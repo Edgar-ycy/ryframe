@@ -272,8 +272,13 @@ class Context:
             tools = ExternalTools(self.tool_plan, self.output, self.run)
             tools.verify_databases('source')
             if complete:
-                inventory = capture_side_inventory(self.backend, 'source', tools,
-                    bound_file(self.backend, self.source['request']['maintenance_build']), self.directory('source-inventory'), environment=environment)
+                # 来源执行工作树（夹具等）自带维护工具；证据目录仍写在当前运行根内。
+                from devex_clone_target_binding import execution_backend
+
+                source_execution, _ = execution_backend(self.backend, self.source['request'])
+                inventory = capture_side_inventory(source_execution, 'source', tools,
+                    bound_file(self.backend, self.source['request']['maintenance_build']), self.directory('source-inventory'),
+                    environment=environment, evidence_root=self.backend)
                 observed = {db['key']: obs for db, obs in zip(sorted(self.source_config['databases'], key=lambda x: x['key']),
                                                             sorted(inventory.observations, key=lambda x: next(d['key'] for d in self.source_config['databases'] if d['database'] == x.resource['database'])), strict=True)}
                 actual = {key: {'tables': value.tables, 'preserved': value.preserved} for key, value in observed.items()}
@@ -287,10 +292,15 @@ class Context:
         # 来源执行工作树（夹具等）不属于当前仓源码窗口；窗口外按该根完整核验，禁止复用窗口结果。
         self.source_guard(complete=True)
         with source_check(self.backend):
+            from devex_clone_target_binding import execution_backend
+
+            target_execution, _ = execution_backend(self.backend, self.target)
             with self.old.use('target') as environment:
                 tools = ExternalTools(self.tool_plan, self.output, self.run)
-                actual = capture_side_inventory(self.backend, 'target', tools, bound_file(self.backend, self.target['maintenance_build']),
-                                                 self.directory('target-copy-handoff'), environment=environment)
+                actual = capture_side_inventory(target_execution, 'target', tools,
+                                                bound_file(self.backend, self.target['maintenance_build']),
+                                                self.directory('target-copy-handoff'), environment=environment,
+                                                evidence_root=self.backend)
             for observed in actual.observations:
                 key = next(db['key'] for db in self.target_config['databases'] if db['database'] == observed.resource['database'])
                 original = self.initial['inventory']['observations'][observed.resource['database']]
