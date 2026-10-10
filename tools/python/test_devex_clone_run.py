@@ -46,6 +46,24 @@ class RunTests(unittest.TestCase):
         write_json(path, value)
         return state.binding(path)
 
+    def test_fixture_storage_run_forwards_owned_lock_identity(self):
+        target = self.local / "candidate/target"
+        target.mkdir(parents=True)
+        write_json(target.parent / "registration.json", {"storage_run": {}})
+        initialized = target / "initialized.json"
+        write_json(initialized, {"kind": "fixture"})
+        observed = []
+
+        def history(_backend, path, identity=None):
+            observed.append((Path(path).name, identity))
+            return ({}, {})
+
+        with patch.object(run, "initialization_history", side_effect=history):
+            result = run.target_fixture_storage_run(self.backend, state.binding(initialized),
+                                                    owned_lock_identity=7)
+        self.assertIsNone(result)
+        self.assertEqual(observed, [("initialized.json", 7)])
+
     def test_failed_export_preserves_history_and_next_stage_attempt_reuses_run(self):
         with patch.object(run, "run_export", side_effect=ValueError("fixture")):
             with self.assertRaises(ValueError):

@@ -254,6 +254,7 @@ class PostTests(unittest.TestCase):
         context.output, context.runtime, context.run = self.directory, self.directory / 'runtime', None
         context.target, context.review, context.target_config = {}, {}, {'scope_id': 'target-one'}
         context.initial, context.environments = {'generation': {'physical': 'physical'}}, Environments({}, {})
+        context.owned_lock_identity = 4242
         context.selected = {**self.selected, 'worker_ready_url': 'http://127.0.0.1:19210',
                             'runtime_dir': str(self.directory / 'old-runtime')}
         tools = SimpleNamespace(verify_databases=lambda _: None, verify_objects=lambda _: None)
@@ -267,7 +268,7 @@ class PostTests(unittest.TestCase):
                 patch('devex_clone_run.target_fixture_storage_run', return_value=fixture) as pinned, \
                 patch('devex_clone_post_context.Resources', return_value=resources) as created:
             self.assertIs(context.target_guard(api=False), resources)
-        pinned.assert_called_once_with(self.backend, context.value['initialized'])
+        pinned.assert_called_once_with(self.backend, context.value['initialized'], owned_lock_identity=4242)
         self.assertEqual(created.call_args.kwargs['storage_run'], fixture)
 
     def test_prepare_is_read_only_remote_and_reuses_exact_partial_local_runtime(self):

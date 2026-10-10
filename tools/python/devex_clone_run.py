@@ -206,15 +206,20 @@ def target_storage_run(backend: Path, value: dict, *, live: bool = True) -> Path
     return directory
 
 
-def target_fixture_storage_run(backend: Path, initialized_descriptor: dict) -> Path | None:
-    """解析 source_to_seed 目标的夹具服务运行；非夹具注册或空绑定返回 None。"""
+def target_fixture_storage_run(backend: Path, initialized_descriptor: dict, *,
+                               owned_lock_identity: int | None = None) -> Path | None:
+    """解析 source_to_seed 目标的夹具服务运行；非夹具注册或空绑定返回 None。
+
+    交接阶段已持有目标 generation lock 时必须传入锁身份，否则初始化文件树复核
+    会在被 msvcrt 锁定的 guard 字节区间上失败关闭。
+    """
     initialized = bound_file(backend, initialized_descriptor)
     if initialized.name != "initialized.json":
         raise ValueError("目标必须绑定显式初始化入口的最终收据")
     registration_path = initialized.parent.parent / "registration.json"
     if not registration_path.is_file() or linked(registration_path):
         return None
-    initialization_history(backend, initialized)
+    initialization_history(backend, initialized, owned_lock_identity)
     registration = read_json(registration_path)
     storage_run = registration.get("storage_run")
     if not isinstance(storage_run, dict) or not storage_run:

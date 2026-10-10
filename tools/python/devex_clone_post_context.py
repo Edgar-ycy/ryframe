@@ -153,7 +153,9 @@ class Context:
             # 否则会把当前运行目录当成存储运行，导致夹具存储代次无法按既定 lineage 采纳。
             storage_run = target_storage_run(self.backend, self.value)
             if storage_run is None:
-                storage_run = target_fixture_storage_run(self.backend, self.value["initialized"])
+                # 交接阶段已持有目标 generation lock，初始化文件树复核必须携带同一锁身份。
+                storage_run = target_fixture_storage_run(
+                    self.backend, self.value["initialized"], owned_lock_identity=self.owned_lock_identity)
             storage_run = storage_run or self.directory_root
             resources = Resources(self.backend, self.target, self.output, self.selected, self.review, self.run,
                                   storage_run=storage_run)
