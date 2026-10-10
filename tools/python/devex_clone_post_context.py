@@ -42,6 +42,18 @@ def absent(path):
         raise ValueError("未登记的生产者或锁仍存在，拒绝接管")
 
 
+def execution_root(backend: Path, request: dict) -> Path:
+    """与复制工厂一致地解析执行工作树：显式声明优先，否则取维护构建收据记录的根。"""
+    if request.get("execution_backend") is not None:
+        from devex_clone_target_binding import execution_backend
+
+        return execution_backend(backend, request)[0]
+    recorded = read_json(bound_file(backend, request["maintenance_build"])).get("backend_root")
+    if not isinstance(recorded, str):
+        raise ValueError("维护构建收据缺少执行后端根")
+    return local_path(backend, recorded)
+
+
 class Context:
     def __init__(self, backend, directory, value, number, run=subprocess.run, *, stage="post-copy",
                  owned_lock_identity: int | None = None):
@@ -273,10 +285,7 @@ class Context:
             tools.verify_databases('source')
             if complete:
                 # 来源执行工作树（夹具等）自带维护工具；证据目录仍写在当前运行根内。
-                from devex_clone_target_binding import execution_backend
-
-                source_execution, _ = execution_backend(self.backend, self.source['request'])
-                inventory = capture_side_inventory(source_execution, 'source', tools,
+                inventory = capture_side_inventory(execution_root(self.backend, self.source['request']), 'source', tools,
                     bound_file(self.backend, self.source['request']['maintenance_build']), self.directory('source-inventory'),
                     environment=environment, evidence_root=self.backend)
                 observed = {db['key']: obs for db, obs in zip(sorted(self.source_config['databases'], key=lambda x: x['key']),
@@ -292,12 +301,9 @@ class Context:
         # 来源执行工作树（夹具等）不属于当前仓源码窗口；窗口外按该根完整核验，禁止复用窗口结果。
         self.source_guard(complete=True)
         with source_check(self.backend):
-            from devex_clone_target_binding import execution_backend
-
-            target_execution, _ = execution_backend(self.backend, self.target)
             with self.old.use('target') as environment:
                 tools = ExternalTools(self.tool_plan, self.output, self.run)
-                actual = capture_side_inventory(target_execution, 'target', tools,
+                actual = capture_side_inventory(execution_root(self.backend, self.target), 'target', tools,
                                                 bound_file(self.backend, self.target['maintenance_build']),
                                                 self.directory('target-copy-handoff'), environment=environment,
                                                 evidence_root=self.backend)
