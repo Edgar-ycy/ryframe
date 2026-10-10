@@ -256,7 +256,8 @@ def _bridge_registration(root: Path, binding: dict, current: dict, current_inven
                                   or bridge["audited_source"] != current)):
         raise ValueError("产物来源桥接的产品指纹不匹配")
     return (canonical_digest(receipt), _bridge_build_identity(receipt),
-            {"inventory": inventory, "inherited": inherited})
+            {"inventory": inventory, "inherited": inherited,
+             "root": str(bridge_root if nested else root)})
 
 
 @contextmanager
@@ -342,9 +343,13 @@ def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
         if scope is not None and root.resolve() != scope[0]:
             return None
         registration = scope[1].get(canonical_digest(receipt)) if scope is not None else None
+        # 嵌套桥接（夹具等自带产品树）在登记阶段已按桥接根核验当前来源；此处不得再用运行根
+        # 复核产品输入或构建上下文，否则与桥接审计结论冲突。
+        nested = (registration is not None
+                  and Path(registration.get("root", "")).resolve() != root.resolve())
         current_inventory = (scope[3] if scope is not None and root.resolve() == scope[0]
                              else capture_inventory(root))
-        if (not registration or not registration["inherited"]) and (
+        if not nested and (not registration or not registration["inherited"]) and (
                 sources["product"] != build_source_domains(current_inventory, repository)["product"]):
             raise ValueError("产品构建输入已经变化，必须重新编译")
         if kind == "restore-frontend-build":
@@ -355,7 +360,7 @@ def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
             return copy.deepcopy(sources["full"]["source"])
         from restore_build import build_context
 
-        if receipt.get("build") != build_context(root):
+        if not nested and receipt.get("build") != build_context(root):
             raise ValueError("构建命令、工具链或有效环境已经变化，必须重新编译")
         return copy.deepcopy(sources["full"]["source"])
     inventory, inherited = receipt.get("source_inventory"), False
