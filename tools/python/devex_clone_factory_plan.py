@@ -25,7 +25,8 @@ def declared_side(config: dict, observations: dict[str, DatabaseObservation]) ->
 
 
 def compose_declaration(exported: dict, source: dict[str, DatabaseObservation], target: dict,
-                        initialized: dict[str, DatabaseObservation], evidence: dict, *, copy_id: str, stage: str) -> dict:
+                        initialized: dict[str, DatabaseObservation], evidence: dict, *, copy_id: str, stage: str,
+                        execution_backend: Path | None = None) -> dict:
     """仅组装完整当前声明；调用方必须使用离线计划验证后才可执行。"""
     fingerprint = exported["worktree_fingerprint"]
     if not isinstance(fingerprint, str) or not fingerprint.startswith("sha256:"):
@@ -33,6 +34,7 @@ def compose_declaration(exported: dict, source: dict[str, DatabaseObservation], 
     source_snapshot = {field: exported["source_snapshot"][field] for field in ("head", "clean")}
     source_snapshot["worktree_sha256"] = digest(fingerprint.removeprefix("sha256:"))
     value = {"format_version": 1, "copy_id": copy_id, "copy_stage": stage, "app_env": "test",
+             "execution_backend": str(execution_backend) if execution_backend is not None else None,
              "target_schedule_actions": [{"action": "disable_schedule_via_api", **item}
                                          for item in exported["enabled_system_schedule_rows"]],
              "artifact_root": exported["artifact_root"], "source_snapshot": source_snapshot,
@@ -49,7 +51,8 @@ def declaration(backend: Path, exported: dict, source: dict[str, DatabaseObserva
                 initialized: dict[str, DatabaseObservation], evidence: dict, *, copy_id: str, stage: str,
                 catalog_root: Path | None = None) -> dict:
     """库存由 live factory 提供；末尾仍执行完整 SQL/对象/关系/调度的离线验证。"""
-    value = compose_declaration(exported, source, target, initialized, evidence, copy_id=copy_id, stage=stage)
+    value = compose_declaration(exported, source, target, initialized, evidence, copy_id=copy_id, stage=stage,
+                               execution_backend=catalog_root)
     # 业务 crate 可能位于独立执行工作树；schema 目录必须与该树一致。
     create_plan(value, backend, catalog_root=catalog_root)
     return value

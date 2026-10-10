@@ -183,7 +183,8 @@ def side(value: dict, *, target=False) -> dict:
 
 
 def validate_input(value: dict, backend: Path, catalog_root: Path | None = None) -> tuple[dict, dict, dict, dict]:
-    exact(value, {"format_version", "copy_id", "copy_stage", "target_schedule_actions", "app_env", "artifact_root", "source_snapshot", "source", "target", "evidence", "databases", "objects"})
+    exact(value, {"format_version", "copy_id", "copy_stage", "target_schedule_actions", "app_env", "artifact_root",
+                  "source_snapshot", "source", "target", "evidence", "databases", "objects", "execution_backend"})
     if value["format_version"] != 1 or value["app_env"] != "test":
         raise ValueError("开发复制仅接受 test 环境当前结构")
     name(value["copy_id"])
@@ -202,7 +203,10 @@ def validate_input(value: dict, backend: Path, catalog_root: Path | None = None)
             raise ValueError("两侧 schema、逻辑目标和模式必须相同")
     local_path(backend, value["artifact_root"])
     # 业务 crate 独立于框架仓库；含业务表时必须按执行工作树读取目录。
-    control, tenant = schema_catalog(catalog_root or backend)
+    declared = value.get("execution_backend")
+    if declared is not None and (not isinstance(declared, str) or not Path(declared).is_absolute()):
+        raise ValueError("输入清单的执行工作树必须是绝对路径或空值")
+    control, tenant = schema_catalog(catalog_root or (Path(declared) if declared else None) or backend)
     return old, new, control, tenant
 
 

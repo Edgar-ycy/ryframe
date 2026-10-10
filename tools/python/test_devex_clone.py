@@ -57,7 +57,7 @@ class CloneTests(unittest.TestCase):
         self.control, self.tenant = schema_catalog(self.backend)
         self.data = {"shared-control": [], "dedicated-a": []}
         self.value = {"format_version": 1, "copy_id": "clone-case", "copy_stage": "source_to_seed", "target_schedule_actions": [],
-                      "app_env": "test", "artifact_root": str(self.root),
+                      "app_env": "test", "artifact_root": str(self.root), "execution_backend": None,
                       "source_snapshot": {"head": "a" * 40, "clean": False, "worktree_sha256": "b" * 64},
                       "source": self.side("clone-source"), "target": {**self.side("clone-target"), "state": "new_initialized", "ever_started": False},
                       "evidence": {}, "databases": [], "objects": []}

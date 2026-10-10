@@ -70,8 +70,10 @@ def hydrate(session: factory.CloneSession, saved: dict) -> None:
     stopped = read_json(artifact_file(root, evidence["target_stopped"]))
     if stopped.get("initialized") != session.target_binding:
         raise ValueError("原计划目标停止证明不属于本初始化")
+    recorded = session.declaration.get("execution_backend")
     expected = compose_declaration(session.exported, session.source_initial, target, session.initialized, evidence,
-                                   copy_id=session.declaration["copy_id"], stage=session.declaration["copy_stage"])
+                                   copy_id=session.declaration["copy_id"], stage=session.declaration["copy_stage"],
+                                   execution_backend=Path(recorded) if recorded else None)
     if session.declaration != expected or saved["plan_sha256"] != session.plan["plan_sha256"]:
         raise ValueError("原计划与当前完整来源、目标及初始像不同")
     session.generation_sha256 = plan_hash({"source": session.export_binding, "target": session.target_binding,
