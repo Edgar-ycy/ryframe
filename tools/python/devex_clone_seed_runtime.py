@@ -362,7 +362,7 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
         from devex_clone_seed_arm import publish_arm_input
 
         return publish_arm_input(backend, directory, request_file, number)
-    with target_lock(backend, value):
+    with target_lock(backend, value) as owned_lock_identity:
         if mode == "register":
             if request_file is None:
                 raise ValueError("seed 登记需要明确 --request")
@@ -372,7 +372,9 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
 
             return register_source(backend, directory, value, number)
         request = registered(backend, directory)
-        context = Context(backend, directory, value, number, stage="seed-runtime")
+        # 持锁阶段构造上下文必须携带同一锁身份，初始化文件树复核才不会被 guard 锁定拒绝。
+        context = Context(backend, directory, value, number, stage="seed-runtime",
+                          owned_lock_identity=owned_lock_identity)
         if mode in {"quotas-plan", "quotas-apply", "quotas-reconcile"}:
             from devex_clone_quota import execute_quotas
 

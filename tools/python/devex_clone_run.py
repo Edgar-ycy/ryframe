@@ -591,8 +591,11 @@ def run_runtime(backend: Path, value: dict, environment: Environments, side: str
             environment = Environments(private, private)
             registered(backend, run_directory)
             number = load_state(run_directory)["attempts"][-1]["number"]
-            with target_lock(backend, value, current_run=run_directory):
-                context = Context(backend, run_directory, value, number)
+            with target_lock(backend, value, current_run=run_directory) as owned_lock_identity:
+                # 交接阶段持有目标 generation lock：初始化文件树复核必须携带同一锁身份，
+                # 否则会在被 msvcrt 锁定的 guard 字节区间上失败关闭。
+                context = Context(backend, run_directory, value, number,
+                                  owned_lock_identity=owned_lock_identity)
                 context.bindings()
                 context.target_guard(api=False)
                 with environment.use("target"):

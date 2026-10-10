@@ -1,5 +1,5 @@
 """固定 post-copy 登记、来源绑定和 runtime 准备；只使用隔离文件与 mock。"""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import json
 from pathlib import Path
 import sys
@@ -270,6 +270,31 @@ class PostTests(unittest.TestCase):
             self.assertIs(context.target_guard(api=False), resources)
         pinned.assert_called_once_with(self.backend, context.value['initialized'], owned_lock_identity=4242)
         self.assertEqual(created.call_args.kwargs['storage_run'], fixture)
+
+    def test_post_copy_api_start_passes_owned_lock_identity_to_context(self):
+        write_json(self.directory / 'post-copy.json', {'fixture': True})
+        captured = {}
+
+        @contextmanager
+        def lock(_backend, _value, current_run=None):
+            yield 4242
+
+        class FakeContext:
+            def __init__(self, *_args, **kwargs):
+                captured.update(kwargs)
+                raise ValueError('context 构造阻断')
+
+        with patch('devex_clone_post.registration', return_value=SimpleNamespace(descriptor={'kind': 'fixture'})), \
+                patch('devex_clone_post.runtime_inputs', return_value=(
+                    {'runtime_dir': str(self.directory / 'runtime'), 'api_url': 'http://127.0.0.1:1'}, {})), \
+                patch('devex_clone_post.registered', return_value={}), \
+                patch('devex_clone_run.load_state', return_value={'attempts': [{'number': 5}]}), \
+                patch('devex_clone_post.target_lock', side_effect=lock), \
+                patch('devex_clone_post_context.Context', FakeContext):
+            with self.assertRaises(ValueError):
+                run.run_runtime(self.backend, self.value, Environments({}, {}), 'target', 'start', ('api',),
+                                run_directory=self.directory)
+        self.assertEqual(captured.get('owned_lock_identity'), 4242)
 
     def test_prepare_is_read_only_remote_and_reuses_exact_partial_local_runtime(self):
         context = Context.__new__(Context)
