@@ -4,6 +4,8 @@ import functools
 import http.server
 import io
 import json
+import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -17,6 +19,7 @@ import restore_frontend_build
 import restore_runtime
 import restore_runtime_evidence
 import source_inventory
+from artifact_digests import filesystem_path
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -373,6 +376,20 @@ class RestoreRuntimeTests(unittest.TestCase):
             return
         with self.assertRaisesRegex(ValueError, "符号链接"):
             restore_runtime.read_json_document(link)
+
+    def test_json_documents_support_paths_beyond_max_path(self):
+        deep = self.root
+        while len(str(deep)) < 250:
+            deep = deep / ("d" * 40)
+        os.makedirs(filesystem_path(deep), exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(filesystem_path(deep), ignore_errors=True))
+        document = deep / "document.json"
+        with open(filesystem_path(document), "wb") as stream:
+            stream.write(b'{"value": 7}')
+        self.assertGreater(len(str(document)), 260)
+        observed = restore_runtime.read_json_document(document)
+        self.assertEqual(observed.value, {"value": 7})
+        self.assertEqual(restore_runtime_evidence.artifact_snapshot(document).bytes, 12)
 
     def test_authoritative_context_has_exact_fields_and_strict_endpoints(self):
         expected = self.authority()

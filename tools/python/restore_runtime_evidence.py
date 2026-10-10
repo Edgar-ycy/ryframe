@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from process_sockets import endpoint
 from restore_build import validate_build_context
 from source_inventory import validate_build_source_domains
+from artifact_digests import filesystem_path
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
@@ -57,7 +58,8 @@ def is_reparse(metadata: os.stat_result) -> bool:
 def reject_link_or_reparse(path: Path) -> None:
     current = path.absolute()
     while True:
-        metadata = current.lstat()
+        # 深层验收目录可能超过 MAX_PATH；系统调用统一走扩展路径，返回的仍是原 Path。
+        metadata = Path(filesystem_path(current)).lstat()
         if stat.S_ISLNK(metadata.st_mode) or is_reparse(metadata):
             raise ValueError(f"恢复核验输入不得经过符号链接或重解析点：{current}")
         if current.parent == current:
@@ -118,14 +120,14 @@ class JsonDocument:
 def read_json_document(path: Path) -> JsonDocument:
     path = path.absolute()
     reject_link_or_reparse(path)
-    before = path.lstat()
+    before = Path(filesystem_path(path)).lstat()
     if not stat.S_ISREG(before.st_mode):
         raise ValueError(f"恢复核验输入必须是普通文件：{path}")
     if before.st_size == 0:
         raise ValueError(f"恢复核验输入不能为空：{path}")
     if before.st_size > MAX_JSON_BYTES:
         raise ValueError(f"恢复核验输入超过 16 MiB：{path}")
-    with path.open("rb") as stream:
+    with open(filesystem_path(path), "rb") as stream:
         opened = os.fstat(stream.fileno())
         if file_state(opened) != file_state(before) or not stat.S_ISREG(opened.st_mode):
             raise ValueError(f"恢复核验输入在打开前被替换：{path}")
@@ -134,7 +136,7 @@ def read_json_document(path: Path) -> JsonDocument:
         repeated = stream.read(MAX_JSON_BYTES + 1)
         after_read = os.fstat(stream.fileno())
     reject_link_or_reparse(path)
-    after = path.lstat()
+    after = Path(filesystem_path(path)).lstat()
     state = file_state(before)
     if raw != repeated or len(raw) > MAX_JSON_BYTES or file_state(after_read) != state or file_state(after) != state:
         raise ValueError(f"恢复核验输入在读取期间被替换或修改：{path}")
@@ -164,11 +166,11 @@ class ArtifactSnapshot:
 def artifact_snapshot(path: Path) -> ArtifactSnapshot:
     path = path.absolute()
     reject_link_or_reparse(path)
-    before = path.lstat()
+    before = Path(filesystem_path(path)).lstat()
     if not stat.S_ISREG(before.st_mode):
         raise ValueError(f"恢复核验产物必须是普通文件：{path}")
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open(filesystem_path(path), "rb") as stream:
         opened = os.fstat(stream.fileno())
         if file_state(opened) != file_state(before):
             raise ValueError(f"恢复核验产物在打开前被替换：{path}")
@@ -176,7 +178,7 @@ def artifact_snapshot(path: Path) -> ArtifactSnapshot:
             digest.update(block)
         after_read = os.fstat(stream.fileno())
     reject_link_or_reparse(path)
-    after = path.lstat()
+    after = Path(filesystem_path(path)).lstat()
     state = file_state(before)
     if file_state(after_read) != state or file_state(after) != state:
         raise ValueError(f"恢复核验产物在读取期间被替换或修改：{path}")
@@ -186,7 +188,7 @@ def artifact_snapshot(path: Path) -> ArtifactSnapshot:
 def directory(path: Path, label: str) -> Path:
     path = path.absolute()
     reject_link_or_reparse(path)
-    if not path.is_dir():
+    if not Path(filesystem_path(path)).is_dir():
         raise ValueError(f"{label}必须是普通目录")
     return path
 
