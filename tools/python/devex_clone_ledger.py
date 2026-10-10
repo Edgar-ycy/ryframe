@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import uuid
 
+from artifact_digests import filesystem_path
 from devex_clone_model import digest, exact, local_path, name
 from devex_clone_copy_locks import CopyOwner, GUARDS, read_copy_owner, record_copy_lock, release_copy_lock
 from process_guard import process_guard
@@ -211,24 +212,26 @@ class CloneLedger:
 
     def _write(self, path: Path, value: dict, *, replace=False) -> None:
         temporary = self.path(path.name + "." + uuid.uuid4().hex + ".tmp")
-        with temporary.open("xb") as stream:
+        # 深层复制目录可能超过 MAX_PATH：临时文件写入与发布统一走扩展路径。
+        with open(filesystem_path(temporary), "xb") as stream:
             stream.write(encoded(value))
             stream.flush()
             os.fsync(stream.fileno())
         if replace:
-            os.replace(temporary, path)
+            os.replace(filesystem_path(temporary), filesystem_path(path))
         else:
-            if path.exists():
+            if os.path.exists(filesystem_path(path)):
                 raise LedgerError("账本新收据不能覆盖既有文件")
             # rename 在 Unix 可覆盖竞态出现的文件；同目录硬链接提供原子排他发布。
-            os.link(temporary, path)
-            temporary.unlink()
+            os.link(filesystem_path(temporary), filesystem_path(path))
+            os.unlink(filesystem_path(temporary))
 
     def _read(self) -> tuple[list, list]:
         journal, anchor = self.path("events.ndjson"), self.path("head.json")
-        if journal.stat().st_size > MAX_BYTES or anchor.stat().st_size > 4096:
+        if (os.stat(filesystem_path(journal)).st_size > MAX_BYTES
+                or os.stat(filesystem_path(anchor)).st_size > 4096):
             raise LedgerError("账本超出固定读取上限")
-        raw = journal.read_bytes()
+        raw = Path(filesystem_path(journal)).read_bytes()
         if not raw or not raw.endswith(b"\n"):
             raise LedgerError("账本已截断，禁止自动修复")
         frames, events, previous = [], [], ZERO
@@ -242,7 +245,7 @@ class CloneLedger:
             frames.append(frame)
             events.append(frame["event"])
         expected = {"format_version": 1, **self.binding, "sequence": len(frames) - 1, "sha256": previous}
-        if checked_json(anchor.read_bytes()) != expected or events[0] != {"type": "created", **self.binding}:
+        if checked_json(Path(filesystem_path(anchor)).read_bytes()) != expected or events[0] != {"type": "created", **self.binding}:
             raise LedgerError("计划、代次或账本 head 不匹配；禁止自动截断补写")
         project(events)
         return frames, events
@@ -259,9 +262,9 @@ class CloneLedger:
             body = {"sequence": len(self.frames), "previous": self.frames[-1]["sha256"] if self.frames else ZERO, "event": event}
             frame = {**body, "sha256": plan_hash(body)}
             journal, raw = self.path("events.ndjson"), encoded(frame)
-            if (journal.stat().st_size if self.frames else 0) + len(raw) > MAX_BYTES:
+            if (os.stat(filesystem_path(journal)).st_size if self.frames else 0) + len(raw) > MAX_BYTES:
                 raise LedgerError("新增事件将超过账本上限，不能开始资源写入")
-            with journal.open("ab" if self.frames else "xb") as stream:
+            with open(filesystem_path(journal), "ab" if self.frames else "xb") as stream:
                 stream.write(raw)
                 stream.flush()
                 os.fsync(stream.fileno())
