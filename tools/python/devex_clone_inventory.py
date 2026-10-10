@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Mapping
 import uuid
@@ -42,14 +43,21 @@ class SideInventory:
     evidence_files: tuple[dict, ...]
 
 
+def _entries(output: Path) -> list[os.DirEntry]:
+    """深层验收目录可能超过 MAX_PATH，目录扫描统一走扩展路径。"""
+    with os.scandir(filesystem_path(output)) as scan:
+        return sorted(scan, key=lambda item: item.name)
+
+
 def _evidence_files(output: Path, names: set[str]) -> tuple[dict, ...]:
     """绑定生产者实际声明的平面证据集，拒绝并发或特殊文件注入。"""
-    paths = list(output.iterdir())
-    if ({path.name for path in paths} != names or len(paths) != len(names)
-            or any(linked(path) or not path.is_file() for path in paths)):
+    entries = _entries(output)
+    if ({entry.name for entry in entries} != names or len(entries) != len(names)
+            or any(entry.is_symlink() or not entry.is_file(follow_symlinks=False) for entry in entries)
+            or any(linked(output / entry.name) for entry in entries)):
         raise ValueError("库存目录包含生产者未声明的文件或目录")
-    return tuple({"path": path.name, "type": "file", **file_digest(regular_file(path))}
-                 for path in sorted(paths, key=lambda item: item.name))
+    return tuple({"path": entry.name, "type": "file",
+                  **file_digest(regular_file(output / entry.name))} for entry in entries)
 
 
 def expected_owners(scope: str, combined: bool) -> tuple[dict, ...]:
@@ -170,7 +178,8 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
         if before != after:
             raise ValueError("采集期间来源、工具、配置或物理绑定变化")
         write_json(output / "binding-after.json", after)
-        artifacts = {path.name: file_digest(regular_file(path)) for path in sorted(output.glob("*-target-*.json"))}
+        artifacts = {entry.name: file_digest(regular_file(output / entry.name))
+                     for entry in _entries(output) if re.fullmatch(r".*-target-.*\.json", entry.name)}
         if artifacts != capture.artifacts:
             raise ValueError("已采集库存文件缺失或被修改")
         receipt = {"format_version": 1, "status": "side_inventory_captured", "side": side,
@@ -197,10 +206,6 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
             os.unlink(filesystem_path(inventory_path))
         failure = {"format_version": 1, "status": "side_inventory_failed", "stage": stage,
                    "error_type": type(error).__name__, "remote_writes": 0, "target_ready": False, "clone_verified": False}
-        if isinstance(error, OSError) and getattr(error, "filename", None):
-            # 只记录调用方自己的路径，便于区分缺失文件与超长路径等系统级故障。
-            failure["failed_path"] = str(error.filename)
-            failure["winerror"] = getattr(error, "winerror", None)
         if isinstance(error, DatabaseVerificationError):
             failure["database_verification"] = error.safe_details()
         write_json(output / "failure.json", failure)
@@ -215,7 +220,7 @@ def verify_side_inventory(backend: Path, descriptor: dict, selected: dict, execu
     value = read_json(path)
     exact(value, {"format_version", "status", "side", "scope_id", "binding_sha256", "keys", "inventories", "observations",
                   "remote_writes", "producer_stopped_proven", "fresh_target_proven", "target_ready", "clone_verified", "restore_qualified"})
-    if (path.name != "inventory.json" or (path.parent / "failure.json").exists()
+    if (path.name != "inventory.json" or os.path.exists(filesystem_path(path.parent / "failure.json"))
             or value["format_version"] != 1 or value["status"] != "side_inventory_captured"
             or value["side"] not in {"source", "target"} or value["scope_id"] != selected["scope_id"]
             or value["keys"] != list(KEYS) or value["remote_writes"] != 0

@@ -11,7 +11,7 @@ import subprocess
 import uuid
 
 from devex_clone import write_plan_result
-from devex_clone_capture import write_json
+from devex_clone_capture import read_json, write_json
 from devex_clone_export_verify import (observe_source_object, observe_source_objects, verify_export_bindings,
                                        verify_source_export)
 from devex_clone_factory_context import database_observation, initialization_history, target_history
@@ -109,7 +109,8 @@ class CloneSession:
                 os.fsync(stream.fileno())
 
     def directory(self, purpose: str) -> Path:
-        return self.output / (name(purpose) + "-" + uuid.uuid4().hex)
+        # 深层验收目录要为 MAX_PATH 留出余量：阶段目录只使用 8 位随机后缀。
+        return self.output / (name(purpose) + "-" + uuid.uuid4().hex[:8])
 
     def _source_generation(self, selection: str | tuple[str, str] = "all") -> dict:
         with self.environment.use("source"):
@@ -134,9 +135,18 @@ class CloneSession:
 
     def _inventory(self, side: str):
         config = self.tools.plan[side]
-        receipt = self.source_request["maintenance_build"] if side == "source" else self.target_request["maintenance_build"]
+        request = self.source_request if side == "source" else self.target_request
+        receipt = bound_file(self.backend, request["maintenance_build"])
+        if request.get("execution_backend") is not None:
+            from devex_clone_target_binding import execution_backend
+
+            execution, _ = execution_backend(self.backend, request)
+        else:
+            # 既有来源请求未声明执行工作树；维护构建收据绑定真实后端根时以它为准。
+            recorded = read_json(receipt).get("backend_root")
+            execution = Path(recorded) if isinstance(recorded, str) and Path(recorded).is_dir() else self.backend
         with source_check(self.backend), self.environment.use(side) as environment:
-            captured = capture_side_inventory(self.backend, side, self.tools, bound_file(self.backend, receipt),
+            captured = capture_side_inventory(execution, side, self.tools, receipt,
                                               self.directory(side + "-inventory"), environment=environment)
         by_name = {db["database"]: db["key"] for db in config["databases"]}
         return {by_name[item.resource["database"]]: item for item in captured.observations}
