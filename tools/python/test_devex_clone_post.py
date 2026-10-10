@@ -248,6 +248,28 @@ class PostTests(unittest.TestCase):
             self.assertIs(context.target_guard(api=False), resources)
         self.assertEqual(created.call_args.kwargs['storage_run'], external)
 
+    def test_source_to_seed_target_guard_uses_fixture_storage_run(self):
+        context = Context.__new__(Context)
+        context.backend, context.value, context.directory_root = self.backend, self.value, self.directory
+        context.output, context.runtime, context.run = self.directory, self.directory / 'runtime', None
+        context.target, context.review, context.target_config = {}, {}, {'scope_id': 'target-one'}
+        context.initial, context.environments = {'generation': {'physical': 'physical'}}, Environments({}, {})
+        context.selected = {**self.selected, 'worker_ready_url': 'http://127.0.0.1:19210',
+                            'runtime_dir': str(self.directory / 'old-runtime')}
+        tools = SimpleNamespace(verify_databases=lambda _: None, verify_objects=lambda _: None)
+        resources = SimpleNamespace(storage_identity=lambda: None, tools=tools)
+        fixture = self.local / 'fixture-service-run'
+        with patch('devex_clone_post_context.source_binding', return_value='physical'), \
+                patch('devex_clone_post_context.verify_api_address'), \
+                patch('devex_clone_post_context.worker_ready_url', return_value=context.selected['worker_ready_url']), \
+                patch('devex_clone_post_context.require_closed_port'), \
+                patch('devex_clone_run.target_storage_run', return_value=None), \
+                patch('devex_clone_run.target_fixture_storage_run', return_value=fixture) as pinned, \
+                patch('devex_clone_post_context.Resources', return_value=resources) as created:
+            self.assertIs(context.target_guard(api=False), resources)
+        pinned.assert_called_once_with(self.backend, context.value['initialized'])
+        self.assertEqual(created.call_args.kwargs['storage_run'], fixture)
+
     def test_prepare_is_read_only_remote_and_reuses_exact_partial_local_runtime(self):
         context = Context.__new__(Context)
         context.backend, context.runtime = self.backend, self.directory / 'runtime'

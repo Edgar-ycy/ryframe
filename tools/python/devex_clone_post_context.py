@@ -138,7 +138,7 @@ class Context:
         return read_json(maintenance)
 
     def target_guard(self, *, api):
-        from devex_clone_run import target_storage_run
+        from devex_clone_run import target_fixture_storage_run, target_storage_run
 
         with self.environments.use("target"):
             if source_binding(self.backend, {"source": self.target_config}) != self.initial["generation"]["physical"]:
@@ -149,7 +149,12 @@ class Context:
             require_closed_port(self.selected["worker_ready_url"])
             absent(self.runtime / "worker.json")
             absent(Path(self.selected["runtime_dir"]))
-            storage_run = target_storage_run(self.backend, self.value) or self.directory_root
+            # source_to_seed 目标的存储可能是夹具服务运行：与 target_storage_control 一致地解析，
+            # 否则会把当前运行目录当成存储运行，导致夹具存储代次无法按既定 lineage 采纳。
+            storage_run = target_storage_run(self.backend, self.value)
+            if storage_run is None:
+                storage_run = target_fixture_storage_run(self.backend, self.value["initialized"])
+            storage_run = storage_run or self.directory_root
             resources = Resources(self.backend, self.target, self.output, self.selected, self.review, self.run,
                                   storage_run=storage_run)
             resources.storage_identity()
