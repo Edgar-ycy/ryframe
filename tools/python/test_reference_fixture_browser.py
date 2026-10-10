@@ -551,21 +551,34 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 self.bind()
         self.assertFalse(binding.exists())
 
-    def test_source_guard_detects_a_to_b_to_a_replacement(self):
+    def test_source_guard_tolerates_identical_touch_and_detects_content_change(self):
         source = self.execution / "source.txt"
         source.write_text("A", encoding="utf-8")
-        state = browser.file_state(source.stat())
+        sha = runtime.file_digest(source)["sha256"]
         inventory = {"source": {"snapshot": {"head": "a" * 40, "patch_sha256": "b" * 64,
                                                 "files": [], "clean": False}},
-                     "files": [{"path": "source.txt", "sha256": "c" * 64}], "guard": {}}
+                     "files": [{"path": "source.txt", "sha256": sha}], "guard": {}}
         expected = {key: value for key, value in inventory["source"]["snapshot"].items() if key != "clean"}
+
+        def located(*_args, **_kwargs):
+            return (source, source.stat())
+
         with patch.object(browser, "capture_inventory", return_value=inventory), \
-                patch.object(browser, "source_file", return_value=(source, source.stat())):
+                patch.object(browser, "source_file", side_effect=located):
             guard = browser.SourceGuard.capture(self.execution, expected)
+        # 开发服务器重写内容相同的生成声明只触碰 mtime：等价重写不是源码变化。
+        os.utime(source, ns=(1_000_000_000, 1_000_000_000))
+        with patch.object(browser, "capture_inventory", return_value=inventory), \
+                patch.object(browser, "source_file", side_effect=located):
+            guard.assert_unchanged()
         source.write_text("B", encoding="utf-8")
-        source.write_text("A", encoding="utf-8")
-        os.utime(source, ns=(state[3] + 1_000_000_000, state[3] + 1_000_000_000))
-        with patch.object(browser, "source_file", return_value=(source, source.stat())):
+        with patch.object(browser, "capture_inventory", return_value=inventory), \
+                patch.object(browser, "source_file", side_effect=located):
+            with self.assertRaisesRegex(ValueError, "曾被替换"):
+                guard.assert_unchanged()
+        source.unlink()
+        with patch.object(browser, "capture_inventory", return_value=inventory), \
+                patch.object(browser, "source_file", return_value=None):
             with self.assertRaisesRegex(ValueError, "曾被替换"):
                 guard.assert_unchanged()
 

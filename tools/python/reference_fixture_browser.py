@@ -34,7 +34,7 @@ from reference_fixture_browser_security import browser_environment, secret_value
 from restore_build import file_digest
 from restore_frontend_build import validate_frontend_build
 from restore_input_plan import _publish_json
-from restore_runtime_evidence import artifact_snapshot, file_state
+from restore_runtime_evidence import artifact_snapshot
 from source_inventory import capture_inventory, source_file
 
 
@@ -52,7 +52,7 @@ class SourceGuard:
     root: Path
     expected: dict
     inventory: dict
-    states: tuple[tuple[str, tuple[int, int, int, int]], ...]
+    states: tuple[tuple[str, int, int, str], ...]
 
     @classmethod
     def capture(cls, root: Path, expected: dict) -> "SourceGuard":
@@ -61,18 +61,21 @@ class SourceGuard:
                     if key != "clean"}
         if snapshot != expected:
             raise ValueError("业务 crate 浏览器源码与已登记生成来源不一致")
+        # 身份 = 内核 inode + 字节数 + 内容摘要；不比较 mtime，因为开发服务器会重写内容相同的
+        # 生成声明（仅触碰 mtime），等价重写不属于源码变化；任何字节替换或删除仍会失败关闭。
         states = []
         for item in inventory["files"]:
             found = source_file(root, item["path"])
             assert found is not None
-            states.append((item["path"], file_state(found[1])))
-        return cls(root, expected, inventory, tuple(states))
+            states.append((item["path"], found[1].st_ino, found[1].st_size, item["sha256"]))
+        return cls(root, expected, inventory, states)
 
     def assert_unchanged(self) -> None:
         changed = []
-        for relative, expected in self.states:
+        for relative, inode, size, expected_sha in self.states:
             found = source_file(self.root, relative, allow_missing=True)
-            if found is None or file_state(found[1]) != expected:
+            if (found is None or found[1].st_ino != inode or found[1].st_size != size
+                    or file_digest(found[0])["sha256"] != expected_sha):
                 changed.append(relative)
         if changed:
             raise ValueError("业务 crate 浏览器期间源码曾被替换或修改："
