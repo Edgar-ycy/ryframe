@@ -363,6 +363,20 @@ class ExportVerificationTests(unittest.TestCase):
         owners = [cmd for cmd, _ in self.calls if cmd[cmd.index("--key") + 1].endswith("/.ryframe-owner")]
         self.assertEqual([cmd[cmd.index("--bucket") + 1] for cmd in owners], ["uploads", "uploads"])
 
+    def test_list_diagnostics_open_with_extended_path_conversion(self):
+        recorded = []
+        original = verify.filesystem_path
+
+        def wrap(path):
+            recorded.append(Path(path))
+            return original(path)
+
+        with patch.object(verify, "filesystem_path", wrap):
+            self.observe()
+        self.assertEqual(sorted(path.name for path in recorded),
+                         sorted(f"list-{phase}-{bucket}-0.diagnostic.json"
+                                for phase in ("before", "after") for bucket in BUCKETS))
+
     def test_real_pagination_is_completed_without_truncating_key_set(self):
         self.paginated = True
         self.observe()

@@ -13,6 +13,7 @@ import subprocess
 from typing import Mapping
 import uuid
 
+from artifact_digests import filesystem_path
 from devex_clone_capture import CaptureReader, inspect_response, read_json, regular_file, unique_object, verify_capture, write_json
 from devex_clone_export import logical_inventory, schema_models, validate_dump_state, validate_inventory
 from devex_clone_inventory import configuration
@@ -342,7 +343,7 @@ class _Observation:
             filename = self.output / f"list-{phase}-{bucket}-{index}.json"
             diagnostic = filename.with_suffix(".diagnostic.json")
             code, stderr, error_type = None, b"", None
-            with diagnostic.open("x", encoding="utf-8", newline="\n") as stream:
+            with open(filesystem_path(diagnostic), "x", encoding="utf-8", newline="\n") as stream:
                 try:
                     response = self.reader.tools.execute(command, env=env)
                     code, stderr = response.returncode, response.stderr
