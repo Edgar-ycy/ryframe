@@ -469,6 +469,9 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         "APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(urlsplit(selected["redis"]["url"]).port or 16390),
         "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false", "APP_JOBS_MODE": "external",
         "APP_JOBS_HEALTH_HOST": worker.hostname, "APP_JOBS_HEALTH_PORT": str(worker.port),
+        # 复制目的地（base/candidate 两个 arm 侧）必须以显式关闭的调度启动：目标 API 在 post-copy
+        # 派生环境启用调度路由之前不得承接调度管理，来源侧 seed 保留原行为。
+        **({"APP_JOBS_SCHEDULER_ENABLED": "false"} if side != "seed" else {}),
         "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
         "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": f"ryframe:devex-fresh:{scope}:sentinel",
         "APP_RESET_LEGACY_MYSQL_EXCLUSIVE": "true", "APP_RESET_LEGACY_REDIS_EXCLUSIVE": "true",

@@ -381,6 +381,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
         self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
+        # 来源侧保留调度默认行为，复制目的地必须显式关闭调度，post-copy 才另行派生启用环境。
+        self.assertNotIn("APP_JOBS_SCHEDULER_ENABLED", values)
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
 
         # 目标代次、运行登记与复制运行环境必须来自同一份 APP_* 配置；只有非 APP_ 的
@@ -465,6 +467,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             base_values, base_files = environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
         self.assertEqual(base_values["APP_SCOPE_ID"], "fixture-base")
         self.assertEqual(base_values["APP_DATABASE_NAME"], "fixture_base_shared_control")
+        self.assertEqual(base_values["APP_JOBS_SCHEDULER_ENABLED"], "false")
         self.assertEqual(base_mysql.read_bytes(), (secrets / "mysql-client.cnf").read_bytes())
         self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
 
