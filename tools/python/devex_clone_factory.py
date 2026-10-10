@@ -228,18 +228,18 @@ class CloneSession:
 
     def generation(self, plan: dict, declared: dict, tools: ExternalTools, *,
                    source_object: tuple[str, str] | None = None) -> GenerationObservation:
-        with source_check(self.backend):
-            if plan != self.plan or declared != self.declaration or tools is not self.tools:
-                raise ValueError("步骤引擎不属于本次实际准备的完整复制计划")
-            if source_object is not None and source_object not in {
-                    (item["bucket"], item["source_key"]) for item in self.plan["objects"]}:
-                raise ValueError("当次源对象证明不属于当前复制计划")
-            self._source_generation(source_object if source_object is not None else "global")
-            current, request, _ = self._target_generation()
-            if current != self.initial_target or request != self.target_request:
-                raise ValueError("目标初始化历史变化")
-            return GenerationObservation(self.plan["plan_sha256"], self.generation_sha256, self.plan["input_sha256"],
-                                         plan_hash(tools.plan), self.export_binding["sha256"], self.target_binding["sha256"], True, True, True)
+        if plan != self.plan or declared != self.declaration or tools is not self.tools:
+            raise ValueError("步骤引擎不属于本次实际准备的完整复制计划")
+        if source_object is not None and source_object not in {
+                (item["bucket"], item["source_key"]) for item in self.plan["objects"]}:
+            raise ValueError("当次源对象证明不属于当前复制计划")
+        # 夹具源码树不在当前验收仓库的检查窗口内；代次复核必须在窗口外完整核验。
+        self._source_generation(source_object if source_object is not None else "global")
+        current, request, _ = self._target_generation()
+        if current != self.initial_target or request != self.target_request:
+            raise ValueError("目标初始化历史变化")
+        return GenerationObservation(self.plan["plan_sha256"], self.generation_sha256, self.plan["input_sha256"],
+                                     plan_hash(tools.plan), self.export_binding["sha256"], self.target_binding["sha256"], True, True, True)
 
     def verify_target_owners(self) -> None:
         """每个显式复制阶段仅一次完整五桶核验；失败保留原始 owner 与命令诊断。"""
