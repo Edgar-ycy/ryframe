@@ -103,7 +103,7 @@ def validate_process_tree_directory(
     return names
 
 
-def _read_object(path: Path) -> dict:
+def _read_object(path: Path, *, maximum: int = 64 * 1024) -> dict:
     path = Path(filesystem_path(path))
     def unique(pairs: list[tuple[str, object]]) -> dict:
         value = {}
@@ -113,7 +113,7 @@ def _read_object(path: Path) -> dict:
             value[key] = item
         return value
 
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > 64 * 1024:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > maximum:
         raise ValueError("进程树收据不存在或不是可信普通文件")
     try:
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)

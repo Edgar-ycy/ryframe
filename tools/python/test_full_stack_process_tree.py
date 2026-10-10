@@ -331,6 +331,23 @@ class FullStackProcessTreeTests(unittest.TestCase):
         process.wait(timeout=5)
 
 
+class MemberProofSizeTests(unittest.TestCase):
+    def test_member_proof_reader_allows_frontend_sized_documents(self):
+        import full_stack_process_monitor as monitor
+
+        local = ROOT / ".local-tests/python-unit"
+        local.mkdir(parents=True, exist_ok=True)
+        workspace = WorkspaceDirectory(dir=local)
+        self.addCleanup(workspace.cleanup)
+        path = Path(workspace.name) / "members.json"
+        payload = {"members": ["x" * 512 for _ in range(400)]}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        self.assertGreater(path.stat().st_size, 64 * 1024)
+        with self.assertRaisesRegex(ValueError, "可信普通文件"):
+            monitor._read(path)
+        self.assertEqual(monitor._read_proof(path), payload)
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["__leaf"]:
         _fixture_leaf(sys.argv[2:])

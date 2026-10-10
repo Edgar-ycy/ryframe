@@ -23,6 +23,12 @@ def _read(path: Path) -> dict:
     return _read_object(path)
 
 
+def _read_proof(path: Path) -> dict:
+    """完整成员关闭证明按成员数增长；为前端/浏览器整树放宽上限，其余收据保持 64 KiB。"""
+    from full_stack_process_tree import _read_object
+    return _read_object(path, maximum=4 * 1024 * 1024)
+
+
 def start_monitor(directory: Path, role: str, scope: str, operation_id: str) -> dict:
     from full_stack_process_tree import OPERATION_ID, ROLES
 
@@ -86,7 +92,7 @@ def wait_members(receipt: dict, timeout: float = 10) -> dict:
         if actual is not None and actual != identity:
             raise ValueError("成员监督器 PID 已复用，拒绝认定关闭成功")
         if Path(filesystem_path(path)).is_file():
-            proof = _read(path)
+            proof = _read_proof(path)
             expected = {"format_version", "operation_id", "directory", "role", "scope_id", "supervisor",
                         "monitor", "status", "members", "error_type"}
             if (set(proof) != expected or proof["operation_id"] != receipt["operation_id"]
@@ -136,7 +142,7 @@ def completion_binding(receipt: dict) -> dict:
     proof = wait_members(receipt)
     path = receipt_path(Path(receipt["runtime_directory"]), receipt["role"], receipt["operation_id"], "stopped")
     descriptor = {"path": str(path), **file_digest(path)}
-    if _read(path) != proof:
+    if _read_proof(path) != proof:
         raise ValueError("完整成员关闭证明在绑定期间发生变化")
     return descriptor
 
