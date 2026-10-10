@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 夹具环境在自身输出目录生成独立测试配置目录：复制基础 `app.toml` 并按已审阅租户目标写出 `app.test.toml`，与 CI 全栈流程一致；迁移 gate 等工具可读取测试目标，冻结执行树保持干净。
+
 - 夹具 Worker 改由正式全栈监督器启动并登记 supervisor/monitor 进程树：冻结的业务浏览器用例通过 `full_stack_worker` 停止、崩溃或重启 Worker，缺少进程树收据时此前无法控制运行。
 
 - 业务浏览器环境携带与运行环境完全相同的 `APP_*` 集合：全栈 Worker 控制按进程配置摘要复核运行收据，缺少 `APP_RESET_*` 会拒绝停止或重启 Worker。

@@ -383,6 +383,17 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
         # 来源侧保留调度默认行为，复制目的地必须显式关闭调度，post-copy 才另行派生启用环境。
         self.assertNotIn("APP_JOBS_SCHEDULER_ENABLED", values)
+        # 测试配置目录随环境生成：迁移 gate 等工具按 APP_CONFIG_DIR/app.test.toml 读取已登记目标。
+        test_config = Path(values["APP_CONFIG_DIR"])
+        self.assertEqual(test_config, self.root / "output" / environment.TEST_CONFIG_DIRECTORY)
+        self.assertEqual((test_config / "app.toml").read_bytes(), (config / "app.toml").read_bytes())
+        targets = (test_config / "app.test.toml").read_text(encoding="utf-8")
+        self.assertIn("[[tenant_data.targets]]", targets)
+        for item in self.review["scopes"]["seed"]["databases"]:
+            if item["key"] == "shared-control":
+                continue
+            self.assertIn(f'key = "{item["key"]}"', targets)
+            self.assertIn(f'database = "{item["database"]}"', targets)
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
 
         # 目标代次、运行登记与复制运行环境必须来自同一份 APP_* 配置；只有非 APP_ 的

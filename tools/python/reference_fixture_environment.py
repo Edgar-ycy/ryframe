@@ -58,6 +58,38 @@ def _fixture(value: dict) -> None:
         raise ValueError("业务 crate 隔离工作树收据不完整或尚未就绪")
 
 
+TEST_CONFIG_DIRECTORY = "config"
+
+
+def _test_configuration(execution: Path, output: Path, targets: list[dict]) -> Path:
+    """生成测试运行配置目录：基础 app.toml 复制，租户目标写入 app.test.toml。
+
+    迁移 gate 等工具按 `APP_CONFIG_DIR/app.test.toml` 读取已登记目标；冻结的夹具执行树
+    不能被写入，因此配置目录必须随环境一起生成。
+    """
+    source = execution / "config" / "app.toml"
+    if linked(source) or not source.is_file():
+        raise ValueError("夹具执行树缺少基础 app.toml")
+    if not targets:
+        raise ValueError("夹具测试配置必须声明至少一个租户数据目标")
+    directory = output / TEST_CONFIG_DIRECTORY
+    if directory.exists() or linked(directory):
+        raise ValueError("夹具测试配置目录已存在，拒绝覆盖")
+    directory.mkdir(parents=True)
+    shutil.copyfile(source, directory / "app.toml")
+    sections = []
+    for target in targets:
+        fields = {"key": target["key"], "display_name": f"夹具 {target['key']}", "kind": target["kind"],
+                  "mode": target["mode"], "host": target["host"], "port": target["port"],
+                  "database": target["database"], "username": target["username"],
+                  "password_env": target["password_env"], "tls_mode": target["tls_mode"],
+                  "max_connections": 8}
+        sections.append("[[tenant_data.targets]]\n" + "\n".join(
+            f"{key} = {json.dumps(value)}" for key, value in fields.items()))
+    (directory / "app.test.toml").write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    return directory
+
+
 def _maintenance(value: dict) -> None:
     artifacts = value.get("artifacts")
     if (value.get("format_version") != 1 or value.get("kind") != "devex-clone-tool-build"
@@ -449,8 +481,11 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
             or frontend.port is None or frontend.path not in ("", "/") or frontend.query or frontend.fragment):
         raise ValueError("夹具 API、Worker 或前端地址必须是明确本机端口")
     frontend_origin = f"{frontend.scheme}://{frontend.netloc}"
+    config = _test_configuration(execution, output, targets)
     environment = {
-        "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
+        # 夹具配置目录独立生成：完整复制基础 app.toml 并按已审阅目标写出 app.test.toml，
+        # 与 CI 全栈流程一致；冻结执行树保持干净，迁移 gate 等工具也能读取测试目标。
+        "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(config),
         # 夹具 API 按 `--no-default-features --features bin-api` 构建，不包含 runtime-swagger-ui；
         # 与夹具运行环境保持一致，必须在准备阶段就显式关闭 api_docs，否则目标代次、运行登记
         # 与复制运行环境会得到不同的配置摘要。
@@ -556,7 +591,8 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
     _, review, _, fixture, maintenance_file, _ = inputs
     execution = Path(fixture["paths"]["backend"])
     environment, secrets = _environment(backend, review, fixture, output, side, secret_directory)
-    output.mkdir()
+    # 测试配置目录随环境一起生成，因此输出目录可能已经存在。
+    output.mkdir(exist_ok=True)
     (output / "tmp").mkdir()
     try:
         # 隔离业务配置，同时保留 Git、Cargo 等本机工具必需的系统环境。
