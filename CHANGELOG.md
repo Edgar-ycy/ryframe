@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- post-copy 交接在登记、准备、调度与读取阶段持有目标 generation lock：初始化文件树快照包含控制互斥文件，缺少 `initialize.lock` 与 guard 归属时初始化历史复核会失败关闭。
+
 - 夹具环境在自身输出目录生成独立测试配置目录：复制基础 `app.toml` 并按已审阅租户目标写出 `app.test.toml`，与 CI 全栈流程一致；迁移 gate 等工具可读取测试目标，冻结执行树保持干净。
 
 - 夹具 Worker 改由正式全栈监督器启动并登记 supervisor/monitor 进程树：冻结的业务浏览器用例通过 `full_stack_worker` 停止、崩溃或重启 Worker，缺少进程树收据时此前无法控制运行。

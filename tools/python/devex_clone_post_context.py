@@ -43,7 +43,8 @@ def absent(path):
 
 
 class Context:
-    def __init__(self, backend, directory, value, number, run=subprocess.run, *, stage="post-copy"):
+    def __init__(self, backend, directory, value, number, run=subprocess.run, *, stage="post-copy",
+                 owned_lock_identity: int | None = None):
         if stage not in {"post-copy", "seed-runtime"}:
             raise ValueError("未知受控交接阶段")
         with source_check(backend):
@@ -59,7 +60,8 @@ class Context:
             self.ledger = CloneLedger(backend, self.copy_root / "ledger", self.copy["plan"]["plan_sha256"], self.copy["result"]["generation_sha256"])
             self.ledger_state = self.ledger.inspect()
             self.ledger_frames = plan_hash(self.ledger.frames)
-            self.initial, self.target = initialization_history(backend, bound_file(backend, value["initialized"]))
+            self.initial, self.target = initialization_history(backend, bound_file(backend, value["initialized"]),
+                                                               owned_lock_identity)
             self.review, self.selected = request_binding(backend, self.target)
             self.private = {"source": read_json(bound_file(backend, value["source_environment"]))["environment"],
                             "target_initial": read_json(bound_file(backend, value["target_environment"]))["environment"],

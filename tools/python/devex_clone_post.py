@@ -71,7 +71,8 @@ def registration(backend: Path, directory: Path, *, descriptor=None, current=Non
     return resolve_post_registration(backend, directory, descriptor=descriptor, current=current, cleanup=cleanup)
 
 
-def validate_registration(backend: Path, directory: Path, value: dict, request: dict):
+def validate_registration(backend: Path, directory: Path, value: dict, request: dict,
+                          owned_lock_identity: int | None = None):
     from devex_clone_factory_context import initialization_history
     from devex_clone_run import require_target_copy
 
@@ -92,7 +93,8 @@ def validate_registration(backend: Path, directory: Path, value: dict, request: 
     bridge_builds = [read_json(Path(item["path"]))["build"] for item in value["build_bridges"]]
     if {key: request["backend_build"][key] for key in ("path", "sha256")} not in bridge_builds:
         raise ValueError("API 产物必须属于本 run 已审计的产品构建")
-    initial, _ = initialization_history(backend, bound_file(backend, value["initialized"]))
+    # 初始化文件树把控制互斥计入快照；只有确实持有 generation lock 时才能按“已持锁”复核。
+    initial, _ = initialization_history(backend, bound_file(backend, value["initialized"]), owned_lock_identity)
     selected = initial["generation"]["selected"]
     private = read_json(Path(request["api_environment"]["path"]))
     exact(private, {"environment"})
@@ -123,11 +125,12 @@ def pacing_binding(backend, directory, request):
                    "sha256": pacing["login_budget_module_sha256"]})
 
 
-def register(backend: Path, directory: Path, value: dict, filename: Path) -> dict:
+def register(backend: Path, directory: Path, value: dict, filename: Path,
+             owned_lock_identity: int | None = None) -> dict:
     filename = local_path(backend, str(filename))
     original = binding(filename)
     request = read_json(filename)
-    validate_registration(backend, directory, value, request)
+    validate_registration(backend, directory, value, request, owned_lock_identity=owned_lock_identity)
     if binding(filename) != original:
         raise ValueError("复制后请求读取期间变化")
     path = directory / "post-copy.json"
@@ -287,10 +290,14 @@ def target_lock(backend: Path, value: dict, current_run: Path | None = None):
         from devex_clone_run import target_storage_control
 
         storage = target_storage_control(backend, current_run, value)
-    with storage, process_guard(target, GUARDS["target"]), process_guard(ledger, GUARDS["ledger"]):
-        if any(path.exists() or linked(path) for path in (target / "initialize.lock", ledger / "clone.lock")):
-            raise ValueError("复制锁尚未回收，不能开始 API 交接")
-        yield
+    from devex_clone_target_state import generation_lock
+
+    # 初始化文件树的快照包含控制互斥；post-copy 必须与复制阶段一样持有目标 generation lock
+    # （guard + initialize.lock），否则初始化历史复核会同时遇到未登记且被锁定的 guard 文件。
+    if any(path.exists() or linked(path) for path in (target / "initialize.lock", ledger / "clone.lock")):
+        raise ValueError("复制锁尚未回收，不能开始 API 交接")
+    with storage, generation_lock(target) as identity, process_guard(ledger, GUARDS["ledger"]):
+        yield identity
 
 
 def execute_post(backend: Path, directory: Path, value: dict, mode: str, number: int,
@@ -304,18 +311,18 @@ def execute_post(backend: Path, directory: Path, value: dict, mode: str, number:
             raise ValueError("Node 回收需要明确 --producer-binding")
         return recover_session(backend, directory, number, producer_binding)
     require_quiet(backend, directory, number)
-    with target_lock(backend, value, current_run=directory):
+    with target_lock(backend, value, current_run=directory) as owned_lock_identity:
         if mode == "register":
             if request_file is None:
                 raise ValueError("登记必须提供明确请求文件")
-            return register(backend, directory, value, request_file)
+            return register(backend, directory, value, request_file, owned_lock_identity)
         if mode == "amend":
             if request_file is None:
                 raise ValueError("amend 必须提供完整修正请求")
             return amend(backend, directory, value, request_file, number)
         if mode not in {"prepare", "schedules", "reconcile", "verify"}:
             raise ValueError("未知复制后阶段")
-        context = Context(backend, directory, value, number)
+        context = Context(backend, directory, value, number, owned_lock_identity=owned_lock_identity)
         if mode == "prepare":
             return context.prepare()
         context.guard()
