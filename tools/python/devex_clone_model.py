@@ -182,7 +182,7 @@ def side(value: dict, *, target=False) -> dict:
     return keys
 
 
-def validate_input(value: dict, backend: Path) -> tuple[dict, dict, dict, dict]:
+def validate_input(value: dict, backend: Path, catalog_root: Path | None = None) -> tuple[dict, dict, dict, dict]:
     exact(value, {"format_version", "copy_id", "copy_stage", "target_schedule_actions", "app_env", "artifact_root", "source_snapshot", "source", "target", "evidence", "databases", "objects"})
     if value["format_version"] != 1 or value["app_env"] != "test":
         raise ValueError("开发复制仅接受 test 环境当前结构")
@@ -201,7 +201,8 @@ def validate_input(value: dict, backend: Path) -> tuple[dict, dict, dict, dict]:
         if any(db[field] != new[key][field] for field in ("kind", "mode", "schema_sha256")):
             raise ValueError("两侧 schema、逻辑目标和模式必须相同")
     local_path(backend, value["artifact_root"])
-    control, tenant = schema_catalog(backend)
+    # 业务 crate 独立于框架仓库；含业务表时必须按执行工作树读取目录。
+    control, tenant = schema_catalog(catalog_root or backend)
     return old, new, control, tenant
 
 
@@ -355,8 +356,8 @@ def database_plan(value: dict, root: Path, old: dict, new: dict, control: dict, 
     return result, pending
 
 
-def create_plan(value: dict, backend: Path) -> dict:
-    old, new, control, tenant = validate_input(value, backend)
+def create_plan(value: dict, backend: Path, *, catalog_root: Path | None = None) -> dict:
+    old, new, control, tenant = validate_input(value, backend, catalog_root)
     root = local_path(backend, value["artifact_root"])
     if not root.is_dir():
         raise ValueError("导出证据根目录不存在")

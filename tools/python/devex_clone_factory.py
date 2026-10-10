@@ -137,20 +137,23 @@ class CloneSession:
         config = self.tools.plan[side]
         request = self.source_request if side == "source" else self.target_request
         receipt = bound_file(self.backend, request["maintenance_build"])
-        if request.get("execution_backend") is not None:
-            from devex_clone_target_binding import execution_backend
-
-            execution, _ = execution_backend(self.backend, request)
-        else:
-            # 既有来源请求未声明执行工作树；维护构建收据绑定真实后端根时以它为准。
-            recorded = read_json(receipt).get("backend_root")
-            execution = Path(recorded) if isinstance(recorded, str) and Path(recorded).is_dir() else self.backend
+        execution = self._execution_root(request)
         # 夹具执行树不在当前验收仓库的检查窗口内；采集必须在窗口外完整核验。
         with self.environment.use(side) as environment:
             captured = capture_side_inventory(execution, side, self.tools, receipt,
                                               self.directory(side + "-inventory"), environment=environment)
         by_name = {db["database"]: db["key"] for db in config["databases"]}
         return {by_name[item.resource["database"]]: item for item in captured.observations}
+
+    def _execution_root(self, request: dict) -> Path:
+        """业务源码树：声明的执行后端，或维护构建收据绑定的真实后端根。"""
+        if request.get("execution_backend") is not None:
+            from devex_clone_target_binding import execution_backend
+
+            execution, _ = execution_backend(self.backend, request)
+            return execution
+        recorded = read_json(bound_file(self.backend, request["maintenance_build"])).get("backend_root")
+        return Path(recorded) if isinstance(recorded, str) and Path(recorded).is_dir() else self.backend
 
     def _source_inventory(self) -> dict:
         observed = self._inventory("source")
@@ -209,7 +212,8 @@ class CloneSession:
                     "target_initialized": {"file": (proofs / "initialized.json").relative_to(root).as_posix(), **file_digest(proofs / "initialized.json")},
                     "target_stopped": {"file": (proofs / "stopped.json").relative_to(root).as_posix(), **file_digest(proofs / "stopped.json")}}
         self.declaration = declaration(self.backend, self.exported, self.source_initial, target_config, self.initialized,
-                                       evidence, copy_id=copy_id, stage=stage)
+                                       evidence, copy_id=copy_id, stage=stage,
+                                       catalog_root=self._execution_root(self.source_request))
         write_json(self.output / "input.json", self.declaration)
         self.plan_file = self.output / "plan.json"
         self.verified_plan = write_plan_result(self.backend, str(self.output / "input.json"), str(self.plan_file))

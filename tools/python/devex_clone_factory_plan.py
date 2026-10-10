@@ -46,8 +46,10 @@ def compose_declaration(exported: dict, source: dict[str, DatabaseObservation], 
 
 
 def declaration(backend: Path, exported: dict, source: dict[str, DatabaseObservation], target: dict,
-                initialized: dict[str, DatabaseObservation], evidence: dict, *, copy_id: str, stage: str) -> dict:
+                initialized: dict[str, DatabaseObservation], evidence: dict, *, copy_id: str, stage: str,
+                catalog_root: Path | None = None) -> dict:
     """库存由 live factory 提供；末尾仍执行完整 SQL/对象/关系/调度的离线验证。"""
     value = compose_declaration(exported, source, target, initialized, evidence, copy_id=copy_id, stage=stage)
-    create_plan(value, backend)
+    # 业务 crate 可能位于独立执行工作树；schema 目录必须与该树一致。
+    create_plan(value, backend, catalog_root=catalog_root)
     return value
