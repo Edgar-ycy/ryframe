@@ -49,6 +49,7 @@ class Context:
             raise ValueError("未知受控交接阶段")
         with source_check(backend):
             self.backend, self.directory_root, self.value, self.runner = backend, directory, value, run
+            self.owned_lock_identity = owned_lock_identity
             active = registration(backend, directory)
             self.request_binding = active.descriptor
             self.request = active.request
@@ -105,7 +106,8 @@ class Context:
             pacing_binding(self.backend, self.directory_root, self.request)
             if self.ledger.inspect() != self.ledger_state or plan_hash(self.ledger.frames) != self.ledger_frames:
                 raise ValueError("复制账本在交接后变化")
-            if initialization_history(self.backend, bound_file(self.backend, self.value["initialized"])) != (self.initial, self.target):
+            if initialization_history(self.backend, bound_file(self.backend, self.value["initialized"]),
+                                      self.owned_lock_identity) != (self.initial, self.target):
                 raise ValueError("原初始化证据变化")
             verify_export_bindings(self.backend, self.source)
             verify_build_artifacts(self.build)
