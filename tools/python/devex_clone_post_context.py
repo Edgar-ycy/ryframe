@@ -118,8 +118,12 @@ class Context:
 
         execution_root, _ = execution_backend(self.backend, self.target)
         maintenance = bound_file(self.backend, self.target["maintenance_build"])
-        with source_check(execution_root):
-            return verify_tools(execution_root, maintenance, self.run)
+        if execution_root.resolve() == self.backend.resolve():
+            with source_check(execution_root):
+                return verify_tools(execution_root, maintenance, self.run)
+        # 目标执行工作树与当前仓分离（夹具等）：维护工具已由目标代次准备时按该根核验并冻结，
+        # 本阶段处于当前仓源码窗口内，不能为另一棵树另开窗口，因此只复核收据绑定与内容。
+        return read_json(maintenance)
 
     def target_guard(self, *, api):
         from devex_clone_run import target_storage_run
