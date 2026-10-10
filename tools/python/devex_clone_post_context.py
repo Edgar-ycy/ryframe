@@ -112,7 +112,13 @@ class Context:
             verify_export_bindings(self.backend, self.source)
             verify_build_artifacts(self.build)
             verify_source(self.backend, self.build, self.source["request"]["worktree_fingerprint"])
-            return verify_tools(self.backend, bound_file(self.backend, self.target["maintenance_build"]), self.run)
+            # 维护 CLI 属于目标的执行工作树（夹具等嵌套树）；必须按该根复核来源与工具链，
+            # 不能按当前运行根，否则会拒绝已审计的目标代次。
+            from devex_clone_target_binding import execution_backend
+
+            execution_root, _ = execution_backend(self.backend, self.target)
+            return verify_tools(execution_root,
+                                bound_file(self.backend, self.target["maintenance_build"]), self.run)
 
     def target_guard(self, *, api):
         from devex_clone_run import target_storage_run
