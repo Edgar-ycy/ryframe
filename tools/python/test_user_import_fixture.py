@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -21,6 +22,7 @@ ROOT = SCRIPTS.parent
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import user_import_fixture as fixture  # noqa: E402
+from artifact_digests import filesystem_path  # noqa: E402
 from user_import_fixture import (  # noqa: E402
     HEADERS,
     MODEL,
@@ -273,6 +275,20 @@ class UserImportFixtureTests(unittest.TestCase):
         )
         self.assertEqual(receipt["template_sha256"], checksum)
         self.assertEqual(receipt["sha256"], digest(output.read_bytes()))
+
+    def test_browser_fixture_supports_paths_beyond_max_path(self) -> None:
+        deep = self.root
+        for part in ("长路径", "x" * 120, "y" * 120):
+            deep = deep / part
+            os.mkdir(filesystem_path(deep))
+        self.addCleanup(lambda: shutil.rmtree(filesystem_path(deep), ignore_errors=True))
+        self.assertGreater(len(str(deep / "placeholder")), 260)
+        output = deep / "import-deep0001.xlsx"
+        receipt = prepare_browser(self.source, self.template_sha256, output, "import-deep0001")
+        self.assertEqual(receipt["path"], str(output))
+        self.assertEqual(
+            receipt["sha256"], digest(Path(filesystem_path(output)).read_bytes())
+        )
 
     def test_parent_directory_aliases_fail_closed(self) -> None:
         actual = self.root / "真实父目录"

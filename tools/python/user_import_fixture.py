@@ -10,10 +10,12 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
 
+from artifact_digests import filesystem_path
 from xlsx_workbook import (
     SPREADSHEET_NS as NS,
     cell_text,
@@ -48,17 +50,22 @@ def canonical(value: object) -> bytes:
 
 
 def template_archive(path: Path, expected_sha256: str) -> zipfile.ZipFile:
-    resolved = path.resolve(strict=False) if path.is_absolute() else None
-    if (
-        not path.is_absolute()
-        or resolved != path
-        or path.is_symlink()
-        or not path.is_file()
-        or path.stat().st_size > MAX_TEMPLATE_BYTES
-        or not re.fullmatch(r"[a-f0-9]{64}", expected_sha256)
-    ):
+    if not path.is_absolute() or not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
         raise ValueError("模板必须为显式绝对路径普通文件且不超过16MiB")
-    content = path.read_bytes()
+    try:
+        canonical = path.resolve(strict=False) == path
+    except OSError:
+        # 超长路径的 realpath 可能失败；退化为文本规范化检查，字节访问仍走扩展路径。
+        canonical = os.path.normpath(str(path)) == str(path)
+    if not canonical:
+        raise ValueError("模板必须为显式绝对路径普通文件且不超过16MiB")
+    try:
+        metadata = os.lstat(filesystem_path(path))
+        content = Path(filesystem_path(path)).read_bytes()
+    except OSError as error:
+        raise ValueError("模板必须为显式绝对路径普通文件且不超过16MiB") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("模板必须为显式绝对路径普通文件且不超过16MiB")
     if len(content) > MAX_TEMPLATE_BYTES or digest(content) != expected_sha256:
         raise ValueError("模板SHA与固定契约不一致")
     try:
@@ -138,28 +145,33 @@ def _render_workbook(
 
 
 def _write_exclusive(output: Path, content: bytes) -> dict[str, object]:
-    resolved_parent = (
-        output.parent.resolve(strict=False) if output.is_absolute() else None
-    )
+    if not output.is_absolute():
+        raise ValueError("输出必须是不存在且父目录已创建的绝对路径")
+    try:
+        canonical = output.parent.resolve(strict=False) / output.name == output
+    except OSError:
+        canonical = os.path.normpath(str(output)) == str(output)
+    os_output = filesystem_path(output)
     if (
-        not output.is_absolute()
-        or resolved_parent is None
-        or resolved_parent / output.name != output
-        or output.parent.is_symlink()
-        or output.exists()
-        or output.is_symlink()
-        or not output.parent.is_dir()
+        not canonical
+        or os.path.islink(filesystem_path(output.parent))
+        or os.path.lexists(os_output)
+        or not os.path.isdir(filesystem_path(output.parent))
     ):
         raise ValueError("输出必须是不存在且父目录已创建的绝对路径")
     temporary = output.parent / f".{output.name}.{os.urandom(12).hex()}.tmp"
+    os_temporary = filesystem_path(temporary)
     try:
-        with temporary.open("xb") as stream:
+        with open(os_temporary, "xb") as stream:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.link(temporary, output)
+        os.link(os_temporary, os_output)
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(os_temporary)
+        except FileNotFoundError:
+            pass
     return {"path": str(output), "bytes": len(content), "sha256": digest(content)}
 
 

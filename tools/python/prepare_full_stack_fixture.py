@@ -247,6 +247,13 @@ def prepare(
     )
     register_fixture_migration(roots["backend"], log)
     sync_fixture_contract(roots["backend"], roots["frontend"], log)
+    # 浏览器验收会在夹具工作树内调用 `cargo xtask`；提前预热 xtask 目标目录，
+    # 避免套件内的首次调用内联编译数百个 crate，触发调用超时并与其他进程争用 CPU。
+    run(
+        ["cargo", "build", "--locked", "-p", "xtask", "--target-dir", "target/xtask-run"],
+        roots["backend"],
+        log,
+    )
     before = {name: snapshot(path)[0] for name, path in roots.items()}
     run(
         [
