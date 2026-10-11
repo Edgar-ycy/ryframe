@@ -701,7 +701,9 @@ def full_stack_source_evidence(backend: Path, directory: Path | None = None) -> 
     if directory is None:
         raise ValueError("全栈来源核验缺少明确运行目录")
     root = backend.resolve(strict=True)
-    if fixture == "business":
+    if fixture == "business" or (root.parent / FIXTURE_RECEIPT).is_file():
+        # 业务夹具工作树内运行的套件（含核心套件）沿用夹具来源模型；
+        # RYFRAME_E2E_FIXTURE 只选择运行的测试集，不改变运行时的源码组合。
         return _business_source_evidence(root, directory)
     expected = os.environ.get("RYFRAME_CODE_SHA", "")
     actual_git_root = Path(git(root, "rev-parse", "--show-toplevel").decode().strip()).resolve()

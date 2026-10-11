@@ -127,6 +127,21 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
             {self.receipt["fixture_sha256"]},
         )
 
+    def test_core_suite_inside_fixture_tree_keeps_fixture_source_model(self):
+        with mock.patch.dict(os.environ, {"RYFRAME_E2E_FIXTURE": "core"}, clear=False):
+            evidence = provenance.full_stack_source_evidence(self.backend, self.root)
+        self.assertEqual(evidence["fixture"], "business")
+        self.assertEqual(evidence["original"], self.sources)
+        self.assertEqual(evidence["generated"], self.generated)
+        self.assertEqual(
+            evidence["fixture_receipt"],
+            {
+                "path": str(self.receipt_path),
+                "bytes": len(self.receipt_path.read_bytes()),
+                "sha256": hashlib.sha256(self.receipt_path.read_bytes()).hexdigest(),
+            },
+        )
+
     def test_local_fixture_pair_binds_fixture_without_claiming_ci_identity(self):
         pair = provenance.reference_fixture_source_pair(self.backend)
         self.assertEqual(pair["kind"], provenance.REFERENCE_FIXTURE_SOURCE_PAIR)
@@ -204,6 +219,10 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
             provenance.full_stack_source_evidence(self.backend, self.root)
 
     def test_core_source_also_binds_selected_pair_and_current_backend_snapshot(self):
+        # 核心分支服务非夹具工作树；夹具工作树内的核心套件必须沿用夹具来源模型。
+        moved = self.root / "fixture-holding.json"
+        self.receipt_path.rename(moved)
+        self.addCleanup(moved.rename, self.receipt_path)
         with mock.patch.dict(os.environ, {"RYFRAME_E2E_FIXTURE": "core"}), mock.patch.object(
             provenance,
             "snapshot",
