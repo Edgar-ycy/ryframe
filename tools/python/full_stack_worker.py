@@ -460,10 +460,13 @@ def _authorize_supervisor(
 def _simple_result(operation: dict, receipt: dict, operation_name: str) -> dict:
     directory = operation["path"].parent
     identity = worker_identity(directory, receipt)
+    reconciled = False
     if operation_name in {"stop", "crash"}:
         tree = _worker_tree(directory, receipt, required=identity is not None)
         if tree is not None:
-            terminate_owned_process_tree(tree, crash=operation_name == "crash")
+            terminate_owned_process_tree(
+                tree, crash=operation_name == "crash", allow_external_closure=True
+            )
         identity = None
         wait_for_port_free(receipt["worker_ready_url"])
     elif identity is None:
@@ -473,8 +476,9 @@ def _simple_result(operation: dict, receipt: dict, operation_name: str) -> dict:
         ):
             raise ValueError("Worker 已退出但进程树监督器仍在运行")
         if tree is not None:
-            from full_stack_process_monitor import wait_members
-            wait_members(tree, timeout=0)
+            from full_stack_process_monitor import closure
+            value = closure(tree, timeout=0, allow_external=True)
+            reconciled = value.get("status") == "external-termination"
         ensure_port_free(receipt["worker_ready_url"])
     else:
         verify_running(identity, receipt["worker_ready_url"])
@@ -484,6 +488,7 @@ def _simple_result(operation: dict, receipt: dict, operation_name: str) -> dict:
         "succeeded",
         "running" if identity else "stopped",
         identity,
+        reconciled=reconciled,
     )
 
 
@@ -569,7 +574,9 @@ def _reconcile_active(
     if requested in {"stop", "crash"}:
         tree = _worker_tree(directory, receipt, required=identity is not None)
         if tree is not None:
-            terminate_owned_process_tree(tree, crash=requested == "crash")
+            terminate_owned_process_tree(
+                tree, crash=requested == "crash", allow_external_closure=True
+            )
         wait_for_port_free(receipt["worker_ready_url"])
         identity, state, outcome, error = None, "stopped", "succeeded", None
     elif (
@@ -596,7 +603,7 @@ def _reconcile_active(
     else:
         if identity is not None:
             tree = _worker_tree(directory, receipt, required=True)
-            terminate_owned_process_tree(tree, crash=True)
+            terminate_owned_process_tree(tree, crash=True, allow_external_closure=True)
             wait_for_port_free(receipt["worker_ready_url"])
         else:
             ensure_port_free(receipt["worker_ready_url"])
@@ -703,6 +710,9 @@ def _run_control(
                 previous_tree["supervisor"],
             ):
                 raise ValueError("上一代 Worker 进程树监督器仍在运行")
+            if previous_tree is not None:
+                from full_stack_process_monitor import closure
+                closure(previous_tree, timeout=5, allow_external=True)
             ensure_port_free(receipt["worker_ready_url"])
         operation_receipt = _claim(
             operation, backend, directory, receipt, source, timeout

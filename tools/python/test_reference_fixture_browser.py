@@ -685,6 +685,36 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(set(logs), {"build", "build_verify_before", "browser"})
         capture.assert_called_once_with(outputs["browser_process"], "fixture-source")
 
+    def test_evidence_restarts_worker_closed_with_the_browser_tree(self):
+        api = Mock()
+        api.control.side_effect = [
+            {"processes": {"api": "running", "worker": "stopped"}},
+            {"processes": {"api": "running", "worker": "running"}},
+            {"processes": {"api": "running", "worker": "running"}},
+        ]
+        browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
+        operations = [call.args[3] for call in api.control.call_args_list]
+        self.assertEqual(operations, ["status", "start", "status"])
+
+    def test_evidence_keeps_running_worker_and_rejects_other_states(self):
+        api = Mock()
+        api.control.return_value = {"processes": {"api": "running", "worker": "running"}}
+        browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
+        self.assertEqual(api.control.call_count, 1)
+        api.control.return_value = {"processes": {"api": "stopped", "worker": "stopped"}}
+        with self.assertRaisesRegex(ValueError, "API"):
+            browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
+        api.control.return_value = {"processes": {"api": "running", "worker": "unknown"}}
+        with self.assertRaisesRegex(ValueError, "状态无效"):
+            browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
+        api.control.side_effect = [
+            {"processes": {"api": "running", "worker": "stopped"}},
+            {"processes": {"api": "running", "worker": "stopped"}},
+            {"processes": {"api": "running", "worker": "stopped"}},
+        ]
+        with self.assertRaisesRegex(ValueError, "未恢复"):
+            browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
+
 
 def read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))

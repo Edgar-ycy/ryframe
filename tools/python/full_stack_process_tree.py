@@ -338,8 +338,12 @@ def _wait_stopped(identities: tuple[dict, ...], timeout: float) -> bool:
     return not any(_expected_alive(identity) for identity in identities)
 
 
-def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
-    from full_stack_process_monitor import wait_members
+def terminate_owned_process_tree(receipt: dict, *, crash: bool = False,
+                                 allow_external_closure: bool = False) -> bool:
+    from full_stack_process_monitor import closure
+
+    def close(value: dict) -> dict:
+        return closure(value, allow_external=allow_external_closure)
 
     supervisor = _valid_identity(receipt.get("supervisor"), "监督进程")
     process = _valid_identity(receipt.get("process"), "产品进程")
@@ -351,11 +355,11 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
     supervisor_alive = assert_identity(actual_supervisor, supervisor)
     process_alive = assert_identity(actual_process, process)
     if not supervisor_alive and not process_alive:
-        wait_members(receipt)
+        close(receipt)
         return False
     _write_control(receipt, "crash" if crash else "normal")
     if not crash and supervisor_alive and _wait_stopped((supervisor, process), 3):
-        wait_members(receipt)
+        close(receipt)
         return True
     if os.name == "nt":
         if not supervisor_alive:
@@ -363,7 +367,7 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
         terminate_owned_process(supervisor, crash=True)
         if not _wait_stopped((supervisor, process), 5):
             raise TimeoutError("Windows Job Object 未在期限内回收完整进程树")
-        wait_members(receipt)
+        close(receipt)
         return True
     for identity, alive in ((supervisor, supervisor_alive), (process, process_alive)):
         if alive and _linux_group(identity) != (group_id, group_id):
@@ -371,13 +375,13 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
     try:
         os.killpg(group_id, signal.SIGKILL if crash else signal.SIGTERM)
     except ProcessLookupError:
-        wait_members(receipt)
+        close(receipt)
         return False
     if not _wait_stopped((supervisor, process), 5):
         os.killpg(group_id, signal.SIGKILL)
         if not _wait_stopped((supervisor, process), 5):
             raise TimeoutError("Unix 进程组未在期限内退出")
-    wait_members(receipt)
+    close(receipt)
     return True
 
 

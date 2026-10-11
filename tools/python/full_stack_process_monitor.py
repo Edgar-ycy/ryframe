@@ -18,6 +18,9 @@ def receipt_path(directory: Path, role: str, operation_id: str, suffix: str) -> 
     return directory / f"{role}-members-{operation_id}-{suffix}.json"
 
 
+MISSING_PROOF = "成员监督器退出但没有完整成员关闭证明"
+
+
 def _read(path: Path) -> dict:
     from full_stack_process_tree import _read_object
     return _read_object(path)
@@ -116,10 +119,71 @@ def wait_members(receipt: dict, timeout: float = 10) -> dict:
             if actual is None:
                 return proof
         elif actual is None:
-            raise ValueError("成员监督器退出但没有完整成员关闭证明")
+            raise ValueError(MISSING_PROOF)
         if time.monotonic() >= deadline:
             raise TimeoutError("成员监督器未在期限内完成整树回收")
         time.sleep(0.01)
+
+
+def external_termination_path(directory: Path, role: str, operation_id: str) -> Path:
+    return directory / f"{role}-external-termination-{operation_id}.json"
+
+
+def external_termination(receipt: dict) -> dict:
+    """登记可归因的外部终止：仅当全部登记身份确认退出且没有正常关闭证明时成立。
+
+    仅受监督的 Worker 树允许使用该路径（其收据中的监督进程与产品进程覆盖全部成员）。
+    其他角色或任一身份仍存活时失败关闭，不补造正常关闭证明。
+    """
+    from full_stack_process_tree import _valid_identity
+
+    if receipt.get("role") != "worker":
+        raise ValueError("仅受监督 Worker 树允许登记外部终止")
+    directory = Path(receipt["runtime_directory"])
+    checked = {}
+    for field, label in (("supervisor", "原监督进程"), ("monitor", "树外成员监督器"),
+                         ("process", "产品进程")):
+        identity = _valid_identity(receipt.get(field), label)
+        try:
+            alive = process_identity(identity["pid"]) is not None
+        except PermissionError:
+            # 退出中的 Windows 进程镜像查询可能暂时拒绝访问；不得据此认定已退出。
+            alive = True
+        if alive:
+            raise ValueError(f"{label}仍在运行，拒绝登记外部终止")
+        checked[field] = identity
+    value = {
+        "format_version": 1,
+        "kind": "full-stack-external-termination",
+        "operation_id": receipt["operation_id"],
+        "directory": str(directory),
+        "role": receipt["role"],
+        "scope_id": receipt["scope_id"],
+        "status": "external-termination",
+        "identities": {field: "missing" for field in checked},
+        "normal_shutdown_proof": None,
+        "checked": checked,
+        "created_at_ns": time.time_ns(),
+    }
+    path = external_termination_path(directory, receipt["role"], receipt["operation_id"])
+    if Path(filesystem_path(path)).is_file():
+        existing = _read(path)
+        expected = {key: item for key, item in value.items() if key != "created_at_ns"}
+        if set(existing) != set(value) or any(existing[key] != item for key, item in expected.items()):
+            raise ValueError("外部终止记录与当前进程树不匹配")
+        return existing
+    write_receipt(path, value)
+    return value
+
+
+def closure(receipt: dict, timeout: float = 10, *, allow_external: bool = False) -> dict:
+    """优先采用监督器签发的完整成员关闭证明；仅在允许且全部身份确认退出时登记外部终止。"""
+    try:
+        return wait_members(receipt, timeout=timeout)
+    except ValueError as error:
+        if not allow_external or str(error) != MISSING_PROOF:
+            raise
+    return external_termination(receipt)
 
 
 def wait_startup_cleanup(directory: Path, role: str, scope: str, operation_id: str, supervisor: dict) -> None:

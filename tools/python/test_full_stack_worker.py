@@ -458,6 +458,46 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
             )
             self.assertEqual(crash_control["mode"], "crash")
 
+    def test_status_reconciles_worker_tree_closed_with_an_outer_job(self):
+        started = self.control("start")
+        tree = json.loads(
+            (self.directory / "worker-tree.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(tree["process"], started["identity"])
+        # 模拟浏览器阶段收口：成员监督器随外层 Job 被终止，整树级联退出且没有关闭证明。
+        terminate_owned_process(tree["monitor"], crash=True)
+        self.wait_for(lambda: self.gone(tree["monitor"]), timeout=15)
+        self.wait_for(lambda: self.gone(tree["supervisor"]), timeout=15)
+        self.wait_for(lambda: self.gone(tree["process"]), timeout=15)
+        proof = self.directory / f"worker-members-{tree['operation_id']}-stopped.json"
+        self.assertFalse(proof.exists())
+
+        result = self.control("status")
+        self.assertEqual(result["state"], "stopped")
+        self.assertTrue(result["reconciled"])
+        record = json.loads(
+            (
+                self.directory
+                / f"worker-external-termination-{tree['operation_id']}.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["status"], "external-termination")
+        self.assertEqual(
+            record["identities"],
+            {"supervisor": "missing", "monitor": "missing", "process": "missing"},
+        )
+        self.assertIsNone(record["normal_shutdown_proof"])
+        self.assertEqual(record["checked"]["monitor"], tree["monitor"])
+        again = self.control("status")
+        self.assertEqual(again["state"], "stopped")
+        self.assertTrue(again["reconciled"])
+
+        # 外部终止登记后允许在套件树之外启动新代次（浏览器证据阶段的恢复路径）。
+        restarted = self.control("start")
+        self.assertEqual(restarted["state"], "running")
+        self.assertNotEqual(restarted["identity"], started["identity"])
+        self.assertEqual(self.control("stop")["state"], "stopped")
+
     def test_wrong_worker_creation_identity_fails_closed_without_signalling_reused_pid(
         self,
     ):

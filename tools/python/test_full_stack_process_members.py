@@ -18,7 +18,13 @@ from full_stack_process_members import (
     _same_process_creation,
     finish_members,
 )
-from full_stack_process_monitor import receipt_path, wait_members
+from full_stack_process_monitor import (
+    closure,
+    external_termination,
+    external_termination_path,
+    receipt_path,
+    wait_members,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -114,6 +120,67 @@ class ProcessMembersTests(unittest.TestCase):
         with patch("full_stack_process_monitor.process_identity", return_value=None), \
                 self.assertRaisesRegex(ValueError, "PermissionError"):
             wait_members(receipt, timeout=0)
+
+    def worker_receipt(self):
+        directory = WorkspaceDirectory(dir=ROOT / ".local-tests")
+        self.addCleanup(directory.cleanup)
+        python = str(Path(sys.executable).resolve())
+        identity = {"started": "1", "executable": python}
+        return {"runtime_directory": str(Path(directory.name)), "role": "worker",
+                "scope_id": "member-test", "operation_id": "c" * 32,
+                "supervisor": {**identity, "pid": 2147482002},
+                "monitor": {**identity, "pid": 2147482003},
+                "process": {**identity, "pid": 2147482004}}
+
+    def test_external_termination_requires_every_identity_missing(self):
+        receipt = self.worker_receipt()
+        with patch("full_stack_process_monitor.process_identity", return_value=None):
+            value = external_termination(receipt)
+        self.assertEqual(value["status"], "external-termination")
+        self.assertIsNone(value["normal_shutdown_proof"])
+        self.assertEqual(value["identities"], {
+            "supervisor": "missing", "monitor": "missing", "process": "missing"})
+        path = external_termination_path(Path(receipt["runtime_directory"]), "worker", "c" * 32)
+        self.assertTrue(path.is_file())
+        with patch("full_stack_process_monitor.process_identity", return_value=None):
+            self.assertEqual(external_termination(receipt), value)
+
+        alive = receipt["monitor"]
+        with patch("full_stack_process_monitor.process_identity",
+                   side_effect=lambda pid: alive if pid == alive["pid"] else None), \
+                self.assertRaisesRegex(ValueError, "仍在运行"):
+            external_termination({**receipt, "operation_id": "d" * 32})
+        with patch("full_stack_process_monitor.process_identity", return_value=None), \
+                self.assertRaisesRegex(ValueError, "Worker"):
+            external_termination({**receipt, "role": "api", "operation_id": "e" * 32})
+
+    def test_external_termination_record_mismatch_and_permission_denial_fail_closed(self):
+        receipt = self.worker_receipt()
+        path = external_termination_path(Path(receipt["runtime_directory"]), "worker", "c" * 32)
+        write_receipt(path, {"format_version": 1, "kind": "full-stack-external-termination"})
+        with patch("full_stack_process_monitor.process_identity", return_value=None), \
+                self.assertRaisesRegex(ValueError, "不匹配"):
+            external_termination(receipt)
+        with patch("full_stack_process_monitor.process_identity",
+                   side_effect=PermissionError), \
+                self.assertRaisesRegex(ValueError, "仍在运行"):
+            external_termination({**receipt, "operation_id": "f" * 32})
+
+    def test_closure_requires_explicit_external_allowance(self):
+        receipt = self.worker_receipt()
+        with patch("full_stack_process_monitor.process_identity", return_value=None), \
+                self.assertRaisesRegex(ValueError, "没有完整成员"):
+            closure(receipt, timeout=0)
+        with patch("full_stack_process_monitor.process_identity", return_value=None):
+            value = closure(receipt, timeout=0, allow_external=True)
+        self.assertEqual(value["status"], "external-termination")
+
+    def test_closure_keeps_other_failures_closed(self):
+        receipt, proof = self.fixture()
+        changed = {**receipt["monitor"], "started": "2"}
+        with patch("full_stack_process_monitor.process_identity", return_value=changed), \
+                self.assertRaisesRegex(ValueError, "PID 已复用"):
+            closure(receipt, timeout=0, allow_external=True)
 
     def test_old_or_other_operation_proof_cannot_establish_completion(self):
         receipt, proof = self.fixture()

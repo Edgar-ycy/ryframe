@@ -398,6 +398,29 @@ def _run_logs(outputs: dict, server: str) -> dict:
     return {name: _bound(outputs[name + "_log"]) for name in keys}
 
 
+def _ensure_worker_running(api: RuntimeApi, backend: Path, environment_path: Path,
+                           output_path: Path) -> None:
+    """浏览器套件结束会连带回收其进程树内的 Worker；证据阶段由树外监督恢复运行态。
+
+    套件内启动的 Worker 属于浏览器进程树，树收口时被正常回收；外部终止会登记在
+    Worker 控制收据中。证据阶段在套件进程树之外重新启动 Worker，保证后续阶段
+    看到的是重新登记、独立于浏览器树的运行实例。
+    """
+    status = api.control(backend, environment_path, output_path, "status")
+    processes = status.get("processes") if isinstance(status, dict) else None
+    if not isinstance(processes, dict) or processes.get("api") != "running":
+        raise ValueError("业务 crate 浏览器证据阶段要求 API 保持运行")
+    worker = processes.get("worker")
+    if worker == "running":
+        return
+    if worker != "stopped":
+        raise ValueError("业务 crate 浏览器证据阶段的 Worker 状态无效")
+    api.control(backend, environment_path, output_path, "start")
+    observed = api.control(backend, environment_path, output_path, "status")
+    if observed.get("processes", {}).get("worker") != "running":
+        raise ValueError("业务 crate 浏览器证据阶段未恢复运行中的 Worker")
+
+
 def _failure_evidence(outputs: dict, server: str, scope_id: str,
                       completed: dict) -> tuple[dict, dict]:
     keys = ["browser"] if server == "dev" else [
@@ -514,6 +537,7 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
             stage = "build_verify_after"
             _verify_preview_after(binding, context, processes, build, build_guard)
         stage = "evidence"
+        _ensure_worker_running(api, backend, environment_path, output_path)
         _assert_guards(context)
         binding_guard.assert_unchanged()
         repeated, _ = _plan(
