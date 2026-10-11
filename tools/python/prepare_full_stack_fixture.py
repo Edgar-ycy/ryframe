@@ -80,6 +80,11 @@ def sync_fixture_contract(backend: Path, frontend: Path, log: Path) -> None:
     )
 
 
+def prewarm_fixture_xtask(backend: Path, log: Path) -> None:
+    """按浏览器套件的实际 Cargo alias 预热夹具维护入口。"""
+    run(["cargo", "xtask", "--help"], backend, log)
+
+
 def copy_snapshot(
     source: Path, destination: Path, receipt: dict, patch: bytes, log: Path
 ) -> None:
@@ -247,13 +252,6 @@ def prepare(
     )
     register_fixture_migration(roots["backend"], log)
     sync_fixture_contract(roots["backend"], roots["frontend"], log)
-    # 浏览器验收会在夹具工作树内调用 `cargo xtask`；提前预热 xtask 目标目录，
-    # 避免套件内的首次调用内联编译数百个 crate，触发调用超时并与其他进程争用 CPU。
-    run(
-        ["cargo", "build", "--locked", "-p", "xtask", "--target-dir", "target/xtask-run"],
-        roots["backend"],
-        log,
-    )
     before = {name: snapshot(path)[0] for name, path in roots.items()}
     run(
         [
@@ -265,6 +263,9 @@ def prepare(
     )
     if before != {name: snapshot(path)[0] for name, path in roots.items()}:
         raise ValueError("资源只读检查改写了隔离工作树")
+    # 必须位于全部生成和源码检查之后，并执行浏览器套件使用的同一 alias；否则后续
+    # Cargo 指纹变化会让首次历史状态轮询重新编译并耗尽浏览器断言时限。
+    prewarm_fixture_xtask(roots["backend"], log)
     receipt.update(status="ready", generated=before)
     write_receipt(output / "fixture.json", receipt)
     return receipt

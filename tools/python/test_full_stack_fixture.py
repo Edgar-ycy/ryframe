@@ -252,6 +252,12 @@ class FullStackFixtureTests(unittest.TestCase):
             log,
         )
 
+    def test_fixture_xtask_is_prewarmed_through_the_browser_alias(self):
+        log = self.root / "log"
+        with patch.object(fixture, "run") as run:
+            fixture.prewarm_fixture_xtask(self.backend, log)
+        run.assert_called_once_with(["cargo", "xtask", "--help"], self.backend, log)
+
     def test_private_protocol_reconstructs_prepare_arguments_without_leaking_to_children(self):
         value = {
             "backend_dir": str(self.backend),
