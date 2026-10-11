@@ -65,9 +65,15 @@ class B0AdapterEvidenceTests(unittest.TestCase):
     def test_patch_ancestor_reparse_is_rejected_before_reading(self):
         root = Path(__file__).resolve().parents[2]
         original = Path.lstat
+
+        def normalized(path):
+            text = str(path)
+            return Path(text[len("\\\\?\\"):]) if text.startswith("\\\\?\\") else Path(path)
+
         def replaced(path, *args, **kwargs):
             value = original(path, *args, **kwargs)
-            return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) if path == root / "xtask/assets" else value
+            return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) \
+                if normalized(path) == root / "xtask/assets" else value
         with patch.object(Path, "lstat", replaced), patch.object(Path, "read_bytes") as read, self.assertRaises(ValueError):
             comparison._patch_bytes(root)
         read.assert_not_called()
@@ -78,9 +84,15 @@ class B0AdapterEvidenceTests(unittest.TestCase):
         root = Path(temporary.name)
         (root / "target").mkdir()
         original = Path.lstat
+
+        def normalized(path):
+            text = str(path)
+            return Path(text[len("\\\\?\\"):]) if text.startswith("\\\\?\\") else Path(path)
+
         def replaced(path, *args, **kwargs):
             value = original(path, *args, **kwargs)
-            return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) if path == root / "target" else value
+            return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) \
+                if normalized(path) == root / "target" else value
         with patch.object(Path, "lstat", replaced), patch.object(comparison, "_git") as git, self.assertRaises(ValueError):
             comparison._reconstructed_tree(root, root / comparison.B0_ADAPTER_PATCH)
         git.assert_not_called()
