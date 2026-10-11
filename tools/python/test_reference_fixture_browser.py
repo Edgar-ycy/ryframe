@@ -123,7 +123,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             "api": self.process_state, "worker": self.process_state}}
         self.api = browser.RuntimeApi(
             runtime._bootstrap, runtime._output, Mock(return_value=verified),
-            Mock(side_effect=state), Mock(side_effect=state),
+            Mock(side_effect=state), Mock(side_effect=state), Mock(return_value="running"),
         )
 
     def patches(self):
@@ -690,28 +690,35 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         api.control.side_effect = [
             {"processes": {"api": "running", "worker": "stopped"}},
             {"processes": {"api": "running", "worker": "running"}},
-            {"processes": {"api": "running", "worker": "running"}},
         ]
+        api.worker.return_value = "running"
         browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
         operations = [call.args[3] for call in api.control.call_args_list]
-        self.assertEqual(operations, ["status", "start", "status"])
+        self.assertEqual(operations, ["status", "status"])
+        worker_operations = [call.args[3] for call in api.worker.call_args_list]
+        self.assertEqual(worker_operations, ["start"])
 
     def test_evidence_keeps_running_worker_and_rejects_other_states(self):
         api = Mock()
         api.control.return_value = {"processes": {"api": "running", "worker": "running"}}
         browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
         self.assertEqual(api.control.call_count, 1)
+        api.worker.assert_not_called()
         api.control.return_value = {"processes": {"api": "stopped", "worker": "stopped"}}
         with self.assertRaisesRegex(ValueError, "API"):
             browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
         api.control.return_value = {"processes": {"api": "running", "worker": "unknown"}}
         with self.assertRaisesRegex(ValueError, "状态无效"):
             browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
+        api.control.return_value = {"processes": {"api": "running", "worker": "stopped"}}
+        api.worker.return_value = "stopped"
+        with self.assertRaisesRegex(ValueError, "未恢复"):
+            browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
         api.control.side_effect = [
             {"processes": {"api": "running", "worker": "stopped"}},
             {"processes": {"api": "running", "worker": "stopped"}},
-            {"processes": {"api": "running", "worker": "stopped"}},
         ]
+        api.worker.return_value = "running"
         with self.assertRaisesRegex(ValueError, "未恢复"):
             browser._ensure_worker_running(api, self.backend, self.bootstrap, self.output)
 

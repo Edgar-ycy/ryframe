@@ -45,6 +45,7 @@ class RuntimeApi:
     verify: Callable
     control: Callable
     observe: Callable
+    worker: Callable
 
 
 @dataclass(frozen=True)
@@ -404,7 +405,7 @@ def _ensure_worker_running(api: RuntimeApi, backend: Path, environment_path: Pat
 
     套件内启动的 Worker 属于浏览器进程树，树收口时被正常回收；外部终止会登记在
     Worker 控制收据中。证据阶段在套件进程树之外重新启动 Worker，保证后续阶段
-    看到的是重新登记、独立于浏览器树的运行实例。
+    看到的是重新登记、独立于浏览器树的运行实例。API 保持原实例，只恢复 Worker。
     """
     status = api.control(backend, environment_path, output_path, "status")
     processes = status.get("processes") if isinstance(status, dict) else None
@@ -415,7 +416,8 @@ def _ensure_worker_running(api: RuntimeApi, backend: Path, environment_path: Pat
         return
     if worker != "stopped":
         raise ValueError("业务 crate 浏览器证据阶段的 Worker 状态无效")
-    api.control(backend, environment_path, output_path, "start")
+    if api.worker(backend, environment_path, output_path, "start") != "running":
+        raise ValueError("业务 crate 浏览器证据阶段未恢复运行中的 Worker")
     observed = api.control(backend, environment_path, output_path, "status")
     if observed.get("processes", {}).get("worker") != "running":
         raise ValueError("业务 crate 浏览器证据阶段未恢复运行中的 Worker")

@@ -182,8 +182,22 @@ def observe_runtime(backend: Path, environment_path: Path, output_path: Path,
             "processes": processes, "remote_writes": 0}
 
 
+def worker_only(backend: Path, environment_path: Path, output_path: Path,
+                operation: str) -> str:
+    """只控制受监督 Worker 的运行态；API 保持原实例，供浏览器证据阶段恢复运行。"""
+    if operation not in {"start", "stop", "status"}:
+        raise ValueError("夹具 Worker 控制操作无效")
+    verify(backend, environment_path, output_path)
+    _, execution, private = _bootstrap(backend, environment_path)
+    output = _output(execution, output_path, new=False)
+    pair = read_json(output / "source-pair.json")
+    values = _runtime_environment(private, pair)
+    with Environments(values, values).use("source"):
+        return _worker_control(execution, output, operation)
+
+
 def _browser_api() -> RuntimeApi:
-    return RuntimeApi(_bootstrap, _output, verify, run, observe_runtime)
+    return RuntimeApi(_bootstrap, _output, verify, run, observe_runtime, worker_only)
 
 
 PROTOCOL_KEY = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_PROTOCOL"
