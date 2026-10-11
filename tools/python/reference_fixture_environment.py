@@ -30,6 +30,9 @@ from source_inventory import snapshot
 SECRET_FILES = ("mysql-client.cnf", "rustfs-access-key.txt", "rustfs-secret-key.txt", "redis-password.txt",
                 "reset-admin-password.txt", "reset-user-password.txt", "jwt-secret.txt", "metrics-token.txt")
 RESET_SECRET_FILES = {"reset-admin-password.txt", "reset-user-password.txt"}
+# 完整浏览器验收单 IP 的请求量高于产品默认限流（100 次/60s）；夹具只提高请求容量，
+# 窗口与 login 等 api_limits 保持基础配置，通过 app.test.toml 深度合并生效。
+FIXTURE_REQUEST_RATE_LIMIT_CAPACITY = 1000
 
 
 def bound(path: Path) -> dict:
@@ -77,7 +80,7 @@ def _test_configuration(execution: Path, output: Path, targets: list[dict]) -> P
         raise ValueError("夹具测试配置目录已存在，拒绝覆盖")
     directory.mkdir(parents=True)
     shutil.copyfile(source, directory / "app.toml")
-    sections = []
+    sections = [f"[rate_limit]\ncapacity = {FIXTURE_REQUEST_RATE_LIMIT_CAPACITY}"]
     for target in targets:
         fields = {"key": target["key"], "display_name": f"夹具 {target['key']}", "kind": target["kind"],
                   "mode": target["mode"], "host": target["host"], "port": target["port"],
