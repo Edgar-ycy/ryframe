@@ -162,7 +162,7 @@ def snapshot_signature(snapshot: dict) -> tuple:
 def observe_snapshot(context) -> dict:
     with context.environments.use("target"):
         resources = Resources(context.backend, context.target, context.output, context.selected, context.review,
-                              context.run, storage_run=context.directory_root)
+                              context.run, storage_run=context.resolved_storage_run())
         databases = [item for item in context.target_config["databases"] if item["key"] == "shared-control"]
         if len(databases) != 1:
             raise ValueError("seed 排空只接受唯一 shared-control 数据库")

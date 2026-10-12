@@ -137,9 +137,20 @@ class Context:
         # 本阶段处于当前仓源码窗口内，不能为另一棵树另开窗口，因此只复核收据绑定与内容。
         return read_json(maintenance)
 
-    def target_guard(self, *, api):
+    def resolved_storage_run(self):
+        """解析目标存储运行：seed_to_arm 外部目标、source_to_seed 夹具服务，最后回退本 run。"""
         from devex_clone_run import target_fixture_storage_run, target_storage_run
 
+        storage_run = target_storage_run(self.backend, self.value)
+        if storage_run is None:
+            # source_to_seed 目标的存储可能是夹具服务运行：与 target_storage_control 一致地解析，
+            # 否则会把当前运行目录当成存储运行，导致夹具存储代次无法按既定 lineage 采纳。
+            # 交接阶段已持有目标 generation lock，初始化文件树复核必须携带同一锁身份。
+            storage_run = target_fixture_storage_run(
+                self.backend, self.value["initialized"], owned_lock_identity=self.owned_lock_identity)
+        return storage_run or self.directory_root
+
+    def target_guard(self, *, api):
         with self.environments.use("target"):
             if source_binding(self.backend, {"source": self.target_config}) != self.initial["generation"]["physical"]:
                 raise ValueError("派生 API 物理目标不是原复制目标")
@@ -149,14 +160,7 @@ class Context:
             require_closed_port(self.selected["worker_ready_url"])
             absent(self.runtime / "worker.json")
             absent(Path(self.selected["runtime_dir"]))
-            # source_to_seed 目标的存储可能是夹具服务运行：与 target_storage_control 一致地解析，
-            # 否则会把当前运行目录当成存储运行，导致夹具存储代次无法按既定 lineage 采纳。
-            storage_run = target_storage_run(self.backend, self.value)
-            if storage_run is None:
-                # 交接阶段已持有目标 generation lock，初始化文件树复核必须携带同一锁身份。
-                storage_run = target_fixture_storage_run(
-                    self.backend, self.value["initialized"], owned_lock_identity=self.owned_lock_identity)
-            storage_run = storage_run or self.directory_root
+            storage_run = self.resolved_storage_run()
             resources = Resources(self.backend, self.target, self.output, self.selected, self.review, self.run,
                                   storage_run=storage_run)
             resources.storage_identity()

@@ -362,7 +362,7 @@ class SeedTests(unittest.TestCase):
     def test_current_schedules_unknown_or_enabled_rejected_before_control(self):
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, target={}, output=self.directory,
             selected={}, review={}, run=Mock(), target_config={"databases": [{"key": "shared-control"}]},
-            environments=runtime.Environments({}, {}))
+            environments=runtime.Environments({}, {}), resolved_storage_run=lambda: self.directory)
         resources = SimpleNamespace(tools=SimpleNamespace(mysql=Mock(return_value="0")))
         with patch.object(runtime, "verify_confirmations", return_value=["confirmed"]), patch.object(runtime, "require_schedule_stage"), patch.object(runtime, "Resources", return_value=resources):
             self.assertEqual(runtime.schedules_guard(context), ["confirmed"])

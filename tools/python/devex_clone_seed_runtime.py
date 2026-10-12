@@ -53,7 +53,7 @@ def resources_guard(context):
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
         resources = Resources(context.backend, context.target, context.output, context.selected, context.review, context.run,
-                              storage_run=context.directory_root)
+                              storage_run=context.resolved_storage_run())
         resources.storage_identity()
         resources.tools.verify_databases("target")
         resources.tools.verify_objects("target")
@@ -65,7 +65,7 @@ def schedules_guard(context):
     require_schedule_stage(context, confirmations)
     with context.environments.use("target"):
         resources = Resources(context.backend, context.target, context.output, context.selected, context.review, context.run,
-                              storage_run=context.directory_root)
+                              storage_run=context.resolved_storage_run())
         database = next(item for item in context.target_config["databases"] if item["key"] == "shared-control")
         raw = resources.tools.mysql(database, "SELECT COUNT(*) FROM sys_job_schedule WHERE enabled=1 AND del_flag='0';")
         if raw != "0":
@@ -112,7 +112,7 @@ def current_mutation_guard(context, request, prerequisite, confirmations):
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
         resources = Resources(context.backend, context.target, context.output, context.selected, context.review,
-                              context.run, storage_run=context.directory_root)
+                              context.run, storage_run=context.resolved_storage_run())
         context.api_guard(resources)
         require_closed_port(context.selected["worker_ready_url"])
         database = next(item for item in context.target_config["databases"] if item["key"] == "shared-control")

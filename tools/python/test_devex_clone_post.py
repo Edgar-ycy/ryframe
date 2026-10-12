@@ -271,6 +271,15 @@ class PostTests(unittest.TestCase):
         pinned.assert_called_once_with(self.backend, context.value['initialized'], owned_lock_identity=4242)
         self.assertEqual(created.call_args.kwargs['storage_run'], fixture)
 
+    def test_resolved_storage_run_falls_back_to_the_current_run(self):
+        context = Context.__new__(Context)
+        context.backend, context.value, context.directory_root = self.backend, self.value, self.directory
+        context.owned_lock_identity = 4242
+        with patch('devex_clone_run.target_storage_run', return_value=None), \
+                patch('devex_clone_run.target_fixture_storage_run', return_value=None) as pinned:
+            self.assertEqual(context.resolved_storage_run(), self.directory)
+        pinned.assert_called_once_with(self.backend, context.value['initialized'], owned_lock_identity=4242)
+
     def test_post_copy_api_start_passes_owned_lock_identity_to_context(self):
         write_json(self.directory / 'post-copy.json', {'fixture': True})
         captured = {}

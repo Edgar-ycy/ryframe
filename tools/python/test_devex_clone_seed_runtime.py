@@ -35,7 +35,7 @@ class RuntimeTests(unittest.TestCase):
                       "runtime_dir": str(self.directory / "candidate")},
             runtime=self.directory / "runtime", target={"target": True}, output=self.directory,
             review={"review": True}, run=MagicMock(), environments=environments,
-            api_guard=MagicMock())
+            api_guard=MagicMock(), resolved_storage_run=lambda: self.directory)
         confirmation_check = patch.object(runtime, "verify_confirmations")
         with patch.object(runtime, "registered", return_value=request), \
                 patch.object(runtime, "history", return_value=post), \
@@ -46,15 +46,41 @@ class RuntimeTests(unittest.TestCase):
                 patch.object(runtime, "verify_api_address"), \
                 patch.object(runtime, "worker_ready_url", return_value=context.selected["worker_ready_url"]), \
                 patch.object(runtime, "absent"), patch.object(runtime, "require_closed_port"), \
-                patch.object(runtime, "Resources", return_value=resources), \
+                patch.object(runtime, "Resources", return_value=resources) as created, \
                 patch("devex_clone_department_model.require_prerequisite"):
             self.assertEqual(runtime.current_mutation_guard(
                 context, request, prerequisite, ["confirmed"]), ["confirmed"])
         verify_confirmations.assert_not_called()
+        self.assertEqual(created.call_args.kwargs["storage_run"], self.directory)
         context.api_guard.assert_called_once_with(resources)
         resources.storage_identity.assert_not_called()
         resources.tools.verify_databases.assert_not_called()
         resources.tools.verify_objects.assert_not_called()
+
+    def test_resources_guard_uses_resolved_fixture_storage_run(self):
+        resources = MagicMock()
+        environments = MagicMock()
+        environments.use.return_value.__enter__.return_value = {}
+        fixture_run = self.directory / "fixture-service-run"
+        context = SimpleNamespace(backend=self.backend, directory_root=self.directory,
+            target={"target": True}, target_config={"scope_id": self.scope},
+            initial={"generation": {"physical": {"scope": "target"}}},
+            selected={"api_url": "http://127.0.0.1:18210",
+                      "worker_ready_url": "http://127.0.0.1:18211/readyz",
+                      "runtime_dir": str(self.directory / "candidate")},
+            runtime=self.directory / "runtime", output=self.directory, review={"review": True},
+            run=MagicMock(), environments=environments, bindings=MagicMock(),
+            resolved_storage_run=lambda: fixture_run)
+        with patch.object(runtime, "source_binding", return_value={"scope": "target"}), \
+                patch.object(runtime, "verify_api_address"), \
+                patch.object(runtime, "worker_ready_url", return_value=context.selected["worker_ready_url"]), \
+                patch.object(runtime, "absent"), \
+                patch.object(runtime, "Resources", return_value=resources) as created:
+            self.assertIs(runtime.resources_guard(context), resources)
+        self.assertEqual(created.call_args.kwargs["storage_run"], fixture_run)
+        resources.storage_identity.assert_called_once_with()
+        resources.tools.verify_databases.assert_called_once_with("target")
+        resources.tools.verify_objects.assert_called_once_with("target")
 
     def test_fresh_identity_sequence_prepares_before_departments_and_verifies_after_them(self):
         self.register()
