@@ -212,6 +212,18 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertTrue(
             services._continued_review(self.backend, environment.bound(pending), output, ready)
         )
+
+        successor_path = self.root / "historical-ready-successor.json"
+        next_observed = copy.deepcopy(observed)
+        next_observed["redis_python"]["sha256"] = "c" * 64
+        with patch.object(environment, "_preflight", return_value=next_observed):
+            renewed = environment.revalidate(self.backend, output, successor_path)
+        environment.validate_preflight_successor(ready, renewed)
+        self.assertTrue(
+            services._continued_review(self.backend, environment.bound(output), successor_path, renewed)
+        )
+        self.assertEqual(renewed["preflight"]["supersedes"], environment.bound(output))
+        self.assertEqual(renewed["tools"]["redis_python"], next_observed["redis_python"])
         expanded_preflight = copy.deepcopy(ready)
         expanded_preflight["preflight"]["tools"]["node"] = ready["tools"]["node"]
         with self.assertRaisesRegex(ValueError, "预检"):

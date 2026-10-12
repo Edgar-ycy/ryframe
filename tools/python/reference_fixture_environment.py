@@ -205,8 +205,12 @@ def _review_semantics(review: dict) -> dict:
 
 def validate_preflight_successor(previous: dict, review: dict) -> None:
     """核验 ready 审阅只增加了当前预检允许产生的字段。"""
-    if previous.get("ready_for_execution") is not False or "preflight" in previous:
-        raise ValueError("preflight predecessor 必须是未预检的 pending 审阅")
+    pending = previous.get("ready_for_execution") is False and "preflight" not in previous
+    ready = previous.get("ready_for_execution") is True and "preflight" in previous
+    if not pending and not ready:
+        raise ValueError("preflight predecessor 必须是 pending 或已验证 ready 审阅")
+    if ready:
+        _preflight_binding(previous)
     structural = copy.deepcopy(previous)
     structural["ready_for_execution"] = True
     validate_review(structural)
@@ -215,10 +219,12 @@ def validate_preflight_successor(previous: dict, review: dict) -> None:
 
     expected = _review_semantics(previous)
     observed = _review_semantics(review)
+    expected.pop("preflight", None)
     observed.pop("preflight")
-    rustfs = observed["services"]["rustfs"]
-    rustfs.pop("scope_id")
-    rustfs.pop("process_receipt")
+    if pending:
+        rustfs = observed["services"]["rustfs"]
+        rustfs.pop("scope_id")
+        rustfs.pop("process_receipt")
     if observed != expected:
         raise ValueError("ready 审阅与其 preflight predecessor 语义不同")
 
