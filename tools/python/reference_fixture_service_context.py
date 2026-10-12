@@ -308,7 +308,23 @@ def observe_services(services: dict) -> dict:
 def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict | None, dict | None]:
     """让既有 fresh-target 仅沿已验证的夹具服务 lineage 采用新运行身份。"""
     manifest = read_json(run / "manifest.json")
-    value = context(backend, Path(manifest["review"]["path"]), Path(manifest["bootstrap"]["path"]))
+    state = load_state(run)
+    history = validate_history(run, state, ready=False, settled=False)
+    review, bootstrap = manifest["review"], manifest["bootstrap"]
+    if history["active_generation"].get("kind") != "initial":
+        restarts = [item for item in state["attempts"]
+                    if (item["stage"], item["mode"], item["status"])
+                    == ("fixture-services", "restart", "passed")
+                    and item["result"] == history["active_generation"]]
+        if len(restarts) != 1:
+            raise ValueError("夹具活跃服务代次缺少唯一已通过 restart 来源")
+        review = restarts[0]["sources"].get("review")
+        bootstrap = restarts[0]["sources"].get("bootstrap")
+        if not isinstance(review, dict) or not isinstance(bootstrap, dict):
+            raise ValueError("夹具 restart 未绑定当前审阅或环境")
+    value = context(backend, Path(review["path"]), Path(bootstrap["path"]))
+    if value["history"]["active_generation"] != history["active_generation"]:
+        raise ValueError("夹具服务代次在解析工具续签期间变化")
     if value["history"]["active_generation"].get("kind") == "initial":
         return None, None
     services = registered_services(value)

@@ -85,6 +85,29 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(requests["redis"]["previous_identity"], {
             key: services["runtime"]["linux_identity"][key] for key in ("pid", "started", "executable")})
 
+    def test_runtime_transition_uses_active_restart_review(self):
+        generation = {"path": str(self.run / "results/0003.json"), "bytes": 1, "sha256": "a" * 64}
+        review = {"path": str(self.root / "review-successor.json")}
+        bootstrap = {"path": str(self.root / "bootstrap.json")}
+        state = {"attempts": [{"stage": "fixture-services", "mode": "restart", "status": "passed",
+                                "result": generation, "sources": {"review": review, "bootstrap": bootstrap}}]}
+        history = {"active_generation": generation}
+        self.fixture.write(self.run / "manifest.json", {
+            "review": {"path": str(self.review)}, "bootstrap": {"path": str(self.bootstrap)}})
+        services = {"origin": {"storage": {}, "redis": {}}, "storage": {
+            "identity": {}, "sha256": "a", "process_receipt": {}, "launch_receipt": {}},
+            "runtime": {"redis": {}}, "requests": {"rustfs": {
+                "data_directory": {}, "api_url": "http://127.0.0.1:29200",
+                "console_url": "http://127.0.0.1:29201"}}}
+        value = {"history": history}
+        with patch.object(context, "load_state", return_value=state), \
+                patch.object(context, "validate_history", return_value=history), \
+                patch.object(context, "context", return_value=value) as load_context, \
+                patch.object(context, "registered_services", return_value=services):
+            transition = context.runtime_transition(self.backend, self.run, services["origin"])
+        load_context.assert_called_once_with(self.backend, Path(review["path"]), Path(bootstrap["path"]))
+        self.assertEqual(transition[0]["storage"], services["storage"])
+
     def mocks(self, *, failure=False):
         stack = ExitStack()
         stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
