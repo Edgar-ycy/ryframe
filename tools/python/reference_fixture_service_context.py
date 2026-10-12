@@ -87,7 +87,11 @@ def context(backend: Path, review_path: Path, bootstrap_path: Path) -> dict:
     run = local_path(backend, str(service_run(review)))
     manifest_file, manifest = document(backend, run / "manifest.json")
     validate_manifest(manifest)
-    if (manifest["review"] != binding(review_file) or manifest["bootstrap"] != binding(bootstrap_file)
+    original = bootstrap.get("plan", {}).get("review")
+    original_review = ({key: original.get(key) for key in ("path", "bytes", "sha256")}
+                       if isinstance(original, dict) else None)
+    if ((manifest["review"] != binding(review_file) and manifest["review"] != original_review)
+            or manifest["bootstrap"] != binding(bootstrap_file)
             or manifest["execution_backend"] != bootstrap["execution_backend"]
             or manifest["scope_id"] != review["services"]["rustfs"]["scope_id"]):
         raise ValueError("夹具服务生命周期未绑定原始审阅、私有环境与执行目录")

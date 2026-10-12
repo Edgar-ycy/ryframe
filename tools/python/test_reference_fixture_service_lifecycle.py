@@ -40,6 +40,21 @@ class ServiceLifecycleTests(unittest.TestCase):
     def snapshot(self):
         return {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
 
+    def test_context_accepts_environment_validated_review_successor(self):
+        review_value = read_json(self.review)
+        successor = self.root / "review-successor.json"
+        write_json(successor, review_value)
+        bootstrap_value = read_json(self.bootstrap)
+        private = read_json(self.bootstrap.parent / "environment.json")["environment"]
+        manifest = read_json(self.run / "manifest.json")
+        original = bootstrap_value["plan"]["review"]
+        self.assertEqual(manifest["review"], {key: original[key] for key in ("path", "bytes", "sha256")})
+        with patch("reference_fixture_services.environment",
+                   return_value=(self.bootstrap, bootstrap_value, private)):
+            value = context.context(self.backend, successor, self.bootstrap)
+        self.assertEqual(value["manifest"], manifest)
+        self.assertEqual(value["documents"]["review"], review_value)
+
     def mocks(self, *, failure=False):
         stack = ExitStack()
         stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
