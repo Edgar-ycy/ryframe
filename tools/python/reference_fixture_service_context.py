@@ -238,7 +238,10 @@ def _identity_observations(tree: dict) -> dict:
                     raise
                 time.sleep(0.05)
         if actual is not None and actual != expected:
-            raise ValueError(f"RustFS {role} PID 已复用")
+            # 身份不同说明被记录进程已经退出，PID 现由无关进程复用：按“被记录身份已消失”
+            # 记账；任何终止或等待仍由 full_stack_process 的身份校验拒绝复用 PID。
+            observations[role] = "missing"
+            continue
         observations[role] = "running" if actual is not None else "missing"
     return observations
 

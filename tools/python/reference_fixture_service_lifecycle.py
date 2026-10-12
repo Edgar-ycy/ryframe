@@ -50,7 +50,8 @@ def _closed_services(services: dict) -> dict:
                 pending = True
                 continue
             if actual is not None and actual != expected:
-                raise ValueError("关闭等待期间 RustFS 进程 PID 已复用")
+                # 身份不同说明被记录进程已经退出，PID 现由无关进程复用：不等待也不发送信号。
+                continue
             pending |= actual is not None
         if not pending:
             observed = observe_services(services)

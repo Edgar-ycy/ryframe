@@ -336,12 +336,12 @@ class ServiceLifecycleTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "Redis 仍存活"):
             context.observe_services(services)
 
-    def test_service_observation_rejects_pid_reuse_or_partial_tree(self):
+    def test_service_observation_treats_reused_identity_as_recorded_exit(self):
         reused = {**self.services["tree"]["monitor"], "started": "2"}
         with patch.object(context, "process_identity", side_effect=lambda pid: reused
-                          if pid == self.services["tree"]["monitor"]["pid"] else None), \
-                self.assertRaisesRegex(ValueError, "PID 已复用"):
-            context._identity_observations(self.services["tree"])
+                          if pid == self.services["tree"]["monitor"]["pid"] else None):
+            observations = context._identity_observations(self.services["tree"])
+        self.assertEqual(observations, {role: "missing" for role in ("supervisor", "monitor", "process")})
         with patch("devex_clone_cache_process.status", return_value={"state": "stopped"}), \
                 patch.object(context, "_identity_observations", return_value={
                     "supervisor": "missing", "monitor": "missing", "process": "running"}), \
@@ -897,12 +897,14 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(self.events, [])
         self.assertEqual(load_state(self.run)["attempts"][-1]["status"], "failed")
 
-    def test_pid_reuse_during_close_wait_fails_immediately(self):
+    def test_pid_reuse_during_close_wait_is_treated_as_recorded_exit(self):
         expected = {"pid": 12345, "started": "1", "executable": "original"}
         services = {"tree": {"supervisor": expected, "process": expected}}
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
         with patch.object(lifecycle, "process_identity", return_value={**expected, "started": "2"}), \
-                patch.object(lifecycle.time, "sleep") as sleep, self.assertRaisesRegex(ValueError, "PID 已复用"):
-            lifecycle._closed_services(services)
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                patch.object(lifecycle.time, "sleep") as sleep:
+            self.assertEqual(lifecycle._closed_services(services), stopped)
         sleep.assert_not_called()
 
     def test_close_wait_retries_transient_windows_identity_denial(self):
