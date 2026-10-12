@@ -55,6 +55,36 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(value["manifest"], manifest)
         self.assertEqual(value["documents"]["review"], review_value)
 
+    def test_successor_tools_observe_predecessor_and_feed_restart(self):
+        original = {"wsl": {"path": "old"}, "python": {"path": "python"}}
+        effective = {"wsl": {"path": "current"}, "python": {"path": "python"}}
+        services = {**self.services, "requests": {"redis": original, "rustfs": {
+            "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201"}},
+            "cache_effective": effective}
+        services["runtime"] = {**services["runtime"],
+            "linux_identity": {"pid": 9001, "started": "1", "executable": "/usr/bin/redis-server",
+                               "boot_id": "11111111-1111-1111-1111-111111111111"},
+            "boot_id": "11111111-1111-1111-1111-111111111111",
+            "redis": {"run_id": "a" * 40}}
+        with patch("devex_clone_cache_process.status") as status, \
+                patch("devex_clone_cache_process.predecessor_status",
+                      return_value={"state": "stopped"}) as predecessor, \
+                patch.object(context, "_identity_observations",
+                             return_value={"supervisor": "running", "monitor": "running", "process": "running"}), \
+                patch.object(context, "arguments", return_value=[]), \
+                patch.object(context, "running", return_value=True):
+            observed = context.observe_services(services)
+        status.assert_not_called()
+        predecessor.assert_called_once_with(original, services["runtime"], effective)
+        self.assertEqual(observed["redis"], "stopped")
+
+        output = self.root / "restart-requests"
+        output.mkdir()
+        requests = lifecycle._restart_requests(services, output)
+        self.assertEqual(requests["redis"]["wsl"], effective["wsl"])
+        self.assertEqual(requests["redis"]["previous_identity"], {
+            key: services["runtime"]["linux_identity"][key] for key in ("pid", "started", "executable")})
+
     def mocks(self, *, failure=False):
         stack = ExitStack()
         stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))

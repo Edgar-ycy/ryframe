@@ -1,6 +1,7 @@
 """服务生命周期的只读输入快照与精确进程观察。"""
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 import time
 
@@ -197,7 +198,26 @@ def registered_services(value: dict, *, settled: bool = True) -> dict:
             raise ValueError("Redis 当前重启运行收据变化")
     runtime_path = (run / "redis/runtime.json" if history["active_generation"].get("kind") == "initial"
                     else Path(cache["runtime"]["output"]) / "runtime.json")
+    cache_effective = None
+    current_review = value["documents"]["review"]
+    if value["manifest"]["review"] != value["sources"]["review"]:
+        tools = current_review["tools"]
+        redis, python = tools["redis_server"], tools["redis_python"]
+        original = requests["redis"]
+        if (redis["distribution"] != original["distribution"]
+                or redis["resolved_path"] != original["executable"]
+                or redis["sha256"] != original["sha256"]
+                or python["distribution"] != original["distribution"]
+                or python["path"] != original["python"]["path"]
+                or python["resolved_path"] != original["python"]["executable"]):
+            raise ValueError("夹具工具续签只能替换 WSL 或同一 Python 入口的字节代次")
+        cache_effective = {**copy.deepcopy(original), "wsl": copy.deepcopy(tools["wsl"]),
+                           "python": {"path": python["path"], "executable": python["resolved_path"],
+                                      "sha256": python["sha256"]}}
+        if cache_effective == original:
+            cache_effective = None
     return {"requests": requests, "tree": tree, "runtime": cache["runtime"], "storage": storage,
+            "cache_effective": cache_effective,
             "storage_observation": observed,
             "origin": initial,
             "evidence": {"rustfs_tree": tree_binding,
@@ -252,9 +272,12 @@ def _external_termination(services: dict, identities: dict) -> dict:
 
 
 def observe_services(services: dict) -> dict:
-    from devex_clone_cache_process import status as cache_status
+    from devex_clone_cache_process import predecessor_status, status as cache_status
 
-    cache = cache_status(services["requests"]["redis"], services["runtime"])
+    effective = services.get("cache_effective")
+    cache = (cache_status(services["requests"]["redis"], services["runtime"])
+             if effective is None else predecessor_status(
+                 services["requests"]["redis"], services["runtime"], effective))
     request, tree = services["requests"]["rustfs"], services["tree"]
     identities = _identity_observations(tree)
     if set(identities.values()) == {"running"}:

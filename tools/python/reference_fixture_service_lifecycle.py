@@ -298,7 +298,7 @@ def _recover_external(value: dict, owner_path: Path) -> dict:
 
 def _restart_requests(services: dict, output: Path) -> dict:
     rustfs = copy.deepcopy(services["requests"]["rustfs"])
-    redis = copy.deepcopy(services["requests"]["redis"])
+    redis = copy.deepcopy(services.get("cache_effective") or services["requests"]["redis"])
     previous = services["runtime"]
     redis.update(previous_identity={key: previous["linux_identity"][key]
                                     for key in ("pid", "started", "executable")},
