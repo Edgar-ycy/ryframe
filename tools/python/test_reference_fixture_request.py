@@ -307,6 +307,21 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "base",
             )
 
+    def test_service_accepts_successor_review_only_through_seed_environment(self):
+        successor = self.write(self.root / "review-successor.json", self.review)
+        scope = {"tools": self.review["tools"],
+                 "services": {"rustfs": {"scope_id": "services-fixture-seed"}}}
+        with patch("reference_fixture_services.environment") as validated:
+            result = request._service(self.backend, self.service_run, self.bound(successor),
+                                      scope, successor)
+        validated.assert_called_once()
+        self.assertEqual(validated.call_args.args[3], self.environments["seed"])
+        self.assertEqual(result["run"]["manifest"], self.bound(self.service_run / "manifest.json"))
+        with patch("reference_fixture_services.environment",
+                   side_effect=ValueError("夹具环境未绑定当前审阅收据")), \
+                self.assertRaisesRegex(ValueError, "未绑定"):
+            request._service(self.backend, self.service_run, self.bound(successor), scope, successor)
+
     def test_side_plan_review_and_scope_drift_fail_before_request_publication(self):
         bootstrap = json.loads(
             self.environments["candidate"].read_text(encoding="utf-8")

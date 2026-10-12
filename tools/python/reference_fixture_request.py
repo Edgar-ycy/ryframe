@@ -73,25 +73,27 @@ def _prepared_environment(
     return bootstrap_file, bootstrap, review_file, review
 
 
-def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> dict:
+def _service(backend: Path, run: Path, review_binding: dict, review: dict, review_file: Path) -> dict:
     manifest_file, manifest = _read(backend, run / "manifest.json")
     state_file, state = _read(backend, run / "state.json")
-    if (
-        manifest.get("kind") != "reference-fixture-service-run"
-        or manifest.get("review") != review_binding
-    ):
-        raise ValueError("首代服务账本未绑定当前审阅计划")
+    if manifest.get("kind") != "reference-fixture-service-run":
+        raise ValueError("首代服务账本类型无效")
     seed_binding = manifest.get("bootstrap")
     if not isinstance(seed_binding, dict):
         raise ValueError("首代服务账本缺少 seed 私有环境绑定")
     seed_file, seed, seed_review_file, seed_review = _prepared_environment(
         backend, Path(seed_binding["path"]), "seed"
     )
+    if _bound(seed_file) != seed_binding or _bound(seed_review_file) != manifest.get("review"):
+        raise ValueError("首代服务账本未绑定 seed 私有环境或原始审阅")
+    if manifest.get("review") != review_binding:
+        # 允许账本保持原始审阅，而登记请求使用由同一 seed 私有环境证明血脉的工具续签审阅；
+        # environment 自身只接受“等于计划审阅”或“经续签校验的审阅”。
+        from reference_fixture_services import environment
+
+        environment(backend, review_file, review, Path(seed_binding["path"]))
     if (
-        _bound(seed_file) != seed_binding
-        or _bound(seed_review_file) != review_binding
-        or seed_review != review
-        or manifest.get("execution_backend") != seed["execution_backend"]
+        manifest.get("execution_backend") != seed["execution_backend"]
         or manifest.get("scope_id") != review["services"]["rustfs"]["scope_id"]
     ):
         raise ValueError("首代服务账本未绑定当前审阅计划的 seed 私有环境")
@@ -190,7 +192,7 @@ def build(
     actual_run = local_path(backend, str(requested_run))
     if actual_run != expected_run:
         raise ValueError("fresh-target 请求必须绑定本审阅计划的唯一服务账本")
-    service = _service(backend, actual_run, review_binding, review)
+    service = _service(backend, actual_run, review_binding, review, review_file)
     if side == "seed" and service["bootstrap"] != bootstrap_binding:
         raise ValueError("seed 请求必须使用启动首代服务的同一私有环境")
     rustfs = service["rustfs"]
