@@ -44,6 +44,29 @@ class StorageTransitionTests(unittest.TestCase):
             with self.subTest(files=files, memory=memory), self.assertRaises(ValueError):
                 runtime_evidence.fixture_restart_generation(files, memory)
 
+    def test_fixture_cache_tool_succession_reads_only_ledger_signed_request(self):
+        from devex_clone_target_resources import fixture_redis_tool_wsl
+
+        temporary = WorkspaceDirectory(
+            dir=Path(__file__).resolve().parents[2] / ".local-tests/tmp", prefix="redis-wsl-")
+        self.addCleanup(temporary.cleanup)
+        backend = Path(temporary.name).resolve()
+        run = backend / ".local-tests/run"
+        request_path = run / "lifecycle-0011/redis/request.json"
+        request_path.parent.mkdir(parents=True)
+        wsl = {"path": str(backend / ".local-tests/wsl.exe"), "sha256": "2" * 64}
+        write_json(request_path, {"wsl": wsl})
+        generation_path = run / "lifecycle-0011/restart.json"
+        write_json(generation_path, {"redis": {"request": receipt_binding(request_path)}})
+        result_path = run / "results/0011.json"
+        result_path.parent.mkdir(parents=True)
+        write_json(result_path, {"generation": receipt_binding(generation_path)})
+        cache = {"redis": {"wsl": wsl}, "generation": receipt_binding(result_path)}
+        self.assertEqual(fixture_redis_tool_wsl(backend, cache), wsl)
+        request_path.write_text("{}", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            fixture_redis_tool_wsl(backend, cache)
+
     def test_only_registered_rustfs_identity_may_change(self):
         before = {"configuration": "fixed", "storage": {"rustfs": {"identity": "old"}, "redis": "fixed"}}
         runtime = {"storage": {"identity": "new"}}

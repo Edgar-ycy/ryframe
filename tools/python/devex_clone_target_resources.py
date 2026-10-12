@@ -43,6 +43,13 @@ redis.call('SET', KEYS[2], ARGV[3])
 return 2"""
 
 
+def fixture_redis_tool_wsl(backend: Path, cache_binding: dict) -> dict:
+    """读取夹具缓存代次请求中由账本签发的 WSL 工具指纹；绑定不符时失败关闭。"""
+    outer = read_json(bound_file(backend, cache_binding["generation"]))
+    generation = read_json(bound_file(backend, outer["generation"]))
+    return read_json(bound_file(backend, generation["redis"]["request"]))["wsl"]
+
+
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
                  *, execution_backend: Path | None = None, storage_run: Path | None = None,
@@ -338,12 +345,16 @@ class Resources:
             self.cache_runtime_binding = registered_cache_binding(self.backend, self.storage_run,
                                                                  owned_lock_identity=cache_lock_identity)
         if self.cache_runtime_binding is not None:
+            tools_wsl = None
             if fixture:
                 from devex_clone_target_runtime_evidence import fixture_restart_generation
 
                 fixture_restart_generation(
                     self.storage_runtime_binding, self.cache_runtime_binding
                 )
+                # 夹具服务代次可能按续签审阅重启：只允许该代次请求（已经历史校验）签发的
+                # WSL 工具指纹随缓存代次更新，其余物理配置仍必须与本目标原始 Redis 一致。
+                tools_wsl = fixture_redis_tool_wsl(self.backend, self.cache_runtime_binding)
             else:
                 cache_request = json.loads(bound_file(
                     self.backend, self.cache_runtime_binding["request"]
@@ -352,7 +363,9 @@ class Resources:
                     raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
             resumed = self.cache_runtime_binding["redis"]
             allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
-            if not fixture and self.cache_runtime_binding.get("tools") is not None:
+            if tools_wsl is not None:
+                allowed["wsl"] = tools_wsl
+            elif not fixture and self.cache_runtime_binding.get("tools") is not None:
                 from devex_clone_cache import generation_request
 
                 output = bound_file(self.backend, self.cache_runtime_binding["tools"]).parent
