@@ -9,6 +9,32 @@ from devex_clone_run_state import binding, controller_record, historical_state
 
 INITIAL = (("storage-target", "initial"), ("cache-target", "initial"), ("fixture-buckets", "prepare"))
 LIFECYCLE_STAGE = "fixture-services"
+# 工具换代允许重签的 Redis 请求字段；其余物理配置必须逐字复用首代请求。
+REDIS_TOOL_FIELDS = ("wsl", "python", "executable", "sha256", "distribution")
+
+
+def _review_redis_tools(review_binding: dict | None) -> dict | None:
+    """读取本代次审阅允许刷新的 Redis 工具指纹；未绑定审阅时保持原严格比较。"""
+    if review_binding is None:
+        return None
+    path = Path(review_binding.get("path", ""))
+    if (not isinstance(review_binding.get("path"), str) or not path.is_file() or linked(path)
+            or binding(path) != review_binding):
+        raise ValueError("夹具服务重启工具审阅缺失或变化")
+    tools = read_json(path).get("tools", {})
+    wsl, python, server = tools.get("wsl"), tools.get("redis_python"), tools.get("redis_server")
+    # 审阅未记录的工具引用不参与放宽：请求对应字段仍必须与原物理请求逐字一致。
+    projection = {}
+    if isinstance(wsl, dict):
+        projection["wsl"] = {"path": wsl.get("path"), "sha256": wsl.get("sha256")}
+    if isinstance(python, dict):
+        projection["python"] = {"path": python.get("path"), "executable": python.get("resolved_path"),
+                                "sha256": python.get("sha256")}
+    if isinstance(server, dict):
+        projection["executable"] = server.get("resolved_path")
+        projection["sha256"] = server.get("sha256")
+        projection["distribution"] = server.get("distribution")
+    return projection
 
 
 def validate_manifest(value: dict) -> None:
@@ -160,7 +186,8 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                     or linked(path) or binding(path) != generation):
                 raise ValueError("夹具服务重启代次收据缺失或变化")
             _validate_restart(read_json(path), run, index + 1, sources["state_before"],
-                              restart_predecessor, active_generation, result.get("controller"))
+                              restart_predecessor, active_generation, result.get("controller"),
+                              sources.get("review"))
             active_generation = item["result"]
             external_recovery = None
             restart_predecessor = None
@@ -335,7 +362,8 @@ def _validate_external_termination(proof: dict, run: Path, state_before: dict, g
 
 
 def _validate_restart(proof: dict, run: Path, number: int, state_before: dict,
-                      predecessor: dict, previous_generation: dict, controller: dict) -> None:
+                      predecessor: dict, previous_generation: dict, controller: dict,
+                      review_binding: dict | None = None) -> None:
     exact(proof, {"format_version", "kind", "run", "attempt", "owner", "predecessor",
                   "previous_generation", "controller", "services", "rustfs", "redis",
                   "remote_writes", "resources_deleted"})
@@ -366,13 +394,20 @@ def _validate_restart(proof: dict, run: Path, number: int, state_before: dict,
         raise ValueError("夹具 Redis 重启没有绑定新运行收据")
     original = read_json(run / "redis/request.json")
     current = read_json(redis_request)
+    skipped = {"previous_identity", "previous_boot_id", "previous_run_id"}
+    tools = _review_redis_tools(review_binding)
+    expected = {key: value for key, value in original.items() if key not in skipped}
     stable = {key: value for key, value in current.items()
-              if key not in {"previous_identity", "previous_boot_id", "previous_run_id"}}
-    if (stable != {key: value for key, value in original.items()
-                  if key not in {"previous_identity", "previous_boot_id", "previous_run_id"}}
+              if key not in skipped}
+    # 工具换代只允许把请求中的工具指纹更新为本代次审阅已签发的值；物理配置仍须逐字复用。
+    for key in REDIS_TOOL_FIELDS:
+        if tools is None or key not in expected or key not in tools or stable.get(key) == expected[key]:
+            continue
+        expected[key] = tools[key]
+    if (stable != expected
             or current.get("previous_identity") is None
             or current.get("previous_boot_id") is None or current.get("previous_run_id") is None):
-        raise ValueError("夹具 Redis 重启未绑定前一运行代次及原物理配置")
+        raise ValueError("夹具 Redis 重启未绑定前一运行代次、原物理配置与本次工具审阅")
 
 
 def _validate_members(proof: dict, run: Path) -> None:

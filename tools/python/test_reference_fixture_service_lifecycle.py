@@ -753,6 +753,37 @@ class ServiceLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "关闭前驱"):
             validate_history(self.run, tampered)
 
+    def restart_with_tool_request(self, refreshed):
+        """按给定有效工具请求重启一代服务；原请求保持旧工具指纹。"""
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        old_services = self.restart_services()
+        original = {"previous_identity": None, "previous_boot_id": None, "previous_run_id": None,
+                    "configuration": old_services["requests"]["redis"]["configuration"], "port": 16390,
+                    "executable": "/usr/bin/old-server", "sha256": "b" * 64, "distribution": "Old"}
+        old_services["requests"]["redis"] = original
+        self.fixture.write(self.run / "redis/request.json", original)
+        old_services["cache_effective"] = {**refreshed, "configuration": original["configuration"],
+                                           "port": original["port"]}
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        self.restart_generation(old_services, stopped)
+
+    def test_restart_accepts_tool_succession_signed_by_bound_review(self):
+        server = read_json(self.review)["tools"]["redis_server"]
+        self.restart_with_tool_request({"executable": server["resolved_path"],
+                                        "sha256": server["sha256"],
+                                        "distribution": server["distribution"]})
+        history = validate_history(self.run, load_state(self.run))
+        self.assertIsNone(history["restart_predecessor"])
+
+    def test_restart_rejects_tool_change_outside_bound_review(self):
+        server = read_json(self.review)["tools"]["redis_server"]
+        self.restart_with_tool_request({"executable": server["resolved_path"],
+                                        "sha256": "c" * 64,
+                                        "distribution": server["distribution"]})
+        with self.assertRaisesRegex(ValueError, "工具审阅"):
+            validate_history(self.run, load_state(self.run))
+
     def test_restart_rejects_missing_predecessor_or_stale_owner_without_writes(self):
         before = self.snapshot()
         with self.assertRaisesRegex(ValueError, "正常关闭或外部终止"):
