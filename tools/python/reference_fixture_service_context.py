@@ -331,8 +331,8 @@ def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict |
     current = {"storage": {key: services["storage"][key]
                            for key in ("identity", "sha256", "process_receipt", "launch_receipt")},
                "redis": services["runtime"]["redis"]}
-    if expected != services["origin"] and expected != current:
-        raise ValueError("夹具服务重启 lineage 未绑定 fresh-target 的原始或当前服务代次")
+    if expected != services["origin"] and expected != current and expected not in _recorded_generations(value, history):
+        raise ValueError("夹具服务重启 lineage 未绑定 fresh-target 的原始或已登记服务代次")
     storage = {key: services["storage"][key]
                for key in ("identity", "sha256", "process_receipt", "launch_receipt")}
     request = services["requests"]["rustfs"]
@@ -341,6 +341,21 @@ def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict |
              "generation": value["history"]["active_generation"]},
             {"redis": services["runtime"]["redis"],
              "generation": value["history"]["active_generation"]})
+
+
+def _recorded_generations(value: dict, history: dict) -> list[dict]:
+    """已登记重启代次的存储与 Redis 运行身份；当前活跃代次由调用方单独比对。"""
+    recorded = []
+    for item in value["state"]["attempts"]:
+        if ((item["stage"], item["mode"], item["status"]) != ("fixture-services", "restart", "passed")
+                or item["result"] == history["active_generation"]):
+            continue
+        outer = read_json(bound_file(value["backend"], item["result"]))
+        generation = read_json(bound_file(value["backend"], outer["generation"]))
+        recorded.append({"storage": {key: generation["rustfs"]["storage"][key]
+                                     for key in ("identity", "sha256", "process_receipt", "launch_receipt")},
+                         "redis": generation["redis"]["runtime"]["redis"]})
+    return recorded
 
 
 def status(backend: Path, review: Path, bootstrap: Path) -> dict:

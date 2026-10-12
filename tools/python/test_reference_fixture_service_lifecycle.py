@@ -108,6 +108,49 @@ class ServiceLifecycleTests(unittest.TestCase):
         load_context.assert_called_once_with(self.backend, Path(review["path"]), Path(bootstrap["path"]))
         self.assertEqual(transition[0]["storage"], services["storage"])
 
+    def test_runtime_transition_accepts_recorded_generation_receipt(self):
+        proof = self.run / "results/0007-generation.json"
+        self.fixture.write(proof, {
+            "rustfs": {"storage": {"identity": {"pid": 11}, "sha256": "s",
+                                   "process_receipt": {"path": "p"}, "launch_receipt": {"path": "l"},
+                                   "tree": {"path": "t"}}},
+            "redis": {"runtime": {"redis": {"run_id": "r", "pid": 12}}}})
+        outer = self.run / "results/0007-outer.json"
+        self.fixture.write(outer, {"generation": binding(proof)})
+        generation = {"path": str(self.run / "results/0009.json"), "bytes": 1, "sha256": "a" * 64}
+        review = {"path": str(self.root / "review-successor.json")}
+        bootstrap = {"path": str(self.root / "bootstrap.json")}
+        state = {"attempts": [
+            {"stage": "fixture-services", "mode": "restart", "status": "passed", "result": generation,
+             "sources": {"review": review, "bootstrap": bootstrap}},
+            {"stage": "fixture-services", "mode": "restart", "status": "passed",
+             "result": binding(outer), "sources": {}}]}
+        history = {"active_generation": generation}
+        self.fixture.write(self.run / "manifest.json", {
+            "review": {"path": str(self.review)}, "bootstrap": {"path": str(self.bootstrap)}})
+        services = {"origin": {"storage": {}, "redis": {}}, "storage": {
+            "identity": {}, "sha256": "a", "process_receipt": {}, "launch_receipt": {}},
+            "runtime": {"redis": {}}, "requests": {"rustfs": {
+                "data_directory": {}, "api_url": "http://127.0.0.1:29200",
+                "console_url": "http://127.0.0.1:29201"}}}
+        value = {"history": history, "backend": self.backend, "state": state}
+        expected = {"storage": {"identity": {"pid": 11}, "sha256": "s",
+                                "process_receipt": {"path": "p"}, "launch_receipt": {"path": "l"}},
+                    "redis": {"run_id": "r", "pid": 12}}
+        with patch.object(context, "load_state", return_value=state), \
+                patch.object(context, "validate_history", return_value=history), \
+                patch.object(context, "context", return_value=value), \
+                patch.object(context, "registered_services", return_value=services):
+            transition = context.runtime_transition(self.backend, self.run, expected)
+        self.assertEqual(transition[0]["generation"], generation)
+        with patch.object(context, "load_state", return_value=state), \
+                patch.object(context, "validate_history", return_value=history), \
+                patch.object(context, "context", return_value=value), \
+                patch.object(context, "registered_services", return_value=services), \
+                self.assertRaisesRegex(ValueError, "已登记服务代次"):
+            context.runtime_transition(self.backend, self.run,
+                                       {"storage": {"identity": {"pid": 99}}, "redis": {"run_id": "other"}})
+
     def mocks(self, *, failure=False):
         stack = ExitStack()
         stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
