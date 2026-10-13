@@ -24,6 +24,9 @@ use release::parse_release;
 pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
     let frontend_option = take_unique_option(&mut args, "--frontend-dir")?;
     let frontend_was_explicit = frontend_option.is_some();
+    let explicit_frontend_is_relative = frontend_option
+        .as_ref()
+        .is_some_and(|value| !std::path::Path::new(value).is_absolute());
     let frontend_dir = match frontend_option {
         Some(value) => {
             let path = PathBuf::from(value);
@@ -98,7 +101,8 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
             "--frontend-dir 只适用于 recovery runtime build，不适用于当前操作",
         ));
     }
-    if requires_absolute_frontend && !frontend_dir.is_absolute() {
+    if requires_absolute_frontend && (explicit_frontend_is_relative || !frontend_dir.is_absolute())
+    {
         return Err(CliError::new("当前操作的 --frontend-dir 必须是绝对路径"));
     }
     Ok(Cli {
