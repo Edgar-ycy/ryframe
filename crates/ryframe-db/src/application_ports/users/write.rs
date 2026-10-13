@@ -13,9 +13,8 @@ use sea_orm::{
 };
 
 use ryframe_application::ports::users::{
-    ManageableUserState, NewUserRecord, USER_STATUS_PENDING_ACTIVATION, UpdateUserRecord,
-    UserAssignmentRole, UserAssignmentState, UserWritePersistencePort, UserWriteRecord,
-    UserWriteTransaction,
+    ManageableUserState, NewUserRecord, USER_STATUS_NORMAL, UpdateUserRecord, UserAssignmentRole,
+    UserAssignmentState, UserWritePersistencePort, UserWriteRecord, UserWriteTransaction,
 };
 
 use super::super::transaction::DatabasePortTransaction;
@@ -179,13 +178,14 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
             tenant_id: user.tenant_id,
             username: user.username,
             password_hash: user.password_hash,
+            password_change_required: true,
             nickname: user.nickname,
             email: user.email,
             phone: user.phone,
             avatar: None,
             avatar_file_id: None,
             preferred_locale: None,
-            status: USER_STATUS_PENDING_ACTIVATION.to_owned(),
+            status: USER_STATUS_NORMAL.to_owned(),
             authorization_version: 1,
             dept_id: user.dept_id,
             remark: None,

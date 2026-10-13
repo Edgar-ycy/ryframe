@@ -4620,6 +4620,9 @@
                 },
                 "type": "array"
               },
+              "password_change_required": {
+                "type": "boolean"
+              },
               "permissions": {
                 "items": {
                   "type": "string"
@@ -4640,6 +4643,7 @@
               }
             },
             "required": [
+              "password_change_required",
               "user",
               "is_super_admin",
               "roles",
@@ -15824,6 +15828,9 @@
             },
             "type": "array"
           },
+          "password_change_required": {
+            "type": "boolean"
+          },
           "permissions": {
             "items": {
               "type": "string"
@@ -15844,6 +15851,7 @@
           }
         },
         "required": [
+          "password_change_required",
           "user",
           "is_super_admin",
           "roles",
@@ -17536,6 +17544,9 @@
           "nickname": {
             "type": "string"
           },
+          "password_change_required": {
+            "type": "boolean"
+          },
           "perms": {
             "items": {
               "type": "string"
@@ -17568,6 +17579,7 @@
           }
         },
         "required": [
+          "password_change_required",
           "id",
           "tenant_id",
           "tenant_name",

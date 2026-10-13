@@ -86,6 +86,7 @@ fn build_authorization_snapshot(
         },
         tenant_session_version: identity.tenant.session_version,
         principal: RequestPrincipal {
+            password_change_required: user.password_change_required,
             actor: ActorContext {
                 user_id: user.id,
                 tenant_id: user.tenant_id.clone(),

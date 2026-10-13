@@ -105,6 +105,7 @@ pub struct TenantBusinessDataContextVo {
 /// 登录、刷新和 GET /auth/context 共用的会话启动快照。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SessionContextVo {
+    pub password_change_required: bool,
     pub user: SessionUserVo,
     /// 仅由后端权威角色标记确定，客户端不得从角色编码或名称推断。
     pub is_super_admin: bool,

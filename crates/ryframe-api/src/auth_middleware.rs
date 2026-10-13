@@ -21,6 +21,7 @@ use ryframe_auth::{
 use ryframe_kernel::AppError;
 
 use crate::RequestPrincipal;
+mod password_change;
 use crate::session_security::{AccessRevocationStore, RefreshSessionControl};
 
 static BACKEND_FAILURE_HOOK: OnceLock<fn(&str)> = OnceLock::new();
@@ -106,6 +107,11 @@ pub async fn auth_middleware(
     )
     .await?;
     let principal = Arc::new(principal);
+    if principal.password_change_required
+        && !password_change::allowed(request.method(), request.uri().path())
+    {
+        return Err(AppError::PermissionDenied("请先修改初始密码，再访问业务功能".into()).into());
+    }
 
     let span = tracing::Span::current();
     span.record("tenant.id", principal.tenant_id.as_str());

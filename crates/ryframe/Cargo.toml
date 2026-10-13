@@ -107,6 +107,7 @@ bin-worker = [
     "ryframe-sdk/runtime",
 ]
 bin-migrate = [
+    "dep:ryframe-auth",
     "runtime-database",
     "ryframe-db/migration",
     "ryframe-tenant-db/migration",
@@ -223,6 +224,11 @@ required-features = ["bin-tenant-data"]
 name = "target_inventory_mysql"
 path = "tests/target_inventory_mysql.rs"
 required-features = ["bin-tenant-data", "bin-migrate"]
+
+[[test]]
+name = "migration_cli"
+path = "tests/migration_cli.rs"
+required-features = ["bin-migrate"]
 
 [lints]
 workspace = true

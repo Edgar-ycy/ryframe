@@ -125,22 +125,40 @@ fn assemble_context(
     menus: Vec<MenuTreeNode>,
     snapshot: &TenantRuntimeSnapshot,
 ) -> AppResult<SessionContextVo> {
-    let is_super_admin = user.is_super_admin;
+    let password_change_required = user.password_change_required;
+    let is_super_admin = user.is_super_admin && !password_change_required;
     let roles = std::mem::take(&mut user.roles);
     let permissions = std::mem::take(&mut user.perms);
     Ok(SessionContextVo {
+        password_change_required,
         user: SessionUserVo::from(user),
         is_super_admin,
-        roles,
-        permissions,
+        roles: if password_change_required {
+            Vec::new()
+        } else {
+            roles
+        },
+        permissions: if password_change_required {
+            Vec::new()
+        } else {
+            permissions
+        },
         authorization_epoch: snapshot.authorization_epoch().to_string(),
         runtime_epoch: snapshot.runtime_epoch().to_string(),
-        capabilities: product.capabilities,
+        capabilities: if password_change_required {
+            Vec::new()
+        } else {
+            product.capabilities
+        },
         business_data: TenantBusinessDataContextVo {
             state: snapshot.business_data_state().into(),
             placement_generation: snapshot.placement_generation().to_string(),
         },
-        menus,
+        menus: if password_change_required {
+            Vec::new()
+        } else {
+            menus
+        },
     })
 }
 

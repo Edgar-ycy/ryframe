@@ -44,7 +44,10 @@ impl AuthService {
             .user_by_id(tenant_id, user_id)
             .await?
             .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
-        if !user.is_enabled() || user.authorization_version != user_authorization_version {
+        if !user.is_enabled()
+            || user.password_change_required
+            || user.authorization_version != user_authorization_version
+        {
             return Err(AppError::Authentication(
                 "用户会话已失效，请重新登录".into(),
             ));

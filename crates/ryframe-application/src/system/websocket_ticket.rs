@@ -56,6 +56,11 @@ impl WebSocketTicketService {
         locale: &str,
     ) -> AppResult<WebSocketTicketGrant> {
         self.ensure_enabled()?;
+        if principal.password_change_required {
+            return Err(AppError::PermissionDenied(
+                "请先修改初始密码，再连接消息中心".into(),
+            ));
+        }
         let claimed_user_id = claims
             .sub
             .parse::<i64>()

@@ -61,6 +61,7 @@ mod auth_dto {
     #[test]
     fn session_context_serializes_explicit_super_admin_marker() {
         let context = SessionContextVo {
+            password_change_required: false,
             user: SessionUserVo {
                 id: "1".into(),
                 tenant_id: "tenant-a".into(),
@@ -255,6 +256,7 @@ mod auth_context {
 
     fn user(role: &str, is_super_admin: bool) -> UserInfo {
         UserInfo {
+            password_change_required: false,
             id: "1".into(),
             tenant_id: "tenant-a".into(),
             tenant_name: "租户甲".into(),

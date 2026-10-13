@@ -12,6 +12,8 @@
 
 首次运行前创建空的 MySQL 数据库并配置连接，然后初始化、验证并启动：
 ```powershell
+$env:APP_ENV = "dev"
+$env:RYFRAME_INIT_ADMIN_PASSWORD_FILE = ".local-tests/secrets/admin-password.txt"
 cargo migrate -- control up
 cargo migrate -- control verify
 cargo serve
@@ -32,7 +34,20 @@ cargo migrate -- tenant-data verify --target <目标键>
 ```
 生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
 
-`sql/ryframe_config.sql` 是源码审阅快照，包含建表后的跨表约束和种子 SQL，但不包含迁移账本，不能作为部署初始化脚本直接导入。已经导入此快照的非空数据库不能通过再次执行 `control up` 自动补齐；先保留错误和结构现状，确认数据用途后选择全新隔离库初始化。
+初始化前将管理员初始密码保存在上述 UTF-8 文件中，也可通过 `RYFRAME_INIT_ADMIN_PASSWORD` 提供；两者不能同时设置。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。
+
+需要直接导入 SQL 时使用正式导出入口：
+
+```powershell
+cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan
+cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
+```
+
+`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据和迁移账本，不包含管理员明文密码。自定义控制库业务迁移尚未提供 SQL 导出时会拒绝导出，改用 `control up`，不会漏掉业务表后报告成功。
+
+MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入，不使用 `--force`。PowerShell 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> --execute="source .local-tests/control-init.sql"`；bash 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> < .local-tests/control-init.sql`。数据库管理工具应启用遇错停止，并按脚本顺序执行全部语句。导入完成后执行 `cargo migrate -- control verify`。
+
+`sql/ryframe_config.sql` 是确定性审阅快照，包含占位哈希且没有迁移账本，不能作为部署脚本直接导入。已经导入审阅快照或导入中断时，不通过重复 `up` 猜测补齐，也不自动删除对象；保留报错和结构现状，确认数据用途后选择全新隔离库初始化。MySQL DDL 不能依赖外层事务整体回滚。
 ## 创建业务 crate
 
 使用正式脚手架创建业务 crate：

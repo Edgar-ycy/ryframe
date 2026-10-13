@@ -2,7 +2,7 @@
 
 当前为 `0.x` 开发版本，安装和联调只支持当前 API、配置、任务载荷与数据库基线；请使用全新隔离数据库，不直接覆盖旧开发库。
 
-当前提供用户、角色、权限、组织、产品套餐、多租户、配置迁移、跨库迁移、监控、消息、调度、导入和导出。Agent 查询接口、用户委托和服务账号管理已移除，个人资料、密码、头像和登录会话管理继续保留。套餐可以发布不含可选能力的版本，租户开通、基础管理与配额管理照常使用。通知公告和租户主动消息发布可按套餐启停；关闭不删除历史数据，也不关闭系统通知、调度、导入导出或备份恢复。
+当前提供用户、角色、权限、组织、产品套餐、多租户、配置迁移、跨库迁移、监控、消息、调度、导入和导出，以及个人资料、密码、头像和登录会话管理。套餐可以发布不含可选能力的版本，租户开通、基础管理与配额管理照常使用。通知公告和租户主动消息发布可按套餐启停；关闭不删除历史数据，也不关闭系统通知、调度、导入导出或备份恢复。
 
 RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套使用。它提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
 
@@ -19,23 +19,29 @@ API、Worker、迁移和维护程序按 feature 定向构建；标准资源生�
 本地开发使用 Windows，需要准备：
 
 - Rust 1.98.1（由 `rust-toolchain.toml` 固定，最低版本为 1.98）；
-- MySQL；
-- WSL 中的 Redis；
-- 需要文件能力时启动 Windows RustFS；
+- MySQL 8.0.16 或更新版本（不使用 MariaDB 替代）；
+- Redis；
+- 需要文件能力时配置本地存储，或连接 RustFS、MinIO、S3 兼容服务；
 - 前端所需的 Node.js 与 pnpm。
 
 配置从 `config/` 中对应环境的文件加载，并可使用 `APP_` 环境变量覆盖。密码、令牌和证书请使用本机环境变量或密钥文件，不要写入配置样例。
+
+MySQL、Redis 和 RustFS 可以运行在满足版本和协议要求的任意平台，也可以连接远程实例，不限定 Windows 或 WSL。
 
 ## 启动开发环境
 
 ```powershell
 $env:APP_ENV = "dev"
+# 先创建空数据库并配置连接，将管理员初始密码保存在这个 UTF-8 文件中
+$env:RYFRAME_INIT_ADMIN_PASSWORD_FILE = ".local-tests/secrets/admin-password.txt"
 cargo migrate -- control up
 cargo migrate -- control verify
 cargo serve
 ```
 
-`cargo migrate -- control verify` 校验控制库结构，不修改数据库。确认迁移后使用 `cargo migrate -- control up`。租户库必须明确指定配置中的目标键，例如 `cargo migrate -- tenant-data verify --target <目标键>`。
+`cargo migrate -- control up` 初始化或升级已明确选择的控制库；`verify` 只校验，不写数据库。管理员初始密码必须显式提供并符合密码规则；普通初始用户 `user`、新建及导入的普通用户初始密码为 `123456`。所有新账号首次登录必须修改密码，改密前不能访问业务功能。重复迁移不覆盖已有密码或改密状态。租户库必须明确指定配置中的目标键，例如 `cargo migrate -- tenant-data verify --target <目标键>`。
+
+需要交给数据库工具导入时，运行 `cargo migrate -- control export-sql --output .local-tests/control-init.sql --write` 生成完整初始化 SQL，再导入空库并执行 `control verify`。源码中的审阅快照不能代替正式导出文件。详见[数据库初始化](docs/development.md#数据库迁移)。
 
 `cargo serve` 只启动后端 API。需要 Worker 时在另一个终端运行 `cargo worker`；前端在 `ryframe-vue3` 仓库中单独运行 `corepack pnpm dev`。
 

@@ -13,6 +13,7 @@ use super::organization::DeptVo;
 /// 当前登录用户的公开信息。
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UserInfo {
+    pub password_change_required: bool,
     pub id: String,
     pub tenant_id: String,
     pub tenant_name: String,
@@ -30,6 +31,7 @@ pub struct UserInfo {
 impl From<ServiceUserInfo> for UserInfo {
     fn from(value: ServiceUserInfo) -> Self {
         let ServiceUserInfo {
+            password_change_required,
             id,
             tenant_id,
             tenant_name,
@@ -45,6 +47,7 @@ impl From<ServiceUserInfo> for UserInfo {
             perms,
         } = value;
         Self {
+            password_change_required,
             id,
             tenant_id,
             tenant_name,

@@ -9,6 +9,7 @@ fn user_mapping_exposes_only_application_fields() {
         tenant_id: "tenant-a".to_owned(),
         username: "alice".to_owned(),
         password_hash: "secret-hash".to_owned(),
+        password_change_required: true,
         nickname: "Alice".to_owned(),
         email: "alice@example.com".to_owned(),
         phone: "13800000000".to_owned(),

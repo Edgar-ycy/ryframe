@@ -14,7 +14,6 @@ use ryframe_kernel::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
-use uuid::Uuid;
 use validator::Validate;
 
 use super::{

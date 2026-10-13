@@ -1,5 +1,5 @@
 -- 自动生成文件：RyFrame 控制库新基线快照。
--- schema fingerprint: c95b8a97fdbe6f49
+-- schema fingerprint: 9f0bde12fa587d4e
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
     `username`       VARCHAR(64)  NOT NULL                  COMMENT '用户名',
     `password_hash`  VARCHAR(255) NOT NULL                  COMMENT '密码哈希(argon2)',
+    `password_change_required` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '首次登录必须修改密码',
     `nickname`       VARCHAR(64)  NOT NULL                  COMMENT '昵称',
     `email`          VARCHAR(128) NOT NULL DEFAULT ''       COMMENT '邮箱',
     `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
@@ -1218,12 +1219,12 @@ INSERT INTO `sys_role` (`id`, `name`, `code`, `is_super`, `data_scope`, `status`
     (1, '超级管理员', 'admin',  1, '1', '1', 1, '超级管理员，拥有所有权限'),
     (2, '普通用户',   'common', 0, '5', '1', 2, '普通用户，拥有基础权限') ON DUPLICATE KEY UPDATE `id` = `id`;
 
-INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `nickname`, `email`, `phone`, `status`, `dept_id`) VALUES
+INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `password_change_required`, `nickname`, `email`, `phone`, `status`, `dept_id`) VALUES
     (1, 'admin',
-        '$argon2id$v=19$m=65536,t=3,p=4$O8qRRhiIVYjCHpUuwGWTSA$OO+ik8t1+N5a4PSipMbB71W/pfc3roAbq6mdIAgV1bA',
+        '${RYFRAME_ADMIN_PASSWORD_HASH}', 1,
         '超级管理员', 'admin@ryframe.com', '13800000000', '1', 1),
     (2, 'user',
-        '$argon2id$v=19$m=65536,t=3,p=4$LDHC7/MqBOozq1OQk24lDw$IDFTnrVNEFZgvpDI+9kzNZi3pKWEt8EIPi6qOKtmgrw',
+        '${RYFRAME_USER_PASSWORD_HASH}', 1,
         '普通用户', 'user@ryframe.com', '13800000001', '1', 5) ON DUPLICATE KEY UPDATE `id` = `id`;
 
 INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`) VALUES

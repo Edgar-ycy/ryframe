@@ -30,6 +30,7 @@ async fn issued_ticket_can_only_be_consumed_once() {
         MessagingPolicy::new(true, 60, 7, 100).expect("策略应有效"),
     );
     let principal = RequestPrincipal {
+        password_change_required: false,
         actor: ActorContext {
             user_id: 42,
             tenant_id: "tenant-a".into(),

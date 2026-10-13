@@ -7,6 +7,10 @@ use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetKind};
 use ryframe_sdk::{BusinessMigrationScope, RyFrameBusinessModule};
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 use sea_orm::DatabaseConnection;
+#[path = "ryframe_migrate/bootstrap.rs"]
+mod bootstrap;
+#[path = "ryframe_migrate/sql_export.rs"]
+mod sql_export;
 
 const USAGE: &str = "usage:\n  ryframe-migrate control <up|verify|status>\n  ryframe-migrate tenant-data <up|verify|status> (--target <key>|--all)";
 
@@ -27,9 +31,15 @@ enum TargetSelection {
     All,
 }
 
-struct Command {
-    scope: MigrationScope,
-    operation: Operation,
+enum Command {
+    Migrate {
+        scope: MigrationScope,
+        operation: Operation,
+    },
+    ExportSql {
+        output: std::path::PathBuf,
+        write: bool,
+    },
 }
 
 #[tokio::main]
@@ -37,21 +47,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ryframe::crypto::install_crypto_provider()?;
     let command = parse_command(std::env::args().skip(1).collect())?;
 
+    let (scope, operation) = match command {
+        Command::Migrate { scope, operation } => (scope, operation),
+        Command::ExportSql { output, write } => return sql_export::run(&output, write),
+    };
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     let business_modules = ryframe::business::registered_business_modules()?;
-    match command.scope {
-        MigrationScope::Control => {
-            run_control(command.operation, &config, &business_modules).await?
-        }
+    match scope {
+        MigrationScope::Control => run_control(operation, &config, &business_modules).await?,
         MigrationScope::TenantData(selection) => {
-            run_tenant_data(command.operation, selection, &config, &business_modules).await?
+            run_tenant_data(operation, selection, &config, &business_modules).await?
         }
     }
     Ok(())
 }
 
 fn parse_command(args: Vec<String>) -> Result<Command, Box<dyn std::error::Error>> {
+    if args.first().is_some_and(|value| value == "control")
+        && args.get(1).is_some_and(|value| value == "export-sql")
+    {
+        return sql_export::parse(&args[2..]);
+    }
     let [scope, operation, rest @ ..] = args.as_slice() else {
         return Err(USAGE.into());
     };
@@ -71,7 +88,7 @@ fn parse_command(args: Vec<String>) -> Result<Command, Box<dyn std::error::Error
         }
         _ => return Err(USAGE.into()),
     };
-    Ok(Command { scope, operation })
+    Ok(Command::Migrate { scope, operation })
 }
 
 async fn run_control(
@@ -79,6 +96,11 @@ async fn run_control(
     config: &AppConfig,
     business_modules: &[RyFrameBusinessModule],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let hashes = if matches!(operation, Operation::Up) {
+        bootstrap::load_hashes()?
+    } else {
+        None
+    };
     let database = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
         config.database.sql_log_level,
@@ -88,7 +110,7 @@ async fn run_control(
     let result = async {
         match operation {
             Operation::Up => {
-                ryframe_db::migration::up(&database).await?;
+                ryframe_db::migration::up(&database, hashes.as_ref()).await?;
                 println!("scope=control migration=completed schema=verified");
             }
             Operation::Verify => {

@@ -30,6 +30,7 @@ pub struct LoginResult {
 /// 用户信息
 #[derive(Debug, Clone, Serialize)]
 pub struct UserInfo {
+    pub password_change_required: bool,
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
     pub tenant_id: String,
@@ -50,6 +51,7 @@ pub struct UserInfo {
 impl From<&IdentityUserRecord> for UserInfo {
     fn from(user: &IdentityUserRecord) -> Self {
         Self {
+            password_change_required: user.password_change_required,
             id: user.id.to_string(),
             tenant_id: user.tenant_id.clone(),
             tenant_name: String::new(),

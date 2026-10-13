@@ -23,6 +23,7 @@ pub struct IdentityUserRecord {
     pub tenant_id: String,
     pub username: String,
     pub password_hash: String,
+    pub password_change_required: bool,
     pub nickname: String,
     pub email: String,
     pub phone: String,

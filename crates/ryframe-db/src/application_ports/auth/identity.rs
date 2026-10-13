@@ -139,6 +139,7 @@ fn to_user(user: crate::entities::user::Model) -> IdentityUserRecord {
         tenant_id: user.tenant_id,
         username: user.username,
         password_hash: user.password_hash,
+        password_change_required: user.password_change_required,
         nickname: user.nickname,
         email: user.email,
         phone: user.phone,

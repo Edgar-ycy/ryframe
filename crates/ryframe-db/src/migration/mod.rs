@@ -14,7 +14,11 @@ use sea_orm_migration::prelude::*;
 mod access_catalog;
 mod baseline_contract;
 #[cfg(feature = "migration")]
+mod bootstrap;
+#[cfg(feature = "migration")]
 mod m20260820_000000_control_baseline;
+#[cfg(feature = "migration")]
+mod m20261013_000000_password_change;
 mod schema;
 #[cfg(feature = "migration")]
 mod seeder;
@@ -23,17 +27,22 @@ pub use access_catalog::{
     AccessMenu, access_menus, access_permission_codes, access_permission_names,
 };
 pub use baseline_contract::ddl_statements as control_ddl_statements;
+#[cfg(feature = "migration")]
+pub use bootstrap::BootstrapHashes;
 pub use schema::{
     expected_extra, extract_column_type, normalize_check_clause, normalize_column_type,
     register_business_tables, verify_current_schema,
 };
 #[cfg(feature = "migration")]
-pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};
+pub use seeder::{mysql_initialization_sql, mysql_snapshot_sql, seed, validate_seed_statements};
 
 #[cfg(feature = "migration")]
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
 pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
-const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_control_baseline"];
+const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[
+    "m20260820_000000_control_baseline",
+    "m20261013_000000_password_change",
+];
 
 pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
     HANDWRITTEN_MIGRATION_NAMES
@@ -94,8 +103,10 @@ pub fn schema_fingerprint() -> String {
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        let mut migrations: Vec<Box<dyn MigrationTrait>> =
-            vec![Box::new(m20260820_000000_control_baseline::Migration)];
+        let mut migrations: Vec<Box<dyn MigrationTrait>> = vec![
+            Box::new(m20260820_000000_control_baseline::Migration),
+            Box::new(m20261013_000000_password_change::Migration),
+        ];
         migrations.extend(crate::generated::migrations());
         migrations
     }
@@ -109,15 +120,16 @@ impl MigratorTrait for Migrator {
 ///
 /// 这是唯一允许执行 DDL 的操作，供独立部署任务使用，而非生产 API 启动过程。
 #[cfg(feature = "migration")]
-pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn up(db: &DatabaseConnection, bootstrap: Option<&BootstrapHashes>) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
+    bootstrap::require_credentials_for_new_users(db, bootstrap).await?;
     let transaction = db.begin().await?;
     if let Err(error) = acquire_migration_lock(&transaction).await {
         let _ = transaction.rollback().await;
         return Err(error);
     }
-    let migration_result = migrate_seed_verify(&transaction).await;
+    let migration_result = migrate_seed_verify(&transaction, bootstrap).await;
     let release_result = release_migration_lock(&transaction).await;
     match migration_result.and(release_result) {
         Ok(()) => transaction.commit().await,
@@ -246,7 +258,7 @@ async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
 }
 
 #[cfg(feature = "migration")]
-async fn migrate_seed_verify<C>(db: &C) -> Result<(), DbErr>
+async fn migrate_seed_verify<C>(db: &C, bootstrap: Option<&BootstrapHashes>) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
     for<'c> &'c C: IntoSchemaManagerConnection<'c>,
@@ -254,7 +266,7 @@ where
     Migrator::up(db, None)
         .await
         .map_err(|error| DbErr::Custom(format!("migration execution failed: {error}")))?;
-    seed(db)
+    seed(db, bootstrap)
         .await
         .map_err(|error| DbErr::Custom(format!("seed execution failed: {error}")))?;
     verify_current_schema(db)

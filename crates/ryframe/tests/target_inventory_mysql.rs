@@ -18,6 +18,12 @@ use mysql::{database_config, db_error, execute, require_count, run_mysql_test};
 
 const SCOPE: &str = "target-inventory-integration";
 
+fn bootstrap_hashes() -> Result<ryframe_db::migration::BootstrapHashes, String> {
+    let hash = ryframe_auth::password::hash("Integration123!initial")
+        .map_err(|error| error.to_string())?;
+    ryframe_db::migration::BootstrapHashes::new(hash.clone(), hash).map_err(db_error)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn complete_inventory_is_read_only_and_rejects_drift_on_real_mysql() {
     run_mysql_test("inventoryctl", |control| async move {
@@ -39,7 +45,7 @@ async fn exercise_inventory(
     shared: DatabaseConnection,
     dedicated: DatabaseConnection,
 ) -> Result<(), String> {
-    ryframe_db::migration::up(&control)
+    ryframe_db::migration::up(&control, Some(&bootstrap_hashes()?))
         .await
         .map_err(db_error)?;
     for database in [&control, &shared, &dedicated] {

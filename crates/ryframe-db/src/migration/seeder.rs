@@ -12,7 +12,7 @@ use super::access_catalog::{
 ///
 /// 重复键使用显式的无操作 upsert，绝不压制无关 SQL 错误。每个规范语义标识和关系
 /// 都会在写入后校验，因此冲突的主键或唯一键无法伪装成成功的引导操作。
-pub async fn seed<C>(db: &C) -> Result<(), DbErr>
+pub async fn seed<C>(db: &C, bootstrap: Option<&super::BootstrapHashes>) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
 {
@@ -20,7 +20,13 @@ where
         return Err(DbErr::Custom("RyFrame v0.5 only supports MySQL".into()));
     }
     for statement in seed_statements() {
-        db.execute_unprepared(&idempotent_upsert(statement)?)
+        let statement = if statement.trim_start().starts_with("INSERT INTO `sys_user`") {
+            let Some(bootstrap) = bootstrap else { continue };
+            bootstrap.render(statement)
+        } else {
+            statement.to_owned()
+        };
+        db.execute_unprepared(&idempotent_upsert(&statement)?)
             .await?;
     }
     seed_access_catalog(db).await?;
@@ -90,134 +96,8 @@ where
     Ok(())
 }
 
-pub fn mysql_snapshot_sql() -> String {
-    let mut snapshot = format!(
-        "-- 自动生成文件：RyFrame 控制库新基线快照。\n\
-         -- schema fingerprint: {}\n\
-         -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。\n\
-         -- 仅供审阅：部署和重置工具不得执行此文件。\n\
-         -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
-        crate::migration::m20260820_000000_control_baseline::schema_fingerprint()
-    );
-    for statement in ddl_statements() {
-        snapshot.push_str(statement.trim());
-        snapshot.push_str(";\n\n");
-    }
-    for statement in post_table_statements() {
-        append_snapshot_statement(&mut snapshot, statement);
-    }
-    snapshot.push_str("-- 幂等初始化数据；此审阅快照不用于部署初始化。\n\n");
-    for statement in seed_statements() {
-        snapshot.push_str(
-            &idempotent_upsert(statement)
-                .expect("canonical seed statements must be valid INSERT statements"),
-        );
-        snapshot.push_str(";\n\n");
-    }
-    snapshot.push_str("-- 访问目录、产品套餐和租户数据放置种子。\n\n");
-    for statement in access_catalog_snapshot_statements().expect("访问目录必须在构建时通过严格解析")
-    {
-        append_snapshot_statement(&mut snapshot, &statement);
-    }
-    for statement in PRODUCT_SEED_STATEMENTS {
-        append_snapshot_statement(&mut snapshot, statement);
-    }
-    append_snapshot_statement(&mut snapshot, TENANT_PLACEMENT_SEED_STATEMENT);
-    append_snapshot_statement(&mut snapshot, RETENTION_SCHEDULE_SEED_STATEMENT);
-    snapshot.truncate(snapshot.trim_end().len());
-    snapshot.push('\n');
-    snapshot
-}
-
-fn append_snapshot_statement(snapshot: &mut String, statement: &str) {
-    snapshot.push_str(statement.trim());
-    snapshot.push_str(";\n\n");
-}
-
-fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
-    let permissions = access_permission_codes()?;
-    let permission_names = access_permission_names()?;
-    let permission_rows = permissions
-        .iter()
-        .enumerate()
-        .map(|(index, code)| {
-            let name = permission_names
-                .get(code)
-                .map(String::as_str)
-                .unwrap_or(code.as_str());
-            format!(
-                "({}, 'system', '{}', '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
-                10_000 + index,
-                name,
-                code,
-                index
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let mut statements = vec![format!(
-        "INSERT INTO `sys_permission` \
-         (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) VALUES\n{permission_rows}\n\
-         ON DUPLICATE KEY UPDATE `name` = IF(`name` = `code`, VALUES(`name`), `name`)"
-    )];
-
-    for (index, menu) in access_menus()?.iter().enumerate() {
-        let permission_id = menu.permission.as_deref().map_or_else(
-            || "NULL".to_owned(),
-            |code| {
-                format!(
-                    "(SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = '{code}' LIMIT 1)"
-                )
-            },
-        );
-        let parent_id = menu.parent_route_key().map_or_else(
-            || "NULL".to_owned(),
-            |route_key| {
-                format!(
-                    "(SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{route_key}' LIMIT 1)"
-                )
-            },
-        );
-        let menu_name = menu.name.replace('\'', "''");
-        let icon = menu
-            .icon()
-            .map_or_else(|| "NULL".to_owned(), |icon| format!("'{icon}'"));
-        statements.push(format!(
-            "INSERT INTO `sys_menu` \
-             (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
-             SELECT {}, 'system', '{}', {}, '{}', {}, '{}', {}, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
-             WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{}')",
-            20_000 + index,
-            menu_name,
-            parent_id,
-            menu.menu_type,
-            permission_id,
-            menu.route_key,
-            icon,
-            menu.sort(),
-            menu.route_key,
-        ));
-        let parent_route = menu.parent_route_key().map_or_else(
-            || "NULL".to_owned(),
-            |route| format!("'{}'", route.replace('\'', "''")),
-        );
-        statements.push(format!(
-            "UPDATE `sys_menu` AS `menu` \
-             LEFT JOIN `sys_menu` AS `parent` ON `parent`.`tenant_id` = 'system' AND `parent`.`route_key` = {parent_route} \
-             SET `menu`.`name` = IF(`menu`.`name` = `menu`.`route_key`, '{}', `menu`.`name`), \
-             `menu`.`parent_id` = `parent`.`id`, `menu`.`menu_type` = '{}', `menu`.`perm_id` = {}, \
-             `menu`.`icon` = COALESCE({}, `menu`.`icon`), `menu`.`sort` = {}, `menu`.`status` = '1', `menu`.`del_flag` = '0' \
-             WHERE `menu`.`tenant_id` = 'system' AND `menu`.`route_key` = '{}'",
-            menu_name,
-            menu.menu_type,
-            permission_id,
-            icon,
-            menu.sort(),
-            menu.route_key,
-        ));
-    }
-    Ok(statements)
-}
+mod snapshot;
+pub use snapshot::{mysql_initialization_sql, mysql_snapshot_sql};
 
 #[derive(Debug)]
 struct SeedInsert {

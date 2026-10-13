@@ -91,6 +91,16 @@ pub async fn change_password(
         .change_password(&current_user, &req.old_password, &req.new_password)
         .await?;
 
+    let sessions = state.services.identity.auth.refresh_sessions();
+    for sid in sessions
+        .session_sids_for_user(&current_user.tenant_id, current_user.user_id)
+        .await?
+    {
+        sessions
+            .revoke_for_user(&current_user.tenant_id, current_user.user_id, &sid)
+            .await?;
+    }
+
     Ok(Json(ApiResponse::success_no_data()))
 }
 

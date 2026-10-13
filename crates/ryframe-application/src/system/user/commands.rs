@@ -1,6 +1,5 @@
 use ryframe_auth::password;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use uuid::Uuid;
 
 use super::{
     CreateUserParams, USER_STATUS_DISABLED, USER_STATUS_NORMAL, UpdateUserParams, UserService,
@@ -32,7 +31,6 @@ impl UserService {
             return Err(AppError::Conflict("用户名已存在".into()));
         }
 
-        let activation_secret = format!("pending:{}", Uuid::new_v4());
         let transaction = self.writes.begin().await?;
         let result = async {
             transaction.lock_configuration(tenant_id).await?;
@@ -44,7 +42,7 @@ impl UserService {
                     id: crate::next_id()?,
                     tenant_id: tenant_id.to_owned(),
                     username: username.to_owned(),
-                    password_hash: password::hash(&activation_secret)?,
+                    password_hash: password::hash(password::INITIAL_USER_PASSWORD)?,
                     nickname: nickname.to_owned(),
                     email: email.to_owned(),
                     phone: phone.to_owned(),

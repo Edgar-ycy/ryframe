@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestPrincipal {
     pub actor: ActorContext,
+    /// 必须先修改初始密码，受限主体不能访问普通业务接口。
+    pub password_change_required: bool,
     /// 解析当前主体时使用的租户授权纪元，用于客户端检测授权变化。
     #[serde(default)]
     pub tenant_authorization_epoch: i32,

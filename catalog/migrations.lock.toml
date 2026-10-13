@@ -9,7 +9,7 @@ target = "m20260820_000000_control_baseline"
 
 [[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs"
-sha256 = "26a2af0153571471d744a89ff9ff154bda084c55226d06434a6dce4c097a2c4c"
+sha256 = "9a66b549451c92f3ad7e36030eed8724ff5877690ce134fbbb507f412a8a3b91"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 
@@ -30,6 +30,12 @@ path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema
 sha256 = "d1bb6746219c68660f44b1470b7951de37062f9b0d0d65d0ddc13dceaa8c4428"
 storage = "control"
 target = "m20260820_000000_control_baseline"
+
+[[files]]
+path = "crates/ryframe-db/src/migration/m20261013_000000_password_change.rs"
+sha256 = "b6fd640f8a97dd1145f16fa41e4f42b55b7d9de14ee6df23d09a631035334189"
+storage = "control"
+target = "m20261013_000000_password_change"
 
 [[files]]
 path = "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"

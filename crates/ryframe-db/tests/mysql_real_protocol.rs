@@ -17,8 +17,16 @@ mod linked_job_states;
 
 const TLS_ENABLE_ENV: &str = "RYFRAME_MYSQL_TLS_INTEGRATION";
 #[cfg(feature = "migration")]
+fn bootstrap_hashes() -> ryframe_db::migration::BootstrapHashes {
+    let hash = "$argon2id$v=19$m=65536,t=3,p=4$O8qRRhiIVYjCHpUuwGWTSA$OO+ik8t1+N5a4PSipMbB71W/pfc3roAbq6mdIAgV1bA";
+    ryframe_db::migration::BootstrapHashes::new(hash.into(), hash.into()).unwrap()
+}
+#[cfg(feature = "migration")]
 #[path = "mysql_real_protocol/backup.rs"]
 mod backup;
+#[cfg(feature = "migration")]
+#[path = "mysql_real_protocol/initialization.rs"]
+mod initialization;
 #[cfg(feature = "migration")]
 #[path = "mysql_real_protocol/job_attempts.rs"]
 mod job_attempts;

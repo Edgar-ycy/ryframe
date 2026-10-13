@@ -16,7 +16,7 @@ struct Fixture {
 
 impl Fixture {
     async fn new(database: DatabaseConnection) -> Result<Self, String> {
-        ryframe_db::migration::up(&database)
+        ryframe_db::migration::up(&database, Some(&super::bootstrap_hashes()))
             .await
             .map_err(|error| error.to_string())?;
         let queue =

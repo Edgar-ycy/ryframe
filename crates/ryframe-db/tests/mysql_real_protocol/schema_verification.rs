@@ -8,7 +8,7 @@ const RESTORE_CHECK: &str = "ck_restore_run_completed";
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn control_schema_checks_are_compared_by_expression_and_enforcement() {
     run_mysql_test("control-checks", |database| async move {
-        migration::up(&database)
+        migration::up(&database, Some(&super::bootstrap_hashes()))
             .await
             .map_err(|error| format!("安装规范控制库失败: {error}"))?;
         migration::verify_current_schema(&database)

@@ -164,27 +164,6 @@ where
     Ok(OwnershipState::Verified)
 }
 
-pub(super) async fn write_seed_hashes(
-    db: &DatabaseConnection,
-    seeds: &SeedCredentials,
-) -> ResetResult<()> {
-    let result = db
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "UPDATE sys_user SET password_hash = CASE username WHEN 'admin' THEN ? WHEN 'user' THEN ? ELSE password_hash END WHERE username IN ('admin', 'user')",
-            [
-                seeds.admin_hash.as_str().into(),
-                seeds.user_hash.as_str().into(),
-            ],
-        ))
-        .await
-        .map_err(|_| ResetError::new("写入环境提供的种子密码失败"))?;
-    if result.rows_affected() != 2 {
-        return Err(ResetError::new("种子账号数量不符合唯一 baseline 预期"));
-    }
-    Ok(())
-}
-
 pub(super) async fn verify_seed_hashes(
     db: &DatabaseConnection,
     seeds: &SeedCredentials,

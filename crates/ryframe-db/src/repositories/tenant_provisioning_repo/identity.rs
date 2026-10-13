@@ -175,6 +175,7 @@ async fn insert_admin_user(
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     user::ActiveModel {
+        password_change_required: sea_orm::ActiveValue::Set(true),
         id: ActiveValue::Set(ids.admin_user_id),
         tenant_id: ActiveValue::Set(record.tenant_id.clone()),
         username: ActiveValue::Set(record.admin_username.clone()),

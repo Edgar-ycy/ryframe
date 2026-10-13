@@ -25,7 +25,7 @@ fn check(condition: bool, message: &str) -> Result<(), String> {
 async fn backup_transactions_health_and_restore_states_use_real_mysql() {
     run_mysql_test("backup", |database| async move {
         ryframe_db::install_id_generator(next_id).map_err(|error| error.to_string())?;
-        ryframe_db::migration::up(&database).await.map_err(|error| error.to_string())?;
+        ryframe_db::migration::up(&database, Some(&super::bootstrap_hashes())).await.map_err(|error| error.to_string())?;
         let repository = application_ports::backup::port(ControlDatabaseCluster::single(database.clone()));
         let now = repository.database_now().await.map_err(|error| error.to_string())?;
         let now = DateTime::from_timestamp(now.timestamp(), 0).ok_or("数据库时间无效")?;

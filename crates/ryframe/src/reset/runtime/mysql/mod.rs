@@ -20,7 +20,7 @@ use identity::{
 use operations::{
     connect_target, database_exists, scalar_i64, verify_database_ownership_before_recreate,
     verify_empty_control_resources, verify_empty_external_tenant, verify_global_privileges,
-    verify_seed_hashes, verify_server_writable, write_seed_hashes,
+    verify_seed_hashes, verify_server_writable,
 };
 
 pub use identity::{parse_lower_case_table_names, same_credentials};
@@ -237,14 +237,18 @@ impl MysqlReset {
             .find(|handle| handle.resource.control_baseline)
             .ok_or_else(|| ResetError::new("不可变清单缺少控制库"))?;
         let target = self.connect_verified_target(handle).await?;
-        ryframe_db::migration::up(&target)
-            .await
-            .map_err(|_| ResetError::new("控制库唯一 baseline 执行失败"))?;
         let seeds = self
             .seeds
             .as_ref()
             .ok_or_else(|| ResetError::new("种子密码未完成预检"))?;
-        write_seed_hashes(&target, seeds).await?;
+        let hashes = ryframe_db::migration::BootstrapHashes::new(
+            seeds.admin_hash.clone(),
+            seeds.user_hash.clone(),
+        )
+        .map_err(|_| ResetError::new("初始化密码哈希无效"))?;
+        ryframe_db::migration::up(&target, Some(&hashes))
+            .await
+            .map_err(|_| ResetError::new("控制库 baseline 执行失败，请保留现场核对部分 DDL"))?;
         ryframe_db::resource_ownership::ensure_resource_ownership(
             &target,
             &manifest.scope_id,

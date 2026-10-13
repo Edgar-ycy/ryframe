@@ -251,6 +251,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
     ) -> ryframe_kernel::AppResult<bool> {
         let result = user::Entity::update_many()
             .col_expr(user::Column::PasswordHash, Expr::value(password_hash))
+            .col_expr(user::Column::PasswordChangeRequired, Expr::value(false))
             .col_expr(
                 user::Column::AuthorizationVersion,
                 Expr::col(user::Column::AuthorizationVersion).add(1),

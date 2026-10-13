@@ -71,10 +71,9 @@ impl UserImportService {
                     .acquire_owned()
                     .await
                     .map_err(|_| AppError::Internal("用户导入密码哈希并发控制器已关闭".into()))?;
-                let activation_secret = format!("pending:{}", Uuid::new_v4());
                 let password_hash = tokio::task::spawn_blocking(move || {
                     let _permit = permit;
-                    password::hash(&activation_secret)
+                    password::hash(password::INITIAL_USER_PASSWORD)
                 })
                 .await
                 .map_err(|error| AppError::Internal(format!("密码哈希任务异常结束: {error}")))??;
@@ -119,7 +118,9 @@ impl UserImportService {
             import.completed_at = Some(now);
             import.updated_at = now;
             transaction.save(import).await?;
-            transaction.commit(crate::TransactionAuditMode::Skip).await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(CommitBatchOutcome::Committed);
         }
         if usize::try_from(import.processed_rows).ok() != Some(expected_offset) {
@@ -174,9 +175,7 @@ impl UserImportService {
         let (success_count, skipped_count, failure_count) =
             batch_counts(users.len(), &prepared.issues)?;
 
-        transaction
-            .insert_users(&import.tenant_id, users)
-            .await?;
+        transaction.insert_users(&import.tenant_id, users).await?;
         let row_records = prepared
             .issues
             .into_iter()
@@ -191,7 +190,9 @@ impl UserImportService {
         import.updated_at = now;
         import.last_error = None;
         transaction.save(import).await?;
-        transaction.commit(crate::TransactionAuditMode::Skip).await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(CommitBatchOutcome::Committed)
     }
 }
@@ -406,8 +407,8 @@ fn partition_new_users(
 }
 
 fn batch_counts(users: usize, issues: &[RowIssue]) -> AppResult<(i32, i32, i32)> {
-    let success_count = i32::try_from(users)
-        .map_err(|_| AppError::Internal("用户导入成功计数溢出".into()))?;
+    let success_count =
+        i32::try_from(users).map_err(|_| AppError::Internal("用户导入成功计数溢出".into()))?;
     let skipped_count = i32::try_from(
         issues
             .iter()

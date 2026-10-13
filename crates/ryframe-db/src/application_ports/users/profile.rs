@@ -164,6 +164,7 @@ impl ProfileTransaction for DatabaseProfileTransaction {
             .await?
             .ok_or_else(|| ryframe_kernel::AppError::NotFound("用户不存在".into()))?;
         user.password_hash = password_hash;
+        user.password_change_required = false;
         user.fill_on_update(&FillContext::new())?;
         user::ActiveModel::from(user)
             .reset_all()

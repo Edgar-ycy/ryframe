@@ -13,6 +13,8 @@ lazy_static::lazy_static! {
 
 /// 新密码最小长度。
 pub const MIN_PASSWORD_LENGTH: usize = 8;
+/// 普通新用户首次登录的初始密码；只能用于带强制改密标志的账号。
+pub const INITIAL_USER_PASSWORD: &str = "123456";
 /// Argon2 接受的新密码最大长度。
 pub const MAX_PASSWORD_LENGTH: usize = 72;
 /// OpenAPI/浏览器端使用的等价复杂度表达式。
