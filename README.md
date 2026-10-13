@@ -93,12 +93,13 @@ cargo xtask generate api --write
 RyFrame 不内置示例业务 crate。使用正式脚手架在 `crates/` 下按业务域创建一个或多个普通库 crate：
 
 ```powershell
-cargo ryframe new-business order
+cargo generate -- new-business order-business --write
+cargo generate-lockfile --offline
 cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-`cargo ryframe new-business order --dry-run` 只显示将创建或更新的文件。正式创建会写入业务 crate 的元数据和目录、工作区成员、组合根依赖及统一 `business_modules()` 注册表；API、Worker 与迁移因此读取同一个模块集合。业务模型使用 Rust `ResourceModel` 维护。生成器可从工作区根目录或业务 crate 的任意子目录运行；预览默认只显示差异，只有 `--write` 更新 `src/generated/`、`migrations/` 和 ownership。手写代码放在 `src/resources/` 与 `src/extensions/`，不会被生成器覆盖。完整结构和代码见[开发指南](docs/development.md#创建业务-crate)。
+创建业务 crate 与生成资源默认都预览，只有 `--write` 写入；新增 crate 后显式刷新锁文件。创建负责目录、元数据、SDK、工作区与进程装配，资源生成负责模型对应的 CRUD、迁移和 ownership。业务模型使用 Rust `ResourceModel` 维护，手写代码位于 `resources/` 与 `extensions/`。默认生成器离线，数据库导入才启用 `schema-import`。完整结构和代码见[开发指南](docs/development.md#创建业务-crate)。
 
 ## 文档
 

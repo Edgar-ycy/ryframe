@@ -171,7 +171,7 @@ def create_business_fixture(root: Path, log: Path) -> bytes:
     """复用正式脚手架及进程 feature 装配，只提供验收资源模型。"""
     crate = root / "crates/order-business"
     template = Path(__file__).with_name("fixtures") / "order-business"
-    run(["cargo", "ryframe", "new-business", "order"], root, log)
+    run(["cargo", "generate", "--", "new-business", "order", "--write"], root, log)
     shutil.copyfile(template / "src/resources/mod.rs", crate / "src/resources/mod.rs")
     # 显式接入 path crate 会改变解析图；仅在隔离夹具中离线刷新锁文件，
     # 后续所有生成命令仍使用 --locked，确保不会隐式修改业务源码。

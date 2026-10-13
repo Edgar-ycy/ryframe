@@ -33,7 +33,14 @@ pub fn locate_business_package(
     package_name: &str,
 ) -> Result<BusinessPackage, ResourceError> {
     let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--format-version",
+            "1",
+            "--no-deps",
+        ])
         .current_dir(current_dir)
         .output()
         .map_err(|error| command_error(format!("无法启动 cargo metadata：{error}")))?;
@@ -80,7 +87,14 @@ pub fn locate_business_package(
 
 pub fn workspace_root(current_dir: &Path) -> Result<PathBuf, ResourceError> {
     let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--format-version",
+            "1",
+            "--no-deps",
+        ])
         .current_dir(current_dir)
         .output()
         .map_err(|error| command_error(format!("无法启动 cargo metadata：{error}")))?;

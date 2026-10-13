@@ -121,7 +121,7 @@ pub fn bootstrap_business_package(
     Ok(report)
 }
 
-fn validate_module(module: &str) -> Result<(), ResourceError> {
+pub(crate) fn validate_module(module: &str) -> Result<(), ResourceError> {
     if module.is_empty()
         || !module.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
@@ -129,7 +129,7 @@ fn validate_module(module: &str) -> Result<(), ResourceError> {
     {
         return Err(ResourceError::new(
             "业务模块名只能包含小写字母、数字、中划线和下划线",
-            "示例：cargo ryframe new-business order",
+            "示例：cargo generate -- new-business order-business --write",
         ));
     }
     Ok(())

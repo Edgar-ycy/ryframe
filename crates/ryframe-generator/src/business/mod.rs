@@ -6,6 +6,7 @@ mod generate;
 mod metadata;
 mod model;
 mod writer;
+pub(crate) use bootstrap::validate_module;
 
 pub use bootstrap::{
     BusinessBootstrapOptions, BusinessBootstrapReport, bootstrap_business_package,

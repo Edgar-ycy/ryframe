@@ -219,7 +219,7 @@ class FullStackFixtureTests(unittest.TestCase):
         registry.parent.mkdir(parents=True)
         registry.write_text("pub fn business_modules() {\n    vec![]\n}\n", encoding="utf-8")
         def scaffold(arguments, _root, _log):
-            if arguments == ["cargo", "ryframe", "new-business", "order"]:
+            if arguments == ["cargo", "generate", "--", "new-business", "order", "--write"]:
                 (self.backend / "crates/order-business/src/resources").mkdir(parents=True)
 
         with patch.object(fixture, "run", side_effect=scaffold) as run:
@@ -232,7 +232,7 @@ class FullStackFixtureTests(unittest.TestCase):
         self.assertEqual(run.call_count, 3)
         self.assertEqual(
             run.call_args_list[0].args[0],
-            ["cargo", "ryframe", "new-business", "order"],
+            ["cargo", "generate", "--", "new-business", "order", "--write"],
         )
 
     def test_reference_fixture_root_is_created_once_for_new_business_worktree(self):

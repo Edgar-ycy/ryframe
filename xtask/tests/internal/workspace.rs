@@ -41,7 +41,7 @@ fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
             line.starts_with("xtask = \"run --locked --target-dir target/xtask-run ")
         })
     );
-    for removed in ["dev", "verify", "resource", "api-sync"] {
+    for removed in ["dev", "verify", "resource", "api-sync", "ryframe"] {
         assert!(
             !config
                 .lines()
@@ -64,7 +64,7 @@ fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
         ),
         (
             "generate",
-            "run -p ryframe-generator --features schema-import --bin ryframe-generate --",
+            "run --locked -p ryframe-generator --bin ryframe-generate",
         ),
     ] {
         assert!(

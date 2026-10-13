@@ -43,11 +43,12 @@ SQL 导出、数据库客户端导入方式及中断处理见[数据指南](data
 使用正式脚手架创建业务 crate：
 
 ```powershell
-cargo ryframe new-business order
-cargo ryframe new-business inventory --dry-run
+cargo generate -- new-business order-business
+cargo generate -- new-business order-business --write
+cargo generate-lockfile --offline # 创建后显式刷新依赖图，后续命令继续使用锁文件
 ```
 
-正式创建会原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、`crates/ryframe` 的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册。预览不写文件。命令拒绝覆盖同名 crate 或重复注册；需要撤销时按普通 Git 变更审查和回退。
+默认预览，`--write` 才创建。创建原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、组合根的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册；不会生成 CRUD 或操作数据库。命令拒绝覆盖同名 crate 或重复注册，模块名 `order` 与业务包名 `order-business` 均创建同一包。
 
 业务 crate 按职责分类，并把可重生成文件统一放入 `generated`：
 
@@ -78,7 +79,7 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-命令可从工作区根目录或该 crate 的任意子目录执行。默认预览只报告差异，`--write` 才原子更新生成文件；生成器不会写入 `resources/` 和 `extensions/`，也不会覆盖已经生成的迁移。数据库反向导入只用于首次创建模型草案。
+命令可从工作区根目录或该 crate 的任意子目录执行。默认预览只报告差异，`--write` 才原子更新生成文件；资源生成不写 `resources/` 和 `extensions/`，不覆盖已生成迁移。`--package` 可由工具配置的 `generator.package` 提供；`--plan` 仅列任务，不编译描述符或访问数据库。`--sync-frontend --write` 使用本次后端候选契约同步前端。默认生成器保持离线，读取既有表使用 `cargo generate --features schema-import -- import --connection legacy --database control --package order-business --table biz_order`，连接和目标类型可由 `generator.source`、`generator.storage` 提供；当前反向导入用于首次模型草案。
 
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
 

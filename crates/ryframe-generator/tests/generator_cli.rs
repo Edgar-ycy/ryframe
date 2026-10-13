@@ -1,0 +1,63 @@
+use std::{fs, process::Command};
+
+fn run(root: &std::path::Path, arguments: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_ryframe-generate"))
+        .args(arguments)
+        .current_dir(root)
+        .env("PATH", "")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn plans_do_not_spawn_cargo_or_read_database_configuration() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = []\n",
+    )
+    .unwrap();
+    fs::create_dir(root.path().join("config")).unwrap();
+    fs::write(
+        root.path().join("config/tools.toml"),
+        "[generator]\npackage = 'order-business'\nsource = 'legacy'\nstorage = 'control'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("config/app.toml"),
+        "这不是有效的运行时配置",
+    )
+    .unwrap();
+    for args in [
+        vec!["new-business", "order-business", "--plan"],
+        vec!["resource", "--plan"],
+        vec!["import", "--table", "biz_order", "--plan"],
+    ] {
+        let output = run(root.path(), &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("计划"));
+        assert!(!root.path().join("target").exists());
+        assert!(!root.path().join("crates").exists());
+        assert!(!root.path().join("Cargo.lock").exists());
+        assert!(!root.path().join(".local-tests").exists());
+    }
+}
+
+#[test]
+fn ambiguous_arguments_fail_before_any_task() {
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["resource", "--package", "--write"],
+        vec!["resource", "--package", "one", "--package", "two"],
+        vec!["new-business", "order", "--write", "--plan"],
+        vec!["new-business", "order", "--write", "--write"],
+        vec!["import", "--table", "--write"],
+    ] {
+        assert_eq!(run(root.path(), &args).status.code(), Some(2));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+}
