@@ -277,7 +277,10 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
             assert_eq!(task.definition().id, task.id);
         }
     }
+}
 
+#[test]
+fn daily_full_checks_use_explicit_repository_scopes() {
     let check_full = tasks_for(super::cli::CheckScope::All, &CheckPlanMode::ExplicitFull).unwrap();
     let backend_full = tasks_for(
         super::cli::CheckScope::Backend,
