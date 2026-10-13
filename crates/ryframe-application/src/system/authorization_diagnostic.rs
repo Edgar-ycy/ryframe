@@ -409,14 +409,22 @@ impl AuthorizationDiagnosticService {
             .await;
         let (status, cached_tenant_epoch, cached_user_version) = match inspection {
             Ok(Some(lookup)) => {
-                let stale = lookup
+                let ahead = lookup
                     .tenant_authorization_epoch
-                    .is_some_and(|version| version != tenant_epoch)
+                    .is_some_and(|version| version > tenant_epoch)
                     || lookup
                         .user_authorization_version
-                        .is_some_and(|version| version != user_version);
-                let status = if stale {
-                    "stale"
+                        .is_some_and(|version| version > user_version);
+                let behind = lookup
+                    .tenant_authorization_epoch
+                    .is_some_and(|version| version < tenant_epoch)
+                    || lookup
+                        .user_authorization_version
+                        .is_some_and(|version| version < user_version);
+                let status = if ahead {
+                    "ahead"
+                } else if behind {
+                    "behind"
                 } else if lookup.snapshot.is_some() {
                     "current"
                 } else {
@@ -428,9 +436,11 @@ impl AuthorizationDiagnosticService {
                     lookup.user_authorization_version,
                 )
             }
+            Ok(None) if !self.authorization_cache.is_enabled() => ("disabled", None, None),
             Ok(None) | Err(_) => ("unavailable", None, None),
         };
-        let warning = (status != "current").then(|| format!("authorization_cache_{status}"));
+        let warning = (!matches!(status, "current" | "disabled"))
+            .then(|| format!("authorization_cache_{status}"));
         (
             AuthorizationDiagnosticVersionVo {
                 tenant_authorization_epoch: tenant_epoch,

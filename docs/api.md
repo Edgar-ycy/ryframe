@@ -1,5 +1,7 @@
 # API
 
+授权诊断区分缓存 `current`、`behind`、`ahead`、`missing`、`disabled` 与 `unavailable`。镜像落后于新令牌时，从主库验证身份后原子重建；镜像版本更高时旧令牌仍被拒绝，不向后覆盖缓存。缓存关闭是正常配置状态，不作为缓存故障警告。
+
 ## 契约入口
 
 HTTP 接口使用 `/api/v1` 前缀，完整路径、字段和 operation ID 见 `openapi/openapi.json`。开发环境启用 `api_docs.enabled` 并编译 `runtime-swagger-ui` feature 后，可访问 `/api/v1/swagger-ui`；原始文档位于 `/api/v1/api-docs/openapi.json`。

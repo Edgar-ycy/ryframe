@@ -21,8 +21,8 @@ impl PrincipalResolver for AuthService {
             .authorization_cache
             .lookup_snapshot(&claims.tenant_id, user_id)
             .await?;
-        validate_mirrored_user_version(claims, lookup.user_authorization_version)?;
-        if let Some(snapshot) = lookup.snapshot {
+        let current = mirrored_user_matches(claims, lookup.user_authorization_version)?;
+        if current && let Some(snapshot) = lookup.snapshot {
             return principal_from_snapshot(claims, user_id, snapshot);
         }
 
@@ -39,8 +39,8 @@ impl PrincipalResolver for AuthService {
                 .authorization_cache
                 .lookup_snapshot(&claims.tenant_id, user_id)
                 .await?;
-            validate_mirrored_user_version(claims, lookup.user_authorization_version)?;
-            if let Some(snapshot) = lookup.snapshot {
+            let current = mirrored_user_matches(claims, lookup.user_authorization_version)?;
+            if current && let Some(snapshot) = lookup.snapshot {
                 return principal_from_snapshot(claims, user_id, snapshot);
             }
         }
@@ -109,18 +109,20 @@ fn build_authorization_snapshot(
     }
 }
 
-fn validate_mirrored_user_version(
+fn mirrored_user_matches(
     claims: &Claims,
     user_authorization_version: Option<i32>,
-) -> AppResult<()> {
-    if user_authorization_version
-        .is_some_and(|version| version != claims.user_authorization_version)
+) -> AppResult<bool> {
+    if user_authorization_version.is_some_and(|version| version > claims.user_authorization_version)
     {
         return Err(AppError::Authentication(
             "用户权限已变更，请重新登录".into(),
         ));
     }
-    Ok(())
+    // 镜像落后于已签名令牌时，必须先校验主库并重建，不能复用旧快照。
+    // store_snapshot 的原子版本检查只向前推进，竞争中的更新不会被降级。
+    Ok(user_authorization_version
+        .is_none_or(|version| version == claims.user_authorization_version))
 }
 
 fn principal_from_snapshot(
@@ -139,7 +141,46 @@ fn principal_from_snapshot(
             "租户会话已失效，请重新登录".into(),
         ));
     }
-    // 兼容升级前已写入 Redis、尚未过期且不含该展示字段的授权快照。
     snapshot.principal.tenant_authorization_epoch = snapshot.versions.tenant_authorization_epoch;
     Ok(snapshot.principal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claims(version: i32) -> Claims {
+        Claims {
+            sub: "2".into(),
+            tenant_id: "system".into(),
+            tenant_session_version: 1,
+            user_authorization_version: version,
+            username: "user".into(),
+            token_type: "access".into(),
+            sid: "session".into(),
+            jti: "token".into(),
+            iat: 0,
+            exp: usize::MAX,
+        }
+    }
+
+    #[test]
+    fn lagging_mirror_requires_authoritative_rebuild() {
+        assert!(!mirrored_user_matches(&claims(3), Some(2)).unwrap());
+        assert!(!mirrored_user_matches(&claims(3), Some(1)).unwrap());
+    }
+
+    #[test]
+    fn current_or_missing_mirror_can_use_validated_snapshot() {
+        assert!(mirrored_user_matches(&claims(3), Some(3)).unwrap());
+        assert!(mirrored_user_matches(&claims(3), None).unwrap());
+    }
+
+    #[test]
+    fn newer_mirror_keeps_old_token_rejected() {
+        assert!(matches!(
+            mirrored_user_matches(&claims(2), Some(3)),
+            Err(AppError::Authentication(_))
+        ));
+    }
 }
