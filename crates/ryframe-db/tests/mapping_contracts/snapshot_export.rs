@@ -3,6 +3,24 @@ use std::{env, fs, path::PathBuf};
 use ryframe_db::migration::mysql_snapshot_sql;
 
 #[test]
+fn snapshot_includes_post_table_constraints_and_legal_menu_updates() {
+    let sql = mysql_snapshot_sql();
+    let file_table = sql.find("CREATE TABLE IF NOT EXISTS `sys_file`").unwrap();
+    let avatar_constraint = sql.find("ADD CONSTRAINT `fk_user_avatar_file`").unwrap();
+    let first_seed = sql.find("INSERT INTO `sys_tenant`").unwrap();
+    assert!(file_table < avatar_constraint && avatar_constraint < first_seed);
+    let updates: Vec<_> = sql
+        .split(';')
+        .filter(|statement| statement.trim_start().starts_with("UPDATE `sys_menu`"))
+        .collect();
+    assert!(!updates.is_empty());
+    for update in updates {
+        assert!(update.contains("LEFT JOIN `sys_menu` AS `parent`"));
+        assert!(!update.contains("SELECT `id` FROM `sys_menu`"));
+    }
+}
+
+#[test]
 fn mysql_snapshot_matches_and_exports_candidate() {
     let rendered = mysql_snapshot_sql();
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

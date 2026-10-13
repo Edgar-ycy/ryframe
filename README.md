@@ -30,6 +30,7 @@ API、Worker、迁移和维护程序按 feature 定向构建；标准资源生�
 
 ```powershell
 $env:APP_ENV = "dev"
+cargo migrate -- control up
 cargo migrate -- control verify
 cargo serve
 ```

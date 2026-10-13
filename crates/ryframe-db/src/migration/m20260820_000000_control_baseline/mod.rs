@@ -34,7 +34,7 @@ impl MigrationTrait for Migration {
         for statement in ddl_statements() {
             connection.execute_unprepared(statement).await?;
         }
-        for statement in POST_TABLE_STATEMENTS {
+        for statement in post_table_statements() {
             connection.execute_unprepared(statement).await?;
         }
         Ok(())
@@ -85,6 +85,11 @@ pub(crate) fn schema_fingerprint() -> String {
 
 fn is_seed_statement(statement: &str) -> bool {
     statement.trim_start().starts_with("INSERT INTO")
+}
+
+/// 所有表创建完成后安装的跨表约束，SQL 导出与迁移共用。
+pub(crate) fn post_table_statements() -> impl Iterator<Item = &'static str> {
+    POST_TABLE_STATEMENTS.iter().copied()
 }
 
 const POST_TABLE_STATEMENTS: &[&str] = &[r#"ALTER TABLE `sys_user`

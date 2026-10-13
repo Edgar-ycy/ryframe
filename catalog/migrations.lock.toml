@@ -21,7 +21,7 @@ target = "m20260820_000000_control_baseline"
 
 [[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs"
-sha256 = "15e33ff9fa54268902bc21bd23c63828b33dbc6566fb6c624ad563c20e58dcd8"
+sha256 = "87d7e064603cb7a01a1e0dbe69c2690161058b72c9a4fb9233bfe4f73ba1b1e1"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 

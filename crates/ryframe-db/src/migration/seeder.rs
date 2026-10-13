@@ -1,6 +1,8 @@
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
-use crate::migration::m20260820_000000_control_baseline::{ddl_statements, seed_statements};
+use crate::migration::m20260820_000000_control_baseline::{
+    ddl_statements, post_table_statements, seed_statements,
+};
 
 use super::access_catalog::{
     access_menus, access_permission_codes, access_permission_names, seed_access_catalog,
@@ -101,7 +103,10 @@ pub fn mysql_snapshot_sql() -> String {
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }
-    snapshot.push_str("-- 幂等初始化数据（生产环境用户默认锁定）。\n\n");
+    for statement in post_table_statements() {
+        append_snapshot_statement(&mut snapshot, statement);
+    }
+    snapshot.push_str("-- 幂等初始化数据；此审阅快照不用于部署初始化。\n\n");
     for statement in seed_statements() {
         snapshot.push_str(
             &idempotent_upsert(statement)
@@ -192,11 +197,18 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
             menu.sort(),
             menu.route_key,
         ));
+        let parent_route = menu.parent_route_key().map_or_else(
+            || "NULL".to_owned(),
+            |route| format!("'{}'", route.replace('\'', "''")),
+        );
         statements.push(format!(
-            "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '{}', `name`), `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `icon` = COALESCE({}, `icon`), `sort` = {}, `status` = '1', `del_flag` = '0' \
-             WHERE `tenant_id` = 'system' AND `route_key` = '{}'",
+            "UPDATE `sys_menu` AS `menu` \
+             LEFT JOIN `sys_menu` AS `parent` ON `parent`.`tenant_id` = 'system' AND `parent`.`route_key` = {parent_route} \
+             SET `menu`.`name` = IF(`menu`.`name` = `menu`.`route_key`, '{}', `menu`.`name`), \
+             `menu`.`parent_id` = `parent`.`id`, `menu`.`menu_type` = '{}', `menu`.`perm_id` = {}, \
+             `menu`.`icon` = COALESCE({}, `menu`.`icon`), `menu`.`sort` = {}, `menu`.`status` = '1', `menu`.`del_flag` = '0' \
+             WHERE `menu`.`tenant_id` = 'system' AND `menu`.`route_key` = '{}'",
             menu_name,
-            parent_id,
             menu.menu_type,
             permission_id,
             icon,

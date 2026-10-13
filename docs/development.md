@@ -6,12 +6,13 @@
 
 ## 环境与配置
 
-本地开发以 Windows 为准，MySQL 和 RustFS 在 Windows 运行，Redis 连接 WSL 中的实例，应用直接在 Windows 启动。安装 rustup 后，在项目目录运行 `rustup show` 安装并选择固定的 Rust 1.98.1、rustfmt 和 Clippy；项目使用 Rust 2024 edition，最低 Rust 版本为 1.98，本地、CI 和生产构建镜像使用同一固定工具链。
+本机开发验证使用 Windows。MySQL、Redis 和 RustFS 可以运行在任意满足版本、协议及连接要求的平台，也可以连接远程服务；不要求使用 WSL。安装 rustup 后，在项目目录运行 `rustup show` 安装并选择固定的 Rust 1.98.1、rustfmt 和 Clippy；项目使用 Rust 2024 edition，最低 Rust 版本为 1.98，本地、CI 和生产构建镜像使用同一固定工具链。
 选择开发配置后再运行命令，例如 `$env:APP_ENV = "dev"`。配置文件位于 `config/`，环境变量使用 `APP_` 前缀覆盖对应字段；外部服务地址、密码、令牌和证书通过本机环境变量或密钥文件提供，所有可用字段和校验范围以配置结构及启动错误为准。
 ## 启动后端
 
-首次启动先验证数据库结构，再启动开发进程：
+首次运行前创建空的 MySQL 数据库并配置连接，然后初始化、验证并启动：
 ```powershell
+cargo migrate -- control up
 cargo migrate -- control verify
 cargo serve
 ```
@@ -30,6 +31,8 @@ cargo migrate -- tenant-data verify --all
 cargo migrate -- tenant-data verify --target <目标键>
 ```
 生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
+
+`sql/ryframe_config.sql` 是源码审阅快照，包含建表后的跨表约束和种子 SQL，但不包含迁移账本，不能作为部署初始化脚本直接导入。已经导入此快照的非空数据库不能通过再次执行 `control up` 自动补齐；先保留错误和结构现状，确认数据用途后选择全新隔离库初始化。
 ## 创建业务 crate
 
 使用正式脚手架创建业务 crate：
