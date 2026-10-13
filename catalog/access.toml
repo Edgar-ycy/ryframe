@@ -500,6 +500,7 @@ permission = "system:perm:list"
 
 [[menus]]
 route_key = "system.authorization-diagnostics"
+icon = "View"
 order = 17
 name = "权限诊断"
 title_key = "authorizationDiagnostics"
