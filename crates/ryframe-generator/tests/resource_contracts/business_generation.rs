@@ -201,6 +201,11 @@ fn assert_generated_business(workspace: &std::path::Path) {
             .contains("x-ryframe-crud-resources")
     );
     assert!(
+        fs::read_to_string(workspace.join("order-business/src/generated/migrations/mod.rs"))
+            .unwrap()
+            .contains("with_initialization_sql")
+    );
+    assert!(
         !workspace
             .join("order-business/src/resources/order.rs")
             .exists()

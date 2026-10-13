@@ -404,6 +404,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
         [
             "test",
             "--locked",
+            "--no-default-features",
             "--target-dir",
             "target/ci/backend",
             "-p",
@@ -429,6 +430,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
         [
             "test",
             "--locked",
+            "--no-default-features",
             "--target-dir",
             "target/ci/backend",
             "-p",

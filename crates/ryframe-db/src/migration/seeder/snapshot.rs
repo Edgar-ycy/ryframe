@@ -2,6 +2,14 @@ use super::*;
 
 /// 生成空控制库的完整初始化脚本。调用方必须使用遇错即停的导入模式。
 pub fn mysql_initialization_sql(hashes: &crate::migration::BootstrapHashes) -> String {
+    mysql_initialization_sql_with_business(hashes, &[])
+}
+
+/// 业务 SQL 已完成完整性校验，先执行结构与业务账本，再登记控制库完成标记。
+pub fn mysql_initialization_sql_with_business(
+    hashes: &crate::migration::BootstrapHashes,
+    business: &[String],
+) -> String {
     let snapshot = hashes.render(&mysql_snapshot_sql());
     let start = snapshot
         .find("CREATE TABLE IF NOT EXISTS")
@@ -21,6 +29,11 @@ pub fn mysql_initialization_sql(hashes: &crate::migration::BootstrapHashes) -> S
          OR CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(VERSION(), '.', 3), '.', -1) AS UNSIGNED) >= 16))), 1, 0);\n\n",
     );
     sql.push_str(&snapshot[start..].replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
+    for statement in business {
+        sql.push('\n');
+        sql.push_str(statement.trim_end_matches([';', '\n', '\r', ' ']));
+        sql.push_str(";\n");
+    }
     sql.push_str("\n-- 所有结构和初始化数据成功后登记迁移；导入完成后执行 control verify。\n");
     sql.push_str("CREATE TABLE `seaql_migrations` (`version` VARCHAR(255) NOT NULL PRIMARY KEY, `applied_at` BIGINT NOT NULL);\n");
     for name in crate::migration::expected_migration_names() {

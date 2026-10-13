@@ -7,6 +7,10 @@ use std::sync::Arc;
 use ryframe_kernel::{AppError, AppResult};
 
 const BUSINESS_MIGRATION_LEDGER: &str = "ryframe_business_migration";
+const BUSINESS_MIGRATION_LEDGER_DDL: &str = "CREATE TABLE ryframe_business_migration (module_name VARCHAR(64) NOT NULL, migration_id VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL, before_fingerprint CHAR(64) NULL, after_fingerprint CHAR(64) NOT NULL, applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (module_name, migration_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
+
+mod export;
+pub use export::business_initialization_statements;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +44,14 @@ pub trait BusinessMigration: Send + Sync {
     /// 应用迁移后的规范化 schema 指纹。
     fn after_fingerprint(&self) -> &'static str;
     fn scope(&self) -> BusinessMigrationScope;
+    /// 与 up 使用同一来源的有序 SQL；无可导出描述时拒绝完整 SQL 初始化。
+    fn initialization_statements(&self) -> AppResult<&'static [&'static str]> {
+        Err(AppError::Config(format!(
+            "业务迁移 {}/{} 未提供初始化 SQL；请使用 control up，或为迁移提供与 up 同源的 SQL 描述，尚未写入导出文件",
+            self.module(),
+            self.id(),
+        )))
+    }
     async fn up(&self, database: &DatabaseConnection) -> AppResult<()>;
     async fn verify(&self, database: &DatabaseConnection) -> AppResult<()>;
     async fn status(&self, database: &DatabaseConnection) -> AppResult<MigrationState>;
@@ -54,6 +66,7 @@ pub struct SeaOrmBusinessMigration {
     after_fingerprint: &'static str,
     scope: BusinessMigrationScope,
     migration: Arc<dyn MigrationTrait>,
+    initialization_sql: Option<&'static [&'static str]>,
 }
 
 impl SeaOrmBusinessMigration {
@@ -74,7 +87,13 @@ impl SeaOrmBusinessMigration {
             after_fingerprint,
             scope,
             migration: Arc::new(migration),
+            initialization_sql: None,
         }
+    }
+
+    pub fn with_initialization_sql(mut self, statements: &'static [&'static str]) -> Self {
+        self.initialization_sql = Some(statements);
+        self
     }
 
     async fn applied_checksum(&self, database: &DatabaseConnection) -> AppResult<Option<String>> {
@@ -120,6 +139,13 @@ impl BusinessMigration for SeaOrmBusinessMigration {
 
     fn scope(&self) -> BusinessMigrationScope {
         self.scope
+    }
+
+    fn initialization_statements(&self) -> AppResult<&'static [&'static str]> {
+        self.initialization_sql.ok_or_else(|| AppError::Config(format!(
+            "业务迁移 {}/{} 未提供初始化 SQL；使用 control up，或通过 with_initialization_sql 提供与 up 同源的 SQL，尚未写入导出文件",
+            self.module, self.id,
+        )))
     }
 
     async fn up(&self, database: &DatabaseConnection) -> AppResult<()> {
@@ -190,9 +216,7 @@ async fn ensure_ledger(database: &DatabaseConnection) -> AppResult<()> {
     database
         .execute_raw(Statement::from_string(
             DbBackend::MySql,
-            format!(
-                "CREATE TABLE IF NOT EXISTS {BUSINESS_MIGRATION_LEDGER} (module_name VARCHAR(64) NOT NULL, migration_id VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL, before_fingerprint CHAR(64) NULL, after_fingerprint CHAR(64) NOT NULL, applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (module_name, migration_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
-            ),
+            BUSINESS_MIGRATION_LEDGER_DDL.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1),
         ))
         .await
         .map_err(database_error)?;

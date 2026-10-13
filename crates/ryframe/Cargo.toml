@@ -208,5 +208,10 @@ name = "migration_cli"
 path = "tests/migration_cli.rs"
 required-features = ["bin-migrate"]
 
+[[test]]
+name = "business_initialization_mysql"
+path = "tests/business_initialization_mysql.rs"
+required-features = ["bin-migrate"]
+
 [lints]
 workspace = true

@@ -34,7 +34,10 @@ pub use schema::{
     register_business_tables, verify_current_schema,
 };
 #[cfg(feature = "migration")]
-pub use seeder::{mysql_initialization_sql, mysql_snapshot_sql, seed, validate_seed_statements};
+pub use seeder::{
+    mysql_initialization_sql, mysql_initialization_sql_with_business, mysql_snapshot_sql, seed,
+    validate_seed_statements,
+};
 
 #[cfg(feature = "migration")]
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";

@@ -11,7 +11,7 @@ cargo migrate -- control export-sql --output .local-tests/control-init.sql --pla
 cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
 ```
 
-`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据和迁移账本，不包含管理员明文密码。自定义控制库业务迁移尚未提供 SQL 导出时会拒绝导出，改用 `control up`，不会漏掉业务表后报告成功。
+`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据、已注册控制库业务迁移和账本，不包含管理员明文密码。生成业务迁移自动使用与 `up` 同源的建表语句；手写 SeaORM 业务迁移通过 `with_initialization_sql` 提供同源 SQL，自定义迁移实现 `initialization_statements`。缺失或空描述会在导出前拒绝，改用 `control up`，不会漏掉业务表后报告成功。
 
 MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入，不使用 `--force`。PowerShell 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> --execute="source .local-tests/control-init.sql"`；bash 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> < .local-tests/control-init.sql`。数据库管理工具应启用遇错停止，并按脚本顺序执行全部语句。导入完成后执行 `cargo migrate -- control verify`。
 

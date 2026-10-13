@@ -39,19 +39,18 @@ pub(super) fn run(output: &Path, write: bool) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let modules = ryframe::business::registered_business_modules()?;
-    if modules.iter().any(|module| {
-        module
-            .migrations()
-            .iter()
-            .any(|migration| migration.scope() == ryframe_sdk::BusinessMigrationScope::Control)
-    }) {
-        return Err("当前业务模块包含自定义控制库迁移，尚不能导出其 SQL；请使用 control up 初始化，不能导出缺少业务表的脚本".into());
-    }
+    let migrations = modules
+        .iter()
+        .flat_map(|module| module.migrations())
+        .filter(|migration| migration.scope() == ryframe_sdk::BusinessMigrationScope::Control)
+        .map(|migration| migration.as_ref())
+        .collect::<Vec<_>>();
+    let business = ryframe_sdk::business_initialization_statements(&migrations)?;
     let hashes = bootstrap::load_hashes()?.ok_or(
         "缺少初始化管理员密码；设置 RYFRAME_INIT_ADMIN_PASSWORD 或 RYFRAME_INIT_ADMIN_PASSWORD_FILE 后重新导出，尚未写入文件",
     )?;
     let output = private_output(output)?;
-    let sql = ryframe_db::migration::mysql_initialization_sql(&hashes);
+    let sql = ryframe_db::migration::mysql_initialization_sql_with_business(&hashes, &business);
     publish(&output, sql.as_bytes())?;
     println!(
         "完整初始化 SQL 已导出：{}。使用遇错即停模式导入空 MySQL 数据库，再执行 cargo migrate -- control verify；文件含密码哈希，请按凭据保管。",

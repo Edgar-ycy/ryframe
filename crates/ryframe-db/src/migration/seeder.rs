@@ -97,7 +97,9 @@ where
 }
 
 mod snapshot;
-pub use snapshot::{mysql_initialization_sql, mysql_snapshot_sql};
+pub use snapshot::{
+    mysql_initialization_sql, mysql_initialization_sql_with_business, mysql_snapshot_sql,
+};
 
 #[derive(Debug)]
 struct SeedInsert {

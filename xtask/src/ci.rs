@@ -364,6 +364,11 @@ fn integration() -> Result<()> {
             "mysql_schema_import",
             Some("schema-import"),
         ),
+        (
+            "ryframe",
+            "business_initialization_mysql",
+            Some("bin-migrate"),
+        ),
     ] {
         run_owned(
             &root,
@@ -401,6 +406,7 @@ pub(crate) fn integration_test_args_for_target(
     let mut args = vec![
         "test".to_owned(),
         "--locked".to_owned(),
+        "--no-default-features".to_owned(),
         "--target-dir".to_owned(),
         target_dir.to_owned(),
         "-p".to_owned(),
