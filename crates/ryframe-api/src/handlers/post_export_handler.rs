@@ -14,7 +14,9 @@ use crate::{
 };
 
 pub fn post_export_router(state: AppState) -> Router {
-    Router::new().merge(route!(request_post_export)).with_state(state)
+    Router::new()
+        .merge(route!(request_post_export))
+        .with_state(state)
 }
 
 /// 创建岗位异步导出任务。
