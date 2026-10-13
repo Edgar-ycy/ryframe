@@ -7,7 +7,7 @@ mod path;
 mod plan;
 mod release_stage;
 mod schema;
-mod transaction;
+pub(crate) mod transaction;
 
 pub use execute::{write_resource, write_resources};
 pub use model::{

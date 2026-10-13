@@ -9,6 +9,7 @@ mod ir;
 mod render;
 mod spec;
 mod writer;
+pub(crate) use writer::transaction as write_transaction;
 
 pub use error::ResourceError;
 pub use explain::{ExplainNode, ResourceExplanation};

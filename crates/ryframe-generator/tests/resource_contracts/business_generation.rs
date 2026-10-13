@@ -55,16 +55,24 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     assert!(!written.created.is_empty());
     assert_generated_business(workspace.path());
 
+    let ownership_path = workspace
+        .path()
+        .join("order-business/.ryframe/generated.toml");
+    let ownership_modified = fs::metadata(&ownership_path).unwrap().modified().unwrap();
     let repeat = generate_business_package(BusinessGenerateOptions {
         current_dir: &crate_root,
         package: "order-business",
         model: None,
-        write: false,
+        write: true,
     })
-    .expect("重复预览应成功");
+    .expect("重复写入应成功且零差异");
     assert!(repeat.created.is_empty());
     assert!(repeat.updated.is_empty());
     assert!(repeat.removed.is_empty());
+    assert_eq!(
+        fs::metadata(&ownership_path).unwrap().modified().unwrap(),
+        ownership_modified
+    );
 
     assert_migration_is_immutable(workspace.path(), &crate_root);
 }

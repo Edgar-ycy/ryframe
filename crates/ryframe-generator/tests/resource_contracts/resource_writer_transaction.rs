@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 #[path = "../../src/resource/writer/transaction.rs"]
 #[allow(dead_code)]
-mod transaction;
+pub(super) mod transaction;
 
 use transaction::{
     ExpectedFile, InstalledFile, persist_recovery_directories, rollback, verify_expected_file,

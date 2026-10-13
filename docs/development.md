@@ -76,7 +76,7 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-命令可从工作区根目录或该 crate 的任意子目录执行。默认预览只报告差异，`--write` 才原子更新生成文件；资源生成不写 `resources/` 和 `extensions/`，不覆盖已生成迁移。`--package` 可由工具配置的 `generator.package` 提供；`--plan` 仅列任务，不编译描述符或访问数据库。`--sync-frontend --write` 使用本次后端候选契约同步前端。默认生成器保持离线，读取既有表使用 `cargo generate --features schema-import -- import --connection legacy --database control --package order-business --table biz_order`，连接和目标类型可由 `generator.source`、`generator.storage` 提供；当前反向导入用于首次模型草案。
+命令可从工作区根目录或该 crate 的任意子目录执行。默认预览只报告差异，`--write` 才原子更新受管文件；并发修改会拒绝覆盖，回滚未完成会报告备份路径。资源生成不写 `resources/` 和 `extensions/`，不覆盖已生成迁移。`--package` 可由工具配置的 `generator.package` 提供；`--plan` 仅列任务，不编译描述符或访问数据库。`--sync-frontend --write` 使用本次后端候选契约同步前端。默认生成器保持离线，读取既有表使用 `cargo generate --features schema-import -- import --connection legacy --database control --package order-business --table biz_order`，连接和目标类型可由 `generator.source`、`generator.storage` 提供；当前反向导入用于首次模型草案。
 
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
 

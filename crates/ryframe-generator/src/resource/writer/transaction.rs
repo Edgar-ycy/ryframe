@@ -6,7 +6,7 @@ use std::{
 use super::{ResourceError, content_hash};
 
 /// 回滚不完整时保留同卷事务目录，供人工从 `.backup` 恢复。
-pub(super) fn persist_recovery_directories(
+pub(crate) fn persist_recovery_directories(
     backend_stage: tempfile::TempDir,
     frontend_stage: Option<tempfile::TempDir>,
 ) -> Vec<PathBuf> {
@@ -18,25 +18,25 @@ pub(super) fn persist_recovery_directories(
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum ExpectedFile {
+pub(crate) enum ExpectedFile {
     Absent,
     ContentHash(String),
     ExactBytes(Vec<u8>),
 }
 
 impl ExpectedFile {
-    pub(super) fn exists(&self) -> bool {
+    pub(crate) fn exists(&self) -> bool {
         !matches!(self, Self::Absent)
     }
 }
 
 #[derive(Debug)]
-pub(super) struct InstalledFile {
-    pub(super) path: PathBuf,
-    pub(super) content_hash: String,
+pub(crate) struct InstalledFile {
+    pub(crate) path: PathBuf,
+    pub(crate) content_hash: String,
 }
 
-pub(super) fn write_staged(
+pub(crate) fn write_staged(
     path: &Path,
     content: &str,
     resource: &str,
@@ -78,7 +78,7 @@ pub(super) fn write_staged(
     Ok(())
 }
 
-pub(super) fn verify_expected_file(
+pub(crate) fn verify_expected_file(
     path: &Path,
     expected: &ExpectedFile,
 ) -> Result<(), ResourceError> {
@@ -128,7 +128,7 @@ pub(super) fn verify_expected_file(
     Ok(())
 }
 
-pub(super) fn move_to_backup(target: &Path, backup: &Path) -> Result<(), ResourceError> {
+pub(crate) fn move_to_backup(target: &Path, backup: &Path) -> Result<(), ResourceError> {
     if let Some(parent) = backup.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             ResourceError::file(
@@ -147,7 +147,7 @@ pub(super) fn move_to_backup(target: &Path, backup: &Path) -> Result<(), Resourc
     })
 }
 
-pub(super) fn install_staged(
+pub(crate) fn install_staged(
     staged: &Path,
     target: &Path,
     resource: &str,
@@ -172,7 +172,7 @@ pub(super) fn install_staged(
     })
 }
 
-pub(super) fn rollback(
+pub(crate) fn rollback(
     installed: &[InstalledFile],
     backups: &[(PathBuf, PathBuf)],
 ) -> Result<(), ResourceError> {

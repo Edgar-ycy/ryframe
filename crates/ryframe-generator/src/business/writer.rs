@@ -10,6 +10,11 @@ use sha2::{Digest, Sha256};
 use super::{BusinessGenerateReport, BusinessPackage};
 use crate::ResourceError;
 
+mod staged;
+use crate::resource::write_transaction as transaction;
+use staged::apply_changes;
+use transaction::ExpectedFile;
+
 const OWNERSHIP_PATH: &str = ".ryframe/generated.toml";
 
 #[derive(Clone, Debug)]
@@ -57,7 +62,7 @@ pub(super) fn install_assets(
     assets.sort_by(|left, right| left.path.cmp(&right.path));
     ensure_unique_safe_paths(&assets)?;
     let manifest_path = package.root.join(OWNERSHIP_PATH);
-    let old = load_manifest(&manifest_path)?;
+    let (old, manifest_expected) = load_manifest(&manifest_path)?;
     verify_owned_files(&package.root, &old)?;
     let old_by_path = old
         .entries
@@ -104,7 +109,9 @@ pub(super) fn install_assets(
         }
     }
     sort_report(&mut report);
-    if !write {
+    if !write
+        || (report.created.is_empty() && report.updated.is_empty() && report.removed.is_empty())
+    {
         return Ok(report);
     }
     let desired_entries = merge_entries(&old, selected, &assets, &report.removed);
@@ -118,11 +125,20 @@ pub(super) fn install_assets(
             &manifest_path,
         )
     })?;
+    let expected = expected_files(&old, &assets, manifest_expected);
+    let changed = assets
+        .iter()
+        .filter(|asset| {
+            report.created.contains(&asset.path) || report.updated.contains(&asset.path)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     apply_changes(
         &package.root,
-        &assets,
+        &changed,
         &report.removed,
-        manifest_source.as_bytes(),
+        &manifest_source,
+        &expected,
     )?;
     Ok(report)
 }
@@ -158,98 +174,31 @@ fn merge_entries(
     entries
 }
 
-fn apply_changes(
-    root: &Path,
+fn expected_files(
+    old: &OwnershipManifest,
     assets: &[BusinessAsset],
-    removed: &[String],
-    manifest: &[u8],
-) -> Result<(), ResourceError> {
-    let stage = tempfile::Builder::new()
-        .prefix(".ryframe-stage-")
-        .tempdir_in(root)
-        .map_err(|io| error(format!("无法创建同卷暂存目录：{io}"), root))?;
+    manifest: ExpectedFile,
+) -> BTreeMap<String, ExpectedFile> {
+    let mut expected = old
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.path.clone(),
+                ExpectedFile::ContentHash(entry.content_hash.clone()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     for asset in assets {
-        let staged = stage.path().join(&asset.path);
-        if let Some(parent) = staged.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|io| error(format!("无法创建暂存目录：{io}"), parent))?;
-        }
-        fs::write(&staged, asset.content.as_bytes())
-            .map_err(|io| error(format!("无法写入暂存文件：{io}"), &staged))?;
+        expected
+            .entry(asset.path.clone())
+            .or_insert(ExpectedFile::Absent);
     }
-    let staged_manifest = stage.path().join(OWNERSHIP_PATH);
-    if let Some(parent) = staged_manifest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|io| error(format!("无法创建 ownership 暂存目录：{io}"), parent))?;
-    }
-    fs::write(&staged_manifest, manifest)
-        .map_err(|io| error(format!("无法暂存 ownership：{io}"), &staged_manifest))?;
-    let backup = stage.path().join("backup");
-    let mut installed = Vec::new();
-    let result = (|| {
-        for path in removed
-            .iter()
-            .chain(assets.iter().map(|asset| &asset.path))
-            .map(String::as_str)
-            .chain(std::iter::once(OWNERSHIP_PATH))
-        {
-            let target = root.join(path);
-            if target.exists() {
-                let saved = backup.join(path);
-                if let Some(parent) = saved.parent() {
-                    fs::create_dir_all(parent)
-                        .map_err(|io| error(format!("无法创建备份目录：{io}"), parent))?;
-                }
-                fs::rename(&target, &saved)
-                    .map_err(|io| error(format!("无法备份受管文件：{io}"), &target))?;
-            }
-        }
-        for asset in assets {
-            let target = root.join(&asset.path);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|io| error(format!("无法创建目标目录：{io}"), parent))?;
-            }
-            fs::rename(stage.path().join(&asset.path), &target)
-                .map_err(|io| error(format!("无法安装生成文件：{io}"), &target))?;
-            installed.push(asset.path.as_str());
-        }
-        let manifest_target = root.join(OWNERSHIP_PATH);
-        if let Some(parent) = manifest_target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|io| error(format!("无法创建 ownership 目录：{io}"), parent))?;
-        }
-        fs::rename(staged_manifest, &manifest_target)
-            .map_err(|io| error(format!("无法安装 ownership：{io}"), &manifest_target))?;
-        installed.push(OWNERSHIP_PATH);
-        Ok(())
-    })();
-    if let Err(failure) = result {
-        for path in installed.into_iter().rev() {
-            let target = root.join(path);
-            let _ = fs::remove_file(target);
-        }
-        for path in removed
-            .iter()
-            .chain(assets.iter().map(|asset| &asset.path))
-            .map(String::as_str)
-            .chain(std::iter::once(OWNERSHIP_PATH))
-        {
-            let saved = backup.join(path);
-            if saved.exists() {
-                let target = root.join(path);
-                if let Some(parent) = target.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                let _ = fs::rename(saved, target);
-            }
-        }
-        return Err(failure);
-    }
-    Ok(())
+    expected.insert(OWNERSHIP_PATH.into(), manifest);
+    expected
 }
 
-fn load_manifest(path: &Path) -> Result<OwnershipManifest, ResourceError> {
+fn load_manifest(path: &Path) -> Result<(OwnershipManifest, ExpectedFile), ResourceError> {
     match fs::read_to_string(path) {
         Ok(source) => {
             let manifest: OwnershipManifest = toml::from_str(&source)
@@ -257,9 +206,11 @@ fn load_manifest(path: &Path) -> Result<OwnershipManifest, ResourceError> {
             if manifest.format_version != format_version() {
                 return Err(error("不支持的 ownership 版本", path));
             }
-            Ok(manifest)
+            Ok((manifest, ExpectedFile::ExactBytes(source.into_bytes())))
         }
-        Err(io) if io.kind() == std::io::ErrorKind::NotFound => Ok(OwnershipManifest::default()),
+        Err(io) if io.kind() == std::io::ErrorKind::NotFound => {
+            Ok((OwnershipManifest::default(), ExpectedFile::Absent))
+        }
         Err(io) => Err(error(format!("无法读取 ownership：{io}"), path)),
     }
 }
