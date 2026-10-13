@@ -63,7 +63,12 @@ pub(crate) fn execute_registered_task(
     state: &mut CheckExecutionState,
 ) -> Result<()> {
     match executor {
-        TaskExecutor::RemovedIdentity => run_removed_identity(&context.root, &context.frontend_dir),
+        TaskExecutor::RemovedIdentity => run_removed_identity(
+            &context.root,
+            context
+                .include_frontend
+                .then_some(context.frontend_dir.as_path()),
+        ),
         TaskExecutor::FrontendDependencies => require_frontend_dependencies(&context.frontend_dir),
         TaskExecutor::PythonEnvironment => {
             run_process(&context.root, "python", PYTHON_ENVIRONMENT_ARGS)
@@ -75,11 +80,14 @@ pub(crate) fn execute_registered_task(
         ),
         TaskExecutor::FeatureRegistry => check_feature_registry(&context.root),
         TaskExecutor::WorkspaceClippy => run_workspace_clippy(context),
-        TaskExecutor::PolicyChecks => run_policy_checks(context, policy_profile(mode)),
+        TaskExecutor::PolicyChecks | TaskExecutor::BackendPolicyChecks => {
+            run_policy_checks(context, policy_profile(mode))
+        }
         TaskExecutor::PythonTests => run_process(&context.root, "python", PYTHON_TEST_ARGS),
         TaskExecutor::NodeTests => run_node_tests(&context.root),
         TaskExecutor::MigrationHistory => run_migration_history(context, mode, executor),
-        TaskExecutor::WorkspaceGates => run_workspace_gates(context, mode, state),
+        TaskExecutor::WorkspaceGates => run_workspace_gates(context, mode, state, true),
+        TaskExecutor::BackendWorkspaceGates => run_workspace_gates(context, mode, state, false),
         TaskExecutor::FrontendFull => run_pnpm(&context.frontend_dir, &["check", "--full"]),
         TaskExecutor::SnapshotPrepare
         | TaskExecutor::SnapshotVerify
@@ -89,6 +97,7 @@ pub(crate) fn execute_registered_task(
         }
         TaskExecutor::SmartBackendPackages
         | TaskExecutor::SmartPolicyChecks
+        | TaskExecutor::BackendSmartPolicyChecks
         | TaskExecutor::SmartFrontend => execute_smart_task(executor, mode, context, state),
         TaskExecutor::CiFrontendSource
         | TaskExecutor::CiFrontendCandidateSource
@@ -155,7 +164,9 @@ fn execute_smart_task(
             &selection.backend_packages,
             state.snapshots.as_ref(),
         ),
-        TaskExecutor::SmartPolicyChecks => run_policy_checks(context, PolicyProfile::Smart),
+        TaskExecutor::SmartPolicyChecks | TaskExecutor::BackendSmartPolicyChecks => {
+            run_policy_checks(context, PolicyProfile::Smart)
+        }
         TaskExecutor::SmartFrontend => frontend_profiles(
             &context.frontend_dir,
             &selection.frontend_profiles,
@@ -175,7 +186,12 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
         run_owned(
             &context.root,
             "python",
-            &task.arguments(&context.root, &context.frontend_dir)?,
+            &task.arguments(
+                &context.root,
+                context
+                    .include_frontend
+                    .then_some(context.frontend_dir.as_path()),
+            )?,
         )?;
     }
     Ok(())
@@ -266,6 +282,7 @@ fn run_workspace_gates(
     context: &VerifyExecutionContext,
     mode: TaskExecutionMode<'_>,
     state: &CheckExecutionState,
+    include_resource_workspace: bool,
 ) -> Result<()> {
     let snapshots = state
         .snapshots
@@ -284,7 +301,29 @@ fn run_workspace_gates(
         "Workspace 门禁并发：总计={}，主 Workspace 编译={}，测试={}，资源 Workspace={}",
         budget.total, budget.backend, test_jobs, budget.resource
     );
-    run_workspace_branches(context, snapshots, test_jobs)
+    if include_resource_workspace {
+        run_workspace_branches(context, snapshots, test_jobs)
+    } else {
+        run_backend_workspace(context, snapshots, test_jobs)
+    }
+}
+
+fn run_backend_workspace(
+    context: &VerifyExecutionContext,
+    snapshots: &BackendSnapshots,
+    test_jobs: usize,
+) -> Result<()> {
+    feature_matrix_with_jobs(
+        &context.root,
+        context.targets.backend.as_str(),
+        context.jobs.backend,
+    )?;
+    run_owned_with_env(
+        &context.root,
+        "cargo",
+        &workspace_test_args(context.targets.backend.as_str(), test_jobs),
+        &snapshots.workspace_test_environment(),
+    )
 }
 
 fn run_workspace_branches(
@@ -295,19 +334,7 @@ fn run_workspace_branches(
     run_parallel_tasks(
         &context.root,
         "backend-workspace",
-        || {
-            feature_matrix_with_jobs(
-                &context.root,
-                context.targets.backend.as_str(),
-                context.jobs.backend,
-            )?;
-            run_owned_with_env(
-                &context.root,
-                "cargo",
-                &workspace_test_args(context.targets.backend.as_str(), test_jobs),
-                &snapshots.workspace_test_environment(),
-            )
-        },
+        || run_backend_workspace(context, snapshots, test_jobs),
         "resource-workspace",
         || {
             resource_workspace_compilation(

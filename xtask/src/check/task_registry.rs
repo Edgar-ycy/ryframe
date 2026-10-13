@@ -62,17 +62,20 @@ pub(crate) enum TaskExecutor {
     FeatureRegistry,
     WorkspaceClippy,
     PolicyChecks,
+    BackendPolicyChecks,
     SnapshotPrepare,
     PythonTests,
     NodeTests,
     MigrationHistory,
     WorkspaceGates,
+    BackendWorkspaceGates,
     SnapshotVerify,
     ConsumerContract,
     FrontendConsumerContract,
     FrontendFull,
     SmartBackendPackages,
     SmartPolicyChecks,
+    BackendSmartPolicyChecks,
     SmartFrontend,
     CiFrontendSource,
     CiFrontendCandidateSource,
@@ -141,7 +144,7 @@ mod perf;
 #[path = "task_registry/release.rs"]
 mod release;
 
-const CHECK_TASKS: [TaskDefinition; 19] = [
+const CHECK_TASKS: [TaskDefinition; 22] = [
     task_definition!(
         RemovedIdentity,
         "policy.removed-identity",
@@ -221,6 +224,19 @@ const CHECK_TASKS: [TaskDefinition; 19] = [
         &[]
     ),
     task_definition!(
+        BackendPolicyChecks,
+        "policy.backend-complete",
+        "run_policy_checks",
+        "执行完整后端政策检查，不读取前端",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &["Python 测试缓存"],
+        &[]
+    ),
+    task_definition!(
         PolicyChecks,
         "policy.complete",
         "run_policy_checks",
@@ -283,6 +299,19 @@ const CHECK_TASKS: [TaskDefinition; 19] = [
         Some(STRICT_MIGRATION_HISTORY_ARGS),
         &[],
         &[],
+        &[]
+    ),
+    task_definition!(
+        BackendWorkspaceGates,
+        "rust.backend-workspace-gates",
+        "run_backend_workspace",
+        "执行后端 feature 矩阵与 Workspace 测试",
+        Backend,
+        Test,
+        Backend,
+        None,
+        &["feature matrix", "Workspace test --all-features"],
+        &["Cargo target", "测试日志"],
         &[]
     ),
     task_definition!(
@@ -365,6 +394,19 @@ const CHECK_TASKS: [TaskDefinition; 19] = [
         None,
         &["选中包及其 feature 测试"],
         &["Cargo target"],
+        &[]
+    ),
+    task_definition!(
+        BackendSmartPolicyChecks,
+        "policy.backend-smart",
+        "run_policy_checks",
+        "执行变更涉及的后端政策检查，不读取前端",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &["Python 测试缓存"],
         &[]
     ),
     task_definition!(

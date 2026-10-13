@@ -315,7 +315,14 @@ pub(super) fn load_workspace_metadata(root: &Path) -> Result<serde_json::Value> 
     let output = command_output(
         root,
         "cargo",
-        &["metadata", "--format-version", "1", "--no-deps"],
+        &[
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--locked",
+            "--offline",
+        ],
     )?;
     serde_json::from_str(&output)
         .map_err(|error| format!("Cargo 工作区元数据不是有效 JSON：{error}").into())

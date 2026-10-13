@@ -13,7 +13,7 @@ use super::{
 pub(crate) fn tasks_for(scope: CheckScope, mode: &CheckPlanMode) -> Result<TaskPlan> {
     let executors = match mode {
         CheckPlanMode::ExplicitFull | CheckPlanMode::ExpandedFull(_) => full_tasks(scope),
-        CheckPlanMode::Selected(selection) => smart_tasks(selection),
+        CheckPlanMode::Selected(selection) => smart_tasks(selection, scope),
     };
     TaskPlan::sequence(&executors)
 }
@@ -24,27 +24,33 @@ fn full_tasks(scope: CheckScope) -> Vec<TaskExecutor> {
     }
     let mut tasks = vec![
         TaskExecutor::PythonEnvironment,
-        TaskExecutor::FrontendDependencies,
         TaskExecutor::FeatureRegistry,
         TaskExecutor::CargoFormat,
         TaskExecutor::WorkspaceClippy,
-        TaskExecutor::PolicyChecks,
+        if scope == CheckScope::Backend {
+            TaskExecutor::BackendPolicyChecks
+        } else {
+            TaskExecutor::PolicyChecks
+        },
         TaskExecutor::SnapshotPrepare,
         TaskExecutor::PythonTests,
         TaskExecutor::NodeTests,
         TaskExecutor::MigrationHistory,
-        TaskExecutor::WorkspaceGates,
+        if scope == CheckScope::Backend {
+            TaskExecutor::BackendWorkspaceGates
+        } else {
+            TaskExecutor::WorkspaceGates
+        },
         TaskExecutor::SnapshotVerify,
     ];
-    tasks.push(match scope {
-        CheckScope::Backend => TaskExecutor::ConsumerContract,
-        CheckScope::All => TaskExecutor::FrontendConsumerContract,
-        CheckScope::Frontend => unreachable!("前端完整任务已提前返回"),
-    });
+    if scope == CheckScope::All {
+        tasks.insert(1, TaskExecutor::FrontendDependencies);
+        tasks.push(TaskExecutor::FrontendConsumerContract);
+    }
     tasks
 }
 
-fn smart_tasks(selection: &VerifySelection) -> Vec<TaskExecutor> {
+fn smart_tasks(selection: &VerifySelection, scope: CheckScope) -> Vec<TaskExecutor> {
     let prepare_snapshots = !selection.backend_packages.is_empty()
         && !selection.backend_snapshot_profiles.is_empty()
         && package_tests_generate_snapshots(
@@ -52,7 +58,10 @@ fn smart_tasks(selection: &VerifySelection) -> Vec<TaskExecutor> {
             &selection.backend_packages,
         );
     let mut tasks = Vec::new();
-    if selection.backend_packages.is_empty() && !selection.frontend_profiles.is_empty() {
+    if scope != CheckScope::Backend
+        && selection.backend_packages.is_empty()
+        && !selection.frontend_profiles.is_empty()
+    {
         tasks.push(TaskExecutor::RemovedIdentity);
     }
     if prepare_snapshots {
@@ -63,16 +72,21 @@ fn smart_tasks(selection: &VerifySelection) -> Vec<TaskExecutor> {
             TaskExecutor::FeatureRegistry,
             TaskExecutor::CargoFormat,
             TaskExecutor::SmartBackendPackages,
-            TaskExecutor::SmartPolicyChecks,
+            if scope == CheckScope::Backend {
+                TaskExecutor::BackendSmartPolicyChecks
+            } else {
+                TaskExecutor::SmartPolicyChecks
+            },
         ]);
     }
     if !selection.backend_snapshot_profiles.is_empty() {
         tasks.push(TaskExecutor::SnapshotVerify);
     }
-    if needs_consumer_contract(&selection.backend_snapshot_profiles) {
+    if scope != CheckScope::Backend && needs_consumer_contract(&selection.backend_snapshot_profiles)
+    {
         tasks.push(TaskExecutor::ConsumerContract);
     }
-    if !selection.frontend_profiles.is_empty() {
+    if scope != CheckScope::Backend && !selection.frontend_profiles.is_empty() {
         tasks.push(TaskExecutor::SmartFrontend);
     }
     tasks

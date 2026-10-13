@@ -5075,6 +5075,7 @@ dependencies = [
  "nix 0.29.0",
  "notify",
  "processkit",
+ "ryframe-config",
  "ryframe-generator",
  "serde",
  "serde_json",

@@ -11,7 +11,13 @@ fn default_frontend_is_sibling_of_backend() {
     } else {
         root.parent().unwrap().join("ryframe-vue3")
     };
-    assert_eq!(workspace::default_frontend_dir(), expected);
+    assert_eq!(
+        workspace::default_frontend_dir()
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        expected.canonicalize().unwrap()
+    );
 }
 
 #[test]

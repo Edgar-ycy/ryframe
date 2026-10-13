@@ -32,9 +32,11 @@ impl PythonPolicyTask {
         }
     }
 
-    pub(crate) fn arguments(self, root: &Path, frontend_dir: &Path) -> Result<Vec<String>> {
+    pub(crate) fn arguments(self, root: &Path, frontend_dir: Option<&Path>) -> Result<Vec<String>> {
         let mut arguments = vec![self.script.to_owned()];
-        if self.requires_frontend {
+        if self.requires_frontend
+            && let Some(frontend_dir) = frontend_dir
+        {
             let frontend_dir = if frontend_dir.is_absolute() {
                 frontend_dir.to_path_buf()
             } else {

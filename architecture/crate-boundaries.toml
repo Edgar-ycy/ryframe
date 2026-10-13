@@ -148,5 +148,6 @@ allowed_internal_edges = [
     "ryframe-tenant-db -> ryframe-db",
     "ryframe-tenant-db -> ryframe-kernel",
     "xtask -> ryframe-generator",
+    "xtask -> ryframe-config",
 ]
 temporary_product_tool_edges = []

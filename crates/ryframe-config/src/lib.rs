@@ -19,7 +19,11 @@ mod runtime_config;
 mod telemetry_config;
 mod tenant_config_transfer_config;
 mod tenant_data_config;
+#[cfg(feature = "tools")]
+mod tool_config;
 mod user_import_config;
+#[cfg(feature = "tools")]
+pub use tool_config::{GeneratorSettings, ToolSettings, WorkspaceSettings};
 
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;

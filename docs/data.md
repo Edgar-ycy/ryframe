@@ -2,6 +2,21 @@
 
 `ryframe-tenant-data backup-inventory` 复用同一只读完整采集核心，必须在 `--quiesced-at <RFC3339>` 与 `--observed-at <RFC3339>` 中选择一个。前者记录外部已停止全部生产者的时间，供正式备份与导出复核；后者仅记录开始观察的时间，供受控源运行的完整前后像比较。输出只包含所选时间字段；带 `observed_at` 的库存不能用于正式备份或导出，仍须用完整前后像确认数据库和对象稳定。
 
+## 控制库初始化 SQL
+
+需要直接导入 SQL 时使用正式导出入口：
+
+```powershell
+cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan
+cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
+```
+
+`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据和迁移账本，不包含管理员明文密码。自定义控制库业务迁移尚未提供 SQL 导出时会拒绝导出，改用 `control up`，不会漏掉业务表后报告成功。
+
+MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入，不使用 `--force`。PowerShell 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> --execute="source .local-tests/control-init.sql"`；bash 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> < .local-tests/control-init.sql`。数据库管理工具应启用遇错停止，并按脚本顺序执行全部语句。导入完成后执行 `cargo migrate -- control verify`。
+
+`sql/ryframe_config.sql` 是确定性审阅快照，包含占位哈希且没有迁移账本，不能作为部署脚本直接导入。已经导入审阅快照或导入中断时，不通过重复 `up` 猜测补齐，也不自动删除对象；保留报错和结构现状，确认数据用途后选择全新隔离库初始化。MySQL DDL 不能依赖外层事务整体回滚。
+
 ## 数据边界
 
 控制库保存身份、授权、产品、租户目录、任务、文件元数据和 placement。租户业务数据按目标路由进入 shared-control 或独立租户库。

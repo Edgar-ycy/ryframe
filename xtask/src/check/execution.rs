@@ -55,6 +55,7 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
     let started = Instant::now();
     let mut mode = if full { "完整" } else { "智能" };
     let mut context = VerifyExecutionContext::new(frontend_dir, full)?;
+    context.include_frontend = scope != CheckScope::Backend;
     metrics::begin(
         &context.root,
         &context.frontend_dir,
@@ -314,7 +315,7 @@ fn backend_packages(
     Ok(())
 }
 
-pub(super) fn run_removed_identity(root: &Path, frontend_dir: &Path) -> Result<()> {
+pub(super) fn run_removed_identity(root: &Path, frontend_dir: Option<&Path>) -> Result<()> {
     let task = PYTHON_POLICY_TASKS
         .iter()
         .find(|task| task.id == "removed-identity")

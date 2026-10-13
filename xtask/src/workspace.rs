@@ -36,15 +36,9 @@ pub(crate) fn root_dir() -> PathBuf {
 }
 
 /// 返回前后端并列检出时的默认前端目录。
-pub(crate) fn default_frontend_dir() -> PathBuf {
+pub(crate) fn default_frontend_dir() -> Result<PathBuf> {
     let root = root_dir();
-    let parent = root.parent().expect("后端 Workspace 必须具有父目录");
-    let ci_frontend = parent.join("frontend");
-    if ci_frontend.is_dir() {
-        ci_frontend
-    } else {
-        parent.join("ryframe-vue3")
-    }
+    Ok(ryframe_config::ToolSettings::load(&root)?.frontend_dir(&root))
 }
 
 /// 删除显式隔离根目录内的单个子目录，并拒绝越界或根目录目标。

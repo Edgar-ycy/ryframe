@@ -47,8 +47,16 @@ pub(crate) fn build_task_plan(
     root: &Path,
     frontend_dir: &Path,
 ) -> Result<CheckTaskPlan> {
-    let backend_changes = changed_paths(root)?;
-    let frontend_changes = changed_paths(frontend_dir)?;
+    let backend_changes = if scope != CheckScope::Frontend {
+        changed_paths(root)?
+    } else {
+        Vec::new()
+    };
+    let frontend_changes = if scope != CheckScope::Backend {
+        changed_paths(frontend_dir).map_err(|error| format!("无法读取前端工作树 {}：{error}；在 config/tools.toml 的 workspace.frontend_dir 或 .local-tests/tools.toml 设置实际路径，也可传 --frontend-dir <路径>", frontend_dir.display()))?
+    } else {
+        Vec::new()
+    };
     let policy = load_change_surface_policy(root)?;
     let mut surface = analyze_change_surface(&backend_changes, &frontend_changes, &policy);
     append_changed_file_size_warnings(
@@ -99,6 +107,9 @@ pub(crate) fn select_check_mode(
         &[]
     };
     let mut selection = classify_changes(selected_backend, selected_frontend, graph);
+    if scope == CheckScope::Backend {
+        selection.frontend_profiles.clear();
+    }
     if let Some(reason) = selection.full_reason.take() {
         return CheckPlanMode::ExpandedFull(reason);
     }

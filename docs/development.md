@@ -36,18 +36,8 @@ cargo migrate -- tenant-data verify --target <目标键>
 
 初始化前将管理员初始密码保存在上述 UTF-8 文件中，也可通过 `RYFRAME_INIT_ADMIN_PASSWORD` 提供；两者不能同时设置。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。
 
-需要直接导入 SQL 时使用正式导出入口：
+SQL 导出、数据库客户端导入方式及中断处理见[数据指南](data.md#控制库初始化-sql)。
 
-```powershell
-cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan
-cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
-```
-
-`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据和迁移账本，不包含管理员明文密码。自定义控制库业务迁移尚未提供 SQL 导出时会拒绝导出，改用 `control up`，不会漏掉业务表后报告成功。
-
-MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入，不使用 `--force`。PowerShell 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> --execute="source .local-tests/control-init.sql"`；bash 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> < .local-tests/control-init.sql`。数据库管理工具应启用遇错停止，并按脚本顺序执行全部语句。导入完成后执行 `cargo migrate -- control verify`。
-
-`sql/ryframe_config.sql` 是确定性审阅快照，包含占位哈希且没有迁移账本，不能作为部署脚本直接导入。已经导入审阅快照或导入中断时，不通过重复 `up` 猜测补齐，也不自动删除对象；保留报错和结构现状，确认数据用途后选择全新隔离库初始化。MySQL DDL 不能依赖外层事务整体回滚。
 ## 创建业务 crate
 
 使用正式脚手架创建业务 crate：
@@ -152,7 +142,16 @@ TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redi
 真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。
 ## 框架维护检查
 
-框架维护者通过 `cargo xtask check` 执行按变更规划的检查，通过 `cargo xtask check --full` 执行浏览器以外的完整门禁。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。
+框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。
+
+前端改名或移动后，在后端 `config/tools.toml` 设置路径；仅本机使用的配置放在忽略目录 `.local-tests/tools.toml`：
+
+```toml
+[workspace]
+frontend_dir = "../web"
+```
+
+优先级为命令行 `--frontend-dir`、本机工具配置、公共工具配置；相对路径统一以后端 Cargo Workspace 根目录解析，与命令在哪个子目录运行无关。工具配置不放服务连接密码，也不影响 `cargo serve` 的运行时配置。后端范围只检查后端，显式跨仓范围找不到前端时会输出实际路径与配置位置。
 
 需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。
 ## 常见问题

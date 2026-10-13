@@ -43,7 +43,7 @@ impl Fixture {
             text(&self.output),
             "--write".to_owned(),
             "--frontend-dir".to_owned(),
-            text(&default_frontend_dir()),
+            text(&default_frontend_dir().unwrap()),
         ]
     }
 }
@@ -129,7 +129,8 @@ fn private_protocol_fixes_paths_and_hides_the_public_request_from_argv() {
             frontend_sha: "b".repeat(40),
         }),
     };
-    let invocation = private_invocation_at(&options, &root_dir(), &default_frontend_dir()).unwrap();
+    let invocation =
+        private_invocation_at(&options, &root_dir(), &default_frontend_dir().unwrap()).unwrap();
     assert_eq!(
         invocation.script,
         "tools/python/prepare_full_stack_fixture.py"

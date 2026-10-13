@@ -24,9 +24,17 @@ use release::parse_release;
 pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
     let frontend_option = take_unique_option(&mut args, "--frontend-dir")?;
     let frontend_was_explicit = frontend_option.is_some();
-    let frontend_dir = frontend_option
-        .map(PathBuf::from)
-        .unwrap_or_else(default_frontend_dir);
+    let frontend_dir = match frontend_option {
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                crate::workspace::root_dir().join(path)
+            }
+        }
+        None => default_frontend_dir().map_err(|error| CliError::new(error.to_string()))?,
+    };
     let Some(command_name) = args.first().cloned() else {
         return Ok(Cli {
             frontend_dir,
@@ -141,7 +149,7 @@ fn parse_check(args: &[String]) -> Result<CheckCommand, CliError> {
 
 fn default_check_options() -> CheckOptions {
     CheckOptions {
-        scope: CheckScope::All,
+        scope: CheckScope::Backend,
         full: false,
         plan: false,
     }

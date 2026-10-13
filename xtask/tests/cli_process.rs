@@ -26,6 +26,38 @@ fn invoke(arguments: &[&str]) -> Output {
         .unwrap()
 }
 
+#[test]
+fn default_backend_plan_does_not_require_frontend_checkout() {
+    let output = invoke(&[
+        "check",
+        "--full",
+        "--plan",
+        "--frontend-dir",
+        ".local-tests/frontend-absent-for-plan",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("rust.backend-workspace-gates"));
+    assert!(!text.contains("任务 frontend.dependencies"));
+    assert!(!text.contains("任务 contract.consumer"));
+    let all = invoke(&[
+        "check",
+        "--scope",
+        "all",
+        "--plan",
+        "--frontend-dir",
+        ".local-tests/frontend-absent-for-plan",
+    ]);
+    assert!(!all.status.success());
+    let error = String::from_utf8_lossy(&all.stderr);
+    assert!(error.contains("config/tools.toml"));
+    assert!(error.contains("frontend-absent-for-plan"));
+}
+
 fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {
     xtask_command()
         .args(arguments)

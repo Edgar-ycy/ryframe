@@ -103,8 +103,12 @@ fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
         .find(|task| task.id == "removed-identity")
         .unwrap();
 
-    let arguments = task.arguments(&root, frontend).unwrap();
+    let arguments = task.arguments(&root, Some(frontend)).unwrap();
     assert_eq!(arguments[0], "tools/python/check_removed_identity.py");
+    assert_eq!(
+        task.arguments(&root, None).unwrap(),
+        ["tools/python/check_removed_identity.py"]
+    );
     assert_eq!(arguments[1], "--frontend-dir");
     assert!(Path::new(&arguments[2]).is_absolute());
     assert_eq!(
@@ -112,7 +116,9 @@ fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
         std::path::absolute(root.join(frontend)).unwrap()
     );
     assert_eq!(
-        PYTHON_POLICY_TASKS[0].arguments(&root, frontend).unwrap(),
+        PYTHON_POLICY_TASKS[0]
+            .arguments(&root, Some(frontend))
+            .unwrap(),
         ["tools/python/check_architecture.py"]
     );
 }

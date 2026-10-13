@@ -45,6 +45,7 @@ pub(crate) struct VerifyJobBudget {
 pub(crate) struct VerifyExecutionContext {
     pub(crate) root: PathBuf,
     pub(crate) frontend_dir: PathBuf,
+    pub(crate) include_frontend: bool,
     pub(crate) jobs: VerifyJobBudget,
     pub(crate) targets: VerifyTargetPolicy,
     ci: bool,
@@ -61,6 +62,7 @@ impl VerifyExecutionContext {
         Ok(Self {
             root: root_dir(),
             frontend_dir: frontend_dir.to_path_buf(),
+            include_frontend: true,
             jobs: verify_job_budget()?,
             targets: verify_target_policy_from(full, ci, cargo_target.as_deref()),
             ci,

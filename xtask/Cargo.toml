@@ -13,6 +13,7 @@ default = []
 resource = ["dep:ryframe-generator"]
 
 [dependencies]
+ryframe-config = { path = "../crates/ryframe-config", features = ["tools"] }
 chrono = { workspace = true }
 notify = "8.2"
 ryframe-generator = { path = "../crates/ryframe-generator", default-features = false, optional = true }

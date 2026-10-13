@@ -90,13 +90,30 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
 }
 
 #[test]
-fn full_scope_keeps_backend_contract_and_frontend_only_paths_distinct() {
+fn full_scope_keeps_backend_independent_and_cross_repository_explicit() {
     let backend = tasks_for(CheckScope::Backend, &CheckPlanMode::ExplicitFull).unwrap();
-    assert_eq!(backend.tasks.last().unwrap().id, "contract.consumer");
     assert_eq!(
-        backend.tasks.last().unwrap().executor,
-        TaskExecutor::ConsumerContract
+        backend.tasks.last().unwrap().id,
+        "contract.snapshots-verify"
     );
+    assert!(
+        backend
+            .tasks
+            .iter()
+            .any(|task| task.executor == TaskExecutor::BackendWorkspaceGates)
+    );
+    assert!(
+        backend
+            .tasks
+            .iter()
+            .all(|task| task.definition().repository == TaskRepository::Backend)
+    );
+    assert!(!backend.tasks.iter().any(|task| matches!(
+        task.executor,
+        TaskExecutor::ConsumerContract
+            | TaskExecutor::FrontendConsumerContract
+            | TaskExecutor::FrontendDependencies
+    )));
 
     let frontend = tasks_for(CheckScope::Frontend, &CheckPlanMode::ExplicitFull).unwrap();
     assert_eq!(frontend.tasks.len(), 2);

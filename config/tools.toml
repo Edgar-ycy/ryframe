@@ -1,0 +1,13 @@
+# 开发工具配置；本机覆盖可写入忽略目录 .local-tests/tools.toml。
+# 相对路径以此后端 Cargo Workspace 根目录为基准。
+[workspace]
+frontend_dir = "../ryframe-vue3"
+
+[generator]
+# 创建自己的业务 crate 后设置 package，避免每次在命令行重复传入。
+# package = "order-business"
+# source = "sources.legacy"
+# storage = "tenant"
+# tables = ["biz_order", "biz_order_item"]
+# strip_table_prefix = "biz_"
+sync_frontend = false
