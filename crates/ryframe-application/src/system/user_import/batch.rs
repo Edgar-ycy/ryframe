@@ -148,25 +148,13 @@ impl UserImportService {
             .await?
             .into_iter()
             .collect::<HashSet<_>>();
-        let mut new_users = partition_new_users(&mut prepared, &existing);
-
-        if !new_users.is_empty()
-            && let Err(error) = transaction
-                .ensure_user_quota(&import.tenant_id, new_users.len())
-                .await
-        {
-            if !matches!(error, AppError::Validation(_)) {
-                return Err(error);
-            }
-            for user in new_users.drain(..) {
-                prepared.issues.push(RowIssue::failed(
-                    user.candidate.row_number,
-                    &user.candidate.data.username,
-                    "tenant_quota_exceeded",
-                    "当前批次将超过租户用户配额",
-                ));
-            }
-        }
+        let new_users = partition_users_for_quota(
+            transaction.as_ref(),
+            &import.tenant_id,
+            &mut prepared,
+            &existing,
+        )
+        .await?;
 
         let users = new_users
             .into_iter()
@@ -182,19 +170,61 @@ impl UserImportService {
             .map(|issue| issue.into_record(&import.tenant_id, import_id, now))
             .collect::<AppResult<Vec<_>>>()?;
         transaction.insert_rows(row_records).await?;
-        import.processed_rows = i32::try_from(next_offset)
-            .map_err(|_| AppError::Internal("用户导入进度计数溢出".into()))?;
-        import.success_count = import.success_count.saturating_add(success_count);
-        import.skipped_count = import.skipped_count.saturating_add(skipped_count);
-        import.failure_count = import.failure_count.saturating_add(failure_count);
-        import.updated_at = now;
-        import.last_error = None;
+        apply_batch_progress(
+            &mut import,
+            next_offset,
+            (success_count, skipped_count, failure_count),
+            now,
+        )?;
         transaction.save(import).await?;
         transaction
             .commit(crate::TransactionAuditMode::Skip)
             .await?;
         Ok(CommitBatchOutcome::Committed)
     }
+}
+
+fn apply_batch_progress(
+    import: &mut UserImportJobRecord,
+    next_offset: usize,
+    counts: (i32, i32, i32),
+    now: DateTime<Utc>,
+) -> AppResult<()> {
+    import.processed_rows = i32::try_from(next_offset)
+        .map_err(|_| AppError::Internal("用户导入进度计数溢出".into()))?;
+    import.success_count = import.success_count.saturating_add(counts.0);
+    import.skipped_count = import.skipped_count.saturating_add(counts.1);
+    import.failure_count = import.failure_count.saturating_add(counts.2);
+    import.updated_at = now;
+    import.last_error = None;
+    Ok(())
+}
+
+async fn partition_users_for_quota(
+    transaction: &dyn crate::ports::users::UserImportTransaction,
+    tenant_id: &str,
+    prepared: &mut PreparedBatch,
+    existing: &HashSet<String>,
+) -> AppResult<Vec<PreparedUser>> {
+    let mut new_users = partition_new_users(prepared, existing);
+    if !new_users.is_empty()
+        && let Err(error) = transaction
+            .ensure_user_quota(tenant_id, new_users.len())
+            .await
+    {
+        if !matches!(error, AppError::Validation(_)) {
+            return Err(error);
+        }
+        for user in new_users.drain(..) {
+            prepared.issues.push(RowIssue::failed(
+                user.candidate.row_number,
+                &user.candidate.data.username,
+                "tenant_quota_exceeded",
+                "当前批次将超过租户用户配额",
+            ));
+        }
+    }
+    Ok(new_users)
 }
 
 struct PreparedUser {
