@@ -89,7 +89,10 @@ pub(super) async fn build_session_context(
                     && !disabled_permissions.contains(permission.as_str())
             });
         }
-        excluded_routes.extend(crate::router::excluded_platform_routes(&actor.tenant_id));
+        excluded_routes.extend(crate::router::excluded_platform_routes(
+            &actor.tenant_id,
+            state.settings.multi_tenancy.enabled,
+        ));
         let product = SessionProductContextVo::try_from(service_product)?;
         let menus = state
             .services

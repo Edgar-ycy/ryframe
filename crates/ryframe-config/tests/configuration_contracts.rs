@@ -6,6 +6,19 @@ use ryframe_config::{
 const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
 
 #[test]
+fn new_projects_default_to_single_tenant_without_changing_internal_isolation() {
+    let mode = ryframe_config::MultiTenancyConfig::default();
+    assert!(!mode.enabled);
+    assert_eq!(mode.fixed_tenant_id(), Some("system"));
+    assert!(mode.allows_tenant("system"));
+    assert!(!mode.allows_tenant("other"));
+    let config: toml::Value = toml::from_str(include_str!("../../../config/app.toml")).unwrap();
+    assert_eq!(config["multi_tenancy"]["enabled"].as_bool(), Some(false));
+    let explicit: ryframe_config::MultiTenancyConfig = toml::from_str("enabled = true").unwrap();
+    assert!(explicit.allows_tenant("other"));
+}
+
+#[test]
 fn checked_in_config_keeps_api_window_outside_the_route_map() {
     let config: toml::Value =
         toml::from_str(include_str!("../../../config/app.toml")).expect("默认配置应是有效 TOML");

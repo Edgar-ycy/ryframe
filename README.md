@@ -32,6 +32,8 @@ MySQL、Redis 和 RustFS 可以运行在满足版本和协议要求的任意平�
 
 ## 启动开发环境
 
+新项目默认单租户，身份入口固定使用系统租户，登录页不选择租户。需要多租户时显式设置 `multi_tenancy.enabled = true` 或 `APP_MULTI_TENANCY_ENABLED=true`；已有部署的显式选择继续生效。单租户仍可使用配置迁移与数据维护，租户和套餐管理仅在多租户模式开放。
+
 ```powershell
 $env:APP_ENV = "dev"
 # 先创建空数据库并配置连接，将管理员初始密码保存在这个 UTF-8 文件中

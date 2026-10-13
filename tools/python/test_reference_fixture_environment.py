@@ -390,6 +390,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual((values["APP_JOBS_HEALTH_HOST"], values["APP_JOBS_HEALTH_PORT"]), ("127.0.0.1", "19210"))
         self.assertEqual(values["APP_DATABASE_TLS_MODE"], "disabled")
         self.assertTrue(all(item["tls_mode"] == "disabled" for item in json.loads(values["APP_TENANT_DATA_TARGETS"])))
+        self.assertEqual(values["APP_MULTI_TENANCY_ENABLED"], "true")
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
         self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")

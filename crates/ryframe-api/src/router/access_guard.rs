@@ -50,13 +50,37 @@ pub(super) async fn catalog_access_guard(
     Ok(next.run(request).await)
 }
 
-pub(crate) fn excluded_platform_routes(tenant_id: &str) -> Vec<String> {
-    if tenant_id == "system" {
-        return Vec::new();
-    }
+pub(crate) fn excluded_platform_routes(
+    tenant_id: &str,
+    multi_tenancy_enabled: bool,
+) -> Vec<String> {
     crate::permission_catalog::menu_routes()
         .iter()
-        .filter(|menu| is_platform_route(menu.route_key))
+        .filter(|menu| {
+            (tenant_id != "system" && is_platform_route(menu.route_key))
+                || (!multi_tenancy_enabled
+                    && matches!(menu.route_key, "platform.tenant" | "platform.product-plans"))
+        })
         .map(|menu| menu.route_key.to_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_tenant_keeps_data_and_configuration_tools() {
+        let excluded = excluded_platform_routes("system", false);
+        assert!(excluded.iter().any(|key| key == "platform.tenant"));
+        assert!(excluded.iter().any(|key| key == "platform.product-plans"));
+        assert!(!excluded.iter().any(|key| key == "platform.config-transfer"));
+        assert!(!excluded.iter().any(|key| key == "platform.data-targets"));
+        assert!(excluded_platform_routes("system", true).is_empty());
+        assert!(
+            excluded_platform_routes("other", true)
+                .iter()
+                .any(|key| key == "platform.data-targets")
+        );
+    }
 }

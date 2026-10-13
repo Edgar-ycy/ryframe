@@ -495,6 +495,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         # 夹具配置目录独立生成：完整复制基础 app.toml 并按已审阅目标写出 app.test.toml，
         # 与 CI 全栈流程一致；冻结执行树保持干净，迁移 gate 等工具也能读取测试目标。
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(config),
+        "APP_MULTI_TENANCY_ENABLED": "true",
         # 夹具 API 按 `--no-default-features --features bin-api` 构建，不包含 runtime-swagger-ui；
         # 与夹具运行环境保持一致，必须在准备阶段就显式关闭 api_docs，否则目标代次、运行登记
         # 与复制运行环境会得到不同的配置摘要。

@@ -8,7 +8,9 @@
 
 HTTP 接口使用 `/api/v1` 前缀，完整路径、字段和 operation ID 见 `openapi/openapi.json`。开发环境启用 `api_docs.enabled` 并编译 `runtime-swagger-ui` feature 后，可访问 `/api/v1/swagger-ui`；原始文档位于 `/api/v1/api-docs/openapi.json`。
 
-当前 0.x 版本只提供现有普通用户与租户接口，Agent 查询、用户委托和服务账号接口已移除；旧地址按未知路由处理。调用方应使用当前契约生成的 `core/system/platform/monitor` 四域 caller。开发版本的接口变化需要同步更新调用方，不提供旧结构映射。
+调用方应使用当前契约生成的 `core/system/platform/monitor` 四域 caller。开发版本的接口变化需要同步更新调用方，不提供旧结构映射。
+
+新配置默认关闭多租户；`GET /api/v1/version` 的 `multi_tenancy_enabled` 是客户端运行模式依据，获取失败应重试。单租户身份固定为 `system`，不开放租户和套餐管理路由，会话菜单同步排除这些页面；配置包、配置迁移及数据维护继续开放，并保持系统租户和权限校验。显式开启多租户后，租户管理、套餐分配和租户选择恢复可用。
 
 普通业务端点使用 JSON；上传、文本、验证码图片、Blob 和文件下载按 OpenAPI 声明的 media type 传输，调用方不得把这些响应按 JSON 解码。时间使用带时区的 RFC3339 并在服务端规范化为 UTC。JSON DTO 默认拒绝未知字段；非法枚举、反向时间范围和越界批量请求在入队前返回 400。
 

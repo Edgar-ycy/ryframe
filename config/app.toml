@@ -14,7 +14,7 @@ port = 8080
 [multi_tenancy]
 # 多租户总开关。关闭后不再接受客户端选择租户，所有身份入口固定使用内置 system 租户；
 # 数据库 tenant_id 隔离列、唯一键和缓存命名空间仍然保留。
-enabled = true
+enabled = false
 
 [tenant_data]
 # 新租户默认 placement；已有租户始终以控制库权威 placement 为准，缺失时拒绝路由。

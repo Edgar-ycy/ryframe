@@ -112,6 +112,7 @@ jobs:
             artifact_suffix: -business
     env:
       APP_ENV: test
+      APP_MULTI_TENANCY_ENABLED: "true"
       APP_API_DOCS_ENABLED: "false"
       APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
       APP_APP_HOST: 127.0.0.1

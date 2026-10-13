@@ -407,16 +407,14 @@ pub fn api_router_with_business(
 
     router = router.nest("/business", protect(business_router, &state));
 
-    if state.settings.multi_tenancy.enabled {
-        let platform = protect(
-            domains::platform::router(state.clone()).layer(from_fn_with_state(
-                OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
-                oper_log_middleware,
-            )),
-            &state,
-        );
-        router = router.nest("/platform", platform);
-    }
+    let platform = protect(
+        domains::platform::router(state.clone()).layer(from_fn_with_state(
+            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
+            oper_log_middleware,
+        )),
+        &state,
+    );
+    router = router.nest("/platform", platform);
 
     if state.settings.api_docs_enabled {
         let docs = Router::new()

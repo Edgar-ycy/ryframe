@@ -36,5 +36,5 @@ impl Default for MultiTenancyConfig {
 }
 
 const fn default_enabled() -> bool {
-    true
+    false
 }
