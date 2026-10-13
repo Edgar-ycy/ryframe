@@ -52,6 +52,7 @@ TRAIT_FUTURE_METHOD = re.compile(
 )
 DOCUMENT_LIMITS = {
     "README.md": 120,
+    "README.en.md": 120,
     "docs/api.md": 180,
     "docs/architecture.md": 200,
     "docs/data.md": 200,

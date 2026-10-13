@@ -45,10 +45,9 @@ SQL 导出、数据库客户端导入方式及中断处理见[数据指南](data
 ```powershell
 cargo generate -- new-business order-business
 cargo generate -- new-business order-business --write
-cargo generate-lockfile --offline # 创建后显式刷新依赖图，后续命令继续使用锁文件
 ```
 
-默认预览，`--write` 才创建。创建原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、组合根的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册；不会生成 CRUD 或操作数据库。命令拒绝覆盖同名 crate 或重复注册，模块名 `order` 与业务包名 `order-business` 均创建同一包。
+默认预览，`--write` 才创建，创建后执行 `cargo generate-lockfile --offline` 显式刷新依赖图。创建原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、组合根的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册；不会生成 CRUD 或操作数据库。命令拒绝覆盖同名 crate 或重复注册，模块名 `order` 与业务包名 `order-business` 均创建同一包。
 
 业务 crate 按职责分类，并把可重生成文件统一放入 `generated`：
 

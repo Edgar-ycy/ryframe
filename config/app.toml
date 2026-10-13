@@ -52,7 +52,7 @@ metrics_bearer_token = ""
 
 [database]
 # database.replicas 与 database.sources 使用与 database.primary 相同的显式 password 字段；
-# 开发快照会保留这些数据源密码，不使用 password_env 或整体数据源文件覆盖。
+# 可用 APP_DATABASE_REPLICAS/SOURCES 或对应 _FILE 覆盖完整 JSON 数组；不支持 password_env。
 # SQL 日志模式: off(关闭) / slow(仅慢 SQL) / summary(摘要) / full(完整参数化 SQL)
 sql_log_level = "off"
 # 慢 SQL 判定阈值（毫秒）。

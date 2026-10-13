@@ -28,7 +28,7 @@ MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入�
 
 声明为 `tenant_data` 的标准资源由生成器同步登记到 `ryframe-tenant-db/src/generated/catalog.rs`，包含复制顺序、租户主键游标、校验列和完整 schema 描述。指纹由当前编译目录和基础设施结构统一计算，初始化与 verify 逐项比对 MySQL 实际结构；未登记、缺失或结构不一致的业务表均拒绝使用。空业务目录合法，控制面资源不会进入租户复制目录。
 
-当前 `0.x` 版本面向全新数据库，只验证当前结构与任务载荷。当前控制库初始化结构已移除服务账号、凭据、委托和访问审计专属表；套餐、租户、任务、配置迁移、数据迁移和备份点继续保留。现有数据库与新基线不符时，启动或 verify 会拒绝，不会自动转换或删除数据。旧开发库引用已移除的基础管理能力代码时，产品上下文校验会报告具体代码并拒绝使用，不自动改写套餐或租户覆盖。请另建隔离控制库以及共享、独立租户目标进行初始化。
+当前 `0.x` 版本面向全新数据库，只验证当前结构与任务载荷。现有数据库与新基线不符时，启动或 verify 会拒绝，不会自动转换或删除数据。旧开发库引用无效的能力代码时，产品上下文校验会报告具体代码，不自动改写套餐或租户覆盖。请另建隔离控制库以及共享、独立租户目标进行初始化。
 
 源码中的基线经调整后，使用 `cargo xtask data migrate baseline --write` 显式刷新迁移锁，随后通过开发指南的正式命令导出 MySQL 快照。该操作只更新仓库基线证据，不连接或重建数据库；普通检查、预览和 `cargo xtask dev` 均不会重写基线。版本阶段读取 Workspace 版本，已出现稳定版本的完整 Git 历史和 tag 会阻止通过降版本重新锁定。`v1.0.0` 及之后的已发布迁移只通过新增迁移向前升级。
 
@@ -137,6 +137,63 @@ start 或 stop 失败后禁止重放。先执行只读 `source-generation-status
 
 ## 租户路由
 
-租户目标注册、placement、fence、session、migration 和 cleanup 是 `ryframe-tenant-db` 的内部模块。shared-control 目标必须去重，独立目标必须校验物理身份、只读状态和 schema fingerprint。
+`database.primary` 是控制库的唯一写入连接；`database.replicas` 是同一控制库的只读副本，`database.sources` 是业务显式选择的命名来源，三者不替代租户 placement。以下内容放在当前环境的 `config/app.<环境>.toml`；数组中的每个连接都要完整填写，不能只提供名称并期待继承 primary：
 
-菜单、权限和能力种子可在 `catalog/access.toml` 查询，配置默认值以配置结构为准。
+```toml
+[[database.replicas]]
+name = "read-east"
+host = "mysql-reader.internal"
+port = 3306
+database = "ryframe_config"
+username = "reader"
+password = ""
+max_connections = 8
+min_connections = 1
+tls_mode = "verify_identity"
+tls_ca = "D:/secrets/mysql-ca.pem"
+
+[[database.sources]]
+name = "legacy"
+host = "mysql-legacy.internal"
+port = 3306
+database = "legacy_orders"
+username = "order_reader"
+password = ""
+max_connections = 4
+min_connections = 1
+tls_mode = "verify_identity"
+tls_ca = "D:/secrets/mysql-ca.pem"
+```
+
+示例留空的密码必须通过本机秘密配置提供。primary 使用 `APP_DATABASE_PASSWORD` 或 `APP_DATABASE_PASSWORD_FILE`；replicas、sources 分别使用 `APP_DATABASE_REPLICAS`、`APP_DATABASE_SOURCES` 的 JSON 数组，或对应 `_FILE` 指向含完整 JSON 数组的 UTF-8 文件。不能同时提供变量及其 `_FILE`；这两个数组使用 `password`，不支持 `password_env`。文件合并及环境覆盖都替换整个数组，不能只覆盖某一项。`APP_CONFIG_DIR` 可选择忽略目录中的完整配置集，实际键和覆盖入口见配置源码。
+
+replicas 只用于调用方显式选择 `ReadConsistency::Eventual` 的读取：健康副本轮询，不可用时回退 primary；`Strong` 始终读取 primary，写后立即读取、授权与事务不能依赖副本。必须自行搭建并监测 MySQL 复制，配置不会建立主从复制或等待复制追平。sources 通过 SDK 运行上下文的 `control_database.source("legacy")` 显式获取，返回 `Option`，调用方须对缺少名称报错；每个来源独立连接、独立事务，不自动分库，也不提供跨库分布式事务。导入模型的结构来源不自动成为该模型的运行目标。
+
+| 租户业务布局 | 配置与放置 |
+| --- | --- |
+| 共享控制库 | 保留默认 `shared-control`，复用 primary 池；省略目标声明时自动注入 |
+| 共享业务库 | 注册 `kind="mysql"`、`mode="shared"` 的独立目标，多个租户共享业务表并按 `tenant_id` 隔离 |
+| 独立业务库 | 注册 `kind="mysql"`、`mode="dedicated"` 的目标，同一时刻只允许一个 active 租户占用 |
+
+```toml
+[tenant_data]
+default_target = "business-shared"
+[[tenant_data.targets]]
+key = "business-shared"
+kind = "mysql"
+mode = "shared"
+host = "mysql-business.internal"
+port = 3306
+database = "ryframe_business"
+username = "business_app"
+password_env = "RYFRAME_BUSINESS_DB_PASSWORD"
+max_connections = 8
+tls_mode = "verify_identity"
+tls_ca = "D:/secrets/mysql-ca.pem"
+```
+
+独立库复制上述目标配置，改用唯一 `key`、独立 `database` 和秘密环境变量名，并设置 `mode="dedicated"`。目标键用于迁移命令和 placement，不能用数据库名称代替。`default_target` 只决定新租户放置，已有租户使用控制库的权威记录；改变配置不会迁移既有数据。共享和独立业务目标均需租户字段，关闭多租户也不移除隔离结构。
+
+先创建空业务数据库、向 API/Worker/迁移进程提供 `password_env` 引用的秘密，再运行 `cargo migrate -- tenant-data up --target business-shared` 和 `cargo migrate -- tenant-data verify --target business-shared`。控制库仍先执行 `control up`；`--all` 只处理明确登记目标。租户目标数组可由 `APP_TENANT_DATA_TARGETS` 或 `_FILE` 完整替换。独立池按需建立，`max_open_targets` 限制单进程池数量，`max_total_connections` 限制全部目标池的连接预算，`idle_pool_secs` 控制空闲回收；API 与 Worker 各自计数。TLS 可选 `disabled/required/verify_ca/verify_identity`，远程生产使用身份校验与 CA，mTLS 的客户端证书和私钥必须成对配置；路径属于运行进程所在平台。
+
+租户目标注册、placement、fence、session、migration 和 cleanup 是 `ryframe-tenant-db` 的内部模块。shared-control 目标必须去重，独立目标必须校验物理身份、只读状态和 schema fingerprint。
