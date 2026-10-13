@@ -2,11 +2,16 @@
   "version": 1,
   "packages": [
     {
+      "package": "ryframe-config",
+      "minimal": [],
+      "maximal": ["default", "tools"],
+      "test_targets": ["configuration_contracts"]
+    },
+    {
       "package": "ryframe",
       "minimal": [],
       "maximal": [
         "bin-api",
-        "bin-file-maintenance",
         "bin-migrate",
         "bin-reset",
         "bin-tenant-data",

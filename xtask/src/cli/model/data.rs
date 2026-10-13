@@ -1,10 +1,5 @@
 use std::path::PathBuf;
 
-pub(crate) const FILE_APPLY_CONFIRMATION: &str = "APPLY-FILE-A-MAINTENANCE";
-pub(crate) const FILE_DEFAULT_BATCH_SIZE: u64 = 100;
-pub(crate) const FILE_MAX_BATCH_SIZE: u64 = 1_000;
-pub(crate) const FILE_DEFAULT_START_AFTER: i64 = i64::MIN;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BackupCommand {
     Inventory(BackupInventoryOptions),
@@ -77,45 +72,6 @@ pub(crate) struct RestoreVerifyOptions {
 pub(crate) struct TargetInventoryOptions {
     pub(crate) target: String,
     pub(crate) output: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FileMaintenanceOperation {
-    BackfillSha256,
-    DrainLegacyReservations,
-}
-
-impl FileMaintenanceOperation {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::BackfillSha256 => "backfill-sha256",
-            Self::DrainLegacyReservations => "drain-legacy-reservations",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FileMaintenanceMode {
-    DryRun,
-    Apply,
-}
-
-impl FileMaintenanceMode {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::DryRun => "dry-run",
-            Self::Apply => "apply",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FileMaintenanceOptions {
-    pub(crate) operation: FileMaintenanceOperation,
-    pub(crate) mode: FileMaintenanceMode,
-    pub(crate) database: String,
-    pub(crate) batch_size: u64,
-    pub(crate) start_after: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -16,7 +16,6 @@ pub mod business;
     feature = "bin-worker",
     feature = "bin-migrate",
     feature = "bin-tenant-data",
-    feature = "bin-file-maintenance",
     feature = "bin-reset",
 ))]
 pub mod crypto;

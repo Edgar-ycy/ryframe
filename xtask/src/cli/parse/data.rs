@@ -12,10 +12,8 @@ use path::{DataPathRole, validate_data_path};
 
 use super::super::model::{
     BackupCommand, BackupInventoryOptions, BackupObservation, BackupRegisterOptions, CliError,
-    DataCommand, FILE_APPLY_CONFIRMATION, FILE_DEFAULT_BATCH_SIZE, FILE_DEFAULT_START_AFTER,
-    FILE_MAX_BATCH_SIZE, FileMaintenanceMode, FileMaintenanceOperation, FileMaintenanceOptions,
-    ResetCommand, ResetExecuteOptions, RestoreBeginOptions, RestoreCommand, RestoreDataOptions,
-    RestoreVerifyOptions, TargetInventoryOptions,
+    DataCommand, ResetCommand, ResetExecuteOptions, RestoreBeginOptions, RestoreCommand,
+    RestoreDataOptions, RestoreVerifyOptions, TargetInventoryOptions,
 };
 
 pub(super) fn parse_maintenance_data(args: &[String]) -> Result<DataCommand, CliError> {
@@ -26,7 +24,6 @@ pub(super) fn parse_maintenance_data(args: &[String]) -> Result<DataCommand, Cli
         "backup" => parse_backup(rest).map(DataCommand::Backup),
         "restore" => parse_restore(rest).map(DataCommand::Restore),
         "target" => parse_target(rest).map(DataCommand::TargetInventory),
-        "file" => parse_file(rest).map(DataCommand::File),
         "reset" => parse_reset(rest).map(DataCommand::Reset),
         _ => Err(CliError::new(format!("未知 data 子任务：{kind}"))),
     }
@@ -154,63 +151,6 @@ fn parse_target(args: &[String]) -> Result<TargetInventoryOptions, CliError> {
     Ok(command)
 }
 
-fn parse_file(args: &[String]) -> Result<FileMaintenanceOptions, CliError> {
-    let Some((operation, args)) = args.split_first() else {
-        return Err(CliError::new(file_usage()));
-    };
-    let operation = match operation.as_str() {
-        "backfill-sha256" => FileMaintenanceOperation::BackfillSha256,
-        "drain-legacy-reservations" => FileMaintenanceOperation::DrainLegacyReservations,
-        _ => return Err(CliError::new(format!("未知 data file 子操作：{operation}"))),
-    };
-    let Some((mode, rest)) = args.split_first() else {
-        return Err(CliError::new(file_usage()));
-    };
-    let mode = match mode.as_str() {
-        "dry-run" => FileMaintenanceMode::DryRun,
-        "apply" => FileMaintenanceMode::Apply,
-        _ => return Err(CliError::new(file_usage())),
-    };
-    let mut options = NamedOptions::parse(rest)?;
-    let database = options.take_scalar("--database")?;
-    let batch_size = options
-        .take_optional_scalar("--batch-size")?
-        .map(|value| parse_batch_size(&value))
-        .transpose()?
-        .unwrap_or(FILE_DEFAULT_BATCH_SIZE);
-    let start_after = options
-        .take_optional_signed("--start-after")?
-        .map(|value| {
-            value
-                .parse::<i64>()
-                .map_err(|_| CliError::new("--start-after 必须是 i64 文件 ID"))
-        })
-        .transpose()?
-        .unwrap_or(FILE_DEFAULT_START_AFTER);
-    let confirmation = options.take_optional_scalar("--confirm-apply")?;
-    let write = options.take_flag("--write");
-    match (mode, confirmation.as_deref(), write) {
-        (FileMaintenanceMode::DryRun, None, false) => {}
-        (FileMaintenanceMode::DryRun, _, _) => {
-            return Err(CliError::new("dry-run 不接受 --write 或 --confirm-apply"));
-        }
-        (FileMaintenanceMode::Apply, Some(FILE_APPLY_CONFIRMATION), true) => {}
-        (FileMaintenanceMode::Apply, _, _) => {
-            return Err(CliError::new(format!(
-                "apply 必须同时提供 --write 和 --confirm-apply {FILE_APPLY_CONFIRMATION}"
-            )));
-        }
-    }
-    options.finish("data file")?;
-    Ok(FileMaintenanceOptions {
-        operation,
-        mode,
-        database,
-        batch_size,
-        start_after,
-    })
-}
-
 fn parse_reset(args: &[String]) -> Result<ResetCommand, CliError> {
     let Some((operation, rest)) = args.split_first() else {
         return Err(CliError::new("data reset 缺少明确子操作"));
@@ -236,18 +176,6 @@ fn parse_reset(args: &[String]) -> Result<ResetCommand, CliError> {
             "未知 data reset 子操作：{operation}"
         ))),
     }
-}
-
-fn parse_batch_size(value: &str) -> Result<u64, CliError> {
-    let parsed = value
-        .parse::<u64>()
-        .map_err(|_| CliError::new("--batch-size 必须是正整数"))?;
-    if !(1..=FILE_MAX_BATCH_SIZE).contains(&parsed) {
-        return Err(CliError::new(format!(
-            "--batch-size 必须在 1..={FILE_MAX_BATCH_SIZE} 之间"
-        )));
-    }
-    Ok(parsed)
 }
 
 fn validate_commit_sha(value: &str) -> Result<(), CliError> {
@@ -312,10 +240,6 @@ fn require_no_arguments(args: &[String], command: &str) -> Result<(), CliError> 
     }
 }
 
-fn file_usage() -> &'static str {
-    "cargo xtask data file <backfill-sha256|drain-legacy-reservations> <dry-run|apply> --database <名称> [--batch-size <1..1000>] [--start-after <ID>] [--write --confirm-apply APPLY-FILE-A-MAINTENANCE]"
-}
-
 struct NamedOptions {
     values: BTreeMap<String, String>,
     flags: BTreeSet<String>,
@@ -362,10 +286,6 @@ impl NamedOptions {
             return Err(CliError::new(format!("{option} 缺少取值")));
         }
         Ok(value)
-    }
-
-    fn take_optional_signed(&mut self, option: &str) -> Result<Option<String>, CliError> {
-        Ok(self.values.remove(option))
     }
 
     fn take_path(&mut self, option: &str, role: DataPathRole) -> Result<PathBuf, CliError> {

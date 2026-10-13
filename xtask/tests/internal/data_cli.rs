@@ -6,9 +6,8 @@ use std::{
 
 use super::cli::{
     BackupCommand, BackupInventoryOptions, BackupObservation, BackupRegisterOptions, Command,
-    DataCommand, FileMaintenanceMode, FileMaintenanceOperation, FileMaintenanceOptions,
-    ResetCommand, ResetExecuteOptions, RestoreBeginOptions, RestoreCommand, RestoreDataOptions,
-    RestoreVerifyOptions, TargetInventoryOptions, parse,
+    DataCommand, ResetCommand, ResetExecuteOptions, RestoreBeginOptions, RestoreCommand,
+    RestoreDataOptions, RestoreVerifyOptions, TargetInventoryOptions, parse,
 };
 
 fn command(values: &[&str]) -> Command {
@@ -640,48 +639,7 @@ fn linked_data_paths_are_rejected_when_the_platform_can_create_a_link() {
 }
 
 #[test]
-fn parses_file_and_reset_operations_with_canonical_defaults() {
-    assert_eq!(
-        command(&[
-            "data",
-            "file",
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "ryframe_test",
-        ]),
-        Command::Data(DataCommand::File(FileMaintenanceOptions {
-            operation: FileMaintenanceOperation::BackfillSha256,
-            mode: FileMaintenanceMode::DryRun,
-            database: "ryframe_test".into(),
-            batch_size: 100,
-            start_after: i64::MIN,
-        }))
-    );
-    assert_eq!(
-        command(&[
-            "data",
-            "file",
-            "drain-legacy-reservations",
-            "apply",
-            "--database",
-            "ryframe_test",
-            "--batch-size",
-            "25",
-            "--start-after",
-            "-7",
-            "--confirm-apply",
-            "APPLY-FILE-A-MAINTENANCE",
-            "--write",
-        ]),
-        Command::Data(DataCommand::File(FileMaintenanceOptions {
-            operation: FileMaintenanceOperation::DrainLegacyReservations,
-            mode: FileMaintenanceMode::Apply,
-            database: "ryframe_test".into(),
-            batch_size: 25,
-            start_after: -7,
-        }))
-    );
+fn parses_reset_operations_with_canonical_defaults() {
     assert_eq!(
         command(&["data", "reset", "plan"]),
         Command::Data(DataCommand::Reset(ResetCommand::Plan))
@@ -704,96 +662,6 @@ fn parses_file_and_reset_operations_with_canonical_defaults() {
             }
         )))
     );
-}
-
-#[test]
-fn rejects_file_writes_before_starting_the_private_binary() {
-    for values in [
-        vec!["data", "file"],
-        vec!["data", "file", "unknown", "dry-run"],
-        vec!["data", "file", "backfill-sha256", "unknown"],
-        vec!["data", "file", "backfill-sha256", "dry-run"],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "-h",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "db",
-            "--batch-size",
-            "0",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "db",
-            "--batch-size",
-            "1001",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "db",
-            "--start-after",
-            "invalid",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "db",
-            "--confirm-apply",
-            "APPLY-FILE-A-MAINTENANCE",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "apply",
-            "--database",
-            "db",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "apply",
-            "--database",
-            "db",
-            "--confirm-apply",
-            "wrong",
-        ],
-        vec![
-            "data",
-            "file",
-            "backfill-sha256",
-            "apply",
-            "--database",
-            "db",
-            "--database",
-            "other",
-            "--confirm-apply",
-            "APPLY-FILE-A-MAINTENANCE",
-        ],
-    ] {
-        rejects(&values);
-    }
 }
 
 #[test]
@@ -841,4 +709,9 @@ fn rejects_reset_writes_before_starting_the_private_binary() {
     ] {
         rejects(&values);
     }
+}
+
+#[test]
+fn unknown_data_operation_does_not_dispatch_a_binary() {
+    rejects(&["data", "file"]);
 }

@@ -29,7 +29,6 @@ tracing-appender = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true}
 redis = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
-md5 = { version = "0.8", optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 same-file = { version = "1.0.6", optional = true }
@@ -130,21 +129,6 @@ bin-tenant-data = [
     "dep:serde",
     "dep:serde_json",
 ]
-bin-file-maintenance = [
-    "runtime-crypto",
-    "dep:ryframe-config",
-    "dep:ryframe-db",
-    "ryframe-db/repositories",
-    "dep:ryframe-adapters",
-    "dep:sea-orm",
-    "dep:tokio",
-    "tokio/macros",
-    "tokio/rt-multi-thread",
-    "dep:md5",
-    "dep:sha2",
-    "dep:hex",
-    "dep:chrono",
-]
 bin-reset = [
     "runtime-database",
     "ryframe-db/migration",
@@ -197,12 +181,6 @@ test = false
 name = "ryframe-worker"
 path = "src/bin/ryframe_worker.rs"
 required-features = ["bin-worker"]
-test = false
-
-[[bin]]
-name = "ryframe-file-maintenance"
-path = "src/bin/ryframe_file_maintenance.rs"
-required-features = ["bin-file-maintenance"]
 test = false
 
 [[test]]

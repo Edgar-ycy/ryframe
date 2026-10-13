@@ -239,7 +239,6 @@ pub(crate) enum DataCommand {
     Backup(BackupCommand),
     Restore(RestoreCommand),
     TargetInventory(TargetInventoryOptions),
-    File(FileMaintenanceOptions),
     Reset(ResetCommand),
 }
 

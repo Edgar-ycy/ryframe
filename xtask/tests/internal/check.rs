@@ -70,7 +70,7 @@ fn feature_combination_rejects_duplicates_and_unknowns() {
 
 #[test]
 fn feature_matrix_compiles_and_tests_required_feature_targets() {
-    let features = vec!["bin-reset".to_owned(), "bin-file-maintenance".to_owned()];
+    let features = vec!["bin-reset".to_owned(), "bin-migrate".to_owned()];
     let check = feature_operation_args("check", "ryframe", &features, "target", 8);
     let clippy = feature_operation_args("clippy", "ryframe", &features, "target", 8);
 
@@ -83,7 +83,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         assert!(args.contains(&"--all-targets".to_owned()));
         assert!(args.contains(&"--no-default-features".to_owned()));
         assert!(args.windows(2).any(|pair| pair == ["--jobs", "8"]));
-        assert!(args.contains(&"bin-reset,bin-file-maintenance".to_owned()));
+        assert!(args.contains(&"bin-reset,bin-migrate".to_owned()));
     }
     let test = feature_test_args(
         "ryframe",
@@ -104,7 +104,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
     );
     assert!(!test.contains(&"--all-targets".to_owned()));
     assert!(test.contains(&"--no-default-features".to_owned()));
-    assert!(test.contains(&"bin-reset,bin-file-maintenance".to_owned()));
+    assert!(test.contains(&"bin-reset,bin-migrate".to_owned()));
     assert!(clippy.ends_with(&[
         "--".into(),
         "-D".into(),

@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use crate::cli::{
-    BackupCommand, DataCommand, FILE_APPLY_CONFIRMATION, FileMaintenanceMode,
-    FileMaintenanceOptions, ResetCommand, RestoreCommand, TargetInventoryOptions,
+    BackupCommand, DataCommand, ResetCommand, RestoreCommand, TargetInventoryOptions,
 };
 
 pub(super) struct DataInvocation {
@@ -18,11 +17,6 @@ pub(super) fn invocation(command: &DataCommand) -> Option<DataInvocation> {
         DataCommand::TargetInventory(options) => {
             Some(tenant_data(target_inventory_arguments(options)))
         }
-        DataCommand::File(options) => Some(DataInvocation {
-            feature: "bin-file-maintenance",
-            binary: "ryframe-file-maintenance",
-            arguments: file_arguments(options),
-        }),
         DataCommand::Reset(command) => Some(DataInvocation {
             feature: "bin-reset",
             binary: "ryframe-reset",
@@ -115,23 +109,6 @@ pub(crate) fn target_inventory_arguments(options: &TargetInventoryOptions) -> Ve
         "--output".into(),
         path_argument(&options.output),
     ]
-}
-
-pub(crate) fn file_arguments(options: &FileMaintenanceOptions) -> Vec<String> {
-    let mut arguments = vec![
-        options.operation.as_str().into(),
-        options.mode.as_str().into(),
-        "--database".into(),
-        options.database.clone(),
-        "--batch-size".into(),
-        options.batch_size.to_string(),
-        "--start-after".into(),
-        options.start_after.to_string(),
-    ];
-    if options.mode == FileMaintenanceMode::Apply {
-        arguments.extend(["--confirm-apply".into(), FILE_APPLY_CONFIRMATION.into()]);
-    }
-    arguments
 }
 
 pub(crate) fn reset_arguments(command: &ResetCommand) -> Vec<String> {

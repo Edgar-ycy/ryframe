@@ -48,7 +48,6 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | Worker | `bin-worker` |
 | 控制库迁移 | `bin-migrate` |
 | 租户数据维护 | `bin-tenant-data` |
-| 文件维护 | `bin-file-maintenance` |
 | 非生产重建 | `bin-reset` |
 
 `ryframe-adapters` 默认不启用高成本能力；API 显式组合 `image-processing`、`monitoring`、`otel`、`redis-api` 与 `spreadsheet`，Worker 使用 `monitoring`、`otel`、`redis-client` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。

@@ -29,7 +29,6 @@ fn every_process_binary_has_an_explicit_required_feature() {
         "bin-worker",
         "bin-migrate",
         "bin-tenant-data",
-        "bin-file-maintenance",
         "bin-reset",
         "runtime-swagger-ui",
     ] {
@@ -43,7 +42,6 @@ fn every_process_binary_has_an_explicit_required_feature() {
         "required-features = [\"bin-worker\"]",
         "required-features = [\"bin-migrate\"]",
         "required-features = [\"bin-tenant-data\"]",
-        "required-features = [\"bin-file-maintenance\"]",
         "required-features = [\"bin-reset\"]",
     ] {
         assert!(MANIFEST.contains(required), "二进制缺少 {required}");
@@ -69,11 +67,6 @@ fn every_client_process_installs_crypto_before_loading_configuration() {
             "tenant-data",
             include_str!("../src/bin/ryframe_tenant_data.rs"),
             "Environment::from_env",
-        ),
-        (
-            "file-maintenance",
-            include_str!("../src/bin/ryframe_file_maintenance.rs"),
-            "Environment::from_required_env",
         ),
         (
             "reset",
@@ -272,9 +265,6 @@ fn process_features_select_precise_database_surfaces() {
     let tenant_data = feature_members("bin-tenant-data");
     assert!(tenant_data.contains("ryframe-db/repositories"));
     assert!(tenant_data.contains("ryframe-tenant-db/repositories"));
-
-    let maintenance = feature_members("bin-file-maintenance");
-    assert!(maintenance.contains("ryframe-db/repositories"));
 
     let reset = feature_members("bin-reset");
     assert!(!reset.contains("ryframe-db/repositories"));

@@ -3,13 +3,11 @@ use std::path::PathBuf;
 use super::{
     cli::{
         BackupCommand, BackupInventoryOptions, BackupObservation, BackupRegisterOptions,
-        FileMaintenanceMode, FileMaintenanceOperation, FileMaintenanceOptions, ResetCommand,
-        ResetExecuteOptions, RestoreBeginOptions, RestoreCommand, RestoreDataOptions,
+        ResetCommand, ResetExecuteOptions, RestoreBeginOptions, RestoreCommand, RestoreDataOptions,
         RestoreVerifyOptions, TargetInventoryOptions,
     },
     data::arguments::{
-        backup_arguments, file_arguments, reset_arguments, restore_arguments,
-        target_inventory_arguments,
+        backup_arguments, reset_arguments, restore_arguments, target_inventory_arguments,
     },
 };
 
@@ -132,47 +130,7 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
 }
 
 #[test]
-fn file_and_reset_commands_rebuild_only_validated_write_arguments() {
-    assert_eq!(
-        file_arguments(&FileMaintenanceOptions {
-            operation: FileMaintenanceOperation::BackfillSha256,
-            mode: FileMaintenanceMode::DryRun,
-            database: "ryframe_test".into(),
-            batch_size: 100,
-            start_after: i64::MIN,
-        }),
-        strings(&[
-            "backfill-sha256",
-            "dry-run",
-            "--database",
-            "ryframe_test",
-            "--batch-size",
-            "100",
-            "--start-after",
-            "-9223372036854775808",
-        ])
-    );
-    assert_eq!(
-        file_arguments(&FileMaintenanceOptions {
-            operation: FileMaintenanceOperation::DrainLegacyReservations,
-            mode: FileMaintenanceMode::Apply,
-            database: "ryframe_test".into(),
-            batch_size: 2,
-            start_after: 9,
-        }),
-        strings(&[
-            "drain-legacy-reservations",
-            "apply",
-            "--database",
-            "ryframe_test",
-            "--batch-size",
-            "2",
-            "--start-after",
-            "9",
-            "--confirm-apply",
-            "APPLY-FILE-A-MAINTENANCE",
-        ])
-    );
+fn reset_commands_rebuild_only_validated_write_arguments() {
     assert_eq!(reset_arguments(&ResetCommand::Plan), ["plan"]);
     assert_eq!(
         reset_arguments(&ResetCommand::Execute(ResetExecuteOptions {

@@ -67,7 +67,6 @@ max_integration_test_lines = 1000
 disabled_bin_test_targets = [
     "ryframe:ryframe",
     "ryframe:export_openapi",
-    "ryframe:ryframe-file-maintenance",
     "ryframe:ryframe-migrate",
     "ryframe:ryframe-reset",
     "ryframe:ryframe-tenant-data",

@@ -176,17 +176,6 @@ fn invalid_data_arguments_exit_two_before_starting_cargo() {
         ["data", "backup", "register", "--manifest", "relative.json"].as_slice(),
         [
             "data",
-            "file",
-            "backfill-sha256",
-            "apply",
-            "--database",
-            "ryframe_test",
-            "--confirm-apply",
-            "APPLY-FILE-A-MAINTENANCE",
-        ]
-        .as_slice(),
-        [
-            "data",
             "reset",
             "execute",
             "--plan-hash",
