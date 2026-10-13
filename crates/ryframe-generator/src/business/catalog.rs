@@ -5,9 +5,12 @@ use tempfile::Builder;
 use super::{BusinessPackage, OwnedResourceDescriptor};
 use crate::ResourceError;
 
+mod lock;
+
 pub(super) fn load_descriptors(
     package: &BusinessPackage,
 ) -> Result<Vec<OwnedResourceDescriptor>, ResourceError> {
+    let manifest = lock::reader_manifest(package)?;
     let scratch_root = package.workspace_root.join("target/ryframe-generate");
     fs::create_dir_all(&scratch_root).map_err(|error| {
         catalog_error(format!("无法创建 catalog 临时目录：{error}"), &scratch_root)
@@ -18,11 +21,6 @@ pub(super) fn load_descriptors(
         .map_err(|error| {
             catalog_error(format!("无法创建 catalog 临时目录：{error}"), &scratch_root)
         })?;
-    let dependency_path = package.root.to_string_lossy();
-    let manifest = format!(
-        "[package]\nname = \"ryframe-catalog-reader\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies]\nbusiness = {{ package = {:?}, path = {:?}, default-features = false, features = [\"catalog\"] }}\nserde_json = \"1\"\n",
-        package.name, dependency_path,
-    );
     fs::write(scratch.path().join("Cargo.toml"), manifest).map_err(|error| {
         catalog_error(
             format!("无法写入 catalog 临时清单：{error}"),
@@ -40,8 +38,9 @@ pub(super) fn load_descriptors(
         "fn main() { println!(\"{}\", serde_json::to_string(&business::resource_descriptors()).expect(\"资源描述符必须可序列化\")); }\n",
     )
     .map_err(|error| catalog_error(format!("无法写入 catalog reader：{error}"), scratch.path()))?;
+    lock::resolve_reader(package, scratch.path())?;
     let output = Command::new("cargo")
-        .args(["run", "--quiet", "--manifest-path"])
+        .args(["run", "--locked", "--offline", "--quiet", "--manifest-path"])
         .arg(scratch.path().join("Cargo.toml"))
         .arg("--target-dir")
         .arg(

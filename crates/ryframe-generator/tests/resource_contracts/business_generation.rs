@@ -37,6 +37,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     )
     .expect("应写入业务入口");
     write_order_model(workspace.path());
+    let locked = prepare_lock(workspace.path());
     if auto_increment {
         let model = workspace.path().join("order-business/src/resources/mod.rs");
         fs::write(
@@ -97,6 +98,37 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     );
 
     assert_migration_is_immutable(workspace.path(), &crate_root);
+    assert_eq!(
+        fs::read(workspace.path().join("Cargo.lock")).unwrap(),
+        locked
+    );
+}
+
+fn prepare_lock(workspace: &std::path::Path) -> Vec<u8> {
+    let error = generate_business_package(BusinessGenerateOptions {
+        current_dir: workspace,
+        package: "order-business",
+        model: None,
+        write: false,
+    })
+    .expect_err("缺少项目锁文件必须在生成前拒绝");
+    assert!(
+        error
+            .to_string()
+            .contains("cargo generate-lockfile --offline")
+    );
+    assert!(!workspace.join("target/ryframe-generate").exists());
+    let output = std::process::Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::read(workspace.join("Cargo.lock")).unwrap()
 }
 
 fn assert_auto_increment_assets(workspace: &std::path::Path) {
