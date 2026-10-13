@@ -15,6 +15,20 @@ pub enum StorageKind {
     TenantData,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdGeneration {
+    #[default]
+    Snowflake,
+    AutoIncrement,
+}
+
+impl IdGeneration {
+    pub(crate) fn is_snowflake(&self) -> bool {
+        *self == Self::Snowflake
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueType {
@@ -80,6 +94,8 @@ pub struct ResourceIr {
     pub configuration_versioned: bool,
     pub table: String,
     pub primary_key: Vec<String>,
+    #[serde(skip_serializing_if = "IdGeneration::is_snowflake")]
+    pub id_generation: IdGeneration,
     pub bootstrap_migration: bool,
     pub schema_hash: String,
     pub schema_revision: Option<String>,

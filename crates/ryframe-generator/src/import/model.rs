@@ -69,7 +69,7 @@ pub fn rust_model_source(table: &TableInfo, database: &str) -> Result<String, St
             attributes.push("primary_key");
         }
         if column.is_auto_increment {
-            attributes.push("generated");
+            attributes.push("auto_increment");
         }
         if !attributes.is_empty() {
             output.push_str(&format!("    #[resource({})]\n", attributes.join(", ")));

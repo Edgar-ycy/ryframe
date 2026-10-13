@@ -86,6 +86,15 @@ pub(super) fn descriptor_to_ir(
             configuration_versioned: false,
         },
         database: DatabaseSpec {
+            id_generation: if descriptor
+                .fields
+                .iter()
+                .any(|field| field.name == "id" && field.auto_increment)
+            {
+                crate::IdGeneration::AutoIncrement
+            } else {
+                crate::IdGeneration::Snowflake
+            },
             table: descriptor.table.clone(),
             primary_key,
             bootstrap_migration: true,
@@ -291,7 +300,7 @@ fn indexes(descriptor: &OwnedResourceDescriptor) -> Vec<IndexSpec> {
     descriptor
         .fields
         .iter()
-        .filter(|field| field.unique || field.name == "tenant_id")
+        .filter(|field| field.unique || field.auto_increment || field.name == "tenant_id")
         .map(|field| IndexSpec {
             name: format!(
                 "{}_{}_{}",
@@ -300,6 +309,7 @@ fn indexes(descriptor: &OwnedResourceDescriptor) -> Vec<IndexSpec> {
                 field.name
             ),
             fields: if field.unique
+                && !field.auto_increment
                 && descriptor.database == OwnedResourceDatabase::Tenant
                 && field.name != "tenant_id"
             {
@@ -307,7 +317,7 @@ fn indexes(descriptor: &OwnedResourceDescriptor) -> Vec<IndexSpec> {
             } else {
                 vec![field.name.clone()]
             },
-            unique: field.unique,
+            unique: field.unique && !field.auto_increment,
         })
         .collect()
 }

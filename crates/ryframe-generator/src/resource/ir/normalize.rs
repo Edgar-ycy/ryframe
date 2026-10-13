@@ -58,19 +58,7 @@ pub(in crate::resource) fn normalize(
 
     let (names, fields) = normalize_fields(&mut spec, &resource, &source_path)?;
 
-    let mut relations = spec
-        .relations
-        .iter()
-        .map(|relation| RelationIr {
-            name: relation.name.clone(),
-            pascal_name: crate::naming::to_pascal_case(&relation.name),
-            kind: relation.kind,
-            local_field: relation.local_field.clone(),
-            target_resource: relation.target_resource.clone(),
-            target_pascal_name: crate::naming::to_pascal_case(&relation.target_resource),
-        })
-        .collect::<Vec<_>>();
-    relations.sort_by(|left, right| left.name.cmp(&right.name));
+    let relations = normalize_relations(&spec.relations);
 
     validate_references(&resource, &source_path, &spec, &names, &fields)?;
     validate_storage(&resource, &source_path, &spec, &names)?;
@@ -114,6 +102,7 @@ pub(in crate::resource) fn normalize(
         configuration_versioned: spec.storage.configuration_versioned,
         table: spec.database.table,
         primary_key: spec.database.primary_key,
+        id_generation: spec.database.id_generation,
         bootstrap_migration: spec.database.bootstrap_migration,
         schema_hash,
         schema_revision: spec.database.schema_revision,
@@ -158,6 +147,23 @@ pub(in crate::resource) fn normalize(
         source_path,
         source_hash,
     })
+}
+
+fn normalize_relations(spec: &[super::RelationSpec]) -> Vec<RelationIr> {
+    let mut relations = spec
+        .iter()
+        .map(|relation| RelationIr {
+            name: relation.name.clone(),
+            pascal_name: crate::naming::to_pascal_case(&relation.name),
+            kind: relation.kind,
+            local_field: relation.local_field.clone(),
+            target_resource: relation.target_resource.clone(),
+            target_pascal_name: crate::naming::to_pascal_case(&relation.target_resource),
+        })
+        .collect::<Vec<_>>();
+    relations.sort_by(|left, right| left.name.cmp(&right.name));
+
+    relations
 }
 
 fn validate_path_matches_resource(path: &str, resource: &str) -> Result<(), ResourceError> {

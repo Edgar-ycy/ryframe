@@ -10,6 +10,8 @@ mod resource_aggregate;
 mod resource_check;
 #[path = "resource_contracts/resource_generation.rs"]
 mod resource_generation;
+#[path = "resource_contracts/resource_id_generation.rs"]
+mod resource_id_generation;
 #[path = "resource_contracts/resource_import.rs"]
 mod resource_import;
 #[path = "resource_contracts/resource_migration_generation.rs"]

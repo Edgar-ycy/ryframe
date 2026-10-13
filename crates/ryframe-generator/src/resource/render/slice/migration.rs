@@ -9,7 +9,7 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
     let mut definitions = resource
         .fields
         .iter()
-        .map(column_definition)
+        .map(|field| column_definition(resource, field))
         .collect::<Vec<_>>();
     definitions.push(format!(
         "  PRIMARY KEY ({})",
@@ -94,7 +94,7 @@ pub(super) fn migration_name(resource: &ResourceIr) -> String {
     format!("m_resource_initial_{}", resource.name)
 }
 
-fn column_definition(field: &super::FieldIr) -> String {
+fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -> String {
     let sql_type = super::super::schema::column_type(field);
     let nullability = if field.nullable { "NULL" } else { "NOT NULL" };
     let default = field
@@ -102,5 +102,14 @@ fn column_definition(field: &super::FieldIr) -> String {
         .as_ref()
         .map(|value| format!(" DEFAULT {}", sql_literal(value)))
         .unwrap_or_default();
-    format!("  `{}` {sql_type} {nullability}{default}", field.column)
+    let auto_increment =
+        if field.name == "id" && resource.id_generation == crate::IdGeneration::AutoIncrement {
+            " AUTO_INCREMENT"
+        } else {
+            ""
+        };
+    format!(
+        "  `{}` {sql_type} {nullability}{default}{auto_increment}",
+        field.column
+    )
 }

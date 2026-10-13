@@ -221,7 +221,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         .iter()
         .map(|field| {
             format!(
-                "ryframe_sdk::ResourceFieldDescriptor {{ name: {:?}, column: {:?}, rust_type: {:?}, rename_from: {}, default: {}, primary_key: {}, generated: {}, read_only: {}, filter: {}, sort: {}, unique: {} }}",
+                "ryframe_sdk::ResourceFieldDescriptor {{ name: {:?}, column: {:?}, rust_type: {:?}, rename_from: {}, default: {}, primary_key: {}, generated: {}, auto_increment: {}, read_only: {}, filter: {}, sort: {}, unique: {} }}",
                 field.name,
                 field.column,
                 field.rust_type,
@@ -229,6 +229,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
                 option_literal(field.default.as_deref()),
                 field.primary_key,
                 field.generated,
+                field.auto_increment,
                 field.read_only,
                 field.filter,
                 field.sort,

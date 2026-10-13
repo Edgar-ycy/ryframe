@@ -79,6 +79,9 @@ pub(crate) fn service(resource: &ResourceIr, header: &str) -> String {
 }
 fn create_expression(resource: &ResourceIr, field: &FieldIr) -> String {
     if field.name == "id" {
+        if resource.id_generation == crate::IdGeneration::AutoIncrement {
+            return "0".into();
+        }
         return "crate::next_id()?".into();
     }
     if field.name == "tenant_id" {

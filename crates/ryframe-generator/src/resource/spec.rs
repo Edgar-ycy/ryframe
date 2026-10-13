@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{RelationKind, ResourceError, ResourceProfile, StorageKind, ValueType};
+use super::{IdGeneration, RelationKind, ResourceError, ResourceProfile, StorageKind, ValueType};
 
 /// 资源清单的稳定输入模型。
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -125,6 +125,8 @@ fn default_true() -> bool {
 pub struct DatabaseSpec {
     pub table: String,
     pub primary_key: Vec<String>,
+    #[serde(default, skip_serializing_if = "IdGeneration::is_snowflake")]
+    pub id_generation: IdGeneration,
     /// 为新资源生成首次引入的不可变初始迁移。
     #[serde(default)]
     pub bootstrap_migration: bool,

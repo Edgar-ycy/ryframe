@@ -212,7 +212,11 @@ fn render_column(output: &mut String, resource: &ResourceIr, field: &FieldIr) {
         collation,
         column_key(resource, field),
         default,
-        "",
+        if field.name == "id" && resource.id_generation == crate::IdGeneration::AutoIncrement {
+            "auto_increment"
+        } else {
+            ""
+        },
         "",
     )
     .expect("写入 String 不会失败");

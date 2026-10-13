@@ -344,12 +344,7 @@ fn reset_workspace_directory(path: &Path) {
 }
 
 fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationProfile) {
-    let mut order = load_resource(
-        workspace
-            .backend_source
-            .join("crates/ryframe-generator/tests/fixtures/order.toml"),
-    )
-    .expect("Order 清单应有效");
+    let mut order = load_auto_order();
     order.relations.push(RelationIr {
         name: "parent".into(),
         pascal_name: "Parent".into(),
@@ -483,6 +478,20 @@ fn register_generated_backend_modules(backend: &Path) {
         }
         fs::write(&lib, source).expect("应在临时副本接入 generated module");
     }
+}
+
+fn load_auto_order() -> ryframe_generator::ResourceIr {
+    // 同时验证租户复合主键自增与 Post/Notice 默认雪花主键的真实编译面。
+    let mut spec =
+        ryframe_generator::ResourceSpec::parse(include_str!("fixtures/order.toml"), "order.toml")
+            .unwrap();
+    spec.database.id_generation = ryframe_generator::IdGeneration::AutoIncrement;
+    spec.database.indexes.push(ryframe_generator::IndexSpec {
+        name: "idx_order_auto_id".into(),
+        fields: vec!["id".into()],
+        unique: false,
+    });
+    ryframe_generator::normalize_resource(spec, "order.toml", "auto-order-fixture").unwrap()
 }
 
 fn assert_backend_checks(workspace: &SharedWorkspace) {
@@ -827,7 +836,7 @@ use ryframe_application::generated::order::{
 fn record(id: i64) -> OrderRecord {
     OrderRecord {
         tenant_id: "tenant-a".into(),
-        id,
+        id: id + 100,
         name: format!("order-{id}"),
         status: 1,
         created_at: Utc::now(),

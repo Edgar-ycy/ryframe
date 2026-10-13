@@ -12,9 +12,9 @@ mod syntax;
 mod value;
 
 pub use model::{
-    AccessIr, ApiIr, AuditIr, FieldIr, FieldUsageIr, IndexIr, LabelsIr, MenuIr, PermissionIr,
-    RelationIr, RelationKind, ResourceIr, ResourceProfile, RouteIr, SoftDeleteIr, StorageKind,
-    ValidationIr, ValueType, WidgetIr,
+    AccessIr, ApiIr, AuditIr, FieldIr, FieldUsageIr, IdGeneration, IndexIr, LabelsIr, MenuIr,
+    PermissionIr, RelationIr, RelationKind, ResourceIr, ResourceProfile, RouteIr, SoftDeleteIr,
+    StorageKind, ValidationIr, ValueType, WidgetIr,
 };
 
 use access::{validate_api_and_access, validate_extensions};

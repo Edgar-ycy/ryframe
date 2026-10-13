@@ -83,11 +83,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
 
     async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
         self.ensure_tenant(&record.tenant_id)?;
-        entity::ActiveModel::from(to_entity(record))
-            .insert(&self.transaction)
-            .await
-            .map(to_record)
-            .db_conflicts(&[{unique_conflicts}], {generic_conflict:?})
+{insert_body}
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{

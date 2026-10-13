@@ -14,8 +14,8 @@ pub(crate) use writer::transaction as write_transaction;
 pub use error::ResourceError;
 pub use explain::{ExplainNode, ResourceExplanation};
 pub use ir::{
-    FieldIr, IndexIr, PermissionIr, RelationIr, RelationKind, ResourceIr, ResourceProfile,
-    StorageKind, ValueType, WidgetIr,
+    FieldIr, IdGeneration, IndexIr, PermissionIr, RelationIr, RelationKind, ResourceIr,
+    ResourceProfile, StorageKind, ValueType, WidgetIr,
 };
 pub(crate) use render::business::render_business_resource;
 pub(crate) use render::tenant_catalog::{business_tenant_manifest, render_business_tenant_catalog};

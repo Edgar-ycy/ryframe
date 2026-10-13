@@ -108,6 +108,7 @@ fn field_descriptor(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
     let mut default = None;
     let mut primary_key = false;
     let mut generated = false;
+    let mut auto_increment = false;
     let mut read_only = false;
     let mut filter = false;
     let mut sort = false;
@@ -132,6 +133,10 @@ fn field_descriptor(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
             } else if meta.path.is_ident("generated") {
                 generated = true;
                 Ok(())
+            } else if meta.path.is_ident("auto_increment") {
+                auto_increment = true;
+                generated = true;
+                Ok(())
             } else if meta.path.is_ident("read_only") {
                 read_only = true;
                 Ok(())
@@ -149,6 +154,12 @@ fn field_descriptor(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
             }
         })?;
     }
+    if auto_increment && (!primary_key || field_name != "id" || default.is_some()) {
+        return Err(syn::Error::new_spanned(
+            field,
+            "auto_increment 仅支持无默认值的 id 主键；声明 #[resource(primary_key, auto_increment)]",
+        ));
+    }
     let column = column.unwrap_or(column_default);
     let rename = rename_from
         .map(|value| quote!(Some(#value)))
@@ -165,6 +176,7 @@ fn field_descriptor(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
             default: #default,
             primary_key: #primary_key,
             generated: #generated,
+            auto_increment: #auto_increment,
             read_only: #read_only,
             filter: #filter,
             sort: #sort,
@@ -175,4 +187,38 @@ fn field_descriptor(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
 
 fn required(value: Option<String>, input: &DeriveInput, field: &str) -> syn::Result<String> {
     value.ok_or_else(|| syn::Error::new_spanned(input, format!("缺少 resource {field}")))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn auto_increment_requires_explicit_id_primary_key_without_default() {
+        for field in [
+            "#[resource(auto_increment)] id: i64",
+            "#[resource(primary_key, auto_increment)] other: i64",
+            "#[resource(primary_key, auto_increment, default = \"0\")] id: i64",
+        ] {
+            let source = format!(
+                "#[resource(name = \"item\", table = \"biz_item\", database = \"tenant\")] struct Item {{ {field} }}"
+            );
+            let input = syn::parse_str(&source).unwrap();
+            let error = super::expand_inner(&input).unwrap_err().to_string();
+            assert!(error.contains("auto_increment"));
+            assert!(error.contains("无默认值"));
+        }
+    }
+
+    #[test]
+    fn auto_increment_descriptor_is_also_service_managed() {
+        let input = syn::parse_quote! {
+            #[resource(name = "item", table = "biz_item", database = "tenant")]
+            struct Item {
+                #[resource(primary_key, auto_increment)]
+                id: i64,
+            }
+        };
+        let expanded = super::expand_inner(&input).unwrap().to_string();
+        assert!(expanded.contains("auto_increment : true"));
+        assert!(expanded.contains("generated : true"));
+    }
 }

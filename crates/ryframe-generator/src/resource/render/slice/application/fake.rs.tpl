@@ -50,7 +50,7 @@ struct FakeState {{
     records: BTreeMap<(String, i64), {pascal}Record>,
     failures: VecDeque<{pascal}Failure>,
     transactions: Vec<{pascal}TransactionState>,
-{owner_state}}}
+{owner_state}{id_state}}}
 
 #[derive(Clone, Default)]
 pub struct {pascal}FakePersistence {{
@@ -198,13 +198,13 @@ impl {pascal}Transaction for FakeTransaction {{
         Ok(self.lock_view().get(&id).cloned())
     }}
 
-    async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
+    async fn insert(&self, {record_mut}record: {pascal}Record) -> AppResult<{pascal}Record> {{
         self.ensure_tenant(&record.tenant_id)?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Insert {{ record: record.clone() }});
             fail_if_requested(&mut state, {pascal}Failure::Insert)?;
-        }}
+{auto_id}        }}
         self.lock_view().insert(record.id, record.clone());
         Ok(record)
     }}

@@ -147,6 +147,10 @@ fn table_import_is_deterministic_and_keeps_business_semantics_pending() {
     assert_eq!(first_toml, second_toml);
     assert_eq!(first.spec.database.primary_key, ["id"]);
     assert_eq!(
+        first.spec.database.id_generation,
+        ryframe_generator::IdGeneration::AutoIncrement
+    );
+    assert_eq!(
         first
             .spec
             .database
@@ -250,6 +254,7 @@ fn imported_models_escape_comments_and_reject_unusable_keys_before_write() {
     source.comment = Some("订单\"\\\n下一行".into());
     let model = rust_model_source(&source, "control").unwrap();
     syn::parse_file(&model).expect("数据库注释必须生成为合法 Rust 字符串");
+    assert!(model.contains("primary_key, auto_increment"));
     assert!(
         rust_model_source(&source, "tenant")
             .unwrap_err()

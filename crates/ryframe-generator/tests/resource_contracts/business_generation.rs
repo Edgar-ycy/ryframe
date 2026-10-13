@@ -4,6 +4,15 @@ use ryframe_generator::business::{BusinessGenerateOptions, generate_business_pac
 
 #[test]
 fn business_crate_generation_is_local_read_only_by_default_and_repeatable() {
+    assert_business_generation(false);
+}
+
+#[test]
+fn auto_increment_business_preserves_tenant_primary_key_and_repeatability() {
+    assert_business_generation(true);
+}
+
+fn assert_business_generation(auto_increment: bool) {
     let workspace = tempfile::Builder::new()
         .prefix("business-generation-")
         .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
@@ -28,6 +37,16 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     )
     .expect("应写入业务入口");
     write_order_model(workspace.path());
+    if auto_increment {
+        let model = workspace.path().join("order-business/src/resources/mod.rs");
+        fs::write(
+            &model,
+            fs::read_to_string(&model)
+                .unwrap()
+                .replace("primary_key, generated", "primary_key, auto_increment"),
+        )
+        .unwrap();
+    }
 
     let crate_root = workspace.path().join("order-business/src/resources");
     let preview = generate_business_package(BusinessGenerateOptions {
@@ -54,6 +73,9 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     .expect("写入应成功");
     assert!(!written.created.is_empty());
     assert_generated_business(workspace.path());
+    if auto_increment {
+        assert_auto_increment_assets(workspace.path());
+    }
 
     let ownership_path = workspace
         .path()
@@ -75,6 +97,19 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     );
 
     assert_migration_is_immutable(workspace.path(), &crate_root);
+}
+
+fn assert_auto_increment_assets(workspace: &std::path::Path) {
+    let migration =
+        fs::read_to_string(workspace.join("order-business/migrations/m_resource_initial_order.rs"))
+            .unwrap();
+    assert!(migration.contains("AUTO_INCREMENT"));
+    assert!(migration.contains("PRIMARY KEY (`tenant_id`, `id`)"));
+    assert!(migration.contains("KEY `idx_order_id` (`id`)"));
+    let repository =
+        fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))
+            .unwrap();
+    assert!(repository.contains("LAST_INSERT_ID()"));
 }
 
 fn write_business_manifest(workspace: &std::path::Path, sdk: &std::path::Path) {

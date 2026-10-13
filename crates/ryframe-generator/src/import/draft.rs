@@ -179,6 +179,15 @@ pub fn draft_resource_from_table(
             resource: metadata.identity,
             storage: metadata.storage,
             database: DatabaseSpec {
+                id_generation: if table
+                    .columns
+                    .iter()
+                    .any(|column| column.name == "id" && column.is_auto_increment)
+                {
+                    crate::IdGeneration::AutoIncrement
+                } else {
+                    crate::IdGeneration::Snowflake
+                },
                 table: table.table_name.clone(),
                 primary_key,
                 bootstrap_migration: false,

@@ -66,6 +66,51 @@ pub(super) fn validate_generation_contract(
     validate_tenant_identity(resource, source_path, spec, fields)?;
     validate_managed_fields(resource, source_path, spec, fields)?;
     validate_default_sort(resource, source_path, fields)?;
+    validate_id_generation(resource, source_path, spec, fields)?;
+    Ok(())
+}
+
+fn validate_id_generation(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &[FieldIr],
+) -> Result<(), ResourceError> {
+    if spec.database.id_generation == super::IdGeneration::Snowflake {
+        return Ok(());
+    }
+    let id = fields
+        .iter()
+        .find(|field| field.name == "id")
+        .expect("ID 已校验");
+    if id.default.is_some() || id.usage.create || id.usage.update {
+        return Err(field_error(
+            resource,
+            "id",
+            source_path,
+            "自增 ID 不能由表单或默认值写入",
+            "将 id 设为服务管理字段，删除 default 与 create/update 用途",
+        ));
+    }
+    let first_id_key = spec
+        .database
+        .primary_key
+        .first()
+        .is_some_and(|field| field == "id")
+        || spec
+            .database
+            .indexes
+            .iter()
+            .any(|index| index.fields.first().is_some_and(|field| field == "id"));
+    if !first_id_key {
+        return Err(field_error(
+            resource,
+            "id",
+            source_path,
+            "MySQL 自增列必须是某个索引的首列",
+            "显式增加以 id 开头的非唯一索引，保留 tenant_id 作为租户复合主键首列",
+        ));
+    }
     Ok(())
 }
 

@@ -7,7 +7,13 @@ pub(crate) fn entity(resource: &ResourceIr, header: &str) -> String {
     );
     for field in &resource.fields {
         if resource.primary_key.contains(&field.name) {
-            output.push_str("    #[sea_orm(primary_key, auto_increment = false)]\n");
+            // ORM 不支持复合自增主键；租户插入由 Repository 显式省略 ID 并回读。
+            let auto_increment = resource.primary_key.len() == 1
+                && field.name == "id"
+                && resource.id_generation == crate::IdGeneration::AutoIncrement;
+            output.push_str(&format!(
+                "    #[sea_orm(primary_key, auto_increment = {auto_increment})]\n"
+            ));
         }
         if field.column != field.name {
             output.push_str(&format!(

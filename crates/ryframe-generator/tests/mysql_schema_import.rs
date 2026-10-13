@@ -1,7 +1,40 @@
 use ryframe_generator::import::inspect_existing_table;
+use sea_orm::TransactionTrait;
 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generated_tenant_auto_increment_ddl_and_transaction_readback_match_mysql() {
+    use ryframe_generator::{
+        IdGeneration, IndexSpec, ResourceSpec, normalize_resource, render_resources,
+    };
+    mysql::run_mysql_test("schema_auto_id", |database| async move {
+        let mut spec = ResourceSpec::parse(include_str!("fixtures/order.toml"), "order.toml").unwrap();
+        spec.database.id_generation = IdGeneration::AutoIncrement;
+        spec.database.indexes.push(IndexSpec {
+            name: "idx_order_auto_id".into(), fields: vec!["id".into()], unique: false,
+        });
+        let resource = normalize_resource(spec, "order.toml", "auto").unwrap();
+        let generated = render_resources(&[resource]).unwrap();
+        let migration = &generated.assets.iter().find(|asset| asset.path.ends_with("order/migration.rs")).unwrap().content;
+        let ddl = migration.split_once("CREATE_TABLE_DDL: &str = r#\"").unwrap().1.split_once("\"#;").unwrap().0;
+        mysql::execute(&database, ddl).await?;
+        let transaction = database.begin().await.map_err(|error| error.to_string())?;
+        mysql::execute(&transaction, "SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')").await?;
+        mysql::execute(&transaction, "INSERT INTO biz_order(tenant_id, name, status, created_at, del_flag) VALUES ('tenant-a','first',1,NOW(6),0)").await?;
+        mysql::require_count(&transaction, "SELECT COUNT(*) AS value FROM biz_order WHERE tenant_id='tenant-a' AND id=LAST_INSERT_ID() AND id=1", 1).await?;
+        mysql::execute(&transaction, "INSERT INTO biz_order(tenant_id, name, status, created_at, del_flag) VALUES ('tenant-b','first',1,NOW(6),0)").await?;
+        mysql::require_count(&transaction, "SELECT COUNT(*) AS value FROM biz_order WHERE tenant_id='tenant-b' AND id=LAST_INSERT_ID() AND id=2", 1).await?;
+        mysql::require_count(&transaction, "SELECT COUNT(*) AS value FROM biz_order WHERE tenant_id='tenant-a' AND id=LAST_INSERT_ID()", 0).await?;
+        transaction.rollback().await.map_err(|error| error.to_string())?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_order", 0).await?;
+        let table = inspect_existing_table(&database, "biz_order").await.map_err(|error| error.to_string())?;
+        assert!(table.columns.iter().find(|column| column.name == "id").unwrap().is_auto_increment);
+        assert!(table.indexes.iter().any(|index| index.name == "idx_order_auto_id" && !index.unique && index.columns == ["id"]));
+        Ok(())
+    }).await;
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn selected_tables_preserve_types_defaults_indexes_and_foreign_keys() {

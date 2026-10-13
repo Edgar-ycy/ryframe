@@ -46,6 +46,7 @@ pub(crate) struct OwnedFieldDescriptor {
     pub default: Option<String>,
     pub primary_key: bool,
     pub generated: bool,
+    pub auto_increment: bool,
     pub read_only: bool,
     pub filter: bool,
     pub sort: bool,

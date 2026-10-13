@@ -77,6 +77,21 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
         record_order = record_order,
         tenant_mismatch = tenant_mismatch,
         control_methods = control_methods,
+        record_mut = if resource.id_generation == crate::IdGeneration::AutoIncrement {
+            "mut "
+        } else {
+            ""
+        },
+        id_state = if resource.id_generation == crate::IdGeneration::AutoIncrement {
+            "    next_id: i64,\n"
+        } else {
+            ""
+        },
+        auto_id = if resource.id_generation == crate::IdGeneration::AutoIncrement {
+            "            let maximum = state.records.values().map(|record| record.id).max().unwrap_or_default().max(state.next_id);\n            state.next_id = maximum.checked_add(1).ok_or_else(|| AppError::Conflict(\"自增 ID 已超出 i64 范围\".into()))?;\n            record.id = state.next_id;\n"
+        } else {
+            ""
+        },
     )
 }
 fn fake_active_record_filters(resource: &ResourceIr) -> (String, String) {

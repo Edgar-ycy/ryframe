@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-use super::{ResourceError, ResourceSpec, is_snake_identifier};
+use super::{IdGeneration, ResourceError, ResourceSpec, is_snake_identifier};
 
 pub(super) fn normalize_schema(
     spec: &ResourceSpec,
@@ -67,7 +67,7 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
             contract
         })
         .collect::<Vec<_>>();
-    let contract = serde_json::json!({
+    let mut contract = serde_json::json!({
         "fields": fields,
         "indexes": spec.database.indexes,
         "primary_key": spec.database.primary_key,
@@ -77,6 +77,12 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
         },
         "table": spec.database.table,
     });
+    if spec.database.id_generation != IdGeneration::Snowflake {
+        contract.as_object_mut().expect("schema 是对象").insert(
+            "id_generation".into(),
+            serde_json::json!(spec.database.id_generation),
+        );
+    }
     hex::encode(Sha256::digest(
         serde_json::to_vec(&contract).expect("schema contract 只包含可序列化基础类型"),
     ))
