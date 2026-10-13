@@ -1,7 +1,5 @@
 # 开发指南
 
-当前契约生成使用 `core/system/platform/monitor` 四个领域。套餐能力目录可以为空，开发新业务能力时仍需明确登记 capability，未知能力继续被拒绝。标准 CRUD 的生成与幂等检查保持不变。
-
 产品套餐的能力选项来自后端编译目录和前端 feature manifest。基础管理功能保持可用并遵循 RBAC，通知公告与租户主动消息发布可以按套餐启停。首批能力使用 `standard` 变体和严格空对象配置；停用公告后管理与读取入口关闭，停用主动消息后拒绝新的发布，已有数据和已接受消息保留，系统通知继续运行。租户、产品套餐、数据目标及平台基础设施管理属于系统租户，不能通过普通租户的权限通配符、菜单授权或配置包开放。系统租户具备已部署的管理能力，仍受实际基础设施可用性校验。
 
 ## 环境与配置
@@ -81,6 +79,8 @@ cargo generate -- resource --package order-business --model Order --write
 命令可从工作区根目录或该 crate 的任意子目录执行。默认预览只报告差异，`--write` 才原子更新生成文件；资源生成不写 `resources/` 和 `extensions/`，不覆盖已生成迁移。`--package` 可由工具配置的 `generator.package` 提供；`--plan` 仅列任务，不编译描述符或访问数据库。`--sync-frontend --write` 使用本次后端候选契约同步前端。默认生成器保持离线，读取既有表使用 `cargo generate --features schema-import -- import --connection legacy --database control --package order-business --table biz_order`，连接和目标类型可由 `generator.source`、`generator.storage` 提供；当前反向导入用于首次模型草案。
 
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
+
+反向结构读取保留完整列类型、默认值和附加属性，未知类型、视图及不可读列明确拒绝。模型的日期、JSON 和精确 Decimal 可使用 SDK 限定路径，不必直接依赖数据库或 API；`tinyint(1)` 保留整数范围，不据显示宽度猜测布尔含义。模型草案不代表完整 CRUD 已支持其全部类型，资源生成仍校验实际支持边界。
 
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 

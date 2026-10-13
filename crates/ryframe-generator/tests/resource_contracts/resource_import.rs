@@ -125,6 +125,9 @@ fn column(
     ColumnInfo {
         name: name.into(),
         data_type: data_type.into(),
+        column_type: data_type.into(),
+        default: None,
+        extra: String::new(),
         rust_type: String::new(),
         is_nullable: nullable,
         is_primary_key: primary,
@@ -198,6 +201,81 @@ fn table_import_rejects_unknown_types_instead_of_guessing() {
     assert!(error.contains("字段 name"));
     assert!(error.contains("geometry"));
     assert!(error.contains("人工选择"));
+}
+
+#[test]
+fn mysql_mapping_keeps_ranges_and_qualified_model_types() {
+    use ryframe_generator::import::mysql_rust_type;
+    for (sql, rust) in [
+        ("tinyint(1)", "i8"),
+        ("smallint unsigned", "u16"),
+        ("mediumint", "i32"),
+        ("bigint unsigned", "u64"),
+        ("bool", "bool"),
+        ("decimal(20,6)", "ryframe_sdk::rust_decimal::Decimal"),
+        (
+            "datetime(6)",
+            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
+        ),
+        ("json", "ryframe_sdk::serde_json::Value"),
+        ("varbinary(64)", "Vec<u8>"),
+    ] {
+        assert_eq!(mysql_rust_type(sql, false).unwrap(), rust);
+        assert_eq!(
+            mysql_rust_type(sql, true).unwrap(),
+            format!("Option<{rust}>")
+        );
+    }
+    for unknown in [
+        "geometry",
+        "enum('a','b')",
+        "set('x','y')",
+        "uuid",
+        "bytea",
+        "",
+    ] {
+        let error = mysql_rust_type(unknown, false).unwrap_err();
+        assert!(error.contains(unknown));
+        assert!(error.contains("显式转换"));
+    }
+}
+
+#[test]
+fn imported_models_escape_comments_and_reject_unusable_keys_before_write() {
+    use ryframe_generator::import::{mysql_rust_type, rust_model_source};
+    let mut source = table();
+    for column in &mut source.columns {
+        column.rust_type = mysql_rust_type(&column.column_type, column.is_nullable).unwrap();
+    }
+    source.comment = Some("订单\"\\\n下一行".into());
+    let model = rust_model_source(&source, "control").unwrap();
+    syn::parse_file(&model).expect("数据库注释必须生成为合法 Rust 字符串");
+    assert!(
+        rust_model_source(&source, "tenant")
+            .unwrap_err()
+            .contains("tenant_id")
+    );
+    source.columns[1].is_primary_key = true;
+    assert!(rust_model_source(&source, "tenant").is_ok());
+    assert!(
+        rust_model_source(&source, "control")
+            .unwrap_err()
+            .contains("复合主键")
+    );
+    source.columns[2].name = "type".into();
+    assert!(
+        rust_model_source(&source, "tenant")
+            .unwrap_err()
+            .contains("字段映射")
+    );
+    for column in &mut source.columns {
+        column.is_primary_key = false;
+    }
+    assert!(
+        rust_model_source(&source, "control")
+            .unwrap_err()
+            .contains("没有主键")
+    );
 }
 
 #[cfg(feature = "schema-import")]

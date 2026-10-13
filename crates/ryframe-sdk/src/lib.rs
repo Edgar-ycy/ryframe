@@ -48,10 +48,10 @@ pub fn validated_tenant_id(actor: &ryframe_kernel::ActorContext) -> AppResult<&s
     Ok(&actor.tenant_id)
 }
 
-pub use chrono;
-pub use serde;
 #[cfg(feature = "api")]
-pub use {axum, serde_json, utoipa, validator};
+pub use {axum, utoipa, validator};
+pub use {chrono, rust_decimal};
+pub use {serde, serde_json};
 
 /// 生成的业务持久化代码使用的依赖统一从此模块取得，业务模型不需要暴露 ORM 类型。
 #[cfg(feature = "persistence")]

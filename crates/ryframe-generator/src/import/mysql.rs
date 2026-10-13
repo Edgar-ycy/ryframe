@@ -11,17 +11,41 @@ pub async fn inspect_existing_table(
     table_name: &str,
 ) -> AppResult<TableInfo> {
     // 验证表名只包含字母、数字和下划线，防止注入
-    if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+    if table_name.is_empty()
+        || !table_name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+    {
         return Err(AppError::Validation(
             "表名只能包含字母、数字和下划线".into(),
         ));
     }
 
+    ryframe_tenant_db::migration::verify_mysql_80(db)
+        .await
+        .map_err(|error| {
+            AppError::Validation(format!("表结构导入要求 MySQL 8.0.16 或更高版本：{error}"))
+        })?;
+    if !query_tables(db)
+        .await?
+        .iter()
+        .any(|table| table.table_name == table_name)
+    {
+        return Err(AppError::Validation(format!(
+            "未找到可导入的普通表 {table_name}；请确认来源数据库、表名及查询权限，视图和迁移账本不能导入"
+        )));
+    }
     let columns = query_columns(db, table_name).await?;
+    if columns.is_empty() {
+        return Err(AppError::Validation(format!(
+            "表 {table_name} 没有可读取的列；检查 information_schema 权限"
+        )));
+    }
 
     let mut col_infos: Vec<ColumnInfo> = Vec::new();
     for col in columns {
-        if col.extra.to_ascii_lowercase().contains("generated") {
+        let extra = col.extra.to_ascii_lowercase();
+        if extra.contains("virtual generated") || extra.contains("stored generated") {
             return Err(AppError::Validation(format!(
                 "租户业务表 {table_name} 的生成列 {} 暂不支持复制，请改为普通持久列",
                 col.column_name
@@ -33,10 +57,20 @@ pub async fn inspect_existing_table(
                 col.column_name
             )));
         }
-        let rust_type = super::type_mapping::db_to_rust(&col.data_type, col.is_nullable == "YES");
+        let rust_type =
+            super::type_mapping::mysql_rust_type(&col.column_type, col.is_nullable == "YES")
+                .map_err(|error| {
+                    AppError::Validation(format!(
+                        "表 {table_name}，字段 {}：{error}",
+                        col.column_name
+                    ))
+                })?;
         let col_info = ColumnInfo {
             name: col.column_name.clone(),
             data_type: col.data_type.clone(),
+            column_type: col.column_type,
+            default: col.column_default,
+            extra: col.extra.clone(),
             rust_type: rust_type.to_string(),
             is_nullable: col.is_nullable == "YES",
             is_primary_key: col.column_key == "PRI",
@@ -47,9 +81,6 @@ pub async fn inspect_existing_table(
         col_infos.push(col_info);
     }
 
-    ryframe_tenant_db::migration::verify_mysql_80(db)
-        .await
-        .map_err(|_| AppError::Validation("表结构导入要求 MySQL 8.0.16 或更高版本".into()))?;
     let table_comment = query_table_comment(db, table_name).await?;
     let indexes = query_indexes(db, table_name).await?;
     let foreign_keys = query_foreign_keys(db, table_name).await?;
@@ -84,6 +115,8 @@ pub async fn list_existing_tables(db: &DatabaseConnection) -> AppResult<Vec<Stri
 struct ColumnRow {
     column_name: String,
     data_type: String,
+    column_type: String,
+    column_default: Option<String>,
     is_nullable: String,
     column_key: String,
     extra: String,
@@ -100,6 +133,8 @@ async fn query_columns(db: &DatabaseConnection, table_name: &str) -> AppResult<V
         table_name,
         r#"SELECT COLUMN_NAME AS `column_name`,
                           DATA_TYPE AS `data_type`,
+                          COLUMN_TYPE AS `column_type`,
+                          COLUMN_DEFAULT AS `column_default`,
                           IS_NULLABLE AS `is_nullable`,
                           COLUMN_KEY AS `column_key`,
                           EXTRA AS `extra`,

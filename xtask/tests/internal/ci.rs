@@ -104,6 +104,16 @@ fn database_change_selects_rust_integration_and_consumer_gates() {
 }
 
 #[test]
+fn generator_change_keeps_real_mysql_import_coverage() {
+    let mut selection = VerifySelection::default();
+    selection
+        .backend_packages
+        .insert("ryframe-generator".into());
+    let plan = ci_plan_for("pull_request", "synchronize", &selection, false).unwrap();
+    assert!(planned(&plan, CiJob::Integration));
+}
+
+#[test]
 fn shared_pull_request_change_expands_to_full_plan() {
     let mut selection = VerifySelection::default();
     selection.full_reason = Some("共享配置变化".to_owned());
@@ -287,7 +297,7 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
         TaskExecutor::WorkspaceGates,
         TaskExecutor::SnapshotVerify,
         TaskExecutor::FrontendDependencies,
-        TaskExecutor::ConsumerContract,
+        TaskExecutor::FrontendConsumerContract,
     ] {
         assert!(
             check_full.tasks.iter().any(|task| task.executor == shared)
@@ -298,6 +308,13 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
             "普通完整检查与 CI 应共用原子节点 {shared:?}"
         );
     }
+    assert!(
+        !backend_full.tasks.iter().any(|task| matches!(
+            task.executor,
+            TaskExecutor::ConsumerContract | TaskExecutor::FrontendConsumerContract
+        )),
+        "后端完整检查不能隐式访问前端；跨仓契约由 all 完整检查和 CI 明确执行"
+    );
 }
 
 #[test]

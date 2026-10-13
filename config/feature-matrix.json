@@ -82,7 +82,9 @@
         "schema-import"
       ],
       "test_targets": [
-        "resource_contracts"
+        "resource_contracts",
+        "generator_cli",
+        "mysql_schema_import"
       ]
     },
     {

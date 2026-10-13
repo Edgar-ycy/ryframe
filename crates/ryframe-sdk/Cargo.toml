@@ -11,7 +11,7 @@ description = "RyFrame 业务模块开发接口"
 [features]
 default = []
 runtime = ["dep:ryframe-application", "dep:ryframe-kernel"]
-api = ["runtime", "dep:axum", "dep:ryframe-api", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:serde_json", "dep:utoipa", "dep:validator"]
+api = ["runtime", "dep:axum", "dep:ryframe-api", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:utoipa", "dep:validator"]
 migration = ["persistence", "dep:sea-orm-migration"]
 persistence = ["runtime", "dep:async-trait", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:sea-orm"]
 
@@ -19,6 +19,7 @@ persistence = ["runtime", "dep:async-trait", "dep:ryframe-db", "dep:ryframe-tena
 async-trait = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 chrono = { workspace = true }
+rust_decimal = { workspace = true }
 ryframe-api = { path = "../ryframe-api", optional = true }
 ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }
 ryframe-db = { path = "../ryframe-db", default-features = false, features = ["repositories"], optional = true }
@@ -28,7 +29,7 @@ ryframe-tenant-db = { path = "../ryframe-tenant-db", default-features = false, f
 sea-orm = { workspace = true, optional = true }
 sea-orm-migration = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true }
 utoipa = { workspace = true, optional = true }
 validator = { workspace = true, features = ["derive"], optional = true }
 

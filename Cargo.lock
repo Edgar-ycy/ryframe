@@ -3330,6 +3330,7 @@ version = "0.13.1"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-util",
  "hex",
  "ryframe-config",
  "ryframe-db",
@@ -3370,6 +3371,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "rust_decimal",
  "ryframe-api",
  "ryframe-application",
  "ryframe-db",

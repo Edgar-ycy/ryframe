@@ -33,6 +33,7 @@ tempfile = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+futures-util = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 syn = { workspace = true }
@@ -43,3 +44,8 @@ workspace = true
 [[bin]]
 name = "ryframe-generate"
 path = "src/bin/ryframe_generate.rs"
+
+[[test]]
+name = "mysql_schema_import"
+path = "tests/mysql_schema_import.rs"
+required-features = ["schema-import"]

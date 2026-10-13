@@ -1,24 +1,39 @@
-/// 数据库类型 → Rust 类型映射
-pub(super) fn db_to_rust(db_type: &str, is_nullable: bool) -> String {
-    let base = match db_type.to_lowercase().as_str() {
-        "varchar" | "char" | "text" | "longtext" | "mediumtext" | "tinytext" | "uuid" => "String",
-        "int" | "integer" | "int4" => "i32",
-        "bigint" | "int8" => "i64",
-        "smallint" | "int2" => "i16",
-        "tinyint" => "i8",
-        "boolean" | "bool" => "bool",
-        "decimal" | "numeric" => "rust_decimal::Decimal",
-        "float" | "float4" => "f32",
-        "double" | "float8" => "f64",
-        "timestamp" | "timestamptz" | "datetime" => "DateTime<Utc>",
-        "date" => "chrono::NaiveDate",
-        "json" | "jsonb" => "serde_json::Value",
-        "bytea" | "blob" => "Vec<u8>",
-        _ => "String",
+/// 保留 MySQL 有符号范围与精确类型；未知类型必须由调用方显式处理。
+pub fn mysql_rust_type(column_type: &str, is_nullable: bool) -> Result<String, String> {
+    let normalized = column_type.trim().to_ascii_lowercase();
+    let data_type = normalized.split(['(', ' ']).next().unwrap_or_default();
+    let unsigned = normalized.split_whitespace().any(|part| part == "unsigned");
+    let base = match (data_type, unsigned) {
+        ("varchar" | "char" | "text" | "longtext" | "mediumtext" | "tinytext", false) => "String",
+        ("int" | "integer" | "mediumint", false) => "i32",
+        ("int" | "integer" | "mediumint", true) => "u32",
+        ("bigint", false) => "i64",
+        ("bigint", true) => "u64",
+        ("smallint", false) => "i16",
+        ("smallint", true) => "u16",
+        ("tinyint", false) => "i8",
+        ("tinyint", true) => "u8",
+        ("boolean" | "bool", false) => "bool",
+        ("decimal" | "numeric", _) => "ryframe_sdk::rust_decimal::Decimal",
+        ("float", _) => "f32",
+        ("double", _) => "f64",
+        ("datetime" | "timestamp", false) => {
+            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>"
+        }
+        ("date", false) => "ryframe_sdk::chrono::NaiveDate",
+        ("json", false) => "ryframe_sdk::serde_json::Value",
+        ("binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob", false) => {
+            "Vec<u8>"
+        }
+        _ => {
+            return Err(format!(
+                "不支持 MySQL 类型 {column_type:?}；请显式转换为受支持字段，或实现强类型业务扩展"
+            ));
+        }
     };
     if is_nullable {
-        format!("Option<{}>", base)
+        Ok(format!("Option<{base}>"))
     } else {
-        base.to_string()
+        Ok(base.to_owned())
     }
 }

@@ -32,6 +32,9 @@ pub struct ForeignKeyInfo {
 pub struct ColumnInfo {
     pub name: String,
     pub data_type: String,
+    pub column_type: String,
+    pub default: Option<String>,
+    pub extra: String,
     pub rust_type: String,
     pub is_nullable: bool,
     pub is_primary_key: bool,
@@ -47,19 +50,19 @@ pub fn rust_model_source(table: &TableInfo, database: &str) -> Result<String, St
     if !matches!(database, "control" | "tenant") {
         return Err("导入数据库范围只支持 control 或 tenant".into());
     }
+    validate_model_keys(table, database)?;
     let model = pascal_case(&table.table_name)?;
     let title = table.comment.as_deref().unwrap_or(&table.table_name);
     let mut output = format!(
-        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = \"{}\", title = \"{}\", table = \"{}\", database = \"{}\")]\npub struct {} {{\n",
-        table.table_name,
-        title.replace('"', "\\\""),
-        table.table_name,
-        database,
-        model
+        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?})]\npub struct {} {{\n",
+        table.table_name, title, table.table_name, database, model
     );
     for column in &table.columns {
         if !valid_ident(&column.name) {
-            return Err(format!("字段 {} 不是有效 Rust 标识符", column.name));
+            return Err(format!(
+                "字段 {} 不是可用 Rust 标识符；请显式设置字段映射，导入未写入源码",
+                column.name
+            ));
         }
         let mut attributes = Vec::new();
         if column.is_primary_key {
@@ -77,9 +80,46 @@ pub fn rust_model_source(table: &TableInfo, database: &str) -> Result<String, St
     Ok(output)
 }
 
+fn validate_model_keys(table: &TableInfo, database: &str) -> Result<(), String> {
+    let primary = table
+        .columns
+        .iter()
+        .filter(|column| column.is_primary_key)
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>();
+    if primary.is_empty() {
+        return Err(format!(
+            "表 {} 没有主键；请先设计并审阅主键迁移，不能直接生成可写 CRUD",
+            table.table_name
+        ));
+    }
+    if database == "tenant" && !primary.contains(&"tenant_id") {
+        return Err(format!(
+            "租户表 {} 缺少包含 tenant_id 的主键；请选择全局业务 --database control，或审阅补充租户字段和主键的迁移",
+            table.table_name
+        ));
+    }
+    if primary.len() > 1 && !(database == "tenant" && primary.len() == 2 && primary.contains(&"id"))
+    {
+        return Err(format!(
+            "表 {} 的复合主键 {primary:?} 暂不支持标准 CRUD；请使用强类型业务扩展",
+            table.table_name
+        ));
+    }
+    Ok(())
+}
+
 fn valid_ident(value: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "_", "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+        "extern", "false", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "match", "mod",
+        "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
+        "trait", "true", "type", "unsafe", "use", "where", "while", "abstract", "become", "box",
+        "do", "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+    ];
     let mut chars = value.chars();
-    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+    !KEYWORDS.contains(&value)
+        && matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
         && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 

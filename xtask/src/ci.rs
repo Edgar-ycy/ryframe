@@ -47,7 +47,12 @@ pub(crate) use task_plan::{
 };
 
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];
-const INTEGRATION_PACKAGES: &[&str] = &["ryframe-adapters", "ryframe-db", "ryframe-tenant-db"];
+const INTEGRATION_PACKAGES: &[&str] = &[
+    "ryframe-adapters",
+    "ryframe-db",
+    "ryframe-tenant-db",
+    "ryframe-generator",
+];
 const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
@@ -354,6 +359,11 @@ fn integration() -> Result<()> {
             Some("repositories,migration"),
         ),
         ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
+        (
+            "ryframe-generator",
+            "mysql_schema_import",
+            Some("schema-import"),
+        ),
     ] {
         run_owned(
             &root,
