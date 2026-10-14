@@ -2,6 +2,7 @@
 
 mod bootstrap;
 mod catalog;
+mod format;
 mod generate;
 mod metadata;
 mod model;

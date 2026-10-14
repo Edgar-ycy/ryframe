@@ -12,6 +12,8 @@ use ryframe_generator::{
 };
 
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+#[path = "resource_contracts/business_compilation.rs"]
+mod business_compilation;
 const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
 const PROFILE_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
 
@@ -219,6 +221,7 @@ fn run_shared_workspace() -> Result<(), String> {
     register_order_frontend_contract(&workspace.frontend);
     write_order_fake_transaction_test(&workspace.backend);
     assert_backend_checks(&workspace);
+    business_compilation::verify(&workspace.backend, &workspace.cargo_target);
     assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
     Ok(())
 }

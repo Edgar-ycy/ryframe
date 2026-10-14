@@ -8,6 +8,7 @@ mod aggregate;
 pub(crate) mod business;
 mod catalog;
 mod format;
+pub(crate) use format::rust_assets_in_workspace;
 mod schema;
 mod slice;
 pub(crate) mod tenant_catalog;

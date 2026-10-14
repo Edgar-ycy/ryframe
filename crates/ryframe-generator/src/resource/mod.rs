@@ -73,3 +73,4 @@ fn portable_path(path: &Path) -> String {
         portable
     }
 }
+pub(crate) use render::rust_assets_in_workspace;

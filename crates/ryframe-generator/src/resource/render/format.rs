@@ -7,6 +7,19 @@ use std::{
 use super::{GeneratedAsset, ResourceError};
 
 pub(super) fn rust_assets(assets: &mut [GeneratedAsset]) -> Result<(), ResourceError> {
+    let workspace = find_workspace_root().ok_or_else(|| {
+        ResourceError::new(
+            "无法定位 rustfmt 工作区配置",
+            "从包含 Cargo.toml 与 rustfmt.toml 的后端仓库根目录运行资源生成命令",
+        )
+    })?;
+    rust_assets_in_workspace(&workspace, assets)
+}
+
+pub(crate) fn rust_assets_in_workspace(
+    workspace: &Path,
+    assets: &mut [GeneratedAsset],
+) -> Result<(), ResourceError> {
     let rust_indexes = assets
         .iter()
         .enumerate()
@@ -16,12 +29,6 @@ pub(super) fn rust_assets(assets: &mut [GeneratedAsset]) -> Result<(), ResourceE
     if rust_indexes.is_empty() {
         return Ok(());
     }
-    let workspace = find_workspace_root().ok_or_else(|| {
-        ResourceError::new(
-            "无法定位 rustfmt 工作区配置",
-            "从包含 Cargo.toml 与 rustfmt.toml 的后端仓库根目录运行资源生成命令",
-        )
-    })?;
     let temp_parent = workspace.join("target");
     fs::create_dir_all(&temp_parent).map_err(|error| {
         ResourceError::file(
@@ -54,15 +61,18 @@ pub(super) fn rust_assets(assets: &mut [GeneratedAsset]) -> Result<(), ResourceE
         staged.push((asset_index, path));
     }
 
-    let output = Command::new("rustfmt")
-        .arg("--edition")
-        .arg("2024")
-        .arg("--config-path")
-        .arg(workspace.join("rustfmt.toml"))
+    let mut command = Command::new("rustfmt");
+    command.args(["--edition", "2024"]);
+    if workspace.join("rustfmt.toml").is_file() {
+        command
+            .arg("--config-path")
+            .arg(workspace.join("rustfmt.toml"));
+    }
+    let output = command
         .arg("--config")
         .arg("skip_children=true")
         .args(staged.iter().map(|(_, path)| path))
-        .current_dir(&workspace)
+        .current_dir(workspace)
         .output()
         .map_err(|error| {
             ResourceError::new(

@@ -7,6 +7,9 @@ use sha2::{Digest, Sha256};
 
 use crate::ResourceError;
 
+mod registration;
+use registration::add_module_registration;
+
 #[derive(Clone, Debug)]
 pub struct BusinessBootstrapOptions<'a> {
     pub workspace_root: &'a Path,
@@ -100,6 +103,7 @@ pub fn bootstrap_business_package(
             created: false,
         },
     ];
+    format_planned(options.workspace_root, &mut planned)?;
     planned.sort_by(|left, right| left.path.cmp(&right.path));
     let mut report = BusinessBootstrapReport::default();
     for file in &planned {
@@ -119,6 +123,33 @@ pub fn bootstrap_business_package(
         install(options.workspace_root, &planned)?;
     }
     Ok(report)
+}
+
+fn format_planned(workspace: &Path, files: &mut [PlannedFile]) -> Result<(), ResourceError> {
+    let mut assets = files
+        .iter_mut()
+        .map(|file| crate::GeneratedAsset {
+            resource: "__catalog__".into(),
+            root: crate::AssetRoot::Backend,
+            path: file.path.to_string_lossy().into_owned(),
+            content: std::mem::take(&mut file.content),
+        })
+        .collect::<Vec<_>>();
+    crate::resource::rust_assets_in_workspace(workspace, &mut assets)?;
+    for (file, asset) in files.iter_mut().zip(assets) {
+        file.content = asset.content;
+    }
+    let generated = files
+        .iter()
+        .find(|file| file.path.ends_with("src/generated/mod.rs"))
+        .expect("初始化计划包含生成模块");
+    let ownership = ownership_manifest(&generated.content);
+    files
+        .iter_mut()
+        .find(|file| file.path.ends_with(".ryframe/generated.toml"))
+        .expect("初始化计划包含 ownership")
+        .content = ownership;
+    Ok(())
 }
 
 pub(crate) fn validate_module(module: &str) -> Result<(), ResourceError> {
@@ -228,45 +259,6 @@ fn add_feature_items(
         &source[..closing_at],
         lines,
         &source[closing_at..]
-    ))
-}
-
-fn add_module_registration(source: &str, crate_ident: &str) -> Result<String, ResourceError> {
-    let call = format!("{crate_ident}::module(),");
-    if source.contains(&call) {
-        return Err(ResourceError::new(
-            "业务模块已在组合根注册",
-            "请选择新的模块名",
-        ));
-    }
-    if source.contains("    vec![]\n") {
-        return Ok(source.replacen(
-            "    vec![]\n",
-            &format!("    vec![\n        {call}\n    ]\n"),
-            1,
-        ));
-    }
-    let start = source
-        .find("pub fn business_modules() -> Vec<RyFrameBusinessModule> {\n    vec![\n")
-        .ok_or_else(|| {
-            ResourceError::new(
-                "未找到业务模块注册表",
-                "检查 crates/ryframe/src/business.rs",
-            )
-        })?;
-    let insert_at = source[start..]
-        .find("    ]\n")
-        .map(|offset| start + offset)
-        .ok_or_else(|| {
-            ResourceError::new(
-                "业务模块注册表格式无效",
-                "检查 crates/ryframe/src/business.rs",
-            )
-        })?;
-    Ok(format!(
-        "{}        {call}\n{}",
-        &source[..insert_at],
-        &source[insert_at..]
     ))
 }
 
@@ -453,6 +445,25 @@ mod tests {
         let registry = fs::read_to_string(directory.path().join("crates/ryframe/src/business.rs"))
             .expect("读取业务注册表");
         assert!(registry.contains("order_business::module()"));
+    }
+
+    #[test]
+    fn bootstrap_registers_a_second_crate_after_formatting() {
+        let directory = tempfile::tempdir().expect("创建临时目录");
+        create_workspace(directory.path());
+        for module in ["order", "inventory"] {
+            bootstrap_business_package(BusinessBootstrapOptions {
+                workspace_root: directory.path(),
+                module,
+                write: true,
+            })
+            .expect("格式化后的注册表应能继续添加业务 crate");
+        }
+        let source =
+            fs::read_to_string(directory.path().join("crates/ryframe/src/business.rs")).unwrap();
+        assert_eq!(source.matches("order_business::module()").count(), 1);
+        assert_eq!(source.matches("inventory_business::module()").count(), 1);
+        syn::parse_file(&source).unwrap();
     }
 
     #[test]

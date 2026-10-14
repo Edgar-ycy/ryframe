@@ -3332,6 +3332,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "proc-macro2",
  "ryframe-config",
  "ryframe-db",
  "ryframe-kernel",

@@ -205,6 +205,16 @@ fn assert_generated_business(workspace: &std::path::Path) {
             .unwrap()
             .contains("with_initialization_sql")
     );
+    let migration =
+        fs::read(workspace.join("order-business/migrations/m_resource_initial_order.rs")).unwrap();
+    let checksum = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(migration));
+    let registry =
+        fs::read_to_string(workspace.join("order-business/src/generated/migrations/mod.rs"))
+            .unwrap();
+    assert!(
+        registry.contains(&checksum),
+        "迁移注册必须使用最终格式化文件的校验和"
+    );
     assert!(
         !workspace
             .join("order-business/src/resources/order.rs")

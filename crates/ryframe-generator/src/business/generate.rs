@@ -47,7 +47,9 @@ pub fn generate_business_package(
             );
         }
     }
-    let aggregate = aggregate_assets(&package, &resources, &descriptors, &assets)?;
+    super::format::format_assets(&package.workspace_root, &mut assets)?;
+    let mut aggregate = aggregate_assets(&package, &resources, &descriptors, &assets)?;
+    super::format::format_assets(&package.workspace_root, &mut aggregate)?;
     assets.extend(aggregate);
     install_assets(&package, &selected, assets, options.write)
 }
