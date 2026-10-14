@@ -8,6 +8,8 @@ mod job_and_file_mappings;
 mod migration_contracts;
 #[path = "mapping_contracts/post_export_contract.rs"]
 mod post_export_contract;
+#[path = "mapping_contracts/schema_difference.rs"]
+mod schema_difference;
 #[path = "mapping_contracts/snapshot_export.rs"]
 mod snapshot_export;
 #[path = "mapping_contracts/tenant_config_and_retention.rs"]

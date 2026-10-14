@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use super::{BUSINESS_MIGRATION_LEDGER_DDL, BusinessMigration};
 use ryframe_kernel::{AppError, AppResult};
 
@@ -10,16 +8,9 @@ pub fn business_initialization_statements(
     if migrations.is_empty() {
         return Ok(Vec::new());
     }
-    let mut seen = BTreeSet::new();
+    super::schema::validate_migrations(migrations)?;
     let mut statements = vec![BUSINESS_MIGRATION_LEDGER_DDL.into()];
     for migration in migrations {
-        if !seen.insert((migration.module(), migration.id())) {
-            return Err(AppError::Config(format!(
-                "业务迁移 {}/{} 重复登记，尚未写入导出文件",
-                migration.module(),
-                migration.id()
-            )));
-        }
         let source = migration.initialization_statements()?;
         if source.is_empty() || source.iter().any(|sql| sql.trim().is_empty()) {
             return Err(AppError::Config(format!(
@@ -30,12 +21,13 @@ pub fn business_initialization_statements(
         }
         statements.extend(source.iter().map(|sql| (*sql).to_owned()));
         let before = migration
-            .before_fingerprint()
+            .schema()
+            .before_fingerprint
             .map(sql_text)
             .unwrap_or_else(|| "NULL".into());
         statements.push(format!(
             "INSERT INTO ryframe_business_migration (module_name, migration_id, checksum, before_fingerprint, after_fingerprint) VALUES ({}, {}, {}, {}, {})",
-            sql_text(migration.module()), sql_text(migration.id()), sql_text(migration.checksum()), before, sql_text(migration.after_fingerprint()),
+            sql_text(migration.module()), sql_text(migration.id()), sql_text(migration.checksum()), before, sql_text(migration.schema().after_fingerprint),
         ));
     }
     Ok(statements)

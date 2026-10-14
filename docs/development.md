@@ -84,7 +84,7 @@ cargo generate -- resource --package order-business --model Order --write
 
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 
-租户业务资源同时生成 `generated/tenant_catalog.rs` 与 `generated/tenant_catalog.json`，包含完整列、类型、复制游标及规范化 schema。模块通过 `tenant_data_tables()` 声明生成描述，组合根在连接数据库前统一装配、核验依赖并冻结目录；同一进程再次登记只能使用相同描述。重复表、缺失描述或无效 schema 会阻止启动，不会忽略业务表。复制和恢复校验使用完整目录，并保留业务迁移账本。修改模型后先通过正式生成入口更新受管资产，再显式执行业务迁移；不要手改目录或 ownership 摘要。
+租户业务资源同时生成 `generated/tenant_catalog.rs` 与 `generated/tenant_catalog.json`，包含完整列、类型、复制游标及规范化 schema。模块通过 `tenant_data_tables()` 声明生成描述，组合根在连接数据库前统一装配、核验依赖并冻结目录；同一进程再次登记只能使用相同描述。重复表、缺失描述或无效 schema 会阻止启动，不会忽略业务表。复制和恢复校验使用完整目录，并保留业务迁移账本。生成迁移同时注册模型指纹与每张表的 before/after 物理结构；手写 `SeaOrmBusinessMigration` 也必须提供 `BusinessMigrationSchema`。单条 `verify_ledger` 仅校验历史账本，整组 `verify_business_migrations` 按每张表最新状态校验实际结构，避免合法追加迁移被旧结构误判。修改模型后先通过正式生成入口更新受管资产，再显式执行业务迁移；不要手改目录或 ownership 摘要。
 
 从模型到页面可按以下顺序联调：
 

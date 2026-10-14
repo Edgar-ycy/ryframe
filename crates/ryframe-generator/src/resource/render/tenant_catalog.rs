@@ -139,7 +139,7 @@ fn descriptor(resource: &ResourceIr, order: usize) -> String {
     )
 }
 
-fn canonical_schema(resource: &ResourceIr) -> String {
+pub(crate) fn canonical_schema(resource: &ResourceIr) -> String {
     let mut output = format!(
         "v2|table={:?}|engine={:?}|charset={:?}|collation={:?}|columns=[",
         resource.table, "innodb", "utf8mb4", "utf8mb4_general_ci",

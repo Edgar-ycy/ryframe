@@ -17,8 +17,9 @@ mod tenant_catalog;
 pub use async_trait::async_trait;
 #[cfg(feature = "migration")]
 pub use migration::{
-    BusinessMigration, BusinessMigrationScope, MigrationState, SeaOrmBusinessMigration,
-    business_initialization_statements,
+    BusinessMigration, BusinessMigrationSchema, BusinessMigrationScope, BusinessTableSchema,
+    MigrationState, SeaOrmBusinessMigration, business_initialization_statements,
+    verify_business_migrations,
 };
 #[cfg(feature = "runtime")]
 pub use module::{BusinessModuleBuilder, RyFrameBusinessModule, sort_modules, validate_modules};

@@ -199,8 +199,8 @@ fn migration_registry(
             "#[path = \"../../../migrations/{migration}.rs\"]\nmod {migration};\nconst _: bool = {migration}::INITIAL_RESOURCE_MIGRATION;"
         ));
         entries.push(format!(
-            "        std::sync::Arc::new(ryframe_sdk::SeaOrmBusinessMigration::new({:?}, {:?}, {:?}, None, {:?}, ryframe_sdk::BusinessMigrationScope::{scope}, {migration}::Migration).with_initialization_sql(&[{migration}::CREATE_TABLE_DDL])),",
-            package.module, migration, checksum, resource.schema_hash,
+            "        std::sync::Arc::new(ryframe_sdk::SeaOrmBusinessMigration::new({:?}, {:?}, {:?}, ryframe_sdk::BusinessMigrationSchema {{ before_fingerprint: None, after_fingerprint: {:?}, tables: &[ryframe_sdk::BusinessTableSchema {{ table: {:?}, before: None, after: {:?} }}] }}, ryframe_sdk::BusinessMigrationScope::{scope}, {migration}::Migration).with_initialization_sql(&[{migration}::CREATE_TABLE_DDL])),",
+            package.module, migration, checksum, resource.schema_hash, resource.table, crate::resource::canonical_schema(resource),
         ));
     }
     Ok(format!(

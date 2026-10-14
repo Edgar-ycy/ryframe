@@ -10,7 +10,10 @@ const BUSINESS_MIGRATION_LEDGER: &str = "ryframe_business_migration";
 const BUSINESS_MIGRATION_LEDGER_DDL: &str = "CREATE TABLE ryframe_business_migration (module_name VARCHAR(64) NOT NULL, migration_id VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL, before_fingerprint CHAR(64) NULL, after_fingerprint CHAR(64) NOT NULL, applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (module_name, migration_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
 
 mod export;
+mod schema;
 pub use export::business_initialization_statements;
+pub(crate) use schema::validate_migrations;
+pub use schema::{BusinessMigrationSchema, BusinessTableSchema, verify_business_migrations};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,10 +42,7 @@ pub trait BusinessMigration: Send + Sync {
     fn id(&self) -> &'static str;
     /// 迁移源码和规范化 schema 的稳定校验值。
     fn checksum(&self) -> &'static str;
-    /// 应用迁移前的规范化 schema 指纹；首次迁移可以为空。
-    fn before_fingerprint(&self) -> Option<&'static str>;
-    /// 应用迁移后的规范化 schema 指纹。
-    fn after_fingerprint(&self) -> &'static str;
+    fn schema(&self) -> &BusinessMigrationSchema;
     fn scope(&self) -> BusinessMigrationScope;
     /// 与 up 使用同一来源的有序 SQL；无可导出描述时拒绝完整 SQL 初始化。
     fn initialization_statements(&self) -> AppResult<&'static [&'static str]> {
@@ -52,8 +52,10 @@ pub trait BusinessMigration: Send + Sync {
             self.id(),
         )))
     }
+    /// 执行单条迁移；整组执行结束后使用 verify_business_migrations 校验当前实际结构。
     async fn up(&self, database: &DatabaseConnection) -> AppResult<()>;
-    async fn verify(&self, database: &DatabaseConnection) -> AppResult<()>;
+    /// 只校验历史账本元数据；历史表结构可能已被后续向前迁移合法改变。
+    async fn verify_ledger(&self, database: &DatabaseConnection) -> AppResult<()>;
     async fn status(&self, database: &DatabaseConnection) -> AppResult<MigrationState>;
 }
 
@@ -62,8 +64,7 @@ pub struct SeaOrmBusinessMigration {
     module: &'static str,
     id: &'static str,
     checksum: &'static str,
-    before_fingerprint: Option<&'static str>,
-    after_fingerprint: &'static str,
+    schema: BusinessMigrationSchema,
     scope: BusinessMigrationScope,
     migration: Arc<dyn MigrationTrait>,
     initialization_sql: Option<&'static [&'static str]>,
@@ -74,8 +75,7 @@ impl SeaOrmBusinessMigration {
         module: &'static str,
         id: &'static str,
         checksum: &'static str,
-        before_fingerprint: Option<&'static str>,
-        after_fingerprint: &'static str,
+        schema: BusinessMigrationSchema,
         scope: BusinessMigrationScope,
         migration: impl MigrationTrait + 'static,
     ) -> Self {
@@ -83,8 +83,7 @@ impl SeaOrmBusinessMigration {
             module,
             id,
             checksum,
-            before_fingerprint,
-            after_fingerprint,
+            schema,
             scope,
             migration: Arc::new(migration),
             initialization_sql: None,
@@ -96,7 +95,10 @@ impl SeaOrmBusinessMigration {
         self
     }
 
-    async fn applied_checksum(&self, database: &DatabaseConnection) -> AppResult<Option<String>> {
+    async fn applied_state(
+        &self,
+        database: &DatabaseConnection,
+    ) -> AppResult<Option<AppliedMigration>> {
         if !ledger_exists(database).await? {
             return Ok(None);
         }
@@ -104,14 +106,24 @@ impl SeaOrmBusinessMigration {
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 format!(
-                    "SELECT checksum FROM {BUSINESS_MIGRATION_LEDGER} WHERE module_name = ? AND migration_id = ?"
+                    "SELECT checksum, before_fingerprint, after_fingerprint FROM {BUSINESS_MIGRATION_LEDGER} WHERE module_name = ? AND migration_id = ?"
                 ),
                 [self.module.into(), self.id.into()],
             ))
             .await
             .map_err(database_error)?;
-        row.map(|row| row.try_get("", "checksum").map_err(database_error))
-            .transpose()
+        row.map(|row| {
+            Ok(AppliedMigration {
+                checksum: row.try_get("", "checksum").map_err(database_error)?,
+                before: row
+                    .try_get("", "before_fingerprint")
+                    .map_err(database_error)?,
+                after: row
+                    .try_get("", "after_fingerprint")
+                    .map_err(database_error)?,
+            })
+        })
+        .transpose()
     }
 }
 
@@ -129,12 +141,8 @@ impl BusinessMigration for SeaOrmBusinessMigration {
         self.checksum
     }
 
-    fn before_fingerprint(&self) -> Option<&'static str> {
-        self.before_fingerprint
-    }
-
-    fn after_fingerprint(&self) -> &'static str {
-        self.after_fingerprint
+    fn schema(&self) -> &BusinessMigrationSchema {
+        &self.schema
     }
 
     fn scope(&self) -> BusinessMigrationScope {
@@ -149,14 +157,21 @@ impl BusinessMigration for SeaOrmBusinessMigration {
     }
 
     async fn up(&self, database: &DatabaseConnection) -> AppResult<()> {
-        ensure_ledger(database).await?;
-        if let Some(checksum) = self.applied_checksum(database).await? {
-            return matching_checksum(self, &checksum);
+        schema::validate_migration(self)?;
+        if let Some(state) = self.applied_state(database).await? {
+            return matching_state(self, &state);
         }
+        self.schema.verify_before(database).await?;
+        ensure_ledger(database).await?;
         self.migration
             .up(&SchemaManager::new(database))
             .await
-            .map_err(database_error)?;
+            .map_err(|error| AppError::Database(format!("业务迁移 {}/{} 执行失败：{error}；DDL 可能部分提交，未登记本次账本；先核对前后结构，禁止自动重放", self.module, self.id)))?;
+        self.schema.verify_after(database).await.map_err(|error| {
+            AppError::Config(format!(
+                "{error}；迁移 DDL 已执行但结构校验未通过，未登记本次账本"
+            ))
+        })?;
         database
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
@@ -167,24 +182,30 @@ impl BusinessMigration for SeaOrmBusinessMigration {
                     self.module.into(),
                     self.id.into(),
                     self.checksum.into(),
-                    self.before_fingerprint.into(),
-                    self.after_fingerprint.into(),
+                    self.schema.before_fingerprint.into(),
+                    self.schema.after_fingerprint.into(),
                 ],
             ))
             .await
-            .map_err(database_error)?;
+            .map_err(|error| AppError::Database(format!("业务迁移 {}/{} 的 DDL 已执行并通过结构校验，但账本写入失败：{error}；账本提交结果需重新核对，不自动重放", self.module, self.id)))?;
         Ok(())
     }
 
-    async fn verify(&self, database: &DatabaseConnection) -> AppResult<()> {
-        let checksum = self.applied_checksum(database).await?.ok_or_else(|| {
+    async fn verify_ledger(&self, database: &DatabaseConnection) -> AppResult<()> {
+        schema::validate_migration(self)?;
+        let state = self.applied_state(database).await?.ok_or_else(|| {
             AppError::Config(format!("业务迁移 {}/{} 尚未应用", self.module, self.id))
         })?;
-        matching_checksum(self, &checksum)
+        matching_state(self, &state)
     }
 
     async fn status(&self, database: &DatabaseConnection) -> AppResult<MigrationState> {
-        let applied = usize::from(self.applied_checksum(database).await?.is_some());
+        schema::validate_migration(self)?;
+        let state = self.applied_state(database).await?;
+        if let Some(state) = &state {
+            matching_state(self, state)?;
+        }
+        let applied = usize::from(state.is_some());
         Ok(MigrationState {
             applied,
             expected: 1,
@@ -223,13 +244,31 @@ async fn ensure_ledger(database: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
-fn matching_checksum(migration: &SeaOrmBusinessMigration, actual: &str) -> AppResult<()> {
-    if actual == migration.checksum {
+struct AppliedMigration {
+    checksum: String,
+    before: Option<String>,
+    after: String,
+}
+
+fn matching_state(migration: &SeaOrmBusinessMigration, actual: &AppliedMigration) -> AppResult<()> {
+    let mut changed = Vec::new();
+    if actual.checksum != migration.checksum {
+        changed.push("checksum");
+    }
+    if actual.before.as_deref() != migration.schema.before_fingerprint {
+        changed.push("before_fingerprint");
+    }
+    if actual.after != migration.schema.after_fingerprint {
+        changed.push("after_fingerprint");
+    }
+    if changed.is_empty() {
         Ok(())
     } else {
         Err(AppError::Config(format!(
-            "业务迁移 {}/{} 校验值已变化",
-            migration.module, migration.id
+            "业务迁移 {}/{} 的账本不一致，变化字段：{}；核对迁移来源与账本，禁止自动覆盖或重放",
+            migration.module,
+            migration.id,
+            changed.join("、")
         )))
     }
 }

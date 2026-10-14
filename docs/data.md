@@ -11,7 +11,7 @@ cargo migrate -- control export-sql --output .local-tests/control-init.sql --pla
 cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
 ```
 
-`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据、已注册控制库业务迁移和账本，不包含管理员明文密码。生成业务迁移自动使用与 `up` 同源的建表语句；手写 SeaORM 业务迁移通过 `with_initialization_sql` 提供同源 SQL，自定义迁移实现 `initialization_statements`。缺失或空描述会在导出前拒绝，改用 `control up`，不会漏掉业务表后报告成功。
+`--plan` 不读取密码、配置或数据库，也不创建文件。实际导出读取管理员密码并生成哈希，输出仅允许位于当前后端 `.local-tests`，拒绝覆盖文件和链接路径。脚本包含完整控制库结构、后置约束、系统数据、已注册控制库业务迁移和账本，不包含管理员明文密码。生成业务迁移自动使用与 `up` 同源的建表语句；手写 SeaORM 业务迁移声明 `BusinessMigrationSchema` 并通过 `with_initialization_sql` 提供同源 SQL，自定义迁移实现 `schema` 与 `initialization_statements`。缺失或空描述会在导出前拒绝，改用 `control up`，不会漏掉业务表后报告成功。
 
 MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入，不使用 `--force`。PowerShell 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> --execute="source .local-tests/control-init.sql"`；bash 可运行 `mysql --default-character-set=utf8mb4 -h <host> -u <username> -p <database> < .local-tests/control-init.sql`。数据库管理工具应启用遇错停止，并按脚本顺序执行全部语句。导入完成后执行 `cargo migrate -- control verify`。
 
@@ -39,14 +39,14 @@ MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入�
 本地可使用以下命令查看并校验结构：
 
 ```powershell
-cargo xtask data migrate status
-cargo xtask data migrate verify
-cargo xtask data migrate verify tenant-data --all
+cargo migrate -- control status
+cargo migrate -- control verify
+cargo migrate -- tenant-data verify --all
 ```
 
-`status` 会以 `missing` 和 `unexpected` 列出缺失及额外的迁移版本；两者均为空且数量一致时才报告 `up_to_date=true`。
+`status` 显示迁移账本状态，结构验收使用 `verify`。业务迁移同时核对源码摘要及前后模型指纹，再按每张表最后一次迁移比对实际 MySQL 结构；历史初始结构不会误判合法的追加迁移。差异指出列属性、索引或约束，并给出 `SHOW CREATE TABLE` 核对方法，不回显默认值。初始目标表已存在时不自动接管；DDL 执行后校验失败不登记本次账本，保留现场，不能假定整体回滚或自动重放。
 
-确认迁移内容后，使用 `cargo xtask data migrate up` 或 `cargo xtask data migrate up tenant-data --all` 更新对应目标。
+确认迁移内容后，使用 `cargo migrate -- control up` 或 `cargo migrate -- tenant-data up --all` 更新对应目标。
 
 独立目标采用按需连接。API 启动后，在“平台管理 → 数据目标”打开指定目标的详情，执行实时连接与 schema 探测；已验证且无占用冲突的目标才会出现在租户开通和迁移的可选项中。列表刷新只读取已知健康状态，不会遍历连接所有数据库。
 

@@ -4,6 +4,9 @@ use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
 use crate::migration::normalize_check_clause;
 
+mod difference;
+pub use difference::{describe_schema_difference, validate_canonical_schema};
+
 #[derive(Debug, FromQueryResult)]
 pub struct ColumnMetadata {
     pub column_name: String,

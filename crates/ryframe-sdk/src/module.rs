@@ -293,6 +293,14 @@ pub fn sort_modules(modules: &mut [RyFrameBusinessModule]) -> AppResult<()> {
 
 fn validate_module(module: &RyFrameBusinessModule) -> AppResult<()> {
     crate::tenant_catalog::validate_catalog(module)?;
+    #[cfg(feature = "migration")]
+    crate::migration::validate_migrations(
+        &module
+            .migrations
+            .iter()
+            .map(|migration| migration.as_ref())
+            .collect::<Vec<_>>(),
+    )?;
     if !safe_key(module.name) {
         return Err(AppError::Config(format!(
             "业务模块名称无效：{}",

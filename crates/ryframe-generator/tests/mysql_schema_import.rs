@@ -52,6 +52,8 @@ async fn generated_tenant_auto_increment_ddl_and_transaction_readback_match_mysq
         transaction.rollback().await.map_err(|error| error.to_string())?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_order", 0).await?;
         let table = inspect_existing_table(&database, "biz_order").await.map_err(|error| error.to_string())?;
+        let catalog = &generated.assets.iter().find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/catalog.rs").unwrap().content;
+        assert!(catalog.contains(&format!("{:?}", table.schema_canonical)), "生成器物理结构描述必须与实际 MySQL DDL 完全一致");
         assert!(table.columns.iter().find(|column| column.name == "id").unwrap().is_auto_increment);
         assert!(table.indexes.iter().any(|index| index.name == "idx_order_auto_id" && !index.unique && index.columns == ["id"]));
         Ok(())

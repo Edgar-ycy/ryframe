@@ -263,6 +263,19 @@ async fn run_business_migrations(
     modules: &[RyFrameBusinessModule],
     target: &str,
 ) -> Result<(), sea_orm::DbErr> {
+    let migrations = modules
+        .iter()
+        .flat_map(|module| module.migrations().iter())
+        .filter(|migration| migration.scope() == scope)
+        .map(|migration| migration.as_ref())
+        .collect::<Vec<_>>();
+    if matches!(operation, Operation::Verify) {
+        return ryframe_sdk::verify_business_migrations(database, &migrations)
+            .await
+            .map_err(|error| {
+                sea_orm::DbErr::Custom(format!("目标 {target} 业务迁移结构校验失败：{error}"))
+            });
+    }
     for module in modules {
         for migration in module
             .migrations()
@@ -271,12 +284,13 @@ async fn run_business_migrations(
         {
             let result = match operation {
                 Operation::Up => migration.up(database).await,
-                Operation::Verify => migration.verify(database).await,
+                Operation::Verify => unreachable!("整组结构校验已在循环前执行"),
                 Operation::Status => {
                     let status = migration.status(database).await.map_err(|error| {
                         sea_orm::DbErr::Custom(format!(
-                            "business migration {} for {target} failed: {error}",
-                            module.name()
+                            "目标 {target} 的业务迁移 {}/{} 失败：{error}",
+                            module.name(),
+                            migration.id()
                         ))
                     })?;
                     println!(
@@ -292,11 +306,21 @@ async fn run_business_migrations(
             };
             result.map_err(|error| {
                 sea_orm::DbErr::Custom(format!(
-                    "business migration {} for {target} failed: {error}",
-                    module.name()
+                    "目标 {target} 的业务迁移 {}/{} 失败：{error}",
+                    module.name(),
+                    migration.id()
                 ))
             })?;
         }
+    }
+    if matches!(operation, Operation::Up) {
+        ryframe_sdk::verify_business_migrations(database, &migrations)
+            .await
+            .map_err(|error| {
+                sea_orm::DbErr::Custom(format!(
+                    "目标 {target} 业务迁移已执行但最终结构校验失败：{error}"
+                ))
+            })?;
     }
     Ok(())
 }
