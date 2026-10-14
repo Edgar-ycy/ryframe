@@ -6,6 +6,26 @@ mod migration;
 
 use super::super::{FieldIr, IndexIr, ResourceIr, StorageKind, ValueType};
 
+fn uses_filters(resource: &ResourceIr) -> bool {
+    resource.access.owner_field.is_some()
+        || resource
+            .fields
+            .iter()
+            .any(|field| field.usage.filter && field.name != "tenant_id")
+}
+
+fn filter_lifetime(resource: &ResourceIr, lifetime: &str) -> String {
+    let borrows = resource.access.owner_field.is_some()
+        || resource.fields.iter().any(|field| {
+            field.usage.filter && field.name != "tenant_id" && field.value_type == ValueType::String
+        });
+    if borrows {
+        format!("<{lifetime}>")
+    } else {
+        String::new()
+    }
+}
+
 fn system_tenant_guard(resource: &ResourceIr, module: &str) -> String {
     if resource.access.system_tenant_only {
         format!("        {module}::ensure_system_tenant_id(tenant_id)?;\n")

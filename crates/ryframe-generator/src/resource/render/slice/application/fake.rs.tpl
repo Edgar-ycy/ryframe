@@ -112,7 +112,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         &self,
         tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: {pascal}Filter<'_>,
+        {filter_argument}: {pascal}Filter{filter_lifetime},
     ) -> AppResult<PageResult<{pascal}Record>> {{
 {system_tenant_guard}        let mut state = self.lock();
         state.calls.push({pascal}Call::FindByPage {{

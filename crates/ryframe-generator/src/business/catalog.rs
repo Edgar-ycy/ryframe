@@ -73,8 +73,10 @@ pub(super) fn load_descriptors(
             )
         })?;
     descriptors.sort_by(|left, right| left.name.cmp(&right.name));
-    for pair in descriptors.windows(2) {
-        if pair[0].name == pair[1].name || pair[0].table == pair[1].table {
+    let mut names = std::collections::BTreeSet::new();
+    let mut tables = std::collections::BTreeSet::new();
+    for descriptor in &descriptors {
+        if !names.insert(&descriptor.name) || !tables.insert(&descriptor.table) {
             return Err(catalog_error("业务资源名称或表名重复", &package.root));
         }
     }

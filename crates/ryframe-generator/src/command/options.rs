@@ -1,8 +1,9 @@
-use ryframe_config::ToolSettings;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
 };
+
+use super::{GenerationBuilder, GenerationOperation};
 
 pub(super) struct Arguments {
     values: BTreeMap<String, String>,
@@ -10,27 +11,29 @@ pub(super) struct Arguments {
 }
 
 impl Arguments {
-    pub(super) fn parse(args: &[String]) -> Result<Self, String> {
-        Self::parse_values(
-            args,
-            &["--package", "--model"],
-            &["--write", "--plan", "--sync-frontend"],
-        )
-    }
-
-    pub(super) fn parse_new(args: &[String]) -> Result<Self, String> {
-        Self::parse_values(args, &[], &["--write", "--plan"])
-    }
-
-    pub(super) fn parse_import(args: &[String]) -> Result<Self, String> {
-        Self::parse_values(
-            args,
-            &["--connection", "--database", "--package", "--table"],
-            &["--write", "--plan"],
-        )
-    }
-
-    fn parse_values(args: &[String], names: &[&str], switches: &[&str]) -> Result<Self, String> {
+    pub(super) fn parse_for(
+        operation: &GenerationOperation,
+        args: &[String],
+    ) -> Result<Self, String> {
+        let (names, switches): (&[&str], &[&str]) = match operation {
+            GenerationOperation::NewBusiness(_) => (&[], &["--write", "--plan"]),
+            GenerationOperation::Resource => (
+                &["--package", "--model", "--models"],
+                &["--write", "--plan", "--sync-frontend"],
+            ),
+            GenerationOperation::Import => (
+                &[
+                    "--connection",
+                    "--database",
+                    "--package",
+                    "--table",
+                    "--tables",
+                    "--strip-table-prefix",
+                ],
+                &["--write", "--plan"],
+            ),
+            GenerationOperation::Configured => (&[], &["--write", "--plan"]),
+        };
         let mut parsed = Self {
             values: BTreeMap::new(),
             flags: BTreeSet::new(),
@@ -62,25 +65,59 @@ impl Arguments {
         if parsed.flag("--plan") && parsed.flag("--write") {
             return Err("--plan 不能与 --write 同时使用".into());
         }
+        for (single, multiple) in [("--table", "--tables"), ("--model", "--models")] {
+            if parsed.values.contains_key(single) && parsed.values.contains_key(multiple) {
+                return Err(format!(
+                    "{single} 与 {multiple} 不能同时使用；请选择一种输入"
+                ));
+            }
+        }
         Ok(parsed)
     }
 
-    pub(super) fn value(&self, name: &str) -> Option<&str> {
-        self.values.get(name).map(String::as_str)
+    pub(super) fn builder(
+        &self,
+        root: PathBuf,
+        operation: GenerationOperation,
+    ) -> Result<GenerationBuilder, String> {
+        let mut builder = GenerationBuilder::new(root)
+            .operation(operation)
+            .write(self.flag("--write"));
+        for (name, value) in &self.values {
+            builder = match name.as_str() {
+                "--package" => builder.package(value),
+                "--connection" => builder.source(value),
+                "--database" => builder.database(value),
+                "--strip-table-prefix" => builder.strip_table_prefix(value),
+                "--table" => builder.include_tables([value]),
+                "--tables" => builder.include_tables(list(value)?),
+                "--model" => builder.include_models([value]),
+                "--models" => builder.include_models(list(value)?),
+                _ => unreachable!("解析时已验证全部选项"),
+            };
+        }
+        if self.flag("--sync-frontend") {
+            builder = builder.sync_frontend(true);
+        }
+        Ok(builder)
     }
-    #[cfg(feature = "schema-import")]
-    pub(super) fn required(&self, name: &str) -> Result<&str, String> {
-        self.value(name)
-            .ok_or_else(|| format!("缺少 {name}\n{}", super::USAGE))
-    }
+
     pub(super) fn flag(&self, name: &str) -> bool {
         self.flags.contains(name)
     }
 }
 
-pub(super) fn load_tools() -> Result<(PathBuf, ToolSettings), String> {
+fn list(value: &str) -> Result<Vec<String>, String> {
+    let values = value.split(',').map(str::trim).collect::<Vec<_>>();
+    if values.iter().any(|value| value.is_empty()) {
+        return Err("批量选择中包含空名称；使用 table1,table2 或 Model1,Model2".into());
+    }
+    Ok(values.into_iter().map(str::to_owned).collect())
+}
+
+pub(super) fn workspace_root() -> Result<PathBuf, String> {
     let current = std::env::current_dir().map_err(|error| format!("无法读取当前目录：{error}"))?;
-    let root = current
+    current
         .ancestors()
         .find(|path| {
             std::fs::read_to_string(path.join("Cargo.toml"))
@@ -88,41 +125,6 @@ pub(super) fn load_tools() -> Result<(PathBuf, ToolSettings), String> {
                 .and_then(|text| text.parse::<toml::Table>().ok())
                 .is_some_and(|table| table.contains_key("workspace"))
         })
-        .ok_or("无法定位后端 Workspace；请在后端仓库或业务 crate 中执行")?
-        .to_path_buf();
-    let settings = ToolSettings::load(&root).map_err(|error| error.to_string())?;
-    Ok((root, settings))
-}
-
-pub(super) fn print_plan(operation: &str, parsed: &Arguments) -> Result<(), String> {
-    let (_, settings) = load_tools()?;
-    let package = parsed
-        .value("--package")
-        .or(settings.generator.package.as_deref())
-        .ok_or("缺少 --package 或 generator.package")?;
-    println!("生成计划：操作={operation}，业务包={package}，写入=false");
-    if operation == "import" {
-        let table = parsed.value("--table").ok_or("缺少 --table")?;
-        let scope = parsed
-            .value("--database")
-            .or(settings.generator.storage.as_deref())
-            .ok_or("缺少 --database 或 generator.storage")?;
-        if !matches!(scope, "control" | "tenant") {
-            return Err("--database 只支持 control 或 tenant".into());
-        }
-        let source = parsed
-            .value("--connection")
-            .or(settings.generator.source.as_deref())
-            .unwrap_or("local");
-        println!(
-            "只读结构来源={source}，表={table}，模型目标={scope}；定位业务包 → 读取表结构 → 校验模型 → 预览文件"
-        );
-    } else {
-        println!("定位业务包 → 编译资源描述符 → 校验资源 → 渲染 CRUD 与迁移 → 预览受管文件");
-        if parsed.flag("--sync-frontend") || settings.generator.sync_frontend {
-            println!("显式写入时：导出本次候选 OpenAPI → 原子同步前端契约及派生文件");
-        }
-    }
-    println!("计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。");
-    Ok(())
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "无法定位后端 Workspace；请在后端仓库或业务 crate 中执行".into())
 }

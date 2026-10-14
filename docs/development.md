@@ -76,11 +76,11 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-命令可从工作区根目录或该 crate 的任意子目录执行。默认预览在缓存中校验 Rust 格式并报告差异，`--write` 才原子更新受管文件；新建 crate 与进程装配代码使用同一格式入口，迁移校验和及 ownership 按最终文件计算。并发修改会拒绝覆盖，回滚未完成会报告备份路径。资源生成不写 `resources/` 和 `extensions/`，不覆盖已生成迁移。描述符读取沿用 Workspace 锁定的版本、来源、校验和及 patch，离线编译临时 reader，不修改项目锁文件；缺少锁文件或缓存时按诊断先准备依赖。`--package` 可由工具配置的 `generator.package` 提供；`--plan` 仅列任务，不编译描述符或访问数据库。`--sync-frontend --write` 使用本次后端候选契约同步前端。默认生成器保持离线，读取既有表使用 `cargo generate --features schema-import -- import --connection legacy --database control --package order-business --table biz_order`，连接和目标类型可由 `generator.source`、`generator.storage` 提供；当前反向导入用于首次模型草案。
+命令可从工作区根目录或该 crate 的子目录执行。默认预览在缓存中校验 Rust 格式并报告差异，`--write` 才事务更新受管文件，迁移校验和及 ownership 按最终文件计算；并发修改拒绝覆盖，回滚未完成报告备份路径。`resource` 不写手写目录、不覆盖已生成迁移。描述符 reader 离线使用 Workspace 锁定的版本、来源、校验和及 patch，不修改项目锁文件。工具配置支持 `package`、`models`、`tables`、`source`、`storage`、`strip_table_prefix` 和 `sync_frontend`；`resource --models Order,OrderItem` 覆盖模型列表，`import --tables biz_order,biz_order_item` 覆盖表列表。`run` 根据配置中 tables 是否为空选择导入或模型生成，导入使用 `cargo generate --features schema-import -- run`。`--plan` 只列同一执行计划，不编译或连接数据库；`--sync-frontend --write` 同步本次候选契约。
 
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
 
-反向结构读取保留完整列类型、默认值和附加属性，未知类型、视图及不可读列明确拒绝。模型的日期、JSON 和精确 Decimal 可使用 SDK 限定路径，不必直接依赖数据库或 API；`tinyint(1)` 保留整数范围，不据显示宽度猜测布尔含义。模型草案不代表完整 CRUD 已支持其全部类型，资源生成仍校验实际支持边界。
+反向导入一次只读读取选中表，再整批预检名称、模型、文件与 `descriptors()` 显式 vec 列表，`--write` 一并写入 `resources/` 模型和注册；发生冲突整批停止，不覆盖手写模型。`--strip-table-prefix biz_` 仅改变资源、模块及类型名，保留物理表名；原始列类型、默认值、索引、外键及 schema 保存在 `.ryframe/imports/`。`source=primary`、`sources.legacy` 或 `tenant_data.targets.<键>` 决定只读来源，`storage=control|tenant` 决定运行范围，二者独立。当前导入建立模型起点，需确认字段用途后执行 resource，不能视为已接管原表或完成前端生成；未知类型、视图和不可读列拒绝，`tinyint(1)` 不猜测布尔。SDK 日期、JSON、精确 Decimal 可离线建模，但完整 CRUD 仍校验支持范围。Rust [示例](../crates/ryframe-generator/examples/generate.rs) 可用 `cargo run --locked -p ryframe-generator --example generate` 或 IDE 运行，导入执行需加 `--features schema-import`；Builder 的 `plan()` 默认只读，`execute()` 才执行，`.write(true)` 才更新文件。
 
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 

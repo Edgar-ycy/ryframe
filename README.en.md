@@ -70,7 +70,7 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-Keep handwritten code in `resources/` and `extensions/`. The default generator is offline; database inspection requires `schema-import`. Configure tool defaults and the frontend directory in `config/tools.toml`; ignored `.local-tests/tools.toml` supplies local overrides, and CLI options take precedence.
+Keep handwritten code in `resources/` and `extensions/`. The default generator is offline. With `schema-import`, `import --tables biz_order,biz_order_item` preflights the whole batch, registers model descriptors and preserves original schemas in `.ryframe/imports/` without modifying the database. Configure tool defaults and the frontend directory in `config/tools.toml`; ignored `.local-tests/tools.toml` supplies local overrides, and CLI options take precedence. `cargo generate -- run` consumes configured `tables` or `models`. The Rust `GenerationBuilder` accepts `.include_tables(["biz_order", "biz_order_item"])`; edit and run the [example](crates/ryframe-generator/examples/generate.rs). See the development guide for the complete workflow.
 
 ## Checks, contracts and builds
 

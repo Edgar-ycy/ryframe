@@ -20,7 +20,7 @@ fn plans_do_not_spawn_cargo_or_read_database_configuration() {
     fs::create_dir(root.path().join("config")).unwrap();
     fs::write(
         root.path().join("config/tools.toml"),
-        "[generator]\npackage = 'order-business'\nsource = 'legacy'\nstorage = 'control'\n",
+        "[generator]\npackage = 'order-business'\nsource = 'legacy'\nstorage = 'control'\ntables = ['biz_order', 'biz_order_item']\n",
     )
     .unwrap();
     fs::write(
@@ -32,6 +32,9 @@ fn plans_do_not_spawn_cargo_or_read_database_configuration() {
         vec!["new-business", "order-business", "--plan"],
         vec!["resource", "--plan"],
         vec!["import", "--table", "biz_order", "--plan"],
+        vec!["import", "--tables", "biz_order,biz_order_item", "--plan"],
+        vec!["resource", "--models", "Order,OrderItem", "--plan"],
+        vec!["run", "--plan"],
     ] {
         let output = run(root.path(), &args);
         assert!(
@@ -56,6 +59,7 @@ fn ambiguous_arguments_fail_before_any_task() {
         vec!["new-business", "order", "--write", "--plan"],
         vec!["new-business", "order", "--write", "--write"],
         vec!["import", "--table", "--write"],
+        vec!["import", "--table", "a", "--tables", "b"],
     ] {
         assert_eq!(run(root.path(), &args).status.code(), Some(2));
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);

@@ -271,7 +271,7 @@ fn business_manifest(package: &str, module: &str) -> String {
 }
 
 fn business_lib() -> String {
-    "pub mod extensions;\npub mod resources;\n#[cfg(feature = \"runtime\")]\npub mod generated;\n\npub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {\n    resources::descriptors()\n}\n\n#[cfg(feature = \"runtime\")]\npub fn module() -> ryframe_sdk::RyFrameBusinessModule {\n    let builder = ryframe_sdk::BusinessModuleBuilder::new(env!(\"CARGO_PKG_NAME\").trim_end_matches(\"-business\"))\n        .resources(&generated::RESOURCES)\n        .tenant_data_tables(generated::tenant_catalog::TENANT_DATA_TABLES);\n    #[cfg(feature = \"api\")]\n    let builder = builder.routes(generated::routes).openapi(generated::openapi);\n    #[cfg(feature = \"migration\")]\n    let builder = builder.migrations(generated::migrations::migrations());\n    builder.build()\n}\n".into()
+    "pub mod extensions;\npub mod resources;\n#[cfg(feature = \"runtime\")]\npub mod generated;\n\npub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {\n    resources::descriptors()\n}\n\n#[cfg(feature = \"runtime\")]\npub fn module() -> ryframe_sdk::RyFrameBusinessModule {\n    let builder = ryframe_sdk::BusinessModuleBuilder::new(env!(\"CARGO_PKG_NAME\").trim_end_matches(\"-business\"))\n        .resources(generated::RESOURCES.iter())\n        .tenant_data_tables(generated::tenant_catalog::TENANT_DATA_TABLES);\n    #[cfg(feature = \"api\")]\n    let builder = builder.routes(generated::routes).openapi(generated::openapi);\n    #[cfg(feature = \"migration\")]\n    let builder = builder.migrations(generated::migrations::migrations());\n    builder.build()\n}\n".into()
 }
 
 fn resources_module() -> String {

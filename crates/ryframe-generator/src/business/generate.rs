@@ -12,7 +12,7 @@ use crate::{ResourceError, ResourceIr, StorageKind};
 pub struct BusinessGenerateOptions<'a> {
     pub current_dir: &'a Path,
     pub package: &'a str,
-    pub model: Option<&'a str>,
+    pub models: &'a [String],
     pub write: bool,
 }
 
@@ -32,20 +32,18 @@ pub fn generate_business_package(
     if descriptors.is_empty() {
         return Err(error("业务 crate 没有声明任何 ResourceModel"));
     }
-    let selected = selected_names(&descriptors, options.model)?;
+    let selected = selected_names(&descriptors, options.models)?;
     let resources = descriptors
         .iter()
         .map(|descriptor| descriptor_to_ir(&package, descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     let mut assets = Vec::new();
     for resource in &resources {
-        if selected.contains(&resource.name) {
-            assets.extend(
-                crate::resource::render_business_resource(resource)
-                    .into_iter()
-                    .map(|asset| BusinessAsset::new(asset.resource, asset.path, asset.content)),
-            );
-        }
+        assets.extend(
+            crate::resource::render_business_resource(resource)
+                .into_iter()
+                .map(|asset| BusinessAsset::new(asset.resource, asset.path, asset.content)),
+        );
     }
     super::format::format_assets(&package.workspace_root, &mut assets)?;
     let mut aggregate = aggregate_assets(&package, &resources, &descriptors, &assets)?;

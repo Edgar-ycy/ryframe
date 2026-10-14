@@ -47,15 +47,28 @@ pub struct ColumnInfo {
 ///
 /// 导入只建立一次模型起点：不会猜测路由、菜单、字段用途或业务规则。
 pub fn rust_model_source(table: &TableInfo, database: &str) -> Result<String, String> {
+    rust_model_source_named(table, database, &table.table_name)
+}
+
+pub(super) fn rust_model_source_named(
+    table: &TableInfo,
+    database: &str,
+    name: &str,
+) -> Result<String, String> {
     if !matches!(database, "control" | "tenant") {
         return Err("导入数据库范围只支持 control 或 tenant".into());
     }
     validate_model_keys(table, database)?;
-    let model = pascal_case(&table.table_name)?;
+    if !valid_ident(name) {
+        return Err(format!(
+            "资源名 {name:?} 不是可用 Rust 标识符；调整 strip_table_prefix 或表名映射"
+        ));
+    }
+    let model = pascal_case(name)?;
     let title = table.comment.as_deref().unwrap_or(&table.table_name);
     let mut output = format!(
         "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?})]\npub struct {} {{\n",
-        table.table_name, title, table.table_name, database, model
+        name, title, table.table_name, database, model
     );
     for column in &table.columns {
         if !valid_ident(&column.name) {
@@ -123,7 +136,7 @@ fn valid_ident(value: &str) -> bool {
         && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
-fn pascal_case(value: &str) -> Result<String, String> {
+pub(super) fn pascal_case(value: &str) -> Result<String, String> {
     let mut output = String::new();
     for part in value.split('_').filter(|part| !part.is_empty()) {
         let mut characters = part.chars();

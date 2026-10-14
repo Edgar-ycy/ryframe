@@ -42,7 +42,8 @@ fn compare_and_swap_detects_concurrent_create_and_mutation() {
     let changed = verify_expected_file(&manifest, &expected)
         .expect_err("不得覆盖并发修改的 manifest")
         .to_string();
-    assert!(changed.contains("ownership manifest"));
+    assert!(changed.contains("预检文件") && changed.contains("compare-and-swap"));
+    assert!(changed.contains(".ownership.toml"));
 }
 
 #[test]

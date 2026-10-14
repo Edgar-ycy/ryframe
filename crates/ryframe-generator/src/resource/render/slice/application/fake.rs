@@ -3,6 +3,12 @@ use super::{business_index_fields, method_arguments, unique_business_indexes, un
 
 pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let filter_lifetime = super::super::filter_lifetime(resource, "'_");
+    let filter_argument = if super::super::uses_filters(resource) {
+        "filter"
+    } else {
+        "_filter"
+    };
     let detail_type = if resource.relations.is_empty() {
         format!("{pascal}Record")
     } else {
@@ -62,6 +68,8 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
         header = header,
         collections = collections,
         pascal = pascal,
+        filter_lifetime = filter_lifetime,
+        filter_argument = filter_argument,
         detail_import = detail_import,
         control_call_variants = control_call_variants,
         control_failure_variants = control_failure_variants,

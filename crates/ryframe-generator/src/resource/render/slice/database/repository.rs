@@ -3,6 +3,27 @@ use super::queries::*;
 
 pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let filter_lifetime = super::super::filter_lifetime(resource, "'_");
+    let filter_argument = if super::super::uses_filters(resource) {
+        "filter"
+    } else {
+        "_filter"
+    };
+    let column_trait = if !resource.access.system_tenant_only
+        || resource.soft_delete.is_some()
+        || super::super::uses_filters(resource)
+        || super::super::application::unique_business_indexes(resource)
+            .next()
+            .is_some()
+        || resource.relations.iter().any(|relation| {
+            resources.iter().any(|target| {
+                target.name == relation.target_resource && target.soft_delete.is_some()
+            })
+        }) {
+        "ColumnTrait, "
+    } else {
+        ""
+    };
     let name = &resource.name;
     let persistence = persistence_parts(resource);
     let base_select = base_select(resource);
@@ -53,6 +74,9 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         header = header,
         name = name,
         pascal = pascal,
+        filter_lifetime = filter_lifetime,
+        filter_argument = filter_argument,
+        column_trait = column_trait,
         detail_import = detail_import,
         model_trait = model_trait,
         set_import = set_import,

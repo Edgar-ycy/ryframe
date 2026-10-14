@@ -7,7 +7,7 @@ use ryframe_application::generated::{name}::{{
 use ryframe_application::{{PersistenceTransaction, TransactionAuditMode}};
 use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
 use sea_orm::{{
-    ActiveModelTrait, {set_import}ColumnTrait, DatabaseTransaction, EntityTrait,
+    ActiveModelTrait, {set_import}{column_trait}DatabaseTransaction, EntityTrait,
     {model_trait}QueryFilter, QueryOrder, QuerySelect, {transaction_trait}sea_query::LockType,
 }};
 
@@ -41,7 +41,7 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
         &self,
         tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: {pascal}Filter<'_>,
+        {filter_argument}: {pascal}Filter{filter_lifetime},
     ) -> AppResult<PageResult<{pascal}Record>> {{
 {read_connection}
 {base_select}

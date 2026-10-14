@@ -112,15 +112,15 @@ pub(crate) fn verify_expected_file(
             let bytes = fs::read(path).map_err(|error| {
                 ResourceError::file(
                     path,
-                    format!("ownership manifest 在生成期间丢失或不可读：{error}"),
-                    "恢复原 manifest 并重新生成",
+                    format!("预检文件在生成期间丢失或不可读：{error}"),
+                    "核对文件来源并从新的预览重新生成",
                 )
             })?;
             if bytes != *expected_bytes {
                 return Err(ResourceError::file(
                     path,
-                    "ownership manifest 在生成期间发生变化，compare-and-swap 已拒绝覆盖",
-                    "保留新的 manifest，从新的预览重新生成",
+                    "预检文件在生成期间发生变化，compare-and-swap 已拒绝覆盖",
+                    "保留并发改动，从新的预览重新生成",
                 ));
             }
         }

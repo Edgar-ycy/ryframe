@@ -92,3 +92,42 @@ fn global_access_must_be_explicit_and_cannot_relabel_tenant_business() {
             .contains("全局资源")
     );
 }
+
+#[test]
+fn empty_and_numeric_filters_do_not_declare_borrowed_lifetimes() {
+    for numeric_filter in [false, true] {
+        let mut spec = global_spec();
+        spec.database.soft_delete = None;
+        spec.fields.retain(|field| field.name != "del_flag");
+        spec.database.indexes.clear();
+        for field in &mut spec.fields {
+            field.usage.filter = numeric_filter && field.name == "status";
+        }
+        let generated =
+            render_resources(&[normalize_resource(spec, "order.toml", "no-borrows").unwrap()])
+                .unwrap();
+        for path in [
+            "order/model.rs",
+            "order/port.rs",
+            "order/repository.rs",
+            "order/fake.rs",
+        ] {
+            let content = &generated
+                .assets
+                .iter()
+                .find(|asset| asset.path.ends_with(path))
+                .unwrap()
+                .content;
+            assert!(
+                !content.contains("OrderFilter<"),
+                "{path}: 无借用字段不应声明生命周期"
+            );
+            if path.ends_with("repository.rs") || path.ends_with("fake.rs") {
+                assert_eq!(content.contains("_filter: OrderFilter"), !numeric_filter);
+            }
+            if path.ends_with("repository.rs") {
+                assert_eq!(content.contains("ColumnTrait"), numeric_filter);
+            }
+        }
+    }
+}

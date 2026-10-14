@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use super::{BusinessGenerateReport, BusinessPackage};
 use crate::ResourceError;
 
-mod staged;
+pub(crate) mod staged;
 use crate::resource::write_transaction as transaction;
 use staged::apply_changes;
 use transaction::ExpectedFile;
@@ -18,14 +18,14 @@ use transaction::ExpectedFile;
 const OWNERSHIP_PATH: &str = ".ryframe/generated.toml";
 
 #[derive(Clone, Debug)]
-pub(super) struct BusinessAsset {
-    pub(super) resource: String,
-    pub(super) path: String,
-    pub(super) content: String,
+pub(crate) struct BusinessAsset {
+    pub(crate) resource: String,
+    pub(crate) path: String,
+    pub(crate) content: String,
 }
 
 impl BusinessAsset {
-    pub(super) fn new(
+    pub(crate) fn new(
         resource: impl Into<String>,
         path: impl Into<String>,
         content: String,
@@ -77,6 +77,20 @@ pub(super) fn install_assets(
     for asset in &assets {
         let target = package.root.join(&asset.path);
         let hash = hash(asset.content.as_bytes());
+        if asset.resource != "__catalog__"
+            && !selected.contains(&asset.resource)
+            && old_by_path
+                .get(asset.path.as_str())
+                .is_none_or(|entry| entry.content_hash != hash)
+        {
+            return Err(error(
+                format!(
+                    "未选中的资源 {} 仍有待生成差异：{}；本批未写入",
+                    asset.resource, asset.path
+                ),
+                &target,
+            ));
+        }
         match old_by_path.get(asset.path.as_str()) {
             Some(entry) if entry.content_hash == hash => report.unchanged.push(asset.path.clone()),
             Some(_) if asset.path.starts_with("migrations/") => {
@@ -96,6 +110,18 @@ pub(super) fn install_assets(
         }
     }
     for entry in &old.entries {
+        if !desired_paths.contains(entry.path.as_str())
+            && !selected.contains(&entry.resource)
+            && entry.resource != "__catalog__"
+        {
+            return Err(error(
+                format!(
+                    "未选中的资源 {} 存在待删除资产 {}；请完整预览后再生成",
+                    entry.resource, entry.path
+                ),
+                &package.root,
+            ));
+        }
         if !desired_paths.contains(entry.path.as_str())
             && (selected.contains(&entry.resource) || entry.resource == "__catalog__")
         {

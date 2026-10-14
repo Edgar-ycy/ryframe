@@ -1,4 +1,4 @@
-use ryframe_generator::import::inspect_existing_table;
+use ryframe_generator::import::{inspect_existing_table, plan_import_models};
 use sea_orm::TransactionTrait;
 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
@@ -88,6 +88,37 @@ async fn selected_tables_preserve_types_defaults_indexes_and_foreign_keys() {
             .map_err(|error| error.to_string())?;
         assert_eq!(item.foreign_keys[0].referenced_table, "biz_order");
         assert_eq!(item.foreign_keys[0].columns, ["order_id"]);
+        let workspace = tempfile::Builder::new()
+            .prefix("mysql-import-batch-")
+            .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
+            .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(workspace.path().join("src/resources"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            workspace.path().join("src/resources/mod.rs"),
+            "pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> { vec![] }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let batch = plan_import_models(
+            workspace.path(),
+            workspace.path(),
+            &[order, item],
+            "control",
+            Some("biz_"),
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(batch.created.len(), 4);
+        batch.write().map_err(|error| error.to_string())?;
+        let model = std::fs::read_to_string(workspace.path().join("src/resources/order.rs"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            model.contains("ryframe_sdk::rust_decimal::Decimal") && model.contains("pub id: u64")
+        );
+        let registration = std::fs::read_to_string(workspace.path().join("src/resources/mod.rs"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            registration.contains("order::Order") && registration.contains("order_item::OrderItem")
+        );
         mysql::require_count(
             &database,
             "SELECT COUNT(*) AS value FROM biz_order WHERE code='keep-source'",

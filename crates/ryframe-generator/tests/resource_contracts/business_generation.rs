@@ -53,7 +53,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     let preview = generate_business_package(BusinessGenerateOptions {
         current_dir: &crate_root,
         package: "order-business",
-        model: Some("Order"),
+        models: &["Order".into()],
         write: false,
     })
     .expect("预览应成功");
@@ -68,7 +68,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     let written = generate_business_package(BusinessGenerateOptions {
         current_dir: &crate_root,
         package: "order-business",
-        model: None,
+        models: &[],
         write: true,
     })
     .expect("写入应成功");
@@ -85,7 +85,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     let repeat = generate_business_package(BusinessGenerateOptions {
         current_dir: &crate_root,
         package: "order-business",
-        model: None,
+        models: &[],
         write: true,
     })
     .expect("重复写入应成功且零差异");
@@ -108,7 +108,7 @@ fn prepare_lock(workspace: &std::path::Path) -> Vec<u8> {
     let error = generate_business_package(BusinessGenerateOptions {
         current_dir: workspace,
         package: "order-business",
-        model: None,
+        models: &[],
         write: false,
     })
     .expect_err("缺少项目锁文件必须在生成前拒绝");
@@ -234,7 +234,7 @@ fn assert_migration_is_immutable(workspace: &std::path::Path, crate_root: &std::
     let error = generate_business_package(BusinessGenerateOptions {
         current_dir: crate_root,
         package: "order-business",
-        model: None,
+        models: &[],
         write: false,
     })
     .expect_err("已生成的初始迁移不得随模型变化被覆盖");

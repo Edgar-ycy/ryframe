@@ -23,11 +23,26 @@ pub(super) fn apply_changes(
     manifest: &str,
     expected: &BTreeMap<String, ExpectedFile>,
 ) -> Result<(), ResourceError> {
+    let mut all_assets = assets.to_vec();
+    all_assets.push(BusinessAsset {
+        resource: "__catalog__".into(),
+        path: OWNERSHIP_PATH.into(),
+        content: manifest.into(),
+    });
+    apply_files(root, &all_assets, removed, expected)
+}
+
+/// 模型初稿与显式注册文件使用同一事务协议，但不登记为禁止人工编辑的生成产物。
+pub(crate) fn apply_files(
+    root: &Path,
+    assets: &[BusinessAsset],
+    removed: &[String],
+    expected: &BTreeMap<String, ExpectedFile>,
+) -> Result<(), ResourceError> {
     let paths = removed
         .iter()
         .map(String::as_str)
         .chain(assets.iter().map(|asset| asset.path.as_str()))
-        .chain(std::iter::once(OWNERSHIP_PATH))
         .collect::<BTreeSet<_>>();
     for path in &paths {
         verify_expected_file(&safe_target(root, path)?, &expected[*path])?;
@@ -43,28 +58,18 @@ pub(super) fn apply_changes(
             &asset.resource,
         )?;
     }
-    write_staged(&stage.path().join(OWNERSHIP_PATH), manifest, "__catalog__")?;
-    commit_stage(root, stage, assets, &paths, expected, manifest)
+    commit_files(root, stage, assets, &paths, expected)
 }
 
-pub(super) fn commit_stage(
+pub(super) fn commit_files(
     root: &Path,
     stage: tempfile::TempDir,
     assets: &[BusinessAsset],
     paths: &BTreeSet<&str>,
     expected: &BTreeMap<String, ExpectedFile>,
-    manifest: &str,
 ) -> Result<(), ResourceError> {
     let mut journal = Journal::default();
-    let result = install(
-        root,
-        stage.path(),
-        assets,
-        paths,
-        expected,
-        manifest,
-        &mut journal,
-    );
+    let result = install(root, stage.path(), assets, paths, expected, &mut journal);
     if let Err(failure) = result {
         if let Err(rollback_error) = rollback(&journal.installed, &journal.backups) {
             let saved = persist_recovery_directories(stage, None);
@@ -84,7 +89,6 @@ fn install(
     assets: &[BusinessAsset],
     paths: &BTreeSet<&str>,
     expected: &BTreeMap<String, ExpectedFile>,
-    manifest: &str,
     journal: &mut Journal,
 ) -> Result<(), ResourceError> {
     for path in paths {
@@ -105,12 +109,6 @@ fn install(
             content_hash: hash(asset.content.as_bytes()),
         });
     }
-    let target = safe_target(root, OWNERSHIP_PATH)?;
-    install_staged(&stage.join(OWNERSHIP_PATH), &target, "__catalog__")?;
-    journal.installed.push(InstalledFile {
-        path: target,
-        content_hash: hash(manifest.as_bytes()),
-    });
     Ok(())
 }
 

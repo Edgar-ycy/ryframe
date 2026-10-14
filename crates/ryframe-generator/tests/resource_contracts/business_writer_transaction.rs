@@ -11,6 +11,7 @@ mod staged;
 use super::resource_writer_transaction::transaction;
 
 const OWNERSHIP_PATH: &str = ".ryframe/generated.toml";
+#[derive(Clone)]
 struct BusinessAsset {
     resource: String,
     path: String,
@@ -22,6 +23,23 @@ fn content_hash(bytes: &[u8]) -> String {
 use content_hash as hash;
 fn error(message: impl Into<String>, path: &Path) -> ResourceError {
     ResourceError::new(message, "保留并核对事务现场").with_file(path.to_string_lossy())
+}
+
+fn commit_stage(
+    root: &Path,
+    stage: tempfile::TempDir,
+    assets: &[BusinessAsset],
+    paths: &BTreeSet<&str>,
+    expected: &BTreeMap<String, transaction::ExpectedFile>,
+    manifest: &str,
+) -> Result<(), ResourceError> {
+    let mut all_assets = assets.to_vec();
+    all_assets.push(BusinessAsset {
+        resource: "__catalog__".into(),
+        path: OWNERSHIP_PATH.into(),
+        content: manifest.into(),
+    });
+    staged::commit_files(root, stage, &all_assets, paths, expected)
 }
 
 fn fixture() -> (
@@ -76,7 +94,7 @@ fn missing_second_staged_file_rolls_back_first_install_and_manifest() {
         assets[0].path.as_str(),
         assets[1].path.as_str(),
     ]);
-    staged::commit_stage(
+    commit_stage(
         root.path(),
         stage,
         &assets,
@@ -120,7 +138,7 @@ fn concurrent_create_is_preserved_and_previous_backups_are_restored() {
         assets[0].path.as_str(),
         assets[1].path.as_str(),
     ]);
-    let failure = staged::commit_stage(
+    let failure = commit_stage(
         root.path(),
         stage,
         &assets,

@@ -10,4 +10,8 @@ frontend_dir = "../ryframe-vue3"
 # storage = "tenant"
 # tables = ["biz_order", "biz_order_item"]
 # strip_table_prefix = "biz_"
+# models = ["Order", "OrderItem"]
+# cargo generate -- run 按 tables 是否为空选择导入或模型生成；数组覆盖时整体替换。
+# source 指定只读结构来源，storage 指定生成模型的运行时范围，两者可以不同。
+# source 可用 primary、sources.<名称> 或 tenant_data.targets.<目标键>。
 sync_frontend = false

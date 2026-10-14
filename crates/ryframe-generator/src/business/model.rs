@@ -13,21 +13,24 @@ use crate::{
 };
 pub(super) fn selected_names(
     descriptors: &[OwnedResourceDescriptor],
-    model: Option<&str>,
+    models: &[String],
 ) -> Result<BTreeSet<String>, ResourceError> {
-    match model {
-        None => Ok(descriptors.iter().map(|item| item.name.clone()).collect()),
-        Some(model) => {
-            let selected = descriptors
+    if models.is_empty() {
+        return Ok(descriptors.iter().map(|item| item.name.clone()).collect());
+    }
+    models
+        .iter()
+        .map(|model| {
+            descriptors
                 .iter()
                 .find(|item| {
                     item.name.eq_ignore_ascii_case(model)
                         || item.model_type.eq_ignore_ascii_case(model)
                 })
-                .ok_or_else(|| error(format!("业务模型 `{model}` 不存在")))?;
-            Ok(BTreeSet::from([selected.name.clone()]))
-        }
-    }
+                .map(|selected| selected.name.clone())
+                .ok_or_else(|| error(format!("业务模型 `{model}` 不存在")))
+        })
+        .collect()
 }
 
 pub(super) fn descriptor_to_ir(
