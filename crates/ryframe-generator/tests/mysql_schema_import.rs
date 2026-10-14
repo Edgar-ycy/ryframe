@@ -5,6 +5,28 @@ use sea_orm::TransactionTrait;
 mod mysql;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn global_tables_without_tenant_prefix_share_introspection_but_keep_tenant_boundary() {
+    mysql::run_mysql_test("global_schema", |database| async move {
+        mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(32) NOT NULL)").await?;
+        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT NOT NULL PRIMARY KEY, parent_id BIGINT NOT NULL, CONSTRAINT fk_table2_parent FOREIGN KEY(parent_id) REFERENCES table1(id))").await?;
+        for name in ["table1", "table2"] {
+            let table = inspect_existing_table(&database, name).await.map_err(|error| error.to_string())?;
+            assert_eq!(table.table_name, name);
+            assert!(table.schema_canonical.contains(&format!("table={name:?}")));
+            assert!(ryframe_tenant_db::migration::canonical_table_schema(&database, name).await.is_err());
+        }
+        let second = inspect_existing_table(&database, "table2").await.map_err(|error| error.to_string())?;
+        assert_eq!(second.foreign_keys[0].referenced_table, "table1");
+        assert!(second.schema_canonical.contains("fk_table2_parent"));
+        for invalid in ["", "table1;DROP", "../table1"] {
+            assert!(ryframe_db::schema::canonical_table_schema(&database, invalid).await.is_err());
+        }
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('table1','table2')", 2).await?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generated_tenant_auto_increment_ddl_and_transaction_readback_match_mysql() {
     use ryframe_generator::{
         IdGeneration, IndexSpec, ResourceSpec, normalize_resource, render_resources,

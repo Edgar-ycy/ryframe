@@ -1,19 +1,30 @@
 use super::catalog::{TenantDataCatalog, tenant_data_schema_fingerprint};
 use super::status::{TENANT_DATA_MIGRATION_LEDGER, status_after_server_validation};
 use super::tenant_data_catalog;
-use catalog::{
-    FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
-};
 use ryframe_db::migration::normalize_check_clause;
+use ryframe_db::schema::{
+    CheckMetadata, ColumnMetadata, ConstraintMetadata, IndexMetadata, TableMetadata,
+};
 use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 use target_slot::verify_target_slot_schema;
 
-mod catalog;
 mod fence;
 mod target_slot;
 use fence::{verify_fence_columns, verify_fence_constraints, verify_fence_indexes};
 
-pub use catalog::{canonical_table_schema, ensure_local_foreign_key_schema};
+use ryframe_db::schema::{normalize_column_default, normalize_column_extra};
+
+pub async fn canonical_table_schema(
+    db: &DatabaseConnection,
+    table_name: &str,
+) -> Result<String, DbErr> {
+    if !(table_name.starts_with("biz_") || table_name == "ryframe_resource_ownership") {
+        return Err(DbErr::Custom(
+            "租户数据目录只允许 biz_ 业务表与归属标记表".into(),
+        ));
+    }
+    ryframe_db::schema::canonical_table_schema(db, table_name).await
+}
 
 #[derive(Debug, FromQueryResult)]
 struct TableNameRow {
@@ -164,7 +175,7 @@ async fn verify_fence_schema(
     db: &DatabaseConnection,
     catalog: &TenantDataCatalog,
 ) -> Result<(), DbErr> {
-    let tables = TenantDataTableRow::find_by_statement(Statement::from_string(
+    let tables = TableMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT t.table_name AS `table_name`, t.engine AS `engine`, \
                 c.character_set_name AS `character_set_name`, \
@@ -226,25 +237,6 @@ async fn verify_resource_ownership_schema(db: &DatabaseConnection) -> Result<(),
         return Err(schema_fingerprint_mismatch("resource ownership marker"));
     }
     Ok(())
-}
-
-pub(super) fn normalize_column_default(value: Option<&str>) -> Option<&str> {
-    value.map(|value| {
-        if value.eq_ignore_ascii_case("current_timestamp(6)") {
-            "current_timestamp(6)"
-        } else {
-            value
-        }
-    })
-}
-
-pub(super) fn normalize_column_extra(value: &str) -> String {
-    value
-        .to_ascii_lowercase()
-        .split_whitespace()
-        .filter(|part| *part != "default_generated")
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 pub(super) fn schema_fingerprint_mismatch(detail: &str) -> DbErr {

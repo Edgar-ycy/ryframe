@@ -61,7 +61,7 @@ Create and register empty tenant business databases before running `cargo migrat
 
 `new-business` creates the business crate and SDK/process registration. `resource` generates CRUD, migrations and managed assets from handwritten Rust models. Both preview by default and write only with `--write`. Refresh the lockfile after creating a crate, then define and register models before generation as explained in the [development guide](docs/development.md#创建业务-crate):
 
-Tenant business models use `database="tenant"` and a primary key containing `tenant_id`. Global models without `tenant_id` use `database="control"` and are restricted to the system tenant by default. Enabling multi tenancy does not share global tables automatically; shared reads require explicit business extensions.
+Tenant business models use `database="tenant"`, table names starting with `biz_`, and a primary key containing `tenant_id`. Global models without `tenant_id` use `database="control"`, allow safe table identifiers such as `table1`, and are restricted to the system tenant by default. Enabling multi tenancy does not share global tables automatically; shared reads require explicit business extensions.
 
 ```powershell
 cargo generate -- new-business order-business --write

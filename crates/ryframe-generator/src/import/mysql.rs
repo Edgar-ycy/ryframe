@@ -90,7 +90,7 @@ pub async fn inspect_existing_table(
         .collect::<Vec<_>>();
     foreign_key_dependencies.sort_unstable();
     foreign_key_dependencies.dedup();
-    let schema_canonical = ryframe_tenant_db::migration::canonical_table_schema(db, table_name)
+    let schema_canonical = ryframe_db::schema::canonical_table_schema(db, table_name)
         .await
         .map_err(|error| AppError::Database(format!("规范化业务表结构失败: {error}")))?;
 

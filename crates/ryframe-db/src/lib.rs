@@ -29,6 +29,8 @@ pub mod repositories;
 pub mod repository;
 #[cfg(feature = "connection")]
 pub mod resource_ownership;
+#[cfg(feature = "connection")]
+pub mod schema;
 #[cfg(feature = "repositories")]
 pub mod sql_logger;
 #[cfg(feature = "repositories")]

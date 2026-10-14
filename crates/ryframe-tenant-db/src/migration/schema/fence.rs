@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn verify_fence_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let columns = FenceColumnRow::find_by_statement(Statement::from_string(
+    let columns = ColumnMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
          is_nullable AS `is_nullable`, character_set_name AS `character_set_name`, \
@@ -84,7 +84,7 @@ pub(super) async fn verify_fence_columns(db: &DatabaseConnection) -> Result<(), 
 }
 
 pub(super) async fn verify_fence_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let indexes = FenceIndexRow::find_by_statement(Statement::from_string(
+    let indexes = IndexMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
          CAST(seq_in_index AS SIGNED) AS `seq_in_index`, \
@@ -131,7 +131,7 @@ pub(super) async fn verify_fence_indexes(db: &DatabaseConnection) -> Result<(), 
 }
 
 pub(super) async fn verify_fence_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let constraints = FenceConstraintRow::find_by_statement(Statement::from_string(
+    let constraints = ConstraintMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \
          enforced AS `enforced` \
@@ -158,7 +158,7 @@ pub(super) async fn verify_fence_constraints(db: &DatabaseConnection) -> Result<
         return Err(schema_fingerprint_mismatch("fence constraints"));
     }
 
-    let checks = FenceCheckRow::find_by_statement(Statement::from_string(
+    let checks = CheckMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT tc.constraint_name AS `constraint_name`, cc.check_clause AS `check_clause` \
          FROM information_schema.table_constraints tc \

@@ -1,14 +1,14 @@
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
-use super::catalog::{
-    FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
-};
 use super::{normalize_column_default, normalize_column_extra, schema_fingerprint_mismatch};
 use ryframe_db::migration::normalize_check_clause;
+use ryframe_db::schema::{
+    CheckMetadata, ColumnMetadata, ConstraintMetadata, IndexMetadata, TableMetadata,
+};
 
 pub(super) async fn verify_target_slot_schema(
     db: &DatabaseConnection,
-    tables: &[TenantDataTableRow],
+    tables: &[TableMetadata],
 ) -> Result<(), DbErr> {
     let slot = tables
         .iter()
@@ -32,7 +32,7 @@ pub(super) async fn verify_target_slot_schema(
 }
 
 async fn verify_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let columns = FenceColumnRow::find_by_statement(Statement::from_string(
+    let columns = ColumnMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
          is_nullable AS `is_nullable`, character_set_name AS `character_set_name`, \
@@ -119,7 +119,7 @@ async fn verify_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
 }
 
 async fn verify_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let indexes = FenceIndexRow::find_by_statement(Statement::from_string(
+    let indexes = IndexMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
          CAST(seq_in_index AS SIGNED) AS `seq_in_index`, \
@@ -146,7 +146,7 @@ async fn verify_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
 }
 
 async fn verify_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let constraints = FenceConstraintRow::find_by_statement(Statement::from_string(
+    let constraints = ConstraintMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \
          enforced AS `enforced` \
@@ -172,7 +172,7 @@ async fn verify_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
     {
         return Err(schema_fingerprint_mismatch("target slot constraints"));
     }
-    let checks = FenceCheckRow::find_by_statement(Statement::from_string(
+    let checks = CheckMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT tc.constraint_name AS `constraint_name`, cc.check_clause AS `check_clause` \
          FROM information_schema.table_constraints tc \

@@ -2,52 +2,51 @@ use std::fmt::Write as _;
 
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
-use super::{ensure_mysql, normalize_column_default, normalize_column_extra};
-use ryframe_db::migration::normalize_check_clause;
+use crate::migration::normalize_check_clause;
 
 #[derive(Debug, FromQueryResult)]
-pub(super) struct FenceColumnRow {
-    pub(super) column_name: String,
-    pub(super) column_type: String,
-    pub(super) is_nullable: String,
-    pub(super) character_set_name: Option<String>,
-    pub(super) collation_name: Option<String>,
-    pub(super) column_key: String,
-    pub(super) column_default: Option<String>,
-    pub(super) extra: String,
-    pub(super) generation_expression: String,
+pub struct ColumnMetadata {
+    pub column_name: String,
+    pub column_type: String,
+    pub is_nullable: String,
+    pub character_set_name: Option<String>,
+    pub collation_name: Option<String>,
+    pub column_key: String,
+    pub column_default: Option<String>,
+    pub extra: String,
+    pub generation_expression: String,
 }
 
 #[derive(Debug, FromQueryResult)]
-pub(super) struct FenceIndexRow {
-    pub(super) index_name: String,
-    pub(super) column_name: String,
-    pub(super) seq_in_index: i64,
-    pub(super) non_unique: i64,
-    pub(super) index_type: String,
-    pub(super) sub_part: Option<i64>,
-    pub(super) is_visible: String,
+pub struct IndexMetadata {
+    pub index_name: String,
+    pub column_name: String,
+    pub seq_in_index: i64,
+    pub non_unique: i64,
+    pub index_type: String,
+    pub sub_part: Option<i64>,
+    pub is_visible: String,
 }
 
 #[derive(Debug, FromQueryResult)]
-pub(super) struct FenceCheckRow {
-    pub(super) constraint_name: String,
-    pub(super) check_clause: String,
+pub struct CheckMetadata {
+    pub constraint_name: String,
+    pub check_clause: String,
 }
 
 #[derive(Debug, FromQueryResult)]
-pub(super) struct TenantDataTableRow {
-    pub(super) table_name: String,
-    pub(super) engine: String,
-    pub(super) character_set_name: String,
-    pub(super) table_collation: String,
+pub struct TableMetadata {
+    pub table_name: String,
+    pub engine: String,
+    pub character_set_name: String,
+    pub table_collation: String,
 }
 
 #[derive(Debug, FromQueryResult)]
-pub(super) struct FenceConstraintRow {
-    pub(super) constraint_name: String,
-    pub(super) constraint_type: String,
-    pub(super) enforced: String,
+pub struct ConstraintMetadata {
+    pub constraint_name: String,
+    pub constraint_type: String,
+    pub enforced: String,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -63,23 +62,25 @@ struct ForeignKeySchemaRow {
     delete_rule: String,
 }
 
-/// 从 MySQL information_schema 读取单张 catalog 表的完整、稳定结构描述。
-/// Generator 写入 descriptor 与运行时 verify 共用此实现，避免规范化漂移。
+/// 从 MySQL information_schema 只读读取明确指定表的完整、稳定结构。
+/// 控制库、租户库和生成器共用同一规范化来源；调用方负责资源归属和运行范围。
 pub async fn canonical_table_schema(
     db: &DatabaseConnection,
     table_name: &str,
 ) -> Result<String, DbErr> {
-    ensure_mysql(db)?;
-    if !(table_name.starts_with("biz_") || table_name == "ryframe_resource_ownership")
+    if db.get_database_backend() != DbBackend::MySql {
+        return Err(DbErr::Custom("表结构读取只支持 MySQL".into()));
+    }
+    if table_name.is_empty()
         || !table_name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
     {
         return Err(DbErr::Custom(
-            "invalid tenant-data catalog table name".into(),
+            "表名必须是非空的字母、数字和下划线标识".into(),
         ));
     }
-    let table = TenantDataTableRow::find_by_statement(Statement::from_sql_and_values(
+    let table = TableMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT t.table_name AS `table_name`, t.engine AS `engine`, \
                 c.character_set_name AS `character_set_name`, \
@@ -93,9 +94,9 @@ pub async fn canonical_table_schema(
     ))
     .one(db)
     .await?
-    .ok_or_else(|| DbErr::Custom(format!("tenant-data catalog table missing: {table_name}")))?;
+    .ok_or_else(|| DbErr::Custom(format!("未找到普通表：{table_name}")))?;
 
-    let columns = FenceColumnRow::find_by_statement(Statement::from_sql_and_values(
+    let columns = ColumnMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
                 is_nullable AS `is_nullable`, character_set_name AS `character_set_name`, \
@@ -108,7 +109,7 @@ pub async fn canonical_table_schema(
     ))
     .all(db)
     .await?;
-    let indexes = FenceIndexRow::find_by_statement(Statement::from_sql_and_values(
+    let indexes = IndexMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
          CAST(seq_in_index AS SIGNED) AS `seq_in_index`, \
@@ -120,7 +121,7 @@ pub async fn canonical_table_schema(
     ))
     .all(db)
     .await?;
-    let constraints = FenceConstraintRow::find_by_statement(Statement::from_sql_and_values(
+    let constraints = ConstraintMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \
                 enforced AS `enforced` \
@@ -130,7 +131,7 @@ pub async fn canonical_table_schema(
     ))
     .all(db)
     .await?;
-    let checks = FenceCheckRow::find_by_statement(Statement::from_sql_and_values(
+    let checks = CheckMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT tc.constraint_name AS `constraint_name`, cc.check_clause AS `check_clause` \
          FROM information_schema.table_constraints tc \
@@ -194,17 +195,17 @@ pub fn ensure_local_foreign_key_schema(
         Ok(())
     } else {
         Err(DbErr::Custom(
-            "tenant-data catalog foreign keys must stay within the target schema".into(),
+            "外键必须位于同一目标数据库；跨库外键需要显式业务扩展".into(),
         ))
     }
 }
 
 fn render_table_schema(
-    table: TenantDataTableRow,
-    columns: Vec<FenceColumnRow>,
-    indexes: Vec<FenceIndexRow>,
-    constraints: Vec<FenceConstraintRow>,
-    checks: Vec<FenceCheckRow>,
+    table: TableMetadata,
+    columns: Vec<ColumnMetadata>,
+    indexes: Vec<IndexMetadata>,
+    constraints: Vec<ConstraintMetadata>,
+    checks: Vec<CheckMetadata>,
     foreign_keys: Vec<ForeignKeySchemaRow>,
 ) -> String {
     let mut canonical = format!(
@@ -232,7 +233,7 @@ fn render_table_schema(
             normalize_column_extra(&column.extra),
             column.generation_expression,
         )
-        .expect("writing canonical schema to String cannot fail");
+        .expect("写入 String 不会失败");
     }
     canonical.push_str("]|indexes=[");
     for index in indexes {
@@ -247,7 +248,7 @@ fn render_table_schema(
             index.sub_part,
             index.is_visible,
         )
-        .expect("writing canonical schema to String cannot fail");
+        .expect("写入 String 不会失败");
     }
     canonical.push_str("]|constraints=[");
     for constraint in constraints {
@@ -256,7 +257,7 @@ fn render_table_schema(
             "{:?}:{:?}:{:?};",
             constraint.constraint_name, constraint.constraint_type, constraint.enforced,
         )
-        .expect("writing canonical schema to String cannot fail");
+        .expect("写入 String 不会失败");
     }
     canonical.push_str("]|checks=[");
     for check in checks {
@@ -266,7 +267,7 @@ fn render_table_schema(
             check.constraint_name,
             normalize_check_clause(&check.check_clause),
         )
-        .expect("writing canonical schema to String cannot fail");
+        .expect("写入 String 不会失败");
     }
     canonical.push_str("]|foreign_keys=[");
     for foreign_key in foreign_keys {
@@ -281,8 +282,27 @@ fn render_table_schema(
             foreign_key.update_rule,
             foreign_key.delete_rule,
         )
-        .expect("writing canonical schema to String cannot fail");
+        .expect("写入 String 不会失败");
     }
     canonical.push(']');
     canonical
+}
+
+pub fn normalize_column_default(value: Option<&str>) -> Option<&str> {
+    value.map(|value| {
+        if value.eq_ignore_ascii_case("current_timestamp(6)") {
+            "current_timestamp(6)"
+        } else {
+            value
+        }
+    })
+}
+
+pub fn normalize_column_extra(value: &str) -> String {
+    value
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .filter(|part| *part != "default_generated")
+        .collect::<Vec<_>>()
+        .join(" ")
 }
