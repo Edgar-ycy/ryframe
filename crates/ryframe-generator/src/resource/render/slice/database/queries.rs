@@ -30,6 +30,11 @@ pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
         return String::new();
     }
     let pascal = &resource.pascal_name;
+    let tenant_filter = if resource.access.system_tenant_only {
+        ""
+    } else {
+        "            .filter(entity::Column::TenantId.eq(tenant_id))\n"
+    };
     let unique_methods = unique_business_indexes(resource)
         .map(|index| {
             let fields = business_index_fields(resource, index);
@@ -56,7 +61,7 @@ pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
                 })
                 .unwrap_or_default();
             format!(
-                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n            .filter(entity::Column::TenantId.eq(tenant_id))\n{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record))\n    }}\n\n",
+                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n{tenant_filter}{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record))\n    }}\n\n",
                 method = unique_method_name(index),
                 arguments = method_arguments(&fields),
             )
@@ -81,7 +86,7 @@ pub(crate) struct PersistenceParts {
 
 pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
     let pascal = &resource.pascal_name;
-    match resource.storage {
+    let mut parts = match resource.storage {
         StorageKind::ControlRow => PersistenceParts {
             declaration: format!(
                 "pub fn port(database: crate::ControlDatabaseCluster) -> Arc<dyn {pascal}PersistencePort> {{\n    Arc::new(Database{pascal}Persistence {{ database }})\n}}\n\nstruct Database{pascal}Persistence {{\n    database: crate::ControlDatabaseCluster,\n}}\n\nstruct Database{pascal}Transaction {{\n    tenant_id: String,\n    transaction: DatabaseTransaction,\n}}"
@@ -100,7 +105,11 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
             begin_transaction: "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;\n        let transaction = session.begin_write().await.map_err(tenant_data_error)?;"
                 .into(),
         },
-    }
+    };
+    let guard = super::super::system_tenant_guard(resource, "ryframe_application");
+    parts.read_connection.insert_str(0, &guard);
+    parts.begin_transaction.insert_str(0, &guard);
+    parts
 }
 
 pub(crate) fn base_select(resource: &ResourceIr) -> String {

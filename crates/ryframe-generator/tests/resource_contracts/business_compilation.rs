@@ -90,6 +90,27 @@ pub struct Invoice {
 }
 
 pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
-    vec![<Invoice as ryframe_sdk::ResourceModel>::descriptor()]
+    vec![
+        <Invoice as ryframe_sdk::ResourceModel>::descriptor(),
+        <GlobalItem as ryframe_sdk::ResourceModel>::descriptor(),
+    ]
+}
+
+#[derive(ryframe_sdk::ResourceModel)]
+#[resource(
+    name = "global_item",
+    title = "全局字典",
+    table = "biz_global_item",
+    database = "control"
+)]
+pub struct GlobalItem {
+    #[resource(primary_key, auto_increment)]
+    pub id: i64,
+    #[resource(unique, filter, sort)]
+    pub code: String,
+    #[resource(read_only)]
+    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    #[resource(read_only)]
+    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
 }
 "#;

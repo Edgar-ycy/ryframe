@@ -287,6 +287,8 @@ pub struct OperationSpec {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccessSpec {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub system_tenant_only: bool,
     #[serde(default)]
     pub capability: Option<String>,
     #[serde(default)]

@@ -99,7 +99,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<{detail_type}>> {{
-        let mut state = self.lock();
+{system_tenant_guard}        let mut state = self.lock();
         state.calls.push({pascal}Call::FindById {{ tenant_id: tenant_id.into(), id }});
         fail_if_requested(&mut state, {pascal}Failure::FindById)?;
         Ok(state
@@ -114,7 +114,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         page: ValidatedPageQuery,
         filter: {pascal}Filter<'_>,
     ) -> AppResult<PageResult<{pascal}Record>> {{
-        let mut state = self.lock();
+{system_tenant_guard}        let mut state = self.lock();
         state.calls.push({pascal}Call::FindByPage {{
             tenant_id: tenant_id.into(),
             page: page.page(),
@@ -136,7 +136,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
     }}
 
     async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn {pascal}Transaction>> {{
-        let mut state = self.lock();
+{system_tenant_guard}        let mut state = self.lock();
         state.calls.push({pascal}Call::Begin {{ tenant_id: tenant_id.into() }});
         fail_if_requested(&mut state, {pascal}Failure::Begin)?;
         let transaction_index = state.transactions.len();
@@ -199,7 +199,7 @@ impl {pascal}Transaction for FakeTransaction {{
     }}
 
     async fn insert(&self, {record_mut}record: {pascal}Record) -> AppResult<{pascal}Record> {{
-        self.ensure_tenant(&record.tenant_id)?;
+        self.ensure_tenant({record_tenant})?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Insert {{ record: record.clone() }});
@@ -210,7 +210,7 @@ impl {pascal}Transaction for FakeTransaction {{
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
-        self.ensure_tenant(&record.tenant_id)?;
+        self.ensure_tenant({record_tenant})?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Update {{ record: record.clone() }});

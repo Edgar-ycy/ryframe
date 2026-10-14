@@ -82,12 +82,12 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
     }}
 
     async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
-        self.ensure_tenant(&record.tenant_id)?;
+        self.ensure_tenant({record_tenant})?;
 {insert_body}
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
-        self.ensure_tenant(&record.tenant_id)?;
+        self.ensure_tenant({record_tenant})?;
         entity::ActiveModel::from(to_entity(record))
             .reset_all()
             .update(&self.transaction)

@@ -6,6 +6,14 @@ mod migration;
 
 use super::super::{FieldIr, IndexIr, ResourceIr, StorageKind, ValueType};
 
+fn system_tenant_guard(resource: &ResourceIr, module: &str) -> String {
+    if resource.access.system_tenant_only {
+        format!("        {module}::ensure_system_tenant_id(tenant_id)?;\n")
+    } else {
+        String::new()
+    }
+}
+
 pub(super) fn api_dto(resource: &ResourceIr, header: &str) -> String {
     api::dto(resource, header)
 }

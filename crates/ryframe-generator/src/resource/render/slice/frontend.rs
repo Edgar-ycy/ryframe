@@ -83,7 +83,7 @@ export const pageManifest = definePageManifest({{
       permissionCode: {:?},
       path: {:?},
       requiredCapabilities: {:?},
-      page: () => import({page:?}),
+{system_tenant_only}      page: () => import({page:?}),
     }},
   ],
 }})
@@ -98,6 +98,11 @@ export const pageManifest = definePageManifest({{
             .as_ref()
             .map(|code| vec![code.as_str()])
             .unwrap_or_default(),
+        system_tenant_only = if resource.access.system_tenant_only {
+            "      requiresSystemTenant: true,\n"
+        } else {
+            ""
+        },
     )
 }
 

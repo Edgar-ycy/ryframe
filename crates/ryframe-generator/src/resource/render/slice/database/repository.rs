@@ -71,6 +71,11 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         to_record = to_record,
         to_entity = to_entity,
         insert_body = insert_body(resource, &unique_conflicts, &generic_conflict),
+        record_tenant = if resource.access.system_tenant_only {
+            "\"system\""
+        } else {
+            "&record.tenant_id"
+        },
         relation_mappers = relation_mappers,
         tenant_error = tenant_error,
     )
@@ -78,9 +83,17 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
 
 fn insert_body(resource: &ResourceIr, conflicts: &str, conflict: &str) -> String {
     if resource.id_generation == crate::IdGeneration::AutoIncrement {
+        let (tenant_capture, tenant_filter) = if resource.access.system_tenant_only {
+            ("", "")
+        } else {
+            (
+                "        let tenant_id = record.tenant_id.clone();\n",
+                "            .filter(entity::Column::TenantId.eq(tenant_id))\n",
+            )
+        };
         // MySQL 只返回单个自增值，不能让 ORM 把它解码为租户复合主键。
         format!(
-            "        let tenant_id = record.tenant_id.clone();\n        let mut active = entity::ActiveModel::from(to_entity(record));\n        active.id = sea_orm::ActiveValue::NotSet;\n        entity::Entity::insert(active)\n            .exec_without_returning(&self.transaction)\n            .await\n            .db_conflicts(&[{conflicts}], {conflict:?})?;\n        entity::Entity::find()\n            .filter(entity::Column::TenantId.eq(tenant_id))\n            .filter(sea_orm::ExprTrait::eq(sea_orm::sea_query::Expr::col(entity::Column::Id), sea_orm::sea_query::Expr::cust(\"LAST_INSERT_ID()\")))\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record)\n            .ok_or_else(|| AppError::Database(\"自增记录插入后读取失败；事务尚未提交\".into()))"
+            "{tenant_capture}        let mut active = entity::ActiveModel::from(to_entity(record));\n        active.id = sea_orm::ActiveValue::NotSet;\n        entity::Entity::insert(active)\n            .exec_without_returning(&self.transaction)\n            .await\n            .db_conflicts(&[{conflicts}], {conflict:?})?;\n        entity::Entity::find()\n{tenant_filter}            .filter(sea_orm::ExprTrait::eq(sea_orm::sea_query::Expr::col(entity::Column::Id), sea_orm::sea_query::Expr::cust(\"LAST_INSERT_ID()\")))\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record)\n            .ok_or_else(|| AppError::Database(\"自增记录插入后读取失败；事务尚未提交\".into()))"
         )
     } else {
         format!(
@@ -165,10 +178,12 @@ fn relation_query(target: &ResourceIr, id: &str) -> String {
             name = target.name
         ),
     };
-    query.push_str(&format!(
-        "\n                .filter(crate::generated::{name}::entity::Column::TenantId.eq(tenant_id))",
-        name = target.name
-    ));
+    if !target.access.system_tenant_only {
+        query.push_str(&format!(
+            "\n                .filter(crate::generated::{name}::entity::Column::TenantId.eq(tenant_id))",
+            name = target.name
+        ));
+    }
     if let Some(soft_delete) = &target.soft_delete {
         query.push_str(&format!(
             "\n                .filter(crate::generated::{name}::entity::Column::{column}.eq({active}))",

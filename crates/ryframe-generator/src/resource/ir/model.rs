@@ -227,6 +227,8 @@ pub struct ApiIr {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AccessIr {
+    #[serde(skip_serializing_if = "is_false")]
+    pub system_tenant_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

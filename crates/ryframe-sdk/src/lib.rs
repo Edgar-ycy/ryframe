@@ -34,7 +34,9 @@ pub use ryframe_application::ports::tenant_data::{
     TenantDataForeignKeyDescriptor, TenantDataTableDescriptor,
 };
 #[cfg(feature = "runtime")]
-pub use ryframe_application::{TransactionAuditMode, complete_transaction, next_id};
+pub use ryframe_application::{
+    TransactionAuditMode, complete_transaction, ensure_system_tenant_id, next_id,
+};
 #[cfg(feature = "runtime")]
 pub use ryframe_kernel::{
     ActorContext, AppError, AppResult, PageResult, PaginationPolicy, ValidatedPageQuery,
@@ -57,6 +59,7 @@ pub use {serde, serde_json};
 /// 生成的业务持久化代码使用的依赖统一从此模块取得，业务模型不需要暴露 ORM 类型。
 #[cfg(feature = "persistence")]
 pub mod persistence {
+    pub use ryframe_db::application_ports::audit::commit_current_audit;
     pub use ryframe_db::{ControlDatabaseCluster, DbResultExt, ReadConsistency, pagination};
     pub use ryframe_tenant_db::{TenantDataError, TenantDatabaseRouter};
     pub use sea_orm;

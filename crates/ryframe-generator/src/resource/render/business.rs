@@ -79,6 +79,10 @@ fn application_content(content: String) -> String {
         )
         .replace("crate::next_id", "ryframe_sdk::next_id")
         .replace(
+            "crate::ensure_system_tenant_id",
+            "ryframe_sdk::ensure_system_tenant_id",
+        )
+        .replace(
             "crate::{TransactionAuditMode, complete_transaction}",
             "ryframe_sdk::{TransactionAuditMode, complete_transaction}",
         )
@@ -118,6 +122,15 @@ fn persistence_content(content: String, model_path: &str, name: &str) -> String 
         .replace(
             "crate::ControlDatabaseCluster",
             "ryframe_sdk::persistence::ControlDatabaseCluster",
+        )
+        .replace(
+            "crate::ReadConsistency",
+            "ryframe_sdk::persistence::ReadConsistency",
+        )
+        .replace("crate::pagination", "ryframe_sdk::persistence::pagination")
+        .replace(
+            "crate::application_ports::audit::commit_current_audit",
+            "ryframe_sdk::persistence::commit_current_audit",
         )
         .replace(
             "crate::TenantDatabaseRouter",

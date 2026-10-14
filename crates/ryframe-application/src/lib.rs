@@ -72,6 +72,17 @@ pub(crate) fn validated_tenant_id(actor: &ActorContext) -> AppResult<&str> {
     Ok(&actor.tenant_id)
 }
 
+/// 全局业务默认只属于系统租户；共享读取必须由明确的用例扩展提供。
+pub fn ensure_system_tenant_id(tenant_id: &str) -> AppResult<()> {
+    enforce_tenant_scope(tenant_id)?;
+    if tenant_id != "system" {
+        return Err(ryframe_kernel::AppError::Authorization(
+            "全局业务仅允许系统租户访问".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn enforce_tenant_scope(tenant_id: &str) -> AppResult<()> {
     request_tenant_context::enforce_tenant_context(TenantId::parse(tenant_id)?)
 }

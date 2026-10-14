@@ -35,6 +35,7 @@ fn metadata() -> ResourceDraftMetadata {
             },
         },
         access: AccessSpec {
+            system_tenant_only: false,
             capability: Some("business.order".into()),
             owner_field: None,
             permissions: PermissionSpec {

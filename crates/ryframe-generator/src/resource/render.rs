@@ -271,7 +271,9 @@ fn validate_relation_targets(resources: &[ResourceIr]) -> Result<(), ResourceErr
                     .with_resource(&resource.name)
                     .with_file(&resource.source_path)
                 })?;
-            if target.storage != resource.storage {
+            if target.storage != resource.storage
+                || target.access.system_tenant_only != resource.access.system_tenant_only
+            {
                 return Err(ResourceError::new(
                     format!(
                         "关系 `{}` 跨越了 {:?} 与 {:?} 存储",

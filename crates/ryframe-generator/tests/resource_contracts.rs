@@ -4,6 +4,8 @@ mod business_generation;
 mod business_writer_transaction;
 #[path = "resource_contracts/development_baseline.rs"]
 mod development_baseline;
+#[path = "resource_contracts/global_resource.rs"]
+mod global_resource;
 #[path = "resource_contracts/resource_aggregate.rs"]
 mod resource_aggregate;
 #[path = "resource_contracts/resource_check.rs"]

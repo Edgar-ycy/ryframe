@@ -23,6 +23,16 @@ use ryframe_application::{
 };
 use ryframe_kernel::{ActorContext, AppError, DataScope};
 
+#[test]
+fn global_business_requires_system_tenant_even_without_request_binding() {
+    ryframe_application::ensure_system_tenant_id("system").unwrap();
+    assert!(matches!(
+        ryframe_application::ensure_system_tenant_id("tenant-a"),
+        Err(AppError::Authorization(_))
+    ));
+    assert!(ryframe_application::ensure_system_tenant_id("").is_err());
+}
+
 fn diagnostic_menu(status: &str, menu_type: &str, perm_id: Option<i64>) -> DiagnosticMenuRecord {
     DiagnosticMenuRecord {
         id: 1,

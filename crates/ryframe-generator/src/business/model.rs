@@ -51,6 +51,8 @@ pub(super) fn descriptor_to_ir(
     let soft_delete = soft_delete(descriptor)?;
     let audit = audit(descriptor);
     let module = package.module.replace('-', "_");
+    let permission_module = package.module.replace('_', "-");
+    let permission_name = descriptor.name.replace('_', "-");
     let route_key = format!("{module}.{}", descriptor.name);
     let api_name = format!("{}_{}", module, descriptor.name);
     let labels = LabelsSpec {
@@ -78,11 +80,12 @@ pub(super) fn descriptor_to_ir(
                 OwnedResourceDatabase::Control => StorageKind::ControlRow,
                 OwnedResourceDatabase::Tenant => StorageKind::TenantData,
             },
-            tenant_field: descriptor
-                .fields
-                .iter()
-                .any(|field| field.name == "tenant_id")
-                .then(|| "tenant_id".into()),
+            tenant_field: (descriptor.database == OwnedResourceDatabase::Tenant
+                && descriptor
+                    .fields
+                    .iter()
+                    .any(|field| field.name == "tenant_id"))
+            .then(|| "tenant_id".into()),
             configuration_versioned: false,
         },
         database: DatabaseSpec {
@@ -116,14 +119,15 @@ pub(super) fn descriptor_to_ir(
             },
         },
         access: AccessSpec {
+            system_tenant_only: descriptor.database == OwnedResourceDatabase::Control,
             capability: None,
             owner_field: None,
             permissions: PermissionSpec {
-                create: format!("{module}:{}:add", descriptor.name),
-                read: format!("{module}:{}:list", descriptor.name),
-                list: format!("{module}:{}:list", descriptor.name),
-                update: format!("{module}:{}:edit", descriptor.name),
-                delete: format!("{module}:{}:remove", descriptor.name),
+                create: format!("{permission_module}:{permission_name}:add"),
+                read: format!("{permission_module}:{permission_name}:list"),
+                list: format!("{permission_module}:{permission_name}:list"),
+                update: format!("{permission_module}:{permission_name}:edit"),
+                delete: format!("{permission_module}:{permission_name}:remove"),
             },
         },
         menu: MenuSpec {

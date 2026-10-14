@@ -33,7 +33,7 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
                 .join(", ")
         ));
     }
-    if resource.storage == StorageKind::ControlRow {
+    if resource.storage == StorageKind::ControlRow && !resource.access.system_tenant_only {
         definitions.push(format!(
             "  CONSTRAINT `fk_{}_tenant` FOREIGN KEY (`{}`) REFERENCES `sys_tenant` (`tenant_id`)",
             resource.name,

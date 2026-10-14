@@ -76,6 +76,12 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
         filters = filters,
         record_order = record_order,
         tenant_mismatch = tenant_mismatch,
+        system_tenant_guard = super::super::system_tenant_guard(resource, "crate"),
+        record_tenant = if resource.access.system_tenant_only {
+            "\"system\""
+        } else {
+            "&record.tenant_id"
+        },
         control_methods = control_methods,
         record_mut = if resource.id_generation == crate::IdGeneration::AutoIncrement {
             "mut "

@@ -130,10 +130,13 @@ fn validate_api_identity(
             "将业务资源放入 business 模块，并补齐真实 Workspace 编译验证",
         ));
     }
-    if spec.resource.module == "business" && spec.storage.kind != StorageKind::TenantData {
+    if spec.resource.module == "business"
+        && spec.storage.kind != StorageKind::TenantData
+        && !spec.access.system_tenant_only
+    {
         return Err(error(
-            "业务资源必须使用 tenant_data 存储",
-            "业务表声明 tenant_field 并使用 [tenant_id, id] 主键",
+            "控制库全局业务必须显式限制为系统租户",
+            "全局资源设置 access.system_tenant_only=true；租户业务使用 tenant_data 和 [tenant_id, id] 主键",
         ));
     }
     let path_prefix = format!("/api/v1/{}/", spec.resource.module);
@@ -199,6 +202,18 @@ fn validate_tenant_identity(
             "tenant_data 的 tenant_field 必须是 tenant_id",
             "设置 storage.tenant_field = \"tenant_id\" 并将其放在复合主键第一位",
         ));
+    }
+    if spec.access.system_tenant_only {
+        if spec.storage.kind != StorageKind::ControlRow
+            || spec.storage.configuration_versioned
+            || fields.iter().any(|field| field.name == "tenant_id")
+        {
+            return Err(error(
+                "全局资源必须是无 tenant_id 的控制库业务，不能启用租户配置版本",
+                "租户业务使用 tenant_data；全局业务保留原表结构并关闭 configuration_versioned",
+            ));
+        }
+        return Ok(());
     }
     let tenant = fields
         .iter()

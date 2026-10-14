@@ -125,6 +125,7 @@ pub(in crate::resource) fn normalize(
             operations: operations(spec.api.operations),
         },
         access: AccessIr {
+            system_tenant_only: spec.access.system_tenant_only,
             capability: spec.access.capability,
             owner_field: spec.access.owner_field,
             permissions: permissions(spec.access.permissions),
