@@ -61,7 +61,7 @@ order-business/
   .ryframe/generated.toml      # 生成文件 ownership
 ```
 
-脚手架已生成 `src/lib.rs` 的模块装配；资源只需在 `resources/mod.rs` 中登记描述符：
+脚手架已生成 `src/lib.rs` 的模块装配；模块名中的中划线在 API 路径、operation ID 和页面路径中统一为下划线，权限段统一使用中划线。资源只需在 `resources/mod.rs` 中登记描述符：
 
 ```rust
 pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {

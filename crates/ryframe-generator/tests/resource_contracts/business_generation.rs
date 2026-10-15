@@ -148,7 +148,7 @@ fn write_business_manifest(workspace: &std::path::Path, sdk: &std::path::Path) {
     fs::write(
         workspace.join("order-business/Cargo.toml"),
         format!(
-            "[package]\nname = \"order-business\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[package.metadata.ryframe]\nkind = \"business\"\nmodule = \"order\"\n\n[features]\ndefault = []\ncatalog = []\n\n[dependencies]\nryframe-sdk = {{ path = {:?} }}\n",
+            "[package]\nname = \"order-business\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[package.metadata.ryframe]\nkind = \"business\"\nmodule = \"sales-orders\"\n\n[features]\ndefault = []\ncatalog = []\n\n[dependencies]\nryframe-sdk = {{ path = {:?} }}\n",
             sdk.to_string_lossy()
         ),
     )
@@ -178,6 +178,13 @@ pub struct Order {
 }
 
 fn assert_generated_business(workspace: &std::path::Path) {
+    let router = fs::read_to_string(workspace.join("order-business/src/generated/mod.rs")).unwrap();
+    let openapi =
+        fs::read_to_string(workspace.join("order-business/src/generated/openapi/order.rs"))
+            .unwrap();
+    assert!(router.contains("\"/sales_orders/order\""));
+    assert!(openapi.contains("/api/v1/business/sales_orders/order"));
+    assert!(!router.contains("/sales-orders/order"));
     let repository =
         fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))
             .expect("应读取业务 Repository");

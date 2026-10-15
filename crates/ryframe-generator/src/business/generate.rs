@@ -72,18 +72,23 @@ fn aggregate_assets(
     let routes = resources
         .iter()
         .map(|resource| {
+            let route = resource
+                .api
+                .path
+                .strip_prefix("/api/v1/business")
+                .filter(|path| path.starts_with('/'))
+                .ok_or_else(|| error(format!("业务接口路径缺少装配前缀：{}", resource.api.path)))?;
             let database = match resource.storage {
                 StorageKind::ControlRow => "context.control_database.clone()",
                 StorageKind::TenantData => "context.tenant_database.clone()",
             };
-            format!(
-                "    let service = std::sync::Arc::new(services::{name}::{pascal}Service::new(repositories::{name}::port({database})));\n    router = router.nest(\"/{module}/{name}\", handlers::{name}::router(service, context.state.settings.pagination));",
+            Ok(format!(
+                "    let service = std::sync::Arc::new(services::{name}::{pascal}Service::new(repositories::{name}::port({database})));\n    router = router.nest({route:?}, handlers::{name}::router(service, context.state.settings.pagination));",
                 name = resource.name,
                 pascal = resource.pascal_name,
-                module = package.module,
-            )
+            ))
         })
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>, ResourceError>>()?
         .join("\n");
     let openapi = resources
         .iter()
