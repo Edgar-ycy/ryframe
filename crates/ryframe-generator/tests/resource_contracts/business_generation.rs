@@ -138,6 +138,9 @@ fn assert_auto_increment_assets(workspace: &std::path::Path) {
             .unwrap();
     assert!(migration.contains("AUTO_INCREMENT"));
     assert!(migration.contains("PRIMARY KEY (`tenant_id`, `order_id`)"));
+    assert!(migration.contains("UNIQUE KEY `uk_external_code` (`tenant_id`, `code`)"));
+    assert!(!migration.contains("uk_order_code"));
+    assert!(!migration.contains("idx_order_tenant_id"));
     assert!(migration.contains("KEY `idx_order_id` (`order_id`)"));
     let repository =
         fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))
@@ -161,6 +164,7 @@ fn write_order_model(workspace: &std::path::Path) {
         workspace.join("order-business/src/resources/mod.rs"),
         r#"#[derive(ryframe_sdk::ResourceModel)]
 #[resource(name = "order", title = "订单", table = "biz_order", database = "tenant", primary_key = ["tenant_id", "id"])]
+#[resource(index(name="uk_external_code",fields=["tenant_id","code"],unique))]
 pub struct Order {
     #[resource(primary_key, generated, column = "order_id")]
     pub id: i64,

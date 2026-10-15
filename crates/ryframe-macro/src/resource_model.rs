@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, LitStr, parse_macro_input};
 
+mod index;
+
 pub(crate) fn expand(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand_inner(&input) {
@@ -20,6 +22,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut menu_parent = None;
     let mut menu_order = 100_u16;
     let mut primary_key = None;
+    let mut indexes = Vec::new();
     for attribute in &input.attrs {
         if !attribute.path().is_ident("resource") {
             continue;
@@ -46,6 +49,8 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     return Err(meta.error("primary_key 只能声明一次"));
                 }
                 primary_key = Some(meta.value()?.parse::<syn::ExprArray>()?);
+            } else if meta.path.is_ident("index") {
+                indexes.push(index::parse(&meta)?);
             } else {
                 return Err(meta.error("不支持的 resource 属性"));
             }
@@ -65,23 +70,13 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             ));
         }
     };
-    let fields = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => &fields.named,
-            _ => {
-                return Err(syn::Error::new_spanned(
-                    input,
-                    "ResourceModel 只支持具名字段结构体",
-                ));
-            }
-        },
-        _ => return Err(syn::Error::new_spanned(input, "ResourceModel 只支持结构体")),
-    };
+    let fields = named_fields(input)?;
     let parsed_fields = fields
         .iter()
         .map(field_descriptor)
         .collect::<syn::Result<Vec<_>>>()?;
     let primary_key = ordered_primary_key(primary_key, &parsed_fields, input)?;
+    let indexes = index::tokens(&indexes, &parsed_fields, input)?;
     let field_descriptors = parsed_fields.iter().map(|field| &field.tokens);
     let model = &input.ident;
     let route = optional_string(route);
@@ -102,10 +97,28 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     menu_parent: #menu_parent,
                     menu_order: #menu_order,
                     primary_key: &[#(#primary_key),*],
+                    indexes: &[#(#indexes),*],
                     fields: &[#(#field_descriptors),*],
                 }
             }
         }
+    })
+}
+
+fn named_fields(
+    input: &DeriveInput,
+) -> syn::Result<&syn::punctuated::Punctuated<Field, syn::token::Comma>> {
+    Ok(match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => &fields.named,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "ResourceModel 只支持具名字段结构体",
+                ));
+            }
+        },
+        _ => return Err(syn::Error::new_spanned(input, "ResourceModel 只支持结构体")),
     })
 }
 

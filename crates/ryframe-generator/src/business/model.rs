@@ -346,29 +346,49 @@ fn default_value(value: &str, value_type: ValueType) -> Result<toml::Value, Reso
 }
 
 fn indexes(descriptor: &OwnedResourceDescriptor) -> Vec<IndexSpec> {
-    descriptor
-        .fields
+    let mut indexes = descriptor
+        .indexes
         .iter()
-        .filter(|field| field.unique || field.auto_increment || field.name == "tenant_id")
-        .map(|field| IndexSpec {
-            name: format!(
-                "{}_{}_{}",
-                if field.unique { "uk" } else { "idx" },
-                descriptor.name,
-                field.name
-            ),
-            fields: if field.unique
-                && !field.auto_increment
-                && descriptor.database == OwnedResourceDatabase::Tenant
-                && field.name != "tenant_id"
-            {
-                vec!["tenant_id".into(), field.name.clone()]
-            } else {
-                vec![field.name.clone()]
-            },
-            unique: field.unique && !field.auto_increment,
+        .map(|index| IndexSpec {
+            name: index.name.clone(),
+            fields: index.fields.clone(),
+            unique: index.unique,
         })
-        .collect()
+        .collect::<Vec<_>>();
+    for field in &descriptor.fields {
+        let fields = if field.unique
+            && !field.auto_increment
+            && descriptor.database == OwnedResourceDatabase::Tenant
+            && field.name != "tenant_id"
+        {
+            vec!["tenant_id".into(), field.name.clone()]
+        } else {
+            vec![field.name.clone()]
+        };
+        let unique = field.unique && !field.auto_increment;
+        let needed =
+            unique || (field.auto_increment && descriptor.primary_key.first() != Some(&field.name));
+        let covered = indexes.iter().any(|index| {
+            if unique {
+                index.unique && index.fields == fields
+            } else {
+                index.fields.first() == Some(&field.name)
+            }
+        });
+        if needed && !covered {
+            indexes.push(IndexSpec {
+                name: format!(
+                    "{}_{}_{}",
+                    if unique { "uk" } else { "idx" },
+                    descriptor.name,
+                    field.name
+                ),
+                fields,
+                unique,
+            });
+        }
+    }
+    indexes
 }
 
 fn soft_delete(

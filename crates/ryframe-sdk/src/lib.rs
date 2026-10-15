@@ -32,7 +32,10 @@ pub use migration::{
 pub use module::{BusinessModuleBuilder, RyFrameBusinessModule, sort_modules, validate_modules};
 #[cfg(feature = "api")]
 pub use module::{BusinessRuntimeContext, compose_openapi};
-pub use resource::{ResourceDatabase, ResourceDescriptor, ResourceFieldDescriptor, ResourceModel};
+pub use resource::{
+    ResourceDatabase, ResourceDescriptor, ResourceFieldDescriptor, ResourceIndexDescriptor,
+    ResourceModel,
+};
 #[cfg(feature = "api")]
 pub use ryframe_api::{AppState, openapi::OpenApiDocument};
 #[cfg(feature = "runtime")]

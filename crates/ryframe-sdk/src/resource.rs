@@ -41,7 +41,15 @@ pub struct ResourceDescriptor {
     pub menu_parent: Option<&'static str>,
     pub menu_order: u16,
     pub primary_key: &'static [&'static str],
+    pub indexes: &'static [ResourceIndexDescriptor],
     pub fields: &'static [ResourceFieldDescriptor],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct ResourceIndexDescriptor {
+    pub name: &'static str,
+    pub fields: &'static [&'static str],
+    pub unique: bool,
 }
 
 pub trait ResourceModel {

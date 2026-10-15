@@ -259,6 +259,13 @@ fn imported_models_escape_comments_and_reject_unusable_keys_before_write() {
     syn::parse_file(&model).expect("数据库注释必须生成为合法 Rust 字符串");
     assert!(model.contains("primary_key, auto_increment"));
     assert!(
+        model.contains(
+            "index(name = \"uk_tenant_name\", fields = [\"tenant_id\", \"name\"], unique)"
+        )
+    );
+    assert!(model.contains("index(name = \"idx_name\", fields = [\"name\"])"));
+    assert!(!model.contains("index(name = \"PRIMARY\""));
+    assert!(
         rust_model_source(&source, "tenant")
             .unwrap_err()
             .contains("tenant_id")
@@ -289,6 +296,16 @@ fn imported_models_escape_comments_and_reject_unusable_keys_before_write() {
         rust_model_source(&source, "control")
             .unwrap_err()
             .contains("没有主键")
+    );
+}
+
+#[test]
+fn imported_non_btree_indexes_fail_before_model_write() {
+    let mut source = table();
+    source.indexes[0].index_type = "FULLTEXT".into();
+    let error = ryframe_generator::import::rust_model_source(&source, "control").unwrap_err();
+    assert!(
+        error.contains("uk_tenant_name") && error.contains("BTREE") && error.contains("未写入")
     );
 }
 

@@ -123,6 +123,15 @@ pub(super) fn rust_model_source_named(
             column.to_owned()
         }
     };
+    for column in &table.columns {
+        let field = model_key(&column.name);
+        if !valid_ident(&field) {
+            return Err(format!(
+                "字段 {} 不是可用 Rust 标识符；请显式设置字段映射，导入未写入源码",
+                column.name
+            ));
+        }
+    }
     let model_keys = primary_key
         .iter()
         .map(|column| model_key(column))
@@ -140,21 +149,44 @@ pub(super) fn rust_model_source_named(
         .map(|value| format!(", collation = {value:?}"))
         .unwrap_or_default();
     let mut output = format!(
-        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?}, primary_key = {:?}{collation})]\npub struct {} {{\n",
-        name, title, table.table_name, database, model_keys, model
+        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?}, primary_key = {:?}{collation})]\n",
+        name, title, table.table_name, database, model_keys
     );
+    for index in &table.indexes {
+        if index.name == "PRIMARY" {
+            continue;
+        }
+        if index.index_type != "BTREE"
+            || index.columns.is_empty()
+            || index
+                .columns
+                .iter()
+                .any(|key| !table.columns.iter().any(|column| column.name == *key))
+        {
+            return Err(format!(
+                "表 {} 的索引 {} 不能生成：只支持完整列的 BTREE 索引；审阅索引定义或编写明确迁移，导入未写入源码",
+                table.table_name, index.name
+            ));
+        }
+        let fields = index
+            .columns
+            .iter()
+            .map(|column| model_key(column))
+            .collect::<Vec<_>>();
+        output.push_str(&format!(
+            "#[resource(index(name = {:?}, fields = {:?}{}))]\n",
+            index.name,
+            fields,
+            if index.unique { ", unique" } else { "" }
+        ));
+    }
+    output.push_str(&format!("pub struct {model} {{\n"));
     for column in &table.columns {
         let field = if column.name == id_column {
             "id"
         } else {
             &column.name
         };
-        if !valid_ident(field) {
-            return Err(format!(
-                "字段 {} 不是可用 Rust 标识符；请显式设置字段映射，导入未写入源码",
-                column.name
-            ));
-        }
         let mut attributes = Vec::<String>::new();
         if field != column.name {
             attributes.push(format!("column = {:?}", column.name));

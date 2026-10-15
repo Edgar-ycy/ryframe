@@ -202,14 +202,18 @@ struct IndexColumnRow {
     index_name: String,
     non_unique: i64,
     index_type: String,
-    column_name: String,
+    column_name: Option<String>,
+    prefix_length: Option<u64>,
+    direction: Option<String>,
+    visible: String,
 }
 
 async fn query_indexes(db: &DatabaseConnection, table_name: &str) -> AppResult<Vec<IndexInfo>> {
     let rows = IndexColumnRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
         "SELECT index_name AS `index_name`, CAST(non_unique AS SIGNED) AS `non_unique`, \
-         index_type AS `index_type`, column_name AS `column_name` \
+         index_type AS `index_type`, column_name AS `column_name`, \
+         CAST(sub_part AS UNSIGNED) AS `prefix_length`, collation AS `direction`, is_visible AS `visible` \
          FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? \
          ORDER BY index_name, seq_in_index",
         [table_name.into()],
@@ -219,17 +223,29 @@ async fn query_indexes(db: &DatabaseConnection, table_name: &str) -> AppResult<V
     .map_err(|error| AppError::Database(format!("查询索引结构失败: {error}")))?;
     let mut indexes: Vec<IndexInfo> = Vec::new();
     for row in rows {
+        if row.prefix_length.is_some()
+            || row.direction.as_deref() != Some("A")
+            || row.visible != "YES"
+            || row.column_name.is_none()
+            || row.index_type != "BTREE"
+        {
+            return Err(AppError::Validation(format!(
+                "表 {table_name} 的索引 {} 暂不支持标准生成：要求可见、升序、完整列 BTREE 索引；前缀、降序、函数、全文或空间索引须使用明确迁移扩展；本批未写入",
+                row.index_name
+            )));
+        }
+        let column = row.column_name.expect("已确认完整列索引");
         if let Some(index) = indexes.last_mut()
             && index.name == row.index_name
         {
-            index.columns.push(row.column_name);
+            index.columns.push(column);
             continue;
         }
         indexes.push(IndexInfo {
             name: row.index_name,
             unique: row.non_unique == 0,
             index_type: row.index_type,
-            columns: vec![row.column_name],
+            columns: vec![column],
         });
     }
     Ok(indexes)

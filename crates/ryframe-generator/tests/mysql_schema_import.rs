@@ -7,6 +7,8 @@ mod business_evolution;
 mod mysql;
 #[path = "mysql_schema_import/unsigned_primary.rs"]
 mod unsigned_primary;
+#[path = "mysql_schema_import/unsupported_indexes.rs"]
+mod unsupported_indexes;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn global_tables_without_tenant_prefix_share_introspection_but_keep_tenant_boundary() {

@@ -6,7 +6,7 @@ use ryframe_generator::business::{
 };
 use ryframe_generator::{
     command::{GenerationBuilder, GenerationOperation},
-    import::{ColumnInfo, TableInfo, plan_import_models},
+    import::{ColumnInfo, IndexInfo, TableInfo, plan_import_models},
 };
 
 pub(super) fn verify(backend: &Path, target: &Path) {
@@ -306,7 +306,12 @@ fn import_table(name: &str) -> TableInfo {
         collation: Some("utf8mb4_0900_ai_ci".into()),
         comment: None,
         columns,
-        indexes: Vec::new(),
+        indexes: vec![IndexInfo {
+            name: format!("idx_{name}_status_code"),
+            columns: vec!["status".into(), "code".into()],
+            unique: false,
+            index_type: "BTREE".into(),
+        }],
         foreign_keys: Vec::new(),
         foreign_key_dependencies: Vec::new(),
         schema_canonical: format!("fixture:{name}"),

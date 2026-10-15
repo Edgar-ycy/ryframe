@@ -32,7 +32,16 @@ pub(crate) struct OwnedResourceDescriptor {
     pub menu_parent: Option<String>,
     pub menu_order: u16,
     pub primary_key: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<OwnedIndexDescriptor>,
     pub fields: Vec<OwnedFieldDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct OwnedIndexDescriptor {
+    pub name: String,
+    pub fields: Vec<String>,
+    pub unique: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
