@@ -14,10 +14,12 @@ fn table(name: &str) -> TableInfo {
     TableInfo {
         table_name: name.into(),
         comment: Some("订单\"换行\n说明".into()),
+        collation: None,
         columns: vec![ColumnInfo {
             name: "id".into(),
             data_type: "bigint".into(),
             column_type: "bigint".into(),
+            collation: None,
             default: None,
             extra: "auto_increment".into(),
             rust_type: "i64".into(),

@@ -9,6 +9,9 @@ pub(super) fn statements(
     after: &ResourceIr,
 ) -> Result<Vec<String>, ResourceError> {
     let mut review = Vec::new();
+    if before.table_collation() != after.table_collation() {
+        review.push("表排序规则变化，需要审阅比较语义、索引和存量数据".into());
+    }
     if before.table != after.table
         || before.storage != after.storage
         || before.id_generation != after.id_generation
@@ -49,6 +52,15 @@ pub(super) fn statements(
     let mut clauses = Vec::new();
     for (index, field) in after.fields.iter().enumerate() {
         if let Some(previous) = old.get(field.column.as_str()) {
+            if previous.value_type == ValueType::String
+                && field.value_type == ValueType::String
+                && before.column_collation(previous) != after.column_collation(field)
+            {
+                review.push(format!(
+                    "列 {} 排序规则变化，需要审阅比较语义、索引和存量数据",
+                    field.column
+                ));
+            }
             if column_definition(before, previous) != column_definition(after, field) {
                 if !safe_type(previous, field) || (previous.nullable && !field.nullable) {
                     review.push(format!(

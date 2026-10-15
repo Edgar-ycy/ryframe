@@ -97,6 +97,7 @@ pub(super) fn descriptor_to_ir(
                 crate::IdGeneration::Snowflake
             },
             table: descriptor.table.clone(),
+            collation: descriptor.collation.clone(),
             primary_key,
             bootstrap_migration: true,
             schema_revision: None,
@@ -226,6 +227,7 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
         name: field.name.clone(),
         column: (field.column != field.name).then(|| field.column.clone()),
         sql_type: field.sql_type.clone(),
+        collation: field.collation.clone(),
         value_type,
         wire_type: (value_type == ValueType::I64).then_some(ValueType::String),
         order: u16::try_from((index + 1) * 10).map_err(|_| error("字段数量超过生成上限"))?,

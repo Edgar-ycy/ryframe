@@ -70,6 +70,7 @@ fn table() -> TableInfo {
     TableInfo {
         table_name: "sys_order".into(),
         comment: Some("设备".into()),
+        collation: None,
         columns: vec![
             column("id", "bigint", true, false, true, Some("设备编号")),
             column("tenant_id", "varchar", false, false, false, Some("租户")),
@@ -127,6 +128,7 @@ fn column(
         name: name.into(),
         data_type: data_type.into(),
         column_type: data_type.into(),
+        collation: None,
         default: None,
         extra: String::new(),
         rust_type: String::new(),

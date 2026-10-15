@@ -114,6 +114,7 @@ pub fn draft_resource_from_table(
             name: column.name.clone(),
             column: None,
             sql_type: Some(column.column_type.clone()),
+            collation: column.collation.clone(),
             value_type,
             wire_type: None,
             order,
@@ -190,6 +191,7 @@ pub fn draft_resource_from_table(
                     crate::IdGeneration::Snowflake
                 },
                 table: table.table_name.clone(),
+                collation: table.collation.clone(),
                 primary_key,
                 bootstrap_migration: false,
                 schema_revision: None,

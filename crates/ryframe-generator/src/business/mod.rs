@@ -23,6 +23,8 @@ pub(crate) struct OwnedResourceDescriptor {
     pub name: String,
     pub title: String,
     pub table: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
     pub database: OwnedResourceDatabase,
     pub model_module: String,
     pub model_type: String,
@@ -47,6 +49,8 @@ pub(crate) struct OwnedFieldDescriptor {
     pub rust_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
     pub rename_from: Option<String>,
     pub default: Option<String>,
     pub primary_key: bool,

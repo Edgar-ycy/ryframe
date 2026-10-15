@@ -47,6 +47,7 @@ pub(in crate::resource) fn normalize(
     }
     validate_labels(&spec.resource.labels, &resource, None, &source_path)?;
     validate_path_matches_resource(&source_path, &resource)?;
+    super::super::collation::normalize(&mut spec, &resource, &source_path)?;
     super::super::sql_type::normalize_fields(&mut spec.fields, &resource, &source_path)?;
     let schema_hash = normalize_schema(&spec, &resource, &source_path)?;
 
@@ -102,6 +103,7 @@ pub(in crate::resource) fn normalize(
         tenant_field: spec.storage.tenant_field,
         configuration_versioned: spec.storage.configuration_versioned,
         table: spec.database.table,
+        collation: spec.database.collation,
         primary_key: spec.database.primary_key,
         id_generation: spec.database.id_generation,
         bootstrap_migration: spec.database.bootstrap_migration,
@@ -279,6 +281,7 @@ fn normalize_field(field: FieldSpec, column: String) -> FieldIr {
         name: field.name,
         column,
         sql_type: field.sql_type,
+        collation: field.collation,
         value_type: field.value_type,
         wire_type,
         rust_type: field.value_type.rust_type(nullable),

@@ -3,6 +3,7 @@
 //! 资源清单只描述稳定、重复的平面 CRUD 信息。复杂 SQL、页面布局、状态机和跨资源
 //! 事务必须留在普通手写代码中，避免把业务流程藏进 DSL。
 
+mod collation;
 mod error;
 mod explain;
 mod ir;

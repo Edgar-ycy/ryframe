@@ -142,7 +142,10 @@ fn descriptor(resource: &ResourceIr, order: usize) -> String {
 pub(crate) fn canonical_schema(resource: &ResourceIr) -> String {
     let mut output = format!(
         "v2|table={:?}|engine={:?}|charset={:?}|collation={:?}|columns=[",
-        resource.table, "innodb", "utf8mb4", "utf8mb4_general_ci",
+        resource.table,
+        "innodb",
+        "utf8mb4",
+        resource.table_collation(),
     );
     for field in &resource.fields {
         render_column(&mut output, resource, field);
@@ -195,7 +198,7 @@ fn render_column(output: &mut String, resource: &ResourceIr, field: &FieldIr) {
         schema::column_type(field).to_ascii_lowercase()
     };
     let charset = (field.value_type == ValueType::String).then_some("utf8mb4");
-    let collation = charset.map(|_| "utf8mb4_general_ci");
+    let collation = charset.map(|_| resource.column_collation(field));
     let default = field.default.as_ref().map(|value| match value {
         toml::Value::String(value) => value.clone(),
         toml::Value::Integer(value) => value.to_string(),

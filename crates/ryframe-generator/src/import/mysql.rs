@@ -69,6 +69,7 @@ pub async fn inspect_existing_table(
             name: col.column_name.clone(),
             data_type: col.data_type.clone(),
             column_type: col.column_type,
+            collation: col.collation,
             default: col.column_default,
             extra: col.extra.clone(),
             rust_type: rust_type.to_string(),
@@ -81,7 +82,7 @@ pub async fn inspect_existing_table(
         col_infos.push(col_info);
     }
 
-    let table_comment = query_table_comment(db, table_name).await?;
+    let table_options = query_table_options(db, table_name).await?;
     let indexes = query_indexes(db, table_name).await?;
     let foreign_keys = query_foreign_keys(db, table_name).await?;
     let mut foreign_key_dependencies = foreign_keys
@@ -96,7 +97,8 @@ pub async fn inspect_existing_table(
 
     Ok(TableInfo {
         table_name: table_name.to_string(),
-        comment: table_comment,
+        comment: table_options.comment,
+        collation: Some(table_options.collation),
         columns: col_infos,
         indexes,
         foreign_keys,
@@ -116,6 +118,7 @@ struct ColumnRow {
     column_name: String,
     data_type: String,
     column_type: String,
+    collation: Option<String>,
     column_default: Option<String>,
     is_nullable: String,
     column_key: String,
@@ -134,6 +137,7 @@ async fn query_columns(db: &DatabaseConnection, table_name: &str) -> AppResult<V
         r#"SELECT COLUMN_NAME AS `column_name`,
                           DATA_TYPE AS `data_type`,
                           COLUMN_TYPE AS `column_type`,
+                          COLLATION_NAME AS `collation`,
                           COLUMN_DEFAULT AS `column_default`,
                           IS_NULLABLE AS `is_nullable`,
                           COLUMN_KEY AS `column_key`,
@@ -162,30 +166,35 @@ async fn query_columns_with_sql(
 }
 
 #[derive(Debug, FromQueryResult)]
-struct TableCommentRow {
+struct TableOptionsRow {
     comment: Option<String>,
+    collation: String,
 }
 
-async fn query_table_comment(
+async fn query_table_options(
     db: &DatabaseConnection,
     table_name: &str,
-) -> AppResult<Option<String>> {
+) -> AppResult<TableOptionsRow> {
     let backend = db.get_database_backend();
     if backend != DatabaseBackend::MySql {
         return Err(unsupported_backend(backend));
     }
-    let sql = "SELECT NULLIF(TABLE_COMMENT, '') AS `comment` \
+    let sql = "SELECT NULLIF(TABLE_COMMENT, '') AS `comment`, TABLE_COLLATION AS `collation` \
              FROM information_schema.tables \
              WHERE table_schema = DATABASE() AND table_name = ?";
-    let result = TableCommentRow::find_by_statement(Statement::from_sql_and_values(
+    TableOptionsRow::find_by_statement(Statement::from_sql_and_values(
         backend,
         sql,
         [table_name.into()],
     ))
     .one(db)
     .await
-    .map_err(|error| AppError::Database(format!("查询表注释失败: {error}")))?;
-    Ok(result.and_then(|r| r.comment))
+    .map_err(|error| AppError::Database(format!("查询表选项失败: {error}")))?
+    .ok_or_else(|| {
+        AppError::Validation(format!(
+            "读取表选项时 {table_name} 已不存在；重新核对来源后预览，本批未写入"
+        ))
+    })
 }
 
 #[derive(Debug, FromQueryResult)]

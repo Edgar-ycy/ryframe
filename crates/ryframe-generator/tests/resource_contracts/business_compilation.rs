@@ -280,6 +280,7 @@ fn import_table(name: &str) -> TableInfo {
         name: name.into(),
         data_type: column_type.split(['(', ' ']).next().unwrap().into(),
         column_type: column_type.into(),
+        collation: (rust_type == "String").then(|| "utf8mb4_bin".into()),
         rust_type: rust_type.into(),
         default: None,
         extra: if name == "id" {
@@ -296,6 +297,7 @@ fn import_table(name: &str) -> TableInfo {
     .collect();
     TableInfo {
         table_name: name.into(),
+        collation: Some("utf8mb4_0900_ai_ci".into()),
         comment: None,
         columns,
         indexes: Vec::new(),

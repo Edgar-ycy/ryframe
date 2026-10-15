@@ -84,6 +84,8 @@ cargo generate -- resource --package order-business --model Order --write
 
 反向导入一次只读读取选中表，再整批预检名称、模型、文件与 `descriptors()` 显式 vec 列表，`--write` 一并写入 `resources/` 模型和注册；发生冲突整批停止，不覆盖手写模型。`--strip-table-prefix biz_` 仅改变资源、模块及类型名，保留物理表名；全局表不要求 `biz_` 前缀；租户目录仍要求该前缀。原始列类型、默认值、索引、外键及 schema 保存在 `.ryframe/imports/`。`source=primary`、`sources.legacy` 或 `tenant_data.targets.<键>` 决定只读来源，`storage=control|tenant` 决定运行范围，二者独立。当前导入建立模型起点，需确认字段用途后执行 resource，不能视为已接管原表或完成前端生成；未知类型、视图和不可读列拒绝，`tinyint(1)` 不猜测布尔。SDK 日期、JSON、精确 Decimal 可离线建模，但完整 CRUD 仍校验支持范围。Rust [示例](../crates/ryframe-generator/examples/generate.rs) 可用 `cargo run --locked -p ryframe-generator --example generate` 或 IDE 运行，导入执行需加 `--features schema-import`；Builder 的 `plan()` 默认只读，`execute()` 才执行，`.write(true)` 才更新文件。
 
+模型级 `#[resource(collation="utf8mb4_0900_ai_ci")]` 声明表排序规则；字符串字段可用 `#[resource(collation="utf8mb4_bin")]` 覆盖。未声明的表使用 `utf8mb4_general_ci`，未声明的列继承表规则。导入读取实际表、列规则并保存在 Rust 模型中，DDL、结构指纹、复制目录和接管校验共用声明。只接受安全的 utf8mb4 规则名称，实际可用性由目标 MySQL 校验；其他字符集须先审阅迁移或使用扩展。既有模型改变排序规则时整批停止自动迁移，先核对比较语义、唯一索引和存量数据，不自动转换。
+
 ### 模型结构演进
 
 修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64`、Decimal 的完整 CRUD 仍明确阻断；日期、JSON 等控件限制继续生效。类型声明不代替默认值、索引或外键，导入元数据仍需核对。业务描述目录按资源拆分，生成 Rust 文件超过 500 行时整批停止并报告文件，复杂资源须按职责拆分。
@@ -121,8 +123,6 @@ Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继�
 
 `cargo xtask build --plan` 渲染这份计划的依赖、有效参数、输入范围、编译覆盖和允许写入，不启动 Cargo、Corepack 或服务，也不创建目录、缓存和报告。实际执行在首个任务前和全部任务后核对前后端工作树指纹；任一来源在构建期间变化都会失败，已生成文件不能作为同源成功产物。
 ## 集成验证
-
-模块测试使用 `cargo test --locked -p <包名>`，例如 `ryframe-application` 或 `ryframe-api`。
 
 真实 MySQL 和 Redis 协议测试默认不连接外部服务；需要单独诊断时，显式启用对应的 `RYFRAME_MYSQL_INTEGRATION` 或 `RYFRAME_REDIS_INTEGRATION`，再运行 `mysql_real_protocol` 或 `redis_real_protocol` 测试目标。完整集成使用下面的统一入口。
 

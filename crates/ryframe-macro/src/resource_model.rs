@@ -14,6 +14,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut name = None;
     let mut title = None;
     let mut table = None;
+    let mut collation = None;
     let mut database = None;
     let mut route = None;
     let mut menu_parent = None;
@@ -30,6 +31,8 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 title = Some(meta.value()?.parse::<LitStr>()?.value());
             } else if meta.path.is_ident("table") {
                 table = Some(meta.value()?.parse::<LitStr>()?.value());
+            } else if meta.path.is_ident("collation") {
+                parse_single_string(&meta, &mut collation, "collation")?;
             } else if meta.path.is_ident("database") {
                 database = Some(meta.value()?.parse::<LitStr>()?.value());
             } else if meta.path.is_ident("route") {
@@ -81,12 +84,9 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let primary_key = ordered_primary_key(primary_key, &parsed_fields, input)?;
     let field_descriptors = parsed_fields.iter().map(|field| &field.tokens);
     let model = &input.ident;
-    let route = route
-        .map(|value| quote!(Some(#value)))
-        .unwrap_or_else(|| quote!(None));
-    let menu_parent = menu_parent
-        .map(|value| quote!(Some(#value)))
-        .unwrap_or_else(|| quote!(None));
+    let route = optional_string(route);
+    let menu_parent = optional_string(menu_parent);
+    let collation = optional_string(collation);
     Ok(quote! {
         impl ::ryframe_sdk::ResourceModel for #model {
             fn descriptor() -> ::ryframe_sdk::ResourceDescriptor {
@@ -94,6 +94,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     name: #name,
                     title: #title,
                     table: #table,
+                    collation: #collation,
                     database: #database,
                     model_module: module_path!(),
                     model_type: stringify!(#model),
@@ -164,6 +165,7 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
     let mut rename_from = None;
     let mut default = None;
     let mut sql_type = None;
+    let mut collation = None;
     let mut primary_key = false;
     let mut generated = false;
     let mut auto_increment = false;
@@ -208,11 +210,9 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
                 unique = true;
                 Ok(())
             } else if meta.path.is_ident("sql_type") {
-                if sql_type.is_some() {
-                    return Err(meta.error("sql_type 只能声明一次"));
-                }
-                sql_type = Some(meta.value()?.parse::<LitStr>()?.value());
-                Ok(())
+                parse_single_string(&meta, &mut sql_type, "sql_type")
+            } else if meta.path.is_ident("collation") {
+                parse_single_string(&meta, &mut collation, "collation")
             } else {
                 Err(meta.error("不支持的字段 resource 属性"))
             }
@@ -228,12 +228,14 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
     let rename = optional_string(rename_from);
     let default = optional_string(default);
     let sql_type = optional_string(sql_type);
+    let collation = optional_string(collation);
     let tokens = quote! {
         ::ryframe_sdk::ResourceFieldDescriptor {
             name: #field_name,
             column: #column,
             rust_type: stringify!(#field_type),
             sql_type: #sql_type,
+            collation: #collation,
             rename_from: #rename,
             default: #default,
             primary_key: #primary_key,
@@ -258,12 +260,45 @@ fn optional_string(value: Option<String>) -> proc_macro2::TokenStream {
         .unwrap_or_else(|| quote!(None))
 }
 
+fn parse_single_string(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+    value: &mut Option<String>,
+    name: &str,
+) -> syn::Result<()> {
+    if value.is_some() {
+        return Err(meta.error(format!("{name} 只能声明一次")));
+    }
+    *value = Some(meta.value()?.parse::<LitStr>()?.value());
+    Ok(())
+}
+
 fn required(value: Option<String>, input: &DeriveInput, field: &str) -> syn::Result<String> {
     value.ok_or_else(|| syn::Error::new_spanned(input, format!("缺少 resource {field}")))
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn table_and_column_collations_are_distinct_and_duplicates_fail() {
+        let input = syn::parse_quote! {
+            #[resource(name="item",table="biz_item",database="control",collation="utf8mb4_0900_ai_ci")]
+            struct Item { #[resource(primary_key)] id: i64, #[resource(collation="utf8mb4_bin")] code: String }
+        };
+        let output = super::expand_inner(&input).unwrap().to_string();
+        assert!(output.contains("collation : Some (\"utf8mb4_0900_ai_ci\")"));
+        assert!(output.contains("collation : Some (\"utf8mb4_bin\")"));
+        let input = syn::parse_quote! {
+            #[resource(name="item",table="biz_item",database="control",collation="utf8mb4_bin",collation="utf8mb4_general_ci")]
+            struct Item { #[resource(primary_key)] id: i64 }
+        };
+        assert!(
+            super::expand_inner(&input)
+                .unwrap_err()
+                .to_string()
+                .contains("collation 只能声明一次")
+        );
+    }
+
     #[test]
     fn physical_type_is_preserved_and_duplicate_declarations_fail() {
         let input = syn::parse_quote! {

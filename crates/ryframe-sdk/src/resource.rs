@@ -14,6 +14,8 @@ pub struct ResourceFieldDescriptor {
     pub rust_type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql_type: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<&'static str>,
     pub rename_from: Option<&'static str>,
     pub default: Option<&'static str>,
     pub primary_key: bool,
@@ -30,6 +32,8 @@ pub struct ResourceDescriptor {
     pub name: &'static str,
     pub title: &'static str,
     pub table: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<&'static str>,
     pub database: ResourceDatabase,
     pub model_module: &'static str,
     pub model_type: &'static str,

@@ -41,9 +41,10 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
         ));
     }
     let ddl = format!(
-        "CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='{}'",
+        "CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={} COMMENT='{}'",
         resource.table,
         definitions.join(",\n"),
+        resource.table_collation(),
         resource.labels.zh_cn.replace('\'', "''"),
     );
     format!(
@@ -97,6 +98,11 @@ pub(super) fn migration_name(resource: &ResourceIr) -> String {
 pub(crate) fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -> String {
     let sql_type = super::super::schema::column_type(field);
     let nullability = if field.nullable { "NULL" } else { "NOT NULL" };
+    let collation = field
+        .collation
+        .as_ref()
+        .map(|collation| format!(" COLLATE {collation}"))
+        .unwrap_or_default();
     let default = field
         .default
         .as_ref()
@@ -109,7 +115,7 @@ pub(crate) fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -
             ""
         };
     format!(
-        "  `{}` {sql_type} {nullability}{default}{auto_increment}",
+        "  `{}` {sql_type}{collation} {nullability}{default}{auto_increment}",
         field.column
     )
 }

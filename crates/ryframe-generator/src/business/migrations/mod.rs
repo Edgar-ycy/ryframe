@@ -383,6 +383,29 @@ mod tests {
     }
 
     #[test]
+    fn collation_changes_require_review_even_when_column_type_is_unchanged() {
+        let before = resource();
+        let mut after = before.clone();
+        after.collation = Some("utf8mb4_0900_ai_ci".into());
+        let error = diff::statements(&before, &after).unwrap_err().to_string();
+        assert!(error.contains("表排序规则变化") && error.contains("本批未写入"));
+        assert!(!error.contains("列 id 排序规则变化"));
+        let mut after = before.clone();
+        after
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "name")
+            .unwrap()
+            .collation = Some("utf8mb4_bin".into());
+        assert!(
+            diff::statements(&before, &after)
+                .unwrap_err()
+                .to_string()
+                .contains("列 name 排序规则变化")
+        );
+    }
+
+    #[test]
     fn integer_migration_checks_signed_and_physical_ranges() {
         let mut before = resource();
         before

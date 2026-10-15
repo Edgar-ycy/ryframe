@@ -127,6 +127,8 @@ pub struct ResourceIr {
     pub tenant_field: Option<String>,
     pub configuration_versioned: bool,
     pub table: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
     pub primary_key: Vec<String>,
     #[serde(skip_serializing_if = "IdGeneration::is_snowflake")]
     pub id_generation: IdGeneration,
@@ -198,6 +200,8 @@ pub struct FieldIr {
     pub column: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
     pub value_type: ValueType,
     pub wire_type: ValueType,
     pub rust_type: String,

@@ -70,6 +70,12 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
                     .expect("字段 schema contract 必须是对象")
                     .insert("sql_type".into(), serde_json::json!(sql_type));
             }
+            if let Some(collation) = &field.collation {
+                contract
+                    .as_object_mut()
+                    .expect("字段 schema contract 必须是对象")
+                    .insert("collation".into(), serde_json::json!(collation));
+            }
             contract
         })
         .collect::<Vec<_>>();
@@ -88,6 +94,12 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
             "id_generation".into(),
             serde_json::json!(spec.database.id_generation),
         );
+    }
+    if let Some(collation) = &spec.database.collation {
+        contract
+            .as_object_mut()
+            .expect("schema 是对象")
+            .insert("collation".into(), serde_json::json!(collation));
     }
     hex::encode(Sha256::digest(
         serde_json::to_vec(&contract).expect("schema contract 只包含可序列化基础类型"),

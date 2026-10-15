@@ -5,6 +5,7 @@ use serde::Serialize;
 pub struct TableInfo {
     pub table_name: String,
     pub comment: Option<String>,
+    pub collation: Option<String>,
     pub columns: Vec<ColumnInfo>,
     pub indexes: Vec<IndexInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
@@ -33,6 +34,7 @@ pub struct ColumnInfo {
     pub name: String,
     pub data_type: String,
     pub column_type: String,
+    pub collation: Option<String>,
     pub default: Option<String>,
     pub extra: String,
     pub rust_type: String,
@@ -132,8 +134,13 @@ pub(super) fn rust_model_source_named(
     }
     let model = pascal_case(name)?;
     let title = table.comment.as_deref().unwrap_or(&table.table_name);
+    let collation = table
+        .collation
+        .as_ref()
+        .map(|value| format!(", collation = {value:?}"))
+        .unwrap_or_default();
     let mut output = format!(
-        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?}, primary_key = {:?})]\npub struct {} {{\n",
+        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?}, primary_key = {:?}{collation})]\npub struct {} {{\n",
         name, title, table.table_name, database, model_keys, model
     );
     for column in &table.columns {
@@ -159,6 +166,9 @@ pub(super) fn rust_model_source_named(
             attributes.push("auto_increment".into());
         }
         attributes.push(format!("sql_type = {:?}", column.column_type));
+        if let Some(collation) = &column.collation {
+            attributes.push(format!("collation = {collation:?}"));
+        }
         if !attributes.is_empty() {
             output.push_str(&format!("    #[resource({})]\n", attributes.join(", ")));
         }
