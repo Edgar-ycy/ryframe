@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::ConnectionTrait;
 
 use super::super::{
     BusinessMigration, BusinessMigrationOrigin, BusinessMigrationScope, database_error, ledger,
@@ -95,23 +95,12 @@ pub(super) fn validate_source<'a>(
     Ok(selected)
 }
 
-#[derive(FromQueryResult)]
-struct TargetRow {
-    server_uuid: String,
-    database: String,
-}
-
 pub(super) async fn identity<C: ConnectionTrait>(
     database: &C,
 ) -> AppResult<BusinessAdoptionTarget> {
-    let row = TargetRow::find_by_statement(Statement::from_string(DbBackend::MySql,
-        "SELECT LOWER(@@server_uuid) AS server_uuid, CASE WHEN @@lower_case_table_names=0 THEN DATABASE() ELSE LOWER(DATABASE()) END AS `database`"))
-        .one(database).await.map_err(database_error)?.ok_or_else(|| AppError::Database("无法读取明确数据库的物理身份".into()))?;
-    if row.server_uuid.is_empty() || row.database.is_empty() {
-        return Err(AppError::Config(
-            "接管目标必须包含 MySQL 实例身份与明确数据库".into(),
-        ));
-    }
+    let row = ryframe_db::connection::physical_identity(database)
+        .await
+        .map_err(database_error)?;
     Ok(BusinessAdoptionTarget {
         server_uuid: row.server_uuid,
         database: row.database,

@@ -15,6 +15,8 @@ mod bootstrap;
 mod private_artifact;
 #[path = "ryframe_migrate/sql_export.rs"]
 mod sql_export;
+#[path = "ryframe_migrate/targets.rs"]
+mod targets;
 
 const USAGE: &str = "用法：\n  cargo migrate -- control <up|verify|status>\n  cargo migrate -- tenant-data <up|verify|status> (--target <key>|--all)\n  cargo migrate -- <control|tenant-data> adopt --module <模块> [--target <键>] [--output .local-tests/adopt.json --write]\n  cargo migrate -- <control|tenant-data> adopt <--inspect|--apply> .local-tests/adopt.json [--target <键>] [--write]\n  接管支持 --plan：只显示任务图，不读配置、文件或数据库。";
 
@@ -168,7 +170,16 @@ async fn run_tenant_data(
         return Ok(());
     }
 
+    let identities = targets::preflight(
+        &registry,
+        &config.database.primary,
+        config.database.sql_log_level,
+        config.database.sql_slow_threshold_ms,
+        &targets,
+    )
+    .await?;
     for target in targets {
+        let expected = identities.get(&target).ok_or("迁移预检遗漏目标身份")?;
         match registry.target_kind(&target) {
             Some(TenantDatabaseTargetKind::Control) => {
                 let database = ryframe_db::connection::connect_with_sql_logging(
@@ -177,13 +188,18 @@ async fn run_tenant_data(
                     config.database.sql_slow_threshold_ms,
                 )
                 .await?;
-                let result = run_tenant_data_operation(
-                    operation,
-                    &target,
-                    &database,
-                    false,
-                    business_modules,
-                )
+                let result = async {
+                    targets::verify_identity(&database, &target, expected).await?;
+                    run_tenant_data_operation(
+                        operation,
+                        &target,
+                        &database,
+                        false,
+                        business_modules,
+                    )
+                    .await?;
+                    Ok::<(), Box<dyn std::error::Error>>(())
+                }
                 .await;
                 let close_result = database.close().await;
                 result?;
@@ -191,6 +207,7 @@ async fn run_tenant_data(
             }
             Some(TenantDatabaseTargetKind::Mysql) => {
                 let lease = registry.acquire(&target).await?;
+                targets::verify_identity(lease.connection(), &target, expected).await?;
                 run_tenant_data_operation(
                     operation,
                     &target,

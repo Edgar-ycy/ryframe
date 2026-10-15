@@ -6,6 +6,9 @@ use ryframe_config::{DbConnection, SqlLogLevel};
 use ryframe_kernel::AppResult;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
 
+mod identity;
+pub use identity::{DatabaseIdentity, physical_identity};
+
 /// 根据数据库配置创建连接池
 ///
 /// RyFrame v0.5 起仅支持 MySQL 8.0.16 或更高版本。

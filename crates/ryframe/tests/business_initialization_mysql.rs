@@ -15,8 +15,12 @@ mod adoption;
 mod adoption_races;
 #[path = "business_initialization_mysql/adoption_unknown.rs"]
 mod adoption_unknown;
+#[path = "../src/bin/ryframe_migrate/targets.rs"]
+mod migration_targets;
 #[path = "business_initialization_mysql/response_gate.rs"]
 mod response_gate;
+#[path = "business_initialization_mysql/target_identity.rs"]
+mod target_identity;
 
 const DDL: &str = "CREATE TABLE biz_sql_example (id BIGINT NOT NULL AUTO_INCREMENT, code VARCHAR(32) NOT NULL, PRIMARY KEY(id), UNIQUE KEY uk_example_code(code)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 const CHECKSUM: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
