@@ -40,6 +40,15 @@ pub(crate) fn merge_business_catalog(
                 .map(str::to_owned)
         })
         .collect::<BTreeSet<_>>();
+    let mut title_keys = routes
+        .iter()
+        .filter_map(|route| {
+            route
+                .get("title_key")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
     for resource in resources {
         let permissions = resource
             .pointer("/access/permissions")
@@ -52,13 +61,20 @@ pub(crate) fn merge_business_catalog(
             codes.push(value.clone());
         }
         let route_key = text(resource, "/route/key")?;
+        validate_route_key(route_key)?;
         if !keys.insert(route_key.to_owned()) {
             return Err(invalid("重复菜单路由"));
+        }
+        let title_key = title_key(text(resource, "/name")?)?;
+        if !title_keys.insert(title_key.clone()) {
+            return Err(AppError::Config(format!(
+                "业务菜单标题键冲突：{title_key}；为业务资源选择不同名称后重新生成，不覆盖已有菜单翻译"
+            )));
         }
         routes.push(json!({
             "route_key": route_key,
             "name": text(resource, "/menu/labels/zh_cn")?,
-            "title_key": text(resource, "/name")?,
+            "title_key": title_key,
             "menu_type": "C",
             "page_key": route_key,
             "permission_code": text(resource, "/access/permissions/list")?,
@@ -85,6 +101,44 @@ fn text<'a>(resource: &'a Value, path: &str) -> AppResult<&'a str> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| invalid(path))
+}
+
+fn title_key(name: &str) -> AppResult<String> {
+    if !name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        || name.split('_').any(|part| {
+            part.is_empty()
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+    {
+        return Err(invalid("资源名称"));
+    }
+    let mut parts = name.split('_');
+    let mut key = parts.next().ok_or_else(|| invalid("资源名称"))?.to_owned();
+    for part in parts {
+        let mut bytes = part.bytes();
+        let first = bytes.next().ok_or_else(|| invalid("资源名称"))?;
+        key.push(char::from(first.to_ascii_uppercase()));
+        key.extend(bytes.map(char::from));
+    }
+    Ok(key)
+}
+
+fn validate_route_key(key: &str) -> AppResult<()> {
+    if !key.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        || key.split(['.', '-']).any(|part| {
+            part.is_empty()
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+    {
+        return Err(AppError::Config(format!(
+            "业务菜单路由键无效：{key}；使用小写字母、数字以及 . 或 - 分段，不使用下划线"
+        )));
+    }
+    Ok(())
 }
 
 fn invalid(field: &str) -> AppError {

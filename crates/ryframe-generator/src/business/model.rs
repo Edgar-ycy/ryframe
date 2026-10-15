@@ -51,7 +51,7 @@ pub(super) fn descriptor_to_ir(
     let module = package.module.replace('-', "_");
     let permission_module = package.module.replace('_', "-");
     let permission_name = descriptor.name.replace('_', "-");
-    let route_key = format!("{module}.{}", descriptor.name);
+    let route_key = format!("{permission_module}.{permission_name}");
     let api_name = format!("{}_{}", module, descriptor.name);
     let labels = LabelsSpec {
         zh_cn: descriptor.title.clone(),
@@ -133,7 +133,7 @@ pub(super) fn descriptor_to_ir(
             parent: descriptor
                 .menu_parent
                 .clone()
-                .unwrap_or_else(|| module.clone()),
+                .unwrap_or_else(|| permission_module.clone()),
             order: descriptor.menu_order,
             icon: None,
             labels,

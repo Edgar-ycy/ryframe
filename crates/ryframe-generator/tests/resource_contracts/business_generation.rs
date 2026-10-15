@@ -198,6 +198,8 @@ fn assert_generated_business(workspace: &std::path::Path) {
             .unwrap();
     assert!(router.contains("\"/sales_orders/order\""));
     assert!(openapi.contains("/api/v1/business/sales_orders/order"));
+    assert!(openapi.contains("sales-orders.order"));
+    assert!(!openapi.contains("sales_orders.order"));
     assert!(!router.contains("/sales-orders/order"));
     let repository =
         fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))

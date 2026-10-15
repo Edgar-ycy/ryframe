@@ -88,3 +88,95 @@ fn malformed_business_permission_fails_closed() {
         .expect("非法业务权限不能进入契约");
     assert!(error.to_string().contains("业务资源契约无效：权限"));
 }
+
+fn item_document() -> OpenApiDocument {
+    let mut document = business_document();
+    let resource = &mut document
+        .extensions
+        .as_mut()
+        .unwrap()
+        .get_mut("x-ryframe-crud-resources")
+        .unwrap()["resources"][0];
+    resource["name"] = json!("order_item");
+    resource["route"]["key"] = json!("sales-orders.order-item");
+    document
+}
+
+#[test]
+fn snake_case_business_names_generate_valid_frontend_title_keys() {
+    let document = compose_openapi(
+        ryframe_api::openapi::document(),
+        &[BusinessModuleBuilder::new("sales-orders")
+            .openapi(item_document)
+            .build()],
+    )
+    .unwrap();
+    let extensions = document.extensions.unwrap();
+    let route = extensions["x-ryframe-menu-routes"]["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["route_key"] == "sales-orders.order-item")
+        .unwrap();
+    assert_eq!(route["title_key"], "orderItem");
+}
+
+fn colliding_title_document() -> OpenApiDocument {
+    let mut document = business_document();
+    let resources = document
+        .extensions
+        .as_mut()
+        .unwrap()
+        .get_mut("x-ryframe-crud-resources")
+        .unwrap()["resources"]
+        .as_array_mut()
+        .unwrap();
+    let mut second = resources[0].clone();
+    resources[0]["name"] = json!("order_1");
+    resources[0]["route"]["key"] = json!("order.order-1");
+    second["name"] = json!("order1");
+    second["route"]["key"] = json!("order.order1");
+    resources.push(second);
+    document
+}
+
+#[test]
+fn normalized_title_key_collisions_fail_before_overwriting_translation() {
+    let error = compose_openapi(
+        ryframe_api::openapi::document(),
+        &[BusinessModuleBuilder::new("order")
+            .openapi(colliding_title_document)
+            .build()],
+    )
+    .err()
+    .expect("标题键冲突必须拒绝")
+    .to_string();
+    assert!(error.contains("标题键冲突：order1"));
+}
+
+fn invalid_route_document() -> OpenApiDocument {
+    let mut document = item_document();
+    document
+        .extensions
+        .as_mut()
+        .unwrap()
+        .get_mut("x-ryframe-crud-resources")
+        .unwrap()["resources"][0]["route"]["key"] = json!("sales_orders.order_item");
+    document
+}
+
+#[test]
+fn invalid_menu_keys_fail_during_backend_composition() {
+    assert!(
+        compose_openapi(
+            ryframe_api::openapi::document(),
+            &[BusinessModuleBuilder::new("order")
+                .openapi(invalid_route_document)
+                .build()]
+        )
+        .err()
+        .expect("非法路由键必须拒绝")
+        .to_string()
+        .contains("路由键无效")
+    );
+}
