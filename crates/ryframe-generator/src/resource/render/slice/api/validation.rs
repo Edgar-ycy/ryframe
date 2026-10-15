@@ -107,6 +107,7 @@ pub(super) fn validation_attribute(field: &FieldIr) -> Option<String> {
         | ValueType::U8
         | ValueType::U16
         | ValueType::U32
+        | ValueType::U64
             if validation.minimum.is_some() || validation.maximum.is_some() =>
         {
             let mut parts = Vec::new();
@@ -151,13 +152,19 @@ fn numeric_bound(value: i64, value_type: ValueType) -> String {
 
 pub(super) fn schema_attribute(field: &FieldIr, optional: bool) -> Option<String> {
     let mut parts = Vec::new();
-    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
+        && field.wire_type == ValueType::String
+    {
         parts.push(if optional {
             "value_type = Option<String>".into()
         } else {
             "value_type = String".into()
         });
-        parts.push("pattern = r\"^(?:0|-?[1-9][0-9]*)$\"".into());
+        parts.push(if field.value_type == ValueType::U64 {
+            "pattern = r\"^(?:0|[1-9][0-9]*)$\"".into()
+        } else {
+            "pattern = r\"^(?:0|-?[1-9][0-9]*)$\"".into()
+        });
     }
     if let Some(minimum) = field.validation.min_utf8_bytes {
         parts.push(format!("min_length = {minimum}"));

@@ -51,12 +51,14 @@ fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
         if let Some(attribute) = schema_attribute(field, optional) {
             output.push_str(&format!("    {attribute}\n"));
         }
-        if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
-            let function = if optional {
-                "deserialize_optional_i64"
-            } else {
-                "deserialize_i64"
-            };
+        if matches!(field.value_type, ValueType::I64 | ValueType::U64)
+            && field.wire_type == ValueType::String
+        {
+            let function = format!(
+                "deserialize_{}{}",
+                if optional { "optional_" } else { "" },
+                field.value_type.rust_base_type()
+            );
             let default = if optional { "default, " } else { "" };
             output.push_str(&format!(
                 "    #[serde({default}deserialize_with = \"crate::http::integer::{function}\")]\n"
@@ -215,13 +217,52 @@ pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
 }
 
 pub(super) fn openapi(resource: &ResourceIr, header: &str) -> String {
+    let (metadata, field_calls, field_functions) = metadata_parts(resource);
+    openapi_document(resource, header, &metadata, &field_calls, &field_functions)
+}
+
+pub(super) fn business_openapi(
+    resource: &ResourceIr,
+    header: &str,
+) -> (String, Vec<(String, String)>) {
+    let (metadata, fields) = metadata_fields(resource);
+    let mut assets = Vec::new();
+    let mut modules = String::new();
+    let mut calls = Vec::new();
+    for field in fields {
+        let name = field["name"].as_str().expect("字段名称已校验");
+        let function = format!("field_{name}");
+        modules.push_str(&format!(
+            "mod {function};\npub(super) use {function}::{function};\n"
+        ));
+        calls.push(format!("fields::{function}()"));
+        let value = super::super::catalog::rust_json(&field);
+        assets.push((format!("{function}.rs"), format!("{header}pub(crate) fn {function}() -> serde_json::Value {{\n    serde_json::json!({value})\n}}\n")));
+    }
+    assets.push(("mod.rs".into(), format!("{header}{modules}")));
+    let declaration = format!(
+        "#[path = {:?}]\nmod fields;",
+        format!("{}/fields/mod.rs", resource.name)
+    );
+    (
+        openapi_document(resource, header, &metadata, &calls.join(", "), &declaration),
+        assets,
+    )
+}
+
+fn openapi_document(
+    resource: &ResourceIr,
+    header: &str,
+    metadata: &str,
+    field_calls: &str,
+    field_functions: &str,
+) -> String {
     let pascal = &resource.pascal_name;
     let detail_schema = if resource.relations.is_empty() {
         String::new()
     } else {
         format!("        super::dto::{pascal}DetailVo,\n")
     };
-    let (metadata, field_calls, field_functions) = metadata_parts(resource);
     format!(
         r#"{header}use utoipa::OpenApi;
 
@@ -284,9 +325,12 @@ fn wire_type(field: &FieldIr) -> String {
 }
 
 fn filter_conversion(field: &FieldIr) -> String {
-    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
+        && field.wire_type == ValueType::String
+    {
+        let kind = field.value_type.rust_base_type();
         format!(
-            "self.{0}.map(|value| crate::http::integer::parse_i64(&value).map_err(|_| ryframe_kernel::AppError::Validation(\"{0} 必须是 i64 范围内的规范十进制字符串\".into()))).transpose()?",
+            "self.{0}.map(|value| crate::http::integer::parse_{kind}(&value).map_err(|_| ryframe_kernel::AppError::Validation(\"{0} 必须是 {kind} 范围内的规范十进制字符串\".into()))).transpose()?",
             field.name
         )
     } else {
@@ -295,7 +339,9 @@ fn filter_conversion(field: &FieldIr) -> String {
 }
 
 fn view_conversion(field: &FieldIr) -> String {
-    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
+        && field.wire_type == ValueType::String
+    {
         if field.nullable {
             format!("value.{}.map(|item| item.to_string())", field.name)
         } else {
@@ -307,25 +353,29 @@ fn view_conversion(field: &FieldIr) -> String {
 }
 
 fn metadata_parts(resource: &ResourceIr) -> (String, String, String) {
+    let (metadata, fields) = metadata_fields(resource);
+    let mut calls = Vec::new();
+    let mut functions = Vec::new();
+    for field in fields {
+        let name = field["name"].as_str().expect("字段名称已校验");
+        let value = super::super::catalog::rust_json(&field);
+        calls.push(format!("field_{name}()"));
+        functions.push(format!(
+            "fn field_{name}() -> serde_json::Value {{\n    serde_json::json!({value})\n}}\n"
+        ));
+    }
+    (metadata, calls.join(", "), functions.join("\n"))
+}
+
+fn metadata_fields(resource: &ResourceIr) -> (String, Vec<serde_json::Value>) {
     let mut metadata = super::super::catalog::crud_resource_metadata(resource);
     let fields = metadata
         .as_object_mut()
         .expect("资源元数据必须是对象")
         .remove("fields")
         .expect("资源元数据必须包含字段");
-    let mut calls = Vec::new();
-    let mut functions = Vec::new();
-    for field in fields.as_array().expect("字段元数据必须是数组") {
-        let name = field["name"].as_str().expect("字段名称已校验");
-        let value = super::super::catalog::rust_json(field);
-        calls.push(format!("field_{name}()"));
-        functions.push(format!(
-            "fn field_{name}() -> serde_json::Value {{\n    serde_json::json!({value})\n}}\n"
-        ));
-    }
     (
         super::super::catalog::rust_json(&metadata),
-        calls.join(", "),
-        functions.join("\n"),
+        fields.as_array().expect("字段元数据必须是数组").clone(),
     )
 }

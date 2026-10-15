@@ -200,6 +200,15 @@ fn assert_generated_business(workspace: &std::path::Path) {
     assert!(openapi.contains("/api/v1/business/sales_orders/order"));
     assert!(openapi.contains("sales-orders.order"));
     assert!(!openapi.contains("sales_orders.order"));
+    assert!(openapi.contains("order/fields/mod.rs"));
+    assert!(openapi.contains("fields::field_code()"));
+    assert!(!openapi.contains("fn field_code()"));
+    let field = fs::read_to_string(
+        workspace.join("order-business/src/generated/openapi/order/fields/field_code.rs"),
+    )
+    .unwrap();
+    assert!(field.contains("fn field_code()"));
+    assert!(field.contains("\"name\": \"code\""));
     assert!(!router.contains("/sales-orders/order"));
     let repository =
         fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))

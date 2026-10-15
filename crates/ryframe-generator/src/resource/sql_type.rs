@@ -10,7 +10,12 @@ pub(super) fn normalize_fields(
         let Some(input) = field.sql_type.as_deref() else {
             if matches!(
                 field.value_type,
-                ValueType::I8 | ValueType::I16 | ValueType::U8 | ValueType::U16 | ValueType::U32
+                ValueType::I8
+                    | ValueType::I16
+                    | ValueType::U8
+                    | ValueType::U16
+                    | ValueType::U32
+                    | ValueType::U64
             ) {
                 let declaration = Declaration {
                     sql: field.value_type.rust_base_type().into(),
@@ -46,7 +51,7 @@ struct Declaration {
     sql: String,
     max_length: Option<u32>,
     max_bytes: Option<u32>,
-    range: Option<(i64, i64)>,
+    range: Option<(i128, i128)>,
 }
 
 fn parse(input: &str, value_type: ValueType) -> Result<Declaration, String> {
@@ -106,22 +111,23 @@ fn parse(input: &str, value_type: ValueType) -> Result<Declaration, String> {
     Ok(declaration)
 }
 
-fn sql_integer_bounds(base: &str, unsigned: bool) -> Option<(i64, i64)> {
+fn sql_integer_bounds(base: &str, unsigned: bool) -> Option<(i128, i128)> {
     Some(match (base, unsigned) {
         ("TINYINT", false) => (i8::MIN.into(), i8::MAX.into()),
         ("SMALLINT", false) => (i16::MIN.into(), i16::MAX.into()),
         ("MEDIUMINT", false) => (-8_388_608, 8_388_607),
         ("INT", false) => (i32::MIN.into(), i32::MAX.into()),
-        ("BIGINT", false) => (i64::MIN, i64::MAX),
+        ("BIGINT", false) => (i64::MIN.into(), i64::MAX.into()),
         ("TINYINT", true) => (0, u8::MAX.into()),
         ("SMALLINT", true) => (0, u16::MAX.into()),
         ("MEDIUMINT", true) => (0, 16_777_215),
         ("INT", true) => (0, u32::MAX.into()),
+        ("BIGINT", true) => (0, u64::MAX.into()),
         _ => return None,
     })
 }
 
-pub(crate) fn physical_integer_bounds(field: &super::FieldIr) -> Option<(i64, i64)> {
+pub(crate) fn physical_integer_bounds(field: &super::FieldIr) -> Option<(i128, i128)> {
     field.value_type.integer_bounds()?;
     let Some(sql_type) = &field.sql_type else {
         return field.value_type.integer_bounds();
@@ -178,12 +184,16 @@ fn constrain(field: &mut FieldSpec, declaration: &Declaration) -> Result<(), Str
         if [validation.minimum, validation.maximum]
             .into_iter()
             .flatten()
-            .any(|value| value < minimum || value > maximum)
+            .any(|value| i128::from(value) < minimum || i128::from(value) > maximum)
         {
-            return Err(format!("数值校验超过 {} 的有符号范围", declaration.sql));
+            return Err(format!("数值校验超过 {} 的整数范围", declaration.sql));
         }
-        validation.minimum.get_or_insert(minimum);
-        validation.maximum.get_or_insert(maximum);
+        if let Ok(minimum) = i64::try_from(minimum) {
+            validation.minimum.get_or_insert(minimum);
+        }
+        if let Ok(maximum) = i64::try_from(maximum) {
+            validation.maximum.get_or_insert(maximum);
+        }
     }
     Ok(())
 }

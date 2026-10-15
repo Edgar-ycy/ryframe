@@ -40,6 +40,7 @@ pub enum ValueType {
     U8,
     U16,
     U32,
+    U64,
     Decimal,
     Bool,
     Date,
@@ -64,6 +65,7 @@ impl ValueType {
             Self::U8 => "u8",
             Self::U16 => "u16",
             Self::U32 => "u32",
+            Self::U64 => "u64",
             Self::Decimal => "rust_decimal::Decimal",
             Self::Bool => "bool",
             Self::Date => "chrono::NaiveDate",
@@ -72,15 +74,16 @@ impl ValueType {
         }
     }
 
-    pub fn integer_bounds(self) -> Option<(i64, i64)> {
+    pub fn integer_bounds(self) -> Option<(i128, i128)> {
         Some(match self {
             Self::I8 => (i8::MIN.into(), i8::MAX.into()),
             Self::I16 => (i16::MIN.into(), i16::MAX.into()),
             Self::I32 => (i32::MIN.into(), i32::MAX.into()),
-            Self::I64 => (i64::MIN, i64::MAX),
+            Self::I64 => (i64::MIN.into(), i64::MAX.into()),
             Self::U8 => (0, u8::MAX.into()),
             Self::U16 => (0, u16::MAX.into()),
             Self::U32 => (0, u32::MAX.into()),
+            Self::U64 => (0, u64::MAX.into()),
             Self::String
             | Self::Decimal
             | Self::Bool
@@ -101,7 +104,7 @@ impl ValueType {
 
     pub fn typescript_type(self, nullable: bool) -> String {
         let value = match self {
-            Self::String | Self::Date | Self::DateTime | Self::Decimal => "string",
+            Self::String | Self::Date | Self::DateTime | Self::Decimal | Self::U64 => "string",
             Self::I8 | Self::I16 | Self::I32 | Self::I64 | Self::U8 | Self::U16 | Self::U32 => {
                 "number"
             }

@@ -468,7 +468,9 @@ fn push_typescript_object(output: &mut String, properties: &[String]) {
 }
 
 fn ts_default(field: &FieldIr) -> &'static str {
-    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
+        && field.wire_type == ValueType::String
+    {
         return "''";
     }
     match field.value_type {
@@ -480,6 +482,7 @@ fn ts_default(field: &FieldIr) -> &'static str {
         | ValueType::U8
         | ValueType::U16
         | ValueType::U32
+        | ValueType::U64
         | ValueType::Decimal => "0",
         ValueType::Bool => "false",
         ValueType::Json => "null",
@@ -504,7 +507,9 @@ fn ts_enum_value(value: &str, field: &FieldIr) -> String {
 
 fn form_input(field: &FieldIr, optional: bool) -> String {
     let value = format!("form.{}", field.name);
-    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
+        && field.wire_type == ValueType::String
+    {
         if field.nullable {
             return format!("{value} === '' ? null : {value}");
         }

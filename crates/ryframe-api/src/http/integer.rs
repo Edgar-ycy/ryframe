@@ -21,3 +21,24 @@ pub fn deserialize_optional_i64<'de, D: Deserializer<'de>>(
         .map(|value| parse_i64(&value).map_err(D::Error::custom))
         .transpose()
 }
+
+pub fn parse_u64(value: &str) -> Result<u64, &'static str> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|number| number.to_string() == value)
+        .ok_or("必须是 u64 范围内的规范十进制字符串")
+}
+
+pub fn deserialize_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    parse_u64(&value).map_err(D::Error::custom)
+}
+
+pub fn deserialize_optional_u64<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(|value| parse_u64(&value).map_err(D::Error::custom))
+        .transpose()
+}

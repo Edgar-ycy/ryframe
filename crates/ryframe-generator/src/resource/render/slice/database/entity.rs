@@ -66,6 +66,11 @@ fn soft_delete_constants(resource: &ResourceIr) -> String {
                 .expect("string 软删值已校验")
                 .to_owned(),
         ),
+        ValueType::U64 => (
+            "u64",
+            unsigned_value(&soft_delete.active),
+            unsigned_value(&soft_delete.deleted),
+        ),
         value_type if value_type.integer_bounds().is_some() => (
             value_type.rust_base_type(),
             soft_delete
@@ -107,4 +112,12 @@ fn soft_delete_constants(resource: &ResourceIr) -> String {
     format!(
         "pub const SOFT_DELETE_ACTIVE: {constant_type} = {active};\npub const SOFT_DELETE_DELETED: {constant_type} = {deleted};\n\n"
     )
+}
+
+fn unsigned_value(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(value) => value.clone(),
+        toml::Value::Integer(value) => value.to_string(),
+        _ => unreachable!("u64 软删值已校验"),
+    }
 }

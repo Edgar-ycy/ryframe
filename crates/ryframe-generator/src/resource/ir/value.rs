@@ -27,7 +27,8 @@ pub(super) fn validate_enum_key(
         | ValueType::I64
         | ValueType::U8
         | ValueType::U16
-        | ValueType::U32 => key.parse::<i64>().is_ok_and(|parsed| {
+        | ValueType::U32
+        | ValueType::U64 => key.parse::<i128>().is_ok_and(|parsed| {
             parsed.to_string() == key
                 && field
                     .value_type
@@ -36,11 +37,11 @@ pub(super) fn validate_enum_key(
                 && field
                     .validation
                     .minimum
-                    .is_none_or(|minimum| parsed >= minimum)
+                    .is_none_or(|minimum| parsed >= i128::from(minimum))
                 && field
                     .validation
                     .maximum
-                    .is_none_or(|maximum| parsed <= maximum)
+                    .is_none_or(|maximum| parsed <= i128::from(maximum))
         }),
         ValueType::Bool => matches!(key, "true" | "false"),
         ValueType::Decimal | ValueType::Date | ValueType::DateTime | ValueType::Json => false,
@@ -149,9 +150,12 @@ fn validate_typed_value(
     let valid = match (value_type, value) {
         (ValueType::String, toml::Value::String(_))
         | (ValueType::Bool, toml::Value::Boolean(_)) => true,
+        (ValueType::U64, toml::Value::String(value)) => value
+            .parse::<u64>()
+            .is_ok_and(|parsed| parsed.to_string() == *value),
         (value_type, toml::Value::Integer(value)) => value_type
             .integer_bounds()
-            .is_some_and(|(min, max)| (min..=max).contains(value)),
+            .is_some_and(|(min, max)| (min..=max).contains(&i128::from(*value))),
         _ => false,
     };
     if valid {
@@ -194,6 +198,15 @@ fn validate_value_constraints(
                 || validation
                     .max_utf8_bytes
                     .is_some_and(|maximum| utf8_bytes > maximum)
+        }
+        (ValueType::U64, toml::Value::String(value)) => {
+            let number = i128::from(value.parse::<u64>().expect("u64 默认值已校验"));
+            validation
+                .minimum
+                .is_some_and(|minimum| number < i128::from(minimum))
+                || validation
+                    .maximum
+                    .is_some_and(|maximum| number > i128::from(maximum))
         }
         (value_type, toml::Value::Integer(value)) if value_type.integer_bounds().is_some() => {
             validation.minimum.is_some_and(|minimum| *value < minimum)

@@ -76,7 +76,7 @@ fn validate_identity(
         && wire_type != field.value_type
         && !matches!(
             (field.value_type, wire_type),
-            (ValueType::I64, ValueType::String)
+            (ValueType::I64 | ValueType::U64, ValueType::String)
         )
     {
         return Err(field_error(
@@ -84,7 +84,20 @@ fn validate_identity(
             &field.name,
             source_path,
             "不支持该 value_type 与 wire_type 组合",
-            "目前只有 i64 可在 API 中安全序列化为 string",
+            "64 位整数使用 string 传输，保持完整数值范围",
+        ));
+    }
+    if field.value_type == ValueType::U64
+        && field
+            .wire_type
+            .is_some_and(|wire| wire != ValueType::String)
+    {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "u64 必须使用 string 传输",
+            "省略 wire_type 或明确设置为 string；不得使用 JSON 数字传输完整 u64 范围",
         ));
     }
     validate_labels(&field.labels, resource, Some(&field.name), source_path)?;
@@ -200,15 +213,15 @@ fn validate_widgets(
     field: &FieldSpec,
 ) -> Result<(), ResourceError> {
     if (field.usage.create || field.usage.update)
-        && field.value_type == ValueType::I64
-        && field.wire_type == Some(ValueType::String)
+        && (field.value_type == ValueType::U64
+            || (field.value_type == ValueType::I64 && field.wire_type == Some(ValueType::String)))
         && matches!(field.widget, WidgetSpec::Number)
     {
         return Err(field_error(
             resource,
             &field.name,
             source_path,
-            "字符串传输的 i64 不能使用 number 控件，否则可能丢失精度",
+            "字符串传输的 64 位整数不能使用 number 控件，否则可能丢失精度",
             "使用 text 或有限枚举 select，保持表单、JSON 和 Rust 整数的十进制字符串一致",
         ));
     }

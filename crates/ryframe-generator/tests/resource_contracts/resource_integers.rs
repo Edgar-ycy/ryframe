@@ -36,7 +36,10 @@ fn integer_kinds_preserve_dto_defaults_enum_and_sql_types() {
         assert_eq!(
             (field.validation.minimum, field.validation.maximum),
             kind.integer_bounds()
-                .map(|(min, max)| (Some(min), Some(max)))
+                .map(|(min, max)| (
+                    Some(i64::try_from(min).unwrap()),
+                    Some(i64::try_from(max).unwrap())
+                ))
                 .unwrap()
         );
         let generated = render_resources(&[resource]).unwrap();
@@ -79,7 +82,7 @@ fn integer_default_enum_and_validation_must_fit_the_declared_kind() {
                 .iter_mut()
                 .find(|field| field.name == "status")
                 .unwrap();
-            field.default = Some(toml::Value::Integer(invalid));
+            field.default = Some(toml::Value::Integer(i64::try_from(invalid).unwrap()));
             assert!(
                 normalize_resource(input, "order.toml", "default")
                     .unwrap_err()
@@ -107,7 +110,7 @@ fn integer_default_enum_and_validation_must_fit_the_declared_kind() {
                 .find(|field| field.name == "status")
                 .unwrap()
                 .validation
-                .maximum = Some(invalid);
+                .maximum = Some(i64::try_from(invalid).unwrap());
             assert!(
                 normalize_resource(input, "order.toml", "range")
                     .unwrap_err()

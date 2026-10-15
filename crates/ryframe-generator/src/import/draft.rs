@@ -252,6 +252,7 @@ fn import_value_type(data_type: &str, column_type: &str) -> Option<ValueType> {
         ("tinyint", true) => Some(ValueType::U8),
         ("smallint", true) => Some(ValueType::U16),
         ("mediumint" | "int" | "integer", true) => Some(ValueType::U32),
+        ("bigint", true) => Some(ValueType::U64),
         ("decimal" | "numeric", _) => Some(ValueType::Decimal),
         ("bool" | "boolean", false) => Some(ValueType::Bool),
         ("date", false) => Some(ValueType::Date),

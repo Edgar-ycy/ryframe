@@ -456,5 +456,39 @@ mod tests {
             diff::statements(&before, &after).is_err(),
             "Rust 类型变宽不能掩盖物理列变窄"
         );
+        let mut unsigned = resource();
+        unsigned
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::U32;
+        let mut wide = unsigned.clone();
+        wide.fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::U64;
+        assert!(
+            diff::statements(&unsigned, &wide)
+                .unwrap()
+                .join("\n")
+                .contains("BIGINT UNSIGNED")
+        );
+        assert!(diff::statements(&wide, &unsigned).is_err());
+        unsigned
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::I64;
+        assert!(
+            diff::statements(&unsigned, &wide).is_err(),
+            "有符号旧值不能静默转成无符号列"
+        );
+        assert!(
+            diff::statements(&wide, &unsigned).is_err(),
+            "u64 最大值不能存入 i64"
+        );
     }
 }

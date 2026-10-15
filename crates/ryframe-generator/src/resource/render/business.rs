@@ -10,6 +10,7 @@ pub(crate) fn render_business_resource(resource: &ResourceIr) -> Vec<GeneratedAs
         crate::GENERATOR_VERSION,
     );
     let model_path = format!("crate::generated::models::{name}");
+    let (openapi, field_assets) = slice::business_openapi(resource, &header);
     let model = format!(
         "{header}pub mod model {{\n{}\n}}\n\npub mod port {{\n{}\n}}\n\npub use model::*;\npub use port::*;\n",
         application_content(slice::application_model(resource, "")),
@@ -49,9 +50,16 @@ pub(crate) fn render_business_resource(resource: &ResourceIr) -> Vec<GeneratedAs
         asset(
             resource,
             format!("src/generated/openapi/{name}.rs"),
-            api_content(slice::api_openapi(resource, &header), &model_path, name),
+            api_content(openapi, &model_path, name),
         ),
     ];
+    assets.extend(field_assets.into_iter().map(|(path, content)| {
+        asset(
+            resource,
+            format!("src/generated/openapi/{name}/fields/{path}"),
+            api_content(content, &model_path, name),
+        )
+    }));
     if resource.bootstrap_migration {
         assets.push(asset(
             resource,

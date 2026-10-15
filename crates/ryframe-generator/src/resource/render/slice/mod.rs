@@ -46,6 +46,13 @@ pub(super) fn api_openapi(resource: &ResourceIr, header: &str) -> String {
     api::openapi(resource, header)
 }
 
+pub(super) fn business_openapi(
+    resource: &ResourceIr,
+    header: &str,
+) -> (String, Vec<(String, String)>) {
+    api::business_openapi(resource, header)
+}
+
 pub(super) fn application_fake(resource: &ResourceIr, header: &str) -> String {
     application::fake(resource, header)
 }
@@ -115,6 +122,7 @@ pub(super) fn uses_partial_text_filter(field: &FieldIr) -> bool {
 pub(super) fn rust_literal(value: &toml::Value, value_type: ValueType) -> String {
     match (value, value_type) {
         (toml::Value::String(value), ValueType::String) => format!("String::from({value:?})"),
+        (toml::Value::String(value), ValueType::U64) => format!("{value}_u64"),
         (toml::Value::Integer(value), value_type) if value_type.integer_bounds().is_some() => {
             format!("{value}_{}", value_type.rust_base_type())
         }

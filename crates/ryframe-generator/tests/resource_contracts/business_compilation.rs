@@ -216,10 +216,15 @@ fn import_batch(backend: &Path) {
     let source = fs::read_to_string(&numeric_model).unwrap();
     fs::write(
         &numeric_model,
-        source.replace(
-            "    pub status: i32,",
-            "    #[resource(filter)]\n    pub status: i32,",
-        ),
+        source
+            .replace(
+                "    pub status: i32,",
+                "    #[resource(filter)]\n    pub status: i32,",
+            )
+            .replace(
+                "    pub large_count: u64,",
+                "    #[resource(filter)]\n    pub large_count: u64,",
+            ),
     )
     .unwrap();
     GenerationBuilder::new(backend)
@@ -253,6 +258,7 @@ fn import_table(name: &str) -> TableInfo {
         ("byte_count", "u8", "tinyint unsigned"),
         ("short_count", "u16", "smallint unsigned"),
         ("count", "u32", "int unsigned"),
+        ("large_count", "u64", "bigint unsigned"),
         (
             "created_at",
             "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",

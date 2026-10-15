@@ -276,7 +276,13 @@ fn normalize_fields(
 
 fn normalize_field(field: FieldSpec, column: String) -> FieldIr {
     let nullable = field.nullable;
-    let wire_type = field.wire_type.unwrap_or(field.value_type);
+    let wire_type = field
+        .wire_type
+        .unwrap_or(if field.value_type == super::ValueType::U64 {
+            super::ValueType::String
+        } else {
+            field.value_type
+        });
     FieldIr {
         name: field.name,
         column,

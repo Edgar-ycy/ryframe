@@ -229,7 +229,8 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
         sql_type: field.sql_type.clone(),
         collation: field.collation.clone(),
         value_type,
-        wire_type: (value_type == ValueType::I64).then_some(ValueType::String),
+        wire_type: matches!(value_type, ValueType::I64 | ValueType::U64)
+            .then_some(ValueType::String),
         order: u16::try_from((index + 1) * 10).map_err(|_| error("字段数量超过生成上限"))?,
         nullable,
         default: field
@@ -267,7 +268,7 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
                 | ValueType::U8
                 | ValueType::U16
                 | ValueType::U32 => WidgetSpec::Number,
-                ValueType::I64 => WidgetSpec::Text,
+                ValueType::I64 | ValueType::U64 => WidgetSpec::Text,
                 ValueType::Bool => WidgetSpec::Switch,
                 ValueType::Date => WidgetSpec::Date,
                 ValueType::DateTime => WidgetSpec::DateTime,
@@ -300,6 +301,7 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         "u8" => ValueType::U8,
         "u16" => ValueType::U16,
         "u32" => ValueType::U32,
+        "u64" => ValueType::U64,
         "bool" => ValueType::Bool,
         "chrono::NaiveDate" => ValueType::Date,
         "chrono::DateTime<chrono::Utc>" => ValueType::DateTime,
@@ -316,6 +318,15 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
 fn default_value(value: &str, value_type: ValueType) -> Result<toml::Value, ResourceError> {
     match value_type {
         ValueType::String => Ok(toml::Value::String(value.to_owned())),
+        ValueType::U64 => {
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|parse| error(format!("u64 默认值 `{value}` 无效：{parse}")))?;
+            if parsed.to_string() != value {
+                return Err(error(format!("u64 默认值 `{value}` 不是规范十进制整数")));
+            }
+            Ok(toml::Value::String(value.to_owned()))
+        }
         ValueType::I8
         | ValueType::I16
         | ValueType::I32
@@ -383,6 +394,10 @@ fn soft_delete(
         | ValueType::U8
         | ValueType::U16
         | ValueType::U32 => (toml::Value::Integer(0), toml::Value::Integer(1)),
+        ValueType::U64 => (
+            toml::Value::String("0".into()),
+            toml::Value::String("1".into()),
+        ),
         ValueType::Bool => (toml::Value::Boolean(false), toml::Value::Boolean(true)),
         _ => return Err(error("del_flag 只支持 String、整数或 bool")),
     };
