@@ -10,6 +10,25 @@ fn signed_i64_contract_is_preserved() {
 }
 
 #[test]
+fn unsigned_id_keeps_all_bits_and_supplied_error_message() {
+    for value in [0, i64::MAX as u64 + 1, u64::MAX] {
+        assert_eq!(
+            id_parser::parse_unsigned_id(&value.to_string(), "业务 ID 无效").unwrap(),
+            value
+        );
+        assert_eq!(
+            ryframe_api::parse_unsigned_id(&value.to_string(), "业务 ID 无效").unwrap(),
+            value
+        );
+    }
+    for value in ["-1", "-0", "01", "+1", "1.0", " 1", "18446744073709551616"] {
+        assert!(
+            matches!(id_parser::parse_unsigned_id(value, "业务 ID 无效"), Err(AppError::Validation(message)) if message == "业务 ID 无效")
+        );
+    }
+}
+
+#[test]
 fn positive_id_helpers_preserve_the_supplied_message() {
     let error =
         parse_optional_positive_id(Some("0"), "任务 ID 必须是正整数").expect_err("零不是正整数 ID");

@@ -71,7 +71,7 @@ pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
 
 模型级 `#[resource(primary_key = ["tenant_id", "id"])]` 可明确索引顺序，与字段顺序独立，列表须恰好包含全部主键标记字段，省略时沿用字段顺序。反向导入从 PRIMARY 索引读取顺序，将业务主键映射到 Rust `id` 并用 `column="order_id"` 等属性保留物理列名；与已有 `id` 列冲突时拒绝生成。实体按主键顺序声明字段，DDL 保留原物理列顺序。租户主键必须以 `tenant_id` 开头，其他复合主键明确阻断，不自动修改原库。审计时间列组可省略，此时物理删除或软删除均不补写时间列；已声明的时间及操作者字段仍严格校验并由 Service 管理，请求级操作审计继续遵循原有事务策略。
 
-模型使用 `#[derive(ryframe_sdk::ResourceModel)]`。在 `resources/mod.rs` 定义模型后，将其描述符加入同文件的 `descriptors()`。`database="tenant"` 用于租户业务，表以 `biz_` 开头并把 `tenant_id` 放入联合主键；`database="control"` 用于无 `tenant_id` 的全局业务，Service 与持久化只允许系统租户访问，页面资产携带同样的访问限制。启用多租户不会使全局业务共享，跨租户共享读取须编写明确的用例扩展。ID 默认由应用生成雪花值；数据库自增主键使用 `#[resource(primary_key, auto_increment)] pub id: i64`，不声明默认值或表单写入。生成器为租户复合主键补充以 id 开头的非唯一索引，插入时省略 ID，在同一事务中取得实际自增值。然后运行：
+模型使用 `#[derive(ryframe_sdk::ResourceModel)]`。在 `resources/mod.rs` 定义模型后，将其描述符加入同文件的 `descriptors()`。`database="tenant"` 用于租户业务，表以 `biz_` 开头并把 `tenant_id` 放入联合主键；`database="control"` 用于无 `tenant_id` 的全局业务，Service 与持久化只允许系统租户访问，页面资产携带同样的访问限制。启用多租户不会使全局业务共享，跨租户共享读取须编写明确的用例扩展。ID 默认由应用生成雪花值；数据库自增主键使用 `#[resource(primary_key, auto_increment)] pub id: i64`（无符号列使用 `u64`），不声明默认值或表单写入。生成器为租户复合主键补充以 id 开头的非唯一索引，插入时省略 ID，在同一事务中取得实际自增值。然后运行：
 
 ```powershell
 cargo generate -- resource --package order-business
@@ -88,7 +88,7 @@ cargo generate -- resource --package order-business --model Order --write
 
 ### 模型结构演进
 
-修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32/u64` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64` 普通字段保留完整无符号容量并使用字符串传输，超过 i64 的默认值使用十进制字符串；`u64` 主键与 Decimal 的完整 CRUD 仍明确阻断；日期、JSON 等控件限制继续生效。类型声明不代替默认值、索引或外键，导入元数据仍需核对。业务描述目录按资源拆分，OpenAPI 字段元数据按字段拆分；生成 Rust 文件超过 500 行时整批停止并报告文件，复杂资源须按职责拆分。
+修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32/u64` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64` 普通字段保留完整无符号容量并使用字符串传输，超过 i64 的默认值使用十进制字符串；主键支持 `i64/u64`，自增及雪花策略、URL 和持久化保持类型一致；Decimal 的完整 CRUD 仍明确阻断；日期、JSON 等控件限制继续生效。类型声明不代替默认值、索引或外键，导入元数据仍需核对。业务描述目录按资源拆分，OpenAPI 字段元数据按字段拆分；生成 Rust 文件超过 500 行时整批停止并报告文件，复杂资源须按职责拆分。
 
 - 新增可空列、带显式默认值的非空列、整数或字符串扩宽、放宽非空约束及新增索引可生成向前 DDL；唯一索引仍须先核对存量重复值。
 - 删除或重命名列、收窄类型、收紧非空约束、改变主键/表名/存储范围、调整已有列顺序或删除/修改索引只输出审阅原因，整批停止，不覆盖初始迁移或发布半批注册。非空新列没有默认值时，先用可空列分阶段回填。

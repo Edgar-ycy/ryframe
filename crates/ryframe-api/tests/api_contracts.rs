@@ -10,3 +10,8 @@ mod integer_wire_contract;
 mod middleware_response_contract;
 #[path = "api_contracts/runtime_contract.rs"]
 mod runtime_contract;
+
+// 私有 ID helper 的源码测试复用产品中的整数传输校验。
+mod http {
+    pub use ryframe_api::http::integer;
+}

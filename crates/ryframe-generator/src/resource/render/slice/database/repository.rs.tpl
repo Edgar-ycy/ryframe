@@ -8,7 +8,7 @@ use ryframe_application::{{PersistenceTransaction, TransactionAuditMode}};
 use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
 use sea_orm::{{
     ActiveModelTrait, {set_import}{column_trait}DatabaseTransaction, EntityTrait,
-    {model_trait}QueryFilter, QueryOrder, QuerySelect, {transaction_trait}sea_query::LockType,
+    {model_trait}{query_filter_trait}QueryOrder, QuerySelect, {transaction_trait}sea_query::LockType,
 }};
 
 use crate::DbResultExt;
@@ -31,7 +31,7 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
     async fn find_by_id(
         &self,
         tenant_id: &str,
-        id: i64,
+        id: {id_type},
     ) -> AppResult<Option<{detail_type}>> {{
 {read_connection}
 {detail_read}
@@ -70,7 +70,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
     async fn find_by_id_for_update(
         &self,
         tenant_id: &str,
-        id: i64,
+        id: {id_type},
     ) -> AppResult<Option<{pascal}Record>> {{
         self.ensure_tenant(tenant_id)?;
         Ok({id_query}
@@ -96,7 +96,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
             .db_conflicts(&[{unique_conflicts}], {generic_conflict:?})
     }}
 
-    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {{
+    async fn delete(&self, tenant_id: &str, id: {id_type}) -> AppResult<()> {{
         self.ensure_tenant(tenant_id)?;
 {delete}
     }}

@@ -79,5 +79,5 @@ pub mod persistence {
 pub mod api {
     pub use ryframe_api::auth_middleware::perm_route;
     pub use ryframe_api::http;
-    pub use ryframe_api::{RequestPrincipal, parse_id};
+    pub use ryframe_api::{RequestPrincipal, parse_id, parse_unsigned_id};
 }

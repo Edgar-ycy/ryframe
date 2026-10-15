@@ -14,6 +14,8 @@ use ryframe_generator::{
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 #[path = "resource_contracts/business_compilation.rs"]
 mod business_compilation;
+#[path = "resource_contracts/unsigned_compilation.rs"]
+mod unsigned_compilation;
 const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
 const PROFILE_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
 
@@ -220,6 +222,7 @@ fn run_shared_workspace() -> Result<(), String> {
     register_generated_backend_modules(&workspace.backend);
     register_order_frontend_contract(&workspace.frontend);
     write_order_fake_transaction_test(&workspace.backend);
+    unsigned_compilation::prepare(&workspace.backend);
     assert_backend_checks(&workspace);
     business_compilation::verify(&workspace.backend, &workspace.cargo_target);
     assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
@@ -553,6 +556,8 @@ fn assert_backend_checks(workspace: &SharedWorkspace) {
             "test-support",
             "--test",
             "generated_order_fake",
+            "--test",
+            "generated_unsigned_fake",
         ])
         .current_dir(&workspace.backend)
         .env("CARGO_TARGET_DIR", &workspace.cargo_target)

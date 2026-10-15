@@ -63,6 +63,13 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     } else {
         ""
     };
+    let query_filter_trait = if column_trait.is_empty()
+        && resource.id_generation != crate::IdGeneration::AutoIncrement
+    {
+        ""
+    } else {
+        "QueryFilter, "
+    };
     let control_transaction_methods = control_transaction_methods(resource);
     format!(
         include_str!("repository.rs.tpl"),
@@ -72,11 +79,13 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         pagination = pagination,
         generic_conflict = generic_conflict,
         header = header,
+        id_type = super::super::id_type(resource),
         name = name,
         pascal = pascal,
         filter_lifetime = filter_lifetime,
         filter_argument = filter_argument,
         column_trait = column_trait,
+        query_filter_trait = query_filter_trait,
         detail_import = detail_import,
         model_trait = model_trait,
         set_import = set_import,

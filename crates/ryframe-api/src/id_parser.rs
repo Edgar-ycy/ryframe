@@ -7,6 +7,12 @@ pub fn parse_id(value: &str, invalid_message: &str) -> AppResult<i64> {
         .map_err(|_| AppError::Validation(invalid_message.to_owned()))
 }
 
+/// 解析完整无符号 ID；URL 与正文采用同一规范十进制表示。
+pub fn parse_unsigned_id(value: &str, invalid_message: &str) -> AppResult<u64> {
+    crate::http::integer::parse_u64(value)
+        .map_err(|_| AppError::Validation(invalid_message.to_owned()))
+}
+
 /// 解析大于零的整数 ID，并保留调用方已有的校验文案。
 pub(crate) fn parse_positive_id(value: &str, invalid_message: &str) -> AppResult<i64> {
     parse_id(value, invalid_message).and_then(|id| {

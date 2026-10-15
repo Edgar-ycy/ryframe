@@ -39,7 +39,7 @@ pub mod versioning;
 
 pub use client_ip::{ClientIp, TrustedProxySet};
 pub use handlers::common_handler::{download_router, upload_router};
-pub use id_parser::parse_id;
+pub use id_parser::{parse_id, parse_unsigned_id};
 pub use principal::RequestPrincipal;
 pub use probes::{livez, readyz};
 pub use request_locale::RequestLocale;

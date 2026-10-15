@@ -138,13 +138,13 @@ fn validate_relations(
             .iter()
             .find(|field| field.name == relation.local_field)
             .expect("关系字段引用已校验");
-        if local_field.value_type != ValueType::I64 {
+        if !matches!(local_field.value_type, ValueType::I64 | ValueType::U64) {
             return Err(field_error(
                 resource,
                 &relation.local_field,
                 source_path,
-                "belongs_to 关系字段必须是 i64",
-                "将外键字段设为 i64；通过 wire_type=string 保持前端 ID 精度",
+                "belongs_to 关系字段必须是 i64 或 u64",
+                "外键类型须与目标主键的位宽及符号一致；通过 wire_type=string 保持前端 ID 精度",
             ));
         }
         if !is_snake_identifier(&relation.target_resource) {

@@ -6,6 +6,16 @@ pub(super) mod migration;
 
 use super::super::{FieldIr, IndexIr, ResourceIr, StorageKind, ValueType};
 
+fn id_type(resource: &ResourceIr) -> &'static str {
+    resource
+        .fields
+        .iter()
+        .find(|field| field.name == "id")
+        .expect("资源主键已经校验")
+        .value_type
+        .rust_base_type()
+}
+
 fn uses_filters(resource: &ResourceIr) -> bool {
     resource.access.owner_field.is_some()
         || resource

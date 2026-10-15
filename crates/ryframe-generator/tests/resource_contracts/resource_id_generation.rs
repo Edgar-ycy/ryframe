@@ -105,3 +105,53 @@ fn default_snowflake_still_supplies_application_id_without_auto_increment() {
             .any(|asset| asset.content.contains("LAST_INSERT_ID()"))
     );
 }
+
+#[test]
+fn unsigned_primary_keys_propagate_through_every_generated_layer() {
+    for auto in [false, true] {
+        let mut spec = if auto { auto_spec() } else { tenant_spec() };
+        spec.fields
+            .iter_mut()
+            .find(|field| field.name == "id")
+            .unwrap()
+            .value_type = ryframe_generator::ValueType::U64;
+        let resource = normalize_resource(spec, "order.toml", "unsigned-id").unwrap();
+        let generated = render_resources(&[resource]).unwrap();
+        let content = |suffix: &str| {
+            &generated
+                .assets
+                .iter()
+                .find(|asset| asset.path.ends_with(suffix))
+                .unwrap()
+                .content
+        };
+        for suffix in [
+            "order/model.rs",
+            "order/port.rs",
+            "order/service.rs",
+            "order/entity.rs",
+            "order/repository.rs",
+            "order/fake.rs",
+        ] {
+            assert!(content(suffix).contains("id: u64"), "{suffix}");
+            assert!(!content(suffix).contains("id: i64"), "{suffix}");
+        }
+        assert!(content("order/handler.rs").contains("parse_unsigned_id"));
+        assert!(content("order/migration.rs").contains("`id` BIGINT UNSIGNED NOT NULL"));
+        assert!(content("order/dto.rs").contains("pub id: String"));
+        if auto {
+            assert!(content("order/fake.rs").contains("next_id: u64"));
+            assert!(content("order/fake.rs").contains("自增 ID 已超出 u64 范围"));
+        } else {
+            assert!(content("order/service.rs").contains("u64::try_from(crate::next_id()?)"));
+        }
+        for asset in generated
+            .assets
+            .iter()
+            .filter(|asset| asset.path.ends_with(".rs"))
+        {
+            syn::parse_file(&asset.content)
+                .unwrap_or_else(|error| panic!("{}: {error}", asset.path));
+        }
+    }
+}

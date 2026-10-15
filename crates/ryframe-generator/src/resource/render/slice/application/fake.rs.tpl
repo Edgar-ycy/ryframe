@@ -11,14 +11,14 @@ use super::port::{{{pascal}PersistencePort, {pascal}Transaction}};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum {pascal}Call {{
-    FindById {{ tenant_id: String, id: i64 }},
+    FindById {{ tenant_id: String, id: {id_type} }},
     FindByPage {{ tenant_id: String, page: u64, page_size: u64 }},
     Begin {{ tenant_id: String }},
 {control_call_variants}
-    FindByIdForUpdate {{ tenant_id: String, id: i64 }},
+    FindByIdForUpdate {{ tenant_id: String, id: {id_type} }},
     Insert {{ record: {pascal}Record }},
     Update {{ record: {pascal}Record }},
-    Delete {{ tenant_id: String, id: i64 }},
+    Delete {{ tenant_id: String, id: {id_type} }},
     Commit {{ audit_mode: TransactionAuditMode }},
     Rollback,
 }}
@@ -47,7 +47,7 @@ pub enum {pascal}Failure {{
 #[derive(Default)]
 struct FakeState {{
     calls: Vec<{pascal}Call>,
-    records: BTreeMap<(String, i64), {pascal}Record>,
+    records: BTreeMap<(String, {id_type}), {pascal}Record>,
     failures: VecDeque<{pascal}Failure>,
     transactions: Vec<{pascal}TransactionState>,
 {owner_state}{id_state}}}
@@ -97,7 +97,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
     async fn find_by_id(
         &self,
         tenant_id: &str,
-        id: i64,
+        id: {id_type},
     ) -> AppResult<Option<{detail_type}>> {{
 {system_tenant_guard}        let mut state = self.lock();
         state.calls.push({pascal}Call::FindById {{ tenant_id: tenant_id.into(), id }});
@@ -141,7 +141,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         fail_if_requested(&mut state, {pascal}Failure::Begin)?;
         let transaction_index = state.transactions.len();
         state.transactions.push({pascal}TransactionState::Active);
-        let original: BTreeMap<i64, {pascal}Record> = state.records.iter()
+        let original: BTreeMap<{id_type}, {pascal}Record> = state.records.iter()
             .filter(|((owner, _), _)| owner == tenant_id)
             .map(|((_, id), record)| (*id, record.clone()))
             .collect();
@@ -159,8 +159,8 @@ struct FakeTransaction {{
     state: Arc<Mutex<FakeState>>,
     tenant_id: String,
     transaction_index: usize,
-    view: Mutex<BTreeMap<i64, {pascal}Record>>,
-    original: BTreeMap<i64, {pascal}Record>,
+    view: Mutex<BTreeMap<{id_type}, {pascal}Record>>,
+    original: BTreeMap<{id_type}, {pascal}Record>,
 }}
 
 impl FakeTransaction {{
@@ -176,7 +176,7 @@ impl FakeTransaction {{
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }}
 
-    fn lock_view(&self) -> MutexGuard<'_, BTreeMap<i64, {pascal}Record>> {{
+    fn lock_view(&self) -> MutexGuard<'_, BTreeMap<{id_type}, {pascal}Record>> {{
         self.view.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }}
 }}
@@ -187,7 +187,7 @@ impl {pascal}Transaction for FakeTransaction {{
     async fn find_by_id_for_update(
         &self,
         tenant_id: &str,
-        id: i64,
+        id: {id_type},
     ) -> AppResult<Option<{pascal}Record>> {{
         self.ensure_tenant(tenant_id)?;
         {{
@@ -220,7 +220,7 @@ impl {pascal}Transaction for FakeTransaction {{
         Ok(record)
     }}
 
-    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {{
+    async fn delete(&self, tenant_id: &str, id: {id_type}) -> AppResult<()> {{
         self.ensure_tenant(tenant_id)?;
         {{
             let mut state = self.lock_state();

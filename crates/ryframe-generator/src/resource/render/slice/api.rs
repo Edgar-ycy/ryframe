@@ -193,6 +193,17 @@ pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
         .unwrap_or_default();
     format!(
         include_str!("handler.rs.tpl"),
+        id_type = super::id_type(resource),
+        id_parser = if super::id_type(resource) == "u64" {
+            "parse_unsigned_id"
+        } else {
+            "parse_id"
+        },
+        id_parser_path = if super::id_type(resource) == "u64" {
+            "crate"
+        } else {
+            "crate::handler_utils"
+        },
         name = resource.name,
         list_permission = permissions.list,
         read_permission = permissions.read,

@@ -187,6 +187,10 @@ fn api_content(content: String, model_path: &str, name: &str) -> String {
             "use crate::handler_utils::parse_id;",
             "use ryframe_sdk::api::parse_id;",
         )
+        .replace(
+            "use crate::parse_unsigned_id;",
+            "use ryframe_sdk::api::parse_unsigned_id;",
+        )
         .replace("use crate::http::", "use ryframe_sdk::api::http::")
         .replace("crate::http::", "ryframe_sdk::api::http::")
         .replace("use ryframe_macro::{", "use ryframe_sdk::{")

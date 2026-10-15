@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind, ValueType};
+use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind};
 
 mod aggregate;
 pub(crate) mod business;
@@ -301,10 +301,18 @@ fn validate_relation_targets(resources: &[ResourceIr]) -> Result<(), ResourceErr
                 .iter()
                 .find(|field| field.name == "id")
                 .expect("flat_crud 目标资源已经校验 id");
-            if target_id.value_type != ValueType::I64 || target_id.nullable {
+            let local = resource
+                .fields
+                .iter()
+                .find(|field| field.name == relation.local_field)
+                .expect("关系本地字段已经校验");
+            if target_id.value_type != local.value_type || target_id.nullable {
                 return Err(ResourceError::new(
-                    format!("关系 `{}` 的目标 id 不是非空 i64", relation.name),
-                    "关系目标必须是已通过 flat_crud 校验的标准资源",
+                    format!(
+                        "关系 `{}` 的外键与目标 id 类型不一致，或目标 id 为空",
+                        relation.name
+                    ),
+                    "关系目标必须是已通过 flat_crud 校验的标准资源，外键位宽及符号须与目标主键一致",
                 )
                 .with_resource(&resource.name)
                 .with_field(&relation.local_field)

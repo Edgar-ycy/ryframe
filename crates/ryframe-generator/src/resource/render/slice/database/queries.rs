@@ -26,6 +26,7 @@ pub(crate) fn unique_conflict_mappings(resource: &ResourceIr) -> String {
 }
 
 pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
+    let id_type = super::super::id_type(resource);
     if resource.storage != StorageKind::ControlRow {
         return String::new();
     }
@@ -61,7 +62,7 @@ pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
                 })
                 .unwrap_or_default();
             format!(
-                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n{tenant_filter}{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record))\n    }}\n\n",
+                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<{id_type}>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n{tenant_filter}{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record))\n    }}\n\n",
                 method = unique_method_name(index),
                 arguments = method_arguments(&fields),
             )

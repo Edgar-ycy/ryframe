@@ -10,7 +10,7 @@ use ryframe_macro::{{delete, get, post, put, route}};
 use validator::Validate;
 
 use crate::RequestPrincipal;
-use crate::handler_utils::parse_id;
+use {id_parser_path}::{id_parser};
 use crate::http::{{ApiPageResponse, ApiResponse, HttpAppError, HttpResult}};
 
 use super::dto::{{Create{pascal}Dto, {pascal}ListQuery, {pascal}Vo{detail_import}, Update{pascal}Dto}};
@@ -79,7 +79,7 @@ pub async fn detail(
 ) -> HttpResult<Json<ApiResponse<{detail_vo}>>> {{
     let value = state
         .service
-        .find_by_id(&current_user, parse_id(&id, "id 必须是 i64 字符串")?)
+        .find_by_id(&current_user, {id_parser}(&id, "id 必须是 {id_type} 字符串")?)
         .await
         .map_err(HttpAppError::from)?
         .ok_or_else(|| HttpAppError::from(AppError::NotFound({not_found:?}.into())))?;
@@ -134,7 +134,7 @@ pub async fn update(
         .service
         .update(
             &current_user,
-            parse_id(&id, "id 必须是 i64 字符串")?,
+            {id_parser}(&id, "id 必须是 {id_type} 字符串")?,
             dto.into(),
         )
         .await
@@ -160,7 +160,7 @@ pub async fn remove(
 ) -> HttpResult<Json<ApiResponse<()>>> {{
     state
         .service
-        .delete(&current_user, parse_id(&id, "id 必须是 i64 字符串")?)
+        .delete(&current_user, {id_parser}(&id, "id 必须是 {id_type} 字符串")?)
         .await
         .map_err(HttpAppError::from)?;
     Ok(Json(ApiResponse::success_no_data()))

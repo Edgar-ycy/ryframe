@@ -106,3 +106,18 @@ fn relation_rejects_unknown_targets_cross_storage_and_non_id_fields() {
         .expect_err("字符串外键必须失败");
     assert!(error.to_string().contains("belongs_to 关系字段必须是 i64"));
 }
+
+#[test]
+fn relation_requires_matching_signedness_for_unsigned_target_ids() {
+    let mut order = related_order("id", "order");
+    order
+        .fields
+        .iter_mut()
+        .find(|field| field.name == "id")
+        .unwrap()
+        .value_type = ryframe_generator::ValueType::U64;
+    assert!(render_resources(&[order.clone()]).is_ok());
+    order.relations[0].local_field = "status".into();
+    let error = render_resources(&[order]).unwrap_err().to_string();
+    assert!(error.contains("类型不一致"));
+}

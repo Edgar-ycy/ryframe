@@ -191,6 +191,15 @@ fn import_batch(backend: &Path) {
     minimal
         .columns
         .retain(|column| !matches!(column.name.as_str(), "created_at" | "updated_at"));
+    let unsigned = minimal
+        .columns
+        .iter_mut()
+        .find(|column| column.name == "id")
+        .unwrap();
+    unsigned.rust_type = "u64".into();
+    unsigned.column_type = "bigint unsigned".into();
+    unsigned.is_auto_increment = false;
+    unsigned.extra.clear();
     let mut soft_minimal = minimal.clone();
     soft_minimal.table_name = "biz_soft_minimal".into();
     soft_minimal.schema_canonical = "fixture:biz_soft_minimal".into();
@@ -224,7 +233,9 @@ fn import_batch(backend: &Path) {
             .replace(
                 "    pub large_count: u64,",
                 "    #[resource(filter)]\n    pub large_count: u64,",
-            ),
+            )
+            .replace("pub id: i64", "pub id: u64")
+            .replace("sql_type = \"bigint\"", "sql_type = \"bigint unsigned\""),
     )
     .unwrap();
     GenerationBuilder::new(backend)

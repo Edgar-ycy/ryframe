@@ -3,6 +3,7 @@ use super::{business_index_fields, method_arguments, unique_business_indexes, un
 
 pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let id_type = super::super::id_type(resource);
     let filter_lifetime = super::super::filter_lifetime(resource, "'_");
     let filter_argument = if super::super::uses_filters(resource) {
         "filter"
@@ -66,6 +67,7 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     format!(
         include_str!("fake.rs.tpl"),
         header = header,
+        id_type = id_type,
         collections = collections,
         pascal = pascal,
         filter_lifetime = filter_lifetime,
@@ -97,14 +99,16 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
             ""
         },
         id_state = if resource.id_generation == crate::IdGeneration::AutoIncrement {
-            "    next_id: i64,\n"
+            format!("    next_id: {id_type},\n")
         } else {
-            ""
+            String::new()
         },
         auto_id = if resource.id_generation == crate::IdGeneration::AutoIncrement {
-            "            let maximum = state.records.values().map(|record| record.id).max().unwrap_or_default().max(state.next_id);\n            state.next_id = maximum.checked_add(1).ok_or_else(|| AppError::Conflict(\"自增 ID 已超出 i64 范围\".into()))?;\n            record.id = state.next_id;\n"
+            format!(
+                "            let maximum = state.records.values().map(|record| record.id).max().unwrap_or_default().max(state.next_id);\n            state.next_id = maximum.checked_add(1).ok_or_else(|| AppError::Conflict(\"自增 ID 已超出 {id_type} 范围\".into()))?;\n            record.id = state.next_id;\n"
+            )
         } else {
-            ""
+            String::new()
         },
     )
 }
@@ -165,6 +169,7 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
         return (String::new(), String::new(), String::new());
     }
     let pascal = &resource.pascal_name;
+    let id_type = super::super::id_type(resource);
     let mut calls = String::new();
     let mut failures = String::new();
     let mut methods = String::new();
@@ -196,7 +201,7 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
             .collect::<Vec<_>>()
             .join(", ");
         calls.push_str(&format!(
-            "\n    {variant} {{ tenant_id: String, {call_fields}, exclude_id: Option<i64> }},"
+            "\n    {variant} {{ tenant_id: String, {call_fields}, exclude_id: Option<{id_type}> }},"
         ));
         failures.push_str(&format!("\n    {variant},"));
         let arguments = method_arguments(&fields);
@@ -217,7 +222,7 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
             .collect::<Vec<_>>()
             .join(" && ");
         methods.push_str(&format!(
-            "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        {{\n            let mut state = self.lock_state();\n            state.calls.push({pascal}Call::{variant} {{ tenant_id: tenant_id.into(), {call_values}, exclude_id }});\n            fail_if_requested(&mut state, {pascal}Failure::{variant})?;\n        }}\n        Ok(self.lock_view().values().find(|record| exclude_id != Some(record.id) && {comparisons}).cloned())\n    }}\n\n"
+            "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<{id_type}>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        {{\n            let mut state = self.lock_state();\n            state.calls.push({pascal}Call::{variant} {{ tenant_id: tenant_id.into(), {call_values}, exclude_id }});\n            fail_if_requested(&mut state, {pascal}Failure::{variant})?;\n        }}\n        Ok(self.lock_view().values().find(|record| exclude_id != Some(record.id) && {comparisons}).cloned())\n    }}\n\n"
         ));
     }
     if resource.configuration_versioned {

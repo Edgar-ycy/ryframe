@@ -169,14 +169,19 @@ fn validate_tenant_identity(
     let id = fields
         .iter()
         .find(|field| field.name == "id")
-        .ok_or_else(|| error("flat_crud 缺少 id 字段", "声明非空 value_type=i64 的 id"))?;
-    if id.value_type != ValueType::I64 || id.nullable {
+        .ok_or_else(|| {
+            error(
+                "flat_crud 缺少 id 字段",
+                "声明非空 value_type=i64 或 u64 的 id",
+            )
+        })?;
+    if !matches!(id.value_type, ValueType::I64 | ValueType::U64) || id.nullable {
         return Err(field_error(
             resource,
             "id",
             source_path,
-            "flat_crud id 必须是非空 i64",
-            "将 id 设置为 value_type=i64、nullable=false",
+            "flat_crud id 必须是非空 i64 或 u64",
+            "将 id 设置为 value_type=i64 或 u64、nullable=false，使用字符串传输",
         ));
     }
     let expected_key: &[&str] = match spec.storage.kind {
