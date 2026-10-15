@@ -7,12 +7,16 @@ use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetKind};
 use ryframe_sdk::{BusinessMigrationScope, RyFrameBusinessModule};
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 use sea_orm::DatabaseConnection;
+#[path = "ryframe_migrate/adoption.rs"]
+mod adoption;
 #[path = "ryframe_migrate/bootstrap.rs"]
 mod bootstrap;
+#[path = "ryframe_migrate/private_artifact.rs"]
+mod private_artifact;
 #[path = "ryframe_migrate/sql_export.rs"]
 mod sql_export;
 
-const USAGE: &str = "usage:\n  ryframe-migrate control <up|verify|status>\n  ryframe-migrate tenant-data <up|verify|status> (--target <key>|--all)";
+const USAGE: &str = "用法：\n  cargo migrate -- control <up|verify|status>\n  cargo migrate -- tenant-data <up|verify|status> (--target <key>|--all)\n  cargo migrate -- <control|tenant-data> adopt --module <模块> [--target <键>] [--output .local-tests/adopt.json --write]\n  cargo migrate -- <control|tenant-data> adopt <--inspect|--apply> .local-tests/adopt.json [--target <键>] [--write]\n  接管支持 --plan：只显示任务图，不读配置、文件或数据库。";
 
 #[derive(Clone, Copy)]
 enum Operation {
@@ -32,6 +36,7 @@ enum TargetSelection {
 }
 
 enum Command {
+    Adopt(adoption::Options),
     Migrate {
         scope: MigrationScope,
         operation: Operation,
@@ -50,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (scope, operation) = match command {
         Command::Migrate { scope, operation } => (scope, operation),
         Command::ExportSql { output, write } => return sql_export::run(&output, write),
+        Command::Adopt(options) => return adoption::run(options).await,
     };
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
@@ -64,6 +70,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn parse_command(args: Vec<String>) -> Result<Command, Box<dyn std::error::Error>> {
+    if args.get(1).is_some_and(|value| value == "adopt") {
+        return adoption::parse(&args).map(Command::Adopt);
+    }
     if args.first().is_some_and(|value| value == "control")
         && args.get(1).is_some_and(|value| value == "export-sql")
     {

@@ -1,7 +1,5 @@
 # 数据
 
-`ryframe-tenant-data backup-inventory` 复用同一只读完整采集核心，必须在 `--quiesced-at <RFC3339>` 与 `--observed-at <RFC3339>` 中选择一个。前者记录外部已停止全部生产者的时间，供正式备份与导出复核；后者仅记录开始观察的时间，供受控源运行的完整前后像比较。输出只包含所选时间字段；带 `observed_at` 的库存不能用于正式备份或导出，仍须用完整前后像确认数据库和对象稳定。
-
 ## 控制库初始化 SQL
 
 需要直接导入 SQL 时使用正式导出入口：
@@ -21,10 +19,7 @@ MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入�
 
 控制库保存身份、授权、产品、租户目录、任务、文件元数据和 placement。无 `tenant_id` 的全局业务保留原表结构，默认仅系统租户可以访问，不能因开启多租户而自动共享；共享读取由明确扩展提供。租户业务数据按目标路由进入 shared-control 或独立租户库。生成的控制库业务目录包含同源完整结构，API 和 Worker 在启动服务前只读核验，缺表或漂移时拒绝启动且不自动建表；这不替代 `cargo migrate -- control verify` 对历史业务迁移账本的核验。
 
-控制库与租户库使用独立迁移 ledger：
-
-- 控制库 baseline 由 `ryframe-db` 拥有。
-- 租户 baseline 由 `ryframe-tenant-db` 拥有。
+控制库与租户库使用独立迁移账本；控制库基线由 `ryframe-db` 拥有，租户基线由 `ryframe-tenant-db` 拥有。
 
 声明为 `tenant_data` 的标准资源由生成器同步登记到 `ryframe-tenant-db/src/generated/catalog.rs`，包含复制顺序、租户主键游标、校验列和完整 schema 描述。指纹由当前编译目录和基础设施结构统一计算，初始化与 verify 逐项比对 MySQL 实际结构；未登记、缺失或结构不一致的业务表均拒绝使用。空业务目录合法，控制面资源不会进入租户复制目录。
 
@@ -32,7 +27,7 @@ MySQL 客户端应选择明确的空数据库，使用遇错即停模式导入�
 
 源码中的基线经调整后，使用 `cargo xtask data migrate baseline --write` 显式刷新迁移锁，随后通过开发指南的正式命令导出 MySQL 快照。该操作只更新仓库基线证据，不连接或重建数据库；普通检查、预览和 `cargo xtask dev` 均不会重写基线。版本阶段读取 Workspace 版本，已出现稳定版本的完整 Git 历史和 tag 会阻止通过降版本重新锁定。`v1.0.0` 及之后的已发布迁移只通过新增迁移向前升级。
 
-外部备份登记与恢复演练分别使用 `sys_backup_set`、`sys_backup_resource`、`sys_restore_run`。备份登记会同步原有租户备份点视图，验证通过的恢复演练同步备份点的演练时间。恢复校验使用当前编译期 schema、完整表内容摘要、租户 placement 与对象清单；资源 ownership 和备份登记元数据不参与业务数据摘要，隔离恢复必须保留目标自己的 ownership。
+`ryframe-tenant-data backup-inventory` 复用同一只读完整采集核心，必须在 `--quiesced-at <RFC3339>` 与 `--observed-at <RFC3339>` 中选择一个。前者记录外部已停止全部生产者的时间，供正式备份与导出复核；后者仅记录开始观察的时间，供受控源运行的完整前后像比较。输出只包含所选时间字段；带 `observed_at` 的库存不能用于正式备份或导出，仍须用完整前后像确认数据库和对象稳定。 外部备份登记与恢复演练分别使用 `sys_backup_set`、`sys_backup_resource`、`sys_restore_run`。备份登记会同步原有租户备份点视图，验证通过的恢复演练同步备份点的演练时间。恢复校验使用当前编译期 schema、完整表内容摘要、租户 placement 与对象清单；资源 ownership 和备份登记元数据不参与业务数据摘要，隔离恢复必须保留目标自己的 ownership。
 
 后台任务用单调 `claim_sequence` 关联 `sys_background_job_attempt` 中的每次领取。尝试保存当次可执行时间、领取周期起点、完成时间和闭合结果；人工重试与资源冲突退让不复用序号。租约失效只登记回收时的闭合时间，不虚构 Worker 完成时间；任务按原保留策略删除时，尝试记录随外键一同删除。
 
@@ -50,25 +45,34 @@ cargo migrate -- tenant-data verify --all
 
 已有表只能显式接管。SDK 的 `preview_business_adoption(database, scope, module, migrations)` 接收所选范围的完整注册迁移，只读验证实际表与最新模型完全一致，并绑定物理实例、库名、迁移源码及整个业务账本前像；计划仅含对象名和指纹，不含密码、默认值原文或业务行。审阅后调用 `apply_business_adoption(database, plan, migrations)`，在串行化事务中登记整个模块迁移前缀为 adopted，不执行历史 DDL、不更改业务数据。`inspect_business_adoption` 只读区分原前像和完整后像；部分登记、其他计划来源或结构漂移均报错，不补写。提交结果未知时先 inspect 原计划；完整后像再次 apply 只读确认。若首次创建账本后失败，空账本可能保留，应核对后重新预览，不能把元数据 DDL 当作可事务回滚。
 
-独立目标采用按需连接。API 启动后，在“平台管理 → 数据目标”打开指定目标的详情，执行实时连接与 schema 探测；已验证且无占用冲突的目标才会出现在租户开通和迁移的可选项中。列表刷新只读取已知健康状态，不会遍历连接所有数据库。
+命令入口先只读核验框架基线，不为未知非空库自动初始化。应先在明确空库完成框架初始化，再导入选定业务表、生成并注册匹配模型和迁移，停止 API/Worker 后接管：
+
+```powershell
+cargo migrate -- control adopt --module order --plan
+cargo migrate -- control adopt --module order
+cargo migrate -- control adopt --module order --output .local-tests/order-adopt.json --write
+cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
+cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
+cargo migrate -- control verify
+```
+
+`--module` 使用 SDK 注册模块名，例如包 `order-business` 对应 `order`。不带输出选项只向标准输出打印计划；`--output` 必须配合 `--write`，只保存新文件，数据库仍零写入。`--apply` 必须配合 `--write`，`--inspect` 不接受写入；所有计划文件位于当前后端 `.local-tests`，拒绝覆盖、链接或越界路径。租户接管将上述 `control` 改为 `tenant-data`，每次显式加 `--target business-shared`，不接受 `--all`，目标名可变但物理实例及库必须与原计划一致。`--plan` 与实际执行共用任务图，不读取配置、秘密、原计划或数据库，不创建任何文件；不能与 `--write` 混用。
+
+独立目标采用按需连接。API 启动后，在“平台管理 → 数据目标”打开指定目标的详情，执行实时连接与 schema 探测；已验证且无占用冲突的目标才会出现在租户开通和迁移的可选项中。列表刷新只读取已知健康状态，不会遍历连接所有数据库。 shared-control 目标不得重复登记；独立目标须校验物理身份、只读状态和 schema fingerprint，不能仅凭配置别名判断归属。
 
 ## 一致性
 
-授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。仅允许对可接受陈旧的列表读使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。
-
-列表排序必须带 ID tie-breaker。批量扫描使用 `id ASC` 游标和固定上界，不使用 offset 扫描大集合。
+授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。仅允许对可接受陈旧的列表读使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。列表排序必须带 ID tie-breaker。批量扫描使用 `id ASC` 游标和固定上界，不使用 offset 扫描大集合。
 
 ## 开发数据复制与性能 seed
 
-开发复制先用 `cargo xtask check recovery clone plan --input <输入清单> --output <新计划> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <计划>` 只读复核。已登记 fresh target 的准备、续作、初始化、复核和只读状态使用 `cargo xtask check recovery fresh-target ...`；`status` 从原账本派生最后成功阶段与下一合法动作，保持零写入。固定请求若已不能通过当前审阅、来源或路径等可执行条件，状态会转为 reconciliation、清空下一动作并说明阻塞，不再建议 `resume-prepare`；修复阻塞条件后才能重新核对，不改写登记请求或自动重放。输入、证据和运行目录必须位于当前后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。
+开发复制先用 `cargo xtask check recovery clone plan --input <输入清单> --output <新计划> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <计划>` 只读复核。已登记 fresh target 的准备、续作、初始化、复核和只读状态使用 `cargo xtask check recovery fresh-target ...`；`status` 从原账本派生最后成功阶段与下一合法动作，保持零写入。固定请求若已不能通过当前审阅、来源或路径等可执行条件，状态会转为 reconciliation、清空下一动作并说明阻塞，不再建议 `resume-prepare`；修复阻塞条件后才能重新核对，不改写登记请求或自动重放。输入、证据和运行目录必须位于当前后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。受控工作目录和证据路径可以使用当前后端 `.local-tests` 下的相对路径，入口会先规范化并拒绝链接或越界路径。xtask 固定当前后端目录，不接受调用方传入其他 `--backend-dir`；`status` 不接受 `--write`，其他阶段仍由私有状态机要求显式 `--write` 并核对登记、前后像与控制器身份。
 
 维护工具使用 `cargo xtask check recovery clone maintenance --operation build --output <新目录> --write` 构建，使用 `--operation verify --output <目录或build.json>` 只读复核。来源通过统一 recovery 的 source 阶段捕获。两者绑定实际 API、Worker、维护二进制、配置、源码和工具指纹；生产者必须停止，数据库关系与对象清单在采集前后保持一致。对象按 HEAD、条件 GET、再次 HEAD 的顺序核验内容和元数据，目标只允许精确 key 的条件创建；失败、竞争或未知结果保留证据，不退回无条件覆盖。
 
 复制统一使用同一私有状态机、运行目录和账本：`cargo xtask check recovery clone init` 登记来源、目标与可复用导出；`clone status` 只读展示最后成功阶段、未收尾状态和下一合法动作；`clone stage` 每次只运行明确阶段。中断后先以 `clone stage --mode reconcile` 对照原账本和完整前后像，再显式 `resume`；死亡控制器只通过绑定创建身份的 `clone recover` 回收，回收本地锁不表示远端写入成功。正式维护入口只展示 `cargo xtask check recovery` 的阶段，不把私有脚本名作为命令契约。
 
 RustFS、Redis 与 API/Worker 的重启分别使用同一运行目录下的 `storage`、`cache` 和 `runtime` 操作，绑定原配置、数据目录、产物、凭据引用、端口与进程创建身份。`status` 始终只读，变更操作要求 `--write`；无法证明归属、阶段不允许、端口被占用或出现未知资源时拒绝接管。缓存只重建登记的 ownership 与验收 sentinel，不恢复会话或锁。
-
-fresh target 的准备、续作、初始化、复核和只读状态统一从 `cargo xtask check recovery fresh-target ...` 进入。受控工作目录和证据路径可以使用当前后端 `.local-tests` 下的相对路径，入口会先规范化并拒绝链接或越界路径。xtask 固定当前后端目录，不接受调用方传入其他 `--backend-dir`；`status` 不接受 `--write`，其他阶段仍由私有状态机要求显式 `--write` 并核对登记、前后像与控制器身份。
 
 `resume-initialize` 只接受两类可证明边界：reset 已完成后的只读库存采集失败，或 `create_and_reset` 中由 `FileNotFoundError` 中断的唯一迁移命令前缀。迁移前缀必须绑定完整八阶段 reset 报告、原请求和初始化前像，已有命令按固定顺序各有一份成功收据，首个缺失操作必须是只读 `verify`。续作先执行该 `verify`，随后才按同一固定序列运行剩余操作；每条后续操作保存独立 intent、命令收据和 confirmed，原 reset、已有 `up` 与已有 `verify` 均不重放。若首次续作已经确认重启后的 Redis 标记，但首个只读命令因 Windows 长路径未能发布收据，只允许在同一服务代次、相同二进制及完整资源前像下追加一次后继；已确认标记不重复写入，后继再次失败后禁止第三次尝试。重复或越过缺口的收据、首缺写操作、未知写入、来源或未经登记的存储代次变化均失败关闭。服务已停止时先按服务 `status` 给出的合法生命周期操作恢复，再重新读取 fresh target 状态；不能直接重放初始化。
 
@@ -129,11 +133,7 @@ start 或 stop 失败后禁止重放。先执行只读 `source-generation-status
 
 ## 资源作用域
 
-每个部署配置一个稳定且唯一的 `scope_id`：
-
-- Redis key 和 channel 使用 `ryframe:{scope_id}:...`。
-- 对象 key 使用 `{scope_id}/...`。
-- MySQL、Redis 和对象存储保存并校验 ownership marker。
+每个部署配置一个稳定且唯一的 `scope_id`。Redis key 和 channel 使用 `ryframe:{scope_id}:...`，对象 key 使用 `{scope_id}/...`；MySQL、Redis 和对象存储均保存并校验 ownership marker。
 
 对象逻辑目录固定为 uploads、avatar、exports、imports 和 config-packages。禁止 `FLUSHDB`、`KEYS`、模糊 bucket 删除或自动扫描数据库服务器。
 
@@ -197,5 +197,3 @@ tls_ca = "D:/secrets/mysql-ca.pem"
 独立库复制上述目标配置，改用唯一 `key`、独立 `database` 和秘密环境变量名，并设置 `mode="dedicated"`。目标键用于迁移命令和 placement，不能用数据库名称代替。`default_target` 只决定新租户放置，已有租户使用控制库的权威记录；改变配置不会迁移既有数据。共享和独立业务目标均需租户字段，关闭多租户也不移除隔离结构。
 
 先创建空业务数据库、向 API/Worker/迁移进程提供 `password_env` 引用的秘密，再运行 `cargo migrate -- tenant-data up --target business-shared` 和 `cargo migrate -- tenant-data verify --target business-shared`。控制库仍先执行 `control up`；`--all` 只处理明确登记目标。租户目标数组可由 `APP_TENANT_DATA_TARGETS` 或 `_FILE` 完整替换。独立池按需建立，`max_open_targets` 限制单进程池数量，`max_total_connections` 限制全部目标池的连接预算，`idle_pool_secs` 控制空闲回收；API 与 Worker 各自计数。TLS 可选 `disabled/required/verify_ca/verify_identity`，远程生产使用身份校验与 CA，mTLS 的客户端证书和私钥必须成对配置；路径属于运行进程所在平台。
-
-租户目标注册、placement、fence、session、migration 和 cleanup 是 `ryframe-tenant-db` 的内部模块。shared-control 目标必须去重，独立目标必须校验物理身份、只读状态和 schema fingerprint。
