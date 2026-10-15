@@ -84,6 +84,15 @@ cargo generate -- resource --package order-business --model Order --write
 
 反向导入一次只读读取选中表，再整批预检名称、模型、文件与 `descriptors()` 显式 vec 列表，`--write` 一并写入 `resources/` 模型和注册；发生冲突整批停止，不覆盖手写模型。`--strip-table-prefix biz_` 仅改变资源、模块及类型名，保留物理表名；全局表不要求 `biz_` 前缀；租户目录仍要求该前缀。原始列类型、默认值、索引、外键及 schema 保存在 `.ryframe/imports/`。`source=primary`、`sources.legacy` 或 `tenant_data.targets.<键>` 决定只读来源，`storage=control|tenant` 决定运行范围，二者独立。当前导入建立模型起点，需确认字段用途后执行 resource，不能视为已接管原表或完成前端生成；未知类型、视图和不可读列拒绝，`tinyint(1)` 不猜测布尔。SDK 日期、JSON、精确 Decimal 可离线建模，但完整 CRUD 仍校验支持范围。Rust [示例](../crates/ryframe-generator/examples/generate.rs) 可用 `cargo run --locked -p ryframe-generator --example generate` 或 IDE 运行，导入执行需加 `--features schema-import`；Builder 的 `plan()` 默认只读，`execute()` 才执行，`.write(true)` 才更新文件。
 
+### 模型结构演进
+
+修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。
+
+- 新增可空列、带显式默认值的非空列、整数或字符串扩宽、放宽非空约束及新增索引可生成向前 DDL；唯一索引仍须先核对存量重复值。
+- 删除或重命名列、收窄类型、收紧非空约束、改变主键/表名/存储范围、调整已有列顺序或删除/修改索引只输出审阅原因，整批停止，不覆盖初始迁移或发布半批注册。非空新列没有默认值时，先用可空列分阶段回填。
+- 审阅迁移后停止生产者，再显式执行 control 或所选 tenant-data 目标的 `up` 和 `verify`。数据库被直接改动时 verify 报告漂移，生成器不会反向覆盖模型或猜测已执行状态。
+- 可空可写字段使用完整替换：创建时省略或传 null 均为空，更新时省略或传 null 均清空该字段；非空可选更新省略时保留原值。需要三态补丁时编写明确扩展。
+
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 
 租户业务资源同时生成 `generated/tenant_catalog.rs` 与 `generated/tenant_catalog.json`，包含完整列、类型、复制游标及规范化 schema。模块通过 `tenant_data_tables()` 声明生成描述，组合根在连接数据库前统一装配、核验依赖并冻结目录；同一进程再次登记只能使用相同描述。重复表、缺失描述或无效 schema 会阻止启动，不会忽略业务表。复制和恢复校验使用完整目录，并保留业务迁移账本。生成迁移同时注册模型指纹与每张表的 before/after 物理结构；手写 `SeaOrmBusinessMigration` 也必须提供 `BusinessMigrationSchema`。单条 `verify_ledger` 仅校验历史账本，整组 `verify_business_migrations(database, scope, migrations)` 接收该范围的全部注册迁移，拒绝未知账本和归属冲突，再按每张表最新状态校验实际结构，避免合法追加迁移被旧结构误判。修改模型后先通过正式生成入口更新受管资产，再显式执行业务迁移；不要手改目录或 ownership 摘要。已有表须先用 `cargo migrate -- control adopt --module <模块>` 只读预览并按[数据指南](data.md)保存、审阅、执行和核验计划；租户接管必须选择单个目标，不用 up 猜测接管。
@@ -92,7 +101,7 @@ Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继�
 
 1. 创建业务 crate、登记 `ResourceModel` 后预览生成，再用 `--write` 写入；再次预览应没有差异。
 2. 为业务模型和用例添加测试，执行 `cargo test --locked -p order-business`。先通过控制库与明确租户目标的迁移状态检查，再显式应用本模块迁移，命令见[数据指南](data.md)。
-3. 分别运行 `cargo serve` 与 `cargo worker`，确认模块路由和任务正常装配。接口变化后从后端执行 `cargo xtask generate api --write` 同步候选契约。
+3. 分别运行 `cargo serve` 与 `cargo worker`，确认模块路由和任务正常装配。接口变化后从后端执行 `cargo xtask generate api --write` 同步候选契约。OpenAPI 与数据库结构快照通过正式生成或迁移维护入口产生，不直接运行内部二进制。
 4. 在权限管理中登记生成契约声明的业务权限码，并在角色管理中授予业务角色；业务接口的生成不会自动给已有租户增加权限。需要页面入口时，在菜单管理中绑定对应权限和前端页面标识。新增权限或变更角色授权后，确认会话已取得新的授权投影，再验证接口；未授权时接口应返回 403。
 5. 在前端通过生成的 typed caller 接入业务 API；页面登记路由与 i18n namespace，查询和变更绑定当前会话 scope，方法见[前端架构说明](https://github.com/Edgar-ycy/ryframe-vue3/blob/main/ARCHITECTURE.md)。
 6. 运行前端 `corepack pnpm check --full`，再用本地 Chrome 验证业务成功、权限拒绝、租户切换和取消。只在隔离开发环境准备数据，完成后核验自己创建的数据库与对象资源。
@@ -106,22 +115,13 @@ Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继�
 1. 在自己的业务 crate 的 `extensions/` 中编写模型、用例、Repository 和 Handler；业务复杂后可自行拆成多个 crate。
 2. 通过 `ryframe-sdk` 使用事务、数据库和 HTTP 扩展接口，在该 crate 的 `module()` 中注册路由、OpenAPI 和迁移。生成骨架已通过 `.control_tables(generated::CONTROL_TABLES)` 装配当前控制库业务结构；手写模块用 `BusinessControlTableDescriptor` 提供完整规范化结构，必须与控制库资源一一对应，不能只登记表名。
 3. 覆盖业务成功和失败路径的测试，同步前端契约并联调；模块选择和请求流见[架构说明](architecture.md)。
-## API 与前后端联调
-
-接口变化后运行 `cargo xtask generate api --write`，从当前后端代码生成候选 OpenAPI 并刷新前端 operation descriptor；随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。OpenAPI 与数据库结构快照均由对应的生成或迁移维护入口产生，不直接运行内部二进制。
 ## 生产构建
 
 `cargo xtask build` 从同一构建计划依次运行三个任务：关闭默认 feature 后分别定向构建 API 和 Worker，再通过 Corepack 构建前端生产目录。每项完成后输出 Cargo 实际报告的可执行文件或完整前端目录的路径、字节数和 SHA-256；`--profile dev` 只改变构建 profile，任务边界保持不变。
 
 `cargo xtask build --plan` 渲染这份计划的依赖、有效参数、输入范围、编译覆盖和允许写入，不启动 Cargo、Corepack 或服务，也不创建目录、缓存和报告。实际执行在首个任务前和全部任务后核对前后端工作树指纹；任一来源在构建期间变化都会失败，已生成文件不能作为同源成功产物。
-## 测试与检查
+## 集成验证
 
-日常修改使用智能检查，联调完成后使用完整检查：
-
-```powershell
-cargo xtask check
-cargo xtask check --full
-```
 模块测试使用 `cargo test --locked -p <包名>`，例如 `ryframe-application` 或 `ryframe-api`。
 
 真实 MySQL 和 Redis 协议测试默认不连接外部服务；需要单独诊断时，显式启用对应的 `RYFRAME_MYSQL_INTEGRATION` 或 `RYFRAME_REDIS_INTEGRATION`，再运行 `mysql_real_protocol` 或 `redis_real_protocol` 测试目标。完整集成使用下面的统一入口。

@@ -11,6 +11,8 @@ mod format;
 pub(crate) use format::rust_assets_in_workspace;
 mod schema;
 mod slice;
+pub(crate) use schema::column_type as schema_column_type;
+pub(crate) use slice::migration::column_definition;
 pub(crate) mod tenant_catalog;
 
 const MAX_GENERATED_LINES: usize = 500;

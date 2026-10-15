@@ -236,9 +236,9 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
             .transpose()?,
         usage: FieldUsageSpec {
             create: mutable,
-            create_optional: mutable && (nullable || field.default.is_some()),
+            create_optional: mutable && !nullable && field.default.is_some(),
             update: mutable,
-            update_optional: mutable,
+            update_optional: mutable && !nullable,
             read: field.name != "tenant_id" && field.name != "del_flag",
             list: !hidden || field.primary_key || field.name == "created_at",
             filter: field.filter,

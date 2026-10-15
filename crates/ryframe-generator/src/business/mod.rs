@@ -5,6 +5,7 @@ mod catalog;
 mod format;
 mod generate;
 mod metadata;
+mod migrations;
 mod model;
 pub(crate) mod writer;
 pub(crate) use bootstrap::validate_module;

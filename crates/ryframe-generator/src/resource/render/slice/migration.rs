@@ -94,7 +94,7 @@ pub(super) fn migration_name(resource: &ResourceIr) -> String {
     format!("m_resource_initial_{}", resource.name)
 }
 
-fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -> String {
+pub(crate) fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -> String {
     let sql_type = super::super::schema::column_type(field);
     let nullability = if field.nullable { "NULL" } else { "NOT NULL" };
     let default = field

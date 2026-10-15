@@ -98,6 +98,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     );
 
     assert_migration_is_immutable(workspace.path(), &crate_root);
+    assert_incremental_generation(workspace.path(), &crate_root);
     assert_eq!(
         fs::read(workspace.path().join("Cargo.lock")).unwrap(),
         locked
@@ -244,13 +245,12 @@ fn assert_generated_business(workspace: &std::path::Path) {
 
 fn assert_migration_is_immutable(workspace: &std::path::Path, crate_root: &std::path::Path) {
     let model_path = workspace.join("order-business/src/resources/mod.rs");
-    let changed = fs::read_to_string(&model_path)
-        .expect("应读取资源模型")
-        .replace(
-            "    pub code: String,",
-            "    pub code: String,\n    pub remark: String,",
-        );
-    fs::write(model_path, changed).expect("应更新资源模型");
+    let original = fs::read_to_string(&model_path).expect("应读取资源模型");
+    let changed = original.replace(
+        "    pub code: String,",
+        "    pub code: String,\n    pub remark: String,",
+    );
+    fs::write(&model_path, changed).expect("应更新资源模型");
     let error = generate_business_package(BusinessGenerateOptions {
         current_dir: crate_root,
         package: "order-business",
@@ -258,5 +258,123 @@ fn assert_migration_is_immutable(workspace: &std::path::Path, crate_root: &std::
         write: false,
     })
     .expect_err("已生成的初始迁移不得随模型变化被覆盖");
-    assert!(error.to_string().contains("禁止覆盖"), "实际错误：{error}");
+    assert!(
+        error.to_string().contains("人工审阅") && error.to_string().contains("回填"),
+        "实际错误：{error}"
+    );
+    fs::write(model_path, original).unwrap();
+}
+
+fn assert_incremental_generation(workspace: &std::path::Path, crate_root: &std::path::Path) {
+    let root = workspace.join("order-business");
+    let model = root.join("src/resources/mod.rs");
+    let initial = root.join("migrations/m_resource_initial_order.rs");
+    let initial_bytes = fs::read(&initial).unwrap();
+    let original = fs::read_to_string(&model).unwrap();
+    fs::write(&model, original.replace("    pub code: String,", "    pub code: String,\n    pub remark: Option<String>,\n    #[resource(default = \"0\")]\n    pub amount: i32,")).unwrap();
+    let preview = generate_business_package(BusinessGenerateOptions {
+        current_dir: crate_root,
+        package: "order-business",
+        models: &[],
+        write: false,
+    })
+    .unwrap();
+    let first = preview
+        .created
+        .iter()
+        .find(|path| path.starts_with("migrations/"))
+        .unwrap()
+        .clone();
+    assert!(first.contains("_r000001_"));
+    assert!(!root.join(&first).exists());
+    assert!(
+        !preview
+            .updated
+            .iter()
+            .any(|path| path.starts_with("migrations/"))
+    );
+    let written = generate_business_package(BusinessGenerateOptions {
+        current_dir: crate_root,
+        package: "order-business",
+        models: &[],
+        write: true,
+    })
+    .unwrap();
+    assert_eq!(written.created, preview.created);
+    assert_eq!(fs::read(&initial).unwrap(), initial_bytes);
+    let first_bytes = fs::read(root.join(&first)).unwrap();
+    let source = String::from_utf8(first_bytes.clone()).unwrap();
+    assert!(source.contains("ADD COLUMN `remark` VARCHAR(255) NULL AFTER `code`"));
+    assert!(source.contains("ADD COLUMN `amount` INT NOT NULL DEFAULT 0 AFTER `remark`"));
+    fs::write(
+        &model,
+        fs::read_to_string(&model)
+            .unwrap()
+            .replace("pub amount: i32", "pub amount: i64"),
+    )
+    .unwrap();
+    let second = generate_business_package(BusinessGenerateOptions {
+        current_dir: crate_root,
+        package: "order-business",
+        models: &[],
+        write: true,
+    })
+    .unwrap();
+    let second = second
+        .created
+        .iter()
+        .find(|path| path.starts_with("migrations/"))
+        .unwrap();
+    assert!(second.contains("_r000002_"));
+    assert!(
+        fs::read_to_string(root.join(second))
+            .unwrap()
+            .contains("MODIFY COLUMN `amount` BIGINT NOT NULL DEFAULT 0")
+    );
+    assert_eq!(fs::read(&initial).unwrap(), initial_bytes);
+    assert_eq!(fs::read(root.join(first)).unwrap(), first_bytes);
+    let registry = fs::read_to_string(root.join("src/generated/migrations/mod.rs")).unwrap();
+    assert_eq!(registry.matches("with_initialization_sql").count(), 3);
+    assert_eq!(registry.matches("before_fingerprint: Some(").count(), 2);
+    let repeat = generate_business_package(BusinessGenerateOptions {
+        current_dir: crate_root,
+        package: "order-business",
+        models: &[],
+        write: true,
+    })
+    .unwrap();
+    assert!(repeat.created.is_empty() && repeat.updated.is_empty() && repeat.removed.is_empty());
+    assert_drop_requires_review(crate_root, &root, &model);
+}
+
+fn assert_drop_requires_review(
+    crate_root: &std::path::Path,
+    root: &std::path::Path,
+    model: &std::path::Path,
+) {
+    let ownership = fs::read(root.join(".ryframe/generated.toml")).unwrap();
+    fs::write(
+        model,
+        fs::read_to_string(model)
+            .unwrap()
+            .replace("    pub remark: Option<String>,\n", ""),
+    )
+    .unwrap();
+    let removed = generate_business_package(BusinessGenerateOptions {
+        current_dir: crate_root,
+        package: "order-business",
+        models: &[],
+        write: true,
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(
+        removed.contains("人工审阅")
+            && removed.contains("remark")
+            && removed.contains("删除或重命名")
+    );
+    assert_eq!(
+        fs::read(root.join(".ryframe/generated.toml")).unwrap(),
+        ownership
+    );
 }

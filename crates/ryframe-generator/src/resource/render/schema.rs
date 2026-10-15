@@ -1,7 +1,7 @@
 use super::super::{FieldIr, ValueType};
 
 /// DDL 与复制目录共用列类型，避免同一字段生成两种结构。
-pub(super) fn column_type(field: &FieldIr) -> String {
+pub(crate) fn column_type(field: &FieldIr) -> String {
     match field.value_type {
         ValueType::String => {
             let enum_length = field

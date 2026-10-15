@@ -169,6 +169,11 @@ pub(super) fn install_assets(
     Ok(report)
 }
 
+pub(super) fn verify_package(package: &BusinessPackage) -> Result<(), ResourceError> {
+    let (manifest, _) = load_manifest(&package.root.join(OWNERSHIP_PATH))?;
+    verify_owned_files(&package.root, &manifest)
+}
+
 fn merge_entries(
     old: &OwnershipManifest,
     selected: &BTreeSet<String>,

@@ -38,6 +38,7 @@ pub(super) fn verify(backend: &Path, target: &Path) {
     assert!(!report.created.is_empty());
     verify_selected_generation(backend);
     import_batch(backend);
+    verify_incremental_generation(backend);
     let repeat = generate_business_package(BusinessGenerateOptions {
         current_dir: backend,
         package: "invoice-business",
@@ -78,6 +79,67 @@ pub(super) fn verify(backend: &Path, target: &Path) {
         .output()
         .unwrap();
     super::assert_command_succeeded("业务 crate 与装配代码格式", &formatted);
+    let output = Command::new("cargo")
+        .args([
+            "test",
+            "--locked",
+            "--offline",
+            "-p",
+            "invoice-business",
+            "--no-default-features",
+            "--features",
+            "api",
+            "--test",
+            "nullable_contract",
+            "--jobs",
+            "4",
+        ])
+        .current_dir(backend)
+        .env("CARGO_TARGET_DIR", target)
+        .output()
+        .unwrap();
+    super::assert_command_succeeded("业务可空字段的真实 DTO 契约", &output);
+}
+
+fn verify_incremental_generation(backend: &Path) {
+    let root = backend.join("crates/invoice-business");
+    let model = root.join("src/resources/mod.rs");
+    let initial = root.join("migrations/m_resource_initial_global_item.rs");
+    let bytes = fs::read(&initial).unwrap();
+    fs::write(&model, fs::read_to_string(&model).unwrap().replace("    pub code: String,", "    pub code: String,\n    pub memo: Option<String>,\n    #[resource(default = \"0\")]\n    pub amount: i32,")).unwrap();
+    GenerationBuilder::new(backend)
+        .operation(GenerationOperation::Resource)
+        .package("invoice-business")
+        .write(true)
+        .plan()
+        .unwrap()
+        .execute()
+        .expect("模型增量生成应追加控制库及租户库迁移");
+    assert_eq!(fs::read(&initial).unwrap(), bytes);
+    assert_eq!(fs::read_dir(root.join("migrations")).unwrap().count(), 8);
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(root.join("tests/nullable_contract.rs"), r#"use invoice_business::generated::dto::global_item::{CreateGlobalItemDto, UpdateGlobalItemDto};
+use ryframe_sdk::serde_json::{self, json};
+
+#[test]
+fn nullable_values_follow_complete_replacement_contract() {
+    let missing: CreateGlobalItemDto = serde_json::from_value(json!({"code":"first"})).unwrap();
+    assert!(missing.memo.is_none());
+    let empty: UpdateGlobalItemDto = serde_json::from_value(json!({"memo":null})).unwrap();
+    assert!(empty.memo.is_none());
+    let value: UpdateGlobalItemDto = serde_json::from_value(json!({"memo":"text"})).unwrap();
+    assert_eq!(value.memo.as_deref(), Some("text"));
+    let omitted: UpdateGlobalItemDto = serde_json::from_value(json!({})).unwrap();
+    assert!(omitted.memo.is_none());
+}
+"#).unwrap();
+    let formatted = Command::new("rustfmt")
+        .args(["--edition", "2024"])
+        .arg(root.join("tests/nullable_contract.rs"))
+        .current_dir(backend)
+        .output()
+        .unwrap();
+    super::assert_command_succeeded("业务 DTO 测试夹具格式", &formatted);
 }
 
 fn verify_selected_generation(backend: &Path) {

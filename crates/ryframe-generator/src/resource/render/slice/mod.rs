@@ -2,7 +2,7 @@ mod api;
 mod application;
 mod database;
 mod frontend;
-mod migration;
+pub(super) mod migration;
 
 use super::super::{FieldIr, IndexIr, ResourceIr, StorageKind, ValueType};
 
