@@ -31,7 +31,7 @@ pub use baseline_contract::ddl_statements as control_ddl_statements;
 pub use bootstrap::BootstrapHashes;
 pub use schema::{
     expected_extra, extract_column_type, normalize_check_clause, normalize_column_type,
-    register_business_tables, verify_current_schema,
+    register_business_tables, verify_business_schema, verify_current_schema,
 };
 #[cfg(feature = "migration")]
 pub use seeder::{

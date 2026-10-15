@@ -81,3 +81,56 @@ fn tenant_resources_require_complete_matching_catalog() {
         .build();
     assert!(validate_modules(&[duplicate]).is_err());
 }
+
+#[derive(ResourceModel)]
+#[resource(name = "global_item", table = "global_item", database = "control")]
+pub struct GlobalItem {
+    #[resource(primary_key)]
+    pub id: i64,
+    pub name: String,
+}
+
+#[test]
+fn control_resources_require_complete_current_schema_catalog_without_migration_features() {
+    use ryframe_sdk::BusinessControlTableDescriptor;
+    let descriptor = GlobalItem::descriptor();
+    let table = BusinessControlTableDescriptor {
+        table: "global_item",
+        schema_canonical: "current-schema",
+    };
+    let missing = BusinessModuleBuilder::new("global")
+        .resources([descriptor])
+        .build();
+    assert!(
+        validate_modules(&[missing])
+            .unwrap_err()
+            .to_string()
+            .contains("控制库资源")
+    );
+    let complete = BusinessModuleBuilder::new("global")
+        .resources([descriptor])
+        .control_tables(&[BusinessControlTableDescriptor {
+            table: "global_item",
+            schema_canonical: "current-schema",
+        }])
+        .build();
+    assert!(validate_modules(&[complete]).is_ok());
+    for tables in [
+        vec![table, table],
+        vec![BusinessControlTableDescriptor {
+            schema_canonical: "",
+            ..table
+        }],
+        vec![BusinessControlTableDescriptor {
+            table: "other",
+            ..table
+        }],
+    ] {
+        let tables = Box::leak(tables.into_boxed_slice());
+        let invalid = BusinessModuleBuilder::new("global")
+            .resources([descriptor])
+            .control_tables(tables)
+            .build();
+        assert!(validate_modules(&[invalid]).is_err());
+    }
+}

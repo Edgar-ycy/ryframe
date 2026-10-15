@@ -5,7 +5,7 @@
 //! 二进制共用此处，禁止各进程维护不同的模块列表。
 
 use ryframe_kernel::AppResult;
-use ryframe_sdk::{ResourceDatabase, RyFrameBusinessModule, sort_modules};
+use ryframe_sdk::{RyFrameBusinessModule, sort_modules};
 
 /// 当前应用显式启用的业务模块。RyFrame 官方仓库默认不内置任何业务模块。
 pub fn business_modules() -> Vec<RyFrameBusinessModule> {
@@ -17,10 +17,9 @@ pub fn registered_business_modules() -> AppResult<Vec<RyFrameBusinessModule>> {
     sort_modules(&mut modules)?;
     ryframe_db::migration::register_business_tables(modules.iter().flat_map(|module| {
         module
-            .resources()
+            .control_tables()
             .iter()
-            .filter(|resource| resource.database == ResourceDatabase::Control)
-            .map(|resource| resource.table)
+            .map(|table| (table.table, table.schema_canonical))
     }))
     .map_err(|error| ryframe_kernel::AppError::Config(error.to_string()))?;
     ryframe_tenant_db::migration::register_business_catalog(

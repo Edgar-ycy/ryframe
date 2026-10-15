@@ -12,7 +12,7 @@ use ryframe_tenant_db::TenantDatabaseRouter;
 
 #[cfg(feature = "migration")]
 use crate::BusinessMigration;
-use crate::{ResourceDescriptor, TenantDataTableDescriptor};
+use crate::{BusinessControlTableDescriptor, ResourceDescriptor, TenantDataTableDescriptor};
 #[cfg(any(feature = "api", feature = "migration"))]
 use std::sync::Arc;
 
@@ -35,6 +35,7 @@ pub struct RyFrameBusinessModule {
     dependencies: &'static [&'static str],
     resources: Vec<ResourceDescriptor>,
     tenant_data_tables: &'static [TenantDataTableDescriptor],
+    control_tables: &'static [BusinessControlTableDescriptor],
     #[cfg(feature = "api")]
     router: Option<BusinessRouterFactory>,
     #[cfg(feature = "api")]
@@ -57,6 +58,9 @@ impl RyFrameBusinessModule {
     }
     pub fn tenant_data_tables(&self) -> &'static [TenantDataTableDescriptor] {
         self.tenant_data_tables
+    }
+    pub fn control_tables(&self) -> &'static [BusinessControlTableDescriptor] {
+        self.control_tables
     }
 
     #[cfg(feature = "api")]
@@ -88,6 +92,7 @@ impl BusinessModuleBuilder {
                 dependencies: &[],
                 resources: Vec::new(),
                 tenant_data_tables: &[],
+                control_tables: &[],
                 #[cfg(feature = "api")]
                 router: None,
                 #[cfg(feature = "api")]
@@ -113,6 +118,10 @@ impl BusinessModuleBuilder {
     }
     pub fn tenant_data_tables(mut self, tables: &'static [TenantDataTableDescriptor]) -> Self {
         self.module.tenant_data_tables = tables;
+        self
+    }
+    pub fn control_tables(mut self, tables: &'static [BusinessControlTableDescriptor]) -> Self {
+        self.module.control_tables = tables;
         self
     }
 
@@ -292,6 +301,7 @@ pub fn sort_modules(modules: &mut [RyFrameBusinessModule]) -> AppResult<()> {
 }
 
 fn validate_module(module: &RyFrameBusinessModule) -> AppResult<()> {
+    crate::control_catalog::validate_catalog(module)?;
     crate::tenant_catalog::validate_catalog(module)?;
     #[cfg(feature = "migration")]
     crate::migration::validate_migrations(

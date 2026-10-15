@@ -3,6 +3,8 @@
 //! 业务 crate 依赖本 crate，主程序再显式依赖并注册业务 crate，避免业务代码与
 //! RyFrame 组合根形成 Cargo 循环依赖。
 
+#[cfg(feature = "runtime")]
+mod control_catalog;
 #[cfg(feature = "migration")]
 mod migration;
 #[cfg(feature = "runtime")]
@@ -15,6 +17,8 @@ mod tenant_catalog;
 
 #[cfg(feature = "persistence")]
 pub use async_trait::async_trait;
+#[cfg(feature = "runtime")]
+pub use control_catalog::BusinessControlTableDescriptor;
 #[cfg(feature = "migration")]
 pub use migration::{
     BusinessMigration, BusinessMigrationSchema, BusinessMigrationScope, BusinessTableSchema,

@@ -104,7 +104,7 @@ Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继�
 不能由标准资源表达的流程按以下顺序实现：
 
 1. 在自己的业务 crate 的 `extensions/` 中编写模型、用例、Repository 和 Handler；业务复杂后可自行拆成多个 crate。
-2. 通过 `ryframe-sdk` 使用事务、数据库和 HTTP 扩展接口，在该 crate 的 `module()` 中注册路由、OpenAPI 和迁移。
+2. 通过 `ryframe-sdk` 使用事务、数据库和 HTTP 扩展接口，在该 crate 的 `module()` 中注册路由、OpenAPI 和迁移。生成骨架已通过 `.control_tables(generated::CONTROL_TABLES)` 装配当前控制库业务结构；手写模块用 `BusinessControlTableDescriptor` 提供完整规范化结构，必须与控制库资源一一对应，不能只登记表名。
 3. 覆盖业务成功和失败路径的测试，同步前端契约并联调；模块选择和请求流见[架构说明](architecture.md)。
 ## API 与前后端联调
 

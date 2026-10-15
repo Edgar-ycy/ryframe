@@ -91,8 +91,40 @@ fn missing_empty_and_duplicate_sql_descriptions_fail_before_export() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_business_schema_verification_is_read_only_and_rejects_drift() {
+    use ryframe_db::migration::{register_business_tables, verify_business_schema};
+    register_business_tables([("biz_sql_example", TABLE_SCHEMA)]).unwrap();
+    mysql::run_mysql_test("businessruntime", |database| async move {
+        let missing = verify_business_schema(&database).await.unwrap_err().to_string();
+        assert!(missing.contains("biz_sql_example") && missing.contains("control verify"));
+        mysql::execute(&database, DDL).await?;
+        verify_business_schema(&database).await.map_err(mysql::db_error)?;
+        assert!(register_business_tables([("biz_sql_example", AFTER_SCHEMA), ("invalid_table", "invalid")]).is_err());
+        assert!(register_business_tables([("biz_sql_example", TABLE_SCHEMA), ("biz_sql_example", TABLE_SCHEMA)]).is_err());
+        assert!(register_business_tables([("sys_user", TABLE_SCHEMA)]).is_err());
+        verify_business_schema(&database).await.map_err(mysql::db_error)?;
+        mysql::execute(&database, "INSERT INTO biz_sql_example(code) VALUES ('keep-runtime-data')").await?;
+        mysql::execute(&database, "ALTER TABLE biz_sql_example MODIFY code VARCHAR(64) NOT NULL DEFAULT 'do-not-print-this-value'").await?;
+        let before = (
+            ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?,
+            business_rows(&database).await?,
+        );
+        let drift = verify_business_schema(&database).await.unwrap_err().to_string();
+        assert!(drift.contains("biz_sql_example") && drift.contains("code") && drift.contains("默认值"));
+        assert!(!drift.contains("do-not-print-this-value"));
+        assert_eq!((
+            ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?,
+            business_rows(&database).await?,
+        ), before);
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_sql_example WHERE code='keep-runtime-data'", 1).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ryframe_business_migration'", 0).await?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
-    ryframe_db::migration::register_business_tables(["biz_sql_example"]).unwrap();
+    ryframe_db::migration::register_business_tables([("biz_sql_example", TABLE_SCHEMA)]).unwrap();
     mysql::run_mysql_test("businesssql", |imported| async move {
         let migration = migration(false).with_initialization_sql(&[DDL]);
         let statements =
@@ -296,6 +328,24 @@ async fn latest_table_contract_accepts_roll_forward_without_rechecking_historica
         Ok(())
     })
     .await;
+}
+
+async fn business_rows(database: &DatabaseConnection) -> Result<Vec<(i64, String)>, String> {
+    database
+        .query_all_raw(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT id,code FROM biz_sql_example ORDER BY id",
+        ))
+        .await
+        .map_err(mysql::db_error)?
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("", "id").map_err(mysql::db_error)?,
+                row.try_get("", "code").map_err(mysql::db_error)?,
+            ))
+        })
+        .collect()
 }
 
 async fn inventory(database: &DatabaseConnection) -> Result<Vec<Vec<String>>, String> {

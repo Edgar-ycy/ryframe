@@ -51,6 +51,9 @@ pub async fn prepare(
     install_database_metrics(database);
     apply_migration(database, config.database.migration_mode, startup).await?;
     verify_schema(database, startup.process).await?;
+    ryframe_db::migration::verify_business_schema(database.write())
+        .await
+        .map_err(|error| AppError::Database(format!("控制库业务结构启动校验失败：{error}")))?;
 
     let tenant_database_router = Arc::new(tenant_data::build_router(database.clone(), config)?);
     tenant_data::verify_current_targets(
