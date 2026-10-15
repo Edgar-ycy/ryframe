@@ -106,7 +106,7 @@ fn verify_incremental_generation(backend: &Path) {
     let model = root.join("src/resources/mod.rs");
     let initial = root.join("migrations/m_resource_initial_global_item.rs");
     let bytes = fs::read(&initial).unwrap();
-    fs::write(&model, fs::read_to_string(&model).unwrap().replace("    pub code: String,", "    pub code: String,\n    #[resource(sql_type = \"TEXT\")]\n    pub memo: Option<String>,\n    #[resource(default = \"0\")]\n    pub amount: i32,")).unwrap();
+    fs::write(&model, fs::read_to_string(&model).unwrap().replace("    pub code: String,", "    pub code: String,\n    #[resource(sql_type = \"TEXT\")]\n    pub memo: Option<String>,\n    #[resource(default = \"0\", filter)]\n    pub amount: i32,")).unwrap();
     GenerationBuilder::new(backend)
         .operation(GenerationOperation::Resource)
         .package("invoice-business")
@@ -117,40 +117,29 @@ fn verify_incremental_generation(backend: &Path) {
         .expect("模型增量生成应追加控制库及租户库迁移");
     assert_eq!(fs::read(&initial).unwrap(), bytes);
     assert_eq!(fs::read_dir(root.join("migrations")).unwrap().count(), 8);
+    fs::write(
+        &model,
+        fs::read_to_string(&model)
+            .unwrap()
+            .replace("pub amount: i32", "pub amount: i64"),
+    )
+    .unwrap();
+    GenerationBuilder::new(backend)
+        .operation(GenerationOperation::Resource)
+        .package("invoice-business")
+        .write(true)
+        .plan()
+        .unwrap()
+        .execute()
+        .expect("真实业务模型须完成 i32 到 i64 的第二次扩宽，再验证精确字符串 DTO");
+    assert_eq!(fs::read(&initial).unwrap(), bytes);
+    assert_eq!(fs::read_dir(root.join("migrations")).unwrap().count(), 10);
     fs::create_dir_all(root.join("tests")).unwrap();
-    fs::write(root.join("tests/nullable_contract.rs"), r#"use invoice_business::generated::dto::global_item::{CreateGlobalItemDto, UpdateGlobalItemDto};
-use ryframe_sdk::serde_json::{self, json};
-use ryframe_sdk::validator::Validate;
-
-#[test]
-fn nullable_values_follow_complete_replacement_contract() {
-    let missing: CreateGlobalItemDto = serde_json::from_value(json!({"code":"first"})).unwrap();
-    assert!(missing.memo.is_none());
-    let empty: UpdateGlobalItemDto = serde_json::from_value(json!({"memo":null})).unwrap();
-    assert!(empty.memo.is_none());
-    let value: UpdateGlobalItemDto = serde_json::from_value(json!({"memo":"text"})).unwrap();
-    assert_eq!(value.memo.as_deref(), Some("text"));
-    let omitted: UpdateGlobalItemDto = serde_json::from_value(json!({})).unwrap();
-    assert!(omitted.memo.is_none());
-}
-
-#[test]
-fn imported_integer_dtos_accept_boundaries_and_reject_overflow() {
-    use invoice_business::generated::dto::memo::{CreateMemoDto, UpdateMemoDto};
-    let body = json!({"code":"first", "status":1, "tiny_count":-128, "small_count":-32768, "byte_count":255, "short_count":65535, "count":4294967295u32});
-    let input: CreateMemoDto = serde_json::from_value(body.clone()).unwrap();
-    input.validate().unwrap();
-    assert_eq!((input.tiny_count,input.small_count,input.byte_count,input.short_count,input.count),(-128,-32768,255,65535,u32::MAX));
-    for (field, invalid) in [("tiny_count",-129i64),("small_count",32768),("byte_count",-1),("short_count",65536),("count",4294967296)] {
-        let mut bad = body.clone();
-        bad[field] = json!(invalid);
-        assert!(serde_json::from_value::<CreateMemoDto>(bad).is_err(),"{field}");
-    }
-    let update: UpdateMemoDto = serde_json::from_value(json!({"count":4294967295u32})).unwrap();
-    update.validate().unwrap();
-    assert_eq!(update.count,Some(u32::MAX));
-}
-"#).unwrap();
+    fs::write(
+        root.join("tests/nullable_contract.rs"),
+        include_str!("../fixtures/business_dto_contract.rs"),
+    )
+    .unwrap();
     let formatted = Command::new("rustfmt")
         .args(["--edition", "2024"])
         .arg(root.join("tests/nullable_contract.rs"))

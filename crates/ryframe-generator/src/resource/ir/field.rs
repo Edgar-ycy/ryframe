@@ -200,6 +200,19 @@ fn validate_widgets(
     field: &FieldSpec,
 ) -> Result<(), ResourceError> {
     if (field.usage.create || field.usage.update)
+        && field.value_type == ValueType::I64
+        && field.wire_type == Some(ValueType::String)
+        && matches!(field.widget, WidgetSpec::Number)
+    {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "字符串传输的 i64 不能使用 number 控件，否则可能丢失精度",
+            "使用 text 或有限枚举 select，保持表单、JSON 和 Rust 整数的十进制字符串一致",
+        ));
+    }
+    if (field.usage.create || field.usage.update)
         && !matches!(
             field.widget,
             WidgetSpec::Text | WidgetSpec::Number | WidgetSpec::Select

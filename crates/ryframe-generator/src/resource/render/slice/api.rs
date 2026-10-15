@@ -40,17 +40,28 @@ fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
             field.usage.update
         }
     }) {
-        if let Some(attribute) = validation_attribute(field) {
-            output.push_str(&format!("    {attribute}\n"));
-        }
-        if let Some(attribute) = schema_attribute(field) {
-            output.push_str(&format!("    {attribute}\n"));
-        }
-        let optional = if create {
+        let optional = (if create {
             field.usage.create_optional
         } else {
             field.usage.update_optional
-        } || field.nullable;
+        }) || field.nullable;
+        if let Some(attribute) = validation_attribute(field) {
+            output.push_str(&format!("    {attribute}\n"));
+        }
+        if let Some(attribute) = schema_attribute(field, optional) {
+            output.push_str(&format!("    {attribute}\n"));
+        }
+        if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+            let function = if optional {
+                "deserialize_optional_i64"
+            } else {
+                "deserialize_i64"
+            };
+            let default = if optional { "default, " } else { "" };
+            output.push_str(&format!(
+                "    #[serde({default}deserialize_with = \"crate::http::integer::{function}\")]\n"
+            ));
+        }
         let value_type = rust_base_type(field.value_type);
         let value_type = if optional {
             format!("Option<{value_type}>")
@@ -275,7 +286,7 @@ fn wire_type(field: &FieldIr) -> String {
 fn filter_conversion(field: &FieldIr) -> String {
     if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
         format!(
-            "self.{0}.map(|value| value.parse::<i64>().map_err(|_| ryframe_kernel::AppError::Validation(\"{0} 必须是 i64 字符串\".into()))).transpose()?",
+            "self.{0}.map(|value| crate::http::integer::parse_i64(&value).map_err(|_| ryframe_kernel::AppError::Validation(\"{0} 必须是 i64 范围内的规范十进制字符串\".into()))).transpose()?",
             field.name
         )
     } else {

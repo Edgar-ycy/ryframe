@@ -4,6 +4,8 @@ mod api_contract;
 mod catalog_contract;
 #[path = "api_contracts/id_parser_contract.rs"]
 mod id_parser_contract;
+#[path = "api_contracts/integer_wire_contract.rs"]
+mod integer_wire_contract;
 #[path = "api_contracts/middleware_response_contract.rs"]
 mod middleware_response_contract;
 #[path = "api_contracts/runtime_contract.rs"]

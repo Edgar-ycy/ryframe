@@ -147,7 +147,7 @@ fn render_presentation(resource: &ResourceIr, form_fields: &[&FieldIr], output: 
                 output,
                 &[
                     format!("label: translate({:?}, {:?})", labels.zh_cn, labels.en),
-                    format!("value: {}", ts_enum_value(value, field.value_type)),
+                    format!("value: {}", ts_enum_value(value, field)),
                 ],
             );
         }
@@ -217,10 +217,7 @@ fn render_columns(resource: &ResourceIr, output: &mut String) {
             let positive = field.enum_values.keys().last().expect("枚举非空");
             properties.push("display: 'status'".into());
             properties.push(format!("options: {}Options", field.name));
-            properties.push(format!(
-                "positiveValue: {}",
-                ts_enum_value(positive, field.value_type)
-            ));
+            properties.push(format!("positiveValue: {}", ts_enum_value(positive, field)));
         } else if matches!(field.value_type, ValueType::DateTime) {
             properties.push("display: 'datetime'".into());
             properties.push("format: formatDate".into());
@@ -314,13 +311,25 @@ fn render_crud_resource(resource: &ResourceIr, form_fields: &[&FieldIr], output:
         .fields
         .iter()
         .filter(|field| field.usage.create)
-        .map(|field| format!("      {}: form.{},\n", field.name, field.name))
+        .map(|field| {
+            format!(
+                "      {}: {},\n",
+                field.name,
+                form_input(field, field.usage.create_optional)
+            )
+        })
         .collect::<String>();
     let update_input = resource
         .fields
         .iter()
         .filter(|field| field.usage.update)
-        .map(|field| format!("      {}: form.{},\n", field.name, field.name))
+        .map(|field| {
+            format!(
+                "      {}: {},\n",
+                field.name,
+                form_input(field, field.usage.update_optional)
+            )
+        })
         .collect::<String>();
     let record_id = resource
         .primary_key
@@ -459,6 +468,9 @@ fn push_typescript_object(output: &mut String, properties: &[String]) {
 }
 
 fn ts_default(field: &FieldIr) -> &'static str {
+    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+        return "''";
+    }
     match field.value_type {
         ValueType::String | ValueType::Date | ValueType::DateTime => "''",
         ValueType::I8
@@ -474,8 +486,11 @@ fn ts_default(field: &FieldIr) -> &'static str {
     }
 }
 
-fn ts_enum_value(value: &str, value_type: ValueType) -> String {
-    match value_type {
+fn ts_enum_value(value: &str, field: &FieldIr) -> String {
+    if field.wire_type == ValueType::String {
+        return format!("{value:?}");
+    }
+    match field.value_type {
         value_type
             if (value_type.integer_bounds().is_some() || value_type == ValueType::Decimal)
                 && value.parse::<f64>().is_ok() =>
@@ -485,6 +500,19 @@ fn ts_enum_value(value: &str, value_type: ValueType) -> String {
         ValueType::Bool if matches!(value, "true" | "false") => value.to_owned(),
         _ => format!("{value:?}"),
     }
+}
+
+fn form_input(field: &FieldIr, optional: bool) -> String {
+    let value = format!("form.{}", field.name);
+    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+        if field.nullable {
+            return format!("{value} === '' ? null : {value}");
+        }
+        if optional {
+            return format!("{value} === '' ? undefined : {value}");
+        }
+    }
+    value
 }
 
 fn form_widget(field: &FieldIr) -> &'static str {

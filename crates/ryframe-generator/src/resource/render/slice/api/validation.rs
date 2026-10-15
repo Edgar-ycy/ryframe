@@ -149,8 +149,16 @@ fn numeric_bound(value: i64, value_type: ValueType) -> String {
     }
 }
 
-pub(super) fn schema_attribute(field: &FieldIr) -> Option<String> {
+pub(super) fn schema_attribute(field: &FieldIr, optional: bool) -> Option<String> {
     let mut parts = Vec::new();
+    if field.value_type == ValueType::I64 && field.wire_type == ValueType::String {
+        parts.push(if optional {
+            "value_type = Option<String>".into()
+        } else {
+            "value_type = String".into()
+        });
+        parts.push("pattern = r\"^(?:0|-?[1-9][0-9]*)$\"".into());
+    }
     if let Some(minimum) = field.validation.min_utf8_bytes {
         parts.push(format!("min_length = {minimum}"));
     }

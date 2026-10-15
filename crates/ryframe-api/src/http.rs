@@ -13,6 +13,8 @@ use serde::Serialize;
 use std::fmt;
 use validator::ValidationErrors;
 
+pub mod integer;
+
 /// 当前公开 API 的唯一 URL 前缀。
 pub const API_PREFIX: &str = "/api/v1";
 

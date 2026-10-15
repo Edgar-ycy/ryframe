@@ -264,10 +264,10 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
                 ValueType::I8
                 | ValueType::I16
                 | ValueType::I32
-                | ValueType::I64
                 | ValueType::U8
                 | ValueType::U16
                 | ValueType::U32 => WidgetSpec::Number,
+                ValueType::I64 => WidgetSpec::Text,
                 ValueType::Bool => WidgetSpec::Switch,
                 ValueType::Date => WidgetSpec::Date,
                 ValueType::DateTime => WidgetSpec::DateTime,

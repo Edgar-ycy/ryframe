@@ -177,3 +177,43 @@ fn integer_enum_keys_must_fit_the_physical_range_and_explicit_validation() {
             .contains("枚举键")
     );
 }
+
+#[test]
+fn signed_i64_string_wire_stays_text_in_dto_schema_form_and_enum_options() {
+    let mut input = spec(ValueType::I64);
+    let field = input
+        .fields
+        .iter_mut()
+        .find(|field| field.name == "status")
+        .unwrap();
+    field.wire_type = Some(ValueType::String);
+    let resource = normalize_resource(input.clone(), "order.toml", "exact").unwrap();
+    let generated = render_resources(&[resource]).unwrap();
+    let content = |suffix: &str| {
+        &generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with(suffix))
+            .unwrap()
+            .content
+    };
+    assert!(content("order/dto.rs").contains("deserialize_optional_i64"));
+    assert!(content("order/dto.rs").contains("value_type = Option<String>"));
+    assert!(content("order/dto.rs").contains("crate::http::integer::parse_i64"));
+    let form = content("order/fields.ts");
+    assert!(form.contains("value: \"1\"") && !form.contains("value: 1,"));
+    assert!(form.contains("status: ''"));
+    assert!(form.contains("form.status === '' ? undefined : form.status"));
+    let field = input
+        .fields
+        .iter_mut()
+        .find(|field| field.name == "status")
+        .unwrap();
+    field.widget = ryframe_generator::WidgetSpec::Number;
+    assert!(
+        normalize_resource(input, "order.toml", "unsafe-widget")
+            .unwrap_err()
+            .to_string()
+            .contains("丢失精度")
+    );
+}
