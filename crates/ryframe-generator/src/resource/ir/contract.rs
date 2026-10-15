@@ -336,17 +336,13 @@ fn managed_fields(
     spec: &ResourceSpec,
     fields: &[FieldIr],
 ) -> Result<BTreeSet<String>, ResourceError> {
-    let error = |message: &str, suggestion: &str| {
-        ResourceError::new(message, suggestion)
-            .with_resource(resource)
-            .with_file(source_path)
+    let mut service_managed = BTreeSet::from(["id".to_owned(), "tenant_id".to_owned()]);
+    if let Some(soft_delete) = &spec.database.soft_delete {
+        service_managed.insert(soft_delete.field.clone());
+    }
+    let Some(audit) = &spec.database.audit else {
+        return Ok(service_managed);
     };
-    let audit = spec.database.audit.as_ref().ok_or_else(|| {
-        error(
-            "flat_crud v1 必须声明 created_at/updated_at",
-            "在 database.audit 中声明两个 date_time 字段",
-        )
-    })?;
     for audit_field in [&audit.created_at, &audit.updated_at] {
         let field = fields
             .iter()
@@ -378,15 +374,7 @@ fn managed_fields(
         }
     }
 
-    let mut service_managed = BTreeSet::from([
-        "id".to_owned(),
-        "tenant_id".to_owned(),
-        audit.created_at.clone(),
-        audit.updated_at.clone(),
-    ]);
-    if let Some(soft_delete) = &spec.database.soft_delete {
-        service_managed.insert(soft_delete.field.clone());
-    }
+    service_managed.extend([audit.created_at.clone(), audit.updated_at.clone()]);
     service_managed.extend(audit.created_by.iter().cloned());
     service_managed.extend(audit.updated_by.iter().cloned());
     Ok(service_managed)

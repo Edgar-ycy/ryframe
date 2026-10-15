@@ -118,7 +118,27 @@ fn verify_selected_generation(backend: &Path) {
 
 fn import_batch(backend: &Path) {
     let root = backend.join("crates/invoice-business");
-    let tables = [import_table("biz_memo"), import_table("biz_memo_item")];
+    let mut minimal = import_table("biz_minimal");
+    minimal
+        .columns
+        .retain(|column| !matches!(column.name.as_str(), "created_at" | "updated_at"));
+    let mut soft_minimal = minimal.clone();
+    soft_minimal.table_name = "biz_soft_minimal".into();
+    soft_minimal.schema_canonical = "fixture:biz_soft_minimal".into();
+    let mut deleted = soft_minimal
+        .columns
+        .iter()
+        .find(|column| column.name == "status")
+        .unwrap()
+        .clone();
+    deleted.name = "del_flag".into();
+    soft_minimal.columns.push(deleted);
+    let tables = [
+        import_table("biz_memo"),
+        import_table("biz_memo_item"),
+        minimal,
+        soft_minimal,
+    ];
     plan_import_models(backend, &root, &tables, "control", Some("biz_"))
         .unwrap()
         .write()
@@ -136,13 +156,13 @@ fn import_batch(backend: &Path) {
     GenerationBuilder::new(backend)
         .operation(GenerationOperation::Resource)
         .package("invoice-business")
-        .include_models(["Memo", "MemoItem"])
+        .include_models(["Memo", "MemoItem", "Minimal", "SoftMinimal"])
         .write(true)
         .plan()
         .unwrap()
         .execute()
-        .expect("导入注册后的两个模型必须生成完整可编译后端 CRUD");
-    for name in ["memo", "memo_item"] {
+        .expect("导入注册后的模型及无审计字段表必须生成可编译后端 CRUD");
+    for name in ["memo", "memo_item", "minimal", "soft_minimal"] {
         assert!(
             root.join(format!("src/generated/repositories/{name}.rs"))
                 .is_file()

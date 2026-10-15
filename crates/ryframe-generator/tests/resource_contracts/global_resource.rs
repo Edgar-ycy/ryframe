@@ -94,6 +94,46 @@ fn global_access_must_be_explicit_and_cannot_relabel_tenant_business() {
 }
 
 #[test]
+fn missing_audit_columns_keep_crud_and_request_audit_without_inventing_timestamps() {
+    for soft_delete in [false, true] {
+        let mut spec = global_spec();
+        spec.database.audit = None;
+        spec.fields
+            .retain(|field| !matches!(field.name.as_str(), "created_at" | "updated_at"));
+        if !soft_delete {
+            spec.database.soft_delete = None;
+            spec.fields.retain(|field| field.name != "del_flag");
+        }
+        let generated =
+            render_resources(&[normalize_resource(spec, "order.toml", "no-audit").unwrap()])
+                .unwrap();
+        let service = &generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with("order/service.rs"))
+            .unwrap()
+            .content;
+        assert!(!service.contains("Utc") && !service.contains("let now"));
+        assert!(service.contains("TransactionAuditMode::CurrentRequest"));
+        let repository = &generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with("order/repository.rs"))
+            .unwrap()
+            .content;
+        assert!(!repository.contains("Utc::now()"));
+        assert_eq!(repository.contains("active.del_flag = Set("), soft_delete);
+        let migration = &generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with("order/migration.rs"))
+            .unwrap()
+            .content;
+        assert!(!migration.contains("created_at") && !migration.contains("updated_at"));
+    }
+}
+
+#[test]
 fn empty_and_numeric_filters_do_not_declare_borrowed_lifetimes() {
     for numeric_filter in [false, true] {
         let mut spec = global_spec();

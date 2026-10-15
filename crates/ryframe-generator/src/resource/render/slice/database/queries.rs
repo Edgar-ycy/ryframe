@@ -228,22 +228,27 @@ pub(crate) fn mapping(resource: &ResourceIr, source: &str) -> String {
 pub(crate) fn delete_body(resource: &ResourceIr) -> String {
     let query = id_query(resource, "id");
     if let Some(soft_delete) = &resource.soft_delete {
-        let audit = resource.audit.as_ref().expect("审计契约已由 IR 校验");
-        let updated_at = resource
-            .fields
-            .iter()
-            .find(|field| field.name == audit.updated_at)
-            .expect("审计字段已由 IR 校验");
-        let updated_value = if updated_at.nullable {
-            "Some(chrono::Utc::now())"
-        } else {
-            "chrono::Utc::now()"
-        };
+        let time_update = resource
+            .audit
+            .as_ref()
+            .map(|audit| {
+                let updated_at = resource
+                    .fields
+                    .iter()
+                    .find(|field| field.name == audit.updated_at)
+                    .expect("审计字段已由 IR 校验");
+                let value = if updated_at.nullable {
+                    "Some(chrono::Utc::now())"
+                } else {
+                    "chrono::Utc::now()"
+                };
+                format!("        active.{} = Set({value});\n", audit.updated_at)
+            })
+            .unwrap_or_default();
         format!(
-            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        let mut active: entity::ActiveModel = model.into();\n        active.{field} = Set({deleted});\n        active.{updated_at_field} = Set({updated_value});\n        active.update(&self.transaction).await.db()?;\n        Ok(())",
+            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        let mut active: entity::ActiveModel = model.into();\n        active.{field} = Set({deleted});\n{time_update}        active.update(&self.transaction).await.db()?;\n        Ok(())",
             field = soft_delete.field,
             deleted = field_literal(resource, &soft_delete.field, &soft_delete.deleted),
-            updated_at_field = audit.updated_at,
         )
     } else {
         format!(
