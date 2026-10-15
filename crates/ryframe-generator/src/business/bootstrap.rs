@@ -1,13 +1,12 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use sha2::{Digest, Sha256};
 
 use crate::ResourceError;
 
+mod plan;
 mod registration;
+use plan::PlannedFile;
 use registration::add_module_registration;
 
 #[derive(Clone, Debug)]
@@ -23,12 +22,6 @@ pub struct BusinessBootstrapReport {
     pub updated: Vec<String>,
 }
 
-struct PlannedFile {
-    path: PathBuf,
-    content: String,
-    created: bool,
-}
-
 /// 创建一个可立即接入 API、Worker 和迁移程序的空业务 crate。
 ///
 /// 空 crate 自带受管的零资源 generated 模块，因此组合根在尚未生成第一个资源前也能编译。
@@ -36,91 +29,10 @@ pub fn bootstrap_business_package(
     options: BusinessBootstrapOptions<'_>,
 ) -> Result<BusinessBootstrapReport, ResourceError> {
     validate_module(options.module)?;
-    let package = format!("{}-business", options.module);
-    let crate_ident = package.replace('-', "_");
-    let crate_root = options.workspace_root.join("crates").join(&package);
-    if crate_root.exists() {
-        return Err(error(
-            format!("业务 crate 已存在：{}", crate_root.display()),
-            &crate_root,
-        ));
-    }
-
-    let root_manifest = options.workspace_root.join("Cargo.toml");
-    let composition_manifest = options.workspace_root.join("crates/ryframe/Cargo.toml");
-    let registry = options
-        .workspace_root
-        .join("crates/ryframe/src/business.rs");
-    let root_source = read(&root_manifest)?;
-    let composition_source = read(&composition_manifest)?;
-    let registry_source = read(&registry)?;
-
-    let generated = empty_generated_module();
-    let mut planned = vec![
-        PlannedFile {
-            path: crate_root.join("Cargo.toml"),
-            content: business_manifest(&package, options.module),
-            created: true,
-        },
-        PlannedFile {
-            path: crate_root.join("src/lib.rs"),
-            content: business_lib(),
-            created: true,
-        },
-        PlannedFile {
-            path: crate_root.join("src/resources/mod.rs"),
-            content: resources_module(),
-            created: true,
-        },
-        PlannedFile {
-            path: crate_root.join("src/extensions/mod.rs"),
-            content: "// 在此实现标准 CRUD 无法表达的领域流程。\n".into(),
-            created: true,
-        },
-        PlannedFile {
-            path: crate_root.join("src/generated/mod.rs"),
-            content: generated.clone(),
-            created: true,
-        },
-        PlannedFile {
-            path: crate_root.join(".ryframe/generated.toml"),
-            content: ownership_manifest(&generated),
-            created: true,
-        },
-        PlannedFile {
-            path: root_manifest,
-            content: add_workspace_member(&root_source, &package)?,
-            created: false,
-        },
-        PlannedFile {
-            path: composition_manifest,
-            content: add_composition_dependency(&composition_source, &package)?,
-            created: false,
-        },
-        PlannedFile {
-            path: registry,
-            content: add_module_registration(&registry_source, &crate_ident)?,
-            created: false,
-        },
-    ];
-    format_planned(options.workspace_root, &mut planned)?;
-    planned.sort_by(|left, right| left.path.cmp(&right.path));
-    let mut report = BusinessBootstrapReport::default();
-    for file in &planned {
-        let relative = file
-            .path
-            .strip_prefix(options.workspace_root)
-            .unwrap_or(&file.path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        if file.created {
-            report.created.push(relative);
-        } else if read(&file.path)? != file.content {
-            report.updated.push(relative);
-        }
-    }
+    let files = plan::build(options.workspace_root, options.module)?;
+    let report = plan::report(options.workspace_root, &files)?;
     if options.write {
-        install(options.workspace_root, &planned)?;
+        plan::install(options.workspace_root, &files)?;
     }
     Ok(report)
 }
@@ -153,13 +65,16 @@ fn format_planned(workspace: &Path, files: &mut [PlannedFile]) -> Result<(), Res
 }
 
 pub(crate) fn validate_module(module: &str) -> Result<(), ResourceError> {
-    if module.is_empty()
+    if !module
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_lowercase)
         || !module.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
         })
     {
         return Err(ResourceError::new(
-            "业务模块名只能包含小写字母、数字、中划线和下划线",
+            "业务模块名须以小写字母开头，只包含小写字母、数字、中划线和下划线",
             "示例：cargo generate -- new-business order-business --write",
         ));
     }
@@ -271,7 +186,7 @@ fn business_manifest(package: &str, module: &str) -> String {
 }
 
 fn business_lib() -> String {
-    "pub mod extensions;\npub mod resources;\n#[cfg(feature = \"runtime\")]\npub mod generated;\n\npub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {\n    resources::descriptors()\n}\n\n#[cfg(feature = \"runtime\")]\npub fn module() -> ryframe_sdk::RyFrameBusinessModule {\n    let builder = ryframe_sdk::BusinessModuleBuilder::new(env!(\"CARGO_PKG_NAME\").trim_end_matches(\"-business\"))\n        .resources(generated::RESOURCES.iter())\n        .tenant_data_tables(generated::tenant_catalog::TENANT_DATA_TABLES);\n    #[cfg(feature = \"api\")]\n    let builder = builder.routes(generated::routes).openapi(generated::openapi);\n    #[cfg(feature = \"migration\")]\n    let builder = builder.migrations(generated::migrations::migrations());\n    builder.build()\n}\n".into()
+    "pub mod extensions;\npub mod resources;\n#[cfg(feature = \"runtime\")]\npub mod generated;\n\npub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {\n    resources::descriptors()\n}\n\n#[cfg(feature = \"runtime\")]\npub fn module() -> ryframe_sdk::RyFrameBusinessModule {\n    let module = env!(\"CARGO_PKG_NAME\").strip_suffix(\"-business\").expect(\"业务包以 -business 结尾\");\n    let builder = ryframe_sdk::BusinessModuleBuilder::new(module)\n        .resources(generated::RESOURCES.iter())\n        .tenant_data_tables(generated::tenant_catalog::TENANT_DATA_TABLES);\n    #[cfg(feature = \"api\")]\n    let builder = builder.routes(generated::routes).openapi(generated::openapi);\n    #[cfg(feature = \"migration\")]\n    let builder = builder.migrations(generated::migrations::migrations());\n    builder.build()\n}\n".into()
 }
 
 fn resources_module() -> String {
@@ -289,75 +204,10 @@ fn ownership_manifest(content: &str) -> String {
     )
 }
 
-fn install(workspace_root: &Path, files: &[PlannedFile]) -> Result<(), ResourceError> {
-    let stage = tempfile::Builder::new()
-        .prefix(".ryframe-business-stage-")
-        .tempdir_in(workspace_root)
-        .map_err(|io| error(format!("无法创建暂存目录：{io}"), workspace_root))?;
-    for file in files {
-        let relative = file
-            .path
-            .strip_prefix(workspace_root)
-            .map_err(|_| error("创建路径超出 Workspace", &file.path))?;
-        let staged = stage.path().join(relative);
-        if let Some(parent) = staged.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|io| error(format!("无法创建暂存目录：{io}"), parent))?;
-        }
-        fs::write(&staged, &file.content)
-            .map_err(|io| error(format!("无法写入暂存文件：{io}"), &staged))?;
-    }
-    let backup = stage.path().join("backup");
-    let mut installed = Vec::new();
-    let result = (|| {
-        for file in files {
-            if file.path.exists() {
-                let relative = file.path.strip_prefix(workspace_root).expect("已验证路径");
-                let saved = backup.join(relative);
-                if let Some(parent) = saved.parent() {
-                    fs::create_dir_all(parent)
-                        .map_err(|io| error(format!("无法创建备份目录：{io}"), parent))?;
-                }
-                fs::copy(&file.path, &saved)
-                    .map_err(|io| error(format!("无法备份目标文件：{io}"), &file.path))?;
-            }
-        }
-        for file in files {
-            let relative = file.path.strip_prefix(workspace_root).expect("已验证路径");
-            if let Some(parent) = file.path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|io| error(format!("无法创建目标目录：{io}"), parent))?;
-            }
-            if file.path.exists() {
-                fs::remove_file(&file.path)
-                    .map_err(|io| error(format!("无法替换目标文件：{io}"), &file.path))?;
-            }
-            fs::copy(stage.path().join(relative), &file.path)
-                .map_err(|io| error(format!("无法安装目标文件：{io}"), &file.path))?;
-            installed.push(file.path.clone());
-        }
-        Ok(())
-    })();
-    if let Err(failure) = result {
-        for path in installed.into_iter().rev() {
-            let _ = fs::remove_file(path);
-        }
-        for file in files.iter().rev() {
-            let relative = file.path.strip_prefix(workspace_root).expect("已验证路径");
-            let saved = backup.join(relative);
-            if saved.exists() {
-                let _ = fs::copy(saved, &file.path);
-            }
-        }
-        return Err(failure);
-    }
-    Ok(())
-}
-
 fn error(message: impl Into<String>, path: &Path) -> ResourceError {
     ResourceError::new(
         message,
-        "确认 Workspace 结构完整，或使用 --dry-run 查看将执行的改动",
+        "确认 Workspace 结构完整；省略 --write 预览文件，或使用 --plan 只查看任务",
     )
     .with_file(path.to_string_lossy())
 }
@@ -384,6 +234,87 @@ mod tests {
             "use ryframe_sdk::RyFrameBusinessModule;\n\npub fn business_modules() -> Vec<RyFrameBusinessModule> {\n    vec![]\n}\n",
         )
         .expect("写入业务注册表");
+    }
+
+    #[test]
+    fn concurrent_registration_edit_is_rejected_before_new_crate_write() {
+        let directory = tempfile::tempdir().unwrap();
+        create_workspace(directory.path());
+        let planned = super::plan::build(directory.path(), "order").unwrap();
+        let manifest = directory.path().join("Cargo.toml");
+        let edited = fs::read_to_string(&manifest).unwrap() + "\n# 并发手写变更\n";
+        fs::write(&manifest, &edited).unwrap();
+        let error = super::plan::install(directory.path(), &planned)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("compare-and-swap"));
+        assert_eq!(fs::read_to_string(&manifest).unwrap(), edited);
+        assert!(!directory.path().join("crates/order-business").exists());
+    }
+
+    #[test]
+    fn concurrently_created_business_file_is_never_overwritten() {
+        let directory = tempfile::tempdir().unwrap();
+        create_workspace(directory.path());
+        let original = fs::read(directory.path().join("Cargo.toml")).unwrap();
+        let planned = super::plan::build(directory.path(), "order").unwrap();
+        let source = directory.path().join("crates/order-business/src/lib.rs");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "// 并发手写资源\n").unwrap();
+        let error = super::plan::install(directory.path(), &planned)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("compare-and-swap"));
+        assert_eq!(fs::read_to_string(&source).unwrap(), "// 并发手写资源\n");
+        assert_eq!(
+            fs::read(directory.path().join("Cargo.toml")).unwrap(),
+            original
+        );
+        assert!(
+            !directory
+                .path()
+                .join("crates/order-business/.ryframe/generated.toml")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn windows_line_endings_are_preserved_as_preimage_and_normalized_in_output() {
+        let directory = tempfile::tempdir().unwrap();
+        create_workspace(directory.path());
+        for file in [
+            "Cargo.toml",
+            "crates/ryframe/Cargo.toml",
+            "crates/ryframe/src/business.rs",
+        ] {
+            let path = directory.path().join(file);
+            let original = fs::read_to_string(&path).unwrap();
+            fs::write(&path, original.replace('\n', "\r\n")).unwrap();
+        }
+        bootstrap_business_package(BusinessBootstrapOptions {
+            workspace_root: directory.path(),
+            module: "order",
+            write: true,
+        })
+        .unwrap();
+        let manifest = fs::read_to_string(directory.path().join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("crates/order-business") && !manifest.contains('\r'));
+    }
+
+    #[test]
+    fn invalid_module_identifier_fails_without_creating_any_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        for module in ["", "1order", "-order", "_order", "业务"] {
+            let error = bootstrap_business_package(BusinessBootstrapOptions {
+                workspace_root: directory.path(),
+                module,
+                write: false,
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("小写字母开头"));
+        }
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
     #[test]

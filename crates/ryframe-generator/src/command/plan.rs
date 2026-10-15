@@ -116,12 +116,18 @@ impl GenerationBuilder {
         let operation = match self.operation {
             GenerationOperation::Configured if tables.is_empty() => GenerationOperation::Resource,
             GenerationOperation::Configured => GenerationOperation::Import,
+            GenerationOperation::NewBusiness(module) => GenerationOperation::NewBusiness(
+                module.strip_suffix("-business").unwrap_or(&module).into(),
+            ),
             operation => operation,
         };
-        let package = self
-            .package
-            .or_else(|| defaults.package.clone())
-            .unwrap_or_default();
+        let package = if let GenerationOperation::NewBusiness(module) = &operation {
+            format!("{module}-business")
+        } else {
+            self.package
+                .or_else(|| defaults.package.clone())
+                .unwrap_or_default()
+        };
         let plan = GenerationPlan {
             workspace_root: self.root,
             operation,
@@ -217,6 +223,14 @@ impl GenerationPlan {
     }
 
     pub fn describe(&self) -> String {
+        if let GenerationOperation::NewBusiness(module) = &self.operation {
+            return format!(
+                "生成计划：创建业务模块={module}，业务包={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+                self.package,
+                self.write,
+                self.tasks().join(" → "),
+            );
+        }
         format!(
             "生成计划：操作={:?}，业务包={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
             self.operation,

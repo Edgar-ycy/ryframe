@@ -45,7 +45,7 @@ cargo generate -- new-business order-business
 cargo generate -- new-business order-business --write
 ```
 
-默认预览，`--write` 才创建，创建后执行 `cargo generate-lockfile --offline` 显式刷新依赖图。创建原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、组合根的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册；不会生成 CRUD 或操作数据库。命令拒绝覆盖同名 crate 或重复注册，模块名 `order` 与业务包名 `order-business` 均创建同一包。
+默认预览，`--write` 才创建，创建后执行 `cargo generate-lockfile --offline` 显式刷新依赖图。创建事务更新业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、组合根的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册；不会生成 CRUD 或操作数据库。命令和 Builder 均接受模块名 `order` 或包名 `order-business`，显式名称决定新包，不使用配置中的默认包。模块名须以小写字母开头。已有 crate、重复注册或计划生成后的并发修改均拒绝覆盖；中途失败尝试恢复原文件，回滚未完成时保留并指出恢复目录。Windows CRLF 输入按原始字节校验后输出 LF。
 
 业务 crate 按职责分类，并把可重生成文件统一放入 `generated`：
 

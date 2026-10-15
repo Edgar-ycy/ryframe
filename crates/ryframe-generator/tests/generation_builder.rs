@@ -47,6 +47,45 @@ fn explicit_empty_selection_and_disabled_sync_override_configuration() {
 }
 
 #[test]
+fn new_business_uses_the_requested_package_for_cli_and_builder_names() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("config")).unwrap();
+    fs::write(
+        root.path().join("config/tools.toml"),
+        "[generator]\npackage='other-business'\ntables=['old']\n",
+    )
+    .unwrap();
+    let plans = ["sales-orders", "sales-orders-business"].map(|name| {
+        GenerationBuilder::new(root.path())
+            .operation(GenerationOperation::NewBusiness(name.into()))
+            .package("ignored-business")
+            .plan()
+            .unwrap()
+    });
+    assert_eq!(
+        plans[0].operation,
+        GenerationOperation::NewBusiness("sales-orders".into())
+    );
+    assert_eq!(plans[0].package, "sales-orders-business");
+    assert_eq!(plans[0].describe(), plans[1].describe());
+    assert!(!plans[0].describe().contains("other-business"));
+    assert!(!plans[0].describe().contains("只读结构来源"));
+    let repeated = GenerationBuilder::new(root.path())
+        .operation(GenerationOperation::NewBusiness(
+            "order-business-business".into(),
+        ))
+        .plan()
+        .unwrap();
+    assert_eq!(repeated.package, "order-business-business");
+    assert_eq!(
+        repeated.operation,
+        GenerationOperation::NewBusiness("order-business".into())
+    );
+    assert!(!root.path().join(".local-tests").exists());
+    assert!(!root.path().join("target").exists());
+}
+
+#[test]
 fn invalid_batch_names_and_target_fail_before_execution() {
     let root = tempfile::tempdir().unwrap();
     for tables in [

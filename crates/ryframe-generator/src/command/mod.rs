@@ -24,12 +24,7 @@ pub fn run_from_args(args: Vec<String>) -> Result<(), String> {
             let [module, rest @ ..] = &args[1..] else {
                 return Err(USAGE.into());
             };
-            (
-                GenerationOperation::NewBusiness(
-                    module.strip_suffix("-business").unwrap_or(module).into(),
-                ),
-                rest,
-            )
+            (GenerationOperation::NewBusiness(module.clone()), rest)
         }
         "resource" => (GenerationOperation::Resource, &args[1..]),
         "import" => (GenerationOperation::Import, &args[1..]),
