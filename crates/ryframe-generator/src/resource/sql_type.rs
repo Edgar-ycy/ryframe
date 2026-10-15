@@ -8,6 +8,19 @@ pub(super) fn normalize_fields(
 ) -> Result<(), ResourceError> {
     for field in fields {
         let Some(input) = field.sql_type.as_deref() else {
+            if matches!(
+                field.value_type,
+                ValueType::I8 | ValueType::I16 | ValueType::U8 | ValueType::U16 | ValueType::U32
+            ) {
+                let declaration = Declaration {
+                    sql: field.value_type.rust_base_type().into(),
+                    max_length: None,
+                    max_bytes: None,
+                    range: field.value_type.integer_bounds(),
+                };
+                constrain(field, &declaration)
+                    .map_err(|reason| field_error(resource, path, &field.name, reason))?;
+            }
             continue;
         };
         let declaration = parse(input, field.value_type)
@@ -38,13 +51,29 @@ struct Declaration {
 
 fn parse(input: &str, value_type: ValueType) -> Result<Declaration, String> {
     let normalized = input.trim().to_ascii_uppercase();
-    let (base, size) = parts(&normalized)?;
+    let unsigned = normalized.ends_with(" UNSIGNED");
+    let type_name = normalized.strip_suffix(" UNSIGNED").unwrap_or(&normalized);
+    let (base, size) = parts(type_name)?;
     let mut declaration = Declaration {
         sql: normalized.clone(),
         max_length: None,
         max_bytes: None,
         range: None,
     };
+    if let Some((rust_minimum, rust_maximum)) = value_type.integer_bounds() {
+        let range = sql_integer_bounds(base, unsigned)
+            .filter(|(minimum, maximum)| *minimum >= rust_minimum && *maximum <= rust_maximum);
+        if range.is_none() || size.is_some_and(|width| !(1..=255).contains(&width)) {
+            return Err(format!(
+                "类型 `{input}` 不能完整映射为 {value_type:?}，或整数显示宽度无效"
+            ));
+        }
+        declaration.range = range;
+        return Ok(declaration);
+    }
+    if unsigned {
+        return Err(format!("非整数类型 `{input}` 不能声明 UNSIGNED"));
+    }
     match (value_type, base, size) {
         (ValueType::String, "CHAR" | "VARCHAR", Some(length))
             if length > 0 && length <= if base == "CHAR" { 255 } else { 65_535 } =>
@@ -58,21 +87,6 @@ fn parse(input: &str, value_type: ValueType) -> Result<Declaration, String> {
                 "MEDIUMTEXT" => 16_777_215,
                 _ => u32::MAX,
             });
-        }
-        (ValueType::I32, "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT", width)
-            if width.is_none_or(|value| (1..=255).contains(&value)) =>
-        {
-            declaration.range = Some(match base {
-                "TINYINT" => (i8::MIN.into(), i8::MAX.into()),
-                "SMALLINT" => (i16::MIN.into(), i16::MAX.into()),
-                "MEDIUMINT" => (-8_388_608, 8_388_607),
-                _ => (i32::MIN.into(), i32::MAX.into()),
-            });
-        }
-        (ValueType::I64, "BIGINT", width)
-            if width.is_none_or(|value| (1..=255).contains(&value)) =>
-        {
-            declaration.range = Some((i64::MIN, i64::MAX));
         }
         (ValueType::Bool, "BOOL" | "BOOLEAN", None) | (ValueType::Bool, "TINYINT", Some(1)) => {
             declaration.sql = "TINYINT(1)".into()
@@ -90,6 +104,29 @@ fn parse(input: &str, value_type: ValueType) -> Result<Declaration, String> {
         }
     }
     Ok(declaration)
+}
+
+fn sql_integer_bounds(base: &str, unsigned: bool) -> Option<(i64, i64)> {
+    Some(match (base, unsigned) {
+        ("TINYINT", false) => (i8::MIN.into(), i8::MAX.into()),
+        ("SMALLINT", false) => (i16::MIN.into(), i16::MAX.into()),
+        ("MEDIUMINT", false) => (-8_388_608, 8_388_607),
+        ("INT", false) => (i32::MIN.into(), i32::MAX.into()),
+        ("BIGINT", false) => (i64::MIN, i64::MAX),
+        ("TINYINT", true) => (0, u8::MAX.into()),
+        ("SMALLINT", true) => (0, u16::MAX.into()),
+        ("MEDIUMINT", true) => (0, 16_777_215),
+        ("INT", true) => (0, u32::MAX.into()),
+        _ => return None,
+    })
+}
+
+pub(crate) fn physical_integer_bounds(field: &super::FieldIr) -> Option<(i64, i64)> {
+    field.value_type.integer_bounds()?;
+    let Some(sql_type) = &field.sql_type else {
+        return field.value_type.integer_bounds();
+    };
+    parse(sql_type, field.value_type).ok()?.range
 }
 
 fn parts(value: &str) -> Result<(&str, Option<u32>), String> {

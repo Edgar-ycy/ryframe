@@ -259,7 +259,13 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
             WidgetSpec::Hidden
         } else {
             match value_type {
-                ValueType::I32 | ValueType::I64 => WidgetSpec::Number,
+                ValueType::I8
+                | ValueType::I16
+                | ValueType::I32
+                | ValueType::I64
+                | ValueType::U8
+                | ValueType::U16
+                | ValueType::U32 => WidgetSpec::Number,
                 ValueType::Bool => WidgetSpec::Switch,
                 ValueType::Date => WidgetSpec::Date,
                 ValueType::DateTime => WidgetSpec::DateTime,
@@ -285,8 +291,13 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         .replace("ryframe_sdk::serde_json::", "serde_json::");
     let value = match inner.as_str() {
         "String" | "std::string::String" => ValueType::String,
+        "i8" => ValueType::I8,
+        "i16" => ValueType::I16,
         "i32" => ValueType::I32,
         "i64" => ValueType::I64,
+        "u8" => ValueType::U8,
+        "u16" => ValueType::U16,
+        "u32" => ValueType::U32,
         "bool" => ValueType::Bool,
         "chrono::NaiveDate" => ValueType::Date,
         "chrono::DateTime<chrono::Utc>" => ValueType::DateTime,
@@ -303,7 +314,13 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
 fn default_value(value: &str, value_type: ValueType) -> Result<toml::Value, ResourceError> {
     match value_type {
         ValueType::String => Ok(toml::Value::String(value.to_owned())),
-        ValueType::I32 | ValueType::I64 => value
+        ValueType::I8
+        | ValueType::I16
+        | ValueType::I32
+        | ValueType::I64
+        | ValueType::U8
+        | ValueType::U16
+        | ValueType::U32 => value
             .parse::<i64>()
             .map(toml::Value::Integer)
             .map_err(|parse| error(format!("整数默认值 `{value}` 无效：{parse}"))),
@@ -357,9 +374,15 @@ fn soft_delete(
             toml::Value::String("0".into()),
             toml::Value::String("1".into()),
         ),
-        ValueType::I32 | ValueType::I64 => (toml::Value::Integer(0), toml::Value::Integer(1)),
+        ValueType::I8
+        | ValueType::I16
+        | ValueType::I32
+        | ValueType::I64
+        | ValueType::U8
+        | ValueType::U16
+        | ValueType::U32 => (toml::Value::Integer(0), toml::Value::Integer(1)),
         ValueType::Bool => (toml::Value::Boolean(false), toml::Value::Boolean(true)),
-        _ => return Err(error("del_flag 只支持 String、i32、i64 或 bool")),
+        _ => return Err(error("del_flag 只支持 String、整数或 bool")),
     };
     Ok(Some(SoftDeleteSpec {
         field: field.name.clone(),

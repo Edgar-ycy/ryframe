@@ -50,21 +50,12 @@ pub(super) fn render_enum_validators(resource: &ResourceIr, output: &mut String)
                     .collect::<Vec<_>>()
                     .join(", "),
             ),
-            ValueType::I32 => (
-                "i32",
+            value_type if value_type.integer_bounds().is_some() => (
+                value_type.rust_base_type(),
                 field
                     .enum_values
                     .keys()
-                    .map(|value| format!("{value}_i32"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            ValueType::I64 => (
-                "i64",
-                field
-                    .enum_values
-                    .keys()
-                    .map(|value| format!("{value}_i64"))
+                    .map(|value| format!("{value}_{}", value_type.rust_base_type()))
                     .collect::<Vec<_>>()
                     .join(", "),
             ),
@@ -109,15 +100,27 @@ pub(super) fn validation_attribute(field: &FieldIr) -> Option<String> {
             }
             validators.push(format!("length({})", parts.join(", ")));
         }
-        ValueType::I32 | ValueType::I64
+        ValueType::I8
+        | ValueType::I16
+        | ValueType::I32
+        | ValueType::I64
+        | ValueType::U8
+        | ValueType::U16
+        | ValueType::U32
             if validation.minimum.is_some() || validation.maximum.is_some() =>
         {
             let mut parts = Vec::new();
             if let Some(minimum) = validation.minimum {
-                parts.push(format!("min = {minimum}"));
+                parts.push(format!(
+                    "min = {}",
+                    numeric_bound(minimum, field.value_type)
+                ));
             }
             if let Some(maximum) = validation.maximum {
-                parts.push(format!("max = {maximum}"));
+                parts.push(format!(
+                    "max = {}",
+                    numeric_bound(maximum, field.value_type)
+                ));
             }
             validators.push(format!("range({})", parts.join(", ")));
         }
@@ -136,6 +139,14 @@ pub(super) fn validation_attribute(field: &FieldIr) -> Option<String> {
         ));
     }
     (!validators.is_empty()).then(|| format!("#[validate({})]", validators.join(", ")))
+}
+
+fn numeric_bound(value: i64, value_type: ValueType) -> String {
+    if i32::try_from(value).is_ok() {
+        value.to_string()
+    } else {
+        format!("{value}_{}", value_type.rust_base_type())
+    }
 }
 
 pub(super) fn schema_attribute(field: &FieldIr) -> Option<String> {

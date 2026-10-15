@@ -66,30 +66,17 @@ fn soft_delete_constants(resource: &ResourceIr) -> String {
                 .expect("string 软删值已校验")
                 .to_owned(),
         ),
-        ValueType::I32 => (
-            "i32",
+        value_type if value_type.integer_bounds().is_some() => (
+            value_type.rust_base_type(),
             soft_delete
                 .active
                 .as_integer()
-                .expect("i32 软删值已校验")
+                .expect("整数软删值已校验")
                 .to_string(),
             soft_delete
                 .deleted
                 .as_integer()
-                .expect("i32 软删值已校验")
-                .to_string(),
-        ),
-        ValueType::I64 => (
-            "i64",
-            soft_delete
-                .active
-                .as_integer()
-                .expect("i64 软删值已校验")
-                .to_string(),
-            soft_delete
-                .deleted
-                .as_integer()
-                .expect("i64 软删值已校验")
+                .expect("整数软删值已校验")
                 .to_string(),
         ),
         ValueType::Bool => (

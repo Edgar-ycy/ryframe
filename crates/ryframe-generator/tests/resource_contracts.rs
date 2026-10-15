@@ -16,6 +16,8 @@ mod resource_generation;
 mod resource_id_generation;
 #[path = "resource_contracts/resource_import.rs"]
 mod resource_import;
+#[path = "resource_contracts/resource_integers.rs"]
+mod resource_integers;
 #[path = "resource_contracts/resource_migration_generation.rs"]
 mod resource_migration_generation;
 #[path = "resource_contracts/resource_relations.rs"]

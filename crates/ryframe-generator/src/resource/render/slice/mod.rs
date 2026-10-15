@@ -99,16 +99,7 @@ pub(super) fn migration_name(resource: &ResourceIr) -> String {
 }
 
 pub(super) fn rust_base_type(value_type: ValueType) -> &'static str {
-    match value_type {
-        ValueType::String => "String",
-        ValueType::I32 => "i32",
-        ValueType::I64 => "i64",
-        ValueType::Bool => "bool",
-        ValueType::Date => "chrono::NaiveDate",
-        ValueType::DateTime => "chrono::DateTime<chrono::Utc>",
-        ValueType::Json => "serde_json::Value",
-        ValueType::Decimal => unreachable!("decimal 已在生成边界校验中拒绝"),
-    }
+    value_type.rust_base_type()
 }
 
 pub(super) fn column_variant(name: &str) -> String {
@@ -124,8 +115,9 @@ pub(super) fn uses_partial_text_filter(field: &FieldIr) -> bool {
 pub(super) fn rust_literal(value: &toml::Value, value_type: ValueType) -> String {
     match (value, value_type) {
         (toml::Value::String(value), ValueType::String) => format!("String::from({value:?})"),
-        (toml::Value::Integer(value), ValueType::I32) => format!("{value}_i32"),
-        (toml::Value::Integer(value), ValueType::I64) => format!("{value}_i64"),
+        (toml::Value::Integer(value), value_type) if value_type.integer_bounds().is_some() => {
+            format!("{value}_{}", value_type.rust_base_type())
+        }
         (toml::Value::Boolean(value), ValueType::Bool) => value.to_string(),
         _ => unreachable!("literal 类型已经在 Resource IR 中严格校验"),
     }

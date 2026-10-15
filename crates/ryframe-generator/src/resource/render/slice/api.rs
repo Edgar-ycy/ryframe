@@ -260,16 +260,7 @@ fn view_fields(resource: &ResourceIr) -> impl Iterator<Item = &FieldIr> {
 }
 
 fn wire_base_type(value_type: ValueType) -> &'static str {
-    match value_type {
-        ValueType::String => "String",
-        ValueType::I32 => "i32",
-        ValueType::I64 => "i64",
-        ValueType::Bool => "bool",
-        ValueType::Date => "chrono::NaiveDate",
-        ValueType::DateTime => "chrono::DateTime<chrono::Utc>",
-        ValueType::Json => "serde_json::Value",
-        ValueType::Decimal => unreachable!("decimal 已在生成边界校验中拒绝"),
-    }
+    value_type.rust_base_type()
 }
 
 fn wire_type(field: &FieldIr) -> String {

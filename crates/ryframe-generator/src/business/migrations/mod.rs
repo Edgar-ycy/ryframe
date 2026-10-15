@@ -381,4 +381,57 @@ mod tests {
         let sql = diff::statements(&before, &after).unwrap().join("\n");
         assert!(sql.contains("MODIFY COLUMN `name` VARCHAR(1000)"));
     }
+
+    #[test]
+    fn integer_migration_checks_signed_and_physical_ranges() {
+        let mut before = resource();
+        before
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::U32;
+        let mut after = before.clone();
+        after
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::I64;
+        assert!(
+            diff::statements(&before, &after)
+                .unwrap()
+                .join("\n")
+                .contains("BIGINT")
+        );
+        assert!(
+            diff::statements(&after, &before)
+                .unwrap_err()
+                .to_string()
+                .contains("人工审阅")
+        );
+        after
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::I32;
+        assert!(diff::statements(&after, &before).is_err());
+        before
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .value_type = ValueType::I16;
+        after
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "status")
+            .unwrap()
+            .sql_type = Some("TINYINT".into());
+        assert!(
+            diff::statements(&before, &after).is_err(),
+            "Rust 类型变宽不能掩盖物理列变窄"
+        );
+    }
 }

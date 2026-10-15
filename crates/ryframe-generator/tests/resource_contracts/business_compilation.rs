@@ -120,6 +120,7 @@ fn verify_incremental_generation(backend: &Path) {
     fs::create_dir_all(root.join("tests")).unwrap();
     fs::write(root.join("tests/nullable_contract.rs"), r#"use invoice_business::generated::dto::global_item::{CreateGlobalItemDto, UpdateGlobalItemDto};
 use ryframe_sdk::serde_json::{self, json};
+use ryframe_sdk::validator::Validate;
 
 #[test]
 fn nullable_values_follow_complete_replacement_contract() {
@@ -131,6 +132,23 @@ fn nullable_values_follow_complete_replacement_contract() {
     assert_eq!(value.memo.as_deref(), Some("text"));
     let omitted: UpdateGlobalItemDto = serde_json::from_value(json!({})).unwrap();
     assert!(omitted.memo.is_none());
+}
+
+#[test]
+fn imported_integer_dtos_accept_boundaries_and_reject_overflow() {
+    use invoice_business::generated::dto::memo::{CreateMemoDto, UpdateMemoDto};
+    let body = json!({"code":"first", "status":1, "tiny_count":-128, "small_count":-32768, "byte_count":255, "short_count":65535, "count":4294967295u32});
+    let input: CreateMemoDto = serde_json::from_value(body.clone()).unwrap();
+    input.validate().unwrap();
+    assert_eq!((input.tiny_count,input.small_count,input.byte_count,input.short_count,input.count),(-128,-32768,255,65535,u32::MAX));
+    for (field, invalid) in [("tiny_count",-129i64),("small_count",32768),("byte_count",-1),("short_count",65536),("count",4294967296)] {
+        let mut bad = body.clone();
+        bad[field] = json!(invalid);
+        assert!(serde_json::from_value::<CreateMemoDto>(bad).is_err(),"{field}");
+    }
+    let update: UpdateMemoDto = serde_json::from_value(json!({"count":4294967295u32})).unwrap();
+    update.validate().unwrap();
+    assert_eq!(update.count,Some(u32::MAX));
 }
 "#).unwrap();
     let formatted = Command::new("rustfmt")
@@ -241,6 +259,11 @@ fn import_table(name: &str) -> TableInfo {
         ("id", "i64", "bigint"),
         ("code", "String", "varchar(255)"),
         ("status", "i32", "int"),
+        ("tiny_count", "i8", "tinyint"),
+        ("small_count", "i16", "smallint"),
+        ("byte_count", "u8", "tinyint unsigned"),
+        ("short_count", "u16", "smallint unsigned"),
+        ("count", "u32", "int unsigned"),
         (
             "created_at",
             "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
@@ -255,7 +278,7 @@ fn import_table(name: &str) -> TableInfo {
     .into_iter()
     .map(|(name, rust_type, column_type)| ColumnInfo {
         name: name.into(),
-        data_type: column_type.split('(').next().unwrap().into(),
+        data_type: column_type.split(['(', ' ']).next().unwrap().into(),
         column_type: column_type.into(),
         rust_type: rust_type.into(),
         default: None,

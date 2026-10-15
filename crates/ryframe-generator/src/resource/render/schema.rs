@@ -25,8 +25,13 @@ pub(crate) fn column_type(field: &FieldIr) -> String {
                 .max(1);
             format!("VARCHAR({length})")
         }
+        ValueType::I8 => "TINYINT".into(),
+        ValueType::I16 => "SMALLINT".into(),
         ValueType::I32 => "INT".into(),
         ValueType::I64 => "BIGINT".into(),
+        ValueType::U8 => "TINYINT UNSIGNED".into(),
+        ValueType::U16 => "SMALLINT UNSIGNED".into(),
+        ValueType::U32 => "INT UNSIGNED".into(),
         ValueType::Bool => "BOOLEAN".into(),
         ValueType::Date => "DATE".into(),
         ValueType::DateTime => "DATETIME(6)".into(),
@@ -37,7 +42,11 @@ pub(crate) fn column_type(field: &FieldIr) -> String {
 
 pub(super) fn data_type(field: &FieldIr) -> &str {
     if let Some(declaration) = &field.sql_type {
-        return match declaration.split('(').next().expect("SQL 类型已校验") {
+        return match declaration
+            .split(['(', ' '])
+            .next()
+            .expect("SQL 类型已校验")
+        {
             "CHAR" => "char",
             "VARCHAR" => "varchar",
             "TINYTEXT" => "tinytext",
@@ -57,7 +66,9 @@ pub(super) fn data_type(field: &FieldIr) -> &str {
     }
     match field.value_type {
         ValueType::String => "varchar",
-        ValueType::I32 => "int",
+        ValueType::I8 | ValueType::U8 => "tinyint",
+        ValueType::I16 | ValueType::U16 => "smallint",
+        ValueType::I32 | ValueType::U32 => "int",
         ValueType::I64 => "bigint",
         ValueType::Bool => "tinyint",
         ValueType::Date => "date",

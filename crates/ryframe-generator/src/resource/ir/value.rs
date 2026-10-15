@@ -21,12 +21,27 @@ pub(super) fn validate_enum_key(
     }
     let valid = match field.value_type {
         ValueType::String => true,
-        ValueType::I32 => key
-            .parse::<i32>()
-            .is_ok_and(|parsed| parsed.to_string() == key),
-        ValueType::I64 => key
-            .parse::<i64>()
-            .is_ok_and(|parsed| parsed.to_string() == key),
+        ValueType::I8
+        | ValueType::I16
+        | ValueType::I32
+        | ValueType::I64
+        | ValueType::U8
+        | ValueType::U16
+        | ValueType::U32 => key.parse::<i64>().is_ok_and(|parsed| {
+            parsed.to_string() == key
+                && field
+                    .value_type
+                    .integer_bounds()
+                    .is_some_and(|(min, max)| (min..=max).contains(&parsed))
+                && field
+                    .validation
+                    .minimum
+                    .is_none_or(|minimum| parsed >= minimum)
+                && field
+                    .validation
+                    .maximum
+                    .is_none_or(|maximum| parsed <= maximum)
+        }),
         ValueType::Bool => matches!(key, "true" | "false"),
         ValueType::Decimal | ValueType::Date | ValueType::DateTime | ValueType::Json => false,
     };
@@ -41,7 +56,7 @@ pub(super) fn validate_enum_key(
                 "枚举键 `{key}` 与字段 value_type={:?} 不匹配",
                 field.value_type
             ),
-            "string 使用字符串键；i32/i64 使用规范十进制整数；bool 仅使用 true/false",
+            "string 使用字符串键；整数使用该类型范围内的规范十进制值；bool 仅使用 true/false",
         ))
     }
 }
@@ -133,9 +148,10 @@ fn validate_typed_value(
 ) -> Result<(), ResourceError> {
     let valid = match (value_type, value) {
         (ValueType::String, toml::Value::String(_))
-        | (ValueType::I64, toml::Value::Integer(_))
         | (ValueType::Bool, toml::Value::Boolean(_)) => true,
-        (ValueType::I32, toml::Value::Integer(value)) => i32::try_from(*value).is_ok(),
+        (value_type, toml::Value::Integer(value)) => value_type
+            .integer_bounds()
+            .is_some_and(|(min, max)| (min..=max).contains(value)),
         _ => false,
     };
     if valid {
@@ -179,7 +195,7 @@ fn validate_value_constraints(
                     .max_utf8_bytes
                     .is_some_and(|maximum| utf8_bytes > maximum)
         }
-        (ValueType::I32 | ValueType::I64, toml::Value::Integer(value)) => {
+        (value_type, toml::Value::Integer(value)) if value_type.integer_bounds().is_some() => {
             validation.minimum.is_some_and(|minimum| *value < minimum)
                 || validation.maximum.is_some_and(|maximum| *value > maximum)
         }

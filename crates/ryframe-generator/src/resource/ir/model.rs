@@ -33,8 +33,13 @@ impl IdGeneration {
 #[serde(rename_all = "snake_case")]
 pub enum ValueType {
     String,
+    I8,
+    I16,
     I32,
     I64,
+    U8,
+    U16,
+    U32,
     Decimal,
     Bool,
     Date,
@@ -49,17 +54,44 @@ pub enum RelationKind {
 }
 
 impl ValueType {
-    pub fn rust_type(self, nullable: bool) -> String {
-        let value = match self {
+    pub fn rust_base_type(self) -> &'static str {
+        match self {
             Self::String => "String",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
             Self::I32 => "i32",
             Self::I64 => "i64",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
             Self::Decimal => "rust_decimal::Decimal",
             Self::Bool => "bool",
             Self::Date => "chrono::NaiveDate",
             Self::DateTime => "chrono::DateTime<chrono::Utc>",
             Self::Json => "serde_json::Value",
-        };
+        }
+    }
+
+    pub fn integer_bounds(self) -> Option<(i64, i64)> {
+        Some(match self {
+            Self::I8 => (i8::MIN.into(), i8::MAX.into()),
+            Self::I16 => (i16::MIN.into(), i16::MAX.into()),
+            Self::I32 => (i32::MIN.into(), i32::MAX.into()),
+            Self::I64 => (i64::MIN, i64::MAX),
+            Self::U8 => (0, u8::MAX.into()),
+            Self::U16 => (0, u16::MAX.into()),
+            Self::U32 => (0, u32::MAX.into()),
+            Self::String
+            | Self::Decimal
+            | Self::Bool
+            | Self::Date
+            | Self::DateTime
+            | Self::Json => return None,
+        })
+    }
+
+    pub fn rust_type(self, nullable: bool) -> String {
+        let value = self.rust_base_type();
         if nullable {
             format!("Option<{value}>")
         } else {
@@ -70,7 +102,9 @@ impl ValueType {
     pub fn typescript_type(self, nullable: bool) -> String {
         let value = match self {
             Self::String | Self::Date | Self::DateTime | Self::Decimal => "string",
-            Self::I32 | Self::I64 => "number",
+            Self::I8 | Self::I16 | Self::I32 | Self::I64 | Self::U8 | Self::U16 | Self::U32 => {
+                "number"
+            }
             Self::Bool => "boolean",
             Self::Json => "unknown",
         };

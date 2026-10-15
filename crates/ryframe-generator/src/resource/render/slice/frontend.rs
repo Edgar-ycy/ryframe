@@ -461,7 +461,14 @@ fn push_typescript_object(output: &mut String, properties: &[String]) {
 fn ts_default(field: &FieldIr) -> &'static str {
     match field.value_type {
         ValueType::String | ValueType::Date | ValueType::DateTime => "''",
-        ValueType::I32 | ValueType::I64 | ValueType::Decimal => "0",
+        ValueType::I8
+        | ValueType::I16
+        | ValueType::I32
+        | ValueType::I64
+        | ValueType::U8
+        | ValueType::U16
+        | ValueType::U32
+        | ValueType::Decimal => "0",
         ValueType::Bool => "false",
         ValueType::Json => "null",
     }
@@ -469,7 +476,10 @@ fn ts_default(field: &FieldIr) -> &'static str {
 
 fn ts_enum_value(value: &str, value_type: ValueType) -> String {
     match value_type {
-        ValueType::I32 | ValueType::I64 | ValueType::Decimal if value.parse::<f64>().is_ok() => {
+        value_type
+            if (value_type.integer_bounds().is_some() || value_type == ValueType::Decimal)
+                && value.parse::<f64>().is_ok() =>
+        {
             value.to_owned()
         }
         ValueType::Bool if matches!(value, "true" | "false") => value.to_owned(),

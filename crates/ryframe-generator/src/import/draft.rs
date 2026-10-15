@@ -95,14 +95,15 @@ pub fn draft_resource_from_table(
             )
             .with_field(&column.name)
         })?;
-        let value_type = import_value_type(&column.data_type).ok_or_else(|| {
-            import_error(
-                &metadata.identity.name,
-                format!("数据库类型 `{}` 无法确定映射", column.data_type),
-                "人工选择受支持的 value_type，或将该字段移入强类型扩展",
-            )
-            .with_field(&column.name)
-        })?;
+        let value_type =
+            import_value_type(&column.data_type, &column.column_type).ok_or_else(|| {
+                import_error(
+                    &metadata.identity.name,
+                    format!("数据库类型 `{}` 无法确定映射", column.data_type),
+                    "人工选择受支持的 value_type，或将该字段移入强类型扩展",
+                )
+                .with_field(&column.name)
+            })?;
         let database_label = column
             .comment
             .as_deref()
@@ -224,24 +225,36 @@ fn pending_usage() -> FieldUsageSpec {
     }
 }
 
-fn import_value_type(data_type: &str) -> Option<ValueType> {
-    match data_type
+fn import_value_type(data_type: &str, column_type: &str) -> Option<ValueType> {
+    let normalized = column_type.trim().to_ascii_lowercase();
+    let unsigned = normalized.ends_with(" unsigned");
+    let base = normalized.split(['(', ' ']).next().unwrap_or_default();
+    if data_type
         .trim()
-        .split_once('(')
-        .map_or(data_type.trim(), |(base, _)| base)
+        .split(['(', ' '])
+        .next()
+        .unwrap_or_default()
         .to_ascii_lowercase()
-        .as_str()
+        != base
     {
-        "varchar" | "char" | "text" | "longtext" | "mediumtext" | "tinytext" => {
+        return None;
+    }
+    match (base, unsigned) {
+        ("varchar" | "char" | "text" | "longtext" | "mediumtext" | "tinytext", false) => {
             Some(ValueType::String)
         }
-        "tinyint" | "smallint" | "mediumint" | "int" | "integer" => Some(ValueType::I32),
-        "bigint" => Some(ValueType::I64),
-        "decimal" | "numeric" => Some(ValueType::Decimal),
-        "bool" | "boolean" => Some(ValueType::Bool),
-        "date" => Some(ValueType::Date),
-        "datetime" => Some(ValueType::DateTime),
-        "json" => Some(ValueType::Json),
+        ("tinyint", false) => Some(ValueType::I8),
+        ("smallint", false) => Some(ValueType::I16),
+        ("mediumint" | "int" | "integer", false) => Some(ValueType::I32),
+        ("bigint", false) => Some(ValueType::I64),
+        ("tinyint", true) => Some(ValueType::U8),
+        ("smallint", true) => Some(ValueType::U16),
+        ("mediumint" | "int" | "integer", true) => Some(ValueType::U32),
+        ("decimal" | "numeric", _) => Some(ValueType::Decimal),
+        ("bool" | "boolean", false) => Some(ValueType::Bool),
+        ("date", false) => Some(ValueType::Date),
+        ("datetime", false) => Some(ValueType::DateTime),
+        ("json", false) => Some(ValueType::Json),
         _ => None,
     }
 }

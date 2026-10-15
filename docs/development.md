@@ -56,7 +56,7 @@ order-business/
     resources/                 # 手写 ResourceModel
     extensions/                # 手写复杂业务
     generated/
-      entities/ dto/ repositories/ services/ handlers/ openapi/ models/
+      entities/ dto/ repositories/ services/ handlers/ openapi/ models/ resource_catalog/
   migrations/                  # 本模块迁移
   .ryframe/generated.toml      # 生成文件 ownership
 ```
@@ -86,7 +86,7 @@ cargo generate -- resource --package order-business --model Order --write
 
 ### 模型结构演进
 
-修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。类型声明不等于默认值、索引或外键声明；这些导入元数据仍需核对，完整 CRUD 的字段及控件限制继续生效。
+修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64`、Decimal 的完整 CRUD 仍明确阻断；日期、JSON 等控件限制继续生效。类型声明不代替默认值、索引或外键，导入元数据仍需核对。业务描述目录按资源拆分，生成 Rust 文件超过 500 行时整批停止并报告文件，复杂资源须按职责拆分。
 
 - 新增可空列、带显式默认值的非空列、整数或字符串扩宽、放宽非空约束及新增索引可生成向前 DDL；唯一索引仍须先核对存量重复值。
 - 删除或重命名列、收窄类型、收紧非空约束、改变主键/表名/存储范围、调整已有列顺序或删除/修改索引只输出审阅原因，整批停止，不覆盖初始迁移或发布半批注册。非空新列没有默认值时，先用可空列分阶段回填。

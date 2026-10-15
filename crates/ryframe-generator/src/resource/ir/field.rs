@@ -181,14 +181,14 @@ fn validate_bounds(
         ));
     }
     if (field.validation.minimum.is_some() || field.validation.maximum.is_some())
-        && !matches!(field.value_type, ValueType::I32 | ValueType::I64)
+        && field.value_type.integer_bounds().is_none()
     {
         return Err(field_error(
             resource,
             &field.name,
             source_path,
-            "数值范围校验被用于非 i32/i64 字段",
-            "移除 minimum/maximum，或使用 i32/i64；精确数值规则放入强类型扩展",
+            "数值范围校验被用于非整数字段",
+            "移除 minimum/maximum，或使用整数类型；精确数值规则放入强类型扩展",
         ));
     }
     Ok(())

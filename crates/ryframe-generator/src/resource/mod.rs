@@ -9,6 +9,7 @@ mod ir;
 mod render;
 mod spec;
 mod sql_type;
+pub(crate) use sql_type::physical_integer_bounds;
 mod writer;
 pub(crate) use writer::transaction as write_transaction;
 
