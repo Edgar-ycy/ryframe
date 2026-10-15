@@ -48,6 +48,8 @@ cargo migrate -- tenant-data verify --all
 
 确认迁移内容后，使用 `cargo migrate -- control up` 或 `cargo migrate -- tenant-data up --all` 更新对应目标。
 
+已有表只能显式接管。SDK 的 `preview_business_adoption(database, scope, module, migrations)` 接收所选范围的完整注册迁移，只读验证实际表与最新模型完全一致，并绑定物理实例、库名、迁移源码及整个业务账本前像；计划仅含对象名和指纹，不含密码、默认值原文或业务行。审阅后调用 `apply_business_adoption(database, plan, migrations)`，在串行化事务中登记整个模块迁移前缀为 adopted，不执行历史 DDL、不更改业务数据。`inspect_business_adoption` 只读区分原前像和完整后像；部分登记、其他计划来源或结构漂移均报错，不补写。提交结果未知时先 inspect 原计划；完整后像再次 apply 只读确认。若首次创建账本后失败，空账本可能保留，应核对后重新预览，不能把元数据 DDL 当作可事务回滚。
+
 独立目标采用按需连接。API 启动后，在“平台管理 → 数据目标”打开指定目标的详情，执行实时连接与 schema 探测；已验证且无占用冲突的目标才会出现在租户开通和迁移的可选项中。列表刷新只读取已知健康状态，不会遍历连接所有数据库。
 
 ## 一致性

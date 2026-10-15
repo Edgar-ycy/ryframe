@@ -12,7 +12,7 @@ description = "RyFrame 业务模块开发接口"
 default = []
 runtime = ["dep:ryframe-application", "dep:ryframe-kernel"]
 api = ["runtime", "dep:axum", "dep:ryframe-api", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:utoipa", "dep:validator"]
-migration = ["persistence", "dep:sea-orm-migration"]
+migration = ["persistence", "dep:sea-orm-migration", "dep:sha2"]
 persistence = ["runtime", "dep:async-trait", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:sea-orm"]
 
 [dependencies]
@@ -30,6 +30,7 @@ sea-orm = { workspace = true, optional = true }
 sea-orm-migration = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+sha2 = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 validator = { workspace = true, features = ["derive"], optional = true }
 

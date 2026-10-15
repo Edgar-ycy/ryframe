@@ -21,10 +21,12 @@ pub use async_trait::async_trait;
 pub use control_catalog::BusinessControlTableDescriptor;
 #[cfg(feature = "migration")]
 pub use migration::{
-    BusinessMigration, BusinessMigrationOrigin, BusinessMigrationSchema, BusinessMigrationScope,
-    BusinessTableSchema, MigrationState, SeaOrmBusinessMigration,
-    business_initialization_statements, validate_business_migration_ledger,
-    verify_business_migrations,
+    BusinessAdoptionLedger, BusinessAdoptionManifest, BusinessAdoptionMigration,
+    BusinessAdoptionOutcome, BusinessAdoptionPlan, BusinessAdoptionState, BusinessAdoptionTable,
+    BusinessAdoptionTarget, BusinessMigration, BusinessMigrationOrigin, BusinessMigrationSchema,
+    BusinessMigrationScope, BusinessTableSchema, MigrationState, SeaOrmBusinessMigration,
+    apply_business_adoption, business_initialization_statements, inspect_business_adoption,
+    preview_business_adoption, validate_business_migration_ledger, verify_business_migrations,
 };
 #[cfg(feature = "runtime")]
 pub use module::{BusinessModuleBuilder, RyFrameBusinessModule, sort_modules, validate_modules};

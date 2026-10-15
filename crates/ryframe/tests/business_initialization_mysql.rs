@@ -8,6 +8,16 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
 
+#[path = "business_initialization_mysql/adoption.rs"]
+mod adoption;
+
+#[path = "business_initialization_mysql/adoption_races.rs"]
+mod adoption_races;
+#[path = "business_initialization_mysql/adoption_unknown.rs"]
+mod adoption_unknown;
+#[path = "business_initialization_mysql/response_gate.rs"]
+mod response_gate;
+
 const DDL: &str = "CREATE TABLE biz_sql_example (id BIGINT NOT NULL AUTO_INCREMENT, code VARCHAR(32) NOT NULL, PRIMARY KEY(id), UNIQUE KEY uk_example_code(code)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 const CHECKSUM: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TABLE_SCHEMA: &str = r#"v2|table="biz_sql_example"|engine="innodb"|charset="utf8mb4"|collation="utf8mb4_general_ci"|columns=["id":"bigint":"NO":None:None:"PRI":None:"auto_increment":"";"code":"varchar(32)":"NO":Some("utf8mb4"):Some("utf8mb4_general_ci"):"UNI":None:"":"";]|indexes=["PRIMARY":"id":1:0:"btree":None:"YES";"uk_example_code":"code":1:0:"btree":None:"YES";]|constraints=["PRIMARY":"PRIMARY KEY":"YES";"uk_example_code":"UNIQUE":"YES";]|checks=[]|foreign_keys=[]"#;

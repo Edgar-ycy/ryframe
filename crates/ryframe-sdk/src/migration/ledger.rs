@@ -7,10 +7,13 @@ use super::{BusinessMigration, BusinessMigrationOrigin, BusinessMigrationScope, 
 
 pub(super) mod write;
 pub(super) use write::record_executed;
+mod snapshot;
+pub(super) use snapshot::{LedgerSnapshot, load_snapshot};
 
 pub(super) const NAME: &str = "ryframe_business_migration";
 pub(super) const DDL: &str = "CREATE TABLE ryframe_business_migration (scope VARCHAR(8) NOT NULL, module_name VARCHAR(64) NOT NULL, migration_id VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL, before_fingerprint CHAR(64) NULL, after_fingerprint CHAR(64) NOT NULL, origin VARCHAR(16) NOT NULL, tables_json JSON NOT NULL, adoption_hash CHAR(64) NULL, applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (scope, module_name, migration_id), CONSTRAINT chk_business_origin CHECK ((origin='executed' AND adoption_hash IS NULL) OR (origin='adopted' AND adoption_hash IS NOT NULL))) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
 
+#[derive(serde::Serialize)]
 pub(super) struct AppliedMigration {
     pub scope: String,
     pub module: String,
@@ -183,8 +186,8 @@ pub(super) async fn verify_ownership<C: ConnectionTrait>(
     Ok(())
 }
 
-pub(super) async fn verify_known_records(
-    database: &DatabaseConnection,
+pub(super) async fn verify_known_records<C: ConnectionTrait>(
+    database: &C,
     scope: BusinessMigrationScope,
     migrations: &[&dyn BusinessMigration],
 ) -> AppResult<()> {

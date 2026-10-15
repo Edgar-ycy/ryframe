@@ -1,14 +1,21 @@
 use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::{MigrationTrait, SchemaManager};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use ryframe_kernel::{AppError, AppResult};
 
+mod adoption;
 mod export;
 mod ledger;
 mod schema;
+pub use adoption::{
+    BusinessAdoptionLedger, BusinessAdoptionManifest, BusinessAdoptionMigration,
+    BusinessAdoptionOutcome, BusinessAdoptionPlan, BusinessAdoptionState, BusinessAdoptionTable,
+    BusinessAdoptionTarget, apply_business_adoption, inspect_business_adoption,
+    preview_business_adoption,
+};
 pub use export::business_initialization_statements;
 pub(crate) use schema::validate_migrations;
 pub use schema::{
@@ -16,7 +23,7 @@ pub use schema::{
     verify_business_migrations,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BusinessMigrationScope {
     Control,
