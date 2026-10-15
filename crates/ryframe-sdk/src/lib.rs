@@ -21,8 +21,9 @@ pub use async_trait::async_trait;
 pub use control_catalog::BusinessControlTableDescriptor;
 #[cfg(feature = "migration")]
 pub use migration::{
-    BusinessMigration, BusinessMigrationSchema, BusinessMigrationScope, BusinessTableSchema,
-    MigrationState, SeaOrmBusinessMigration, business_initialization_statements,
+    BusinessMigration, BusinessMigrationOrigin, BusinessMigrationSchema, BusinessMigrationScope,
+    BusinessTableSchema, MigrationState, SeaOrmBusinessMigration,
+    business_initialization_statements, validate_business_migration_ledger,
     verify_business_migrations,
 };
 #[cfg(feature = "runtime")]

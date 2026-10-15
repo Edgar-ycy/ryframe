@@ -91,6 +91,53 @@ fn missing_empty_and_duplicate_sql_descriptions_fail_before_export() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scoped_ledger_rejects_unknown_records_and_foreign_table_ownership() {
+    mysql::run_mysql_test("businessscope", |database| async move {
+        let initial = migration(false);
+        initial.up(&database).await.map_err(|error| error.to_string())?;
+        assert_eq!(initial.status(&database).await.unwrap().origin, Some(ryframe_sdk::BusinessMigrationOrigin::Executed));
+        verify_business_migrations(&database, BusinessMigrationScope::Tenant, &[]).await.map_err(|error| error.to_string())?;
+        mysql::execute(&database, "INSERT INTO ryframe_business_migration(scope,module_name,migration_id,checksum,before_fingerprint,after_fingerprint,origin,tables_json,adoption_hash) SELECT 'tenant','other','other',checksum,before_fingerprint,after_fingerprint,origin,JSON_ARRAY('biz_other'),adoption_hash FROM ryframe_business_migration WHERE scope='control'").await?;
+        verify_business_migrations(&database, BusinessMigrationScope::Control, &[&initial]).await.map_err(|error| error.to_string())?;
+        let unknown = verify_business_migrations(&database, BusinessMigrationScope::Tenant, &[]).await.unwrap_err().to_string();
+        assert!(unknown.contains("未注册") && unknown.contains("other/other"));
+        let before = business_rows(&database).await?;
+        mysql::execute(&database, "UPDATE ryframe_business_migration SET tables_json=JSON_ARRAY('biz_sql_example') WHERE scope='tenant'").await?;
+        let ownership = verify_business_migrations(&database, BusinessMigrationScope::Control, &[&initial]).await.unwrap_err().to_string();
+        assert!(ownership.contains("已登记归属 tenant/other"));
+        assert!(initial.up(&database).await.unwrap_err().to_string().contains("已登记归属"));
+        assert!(initial.status(&database).await.unwrap_err().to_string().contains("已登记归属"));
+        assert!(initial.verify_ledger(&database).await.unwrap_err().to_string().contains("已登记归属"));
+        let next = next_migration();
+        let error = next.up(&database).await.unwrap_err().to_string();
+        assert!(error.contains("已登记归属"));
+        assert_eq!(business_rows(&database).await?, before);
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='biz_sql_example' AND column_name='memo'", 0).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 2).await?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ledger_table_lists_and_origin_hashes_are_verified_without_guessing() {
+    mysql::run_mysql_test("businessorigin", |database| async move {
+        let initial = migration(false);
+        initial.up(&database).await.map_err(|error| error.to_string())?;
+        mysql::execute(&database, "UPDATE ryframe_business_migration SET tables_json=JSON_ARRAY('biz_other')").await?;
+        assert!(initial.status(&database).await.unwrap_err().to_string().contains("tables_json"));
+        mysql::execute(&database, "UPDATE ryframe_business_migration SET tables_json=JSON_ARRAY('biz_sql_example'), origin='adopted', adoption_hash=REPEAT('z',64)").await?;
+        assert!(initial.status(&database).await.unwrap_err().to_string().contains("origin/adoption_hash"));
+        mysql::execute(&database, "UPDATE ryframe_business_migration SET adoption_hash=REPEAT('a',64)").await?;
+        assert_eq!(initial.status(&database).await.unwrap().origin, Some(ryframe_sdk::BusinessMigrationOrigin::Adopted));
+        verify_business_migrations(&database, BusinessMigrationScope::Control, &[&initial]).await.map_err(|error| error.to_string())?;
+        mysql::execute(&database, "UPDATE ryframe_business_migration SET scope='invalid'").await?;
+        assert!(verify_business_migrations(&database, BusinessMigrationScope::Control, &[]).await.unwrap_err().to_string().contains("未注册"));
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 1).await?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn runtime_business_schema_verification_is_read_only_and_rejects_drift() {
     use ryframe_db::migration::{register_business_tables, verify_business_schema};
     register_business_tables([("biz_sql_example", TABLE_SCHEMA)]).unwrap();
@@ -138,7 +185,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
         ryframe_db::migration::verify(&imported)
             .await
             .map_err(mysql::db_error)?;
-        verify_business_migrations(&imported, &[&migration])
+        verify_business_migrations(&imported, BusinessMigrationScope::Control, &[&migration])
             .await
             .map_err(|error| error.to_string())?;
         let expected = inventory(&imported).await?;
@@ -150,7 +197,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
                 .up(&migrated)
                 .await
                 .map_err(|error| error.to_string())?;
-            verify_business_migrations(&migrated, &[&migration])
+            verify_business_migrations(&migrated, BusinessMigrationScope::Control, &[&migration])
                 .await
                 .map_err(|error| error.to_string())?;
             assert_eq!(expected, inventory(&migrated).await?);
@@ -192,9 +239,9 @@ async fn actual_schema_drift_and_ledger_fingerprint_tampering_fail_closed() {
     mysql::run_mysql_test("businessdrift", |database| async move {
         let migration = migration(false);
         migration.up(&database).await.map_err(|error| error.to_string())?;
-        verify_business_migrations(&database, &[&migration]).await.map_err(|error| error.to_string())?;
+        verify_business_migrations(&database, BusinessMigrationScope::Control, &[&migration]).await.map_err(|error| error.to_string())?;
         mysql::execute(&database, "ALTER TABLE biz_sql_example MODIFY code VARCHAR(64) NOT NULL DEFAULT 'do-not-print-this-value'").await?;
-        let error = verify_business_migrations(&database, &[&migration]).await.unwrap_err().to_string();
+        let error = verify_business_migrations(&database, BusinessMigrationScope::Control, &[&migration]).await.unwrap_err().to_string();
         assert!(error.contains("列 code") && error.contains("类型") && error.contains("默认值") && error.contains("SHOW CREATE TABLE"), "{error}");
         assert!(!error.contains("do-not-print-this-value"));
         mysql::execute(&database, "UPDATE ryframe_business_migration SET after_fingerprint=REPEAT('b',64)").await?;
@@ -299,19 +346,27 @@ async fn latest_table_contract_accepts_roll_forward_without_rechecking_historica
         next.up(&database)
             .await
             .map_err(|error| error.to_string())?;
-        verify_business_migrations(&database, &[&initial, &next])
-            .await
-            .map_err(|error| error.to_string())?;
+        verify_business_migrations(
+            &database,
+            BusinessMigrationScope::Control,
+            &[&initial, &next],
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         initial
             .verify_ledger(&database)
             .await
             .map_err(|error| error.to_string())?;
         assert!(
-            verify_business_migrations(&database, &[&next, &initial])
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("前后结构链")
+            verify_business_migrations(
+                &database,
+                BusinessMigrationScope::Control,
+                &[&next, &initial]
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("前后结构链")
         );
         mysql::require_count(
             &database,
@@ -353,7 +408,7 @@ async fn inventory(database: &DatabaseConnection) -> Result<Vec<Vec<String>>, St
     for sql in [
         "SELECT CONCAT_WS('|', TABLE_NAME,COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COALESCE(COLUMN_DEFAULT,'NULL'),EXTRA) AS item FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name IN ('biz_sql_example','ryframe_business_migration') ORDER BY TABLE_NAME,ORDINAL_POSITION",
         "SELECT CONCAT_WS('|', TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME) AS item FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name IN ('biz_sql_example','ryframe_business_migration') ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX",
-        "SELECT CONCAT_WS('|', module_name,migration_id,checksum,COALESCE(before_fingerprint,'NULL'),after_fingerprint) AS item FROM ryframe_business_migration ORDER BY module_name,migration_id",
+        "SELECT CONCAT_WS('|', scope,module_name,migration_id,checksum,COALESCE(before_fingerprint,'NULL'),after_fingerprint,origin,CAST(tables_json AS CHAR),COALESCE(adoption_hash,'NULL')) AS item FROM ryframe_business_migration ORDER BY scope,module_name,migration_id",
     ] {
         let rows = database
             .query_all_raw(Statement::from_string(DbBackend::MySql, sql))

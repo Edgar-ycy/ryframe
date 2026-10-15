@@ -72,9 +72,20 @@ class BusinessCatalogTests(unittest.TestCase):
     def test_business_ledger_columns_follow_formal_sdk_ddl(self):
         backend = Path(__file__).resolve().parents[2]
         self.assertEqual(business_ledger_columns(backend), {
+            "scope": "VARCHAR", "origin": "VARCHAR", "tables_json": "JSON", "adoption_hash": "CHAR",
             "module_name": "VARCHAR", "migration_id": "VARCHAR", "checksum": "CHAR",
             "before_fingerprint": "CHAR", "after_fingerprint": "CHAR", "applied_at": "TIMESTAMP",
         })
+
+    def test_business_ledger_rejects_ambiguous_or_incomplete_ddl(self):
+        backend = Path(__file__).resolve().parents[2]
+        source = (backend / "crates/ryframe-sdk/src/migration/ledger.rs").read_text(encoding="utf-8")
+        target = self.root / "crates/ryframe-sdk/src/migration/ledger.rs"
+        target.parent.mkdir(parents=True)
+        for invalid in [source + source, source.replace("tables_json JSON", "tables_json TEXT"), source.replace("const DDL:", "const UNKNOWN:")]:
+            target.write_text(invalid, encoding="utf-8")
+            with self.subTest(invalid=invalid[:30]), self.assertRaises(ValueError):
+                business_ledger_columns(self.root)
 
 
 if __name__ == "__main__":

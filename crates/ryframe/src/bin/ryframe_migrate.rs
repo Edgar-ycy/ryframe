@@ -270,12 +270,19 @@ async fn run_business_migrations(
         .map(|migration| migration.as_ref())
         .collect::<Vec<_>>();
     if matches!(operation, Operation::Verify) {
-        return ryframe_sdk::verify_business_migrations(database, &migrations)
+        return ryframe_sdk::verify_business_migrations(database, scope, &migrations)
             .await
             .map_err(|error| {
                 sea_orm::DbErr::Custom(format!("目标 {target} 业务迁移结构校验失败：{error}"))
             });
     }
+    ryframe_sdk::validate_business_migration_ledger(database, scope, &migrations)
+        .await
+        .map_err(|error| {
+            sea_orm::DbErr::Custom(format!(
+                "目标 {target} 业务迁移账本预检失败，尚未执行业务 DDL：{error}"
+            ))
+        })?;
     for module in modules {
         for migration in module
             .migrations()
@@ -294,11 +301,13 @@ async fn run_business_migrations(
                         ))
                     })?;
                     println!(
-                        "scope={target} module={} applied={} expected={} current={} missing={}",
+                        "scope={target} module={} migration={} applied={} expected={} current={} origin={} missing={}",
                         module.name(),
+                        migration.id(),
                         status.applied,
                         status.expected,
                         status.is_current(),
+                        status.origin.map_or("pending", |origin| origin.as_str()),
                         display_versions(&status.missing),
                     );
                     Ok(())
@@ -314,7 +323,7 @@ async fn run_business_migrations(
         }
     }
     if matches!(operation, Operation::Up) {
-        ryframe_sdk::verify_business_migrations(database, &migrations)
+        ryframe_sdk::verify_business_migrations(database, scope, &migrations)
             .await
             .map_err(|error| {
                 sea_orm::DbErr::Custom(format!(

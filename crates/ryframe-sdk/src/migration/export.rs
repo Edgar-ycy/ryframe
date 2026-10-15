@@ -1,4 +1,4 @@
-use super::{BUSINESS_MIGRATION_LEDGER_DDL, BusinessMigration};
+use super::BusinessMigration;
 use ryframe_kernel::{AppError, AppResult};
 
 /// 按注册顺序生成业务结构和账本，不访问数据库、不写入文件。
@@ -9,7 +9,7 @@ pub fn business_initialization_statements(
         return Ok(Vec::new());
     }
     super::schema::validate_migrations(migrations)?;
-    let mut statements = vec![BUSINESS_MIGRATION_LEDGER_DDL.into()];
+    let mut statements = vec![super::ledger::DDL.into()];
     for migration in migrations {
         let source = migration.initialization_statements()?;
         if source.is_empty() || source.iter().any(|sql| sql.trim().is_empty()) {
@@ -25,9 +25,11 @@ pub fn business_initialization_statements(
             .before_fingerprint
             .map(sql_text)
             .unwrap_or_else(|| "NULL".into());
+        let tables = serde_json::to_string(&super::ledger::table_names(*migration))
+            .map_err(|error| AppError::Config(format!("业务迁移表归属序列化失败：{error}")))?;
         statements.push(format!(
-            "INSERT INTO ryframe_business_migration (module_name, migration_id, checksum, before_fingerprint, after_fingerprint) VALUES ({}, {}, {}, {}, {})",
-            sql_text(migration.module()), sql_text(migration.id()), sql_text(migration.checksum()), before, sql_text(migration.schema().after_fingerprint),
+            "INSERT INTO ryframe_business_migration (scope,module_name,migration_id,checksum,before_fingerprint,after_fingerprint,origin,tables_json,adoption_hash) VALUES ({}, {}, {}, {}, {}, {}, 'executed', {}, NULL)",
+            sql_text(migration.scope().as_str()), sql_text(migration.module()), sql_text(migration.id()), sql_text(migration.checksum()), before, sql_text(migration.schema().after_fingerprint), sql_text(&tables),
         ));
     }
     Ok(statements)

@@ -89,11 +89,11 @@ def business_columns(backend: Path) -> dict:
 
 
 def business_ledger_columns(backend: Path) -> dict:
-    source = regular_file(backend / "crates/ryframe-sdk/src/migration.rs").read_text(encoding="utf-8")
-    matches = re.findall(r'CREATE TABLE IF NOT EXISTS \{BUSINESS_MIGRATION_LEDGER\} \(([^"\n]+)\) ENGINE=', source)
+    source = regular_file(backend / "crates/ryframe-sdk/src/migration/ledger.rs").read_text(encoding="utf-8")
+    matches = re.findall(r'const DDL: &str = "CREATE TABLE ryframe_business_migration \(([^"\n]+)\) ENGINE=', source)
     if len(matches) != 1:
         raise ValueError("正式业务迁移账本 DDL 缺失或不唯一")
-    columns = re.findall(r"(?:^|, )([a-z_]+) (VARCHAR|CHAR|TIMESTAMP)\b", matches[0])
-    if len(columns) != 6 or len(dict(columns)) != 6:
+    columns = re.findall(r"(?:^|, )([a-z_]+) (VARCHAR|CHAR|TIMESTAMP|JSON)\b", matches[0])
+    if len(columns) != 10 or len(dict(columns)) != 10:
         raise ValueError("业务迁移账本完整列结构变化，必须审查复制规则")
     return dict(columns)

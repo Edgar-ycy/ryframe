@@ -44,7 +44,7 @@ cargo migrate -- control verify
 cargo migrate -- tenant-data verify --all
 ```
 
-`status` 显示迁移账本状态，结构验收使用 `verify`。业务迁移同时核对源码摘要及前后模型指纹，再按每张表最后一次迁移比对实际 MySQL 结构；历史初始结构不会误判合法的追加迁移。差异指出列属性、索引或约束，并给出 `SHOW CREATE TABLE` 核对方法，不回显默认值。初始目标表已存在时不自动接管；DDL 执行后校验失败不登记本次账本，保留现场，不能假定整体回滚或自动重放。
+`status` 显示迁移账本状态和来源，结构验收使用 `verify`。业务账本明确区分 control/tenant 范围、实际执行/接管来源及表归属；普通 up 与初始化 SQL 登记为 executed。所选完整范围的未知记录、跨模块或跨范围的表归属冲突均拒绝继续，同库的另一合法范围分别核验。业务迁移同时核对源码摘要及前后模型指纹，再按每张表最后一次迁移比对实际 MySQL 结构；历史初始结构不会误判合法的追加迁移。差异指出列属性、索引或约束，并给出 `SHOW CREATE TABLE` 核对方法，不回显默认值。初始目标表已存在时不自动接管；DDL 执行后校验失败不登记本次账本，保留现场，不能假定整体回滚或自动重放。
 
 确认迁移内容后，使用 `cargo migrate -- control up` 或 `cargo migrate -- tenant-data up --all` 更新对应目标。
 

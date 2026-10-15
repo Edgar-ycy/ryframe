@@ -95,7 +95,11 @@ pub(crate) fn validate_migrations(migrations: &[&dyn BusinessMigration]) -> AppR
     let mut latest = BTreeMap::new();
     for migration in migrations {
         validate_migration(*migration)?;
-        if !seen.insert((migration.module(), migration.id())) {
+        if !seen.insert((
+            migration.scope().as_str(),
+            migration.module(),
+            migration.id(),
+        )) {
             return Err(AppError::Config(format!(
                 "业务迁移 {}/{} 重复登记",
                 migration.module(),
@@ -133,25 +137,17 @@ pub(super) fn validate_migration(migration: &dyn BusinessMigration) -> AppResult
     Ok(())
 }
 
-fn valid_fingerprint(hash: &str) -> bool {
+pub(super) fn valid_fingerprint(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// 核验所选迁移的账本及每张表最后一次迁移的结构，不拿历史初始结构误判后续迁移。
 pub async fn verify_business_migrations(
     database: &DatabaseConnection,
+    scope: super::BusinessMigrationScope,
     migrations: &[&dyn BusinessMigration],
 ) -> AppResult<()> {
-    validate_migrations(migrations)?;
-    if migrations.first().is_some_and(|first| {
-        migrations
-            .iter()
-            .any(|migration| migration.scope() != first.scope())
-    }) {
-        return Err(AppError::Config(
-            "同一次数据库结构校验只能选择一种迁移范围；分别校验 control 与 tenant 目标".into(),
-        ));
-    }
+    validate_business_migration_ledger(database, scope, migrations).await?;
     let mut latest = BTreeMap::new();
     for migration in migrations {
         migration.verify_ledger(database).await?;
@@ -161,6 +157,28 @@ pub async fn verify_business_migrations(
     }
     for (table, expected) in latest {
         verify_table(database, table, expected).await?;
+    }
+    Ok(())
+}
+
+/// 只读预检完整范围内已存在的账本及表归属，允许尚未执行的已注册迁移。
+pub async fn validate_business_migration_ledger(
+    database: &DatabaseConnection,
+    scope: super::BusinessMigrationScope,
+    migrations: &[&dyn BusinessMigration],
+) -> AppResult<()> {
+    validate_migrations(migrations)?;
+    if migrations
+        .iter()
+        .any(|migration| migration.scope() != scope)
+    {
+        return Err(AppError::Config(
+            "同一次账本校验只能选择明确的一种迁移范围；分别校验 control 与 tenant 目标".into(),
+        ));
+    }
+    super::ledger::verify_known_records(database, scope, migrations).await?;
+    for migration in migrations {
+        super::ledger::verify_ownership(database, *migration).await?;
     }
     Ok(())
 }
