@@ -175,6 +175,8 @@ pub struct FieldSpec {
     pub name: String,
     #[serde(default)]
     pub column: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_type: Option<String>,
     pub value_type: ValueType,
     #[serde(default)]
     pub wire_type: Option<ValueType>,

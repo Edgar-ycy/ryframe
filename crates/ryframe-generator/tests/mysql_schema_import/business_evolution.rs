@@ -11,7 +11,7 @@ async fn generated_incremental_sql_preserves_rows_and_matches_current_mysql_sche
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
         fs::create_dir_all(&root).map_err(message)?;
         let workspace = tempfile::Builder::new().prefix("business-evolution-").tempdir_in(root).map_err(message)?;
-        prepare(workspace.path())?;
+        prepare(workspace.path(), MODEL)?;
         let root = workspace.path().join("evolution-business");
         let initial = generate(workspace.path())?;
         let initial = initial.created.iter().find(|path| path.starts_with("migrations/")).ok_or("缺少初始迁移")?;
@@ -40,7 +40,39 @@ async fn generated_incremental_sql_preserves_rows_and_matches_current_mysql_sche
     }).await;
 }
 
-fn prepare(workspace: &Path) -> Result<(), String> {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn imported_physical_types_match_existing_table_and_generated_ddl() {
+    mysql::run_mysql_test("importedtypes", |database| async move {
+        mysql::execute(&database, "CREATE TABLE biz_evolution (id BIGINT NOT NULL PRIMARY KEY, code VARCHAR(32) NOT NULL, memo TEXT NULL, amount INT NOT NULL, occurred_at DATETIME(3) NULL, whole_second DATETIME NULL, payload JSON NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci").await?;
+        mysql::execute(&database, "INSERT INTO biz_evolution(id,code,amount) VALUES(41,'keep-source',7)").await?;
+        let table = ryframe_generator::import::inspect_existing_table(&database, "biz_evolution").await.map_err(message)?;
+        let model = ryframe_generator::import::rust_model_source(&table, "control")?;
+        assert!(model.contains("sql_type = \"varchar(32)\""));
+        assert!(model.contains("sql_type = \"datetime(3)\""));
+        let model = model.replace("name = \"biz_evolution\"", "name = \"evolution\"")
+            .replace("sql_type = \"datetime(3)\"", "read_only, sql_type = \"datetime(3)\"")
+            .replace("sql_type = \"datetime\"", "read_only, sql_type = \"datetime(0)\"")
+            .replace("sql_type = \"json\"", "read_only, sql_type = \"json\"")
+            + "\npub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> { vec![<BizEvolution as ryframe_sdk::ResourceModel>::descriptor()] }\n";
+        let workspace = tempfile::Builder::new().prefix("imported-types-").tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests")).map_err(message)?;
+        prepare(workspace.path(), &model)?;
+        let root = workspace.path().join("evolution-business");
+        let generated = generate(workspace.path())?;
+        verify_current(&database, &root).await?;
+        mysql::execute(&database, "RENAME TABLE biz_evolution TO biz_source_evolution").await?;
+        let initial = generated.created.iter().find(|path| path.starts_with("migrations/")).ok_or("缺少初始迁移")?;
+        execute_migration(&database, &root.join(initial)).await?;
+        verify_current(&database, &root).await?;
+        mysql::execute(&database, "INSERT INTO biz_evolution(id,code,memo,amount,occurred_at,payload) VALUES(42,REPEAT('x',32),REPEAT('y',1024),2147483647,'2026-10-15 10:20:30.123',JSON_OBJECT('ok',true))").await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_evolution WHERE id=42 AND CHAR_LENGTH(code)=32 AND CHAR_LENGTH(memo)=1024 AND MICROSECOND(occurred_at)=123000", 1).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_source_evolution WHERE id=41 AND code='keep-source' AND amount=7", 1).await?;
+        let repeat = generate(workspace.path())?;
+        assert!(repeat.created.is_empty() && repeat.updated.is_empty() && repeat.removed.is_empty());
+        Ok(())
+    }).await;
+}
+
+fn prepare(workspace: &Path, model: &str) -> Result<(), String> {
     let root = workspace.join("evolution-business");
     fs::create_dir_all(root.join("src/resources")).map_err(message)?;
     fs::write(
@@ -54,7 +86,7 @@ fn prepare(workspace: &Path) -> Result<(), String> {
         .replace('\\', "/");
     fs::write(root.join("Cargo.toml"), format!("[package]\nname=\"evolution-business\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[package.metadata.ryframe]\nkind=\"business\"\nmodule=\"evolution\"\n[features]\ndefault=[]\ncatalog=[]\n[dependencies]\nryframe-sdk={{path={sdk:?}}}\n")).map_err(message)?;
     fs::write(root.join("src/lib.rs"), "pub mod resources;\npub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> { resources::descriptors() }\n").map_err(message)?;
-    fs::write(root.join("src/resources/mod.rs"), MODEL).map_err(message)?;
+    fs::write(root.join("src/resources/mod.rs"), model).map_err(message)?;
     let result = Command::new("cargo")
         .args(["generate-lockfile", "--offline"])
         .current_dir(workspace)

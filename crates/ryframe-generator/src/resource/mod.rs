@@ -8,6 +8,7 @@ mod explain;
 mod ir;
 mod render;
 mod spec;
+mod sql_type;
 mod writer;
 pub(crate) use writer::transaction as write_transaction;
 

@@ -64,6 +64,12 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
                     .expect("字段 schema contract 必须是对象")
                     .insert("column".into(), serde_json::json!(column));
             }
+            if let Some(sql_type) = &field.sql_type {
+                contract
+                    .as_object_mut()
+                    .expect("字段 schema contract 必须是对象")
+                    .insert("sql_type".into(), serde_json::json!(sql_type));
+            }
             contract
         })
         .collect::<Vec<_>>();

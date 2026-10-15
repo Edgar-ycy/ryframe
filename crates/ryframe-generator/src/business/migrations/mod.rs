@@ -349,4 +349,36 @@ mod tests {
         assert!(revision_id("order", 1, "../invalid").is_err());
         assert!(revision_id("order", 1_000_000, &"a".repeat(64)).is_err());
     }
+
+    #[test]
+    fn physical_text_to_varchar_requires_review_but_varchar_widening_is_safe() {
+        let mut before = resource();
+        before
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "name")
+            .unwrap()
+            .sql_type = Some("TEXT".into());
+        let mut after = before.clone();
+        after
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "name")
+            .unwrap()
+            .sql_type = Some("VARCHAR(1000)".into());
+        assert!(
+            diff::statements(&before, &after)
+                .unwrap_err()
+                .to_string()
+                .contains("人工审阅")
+        );
+        before
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "name")
+            .unwrap()
+            .sql_type = Some("VARCHAR(32)".into());
+        let sql = diff::statements(&before, &after).unwrap().join("\n");
+        assert!(sql.contains("MODIFY COLUMN `name` VARCHAR(1000)"));
+    }
 }

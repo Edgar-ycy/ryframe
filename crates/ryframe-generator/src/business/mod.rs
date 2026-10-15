@@ -45,6 +45,8 @@ pub(crate) struct OwnedFieldDescriptor {
     pub name: String,
     pub column: String,
     pub rust_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_type: Option<String>,
     pub rename_from: Option<String>,
     pub default: Option<String>,
     pub primary_key: bool,

@@ -162,6 +162,8 @@ pub struct AuditIr {
 pub struct FieldIr {
     pub name: String,
     pub column: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_type: Option<String>,
     pub value_type: ValueType,
     pub wire_type: ValueType,
     pub rust_type: String,

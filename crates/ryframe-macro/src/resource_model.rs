@@ -163,6 +163,7 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
     let mut column = None;
     let mut rename_from = None;
     let mut default = None;
+    let mut sql_type = None;
     let mut primary_key = false;
     let mut generated = false;
     let mut auto_increment = false;
@@ -206,6 +207,12 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
             } else if meta.path.is_ident("unique") {
                 unique = true;
                 Ok(())
+            } else if meta.path.is_ident("sql_type") {
+                if sql_type.is_some() {
+                    return Err(meta.error("sql_type 只能声明一次"));
+                }
+                sql_type = Some(meta.value()?.parse::<LitStr>()?.value());
+                Ok(())
             } else {
                 Err(meta.error("不支持的字段 resource 属性"))
             }
@@ -218,17 +225,15 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
         ));
     }
     let column = column.unwrap_or(column_default);
-    let rename = rename_from
-        .map(|value| quote!(Some(#value)))
-        .unwrap_or_else(|| quote!(None));
-    let default = default
-        .map(|value| quote!(Some(#value)))
-        .unwrap_or_else(|| quote!(None));
+    let rename = optional_string(rename_from);
+    let default = optional_string(default);
+    let sql_type = optional_string(sql_type);
     let tokens = quote! {
         ::ryframe_sdk::ResourceFieldDescriptor {
             name: #field_name,
             column: #column,
             rust_type: stringify!(#field_type),
+            sql_type: #sql_type,
             rename_from: #rename,
             default: #default,
             primary_key: #primary_key,
@@ -247,12 +252,47 @@ fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
     })
 }
 
+fn optional_string(value: Option<String>) -> proc_macro2::TokenStream {
+    value
+        .map(|value| quote!(Some(#value)))
+        .unwrap_or_else(|| quote!(None))
+}
+
 fn required(value: Option<String>, input: &DeriveInput, field: &str) -> syn::Result<String> {
     value.ok_or_else(|| syn::Error::new_spanned(input, format!("缺少 resource {field}")))
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn physical_type_is_preserved_and_duplicate_declarations_fail() {
+        let input = syn::parse_quote! {
+            #[resource(name = "item", table = "biz_item", database = "control")]
+            struct Item {
+                #[resource(primary_key)] id: i64,
+                #[resource(sql_type = "varchar(32)")] code: String,
+            }
+        };
+        assert!(
+            super::expand_inner(&input)
+                .unwrap()
+                .to_string()
+                .contains("sql_type : Some (\"varchar(32)\")")
+        );
+        let input = syn::parse_quote! {
+            #[resource(name = "item", table = "biz_item", database = "control")]
+            struct Item {
+                #[resource(primary_key, sql_type = "BIGINT", sql_type = "INT")] id: i64,
+            }
+        };
+        assert!(
+            super::expand_inner(&input)
+                .unwrap_err()
+                .to_string()
+                .contains("sql_type 只能声明一次")
+        );
+    }
+
     #[test]
     fn explicit_primary_key_order_rejects_missing_duplicate_or_non_string_fields() {
         for keys in [

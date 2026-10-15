@@ -70,7 +70,7 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；`import --tables biz_order,biz_order_item` 按需启用 `schema-import`，整批预检模型并自动注册描述符，原始结构保存在 `.ryframe/imports/`，不修改数据库。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于忽略的 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费配置中的 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表使用显式接管计划，命令与失败核验见[数据指南](docs/data.md)。
+手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；`import --tables biz_order,biz_order_item` 按需启用 `schema-import`，整批预检模型并自动注册描述符，原始结构保存在 `.ryframe/imports/`，不修改数据库。模型字段的 `sql_type` 保留受支持的物理类型、长度及时间精度，生成前校验其与 Rust 类型及容量规则一致。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于忽略的 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费配置中的 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表使用显式接管计划，命令与失败核验见[数据指南](docs/data.md)。
 
 ## 检查、契约与构建
 

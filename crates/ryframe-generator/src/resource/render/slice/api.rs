@@ -315,14 +315,14 @@ fn metadata_parts(resource: &ResourceIr) -> (String, String, String) {
     let mut functions = Vec::new();
     for field in fields.as_array().expect("字段元数据必须是数组") {
         let name = field["name"].as_str().expect("字段名称已校验");
-        let value = serde_json::to_string_pretty(field).expect("字段元数据可序列化");
+        let value = super::super::catalog::rust_json(field);
         calls.push(format!("field_{name}()"));
         functions.push(format!(
             "fn field_{name}() -> serde_json::Value {{\n    serde_json::json!({value})\n}}\n"
         ));
     }
     (
-        serde_json::to_string_pretty(&metadata).expect("资源元数据可序列化"),
+        super::super::catalog::rust_json(&metadata),
         calls.join(", "),
         functions.join("\n"),
     )

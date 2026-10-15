@@ -1,5 +1,55 @@
 use super::ResourceIr;
 
+/// 为嵌入 json! 的大整数补充 Rust 类型，不改变 JSON 字符串中的数字。
+pub(super) fn rust_json(value: &serde_json::Value) -> String {
+    let json = serde_json::to_string_pretty(value).expect("资源元数据可序列化");
+    let bytes = json.as_bytes();
+    let mut output = String::with_capacity(json.len());
+    let mut copied = 0;
+    let mut index = 0;
+    let mut quoted = false;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if quoted => index += 2,
+            b'"' => {
+                quoted = !quoted;
+                index += 1;
+            }
+            byte if !quoted && (byte == b'-' || byte.is_ascii_digit()) => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && matches!(bytes[index], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+                {
+                    index += 1;
+                }
+                let number = &json[start..index];
+                let suffix = if number
+                    .parse::<i64>()
+                    .is_ok_and(|value| i32::try_from(value).is_err())
+                {
+                    "i64"
+                } else if number
+                    .parse::<u64>()
+                    .is_ok_and(|value| value > i64::MAX as u64)
+                {
+                    "u64"
+                } else {
+                    ""
+                };
+                if !suffix.is_empty() {
+                    output.push_str(&json[copied..index]);
+                    output.push_str(suffix);
+                    copied = index;
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    output.push_str(&json[copied..]);
+    output
+}
+
 pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value {
     let fields = resource
         .fields
@@ -120,4 +170,24 @@ pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String 
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rust_json_keeps_full_integer_ranges_and_string_digits() {
+        let value = serde_json::json!({"min":i64::MIN,"max":i64::MAX,"unsigned":u64::MAX,"small":7,"decimal":0.5,"text":"\"9223372036854775807\"\\end"});
+        let source = super::rust_json(&value);
+        for literal in [
+            "-9223372036854775808i64",
+            "9223372036854775807i64",
+            "18446744073709551615u64",
+        ] {
+            assert!(source.contains(literal), "{source}");
+        }
+        assert!(source.contains("\\\"9223372036854775807\\\""));
+        assert!(source.contains("\"small\": 7,"));
+        let expression = format!("serde_json::json!({source})");
+        syn::parse_str::<syn::Expr>(&expression).expect("元数据必须保持合法 Rust 表达式");
+    }
 }

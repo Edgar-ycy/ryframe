@@ -105,7 +105,7 @@ fn safe_type(before: &FieldIr, after: &FieldIr) -> bool {
         || (before.value_type == ValueType::I32 && after.value_type == ValueType::I64)
         || (before.value_type == ValueType::String
             && after.value_type == ValueType::String
-            && varchar_length(&new) >= varchar_length(&old))
+            && matches!((varchar_length(&old), varchar_length(&new)), (Some(old), Some(new)) if new >= old))
 }
 
 fn varchar_length(value: &str) -> Option<u32> {

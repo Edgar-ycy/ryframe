@@ -158,6 +158,7 @@ pub(super) fn rust_model_source_named(
         if column.is_auto_increment {
             attributes.push("auto_increment".into());
         }
+        attributes.push(format!("sql_type = {:?}", column.column_type));
         if !attributes.is_empty() {
             output.push_str(&format!("    #[resource({})]\n", attributes.join(", ")));
         }

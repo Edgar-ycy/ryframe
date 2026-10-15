@@ -112,6 +112,7 @@ pub fn draft_resource_from_table(
         fields.push(FieldSpec {
             name: column.name.clone(),
             column: None,
+            sql_type: Some(column.column_type.clone()),
             value_type,
             wire_type: None,
             order,

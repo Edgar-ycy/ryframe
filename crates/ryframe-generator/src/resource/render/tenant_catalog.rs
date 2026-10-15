@@ -53,7 +53,7 @@ pub(crate) fn business_tenant_manifest(
             "tenant_column": resource.column(resource.tenant_field.as_deref().expect("租户字段已校验")),
             "primary_key_cursor_columns": resource.primary_key.iter().map(|field| resource.column(field)).collect::<Vec<_>>(),
             "checksum_columns": resource.fields.iter().map(|field| field.column.as_str()).collect::<Vec<_>>(),
-            "column_types": resource.fields.iter().map(|field| schema::data_type(field.value_type)).collect::<Vec<_>>(),
+            "column_types": resource.fields.iter().map(schema::data_type).collect::<Vec<_>>(),
             "has_generated_columns": false,
             "foreign_key_dependencies": [],
             "foreign_keys": [],
@@ -124,7 +124,7 @@ fn descriptor(resource: &ResourceIr, order: usize) -> String {
     let types = resource
         .fields
         .iter()
-        .map(|field| schema::data_type(field.value_type))
+        .map(schema::data_type)
         .collect::<Vec<_>>();
     let canonical = canonical_schema(resource);
     format!(

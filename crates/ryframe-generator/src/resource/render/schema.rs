@@ -2,6 +2,9 @@ use super::super::{FieldIr, ValueType};
 
 /// DDL 与复制目录共用列类型，避免同一字段生成两种结构。
 pub(crate) fn column_type(field: &FieldIr) -> String {
+    if let Some(declaration) = &field.sql_type {
+        return declaration.clone();
+    }
     match field.value_type {
         ValueType::String => {
             let enum_length = field
@@ -32,8 +35,27 @@ pub(crate) fn column_type(field: &FieldIr) -> String {
     }
 }
 
-pub(super) fn data_type(value: ValueType) -> &'static str {
-    match value {
+pub(super) fn data_type(field: &FieldIr) -> &str {
+    if let Some(declaration) = &field.sql_type {
+        return match declaration.split('(').next().expect("SQL 类型已校验") {
+            "CHAR" => "char",
+            "VARCHAR" => "varchar",
+            "TINYTEXT" => "tinytext",
+            "TEXT" => "text",
+            "MEDIUMTEXT" => "mediumtext",
+            "LONGTEXT" => "longtext",
+            "TINYINT" => "tinyint",
+            "SMALLINT" => "smallint",
+            "MEDIUMINT" => "mediumint",
+            "INT" => "int",
+            "BIGINT" => "bigint",
+            "DATE" => "date",
+            "DATETIME" => "datetime",
+            "JSON" => "json",
+            _ => unreachable!("SQL 类型已校验"),
+        };
+    }
+    match field.value_type {
         ValueType::String => "varchar",
         ValueType::I32 => "int",
         ValueType::I64 => "bigint",

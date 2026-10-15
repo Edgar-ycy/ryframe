@@ -106,7 +106,7 @@ fn verify_incremental_generation(backend: &Path) {
     let model = root.join("src/resources/mod.rs");
     let initial = root.join("migrations/m_resource_initial_global_item.rs");
     let bytes = fs::read(&initial).unwrap();
-    fs::write(&model, fs::read_to_string(&model).unwrap().replace("    pub code: String,", "    pub code: String,\n    pub memo: Option<String>,\n    #[resource(default = \"0\")]\n    pub amount: i32,")).unwrap();
+    fs::write(&model, fs::read_to_string(&model).unwrap().replace("    pub code: String,", "    pub code: String,\n    #[resource(sql_type = \"TEXT\")]\n    pub memo: Option<String>,\n    #[resource(default = \"0\")]\n    pub amount: i32,")).unwrap();
     GenerationBuilder::new(backend)
         .operation(GenerationOperation::Resource)
         .package("invoice-business")
@@ -295,7 +295,7 @@ pub struct Invoice {
     pub id: i64,
     #[resource(primary_key)]
     pub tenant_id: String,
-    #[resource(unique, filter, sort)]
+    #[resource(unique, filter, sort, sql_type = "VARCHAR(32)")]
     pub code: String,
     #[resource(read_only)]
     pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
@@ -320,7 +320,7 @@ pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
 pub struct GlobalItem {
     #[resource(primary_key, auto_increment)]
     pub id: i64,
-    #[resource(unique, filter, sort)]
+    #[resource(unique, filter, sort, sql_type = "VARCHAR(32)")]
     pub code: String,
     #[resource(read_only)]
     pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
