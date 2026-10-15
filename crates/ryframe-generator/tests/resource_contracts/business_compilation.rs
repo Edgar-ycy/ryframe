@@ -288,9 +288,17 @@ fn import_table(name: &str) -> TableInfo {
         column_type: column_type.into(),
         collation: (rust_type == "String").then(|| "utf8mb4_bin".into()),
         rust_type: rust_type.into(),
-        default: None,
+        default: match name {
+            "created_at" => Some("CURRENT_TIMESTAMP(6)".into()),
+            "large_count" => Some(u64::MAX.to_string()),
+            _ => None,
+        },
         extra: if name == "id" {
             "auto_increment".into()
+        } else if name == "created_at" {
+            "DEFAULT_GENERATED".into()
+        } else if name == "updated_at" {
+            "on update CURRENT_TIMESTAMP(6)".into()
         } else {
             String::new()
         },

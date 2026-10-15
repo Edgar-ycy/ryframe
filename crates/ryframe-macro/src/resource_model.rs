@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, LitStr, parse_macro_input};
 
+mod field;
 mod index;
 
 pub(crate) fn expand(input: TokenStream) -> TokenStream {
@@ -73,7 +74,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input)?;
     let parsed_fields = fields
         .iter()
-        .map(field_descriptor)
+        .map(field::parse)
         .collect::<syn::Result<Vec<_>>>()?;
     let primary_key = ordered_primary_key(primary_key, &parsed_fields, input)?;
     let indexes = index::tokens(&indexes, &parsed_fields, input)?;
@@ -168,103 +169,6 @@ fn ordered_primary_key(
         ));
     }
     Ok(keys)
-}
-
-fn field_descriptor(field: &Field) -> syn::Result<ParsedField> {
-    let field_name = field.ident.as_ref().expect("具名字段").to_string();
-    let field_type = &field.ty;
-    let column_default = field_name.clone();
-    let mut column = None;
-    let mut rename_from = None;
-    let mut default = None;
-    let mut sql_type = None;
-    let mut collation = None;
-    let mut primary_key = false;
-    let mut generated = false;
-    let mut auto_increment = false;
-    let mut read_only = false;
-    let mut filter = false;
-    let mut sort = false;
-    let mut unique = false;
-    for attribute in &field.attrs {
-        if !attribute.path().is_ident("resource") {
-            continue;
-        }
-        attribute.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename_from") {
-                rename_from = Some(meta.value()?.parse::<LitStr>()?.value());
-                Ok(())
-            } else if meta.path.is_ident("column") {
-                column = Some(meta.value()?.parse::<LitStr>()?.value());
-                Ok(())
-            } else if meta.path.is_ident("default") {
-                default = Some(meta.value()?.parse::<LitStr>()?.value());
-                Ok(())
-            } else if meta.path.is_ident("primary_key") {
-                primary_key = true;
-                Ok(())
-            } else if meta.path.is_ident("generated") {
-                generated = true;
-                Ok(())
-            } else if meta.path.is_ident("auto_increment") {
-                auto_increment = true;
-                generated = true;
-                Ok(())
-            } else if meta.path.is_ident("read_only") {
-                read_only = true;
-                Ok(())
-            } else if meta.path.is_ident("filter") {
-                filter = true;
-                Ok(())
-            } else if meta.path.is_ident("sort") {
-                sort = true;
-                Ok(())
-            } else if meta.path.is_ident("unique") {
-                unique = true;
-                Ok(())
-            } else if meta.path.is_ident("sql_type") {
-                parse_single_string(&meta, &mut sql_type, "sql_type")
-            } else if meta.path.is_ident("collation") {
-                parse_single_string(&meta, &mut collation, "collation")
-            } else {
-                Err(meta.error("不支持的字段 resource 属性"))
-            }
-        })?;
-    }
-    if auto_increment && (!primary_key || field_name != "id" || default.is_some()) {
-        return Err(syn::Error::new_spanned(
-            field,
-            "auto_increment 仅支持无默认值的 id 主键；声明 #[resource(primary_key, auto_increment)]",
-        ));
-    }
-    let column = column.unwrap_or(column_default);
-    let rename = optional_string(rename_from);
-    let default = optional_string(default);
-    let sql_type = optional_string(sql_type);
-    let collation = optional_string(collation);
-    let tokens = quote! {
-        ::ryframe_sdk::ResourceFieldDescriptor {
-            name: #field_name,
-            column: #column,
-            rust_type: stringify!(#field_type),
-            sql_type: #sql_type,
-            collation: #collation,
-            rename_from: #rename,
-            default: #default,
-            primary_key: #primary_key,
-            generated: #generated,
-            auto_increment: #auto_increment,
-            read_only: #read_only,
-            filter: #filter,
-            sort: #sort,
-            unique: #unique,
-        }
-    };
-    Ok(ParsedField {
-        name: field_name,
-        primary_key,
-        tokens,
-    })
 }
 
 fn optional_string(value: Option<String>) -> proc_macro2::TokenStream {

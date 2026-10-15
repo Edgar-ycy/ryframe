@@ -59,6 +59,10 @@ pub(crate) struct OwnedFieldDescriptor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_default: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_on_update: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub collation: Option<String>,
     pub rename_from: Option<String>,
     pub default: Option<String>,

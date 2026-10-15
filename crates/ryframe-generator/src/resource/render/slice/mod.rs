@@ -143,6 +143,13 @@ pub(super) fn rust_literal(value: &toml::Value, value_type: ValueType) -> String
 
 pub(super) fn sql_literal(value: &toml::Value) -> String {
     match value {
+        toml::Value::String(value)
+            if value
+                .chars()
+                .any(|character| character == '\\' || character.is_control()) =>
+        {
+            format!("_utf8mb4 X'{}'", hex::encode(value.as_bytes()))
+        }
         toml::Value::String(value) => format!("'{}'", value.replace('\'', "''")),
         toml::Value::Integer(value) => value.to_string(),
         toml::Value::Boolean(value) => i32::from(*value).to_string(),

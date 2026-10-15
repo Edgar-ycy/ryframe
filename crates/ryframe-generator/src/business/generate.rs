@@ -206,11 +206,13 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         .iter()
         .map(|field| {
             format!(
-                "ryframe_sdk::ResourceFieldDescriptor {{ name: {:?}, column: {:?}, rust_type: {:?}, sql_type: {}, collation: {}, rename_from: {}, default: {}, primary_key: {}, generated: {}, auto_increment: {}, read_only: {}, filter: {}, sort: {}, unique: {} }}",
+                "ryframe_sdk::ResourceFieldDescriptor {{ name: {:?}, column: {:?}, rust_type: {:?}, sql_type: {}, sql_default: {}, sql_on_update: {}, collation: {}, rename_from: {}, default: {}, primary_key: {}, generated: {}, auto_increment: {}, read_only: {}, filter: {}, sort: {}, unique: {} }}",
                 field.name,
                 field.column,
                 field.rust_type,
                 option_literal(field.sql_type.as_deref()),
+                option_literal(field.sql_default.as_deref()),
+                option_literal(field.sql_on_update.as_deref()),
                 option_literal(field.collation.as_deref()),
                 option_literal(field.rename_from.as_deref()),
                 option_literal(field.default.as_deref()),

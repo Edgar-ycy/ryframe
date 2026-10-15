@@ -104,9 +104,20 @@ pub(crate) fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -
         .map(|collation| format!(" COLLATE {collation}"))
         .unwrap_or_default();
     let default = field
-        .default
+        .sql_default
         .as_ref()
-        .map(|value| format!(" DEFAULT {}", sql_literal(value)))
+        .map(|value| format!(" DEFAULT {value}"))
+        .or_else(|| {
+            field
+                .default
+                .as_ref()
+                .map(|value| format!(" DEFAULT {}", sql_literal(value)))
+        })
+        .unwrap_or_default();
+    let on_update = field
+        .sql_on_update
+        .as_ref()
+        .map(|value| format!(" ON UPDATE {value}"))
         .unwrap_or_default();
     let auto_increment =
         if field.name == "id" && resource.id_generation == crate::IdGeneration::AutoIncrement {
@@ -115,7 +126,7 @@ pub(crate) fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -
             ""
         };
     format!(
-        "  `{}` {sql_type}{collation} {nullability}{default}{auto_increment}",
+        "  `{}` {sql_type}{collation} {nullability}{default}{on_update}{auto_increment}",
         field.column
     )
 }

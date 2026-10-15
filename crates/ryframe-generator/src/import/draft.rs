@@ -85,51 +85,12 @@ pub fn draft_resource_from_table(
         .map(str::to_owned)
         .collect::<Vec<_>>();
 
-    let mut fields = Vec::with_capacity(table.columns.len());
-    for (position, column) in table.columns.iter().enumerate() {
-        let order = u16::try_from((position + 1).saturating_mul(10)).map_err(|_| {
-            import_error(
-                &metadata.identity.name,
-                "字段数量超过资源清单可表达范围",
-                "缩小平面资源范围，复杂宽表改用手写用例",
-            )
-            .with_field(&column.name)
-        })?;
-        let value_type =
-            import_value_type(&column.data_type, &column.column_type).ok_or_else(|| {
-                import_error(
-                    &metadata.identity.name,
-                    format!("数据库类型 `{}` 无法确定映射", column.data_type),
-                    "人工选择受支持的 value_type，或将该字段移入强类型扩展",
-                )
-                .with_field(&column.name)
-            })?;
-        let database_label = column
-            .comment
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(&column.name);
-        fields.push(FieldSpec {
-            name: column.name.clone(),
-            column: None,
-            sql_type: Some(column.column_type.clone()),
-            collation: column.collation.clone(),
-            value_type,
-            wire_type: None,
-            order,
-            nullable: column.is_nullable,
-            default: None,
-            usage: pending_usage(),
-            validation: ValidationSpec::default(),
-            labels: LabelsSpec {
-                zh_cn: database_label.to_owned(),
-                en: column.name.clone(),
-            },
-            widget: WidgetSpec::Hidden,
-            enum_values: BTreeMap::new(),
-        });
-    }
+    let fields = table
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(position, column)| draft_field(column, position, &metadata.identity.name))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut indexes = table
         .indexes
@@ -268,4 +229,61 @@ fn import_error(
     suggestion: impl Into<String>,
 ) -> ResourceError {
     ResourceError::new(message, suggestion).with_resource(resource)
+}
+
+fn draft_field(
+    column: &super::ColumnInfo,
+    position: usize,
+    resource: &str,
+) -> Result<FieldSpec, ResourceError> {
+    let order = u16::try_from((position + 1).saturating_mul(10)).map_err(|_| {
+        import_error(
+            resource,
+            "字段数量超过资源清单可表达范围",
+            "缩小平面资源范围，复杂宽表改用手写用例",
+        )
+        .with_field(&column.name)
+    })?;
+    let value_type =
+        import_value_type(&column.data_type, &column.column_type).ok_or_else(|| {
+            import_error(
+                resource,
+                format!("数据库类型 `{}` 无法确定映射", column.data_type),
+                "人工选择受支持的 value_type，或将该字段移入强类型扩展",
+            )
+            .with_field(&column.name)
+        })?;
+    let database_label = column
+        .comment
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&column.name);
+    let defaults = super::defaults::from_column(column).map_err(|reason| {
+        import_error(resource, reason, "核对来源列的默认值与 EXTRA；未写入文件")
+            .with_field(&column.name)
+    })?;
+    Ok(FieldSpec {
+        name: column.name.clone(),
+        column: None,
+        sql_type: Some(column.column_type.clone()),
+        sql_default: defaults.expression,
+        sql_on_update: defaults.on_update,
+        collation: column.collation.clone(),
+        value_type,
+        wire_type: None,
+        order,
+        nullable: column.is_nullable,
+        default: defaults
+            .literal
+            .map(|value| super::defaults::literal_value(value, value_type)),
+        usage: pending_usage(),
+        validation: ValidationSpec::default(),
+        labels: LabelsSpec {
+            zh_cn: database_label.to_owned(),
+            en: column.name.clone(),
+        },
+        widget: WidgetSpec::Hidden,
+        enum_values: BTreeMap::new(),
+    })
 }

@@ -180,6 +180,10 @@ pub struct FieldSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sql_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_default: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_on_update: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collation: Option<String>,
     pub value_type: ValueType,
     #[serde(default)]

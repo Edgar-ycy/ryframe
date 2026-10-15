@@ -199,12 +199,28 @@ fn render_column(output: &mut String, resource: &ResourceIr, field: &FieldIr) {
     };
     let charset = (field.value_type == ValueType::String).then_some("utf8mb4");
     let collation = charset.map(|_| resource.column_collation(field));
-    let default = field.default.as_ref().map(|value| match value {
-        toml::Value::String(value) => value.clone(),
-        toml::Value::Integer(value) => value.to_string(),
-        toml::Value::Boolean(value) => u8::from(*value).to_string(),
-        _ => unreachable!("默认值已由 IR 校验"),
-    });
+    let default = field
+        .sql_default
+        .as_ref()
+        .map(|value| value.to_ascii_lowercase())
+        .or_else(|| {
+            field.default.as_ref().map(|value| match value {
+                toml::Value::String(value) => value.clone(),
+                toml::Value::Integer(value) => value.to_string(),
+                toml::Value::Boolean(value) => u8::from(*value).to_string(),
+                _ => unreachable!("默认值已由 IR 校验"),
+            })
+        });
+    let extra =
+        if field.name == "id" && resource.id_generation == crate::IdGeneration::AutoIncrement {
+            "auto_increment".into()
+        } else {
+            field
+                .sql_on_update
+                .as_ref()
+                .map(|value| format!("on update {}", value.to_ascii_lowercase()))
+                .unwrap_or_default()
+        };
     write!(
         output,
         "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?};",
@@ -215,11 +231,7 @@ fn render_column(output: &mut String, resource: &ResourceIr, field: &FieldIr) {
         collation,
         column_key(resource, field),
         default,
-        if field.name == "id" && resource.id_generation == crate::IdGeneration::AutoIncrement {
-            "auto_increment"
-        } else {
-            ""
-        },
+        extra,
         "",
     )
     .expect("写入 String 不会失败");

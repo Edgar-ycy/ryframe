@@ -20,7 +20,15 @@ fn imported_integer_dtos_accept_boundaries_and_reject_overflow() {
     let body = json!({"code":"first", "status":1, "tiny_count":-128, "small_count":-32768, "byte_count":255, "short_count":65535, "count":4294967295u32, "large_count":"18446744073709551615"});
     let input: CreateMemoDto = serde_json::from_value(body.clone()).unwrap();
     input.validate().unwrap();
-    assert_eq!(input.large_count, u64::MAX);
+    assert_eq!(input.large_count, Some(u64::MAX));
+    let mut missing_default = body.clone();
+    missing_default
+        .as_object_mut()
+        .unwrap()
+        .remove("large_count");
+    let missing_default: CreateMemoDto = serde_json::from_value(missing_default).unwrap();
+    missing_default.validate().unwrap();
+    assert!(missing_default.large_count.is_none());
     assert_eq!(
         (
             input.tiny_count,
@@ -53,20 +61,46 @@ fn imported_integer_dtos_accept_boundaries_and_reject_overflow() {
 #[test]
 fn unsigned_body_schema_and_query_preserve_maximum() {
     use invoice_business::generated::dto::memo_item::{MemoItemListQuery, UpdateMemoItemDto};
-    let input: UpdateMemoItemDto = serde_json::from_value(json!({"large_count":u64::MAX.to_string()})).unwrap();
+    let input: UpdateMemoItemDto =
+        serde_json::from_value(json!({"large_count":u64::MAX.to_string()})).unwrap();
     input.validate().unwrap();
     assert_eq!(input.large_count, Some(u64::MAX));
-    let query: MemoItemListQuery = serde_json::from_value(json!({"large_count":u64::MAX.to_string()})).unwrap();
-    assert_eq!(query.into_service_params(ryframe_sdk::PaginationPolicy::new(20, 100)).unwrap().large_count, Some(u64::MAX));
-    let schema = serde_json::to_value(<UpdateMemoItemDto as ryframe_sdk::utoipa::PartialSchema>::schema()).unwrap();
-    assert_eq!(schema["properties"]["large_count"]["type"], json!(["string", "null"]));
-    assert_eq!(schema["properties"]["large_count"]["pattern"], "^(?:0|[1-9][0-9]*)$");
-    for value in [json!(u64::MAX), json!("-1"), json!("18446744073709551616"), json!("01")] {
+    let query: MemoItemListQuery =
+        serde_json::from_value(json!({"large_count":u64::MAX.to_string()})).unwrap();
+    assert_eq!(
+        query
+            .into_service_params(ryframe_sdk::PaginationPolicy::new(20, 100))
+            .unwrap()
+            .large_count,
+        Some(u64::MAX)
+    );
+    let schema =
+        serde_json::to_value(<UpdateMemoItemDto as ryframe_sdk::utoipa::PartialSchema>::schema())
+            .unwrap();
+    assert_eq!(
+        schema["properties"]["large_count"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(
+        schema["properties"]["large_count"]["pattern"],
+        "^(?:0|[1-9][0-9]*)$"
+    );
+    for value in [
+        json!(u64::MAX),
+        json!("-1"),
+        json!("18446744073709551616"),
+        json!("01"),
+    ] {
         assert!(serde_json::from_value::<UpdateMemoItemDto>(json!({"large_count":value})).is_err());
     }
     for value in ["-1", "18446744073709551616", "01"] {
-        let query: MemoItemListQuery = serde_json::from_value(json!({"large_count":value})).unwrap();
-        assert!(query.into_service_params(ryframe_sdk::PaginationPolicy::new(20, 100)).is_err());
+        let query: MemoItemListQuery =
+            serde_json::from_value(json!({"large_count":value})).unwrap();
+        assert!(
+            query
+                .into_service_params(ryframe_sdk::PaginationPolicy::new(20, 100))
+                .is_err()
+        );
     }
 }
 

@@ -227,6 +227,8 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
         name: field.name.clone(),
         column: (field.column != field.name).then(|| field.column.clone()),
         sql_type: field.sql_type.clone(),
+        sql_default: field.sql_default.clone(),
+        sql_on_update: field.sql_on_update.clone(),
         collation: field.collation.clone(),
         value_type,
         wire_type: matches!(value_type, ValueType::I64 | ValueType::U64)
@@ -337,10 +339,13 @@ fn default_value(value: &str, value_type: ValueType) -> Result<toml::Value, Reso
             .parse::<i64>()
             .map(toml::Value::Integer)
             .map_err(|parse| error(format!("整数默认值 `{value}` 无效：{parse}"))),
-        ValueType::Bool => value
-            .parse::<bool>()
-            .map(toml::Value::Boolean)
-            .map_err(|parse| error(format!("布尔默认值 `{value}` 无效：{parse}"))),
+        ValueType::Bool => match value {
+            "0" | "false" => Ok(toml::Value::Boolean(false)),
+            "1" | "true" => Ok(toml::Value::Boolean(true)),
+            _ => Err(error(format!(
+                "布尔默认值 `{value}` 无效；使用 true/false 或数据库字面量 1/0"
+            ))),
+        },
         _ => Err(error("日期、JSON 与 decimal 字段不能声明自动 SQL 默认值")),
     }
 }

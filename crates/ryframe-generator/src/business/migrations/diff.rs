@@ -74,7 +74,7 @@ pub(super) fn statements(
                     ));
                 }
             }
-        } else if !field.nullable && field.default.is_none() {
+        } else if !field.nullable && field.default.is_none() && field.sql_default.is_none() {
             review.push(format!(
                 "新增非空列 {} 没有显式默认值，须先新增可空列并回填，再审阅非空约束",
                 field.column

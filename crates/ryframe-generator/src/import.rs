@@ -1,6 +1,7 @@
 //! 既有表导入资源草案的纯模型，以及按需启用的 MySQL 结构读取器。
 
 mod batch;
+mod defaults;
 mod draft;
 mod model;
 

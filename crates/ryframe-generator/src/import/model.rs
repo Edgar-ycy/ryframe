@@ -197,6 +197,16 @@ pub(super) fn rust_model_source_named(
         if column.is_auto_increment {
             attributes.push("auto_increment".into());
         }
+        let defaults = super::defaults::from_column(column)?;
+        for (name, value) in [
+            ("default", defaults.literal),
+            ("sql_default", defaults.expression),
+            ("sql_on_update", defaults.on_update),
+        ] {
+            if let Some(value) = value {
+                attributes.push(format!("{name} = {value:?}"));
+            }
+        }
         attributes.push(format!("sql_type = {:?}", column.column_type));
         if let Some(collation) = &column.collation {
             attributes.push(format!("collation = {collation:?}"));
