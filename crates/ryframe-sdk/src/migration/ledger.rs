@@ -5,6 +5,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, State
 
 use super::{BusinessMigration, BusinessMigrationOrigin, BusinessMigrationScope, database_error};
 
+pub(super) mod write;
+pub(super) use write::record_executed;
+
 pub(super) const NAME: &str = "ryframe_business_migration";
 pub(super) const DDL: &str = "CREATE TABLE ryframe_business_migration (scope VARCHAR(8) NOT NULL, module_name VARCHAR(64) NOT NULL, migration_id VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL, before_fingerprint CHAR(64) NULL, after_fingerprint CHAR(64) NOT NULL, origin VARCHAR(16) NOT NULL, tables_json JSON NOT NULL, adoption_hash CHAR(64) NULL, applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (scope, module_name, migration_id), CONSTRAINT chk_business_origin CHECK ((origin='executed' AND adoption_hash IS NULL) OR (origin='adopted' AND adoption_hash IS NOT NULL))) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
 
@@ -107,7 +110,7 @@ pub(super) fn table_names(migration: &dyn BusinessMigration) -> Vec<String> {
     names
 }
 
-pub(super) async fn exists(database: &DatabaseConnection) -> AppResult<bool> {
+pub(super) async fn exists<C: ConnectionTrait>(database: &C) -> AppResult<bool> {
     let row = database.query_one_raw(Statement::from_string(DbBackend::MySql,
         format!("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='{NAME}') AS ledger_exists")))
         .await.map_err(database_error)?.ok_or_else(|| AppError::Database("无法读取业务迁移账本状态".into()))?;
@@ -127,8 +130,8 @@ pub(super) async fn ensure(database: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
-pub(super) async fn state(
-    database: &DatabaseConnection,
+pub(super) async fn state<C: ConnectionTrait>(
+    database: &C,
     migration: &dyn BusinessMigration,
 ) -> AppResult<Option<AppliedMigration>> {
     if !exists(database).await? {
@@ -153,8 +156,8 @@ pub(super) async fn insert<C: ConnectionTrait>(
     Ok(())
 }
 
-pub(super) async fn verify_ownership(
-    database: &DatabaseConnection,
+pub(super) async fn verify_ownership<C: ConnectionTrait>(
+    database: &C,
     migration: &dyn BusinessMigration,
 ) -> AppResult<()> {
     if !exists(database).await? {

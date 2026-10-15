@@ -82,7 +82,7 @@ impl BusinessMigrationSchema {
         Ok(())
     }
 
-    pub(super) async fn verify_after(&self, database: &DatabaseConnection) -> AppResult<()> {
+    pub(super) async fn verify_after<C: ConnectionTrait>(&self, database: &C) -> AppResult<()> {
         for table in self.tables {
             verify_table(database, table.table, table.after).await?;
         }
@@ -183,7 +183,11 @@ pub async fn validate_business_migration_ledger(
     Ok(())
 }
 
-async fn verify_table(database: &DatabaseConnection, table: &str, expected: &str) -> AppResult<()> {
+async fn verify_table<C: ConnectionTrait>(
+    database: &C,
+    table: &str,
+    expected: &str,
+) -> AppResult<()> {
     let actual = ryframe_db::schema::canonical_table_schema(database, table)
         .await
         .map_err(super::database_error)?;

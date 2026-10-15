@@ -3,7 +3,7 @@ use ryframe_sdk::{
     BusinessMigration, BusinessMigrationSchema, BusinessMigrationScope, BusinessTableSchema,
     SeaOrmBusinessMigration, business_initialization_statements, verify_business_migrations,
 };
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
@@ -88,6 +88,43 @@ fn missing_empty_and_duplicate_sql_descriptions_fail_before_export() {
             .contains("重复登记")
     );
     assert!(business_initialization_statements(&[]).unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn migration_receipt_holds_table_metadata_lock_until_commit() {
+    mysql::run_mysql_test("businessmetagate", |database| async move {
+        migration(false).up(&database).await.map_err(|error| error.to_string())?;
+        mysql::execute(&database, "INSERT INTO biz_sql_example(code) VALUES ('keep-metadata-data')").await?;
+        let before = business_rows(&database).await?;
+        mysql::execute(&database, "CREATE TABLE fixture_ledger_gate (id BIGINT PRIMARY KEY)").await?;
+        mysql::execute(&database, "INSERT INTO fixture_ledger_gate VALUES(1)").await?;
+        database.execute_unprepared("CREATE TRIGGER hold_business_receipt BEFORE INSERT ON ryframe_business_migration FOR EACH ROW BEGIN DECLARE gate_id BIGINT; SELECT id INTO gate_id FROM fixture_ledger_gate WHERE id=1 FOR UPDATE; END").await.map_err(mysql::db_error)?;
+        let gate = database.begin().await.map_err(mysql::db_error)?;
+        gate.query_one_raw(Statement::from_string(DbBackend::MySql, "SELECT id FROM fixture_ledger_gate WHERE id=1 FOR UPDATE")).await.map_err(mysql::db_error)?;
+        let write_connection = database.clone();
+        let writing = tokio::spawn(async move { next_migration().up(&write_connection).await.map_err(|error| error.to_string()) });
+        let blocked = wait_for_database_state(&database, "SELECT COUNT(*) AS value FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID AND l.ENGINE=w.ENGINE WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME='fixture_ledger_gate'", "账本 INSERT 被测试 gate 阻塞").await;
+        if let Err(error) = blocked {
+            gate.rollback().await.map_err(mysql::db_error)?;
+            writing.await.map_err(|error| error.to_string())??;
+            return Err(error);
+        }
+        let ddl_connection = database.clone();
+        let altering = tokio::spawn(async move { mysql::execute(&ddl_connection, "ALTER TABLE biz_sql_example ADD note VARCHAR(32) NULL").await });
+        let waiting = wait_for_database_state(&database, "SELECT COUNT(*) AS value FROM performance_schema.metadata_locks WHERE OBJECT_SCHEMA=DATABASE() AND OBJECT_NAME='biz_sql_example' AND LOCK_STATUS='PENDING'", "外部 ALTER 等待业务表 MDL").await;
+        gate.rollback().await.map_err(mysql::db_error)?;
+        let (write_result, ddl_result) = tokio::join!(writing, altering);
+        write_result.map_err(|error| error.to_string())??;
+        ddl_result.map_err(|error| error.to_string())??;
+        waiting?;
+        assert_eq!(business_rows(&database).await?, before);
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration WHERE origin='executed'", 2).await?;
+        let initial = migration(false);
+        let next = next_migration();
+        let drift = verify_business_migrations(&database, BusinessMigrationScope::Control, &[&initial, &next]).await.unwrap_err().to_string();
+        assert!(drift.contains("note"));
+        Ok(())
+    }).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -383,6 +420,47 @@ async fn latest_table_contract_accepts_roll_forward_without_rechecking_historica
         Ok(())
     })
     .await;
+}
+
+async fn wait_for_database_state(
+    database: &DatabaseConnection,
+    sql: &str,
+    stage: &str,
+) -> Result<(), String> {
+    for _ in 0..200 {
+        let row = database
+            .query_one_raw(Statement::from_string(DbBackend::MySql, sql))
+            .await
+            .map_err(mysql::db_error)?
+            .ok_or_else(|| format!("无法观察 {stage}"))?;
+        let count: i64 = row.try_get("", "value").map_err(mysql::db_error)?;
+        if count > 0 {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let rows = database.query_all_raw(Statement::from_string(DbBackend::MySql,
+        "SELECT p.ID AS id, COALESCE(p.STATE,'') AS state, COALESCE(t.trx_state,'') AS transaction_state, COALESCE(LEFT(p.INFO,160),'') AS statement FROM information_schema.processlist p LEFT JOIN information_schema.innodb_trx t ON t.trx_mysql_thread_id=p.ID WHERE p.DB=DATABASE() ORDER BY p.ID"))
+        .await.map_err(mysql::db_error)?;
+    let mut observed = Vec::new();
+    for row in rows {
+        observed.push((
+            row.try_get::<u64>("", "id").map_err(mysql::db_error)?,
+            row.try_get::<String>("", "state")
+                .map_err(mysql::db_error)?,
+            row.try_get::<String>("", "transaction_state")
+                .map_err(mysql::db_error)?,
+            row.try_get::<String>("", "statement")
+                .map_err(mysql::db_error)?,
+        ));
+    }
+    let data_wait = database.query_one_raw(Statement::from_string(DbBackend::MySql,
+        "SELECT COUNT(*) AS value FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID AND l.ENGINE=w.ENGINE WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME='fixture_ledger_gate'"))
+        .await.map_err(mysql::db_error)?.ok_or("无法读取测试 gate 数据锁等待")?;
+    let data_wait: i64 = data_wait.try_get("", "value").map_err(mysql::db_error)?;
+    Err(format!(
+        "未观察到预期数据库阶段：{stage}；gate 数据锁等待={data_wait}；独占 schema 现场：{observed:?}"
+    ))
 }
 
 async fn business_rows(database: &DatabaseConnection) -> Result<Vec<(i64, String)>, String> {

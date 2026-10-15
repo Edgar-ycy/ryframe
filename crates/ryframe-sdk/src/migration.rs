@@ -170,7 +170,7 @@ impl BusinessMigration for SeaOrmBusinessMigration {
                 "{error}；迁移 DDL 已执行但结构校验未通过，未登记本次账本"
             ))
         })?;
-        ledger::insert(database, self, BusinessMigrationOrigin::Executed, None)
+        ledger::record_executed(database, self)
             .await
             .map_err(|error| AppError::Database(format!("业务迁移 {}/{} 的 DDL 已执行并通过结构校验，但账本写入失败：{error}；账本提交结果需重新核对，不自动重放", self.module, self.id)))?;
         Ok(())

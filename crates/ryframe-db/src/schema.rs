@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement};
 
 use crate::migration::normalize_check_clause;
 
@@ -67,8 +67,8 @@ struct ForeignKeySchemaRow {
 
 /// 从 MySQL information_schema 只读读取明确指定表的完整、稳定结构。
 /// 控制库、租户库和生成器共用同一规范化来源；调用方负责资源归属和运行范围。
-pub async fn canonical_table_schema(
-    db: &DatabaseConnection,
+pub async fn canonical_table_schema<C: ConnectionTrait>(
+    db: &C,
     table_name: &str,
 ) -> Result<String, DbErr> {
     if db.get_database_backend() != DbBackend::MySql {
