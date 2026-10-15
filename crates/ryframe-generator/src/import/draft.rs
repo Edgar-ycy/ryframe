@@ -73,18 +73,17 @@ pub fn draft_resource_from_table(
         ));
     }
     let primary_key = table
-        .columns
-        .iter()
-        .filter(|column| column.is_primary_key)
-        .map(|column| column.name.clone())
+        .primary_key_columns()
+        .map_err(|error| {
+            import_error(
+                &metadata.identity.name,
+                error,
+                "核对 PRIMARY 索引、列标记与实际主键顺序",
+            )
+        })?
+        .into_iter()
+        .map(str::to_owned)
         .collect::<Vec<_>>();
-    if primary_key.is_empty() {
-        return Err(import_error(
-            &metadata.identity.name,
-            "既有表没有主键，无法形成稳定 CRUD 资源",
-            "先为表增加显式主键，再重新导入",
-        ));
-    }
 
     let mut fields = Vec::with_capacity(table.columns.len());
     for (position, column) in table.columns.iter().enumerate() {

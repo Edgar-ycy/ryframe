@@ -44,12 +44,7 @@ pub(super) fn descriptor_to_ir(
         .enumerate()
         .map(|(index, field)| field_spec(field, index))
         .collect::<Result<Vec<_>, _>>()?;
-    let primary_key = descriptor
-        .fields
-        .iter()
-        .filter(|field| field.primary_key)
-        .map(|field| field.name.clone())
-        .collect::<Vec<_>>();
+    let primary_key = descriptor.primary_key.clone();
     let indexes = indexes(descriptor);
     let soft_delete = soft_delete(descriptor)?;
     let audit = audit(descriptor);
@@ -179,6 +174,22 @@ fn validate_descriptor(
     if primary == 0 {
         return Err(error(format!(
             "资源 {} 必须用 #[resource(primary_key)] 标记主键",
+            descriptor.name
+        )));
+    }
+    let keys = descriptor
+        .primary_key
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let marked = descriptor
+        .fields
+        .iter()
+        .filter(|field| field.primary_key)
+        .map(|field| &field.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    if keys.len() != descriptor.primary_key.len() || keys != marked {
+        return Err(error(format!(
+            "资源 {} 的主键顺序与字段标记不一致；修正 primary_key 列表",
             descriptor.name
         )));
     }

@@ -5,7 +5,19 @@ pub(crate) fn entity(resource: &ResourceIr, header: &str) -> String {
         "{header}use sea_orm::entity::prelude::*;\n\n#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]\n#[sea_orm(table_name = {:?})]\npub struct Model {{\n",
         resource.table
     );
-    for field in &resource.fields {
+    // SeaORM 按字段声明顺序生成复合主键元组；只调整实体，DDL 仍保留物理列顺序。
+    let keys = resource.primary_key.iter().map(|key| {
+        resource
+            .fields
+            .iter()
+            .find(|field| &field.name == key)
+            .expect("主键已校验")
+    });
+    let other_fields = resource
+        .fields
+        .iter()
+        .filter(|field| !resource.primary_key.contains(&field.name));
+    for field in keys.chain(other_fields) {
         if resource.primary_key.contains(&field.name) {
             // ORM 不支持复合自增主键；租户插入由 Repository 显式省略 ID 并回读。
             let auto_increment = resource.primary_key.len() == 1

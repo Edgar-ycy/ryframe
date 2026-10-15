@@ -136,8 +136,8 @@ fn assert_auto_increment_assets(workspace: &std::path::Path) {
         fs::read_to_string(workspace.join("order-business/migrations/m_resource_initial_order.rs"))
             .unwrap();
     assert!(migration.contains("AUTO_INCREMENT"));
-    assert!(migration.contains("PRIMARY KEY (`tenant_id`, `id`)"));
-    assert!(migration.contains("KEY `idx_order_id` (`id`)"));
+    assert!(migration.contains("PRIMARY KEY (`tenant_id`, `order_id`)"));
+    assert!(migration.contains("KEY `idx_order_id` (`order_id`)"));
     let repository =
         fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))
             .unwrap();
@@ -159,12 +159,12 @@ fn write_order_model(workspace: &std::path::Path) {
     fs::write(
         workspace.join("order-business/src/resources/mod.rs"),
         r#"#[derive(ryframe_sdk::ResourceModel)]
-#[resource(name = "order", title = "订单", table = "biz_order", database = "tenant")]
+#[resource(name = "order", title = "订单", table = "biz_order", database = "tenant", primary_key = ["tenant_id", "id"])]
 pub struct Order {
+    #[resource(primary_key, generated, column = "order_id")]
+    pub id: i64,
     #[resource(primary_key)]
     pub tenant_id: String,
-    #[resource(primary_key, generated)]
-    pub id: i64,
     #[resource(unique, filter, sort)]
     pub code: String,
     #[resource(read_only)]
@@ -178,6 +178,19 @@ pub struct Order {
 }
 
 fn assert_generated_business(workspace: &std::path::Path) {
+    let entity =
+        fs::read_to_string(workspace.join("order-business/src/generated/entities/order.rs"))
+            .unwrap();
+    assert!(entity.find("pub tenant_id:").unwrap() < entity.find("pub id:").unwrap());
+    assert!(entity.contains("column_name = \"order_id\""));
+    let migration =
+        fs::read_to_string(workspace.join("order-business/migrations/m_resource_initial_order.rs"))
+            .unwrap();
+    assert!(
+        migration.find("`order_id` BIGINT").unwrap()
+            < migration.find("`tenant_id` VARCHAR").unwrap()
+    );
+    assert!(migration.contains("PRIMARY KEY (`tenant_id`, `order_id`)"));
     let router = fs::read_to_string(workspace.join("order-business/src/generated/mod.rs")).unwrap();
     let openapi =
         fs::read_to_string(workspace.join("order-business/src/generated/openapi/order.rs"))

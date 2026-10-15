@@ -28,6 +28,7 @@ pub(crate) struct OwnedResourceDescriptor {
     pub route: Option<String>,
     pub menu_parent: Option<String>,
     pub menu_order: u16,
+    pub primary_key: Vec<String>,
     pub fields: Vec<OwnedFieldDescriptor>,
 }
 

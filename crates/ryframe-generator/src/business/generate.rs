@@ -244,7 +244,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "ryframe_sdk::ResourceDescriptor {{ name: {:?}, title: {:?}, table: {:?}, database: {database}, model_module: {:?}, model_type: {:?}, route: {}, menu_parent: {}, menu_order: {}, fields: &[{fields}] }}",
+        "ryframe_sdk::ResourceDescriptor {{ name: {:?}, title: {:?}, table: {:?}, database: {database}, model_module: {:?}, model_type: {:?}, route: {}, menu_parent: {}, menu_order: {}, primary_key: &{:?}, fields: &[{fields}] }}",
         descriptor.name,
         descriptor.title,
         descriptor.table,
@@ -253,6 +253,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         option_literal(descriptor.route.as_deref()),
         option_literal(descriptor.menu_parent.as_deref()),
         descriptor.menu_order,
+        descriptor.primary_key,
     )
 }
 

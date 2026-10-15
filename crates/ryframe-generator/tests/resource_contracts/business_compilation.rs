@@ -205,13 +205,14 @@ const MODEL: &str = r#"#[derive(ryframe_sdk::ResourceModel)]
     name = "invoice",
     title = "发票",
     table = "biz_invoice",
-    database = "tenant"
+    database = "tenant",
+    primary_key = ["tenant_id", "id"]
 )]
 pub struct Invoice {
+    #[resource(primary_key, auto_increment, column = "invoice_id")]
+    pub id: i64,
     #[resource(primary_key)]
     pub tenant_id: String,
-    #[resource(primary_key, auto_increment)]
-    pub id: i64,
     #[resource(unique, filter, sort)]
     pub code: String,
     #[resource(read_only)]

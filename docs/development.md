@@ -69,6 +69,8 @@ pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
 }
 ```
 
+模型级 `#[resource(primary_key = ["tenant_id", "id"])]` 可明确索引顺序，与字段顺序独立，列表须恰好包含全部主键标记字段，省略时沿用字段顺序。反向导入从 PRIMARY 索引读取顺序，将业务主键映射到 Rust `id` 并用 `column="order_id"` 等属性保留物理列名；与已有 `id` 列冲突时拒绝生成。实体按主键顺序声明字段，DDL 保留原物理列顺序。租户主键必须以 `tenant_id` 开头，其他复合主键明确阻断，不自动修改原库。
+
 模型使用 `#[derive(ryframe_sdk::ResourceModel)]`。在 `resources/mod.rs` 定义模型后，将其描述符加入同文件的 `descriptors()`。`database="tenant"` 用于租户业务，表以 `biz_` 开头并把 `tenant_id` 放入联合主键；`database="control"` 用于无 `tenant_id` 的全局业务，Service 与持久化只允许系统租户访问，页面资产携带同样的访问限制。启用多租户不会使全局业务共享，跨租户共享读取须编写明确的用例扩展。ID 默认由应用生成雪花值；数据库自增主键使用 `#[resource(primary_key, auto_increment)] pub id: i64`，不声明默认值或表单写入。生成器为租户复合主键补充以 id 开头的非唯一索引，插入时省略 ID，在同一事务中取得实际自增值。然后运行：
 
 ```powershell
@@ -120,13 +122,11 @@ Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继�
 cargo xtask check
 cargo xtask check --full
 ```
-只运行后端或前端主要检查时可添加 `--scope backend` 或 `--scope frontend`。
-
 模块测试使用 `cargo test --locked -p <包名>`，例如 `ryframe-application` 或 `ryframe-api`。
 
 真实 MySQL 和 Redis 协议测试默认不连接外部服务；需要单独诊断时，显式启用对应的 `RYFRAME_MYSQL_INTEGRATION` 或 `RYFRAME_REDIS_INTEGRATION`，再运行 `mysql_real_protocol` 或 `redis_real_protocol` 测试目标。完整集成使用下面的统一入口。
 
-完整集成门禁会验证 MySQL required TLS，以及 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。Windows 本地需有 `python`、`openssl`，并在 `127.0.0.1` 启动隔离的 MySQL 与 Redis；Redis 建议使用 WSL 独立实例和数据库 15。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一 `scope_id` 隔离并精确删除。运行入口与 CI 相同：
+完整集成门禁会验证 MySQL required TLS，以及 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。本地需有 `python`、`openssl`，并在回环地址提供隔离的 MySQL 与 Redis；服务按版本和协议要求选择平台，测试显式选择独立 Redis 实例和数据库。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一 `scope_id` 隔离并精确删除。运行入口与 CI 相同：
 
 ```powershell
 $env:RYFRAME_MYSQL_INTEGRATION = "1"

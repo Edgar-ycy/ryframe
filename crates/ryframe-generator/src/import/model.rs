@@ -43,6 +43,50 @@ pub struct ColumnInfo {
     pub comment: Option<String>,
 }
 
+impl TableInfo {
+    /// 主键顺序来自 PRIMARY 索引，独立于物理列顺序；单列初稿可从字段标记确定。
+    pub(super) fn primary_key_columns(&self) -> Result<Vec<&str>, String> {
+        let marked = self
+            .columns
+            .iter()
+            .filter(|column| column.is_primary_key)
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>();
+        if marked.is_empty() {
+            return Err(format!(
+                "表 {} 没有主键；请先设计并审阅主键迁移，不能直接生成可写 CRUD",
+                self.table_name
+            ));
+        }
+        let indexes = self
+            .indexes
+            .iter()
+            .filter(|index| index.name == "PRIMARY")
+            .collect::<Vec<_>>();
+        let keys = match indexes.as_slice() {
+            [index] if index.unique => index.columns.iter().map(String::as_str).collect::<Vec<_>>(),
+            [] if marked.len() == 1 => marked.clone(),
+            _ => {
+                return Err(format!(
+                    "表 {} 缺少唯一 PRIMARY 索引顺序或重复声明；重新读取完整结构",
+                    self.table_name
+                ));
+            }
+        };
+        let unique = keys.iter().collect::<std::collections::BTreeSet<_>>();
+        if keys.is_empty()
+            || unique.len() != keys.len()
+            || unique != marked.iter().collect::<std::collections::BTreeSet<_>>()
+        {
+            return Err(format!(
+                "表 {} 的 PRIMARY 索引与字段主键标记不一致；重新读取完整结构",
+                self.table_name
+            ));
+        }
+        Ok(keys)
+    }
+}
+
 /// 将已检查的表结构转换为供开发者确认的 Rust `ResourceModel` 初稿。
 ///
 /// 导入只建立一次模型起点：不会猜测路由、菜单、字段用途或业务规则。
@@ -58,7 +102,29 @@ pub(super) fn rust_model_source_named(
     if !matches!(database, "control" | "tenant") {
         return Err("导入数据库范围只支持 control 或 tenant".into());
     }
-    validate_model_keys(table, database)?;
+    let primary_key = validate_model_keys(table, database)?;
+    let id_column = primary_key
+        .iter()
+        .find(|key| **key != "tenant_id")
+        .copied()
+        .ok_or_else(|| format!("表 {} 缺少业务主键；请审阅主键设计", table.table_name))?;
+    if id_column != "id" && table.columns.iter().any(|column| column.name == "id") {
+        return Err(format!(
+            "表 {} 的主键 {id_column} 映射为 id 时与已有列冲突；请显式设计字段映射",
+            table.table_name
+        ));
+    }
+    let model_key = |column: &str| {
+        if column == id_column {
+            "id".to_owned()
+        } else {
+            column.to_owned()
+        }
+    };
+    let model_keys = primary_key
+        .iter()
+        .map(|column| model_key(column))
+        .collect::<Vec<_>>();
     if !valid_ident(name) {
         return Err(format!(
             "资源名 {name:?} 不是可用 Rust 标识符；调整 strip_table_prefix 或表名映射"
@@ -67,59 +133,57 @@ pub(super) fn rust_model_source_named(
     let model = pascal_case(name)?;
     let title = table.comment.as_deref().unwrap_or(&table.table_name);
     let mut output = format!(
-        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?})]\npub struct {} {{\n",
-        name, title, table.table_name, database, model
+        "// 由 ryframe-generate import 生成；请确认字段用途和业务规则。\n#[derive(ryframe_sdk::ResourceModel)]\n#[resource(name = {:?}, title = {:?}, table = {:?}, database = {:?}, primary_key = {:?})]\npub struct {} {{\n",
+        name, title, table.table_name, database, model_keys, model
     );
     for column in &table.columns {
-        if !valid_ident(&column.name) {
+        let field = if column.name == id_column {
+            "id"
+        } else {
+            &column.name
+        };
+        if !valid_ident(field) {
             return Err(format!(
                 "字段 {} 不是可用 Rust 标识符；请显式设置字段映射，导入未写入源码",
                 column.name
             ));
         }
-        let mut attributes = Vec::new();
+        let mut attributes = Vec::<String>::new();
+        if field != column.name {
+            attributes.push(format!("column = {:?}", column.name));
+        }
         if column.is_primary_key {
-            attributes.push("primary_key");
+            attributes.push("primary_key".into());
         }
         if column.is_auto_increment {
-            attributes.push("auto_increment");
+            attributes.push("auto_increment".into());
         }
         if !attributes.is_empty() {
             output.push_str(&format!("    #[resource({})]\n", attributes.join(", ")));
         }
-        output.push_str(&format!("    pub {}: {},\n", column.name, column.rust_type));
+        output.push_str(&format!("    pub {field}: {},\n", column.rust_type));
     }
     output.push_str("}\n");
     Ok(output)
 }
 
-fn validate_model_keys(table: &TableInfo, database: &str) -> Result<(), String> {
-    let primary = table
-        .columns
-        .iter()
-        .filter(|column| column.is_primary_key)
-        .map(|column| column.name.as_str())
-        .collect::<Vec<_>>();
-    if primary.is_empty() {
-        return Err(format!(
-            "表 {} 没有主键；请先设计并审阅主键迁移，不能直接生成可写 CRUD",
-            table.table_name
-        ));
-    }
+fn validate_model_keys<'a>(table: &'a TableInfo, database: &str) -> Result<Vec<&'a str>, String> {
+    let primary = table.primary_key_columns()?;
     if database == "tenant" && !primary.contains(&"tenant_id") {
         return Err(format!(
             "租户表 {} 缺少包含 tenant_id 的主键；请选择全局业务 --database control，或审阅补充租户字段和主键的迁移",
             table.table_name
         ));
     }
-    if primary.len() > 1 && !(database == "tenant" && primary.len() == 2 && primary.contains(&"id"))
+    if primary.len() > 1
+        && !(database == "tenant" && primary.len() == 2 && primary[0] == "tenant_id")
     {
         return Err(format!(
-            "表 {} 的复合主键 {primary:?} 暂不支持标准 CRUD；请使用强类型业务扩展",
+            "表 {} 的复合主键 {primary:?} 暂不支持标准 CRUD；租户主键须以 tenant_id 开头，不自动重排数据库索引，请审阅迁移或使用强类型业务扩展",
             table.table_name
         ));
     }
-    Ok(())
+    Ok(primary)
 }
 
 fn valid_ident(value: &str) -> bool {

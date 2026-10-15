@@ -262,6 +262,12 @@ fn imported_models_escape_comments_and_reject_unusable_keys_before_write() {
             .contains("tenant_id")
     );
     source.columns[1].is_primary_key = true;
+    source
+        .indexes
+        .iter_mut()
+        .find(|index| index.name == "PRIMARY")
+        .unwrap()
+        .columns = vec!["tenant_id".into(), "id".into()];
     assert!(rust_model_source(&source, "tenant").is_ok());
     assert!(
         rust_model_source(&source, "control")
@@ -281,6 +287,65 @@ fn imported_models_escape_comments_and_reject_unusable_keys_before_write() {
         rust_model_source(&source, "control")
             .unwrap_err()
             .contains("没有主键")
+    );
+}
+
+#[test]
+fn imported_primary_keys_keep_index_order_and_map_the_physical_id_column() {
+    use ryframe_generator::import::{mysql_rust_type, rust_model_source};
+    let mut source = table();
+    for column in &mut source.columns {
+        column.rust_type = mysql_rust_type(&column.column_type, column.is_nullable).unwrap();
+    }
+    source.columns[0].name = "order_id".into();
+    source.columns[1].is_primary_key = true;
+    let primary = source
+        .indexes
+        .iter_mut()
+        .find(|index| index.name == "PRIMARY")
+        .unwrap();
+    primary.columns = vec!["tenant_id".into(), "order_id".into()];
+    let model = rust_model_source(&source, "tenant").unwrap();
+    assert!(model.contains("primary_key = [\"tenant_id\", \"id\"]"));
+    assert!(model.contains("column = \"order_id\", primary_key, auto_increment"));
+    assert!(model.find("pub id:").unwrap() < model.find("pub tenant_id:").unwrap());
+    let draft = draft_resource_from_table(&source, metadata()).unwrap();
+    assert_eq!(draft.spec.database.primary_key, ["tenant_id", "order_id"]);
+    assert_eq!(draft.spec.fields[0].name, "order_id");
+    source
+        .indexes
+        .iter_mut()
+        .find(|index| index.name == "PRIMARY")
+        .unwrap()
+        .columns
+        .reverse();
+    assert!(
+        rust_model_source(&source, "tenant")
+            .unwrap_err()
+            .contains("不自动重排")
+    );
+    source
+        .indexes
+        .iter_mut()
+        .find(|index| index.name == "PRIMARY")
+        .unwrap()
+        .columns = vec!["tenant_id".into(), "missing".into()];
+    assert!(
+        rust_model_source(&source, "tenant")
+            .unwrap_err()
+            .contains("不一致")
+    );
+    source
+        .indexes
+        .iter_mut()
+        .find(|index| index.name == "PRIMARY")
+        .unwrap()
+        .columns = vec!["tenant_id".into(), "order_id".into()];
+    source.columns[2].name = "id".into();
+    assert!(
+        rust_model_source(&source, "tenant")
+            .unwrap_err()
+            .contains("映射为 id 时与已有列冲突")
     );
 }
 

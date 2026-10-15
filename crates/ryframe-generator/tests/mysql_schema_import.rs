@@ -27,6 +27,23 @@ async fn global_tables_without_tenant_prefix_share_introspection_but_keep_tenant
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn imported_tenant_primary_index_order_is_independent_of_physical_column_order() {
+    mysql::run_mysql_test("schema_pk_order", |database| async move {
+        mysql::execute(&database, "CREATE TABLE biz_ordered (order_id BIGINT NOT NULL AUTO_INCREMENT, name VARCHAR(32) NOT NULL, tenant_id VARCHAR(36) NOT NULL, PRIMARY KEY(tenant_id,order_id), KEY idx_ordered_id(order_id))").await?;
+        let table = inspect_existing_table(&database, "biz_ordered").await.map_err(|error| error.to_string())?;
+        assert_eq!(table.columns[0].name, "order_id");
+        let primary = table.indexes.iter().find(|index| index.name == "PRIMARY").unwrap();
+        assert_eq!(primary.columns, ["tenant_id", "order_id"]);
+        let model = ryframe_generator::import::rust_model_source(&table, "tenant")?;
+        assert!(model.contains("primary_key = [\"tenant_id\", \"id\"]"));
+        assert!(model.contains("column = \"order_id\", primary_key, auto_increment"));
+        assert!(model.find("pub id:").unwrap() < model.find("pub tenant_id:").unwrap());
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_ordered", 0).await?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generated_tenant_auto_increment_ddl_and_transaction_readback_match_mysql() {
     use ryframe_generator::{
         IdGeneration, IndexSpec, ResourceSpec, normalize_resource, render_resources,

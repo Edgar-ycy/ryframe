@@ -34,6 +34,7 @@ pub struct ResourceDescriptor {
     pub route: Option<&'static str>,
     pub menu_parent: Option<&'static str>,
     pub menu_order: u16,
+    pub primary_key: &'static [&'static str],
     pub fields: &'static [ResourceFieldDescriptor],
 }
 
