@@ -120,9 +120,10 @@ fn defaults_soft_delete_and_enum_keys_are_strictly_typed() {
         "name = \"name\"\nvalue_type = \"string\"",
         "name = \"name\"\nvalue_type = \"decimal\"",
     );
-    let error = normalize(&decimal, "order").expect_err("decimal 必须在 normalize 阶段失败");
+    let error = normalize(&decimal, "order")
+        .expect_err("Decimal 缺少明确 SQL 精度必须在 normalize 阶段失败");
     assert!(error.contains("字段 name"));
-    assert!(error.contains("decimal"));
+    assert!(error.contains("DECIMAL(p,s)"));
 }
 
 #[test]

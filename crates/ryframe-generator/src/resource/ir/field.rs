@@ -76,7 +76,10 @@ fn validate_identity(
         && wire_type != field.value_type
         && !matches!(
             (field.value_type, wire_type),
-            (ValueType::I64 | ValueType::U64, ValueType::String)
+            (
+                ValueType::I64 | ValueType::U64 | ValueType::Decimal,
+                ValueType::String
+            )
         )
     {
         return Err(field_error(
@@ -84,10 +87,10 @@ fn validate_identity(
             &field.name,
             source_path,
             "不支持该 value_type 与 wire_type 组合",
-            "64 位整数使用 string 传输，保持完整数值范围",
+            "精确数值使用 string 传输，保持完整数值范围",
         ));
     }
-    if field.value_type == ValueType::U64
+    if matches!(field.value_type, ValueType::U64 | ValueType::Decimal)
         && field
             .wire_type
             .is_some_and(|wire| wire != ValueType::String)
@@ -96,20 +99,11 @@ fn validate_identity(
             resource,
             &field.name,
             source_path,
-            "u64 必须使用 string 传输",
-            "省略 wire_type 或明确设置为 string；不得使用 JSON 数字传输完整 u64 范围",
+            "u64、Decimal 必须使用 string 传输",
+            "省略 wire_type 或明确设置为 string；JSON 数字不能保证完整 u64 范围和十进制精度",
         ));
     }
     validate_labels(&field.labels, resource, Some(&field.name), source_path)?;
-    if field.value_type == ValueType::Decimal {
-        return Err(field_error(
-            resource,
-            &field.name,
-            source_path,
-            "flat_crud v1 不生成 decimal 字段",
-            "将精度与舍入规则放入强类型业务切片，或先扩展完整 decimal 契约测试",
-        ));
-    }
     Ok(())
 }
 
@@ -213,7 +207,7 @@ fn validate_widgets(
     field: &FieldSpec,
 ) -> Result<(), ResourceError> {
     if (field.usage.create || field.usage.update)
-        && (field.value_type == ValueType::U64
+        && (matches!(field.value_type, ValueType::U64 | ValueType::Decimal)
             || (field.value_type == ValueType::I64 && field.wire_type == Some(ValueType::String)))
         && matches!(field.widget, WidgetSpec::Number)
     {
@@ -221,8 +215,8 @@ fn validate_widgets(
             resource,
             &field.name,
             source_path,
-            "字符串传输的 64 位整数不能使用 number 控件，否则可能丢失精度",
-            "使用 text 或有限枚举 select，保持表单、JSON 和 Rust 整数的十进制字符串一致",
+            "精确数值字段不能使用 number 控件，否则可能丢失精度",
+            "使用 text；整数也可使用有限枚举 select，保持表单、JSON 和 Rust 精确数值一致",
         ));
     }
     if (field.usage.create || field.usage.update)

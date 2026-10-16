@@ -37,7 +37,7 @@ pub(crate) fn column_type(field: &FieldIr) -> String {
         ValueType::Date => "DATE".into(),
         ValueType::DateTime => "DATETIME(6)".into(),
         ValueType::Json => "JSON".into(),
-        ValueType::Decimal => unreachable!("decimal 已在生成边界校验中拒绝"),
+        ValueType::Decimal => unreachable!("Decimal 已在生成边界要求显式 SQL 类型"),
     }
 }
 
@@ -62,6 +62,7 @@ pub(super) fn data_type(field: &FieldIr) -> &str {
             "DATE" => "date",
             "DATETIME" => "datetime",
             "JSON" => "json",
+            "DECIMAL" => "decimal",
             _ => unreachable!("SQL 类型已校验"),
         };
     }
@@ -75,6 +76,6 @@ pub(super) fn data_type(field: &FieldIr) -> &str {
         ValueType::Date => "date",
         ValueType::DateTime => "datetime",
         ValueType::Json => "json",
-        ValueType::Decimal => unreachable!("decimal 已在生成边界校验中拒绝"),
+        ValueType::Decimal => unreachable!("Decimal 已在生成边界要求显式 SQL 类型"),
     }
 }

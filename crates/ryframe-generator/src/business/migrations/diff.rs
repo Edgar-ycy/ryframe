@@ -114,6 +114,9 @@ fn safe_type(before: &FieldIr, after: &FieldIr) -> bool {
     let old = schema_column_type(before);
     let new = schema_column_type(after);
     old == new
+        || (before.value_type == ValueType::Decimal
+            && after.value_type == ValueType::Decimal
+            && crate::resource::decimal::widening(&old, &new))
         || matches!((crate::resource::physical_integer_bounds(before), crate::resource::physical_integer_bounds(after)), (Some((old_min, old_max)), Some((new_min, new_max))) if new_min <= old_min && new_max >= old_max)
         || (before.value_type == ValueType::String
             && after.value_type == ValueType::String

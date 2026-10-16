@@ -8,17 +8,10 @@
 选择开发配置后再运行命令，例如 `$env:APP_ENV = "dev"`。配置文件位于 `config/`，环境变量使用 `APP_` 前缀覆盖对应字段；外部服务地址、密码、令牌和证书通过本机环境变量或密钥文件提供，所有可用字段和校验范围以配置结构及启动错误为准。
 ## 启动后端
 
-首次运行前创建空的 MySQL 数据库并配置连接，然后初始化、验证并启动：
-```powershell
-$env:APP_ENV = "dev"
-$env:RYFRAME_INIT_ADMIN_PASSWORD_FILE = ".local-tests/secrets/admin-password.txt"
-cargo migrate -- control up
-cargo migrate -- control verify
-cargo serve
-```
-`cargo serve` 只启动 API，不会同时启动 Worker 或前端。需要后台任务时另开终端运行 `cargo worker`；需要联调页面时，在 `ryframe-vue3` 仓库中运行 `corepack pnpm dev`。`cargo xtask dev` 保留给 RyFrame 框架维护者验证热切换状态机，不是使用者开发业务的启动入口。
+本地初始化、管理员密码和 API/Worker/前端启动顺序见 [README](../README.md)。`cargo serve` 只启动 API，后台任务使用独立的 `cargo worker`，前端单独运行 `corepack pnpm dev`。
 
-框架维护者需要热切换验证时使用 `cargo xtask dev`；它按实际变更选择 API、Worker 或迁移目标，只验证已登记数据库，不自动升级。常用排障从 `cargo xtask check doctor` 开始。
+框架维护者用 `cargo xtask dev` 验证热切换；它只验证已登记数据库，不自动升级。常用排障从 `cargo xtask check doctor` 开始。
+
 ## 数据库迁移
 
 控制库使用默认目标；租户数据可操作全部已登记目标或单个目标；新迁移必须用对应命令创建骨架：
@@ -32,7 +25,7 @@ cargo migrate -- tenant-data verify --target <目标键>
 ```
 生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
 
-初始化前将管理员初始密码保存在上述 UTF-8 文件中，也可通过 `RYFRAME_INIT_ADMIN_PASSWORD` 提供；两者不能同时设置。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。
+初始化前设置 `RYFRAME_INIT_ADMIN_PASSWORD_FILE` 指向 UTF-8 密码文件，也可通过 `RYFRAME_INIT_ADMIN_PASSWORD` 提供；两者不能同时设置。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。
 
 SQL 导出、数据库客户端导入方式及中断处理见[数据指南](data.md#控制库初始化-sql)。
 
@@ -88,7 +81,13 @@ cargo generate -- resource --package order-business --model Order --write
 
 ### 模型结构演进
 
-修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32/u64` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64` 普通字段保留完整无符号容量并使用字符串传输，超过 i64 的默认值使用十进制字符串；主键支持 `i64/u64`，自增及雪花策略、URL 和持久化保持类型一致；Decimal 的完整 CRUD 仍明确阻断；日期、JSON 等控件限制继续生效。复合索引用结构体属性 `#[resource(index(name="idx_code",fields=["code","id"]))]` 声明，唯一索引加 `unique`；导入保留索引名、字段顺序和唯一性，拒绝前缀、降序、函数、不可见及非 BTREE 索引。仅为自增联合主键补充必要的 id 首列索引，不给主键已覆盖字段补冗余索引。字面量默认值使用字段 `default="值"`，数据库时钟使用 `sql_default="CURRENT_TIMESTAMP(6)"`、`sql_on_update="CURRENT_TIMESTAMP(6)"`；时钟只支持与 DATETIME 列一致的 0～6 位精度，不接受任意 SQL，`default` 与 `sql_default` 不能并用。导入保留这两类默认值及更新时间表达式；应用显式写入及可空替换语义仍生效。日期、Decimal 的字面量默认值须符合当前 CRUD 支持范围，其他表达式使用明确迁移扩展。外键仍需核对导入元数据。业务描述目录按资源拆分，OpenAPI 字段元数据按字段拆分；生成 Rust 文件超过 500 行时整批停止并报告文件，复杂资源须按职责拆分。
+修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。
+
+字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32/u64` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64` 普通字段保留完整无符号容量并使用字符串传输，超过 i64 的默认值使用十进制字符串；主键支持 `i64/u64`，自增及雪花策略、URL 和持久化保持类型一致；Decimal 必须显式声明 `DECIMAL(p,s)`（1≤p≤28、0≤s≤p），使用 SDK 的 `rust_decimal::Decimal`；正文、查询、响应及文本表单均以字符串传输。超出列容量或小数位数会拒绝，API 和 SDK 用例均不做自动舍入；日期、JSON 等控件限制继续生效。
+
+复合索引用结构体属性 `#[resource(index(name="idx_code",fields=["code","id"]))]` 声明，唯一索引加 `unique`；导入保留索引名、字段顺序和唯一性，拒绝前缀、降序、函数、不可见及非 BTREE 索引。仅为自增联合主键补充必要的 id 首列索引，不给主键已覆盖字段补冗余索引。
+
+字面量默认值使用字段 `default="值"`，数据库时钟使用 `sql_default="CURRENT_TIMESTAMP(6)"`、`sql_on_update="CURRENT_TIMESTAMP(6)"`；时钟只支持与 DATETIME 列一致的 0～6 位精度，不接受任意 SQL，`default` 与 `sql_default` 不能并用。导入保留这两类默认值及更新时间表达式；应用显式写入及可空替换语义仍生效。日期、Decimal 的字面量默认值须符合当前 CRUD 支持范围，其他表达式使用明确迁移扩展。外键仍需核对导入元数据。
 
 - 新增可空列、带显式默认值的非空列、整数或字符串扩宽、放宽非空约束及新增索引可生成向前 DDL；唯一索引仍须先核对存量重复值。
 - 删除或重命名列、收窄类型、收紧非空约束、改变主键/表名/存储范围、调整已有列顺序或删除/修改索引只输出审阅原因，整批停止，不覆盖初始迁移或发布半批注册。非空新列没有默认值时，先用可空列分阶段回填。

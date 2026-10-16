@@ -3229,6 +3229,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.10.3",
  "regex",
+ "rust_decimal",
  "ryframe-application",
  "ryframe-auth",
  "ryframe-kernel",
@@ -3261,6 +3262,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
+ "rust_decimal",
  "ryframe-auth",
  "ryframe-kernel",
  "serde",
@@ -3310,6 +3312,7 @@ dependencies = [
  "log",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
+ "rust_decimal",
  "ryframe-application",
  "ryframe-config",
  "ryframe-kernel",
@@ -3351,6 +3354,7 @@ dependencies = [
 name = "ryframe-kernel"
 version = "0.13.1"
 dependencies = [
+ "rust_decimal",
  "serde",
  "validator",
 ]
@@ -3395,6 +3399,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "hex",
+ "rust_decimal",
  "ryframe-application",
  "ryframe-config",
  "ryframe-db",

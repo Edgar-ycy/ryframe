@@ -72,6 +72,8 @@ cargo generate -- resource --package order-business --model Order --write
 
 Keep handwritten code in `resources/` and `extensions/`. The default generator is offline. With `schema-import`, `import --tables biz_order,biz_order_item` preflights the whole batch, registers model descriptors and preserves original schemas in `.ryframe/imports/` without modifying the database. Model fields use `sql_type` to retain supported physical types, lengths and datetime precision, checked against Rust types and capacity constraints before generation. Tables and string columns can declare their own UTF-8 collations, retained for schema verification after import. Configure tool defaults and the frontend directory in `config/tools.toml`; ignored `.local-tests/tools.toml` supplies local overrides, and CLI options take precedence. `cargo generate -- run` consumes configured `tables` or `models`. The Rust `GenerationBuilder` accepts `.include_tables(["biz_order", "biz_order_item"])`; edit and run the [example](crates/ryframe-generator/examples/generate.rs). See the development guide for the complete workflow and the [data guide](docs/data.md) for explicit adoption plans, execution and failure inspection of existing tables.
 
+Exact Decimal fields must declare `sql_type="DECIMAL(p,s)"` explicitly. The current native type supports the complete domain for 1≤p≤28 and 0≤s≤p. API payloads and forms use decimal strings; values exceeding the declared capacity are rejected. See the development guide for models and defaults.
+
 ## Checks, contracts and builds
 
 Daily backend checks do not require the frontend. Explicitly choose `all` for complete cross-repository checks. Update tool configuration when renaming or relocating the frontend:

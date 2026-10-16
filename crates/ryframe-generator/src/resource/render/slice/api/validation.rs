@@ -1,5 +1,21 @@
 use super::super::{FieldIr, ResourceIr, ValueType};
 
+pub(super) fn render_decimal_validators(resource: &ResourceIr, output: &mut String) {
+    for field in resource.fields.iter().filter(|field| {
+        field.value_type == ValueType::Decimal && (field.usage.create || field.usage.update)
+    }) {
+        let (precision, scale) = crate::resource::decimal::capacity(
+            field.sql_type.as_deref().expect("Decimal 类型已校验"),
+        )
+        .expect("Decimal 容量已校验");
+        let message = format!(
+            "{} 必须符合 DECIMAL({precision},{scale})，不能舍入或溢出",
+            field.labels.zh_cn
+        );
+        output.push_str(&format!("fn validate_{name}_decimal(value: &rust_decimal::Decimal) -> Result<(), validator::ValidationError> {{\n    if ryframe_kernel::decimal_fits_precision(*value, {precision}, {scale}) {{\n        Ok(())\n    }} else {{\n        let mut error = validator::ValidationError::new(\"decimal_capacity\");\n        error.message = Some({message:?}.into());\n        Err(error)\n    }}\n}}\n\n", name=field.name));
+    }
+}
+
 pub(super) fn render_utf8_byte_validators(resource: &ResourceIr, output: &mut String) {
     for field in resource.fields.iter().filter(|field| {
         field.validation.min_utf8_bytes.is_some() || field.validation.max_utf8_bytes.is_some()
@@ -133,6 +149,12 @@ pub(super) fn validation_attribute(field: &FieldIr) -> Option<String> {
             field.name
         ));
     }
+    if field.value_type == ValueType::Decimal {
+        validators.push(format!(
+            "custom(function = \"validate_{}_decimal\")",
+            field.name
+        ));
+    }
     if validation.min_utf8_bytes.is_some() || validation.max_utf8_bytes.is_some() {
         validators.push(format!(
             "custom(function = \"validate_{}_utf8_bytes\")",
@@ -152,15 +174,19 @@ fn numeric_bound(value: i64, value_type: ValueType) -> String {
 
 pub(super) fn schema_attribute(field: &FieldIr, optional: bool) -> Option<String> {
     let mut parts = Vec::new();
-    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
-        && field.wire_type == ValueType::String
+    if matches!(
+        field.value_type,
+        ValueType::I64 | ValueType::U64 | ValueType::Decimal
+    ) && field.wire_type == ValueType::String
     {
         parts.push(if optional {
             "value_type = Option<String>".into()
         } else {
             "value_type = String".into()
         });
-        parts.push(if field.value_type == ValueType::U64 {
+        parts.push(if field.value_type == ValueType::Decimal {
+            "pattern = r\"^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$\"".into()
+        } else if field.value_type == ValueType::U64 {
             "pattern = r\"^(?:0|[1-9][0-9]*)$\"".into()
         } else {
             "pattern = r\"^(?:0|-?[1-9][0-9]*)$\"".into()

@@ -4,6 +4,7 @@
 //! 事务必须留在普通手写代码中，避免把业务流程藏进 DSL。
 
 mod collation;
+pub(crate) mod decimal;
 mod error;
 mod explain;
 mod ir;

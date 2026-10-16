@@ -24,6 +24,8 @@ connection = [
 ]
 migration = ["connection", "dep:async-trait", "dep:sea-orm-migration"]
 repositories = [
+    "dep:rust_decimal",
+    "sea-orm/with-rust_decimal",
     "connection",
     "ryframe-db/repositories",
     "dep:ryframe-kernel",
@@ -32,6 +34,7 @@ repositories = [
 ]
 
 [dependencies]
+rust_decimal = { workspace = true, optional = true }
 ryframe-config = { path = "../ryframe-config", optional = true }
 ryframe-kernel = { path = "../ryframe-kernel", optional = true }
 ryframe-db = { path = "../ryframe-db", default-features = false, optional = true }

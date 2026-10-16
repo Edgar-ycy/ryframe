@@ -231,8 +231,11 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
         sql_on_update: field.sql_on_update.clone(),
         collation: field.collation.clone(),
         value_type,
-        wire_type: matches!(value_type, ValueType::I64 | ValueType::U64)
-            .then_some(ValueType::String),
+        wire_type: matches!(
+            value_type,
+            ValueType::I64 | ValueType::U64 | ValueType::Decimal
+        )
+        .then_some(ValueType::String),
         order: u16::try_from((index + 1) * 10).map_err(|_| error("字段数量超过生成上限"))?,
         nullable,
         default: field
@@ -270,12 +273,11 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
                 | ValueType::U8
                 | ValueType::U16
                 | ValueType::U32 => WidgetSpec::Number,
-                ValueType::I64 | ValueType::U64 => WidgetSpec::Text,
+                ValueType::I64 | ValueType::U64 | ValueType::Decimal => WidgetSpec::Text,
                 ValueType::Bool => WidgetSpec::Switch,
                 ValueType::Date => WidgetSpec::Date,
                 ValueType::DateTime => WidgetSpec::DateTime,
                 ValueType::Json | ValueType::String => WidgetSpec::Text,
-                ValueType::Decimal => unreachable!("decimal 类型已拒绝"),
             }
         },
         enum_values: BTreeMap::new(),
@@ -293,6 +295,7 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         .map_or((compact.as_str(), false), |value| (value, true));
     let inner = inner
         .replace("ryframe_sdk::chrono::", "chrono::")
+        .replace("ryframe_sdk::rust_decimal::", "rust_decimal::")
         .replace("ryframe_sdk::serde_json::", "serde_json::");
     let value = match inner.as_str() {
         "String" | "std::string::String" => ValueType::String,
@@ -304,6 +307,7 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         "u16" => ValueType::U16,
         "u32" => ValueType::U32,
         "u64" => ValueType::U64,
+        "rust_decimal::Decimal" => ValueType::Decimal,
         "bool" => ValueType::Bool,
         "chrono::NaiveDate" => ValueType::Date,
         "chrono::DateTime<chrono::Utc>" => ValueType::DateTime,
@@ -320,6 +324,7 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
 fn default_value(value: &str, value_type: ValueType) -> Result<toml::Value, ResourceError> {
     match value_type {
         ValueType::String => Ok(toml::Value::String(value.to_owned())),
+        ValueType::Decimal => Ok(toml::Value::String(value.to_owned())),
         ValueType::U64 => {
             let parsed = value
                 .parse::<u64>()

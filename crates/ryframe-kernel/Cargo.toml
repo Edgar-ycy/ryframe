@@ -9,6 +9,7 @@ repository.workspace = true
 description = "RyFrame 传输无关的领域核心类型"
 
 [dependencies]
+rust_decimal = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true }
 

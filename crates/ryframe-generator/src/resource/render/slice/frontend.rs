@@ -468,13 +468,15 @@ fn push_typescript_object(output: &mut String, properties: &[String]) {
 }
 
 fn ts_default(field: &FieldIr) -> &'static str {
-    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
-        && field.wire_type == ValueType::String
+    if matches!(
+        field.value_type,
+        ValueType::I64 | ValueType::U64 | ValueType::Decimal
+    ) && field.wire_type == ValueType::String
     {
         return "''";
     }
     match field.value_type {
-        ValueType::String | ValueType::Date | ValueType::DateTime => "''",
+        ValueType::String | ValueType::Date | ValueType::DateTime | ValueType::Decimal => "''",
         ValueType::I8
         | ValueType::I16
         | ValueType::I32
@@ -482,8 +484,7 @@ fn ts_default(field: &FieldIr) -> &'static str {
         | ValueType::U8
         | ValueType::U16
         | ValueType::U32
-        | ValueType::U64
-        | ValueType::Decimal => "0",
+        | ValueType::U64 => "0",
         ValueType::Bool => "false",
         ValueType::Json => "null",
     }
@@ -494,12 +495,7 @@ fn ts_enum_value(value: &str, field: &FieldIr) -> String {
         return format!("{value:?}");
     }
     match field.value_type {
-        value_type
-            if (value_type.integer_bounds().is_some() || value_type == ValueType::Decimal)
-                && value.parse::<f64>().is_ok() =>
-        {
-            value.to_owned()
-        }
+        value_type if value_type.integer_bounds().is_some() => value.to_owned(),
         ValueType::Bool if matches!(value, "true" | "false") => value.to_owned(),
         _ => format!("{value:?}"),
     }
@@ -507,8 +503,10 @@ fn ts_enum_value(value: &str, field: &FieldIr) -> String {
 
 fn form_input(field: &FieldIr, optional: bool) -> String {
     let value = format!("form.{}", field.name);
-    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
-        && field.wire_type == ValueType::String
+    if matches!(
+        field.value_type,
+        ValueType::I64 | ValueType::U64 | ValueType::Decimal
+    ) && field.wire_type == ValueType::String
     {
         if field.nullable {
             return format!("{value} === '' ? null : {value}");

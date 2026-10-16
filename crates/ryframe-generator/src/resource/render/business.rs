@@ -292,4 +292,5 @@ fn shared_content(content: String) -> String {
         .replace("#[utoipa::", "#[ryframe_sdk::utoipa::")
         .replace("validator::", "ryframe_sdk::validator::")
         .replace("chrono::", "ryframe_sdk::chrono::")
+        .replace("rust_decimal::", "ryframe_sdk::rust_decimal::")
 }

@@ -49,6 +49,7 @@ pub(in crate::resource) fn normalize(
     validate_path_matches_resource(&source_path, &resource)?;
     super::super::collation::normalize(&mut spec, &resource, &source_path)?;
     super::super::sql_type::normalize_fields(&mut spec.fields, &resource, &source_path)?;
+    super::super::decimal::normalize_fields(&mut spec.fields, &resource, &source_path)?;
     super::super::sql_defaults::normalize_fields(&mut spec.fields, &resource, &source_path)?;
     let schema_hash = normalize_schema(&spec, &resource, &source_path)?;
 
@@ -277,13 +278,16 @@ fn normalize_fields(
 
 fn normalize_field(field: FieldSpec, column: String) -> FieldIr {
     let nullable = field.nullable;
-    let wire_type = field
-        .wire_type
-        .unwrap_or(if field.value_type == super::ValueType::U64 {
+    let wire_type = field.wire_type.unwrap_or(
+        if matches!(
+            field.value_type,
+            super::ValueType::U64 | super::ValueType::Decimal
+        ) {
             super::ValueType::String
         } else {
             field.value_type
-        });
+        },
+    );
     FieldIr {
         name: field.name,
         column,

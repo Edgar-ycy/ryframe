@@ -13,7 +13,7 @@ default = []
 runtime = ["dep:ryframe-application", "dep:ryframe-kernel"]
 api = ["runtime", "dep:axum", "dep:ryframe-api", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:utoipa", "dep:validator"]
 migration = ["persistence", "dep:sea-orm-migration", "dep:sha2"]
-persistence = ["runtime", "dep:async-trait", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:sea-orm"]
+persistence = ["sea-orm/with-rust_decimal", "runtime", "dep:async-trait", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:sea-orm"]
 
 [dependencies]
 async-trait = { workspace = true, optional = true }

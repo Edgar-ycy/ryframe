@@ -172,6 +172,18 @@ fn validate_lifecycle_references(
             .iter()
             .find(|field| field.name == soft_delete.field)
             .expect("字段引用已校验");
+        if field.value_type != ValueType::String
+            && field.value_type != ValueType::Bool
+            && field.value_type.integer_bounds().is_none()
+        {
+            return Err(field_error(
+                resource,
+                &field.name,
+                source_path,
+                "软删除字段仅支持 string、bool 或整数",
+                "使用明确的离散状态字段；Decimal、日期及 JSON 不能作为软删除标志",
+            ));
+        }
         validate_ir_value(
             resource,
             source_path,

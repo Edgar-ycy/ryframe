@@ -51,6 +51,7 @@ pub use ryframe_application::{
 #[cfg(feature = "runtime")]
 pub use ryframe_kernel::{
     ActorContext, AppError, AppResult, PageResult, PaginationPolicy, ValidatedPageQuery,
+    decimal_fits_precision,
 };
 pub use ryframe_macro::{ResourceModel, capability, delete, get, patch, perm, post, put, route};
 #[cfg(feature = "persistence")]

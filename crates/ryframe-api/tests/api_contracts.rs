@@ -2,6 +2,8 @@
 mod api_contract;
 #[path = "api_contracts/catalog_contract.rs"]
 mod catalog_contract;
+#[path = "api_contracts/decimal_wire_contract.rs"]
+mod decimal_wire_contract;
 #[path = "api_contracts/id_parser_contract.rs"]
 mod id_parser_contract;
 #[path = "api_contracts/integer_wire_contract.rs"]

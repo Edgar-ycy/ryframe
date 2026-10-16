@@ -133,6 +133,16 @@ pub(super) fn rust_literal(value: &toml::Value, value_type: ValueType) -> String
     match (value, value_type) {
         (toml::Value::String(value), ValueType::String) => format!("String::from({value:?})"),
         (toml::Value::String(value), ValueType::U64) => format!("{value}_u64"),
+        (toml::Value::String(value), ValueType::Decimal) => {
+            let scale = value
+                .split_once('.')
+                .map_or(0, |(_, fraction)| fraction.len());
+            let coefficient = value
+                .replace('.', "")
+                .parse::<i128>()
+                .expect("Decimal 默认值已校验");
+            format!("rust_decimal::Decimal::from_i128_with_scale({coefficient}_i128, {scale})")
+        }
         (toml::Value::Integer(value), value_type) if value_type.integer_bounds().is_some() => {
             format!("{value}_{}", value_type.rust_base_type())
         }

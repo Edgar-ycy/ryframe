@@ -8,6 +8,14 @@ pub(super) fn normalize_fields(
 ) -> Result<(), ResourceError> {
     for field in fields {
         let Some(input) = field.sql_type.as_deref() else {
+            if field.value_type == ValueType::Decimal {
+                return Err(field_error(
+                    resource,
+                    path,
+                    &field.name,
+                    "Decimal 必须显式声明 DECIMAL(p,s)，例如 DECIMAL(20,6)".into(),
+                ));
+            }
             if matches!(
                 field.value_type,
                 ValueType::I8
@@ -55,6 +63,14 @@ struct Declaration {
 }
 
 fn parse(input: &str, value_type: ValueType) -> Result<Declaration, String> {
+    if value_type == ValueType::Decimal {
+        return Ok(Declaration {
+            sql: super::decimal::normalize_type(input)?,
+            max_length: None,
+            max_bytes: None,
+            range: None,
+        });
+    }
     let normalized = input.trim().to_ascii_uppercase();
     let unsigned = normalized.ends_with(" UNSIGNED");
     let type_name = normalized.strip_suffix(" UNSIGNED").unwrap_or(&normalized);
@@ -218,6 +234,10 @@ mod tests {
         assert_eq!(parse("int(11)", ValueType::I32).unwrap().sql, "INT(11)");
         assert_eq!(parse("boolean", ValueType::Bool).unwrap().sql, "TINYINT(1)");
         assert_eq!(
+            parse("decimal(10,2)", ValueType::Decimal).unwrap().sql,
+            "DECIMAL(10,2)"
+        );
+        assert_eq!(
             parse("datetime(0)", ValueType::DateTime).unwrap().sql,
             "DATETIME"
         );
@@ -243,7 +263,8 @@ mod tests {
         }
         assert!(parse("VARCHAR(32)", ValueType::I64).is_err());
         assert!(parse("DATETIME(7)", ValueType::DateTime).is_err());
-        assert!(parse("DECIMAL(10,2)", ValueType::Decimal).is_err());
+        assert!(parse("DECIMAL(29,2)", ValueType::Decimal).is_err());
+        assert!(parse("DECIMAL(65,30)", ValueType::Decimal).is_err());
     }
 
     #[test]

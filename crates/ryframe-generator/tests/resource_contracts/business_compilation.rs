@@ -91,6 +91,8 @@ pub(super) fn verify(backend: &Path, target: &Path) {
             "api",
             "--test",
             "nullable_contract",
+            "--test",
+            "decimal_contract",
             "--jobs",
             "4",
         ])
@@ -140,9 +142,15 @@ fn verify_incremental_generation(backend: &Path) {
         include_str!("../fixtures/business_dto_contract.rs"),
     )
     .unwrap();
+    fs::write(
+        root.join("tests/decimal_contract.rs"),
+        include_str!("../fixtures/business_decimal_contract.rs"),
+    )
+    .unwrap();
     let formatted = Command::new("rustfmt")
         .args(["--edition", "2024"])
         .arg(root.join("tests/nullable_contract.rs"))
+        .arg(root.join("tests/decimal_contract.rs"))
         .current_dir(backend)
         .output()
         .unwrap();
@@ -235,6 +243,10 @@ fn import_batch(backend: &Path) {
                 "    #[resource(filter)]\n    pub large_count: u64,",
             )
             .replace("pub id: i64", "pub id: u64")
+            .replace(
+                "    pub price: ryframe_sdk::rust_decimal::Decimal,",
+                "    #[resource(filter)]\n    pub price: ryframe_sdk::rust_decimal::Decimal,",
+            )
             .replace("sql_type = \"bigint\"", "sql_type = \"bigint unsigned\""),
     )
     .unwrap();
@@ -271,6 +283,16 @@ fn import_table(name: &str) -> TableInfo {
         ("count", "u32", "int unsigned"),
         ("large_count", "u64", "bigint unsigned"),
         (
+            "price",
+            "ryframe_sdk::rust_decimal::Decimal",
+            "decimal(20,6)",
+        ),
+        (
+            "discount",
+            "Option<ryframe_sdk::rust_decimal::Decimal>",
+            "decimal(28,6)",
+        ),
+        (
             "created_at",
             "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
             "datetime(6)",
@@ -291,6 +313,7 @@ fn import_table(name: &str) -> TableInfo {
         default: match name {
             "created_at" => Some("CURRENT_TIMESTAMP(6)".into()),
             "large_count" => Some(u64::MAX.to_string()),
+            "price" => Some("0.125000".into()),
             _ => None,
         },
         extra: if name == "id" {
@@ -302,7 +325,7 @@ fn import_table(name: &str) -> TableInfo {
         } else {
             String::new()
         },
-        is_nullable: false,
+        is_nullable: name == "discount",
         is_primary_key: name == "id",
         is_unique: false,
         is_auto_increment: name == "id",

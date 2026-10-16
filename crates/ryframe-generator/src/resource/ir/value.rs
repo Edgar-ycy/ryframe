@@ -150,6 +150,9 @@ fn validate_typed_value(
     let valid = match (value_type, value) {
         (ValueType::String, toml::Value::String(_))
         | (ValueType::Bool, toml::Value::Boolean(_)) => true,
+        (ValueType::Decimal, toml::Value::String(value)) => {
+            super::super::decimal::is_literal(value)
+        }
         (ValueType::U64, toml::Value::String(value)) => value
             .parse::<u64>()
             .is_ok_and(|parsed| parsed.to_string() == *value),
@@ -166,7 +169,7 @@ fn validate_typed_value(
         field,
         source_path,
         format!("{owner} 的 TOML 值与 value_type={value_type:?} 不匹配"),
-        "使用严格同类型的 string/integer/boolean；date、date_time、decimal、json 默认值放入强类型扩展",
+        "使用严格同类型的 string/integer/boolean；Decimal 使用列容量内的十进制字符串；date、date_time、json 默认值放入强类型扩展",
     ))
 }
 

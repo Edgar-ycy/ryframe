@@ -72,6 +72,8 @@ cargo generate -- resource --package order-business --model Order --write
 
 手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；`import --tables biz_order,biz_order_item` 按需启用 `schema-import`，整批预检模型并自动注册描述符，原始结构保存在 `.ryframe/imports/`，不修改数据库。模型字段的 `sql_type` 保留受支持的物理类型、长度及时间精度，生成前校验其与 Rust 类型及容量规则一致。表与字符串列可声明各自的 UTF-8 排序规则，导入后继续用于结构核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于忽略的 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费配置中的 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表使用显式接管计划，命令与失败核验见[数据指南](docs/data.md)。
 
+精确 Decimal 字段须显式声明 `sql_type="DECIMAL(p,s)"`，目前支持完整数值域可容纳的 1≤p≤28、0≤s≤p。接口与表单使用十进制字符串，超出容量会拒绝，具体模型和默认值写法见开发指南。
+
 ## 检查、契约与构建
 
 后端日常检查不需要前端。跨仓完整检查显式选择 all；前端目录改名后更新工具配置：

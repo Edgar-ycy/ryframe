@@ -3,7 +3,8 @@ use super::{FieldIr, ResourceIr, ValueType, rust_base_type};
 mod validation;
 
 use validation::{
-    render_enum_validators, render_utf8_byte_validators, schema_attribute, validation_attribute,
+    render_decimal_validators, render_enum_validators, render_utf8_byte_validators,
+    schema_attribute, validation_attribute,
 };
 
 pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
@@ -19,6 +20,7 @@ pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
     );
     render_utf8_byte_validators(resource, &mut output);
     render_enum_validators(resource, &mut output);
+    render_decimal_validators(resource, &mut output);
     render_input(resource, &mut output, true);
     render_input(resource, &mut output, false);
     render_list_query(resource, &mut output);
@@ -62,6 +64,17 @@ fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
             let default = if optional { "default, " } else { "" };
             output.push_str(&format!(
                 "    #[serde({default}deserialize_with = \"crate::http::integer::{function}\")]\n"
+            ));
+        }
+        if field.value_type == ValueType::Decimal {
+            let function = if optional {
+                "deserialize_optional_decimal"
+            } else {
+                "deserialize_decimal"
+            };
+            let default = if optional { "default, " } else { "" };
+            output.push_str(&format!(
+                "    #[serde({default}deserialize_with = \"crate::http::decimal::{function}\")]\n"
             ));
         }
         let value_type = rust_base_type(field.value_type);
@@ -336,8 +349,20 @@ fn wire_type(field: &FieldIr) -> String {
 }
 
 fn filter_conversion(field: &FieldIr) -> String {
-    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
-        && field.wire_type == ValueType::String
+    if field.value_type == ValueType::Decimal {
+        let (precision, scale) = crate::resource::decimal::capacity(
+            field.sql_type.as_deref().expect("Decimal 类型已校验"),
+        )
+        .expect("Decimal 容量已校验");
+        return format!(
+            "self.{0}.map(|value| crate::http::decimal::parse_decimal_with_capacity(&value, {precision}, {scale}).map_err(|reason| ryframe_kernel::AppError::Validation(format!(\"{0}: {{reason}}\")))).transpose()?",
+            field.name
+        );
+    }
+    if matches!(
+        field.value_type,
+        ValueType::I64 | ValueType::U64 | ValueType::Decimal
+    ) && field.wire_type == ValueType::String
     {
         let kind = field.value_type.rust_base_type();
         format!(
@@ -350,8 +375,10 @@ fn filter_conversion(field: &FieldIr) -> String {
 }
 
 fn view_conversion(field: &FieldIr) -> String {
-    if matches!(field.value_type, ValueType::I64 | ValueType::U64)
-        && field.wire_type == ValueType::String
+    if matches!(
+        field.value_type,
+        ValueType::I64 | ValueType::U64 | ValueType::Decimal
+    ) && field.wire_type == ValueType::String
     {
         if field.nullable {
             format!("value.{}.map(|item| item.to_string())", field.name)

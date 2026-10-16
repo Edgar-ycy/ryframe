@@ -7,6 +7,7 @@
 mod actor_context;
 pub mod constants;
 mod data_scope;
+mod decimal;
 pub mod enums;
 mod error;
 mod export_selection;
@@ -21,6 +22,7 @@ mod tenant_id;
 pub use actor_context::ActorContext;
 pub use constants::*;
 pub use data_scope::{DataScope, DataScopeContext};
+pub use decimal::decimal_fits_precision;
 pub use enums::{BusinessType, UserStatus};
 pub use error::{AppError, ErrorCode};
 pub use export_selection::{ExportCursorWindow, ExportQuerySnapshot};

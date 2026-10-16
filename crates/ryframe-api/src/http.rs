@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::fmt;
 use validator::ValidationErrors;
 
+pub mod decimal;
 pub mod integer;
 
 /// 当前公开 API 的唯一 URL 前缀。
