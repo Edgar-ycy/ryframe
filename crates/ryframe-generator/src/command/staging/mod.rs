@@ -10,6 +10,7 @@ use snapshot::{FileChange, safe_path};
 use workspace::CandidateWorkspace;
 
 mod backend;
+pub(super) mod bootstrap;
 mod frontend;
 mod install;
 mod lock;

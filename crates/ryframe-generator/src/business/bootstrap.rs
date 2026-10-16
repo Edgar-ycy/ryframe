@@ -22,7 +22,7 @@ pub struct BusinessBootstrapReport {
     pub updated: Vec<String>,
 }
 
-/// 创建一个可立即接入 API、Worker 和迁移程序的空业务 crate。
+/// 渲染或安装空业务骨架；完整的依赖锁定与原子交付使用 `GenerationBuilder` 入口。
 ///
 /// 空 crate 自带受管的零资源 generated 模块，因此组合根在尚未生成第一个资源前也能编译。
 pub fn bootstrap_business_package(

@@ -1,9 +1,6 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
-use ryframe_generator::{
-    business::{BusinessBootstrapOptions, bootstrap_business_package},
-    command::{GenerationBuilder, GenerationOperation},
-};
+use ryframe_generator::command::{GenerationBuilder, GenerationOperation};
 
 #[path = "../../src/command/staging/snapshot.rs"]
 mod snapshot;
@@ -30,24 +27,9 @@ pub(super) fn verify() {
     let frontend = frontend_scope.path().join("frontend");
     backend_before.copy_to(&backend).unwrap();
     frontend_before.copy_to(&frontend).unwrap();
-    bootstrap_business_package(BusinessBootstrapOptions {
-        workspace_root: &backend,
-        module: "pipeline",
-        write: true,
-    })
-    .unwrap();
+    bootstrap(&backend);
     let model = backend.join("crates/pipeline-business/src/resources/mod.rs");
     fs::write(&model, MODELS).unwrap();
-    let metadata = Command::new("cargo")
-        .args(["metadata", "--offline", "--format-version", "1"])
-        .current_dir(&backend)
-        .output()
-        .unwrap();
-    assert!(
-        metadata.status.success(),
-        "{}",
-        String::from_utf8_lossy(&metadata.stderr)
-    );
     fs::create_dir_all(backend.join(".local-tests")).unwrap();
     fs::write(backend.join(".local-tests/tools.toml"), format!("[workspace]\nfrontend_dir={:?}\n[generator]\npackage='pipeline-business'\nsync_frontend=true\n", frontend.to_string_lossy())).unwrap();
     let before = snapshot::SourceSnapshot::capture(&backend).unwrap();
@@ -86,6 +68,46 @@ pub(super) fn verify() {
     fs::remove_file(fault).unwrap();
     backend_before.verify().unwrap();
     frontend_before.verify().unwrap();
+}
+
+fn bootstrap(root: &Path) {
+    let lock_path = root.join("Cargo.lock");
+    let original_lock = fs::read(&lock_path).unwrap();
+    fs::remove_file(&lock_path).unwrap();
+    let invalid = snapshot::SourceSnapshot::capture(root).unwrap();
+    let build = |write| {
+        GenerationBuilder::new(root)
+            .operation(GenerationOperation::NewBusiness("pipeline-business".into()))
+            .write(write)
+            .plan()
+            .unwrap()
+            .execute()
+    };
+    assert!(build(true).unwrap_err().contains("Cargo.lock"));
+    invalid.verify().unwrap();
+    fs::write(&lock_path, original_lock).unwrap();
+    let before = snapshot::SourceSnapshot::capture(root).unwrap();
+    build(false).unwrap();
+    before.verify().unwrap();
+    build(true).unwrap();
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    assert!(
+        lock["package"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| package["name"].as_str() == Some("pipeline-business"))
+    );
+    assert!(
+        before
+            .changes(root)
+            .unwrap()
+            .iter()
+            .any(|change| change.relative == Path::new("Cargo.lock"))
+    );
+    let installed = snapshot::SourceSnapshot::capture(root).unwrap();
+    assert!(build(true).unwrap_err().contains("已存在"));
+    installed.verify().unwrap();
 }
 
 fn generate(root: &Path, write: bool) -> Result<(), String> {

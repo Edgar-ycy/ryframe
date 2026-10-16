@@ -210,7 +210,9 @@ impl GenerationPlan {
             GenerationOperation::NewBusiness(_) => vec![
                 "定位工作区",
                 "校验业务模块",
+                "创建隔离候选工作区",
                 "渲染骨架与进程装配",
+                "离线解析并核对锁定依赖",
                 "预检所有目标文件",
             ],
             GenerationOperation::Resource => vec![
