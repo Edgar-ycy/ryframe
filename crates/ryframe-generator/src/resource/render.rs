@@ -344,13 +344,15 @@ fn render_frontend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
         format!("src/generated/resources/{name}/api.ts"),
         slice::frontend_api(resource),
     );
-    push(
-        assets,
-        resource,
-        AssetRoot::Frontend,
-        format!("src/generated/resources/{name}/fields.ts"),
-        slice::frontend_fields(resource),
-    );
+    for (path, content) in slice::frontend_fields(resource) {
+        push(
+            assets,
+            resource,
+            AssetRoot::Frontend,
+            format!("src/generated/resources/{name}/{path}"),
+            content,
+        );
+    }
     push(
         assets,
         resource,
@@ -405,9 +407,16 @@ fn validate_assets(assets: &[GeneratedAsset]) -> Result<(), ResourceError> {
             .with_resource(&asset.resource)
             .with_file(&asset.path));
         }
-        if asset.content.lines().count() > MAX_GENERATED_LINES {
+        let max_lines = if asset.path.ends_with(".ts") {
+            300
+        } else if asset.path.ends_with(".vue") {
+            600
+        } else {
+            MAX_GENERATED_LINES
+        };
+        if asset.content.lines().count() > max_lines {
             return Err(ResourceError::new(
-                format!("生成文件超过 {MAX_GENERATED_LINES} 行"),
+                format!("生成文件超过 {max_lines} 行"),
                 "按职责继续拆分生成文件，不要扩大单文件模板",
             )
             .with_resource(&asset.resource)

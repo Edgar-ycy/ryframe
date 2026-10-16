@@ -95,7 +95,7 @@ pub(super) fn frontend_api(resource: &ResourceIr) -> String {
     frontend::api(resource)
 }
 
-pub(super) fn frontend_fields(resource: &ResourceIr) -> String {
+pub(super) fn frontend_fields(resource: &ResourceIr) -> Vec<(String, String)> {
     frontend::fields(resource)
 }
 
