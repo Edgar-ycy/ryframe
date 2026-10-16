@@ -5,6 +5,7 @@ use ryframe_sdk::ResourceModel;
 pub struct TypedModel {
     #[resource(primary_key, auto_increment)]
     pub id: i64,
+    #[resource(sql_comment = "中文 '注释'\\路径")]
     pub payload: ryframe_sdk::serde_json::Value,
     pub date: ryframe_sdk::chrono::NaiveDate,
     pub amount: ryframe_sdk::rust_decimal::Decimal,
@@ -19,6 +20,7 @@ fn model_types_compile_without_runtime_api_or_database_features() {
     assert!(descriptor.fields[0].generated);
     assert!(!descriptor.fields[1].auto_increment);
     assert!(descriptor.fields[1].rust_type.contains("serde_json"));
+    assert_eq!(descriptor.fields[1].sql_comment, Some("中文 '注释'\\路径"));
     let model = TypedModel {
         id: 1,
         payload: ryframe_sdk::serde_json::json!({"value": 1}),

@@ -329,7 +329,7 @@ fn import_table(name: &str) -> TableInfo {
         is_primary_key: name == "id",
         is_unique: false,
         is_auto_increment: name == "id",
-        comment: None,
+        comment: (name == "price").then(|| "金额 '原样'\\保存".into()),
     })
     .collect();
     TableInfo {

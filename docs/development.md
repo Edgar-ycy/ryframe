@@ -27,8 +27,6 @@ cargo migrate -- tenant-data verify --target <目标键>
 
 初始化前设置 `RYFRAME_INIT_ADMIN_PASSWORD_FILE` 指向 UTF-8 密码文件，也可通过 `RYFRAME_INIT_ADMIN_PASSWORD` 提供；两者不能同时设置。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。
 
-SQL 导出、数据库客户端导入方式及中断处理见[数据指南](data.md#控制库初始化-sql)。
-
 ## 创建业务 crate
 
 使用正式脚手架创建业务 crate：
@@ -86,6 +84,8 @@ cargo generate -- resource --package order-business --model Order --write
 字段可用 `#[resource(sql_type="VARCHAR(32)")]` 保留物理类型；导入自动写入该属性，DDL、复制目录和接管校验共用它。当前支持与 Rust 类型匹配的 CHAR/VARCHAR、TEXT 系列、有符号整数及 `u8/u16/u32/u64` 无符号整数、布尔、DATE、DATETIME（0～6 位小数）和 JSON；推导字符长度、文本字节容量及整数范围，矛盾校验、未知声明或 SQL 子句在写入前报错。整数 CRUD 保留 Rust 位宽及符号，默认值和枚举必须在该类型范围内；物理 SQL 容量须完整适配模型，增量转换按物理范围检查。`u64` 普通字段保留完整无符号容量并使用字符串传输，超过 i64 的默认值使用十进制字符串；主键支持 `i64/u64`，自增及雪花策略、URL 和持久化保持类型一致；Decimal 必须显式声明 `DECIMAL(p,s)`（1≤p≤28、0≤s≤p），使用 SDK 的 `rust_decimal::Decimal`；正文、查询、响应及文本表单均以字符串传输。超出列容量或小数位数会拒绝，API 和 SDK 用例均不做自动舍入；日期、JSON 等控件限制继续生效。
 
 复合索引用结构体属性 `#[resource(index(name="idx_code",fields=["code","id"]))]` 声明，唯一索引加 `unique`；导入保留索引名、字段顺序和唯一性，拒绝前缀、降序、函数、不可见及非 BTREE 索引。仅为自增联合主键补充必要的 id 首列索引，不给主键已覆盖字段补冗余索引。
+
+字段的 `#[resource(sql_comment="数据库注释")]` 独立于界面标签；导入、DDL、模型摘要及追加迁移保留该值，结构指纹仍只核对结构。引号、反斜杠、换行原样保存；字段注释不能含 NUL 或超过 1024 个字符。
 
 字面量默认值使用字段 `default="值"`，数据库时钟使用 `sql_default="CURRENT_TIMESTAMP(6)"`、`sql_on_update="CURRENT_TIMESTAMP(6)"`；时钟只支持与 DATETIME 列一致的 0～6 位精度，不接受任意 SQL，`default` 与 `sql_default` 不能并用。导入保留这两类默认值及更新时间表达式；应用显式写入及可空替换语义仍生效。日期、Decimal 的字面量默认值须符合当前 CRUD 支持范围，其他表达式使用明确迁移扩展。外键仍需核对导入元数据。
 

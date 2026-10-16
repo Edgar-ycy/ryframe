@@ -208,6 +208,8 @@ pub struct FieldIr {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql_on_update: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub collation: Option<String>,
     pub value_type: ValueType,
     pub wire_type: ValueType,

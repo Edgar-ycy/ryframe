@@ -30,6 +30,8 @@ mod resource_unsigned;
 mod resource_validation;
 #[path = "resource_contracts/resource_writer_transaction.rs"]
 mod resource_writer_transaction;
+#[path = "resource_contracts/sql_comments.rs"]
+mod sql_comments;
 #[path = "resource_contracts/sql_defaults.rs"]
 mod sql_defaults;
 

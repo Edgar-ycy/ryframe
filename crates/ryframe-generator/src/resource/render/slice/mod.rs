@@ -151,6 +151,10 @@ pub(super) fn rust_literal(value: &toml::Value, value_type: ValueType) -> String
     }
 }
 
+pub(super) fn sql_comment(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+}
+
 pub(super) fn sql_literal(value: &toml::Value) -> String {
     match value {
         toml::Value::String(value)

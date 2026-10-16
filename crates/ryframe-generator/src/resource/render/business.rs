@@ -269,6 +269,14 @@ fn handler_content(resource: &ResourceIr, header: &str, model_path: &str) -> Str
 
 fn migration_content(content: String) -> String {
     shared_content(content)
+        .replace(
+            "crate::connection::execute_generated_mysql_ddl",
+            "ryframe_sdk::execute_generated_mysql_ddl",
+        )
+        .replace(
+            "ryframe_db::connection::execute_generated_mysql_ddl",
+            "ryframe_sdk::execute_generated_mysql_ddl",
+        )
         .replace("use sea_orm::", "use ryframe_sdk::persistence::sea_orm::")
         .replace(
             "use sea_orm_migration::",

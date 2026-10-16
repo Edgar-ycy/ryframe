@@ -48,6 +48,8 @@ pub use ryframe_application::ports::tenant_data::{
 pub use ryframe_application::{
     TransactionAuditMode, complete_transaction, ensure_system_tenant_id, next_id,
 };
+#[cfg(feature = "migration")]
+pub use ryframe_db::connection::execute_generated_mysql_ddl;
 #[cfg(feature = "runtime")]
 pub use ryframe_kernel::{
     ActorContext, AppError, AppResult, PageResult, PaginationPolicy, ValidatedPageQuery,

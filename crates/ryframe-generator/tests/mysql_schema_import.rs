@@ -5,6 +5,8 @@ use sea_orm::TransactionTrait;
 mod business_evolution;
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
+#[path = "mysql_schema_import/sql_comments.rs"]
+mod sql_comments;
 #[path = "mysql_schema_import/unsigned_primary.rs"]
 mod unsigned_primary;
 #[path = "mysql_schema_import/unsupported_indexes.rs"]

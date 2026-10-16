@@ -12,6 +12,19 @@ pub(super) fn validate_field(
     validate_bounds(resource, source_path, field)?;
     validate_widgets(resource, source_path, field)?;
     validate_usage(resource, source_path, field)?;
+    if field
+        .sql_comment
+        .as_ref()
+        .is_some_and(|comment| comment.contains('\0') || comment.chars().count() > 1024)
+    {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "SQL 字段注释不能包含 NUL 或超过 1024 个字符；本批未写入",
+            "缩短 sql_comment；界面 labels 与数据库注释分别维护",
+        ));
+    }
     Ok(())
 }
 

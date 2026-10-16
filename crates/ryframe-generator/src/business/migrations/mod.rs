@@ -104,7 +104,9 @@ fn prepare_resource(
             )));
         }
         preserve(package, &resource.name, &old.versions, assets)?;
-        if crate::resource::canonical_schema(resource) == latest.canonical {
+        if crate::resource::canonical_schema(resource) == latest.canonical
+            && column_comments(&before) == column_comments(resource)
+        {
             old.versions
         } else {
             let statements = diff::statements(&before, resource)?;
@@ -161,6 +163,19 @@ fn preserve(
         }
     }
     Ok(())
+}
+
+fn column_comments(resource: &ResourceIr) -> Vec<(&str, &str)> {
+    resource
+        .fields
+        .iter()
+        .map(|field| {
+            (
+                field.column.as_str(),
+                field.sql_comment.as_deref().unwrap_or_default(),
+            )
+        })
+        .collect()
 }
 
 fn revision_id(resource: &str, index: usize, schema: &str) -> Result<String, ResourceError> {

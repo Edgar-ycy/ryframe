@@ -1,4 +1,4 @@
-use super::{ResourceIr, StorageKind, sql_literal};
+use super::{ResourceIr, StorageKind, sql_comment, sql_literal};
 
 pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
     assert!(
@@ -41,20 +41,42 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
         ));
     }
     let ddl = format!(
-        "CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={} COMMENT='{}'",
+        "CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={} COMMENT={}",
         resource.table,
         definitions.join(",\n"),
         resource.table_collation(),
-        resource.labels.zh_cn.replace('\'', "''"),
+        sql_comment(&resource.labels.zh_cn),
     );
+    let ddl_literal = if ddl.contains("\"#") {
+        format!("{ddl:?}")
+    } else {
+        format!("r#\"{ddl}\"#")
+    };
+    let execute = if ddl.contains("\\\\") {
+        match resource.storage {
+            StorageKind::ControlRow => {
+                "        crate::connection::execute_generated_mysql_ddl(manager.get_connection(), CREATE_TABLE_DDL).await?;"
+            }
+            StorageKind::TenantData => {
+                "        ryframe_db::connection::execute_generated_mysql_ddl(manager.get_connection(), CREATE_TABLE_DDL).await?;"
+            }
+        }
+    } else {
+        "        manager\n            .get_connection()\n            .execute_unprepared(CREATE_TABLE_DDL)\n            .await?;"
+    };
+    let connection_import = if ddl.contains("\\\\") {
+        "DbBackend"
+    } else {
+        "ConnectionTrait, DbBackend"
+    };
     format!(
         r##"{header}// schema-sha256: {schema_hash}
 
-use sea_orm::{{ConnectionTrait, DbBackend}};
+use sea_orm::{{{connection_import}}};
 use sea_orm_migration::prelude::*;
 
 pub const MIGRATION_NAME: &str = {migration_name:?};
-pub const CREATE_TABLE_DDL: &str = r#"{ddl}"#;
+pub const CREATE_TABLE_DDL: &str = {ddl_literal};
 
 /// 资源初始迁移；正式发布前可显式重整基线，正式发布后只能追加向前迁移。
 pub const INITIAL_RESOURCE_MIGRATION: bool = true;
@@ -73,10 +95,7 @@ impl MigrationTrait for Migration {{
         if manager.get_database_backend() != DbBackend::MySql {{
             return Err(DbErr::Custom("资源迁移只支持 MySQL 8".into()));
         }}
-        manager
-            .get_connection()
-            .execute_unprepared(CREATE_TABLE_DDL)
-            .await?;
+{execute}
         Ok(())
     }}
 
@@ -125,8 +144,13 @@ pub(crate) fn column_definition(resource: &ResourceIr, field: &super::FieldIr) -
         } else {
             ""
         };
+    let comment = field
+        .sql_comment
+        .as_ref()
+        .map(|value| format!(" COMMENT {}", sql_comment(value)))
+        .unwrap_or_default();
     format!(
-        "  `{}` {sql_type}{collation} {nullability}{default}{on_update}{auto_increment}",
+        "  `{}` {sql_type}{collation} {nullability}{default}{on_update}{auto_increment}{comment}",
         field.column
     )
 }

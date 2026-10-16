@@ -229,6 +229,7 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
         sql_type: field.sql_type.clone(),
         sql_default: field.sql_default.clone(),
         sql_on_update: field.sql_on_update.clone(),
+        sql_comment: field.sql_comment.clone(),
         collation: field.collation.clone(),
         value_type,
         wire_type: matches!(

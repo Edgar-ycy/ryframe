@@ -492,6 +492,11 @@ fn load_auto_order() -> ryframe_generator::ResourceIr {
         ryframe_generator::ResourceSpec::parse(include_str!("fixtures/order.toml"), "order.toml")
             .unwrap();
     spec.database.id_generation = ryframe_generator::IdGeneration::AutoIncrement;
+    spec.fields
+        .iter_mut()
+        .find(|field| field.name == "name")
+        .unwrap()
+        .sql_comment = Some("注释 '原样'\\路径".into());
     spec.database.indexes.push(ryframe_generator::IndexSpec {
         name: "idx_order_auto_id".into(),
         fields: vec!["id".into()],

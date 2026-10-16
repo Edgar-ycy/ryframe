@@ -19,6 +19,8 @@ pub struct ResourceFieldDescriptor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql_on_update: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_comment: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub collation: Option<&'static str>,
     pub rename_from: Option<&'static str>,
     pub default: Option<&'static str>,

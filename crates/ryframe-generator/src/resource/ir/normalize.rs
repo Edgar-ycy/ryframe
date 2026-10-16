@@ -294,6 +294,7 @@ fn normalize_field(field: FieldSpec, column: String) -> FieldIr {
         sql_type: field.sql_type,
         sql_default: field.sql_default,
         sql_on_update: field.sql_on_update,
+        sql_comment: field.sql_comment,
         collation: field.collation,
         value_type: field.value_type,
         wire_type,

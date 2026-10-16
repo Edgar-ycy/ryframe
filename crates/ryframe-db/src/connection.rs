@@ -8,6 +8,8 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Sta
 
 mod identity;
 pub use identity::{DatabaseIdentity, physical_identity};
+mod ddl;
+pub use ddl::{execute_generated_mysql_ddl, generated_mysql_ddl_statements};
 
 /// 根据数据库配置创建连接池
 ///

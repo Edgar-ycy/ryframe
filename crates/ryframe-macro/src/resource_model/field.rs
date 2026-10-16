@@ -12,6 +12,7 @@ struct Attributes {
     collation: Option<String>,
     sql_default: Option<String>,
     sql_on_update: Option<String>,
+    sql_comment: Option<String>,
     primary_key: bool,
     generated: bool,
     auto_increment: bool,
@@ -63,6 +64,7 @@ impl Attributes {
             "collation" => Some(&mut self.collation),
             "sql_default" => Some(&mut self.sql_default),
             "sql_on_update" => Some(&mut self.sql_on_update),
+            "sql_comment" => Some(&mut self.sql_comment),
             _ => None,
         };
         if let Some(literal) = literal {
@@ -92,6 +94,7 @@ impl Attributes {
         let collation = optional_string(self.collation);
         let sql_default = optional_string(self.sql_default);
         let sql_on_update = optional_string(self.sql_on_update);
+        let sql_comment = optional_string(self.sql_comment);
         let primary_key = self.primary_key;
         let generated = self.generated;
         let auto_increment = self.auto_increment;
@@ -104,6 +107,7 @@ impl Attributes {
                 name: #field_name, column: #column, rust_type: stringify!(#field_type),
                 sql_type: #sql_type, collation: #collation,
                 sql_default: #sql_default, sql_on_update: #sql_on_update,
+                sql_comment: #sql_comment,
                 rename_from: #rename, default: #default,
                 primary_key: #primary_key, generated: #generated, auto_increment: #auto_increment,
                 read_only: #read_only, filter: #filter, sort: #sort, unique: #unique,
@@ -136,6 +140,26 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("default 只能声明一次")
+        );
+    }
+
+    #[test]
+    fn column_comments_are_exact_optional_metadata_and_cannot_be_duplicated() {
+        let input = syn::parse_quote! {
+            #[resource(name="item",table="table1",database="control")]
+            struct Item { #[resource(primary_key,sql_comment="中文 '单引号'\\路径")] id: i64 }
+        };
+        let output = super::super::expand_inner(&input).unwrap().to_string();
+        assert!(output.contains("sql_comment : Some (\"中文 '单引号'\\\\路径\")"));
+        let input = syn::parse_quote! {
+            #[resource(name="item",table="table1",database="control")]
+            struct Item { #[resource(primary_key,sql_comment="一",sql_comment="二")] id: i64 }
+        };
+        assert!(
+            super::super::expand_inner(&input)
+                .unwrap_err()
+                .to_string()
+                .contains("sql_comment 只能声明一次")
         );
     }
 }

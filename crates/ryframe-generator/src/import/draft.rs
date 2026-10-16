@@ -269,6 +269,7 @@ fn draft_field(
         sql_type: Some(column.column_type.clone()),
         sql_default: defaults.expression,
         sql_on_update: defaults.on_update,
+        sql_comment: column.comment.clone(),
         collation: column.collation.clone(),
         value_type,
         wire_type: None,

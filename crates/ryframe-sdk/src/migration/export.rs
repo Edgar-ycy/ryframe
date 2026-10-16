@@ -19,7 +19,11 @@ pub fn business_initialization_statements(
                 migration.id()
             )));
         }
-        statements.extend(source.iter().map(|sql| (*sql).to_owned()));
+        statements.extend(
+            source
+                .iter()
+                .flat_map(|sql| ryframe_db::connection::generated_mysql_ddl_statements(sql)),
+        );
         let before = migration
             .schema()
             .before_fingerprint

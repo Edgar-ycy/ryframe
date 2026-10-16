@@ -211,6 +211,9 @@ pub(super) fn rust_model_source_named(
         if let Some(collation) = &column.collation {
             attributes.push(format!("collation = {collation:?}"));
         }
+        if let Some(comment) = &column.comment {
+            attributes.push(format!("sql_comment = {comment:?}"));
+        }
         if !attributes.is_empty() {
             output.push_str(&format!("    #[resource({})]\n", attributes.join(", ")));
         }
