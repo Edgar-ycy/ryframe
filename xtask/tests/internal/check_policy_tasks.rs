@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use super::check::{
     MIGRATION_HISTORY_SCRIPT, PYTHON_POLICY_TASKS, PolicyProfile, STRICT_MIGRATION_HISTORY_ARGS,
@@ -37,7 +36,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
             "tools/python/check_deployment_assets.py",
             "tools/python/check_prerelease_dependencies.py",
             "tools/python/check_permission_routes.py",
-            "tools/python/check_removed_identity.py",
             "tools/python/check_supply_chain.py",
         ]
     );
@@ -47,7 +45,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
             "tools/python/check_architecture.py",
             "tools/python/check_migration_history.py",
             "tools/python/check_permission_routes.py",
-            "tools/python/check_removed_identity.py",
         ]
     );
     assert_eq!(
@@ -56,7 +53,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
             "tools/python/check_prerelease_dependencies.py",
             "tools/python/check_architecture.py",
             "tools/python/check_permission_routes.py",
-            "tools/python/check_removed_identity.py",
         ]
     );
     assert_eq!(
@@ -95,30 +91,9 @@ fn strict_migration_command_reuses_the_registered_script() {
 }
 
 #[test]
-fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
-    let root = std::env::current_dir().unwrap();
-    let frontend = Path::new("../包含 空格/ryframe-vue3");
-    let task = PYTHON_POLICY_TASKS
-        .iter()
-        .find(|task| task.id == "removed-identity")
-        .unwrap();
-
-    let arguments = task.arguments(&root, Some(frontend)).unwrap();
-    assert_eq!(arguments[0], "tools/python/check_removed_identity.py");
-    assert_eq!(
-        task.arguments(&root, None).unwrap(),
-        ["tools/python/check_removed_identity.py"]
-    );
-    assert_eq!(arguments[1], "--frontend-dir");
-    assert!(Path::new(&arguments[2]).is_absolute());
-    assert_eq!(
-        Path::new(&arguments[2]),
-        std::path::absolute(root.join(frontend)).unwrap()
-    );
-    assert_eq!(
-        PYTHON_POLICY_TASKS[0]
-            .arguments(&root, Some(frontend))
-            .unwrap(),
-        ["tools/python/check_architecture.py"]
-    );
+fn python_policies_only_use_their_registered_script() {
+    for task in PYTHON_POLICY_TASKS {
+        assert_ne!(task.id, "removed-identity");
+        assert_eq!(task.arguments(), [task.script]);
+    }
 }

@@ -182,17 +182,14 @@ fn run_workspace_clippy(context: &VerifyExecutionContext) -> Result<()> {
 }
 
 fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -> Result<()> {
+    run_removed_identity(
+        &context.root,
+        context
+            .include_frontend
+            .then_some(context.frontend_dir.as_path()),
+    )?;
     for task in policy_tasks(profile) {
-        run_owned(
-            &context.root,
-            "python",
-            &task.arguments(
-                &context.root,
-                context
-                    .include_frontend
-                    .then_some(context.frontend_dir.as_path()),
-            )?,
-        )?;
+        run_owned(&context.root, "python", &task.arguments())?;
     }
     Ok(())
 }

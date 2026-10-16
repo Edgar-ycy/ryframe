@@ -54,6 +54,8 @@ mod check_plan_tests;
 mod check_policy_task_tests;
 #[path = "internal/check_policy.rs"]
 mod check_policy_tests;
+#[path = "internal/check_removed_identity.rs"]
+mod check_removed_identity_tests;
 #[path = "internal/check_snapshot.rs"]
 mod check_snapshot_tests;
 #[path = "internal/check.rs"]

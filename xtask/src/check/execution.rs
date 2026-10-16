@@ -5,7 +5,6 @@ use super::{
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile},
     plan::{CheckPlanMode, build_task_plan, render_plan, validate_plan},
-    policy_tasks::PYTHON_POLICY_TASKS,
     selection::frontend_profile_commands,
     snapshot::{
         prepare_consumer_backend_snapshots, run_consumer_contract,
@@ -316,11 +315,12 @@ fn backend_packages(
 }
 
 pub(super) fn run_removed_identity(root: &Path, frontend_dir: Option<&Path>) -> Result<()> {
-    let task = PYTHON_POLICY_TASKS
-        .iter()
-        .find(|task| task.id == "removed-identity")
-        .ok_or("服务身份删除检查任务未登记")?;
-    run_owned(root, "python", &task.arguments(root, frontend_dir)?)
+    let errors = super::removed_identity::check(root, frontend_dir)?;
+    if !errors.is_empty() {
+        return Err(PreservedFailure::new(errors.join("\n"), Some(1)).into());
+    }
+    println!("服务身份删除范围检查通过");
+    Ok(())
 }
 
 fn frontend_profiles(

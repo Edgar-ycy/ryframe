@@ -1,7 +1,3 @@
-use std::path::Path;
-
-use crate::Result;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyProfile {
     FullStatic,
@@ -20,7 +16,6 @@ pub(crate) struct PythonPolicyTask {
     full_order: Option<u8>,
     smart_order: Option<u8>,
     ci_preflight_order: Option<u8>,
-    requires_frontend: bool,
 }
 
 impl PythonPolicyTask {
@@ -32,29 +27,8 @@ impl PythonPolicyTask {
         }
     }
 
-    pub(crate) fn arguments(self, root: &Path, frontend_dir: Option<&Path>) -> Result<Vec<String>> {
-        let mut arguments = vec![self.script.to_owned()];
-        if self.requires_frontend
-            && let Some(frontend_dir) = frontend_dir
-        {
-            let frontend_dir = if frontend_dir.is_absolute() {
-                frontend_dir.to_path_buf()
-            } else {
-                root.join(frontend_dir)
-            };
-            let frontend_dir = std::path::absolute(&frontend_dir).map_err(|error| {
-                format!(
-                    "无法解析服务身份检查使用的前端目录 {}：{error}",
-                    frontend_dir.display()
-                )
-            })?;
-            let frontend_dir = frontend_dir
-                .to_str()
-                .ok_or("服务身份检查使用的前端目录不是有效 UTF-8")?;
-            arguments.push("--frontend-dir".to_owned());
-            arguments.push(frontend_dir.to_owned());
-        }
-        Ok(arguments)
+    pub(crate) fn arguments(self) -> Vec<String> {
+        vec![self.script.to_owned()]
     }
 }
 
@@ -65,7 +39,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(0),
         smart_order: Some(0),
         ci_preflight_order: Some(2),
-        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "deployment-assets",
@@ -73,7 +46,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(1),
         smart_order: None,
         ci_preflight_order: None,
-        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "migration-history",
@@ -81,7 +53,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: None,
         smart_order: Some(1),
         ci_preflight_order: None,
-        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "prerelease-dependencies",
@@ -89,7 +60,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(3),
         smart_order: None,
         ci_preflight_order: Some(0),
-        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "permission-routes",
@@ -97,15 +67,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(4),
         smart_order: Some(2),
         ci_preflight_order: Some(3),
-        requires_frontend: false,
-    },
-    PythonPolicyTask {
-        id: "removed-identity",
-        script: "tools/python/check_removed_identity.py",
-        full_order: Some(5),
-        smart_order: Some(3),
-        ci_preflight_order: Some(4),
-        requires_frontend: true,
     },
     PythonPolicyTask {
         id: "supply-chain",
@@ -113,7 +74,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(6),
         smart_order: None,
         ci_preflight_order: None,
-        requires_frontend: false,
     },
 ];
 

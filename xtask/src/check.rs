@@ -20,6 +20,8 @@ mod node_suite;
 mod plan;
 #[path = "check/policy_tasks.rs"]
 mod policy_tasks;
+#[path = "check/removed_identity.rs"]
+pub(crate) mod removed_identity;
 #[path = "check/resource.rs"]
 mod resource;
 #[path = "check/selection.rs"]
