@@ -4,7 +4,7 @@ use super::super::{html_header, slash_header};
 pub(super) fn api(resource: &ResourceIr) -> String {
     let pascal = &resource.pascal_name;
     let domain = if resource.module == "business" {
-        "core"
+        "system"
     } else {
         resource.module.as_str()
     };
@@ -123,6 +123,11 @@ fn render_fields(resource: &ResourceIr) -> String {
 
 fn render_presentation(resource: &ResourceIr, form_fields: &[&FieldIr], output: &mut String) {
     let pascal = &resource.pascal_name;
+    let date_parameter = if has_date_column(resource) {
+        "  formatDate: (value: string) => string,\n"
+    } else {
+        ""
+    };
     output.push_str("import {\n  defineFlatCrudResource,\n  type FlatCrudColumn,\n  type FlatCrudFormField,\n  type FlatCrudLabels,\n  type FlatCrudPermissions,\n  type FlatCrudQueryField,\n} from '@/components/business/flat-crud'\n");
     output.push_str(&format!(
         "import {{\n  create{pascal},\n  delete{pascal},\n  get{pascal},\n  list{pascal},\n  update{pascal},\n  type {pascal}CreateInput,\n  type {pascal}Query,\n  type {pascal}Record,\n  type {pascal}UpdateInput,\n}} from './api'\nimport {{ emptyPageResponse }} from '@/shared/http/types'\n\n"
@@ -133,7 +138,7 @@ fn render_presentation(resource: &ResourceIr, form_fields: &[&FieldIr], output: 
     }
     output.push_str("}\n\n");
     output.push_str(&format!(
-        "export interface {pascal}Presentation {{\n  columns: readonly FlatCrudColumn<{pascal}Record>[]\n  formFields: readonly FlatCrudFormField<{pascal}Form>[]\n  labels: FlatCrudLabels\n  permissions: FlatCrudPermissions\n  queryFields: readonly FlatCrudQueryField<{pascal}Query>[]\n  resource: ReturnType<typeof {name}Resource>\n}}\n\ntype Translate = (zhCN: string, en: string) => string\n\nexport function create{pascal}Presentation(\n  translate: Translate,\n  formatDate: (value: string) => string,\n): {pascal}Presentation {{\n",
+        "export interface {pascal}Presentation {{\n  columns: readonly FlatCrudColumn<{pascal}Record>[]\n  formFields: readonly FlatCrudFormField<{pascal}Form>[]\n  labels: FlatCrudLabels\n  permissions: FlatCrudPermissions\n  queryFields: readonly FlatCrudQueryField<{pascal}Query>[]\n  resource: ReturnType<typeof {name}Resource>\n}}\n\ntype Translate = (zhCN: string, en: string) => string\n\nexport function create{pascal}Presentation(\n  translate: Translate,\n{date_parameter}): {pascal}Presentation {{\n",
         name = resource.name
     ));
     for field in resource
@@ -370,6 +375,14 @@ fn render_crud_resource(resource: &ResourceIr, form_fields: &[&FieldIr], output:
 }
 
 fn render_page(resource: &ResourceIr) -> String {
+    let (date_import, date_argument) = if has_date_column(resource) {
+        (
+            "import { formatLocalizedDate } from '@/i18n'\n",
+            ", formatLocalizedDate",
+        )
+    } else {
+        ("", "")
+    };
     format!(
         r#"{}<template>
   <FlatCrudPage
@@ -417,8 +430,7 @@ import {{ computed }} from 'vue'
 import {{ useI18n }} from 'vue-i18n'
 
 import {{ FlatCrudPage, useFlatCrudResource }} from '@/components/business/flat-crud'
-import {{ formatLocalizedDate }} from '@/i18n'
-import type {{ {pascal}Query }} from './api'
+{date_import}import type {{ {pascal}Query }} from './api'
 import {{ create{pascal}Presentation }} from './fields'
 
 const slots = defineSlots<{{
@@ -427,7 +439,7 @@ const slots = defineSlots<{{
 
 const {{ locale }} = useI18n()
 const translate = (zhCN: string, en: string) => locale.value.startsWith('zh') ? zhCN : en
-const presentation = computed(() => create{pascal}Presentation(translate, formatLocalizedDate))
+const presentation = computed(() => create{pascal}Presentation(translate{date_argument}))
 const {{
   add,
   canExport,
@@ -455,6 +467,12 @@ const {{
         html_header(resource),
         pascal = resource.pascal_name,
     )
+}
+
+fn has_date_column(resource: &ResourceIr) -> bool {
+    resource.fields.iter().any(|field| {
+        field.usage.list && field.enum_values.is_empty() && field.value_type == ValueType::DateTime
+    })
 }
 
 fn push_typescript_object(output: &mut String, properties: &[String]) {
@@ -526,5 +544,31 @@ fn form_widget(field: &FieldIr) -> &'static str {
             WidgetIr::Number => "number",
             _ => "text",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ResourceSpec, normalize_resource};
+
+    #[test]
+    fn date_formatter_is_emitted_only_for_visible_datetime_columns() {
+        let spec = ResourceSpec::parse(
+            include_str!("../../../../tests/fixtures/order.toml"),
+            "order.toml",
+        )
+        .unwrap();
+        let mut resource = normalize_resource(spec, "order.toml", "test").unwrap();
+        assert!(render_fields(&resource).contains("formatDate: (value: string) => string"));
+        assert!(render_page(&resource).contains("Presentation(translate, formatLocalizedDate)"));
+        for field in &mut resource.fields {
+            if field.value_type == ValueType::DateTime {
+                field.usage.list = false;
+            }
+        }
+        assert!(!render_fields(&resource).contains("formatDate"));
+        assert!(!render_page(&resource).contains("formatLocalizedDate"));
+        assert!(render_page(&resource).contains("Presentation(translate)"));
     }
 }

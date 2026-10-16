@@ -112,6 +112,10 @@ impl GenerationBuilder {
         let settings = ToolSettings::load(&self.root).map_err(|error| error.to_string())?;
         let defaults = &settings.generator;
         let tables = self.tables.unwrap_or_else(|| defaults.tables.clone());
+        let explicit_models = self
+            .models
+            .as_ref()
+            .is_some_and(|models| !models.is_empty());
         let models = self.models.unwrap_or_else(|| defaults.models.clone());
         let operation = match self.operation {
             GenerationOperation::Configured if tables.is_empty() => GenerationOperation::Resource,
@@ -120,6 +124,17 @@ impl GenerationBuilder {
                 module.strip_suffix("-business").unwrap_or(&module).into(),
             ),
             operation => operation,
+        };
+        if operation == GenerationOperation::Import && explicit_models {
+            return Err(
+                "导入以 tables 作为完整批次，不能同时 include_models；模型选择用于 resource 操作"
+                    .into(),
+            );
+        }
+        let models = if operation == GenerationOperation::Import {
+            Vec::new()
+        } else {
+            models
         };
         let package = if let GenerationOperation::NewBusiness(module) = &operation {
             format!("{module}-business")
@@ -165,6 +180,9 @@ impl GenerationPlan {
         }
         validate_names(&self.models, "模型")?;
         if self.operation == GenerationOperation::Import {
+            if !self.models.is_empty() {
+                return Err("导入以 tables 作为完整批次，不能同时选择 models".into());
+            }
             if self.source.is_empty()
                 || !self
                     .source
@@ -196,6 +214,7 @@ impl GenerationPlan {
                 "预检所有目标文件",
             ],
             GenerationOperation::Resource => vec![
+                "创建隔离候选工作区",
                 "定位业务包",
                 "读取锁定的资源描述符",
                 "校验全部模型",
@@ -205,20 +224,32 @@ impl GenerationPlan {
             GenerationOperation::Import => vec![
                 "定位业务包",
                 "只读读取选中表结构",
+                "创建隔离候选工作区",
                 "校验整批表与模型",
                 "渲染模型并注册描述符",
+                "编译候选模型并生成 CRUD 与迁移",
                 "预检所有目标文件",
             ],
             GenerationOperation::Configured => unreachable!("构建计划已解析配置操作"),
         };
+        if self.sync_frontend
+            && matches!(
+                self.operation,
+                GenerationOperation::Resource | GenerationOperation::Import
+            )
+        {
+            tasks.extend([
+                "导出本次候选 OpenAPI",
+                "同步前端契约与派生文件",
+                "生成业务列表表单与路由",
+                "校验候选前端类型",
+            ]);
+        }
         tasks.push(if self.write {
             "事务写入文件"
         } else {
             "输出文件预览"
         });
-        if self.sync_frontend && self.write && self.operation == GenerationOperation::Resource {
-            tasks.extend(["导出本次候选 OpenAPI", "同步前端契约与派生文件"]);
-        }
         tasks
     }
 

@@ -12,6 +12,7 @@ pub struct BusinessGenerateOptions<'a> {
     pub package: &'a str,
     pub models: &'a [String],
     pub write: bool,
+    pub catalog_target: Option<&'a Path>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -27,7 +28,7 @@ pub fn generate_business_package(
 ) -> Result<BusinessGenerateReport, ResourceError> {
     let package = locate_business_package(options.current_dir, options.package)?;
     super::writer::verify_package(&package)?;
-    let descriptors = load_descriptors(&package)?;
+    let descriptors = load_descriptors(&package, options.catalog_target)?;
     if descriptors.is_empty() {
         return Err(error("业务 crate 没有声明任何 ResourceModel"));
     }
@@ -229,7 +230,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "ryframe_sdk::ResourceDescriptor {{ name: {:?}, title: {:?}, table: {:?}, collation: {}, database: {database}, model_module: {:?}, model_type: {:?}, route: {}, menu_parent: {}, menu_order: {}, primary_key: &{:?}, indexes: &[{indexes}], fields: &[{fields}] }}",
+        "ryframe_sdk::ResourceDescriptor {{ name: {:?}, title: {:?}, table: {:?}, collation: {}, database: {database}, model_module: {:?}, model_type: {:?}, route: {}, frontend_page: {}, menu_parent: {}, menu_order: {}, primary_key: &{:?}, indexes: &[{indexes}], fields: &[{fields}] }}",
         descriptor.name,
         descriptor.title,
         descriptor.table,
@@ -237,6 +238,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         descriptor.model_module,
         descriptor.model_type,
         option_literal(descriptor.route.as_deref()),
+        option_literal(descriptor.frontend_page.as_deref()),
         option_literal(descriptor.menu_parent.as_deref()),
         descriptor.menu_order,
         descriptor.primary_key,

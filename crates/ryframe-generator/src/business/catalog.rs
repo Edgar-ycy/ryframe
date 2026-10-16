@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{fs, process::Command};
 
 use tempfile::Builder;
@@ -9,6 +10,7 @@ mod lock;
 
 pub(super) fn load_descriptors(
     package: &BusinessPackage,
+    target: Option<&Path>,
 ) -> Result<Vec<OwnedResourceDescriptor>, ResourceError> {
     let manifest = lock::reader_manifest(package)?;
     let scratch_root = package.workspace_root.join("target/ryframe-generate");
@@ -43,11 +45,11 @@ pub(super) fn load_descriptors(
         .args(["run", "--locked", "--offline", "--quiet", "--manifest-path"])
         .arg(scratch.path().join("Cargo.toml"))
         .arg("--target-dir")
-        .arg(
+        .arg(target.map(Path::to_path_buf).unwrap_or_else(|| {
             package
                 .workspace_root
-                .join("target/ryframe-generate/catalog-target"),
-        )
+                .join("target/ryframe-generate/catalog-target")
+        }))
         .output()
         .map_err(|error| catalog_error(format!("无法编译业务 catalog：{error}"), &package.root))?;
     if !output.status.success() {

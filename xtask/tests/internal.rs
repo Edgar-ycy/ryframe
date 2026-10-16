@@ -76,6 +76,8 @@ mod cli_tests;
 mod clone_cli_tests;
 #[path = "internal/contract_source.rs"]
 mod contract_source_tests;
+#[path = "internal/contract_target.rs"]
+mod contract_target_tests;
 #[path = "internal/contract.rs"]
 mod contract_tests;
 #[path = "internal/data_cli.rs"]

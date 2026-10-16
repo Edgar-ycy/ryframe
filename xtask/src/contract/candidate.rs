@@ -10,8 +10,8 @@ use super::{
     atomic::write_atomically,
     formal::sync_commit,
     model::{
-        CANDIDATE_MARKER, CRUD_RESOURCE_ARTIFACT, ContractLock, Snapshot, StagingFrontend, nonce,
-        sha256_hex,
+        CANDIDATE_MARKER, CRUD_RESOURCE_ARTIFACT, ContractLock, Snapshot, StagingFrontend,
+        export_target, nonce, sha256_hex,
     },
     ownership::contract_managed_paths,
     recovery::reject_contract_recovery_artifacts,
@@ -47,7 +47,7 @@ fn sync_candidate(frontend_dir: &Path) -> Result<()> {
     let candidate = candidate_path
         .to_str()
         .ok_or("候选 OpenAPI 路径不是有效 UTF-8")?;
-    let target_dir = root.join("target/xtask-contract");
+    let target_dir = export_target(&root, std::env::var_os("CARGO_TARGET_DIR"));
     let target_dir = target_dir
         .to_str()
         .ok_or("契约导出 target 路径不是有效 UTF-8")?;

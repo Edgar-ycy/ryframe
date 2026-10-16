@@ -44,6 +44,8 @@ pub struct ResourceDescriptor {
     pub model_module: &'static str,
     pub model_type: &'static str,
     pub route: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontend_page: Option<&'static str>,
     pub menu_parent: Option<&'static str>,
     pub menu_order: u16,
     pub primary_key: &'static [&'static str],

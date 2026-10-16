@@ -70,7 +70,7 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；`import --tables biz_order,biz_order_item` 按需启用 `schema-import`，整批预检模型并自动注册描述符，原始结构保存在 `.ryframe/imports/`，不修改数据库。模型字段的 `sql_type` 保留受支持的物理类型、长度及时间精度，生成前校验其与 Rust 类型及容量规则一致。表与字符串列可声明各自的 UTF-8 排序规则，导入后继续用于结构核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于忽略的 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费配置中的 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表使用显式接管计划，命令与失败核验见[数据指南](docs/data.md)。
+手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；`import --tables biz_order,biz_order_item` 按需启用 `schema-import`，整批生成模型、CRUD 和迁移，原始结构保存在 `.ryframe/imports/`，不修改数据库。开启 `generator.sync_frontend` 或 `--sync-frontend` 后，候选 OpenAPI、typed caller、列表表单和路由经过类型及 lint 检查，再统一安装两仓文件；预览只写隔离缓存，`--no-sync-frontend` 临时关闭同步。不支持的结构整批报错，不接管原表。字段 `sql_type` 保留受支持的物理类型、容量和时间精度；表与字符串列的排序规则参与核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表使用显式接管计划，命令与失败核验见[数据指南](docs/data.md)。
 
 精确 Decimal 字段须显式声明 `sql_type="DECIMAL(p,s)"`，目前支持完整数值域可容纳的 1≤p≤28、0≤s≤p。接口与表单使用十进制字符串，超出容量会拒绝，具体模型和默认值写法见开发指南。
 

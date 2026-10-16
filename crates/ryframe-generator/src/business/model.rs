@@ -58,13 +58,9 @@ pub(super) fn descriptor_to_ir(
         en: descriptor.model_type.clone(),
     };
     let mut frontend = BTreeMap::new();
-    frontend.insert(
-        "page".into(),
-        toml::Value::String(format!(
-            "@/views/business/{module}/{}/index.vue",
-            descriptor.name
-        )),
-    );
+    if let Some(page) = &descriptor.frontend_page {
+        frontend.insert("page".into(), toml::Value::String(page.clone()));
+    }
     let spec = ResourceSpec {
         schema_version: 1,
         resource: ResourceIdentitySpec {

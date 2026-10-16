@@ -1,7 +1,12 @@
 use ryframe_sdk::ResourceModel;
 
 #[derive(ResourceModel)]
-#[resource(name = "typed_model", table = "biz_typed_model", database = "control")]
+#[resource(
+    name = "typed_model",
+    table = "biz_typed_model",
+    database = "control",
+    frontend_page = "@/views/custom/index.vue"
+)]
 pub struct TypedModel {
     #[resource(primary_key, auto_increment)]
     pub id: i64,
@@ -15,6 +20,7 @@ pub struct TypedModel {
 fn model_types_compile_without_runtime_api_or_database_features() {
     let descriptor = TypedModel::descriptor();
     assert_eq!(descriptor.fields.len(), 4);
+    assert_eq!(descriptor.frontend_page, Some("@/views/custom/index.vue"));
     assert_eq!(descriptor.primary_key, ["id"]);
     assert!(descriptor.fields[0].auto_increment);
     assert!(descriptor.fields[0].generated);
@@ -44,6 +50,7 @@ pub struct OrderedModel {
 #[test]
 fn explicit_key_order_is_independent_of_model_field_and_physical_column_order() {
     let descriptor = OrderedModel::descriptor();
+    assert_eq!(descriptor.frontend_page, None);
     assert_eq!(descriptor.primary_key, ["tenant_id", "id"]);
     assert_eq!(
         descriptor

@@ -134,6 +134,7 @@ fn generate(
     workspace: &Path,
 ) -> Result<ryframe_generator::business::BusinessGenerateReport, String> {
     generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: workspace,
         package: "evolution-business",
         models: &[],

@@ -323,6 +323,18 @@ fn validate_relation_targets(resources: &[ResourceIr]) -> Result<(), ResourceErr
     Ok(())
 }
 
+pub(crate) fn business_frontend_assets(
+    resources: &[ResourceIr],
+) -> Result<Vec<GeneratedAsset>, ResourceError> {
+    let mut assets = Vec::new();
+    for resource in resources {
+        render_frontend(resource, &mut assets);
+    }
+    validate_assets(&assets)?;
+    assets.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(assets)
+}
+
 fn render_frontend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
     let name = &resource.name;
     push(

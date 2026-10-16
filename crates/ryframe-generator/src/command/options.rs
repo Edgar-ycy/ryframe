@@ -19,7 +19,7 @@ impl Arguments {
             GenerationOperation::NewBusiness(_) => (&[], &["--write", "--plan"]),
             GenerationOperation::Resource => (
                 &["--package", "--model", "--models"],
-                &["--write", "--plan", "--sync-frontend"],
+                &["--write", "--plan", "--sync-frontend", "--no-sync-frontend"],
             ),
             GenerationOperation::Import => (
                 &[
@@ -30,9 +30,12 @@ impl Arguments {
                     "--tables",
                     "--strip-table-prefix",
                 ],
-                &["--write", "--plan"],
+                &["--write", "--plan", "--sync-frontend", "--no-sync-frontend"],
             ),
-            GenerationOperation::Configured => (&[], &["--write", "--plan"]),
+            GenerationOperation::Configured => (
+                &[],
+                &["--write", "--plan", "--sync-frontend", "--no-sync-frontend"],
+            ),
         };
         let mut parsed = Self {
             values: BTreeMap::new(),
@@ -64,6 +67,9 @@ impl Arguments {
         }
         if parsed.flag("--plan") && parsed.flag("--write") {
             return Err("--plan 不能与 --write 同时使用".into());
+        }
+        if parsed.flag("--sync-frontend") && parsed.flag("--no-sync-frontend") {
+            return Err("--sync-frontend 与 --no-sync-frontend 不能同时使用".into());
         }
         for (single, multiple) in [("--table", "--tables"), ("--model", "--models")] {
             if parsed.values.contains_key(single) && parsed.values.contains_key(multiple) {
@@ -99,6 +105,9 @@ impl Arguments {
         if self.flag("--sync-frontend") {
             builder = builder.sync_frontend(true);
         }
+        if self.flag("--no-sync-frontend") {
+            builder = builder.sync_frontend(false);
+        }
         Ok(builder)
     }
 
@@ -127,4 +136,40 @@ pub(super) fn workspace_root() -> Result<PathBuf, String> {
         })
         .map(std::path::Path::to_path_buf)
         .ok_or_else(|| "无法定位后端 Workspace；请在后端仓库或业务 crate 中执行".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frontend_switches_override_defaults_for_each_generation_entry() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("config")).unwrap();
+        std::fs::write(root.path().join("config/tools.toml"), "[generator]\npackage='orders-business'\ntables=['table1','table2']\nstorage='control'\nsync_frontend=true\n").unwrap();
+        for operation in [
+            GenerationOperation::Resource,
+            GenerationOperation::Import,
+            GenerationOperation::Configured,
+        ] {
+            for (flag, expected) in [("--sync-frontend", true), ("--no-sync-frontend", false)] {
+                let args = Arguments::parse_for(&operation, &[flag.into()]).unwrap();
+                let plan = args
+                    .builder(root.path().into(), operation.clone())
+                    .unwrap()
+                    .plan()
+                    .unwrap();
+                assert_eq!(plan.sync_frontend, expected);
+            }
+            assert!(
+                Arguments::parse_for(
+                    &operation,
+                    &["--sync-frontend".into(), "--no-sync-frontend".into()]
+                )
+                .is_err()
+            );
+        }
+        assert!(!root.path().join(".local-tests").exists());
+        assert!(!root.path().join("target").exists());
+    }
 }

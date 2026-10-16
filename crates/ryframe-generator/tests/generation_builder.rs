@@ -112,3 +112,34 @@ fn invalid_batch_names_and_target_fail_before_execution() {
     );
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn import_uses_all_tables_and_validates_before_any_side_effect() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("config")).unwrap();
+    fs::write(root.path().join("config/tools.toml"), "[generator]\npackage='order-business'\nmodels=['Old']\ntables=['table1','table2']\nstorage='control'\nsync_frontend=true\n").unwrap();
+    let mut plan = GenerationBuilder::new(root.path())
+        .write(true)
+        .plan()
+        .unwrap();
+    assert!(plan.models.is_empty());
+    assert_eq!(plan.tables, ["table1", "table2"]);
+    let tasks = plan.tasks();
+    let validation = tasks
+        .iter()
+        .position(|task| *task == "校验候选前端类型")
+        .unwrap();
+    assert_eq!(tasks.last(), Some(&"事务写入文件"));
+    assert!(validation < tasks.len() - 1);
+    assert!(
+        GenerationBuilder::new(root.path())
+            .include_models(["Old"])
+            .plan()
+            .unwrap_err()
+            .contains("include_models")
+    );
+    plan.models = vec!["Old".into()];
+    assert!(plan.execute().unwrap_err().contains("不能同时选择 models"));
+    assert!(!root.path().join(".local-tests").exists());
+    assert!(!root.path().join("target").exists());
+}

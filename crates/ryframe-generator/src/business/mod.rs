@@ -3,6 +3,7 @@
 mod bootstrap;
 mod catalog;
 mod format;
+mod frontend;
 mod generate;
 mod metadata;
 mod migrations;
@@ -13,6 +14,7 @@ pub(crate) use bootstrap::validate_module;
 pub use bootstrap::{
     BusinessBootstrapOptions, BusinessBootstrapReport, bootstrap_business_package,
 };
+pub(crate) use frontend::generate_business_frontend;
 pub use generate::{BusinessGenerateOptions, BusinessGenerateReport, generate_business_package};
 pub use metadata::{BusinessPackage, locate_business_package, workspace_root};
 
@@ -29,6 +31,8 @@ pub(crate) struct OwnedResourceDescriptor {
     pub model_module: String,
     pub model_type: String,
     pub route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontend_page: Option<String>,
     pub menu_parent: Option<String>,
     pub menu_order: u16,
     pub primary_key: Vec<String>,

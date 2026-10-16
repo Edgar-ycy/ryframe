@@ -29,6 +29,7 @@ pub(super) fn verify(backend: &Path, target: &Path) {
     super::assert_command_succeeded("显式登记业务依赖锁文件", &metadata);
     let lock = fs::read(backend.join("Cargo.lock")).unwrap();
     let report = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: backend,
         package: "invoice-business",
         models: &[],
@@ -40,6 +41,7 @@ pub(super) fn verify(backend: &Path, target: &Path) {
     import_batch(backend);
     verify_incremental_generation(backend);
     let repeat = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: backend,
         package: "invoice-business",
         models: &[],

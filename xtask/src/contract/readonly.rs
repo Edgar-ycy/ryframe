@@ -17,7 +17,7 @@ use super::{
         verify_input_snapshots,
     },
     formal::github_repository_identifier,
-    model::{CANDIDATE_MARKER, Snapshot, StagingFrontend, nonce},
+    model::{CANDIDATE_MARKER, Snapshot, StagingFrontend, export_target, nonce},
     ownership::contract_managed_paths,
     recovery::reject_contract_recovery_artifacts,
     source::verify_contract_source,
@@ -122,7 +122,7 @@ where
 
 fn export_current_openapi(backend_dir: &Path, output: &Path) -> Result<()> {
     let output = output.to_str().ok_or("候选 OpenAPI 路径不是有效 UTF-8")?;
-    let target_dir = backend_dir.join("target/xtask-contract");
+    let target_dir = export_target(backend_dir, std::env::var_os("CARGO_TARGET_DIR"));
     let target_dir = target_dir
         .to_str()
         .ok_or("契约导出 target 路径不是有效 UTF-8")?;

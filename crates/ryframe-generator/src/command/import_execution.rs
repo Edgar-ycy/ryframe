@@ -3,50 +3,22 @@ use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 use sea_orm::DatabaseConnection;
 
 use super::GenerationPlan;
-use crate::{
-    business::locate_business_package,
-    import::{TableInfo, inspect_existing_table, plan_import_models},
-};
+use crate::import::{TableInfo, inspect_existing_table};
 
 pub(super) async fn execute(plan: &GenerationPlan) -> Result<(), String> {
-    let package = locate_business_package(&plan.workspace_root, &plan.package)
+    crate::business::locate_business_package(&plan.workspace_root, &plan.package)
         .map_err(|error| error.to_string())?;
     let config =
         AppConfig::load_from_env(Environment::from_env().map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?;
     let tables = inspect(&config, plan).await?;
-    let models = plan_import_models(
-        &plan.workspace_root,
-        &package.root,
-        &tables,
-        &plan.database,
-        plan.strip_table_prefix.as_deref(),
-    )
-    .map_err(|error| error.to_string())?;
-    for path in &models.created {
-        println!("create {path}");
-    }
-    for path in &models.updated {
-        println!("update {path}");
-    }
     println!(
-        "导入 {} 张表，未变化 {} 个文件；只读来源={}，模型目标={}。",
+        "读取 {} 张表；只读来源={}，模型目标={}。",
         tables.len(),
-        models.unchanged.len(),
         plan.source,
         plan.database
     );
-    if plan.write {
-        models.write().map_err(|error| error.to_string())?;
-    } else {
-        for (path, content) in models.rust_sources() {
-            println!("预览 {path}\n{content}");
-        }
-    }
-    println!(
-        "确认 src/resources 字段用途与 .ryframe/imports 原始结构后，运行 cargo generate -- resource 预览 CRUD；导入未建表、未接管已有表。 "
-    );
-    Ok(())
+    super::staging::execute(plan, Some(&tables))
 }
 
 async fn inspect(config: &AppConfig, plan: &GenerationPlan) -> Result<Vec<TableInfo>, String> {

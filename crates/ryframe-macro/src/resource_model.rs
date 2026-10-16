@@ -20,6 +20,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut collation = None;
     let mut database = None;
     let mut route = None;
+    let mut frontend_page = None;
     let mut menu_parent = None;
     let mut menu_order = 100_u16;
     let mut primary_key = None;
@@ -41,6 +42,8 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 database = Some(meta.value()?.parse::<LitStr>()?.value());
             } else if meta.path.is_ident("route") {
                 route = Some(meta.value()?.parse::<LitStr>()?.value());
+            } else if meta.path.is_ident("frontend_page") {
+                parse_single_string(&meta, &mut frontend_page, "frontend_page")?;
             } else if meta.path.is_ident("menu_parent") {
                 menu_parent = Some(meta.value()?.parse::<LitStr>()?.value());
             } else if meta.path.is_ident("menu_order") {
@@ -81,6 +84,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let field_descriptors = parsed_fields.iter().map(|field| &field.tokens);
     let model = &input.ident;
     let route = optional_string(route);
+    let frontend_page = optional_string(frontend_page);
     let menu_parent = optional_string(menu_parent);
     let collation = optional_string(collation);
     Ok(quote! {
@@ -95,6 +99,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     model_module: module_path!(),
                     model_type: stringify!(#model),
                     route: #route,
+                    frontend_page: #frontend_page,
                     menu_parent: #menu_parent,
                     menu_order: #menu_order,
                     primary_key: &[#(#primary_key),*],

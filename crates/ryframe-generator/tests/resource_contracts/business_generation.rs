@@ -51,6 +51,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
 
     let crate_root = workspace.path().join("order-business/src/resources");
     let preview = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: &crate_root,
         package: "order-business",
         models: &["Order".into()],
@@ -66,6 +67,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     );
 
     let written = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: &crate_root,
         package: "order-business",
         models: &[],
@@ -83,6 +85,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
         .join("order-business/.ryframe/generated.toml");
     let ownership_modified = fs::metadata(&ownership_path).unwrap().modified().unwrap();
     let repeat = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: &crate_root,
         package: "order-business",
         models: &[],
@@ -107,6 +110,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
 
 fn prepare_lock(workspace: &std::path::Path) -> Vec<u8> {
     let error = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: workspace,
         package: "order-business",
         models: &[],
@@ -267,6 +271,7 @@ fn assert_migration_is_immutable(workspace: &std::path::Path, crate_root: &std::
     );
     fs::write(&model_path, changed).expect("应更新资源模型");
     let error = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: crate_root,
         package: "order-business",
         models: &[],
@@ -288,6 +293,7 @@ fn assert_incremental_generation(workspace: &std::path::Path, crate_root: &std::
     let original = fs::read_to_string(&model).unwrap();
     fs::write(&model, original.replace("    pub code: String,", "    pub code: String,\n    pub remark: Option<String>,\n    #[resource(default = \"0\")]\n    pub amount: i32,")).unwrap();
     let preview = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: crate_root,
         package: "order-business",
         models: &[],
@@ -309,6 +315,7 @@ fn assert_incremental_generation(workspace: &std::path::Path, crate_root: &std::
             .any(|path| path.starts_with("migrations/"))
     );
     let written = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: crate_root,
         package: "order-business",
         models: &[],
@@ -329,6 +336,7 @@ fn assert_incremental_generation(workspace: &std::path::Path, crate_root: &std::
     )
     .unwrap();
     let second = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: crate_root,
         package: "order-business",
         models: &[],
@@ -352,6 +360,7 @@ fn assert_incremental_generation(workspace: &std::path::Path, crate_root: &std::
     assert_eq!(registry.matches("with_initialization_sql").count(), 3);
     assert_eq!(registry.matches("before_fingerprint: Some(").count(), 2);
     let repeat = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: crate_root,
         package: "order-business",
         models: &[],
@@ -376,6 +385,7 @@ fn assert_drop_requires_review(
     )
     .unwrap();
     let removed = generate_business_package(BusinessGenerateOptions {
+        catalog_target: None,
         current_dir: crate_root,
         package: "order-business",
         models: &[],

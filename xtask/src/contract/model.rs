@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
@@ -12,6 +13,19 @@ use crate::Result;
 
 pub(super) const CRUD_RESOURCE_ARTIFACT: &str = "src/api/generated/crudResources.ts";
 pub(super) const CANDIDATE_MARKER: &str = "openapi/candidate.json";
+
+pub(super) fn export_target(root: &Path, configured: Option<OsString>) -> PathBuf {
+    configured
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
+        })
+        .unwrap_or_else(|| root.join("target/xtask-contract"))
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct Snapshot {
