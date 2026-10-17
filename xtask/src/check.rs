@@ -1,5 +1,7 @@
 //! 智能检查的命令入口与稳定测试接口。
 
+#[path = "check/architecture.rs"]
+pub(crate) mod architecture;
 #[path = "check/cargo_command.rs"]
 mod cargo_command;
 #[path = "check/change_surface.rs"]

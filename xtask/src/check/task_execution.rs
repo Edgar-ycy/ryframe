@@ -195,6 +195,7 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
     if profile != PolicyProfile::Smart {
         super::super::prerelease::run(&context.root)?;
     }
+    super::super::architecture::run(&context.root)?;
     for task in policy_tasks(profile) {
         run_owned(&context.root, "python", &task.arguments())?;
     }

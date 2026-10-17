@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.metadata
+import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -512,3 +514,68 @@ def function_changed(
         start <= record.end_line and end >= record.start_line
         for start, end in changed.get(record.path, [])
     )
+
+
+def ast_json_request() -> int:
+    """仅供 Rust 架构门禁调用的 AST 入口，按相对路径返回语法记录。"""
+
+    try:
+        request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+        root = Path(request["root"]).resolve()
+        sources = request["sources"]
+        templates = request["templates"]
+        if (
+            not isinstance(sources, list)
+            or not isinstance(templates, list)
+            or not all(isinstance(item, str) for item in sources + templates)
+        ):
+            raise ValueError("sources 和 templates 必须是字符串数组")
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as error:
+        print(f"Rust AST helper 请求无效：{error}", file=sys.stderr)
+        return 2
+
+    def resolve(relative: str, error_label: str, errors: list[str]) -> Path | None:
+        path = (root / relative).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            errors.append(f"{error_label}路径越出仓库：{relative}")
+            return None
+        if not path.is_file():
+            errors.append(f"{error_label}源码不存在：{relative}")
+            return None
+        return path
+
+    errors: list[str] = []
+    source_paths = [
+        path
+        for relative in sources
+        if (path := resolve(relative, "Rust ", errors)) is not None
+    ]
+    template_paths = [
+        path
+        for relative in templates
+        if (path := resolve(relative, "Rust 模板", errors)) is not None
+    ]
+    functions, unsafe_syntax = parse_rust_sources(root, source_paths, errors)
+    unsafe_syntax.extend(parse_template_unsafe(root, template_paths, errors))
+    payload = {
+        "functions": [asdict(record) for record in functions],
+        "unsafe_syntax": [asdict(record) for record in unsafe_syntax],
+        "errors": errors,
+    }
+    sys.stdout.buffer.write(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    )
+    return 0
+
+
+def main() -> int:
+    if sys.argv[1:] == ["--ast-json"]:
+        return ast_json_request()
+    print("用法：python tools/python/rust_function_size.py --ast-json", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 架构检查迁至 Rust xtask，统一校验 crate 依赖事实源、system 业务域公开面、文档与测试布局、源码规模、持久化与异步端口约束、Workspace unsafe lint 及租户数据静态边界；函数规模和 unsafe 语法继续由固定版本的 tree-sitter helper 解析，Rust 负责策略、变更范围和失败诊断。
+
 - 标准资源表单补齐文本域、布尔开关、日期、日期时间、精确 Decimal 和 JSON 控件；JSON 使用严格解析的字符串表单并在请求前转换，同时拒绝无法由标准查询参数表达的 JSON 筛选。
 
 - OpenAPI 菜单路由契约升级为 v3 并携带访问目录图标，权限诊断等菜单的生成资产、会话菜单与侧边栏投影保持一致。

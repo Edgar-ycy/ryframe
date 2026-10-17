@@ -46,6 +46,8 @@ mod data;
 
 #[path = "internal/build.rs"]
 mod build_tests;
+#[path = "internal/check_architecture.rs"]
+mod check_architecture_tests;
 #[path = "internal/check_cancellation.rs"]
 mod check_cancellation_tests;
 #[path = "internal/check_cyclonedx.rs"]

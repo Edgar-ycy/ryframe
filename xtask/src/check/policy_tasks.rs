@@ -34,13 +34,6 @@ impl PythonPolicyTask {
 
 pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     PythonPolicyTask {
-        id: "architecture",
-        script: "tools/python/check_architecture.py",
-        full_order: Some(0),
-        smart_order: Some(0),
-        ci_preflight_order: Some(2),
-    },
-    PythonPolicyTask {
         id: "deployment-assets",
         script: "tools/python/check_deployment_assets.py",
         full_order: Some(1),
