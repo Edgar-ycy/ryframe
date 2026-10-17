@@ -33,6 +33,9 @@ pub(crate) struct OwnedResourceDescriptor {
     pub route: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontend_page: Option<String>,
+    /// 数据范围字段；由 `#[resource(owner_field = "...")]` 声明。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_field: Option<String>,
     pub menu_parent: Option<String>,
     pub menu_order: u16,
     pub primary_key: Vec<String>,

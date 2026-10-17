@@ -233,6 +233,25 @@ mod tests {
     }
 
     #[test]
+    fn owner_field_is_published_in_openapi_access_metadata() {
+        use crate::{ResourceSpec, normalize_resource};
+        let spec = ResourceSpec::parse(
+            include_str!("../../../../../catalog/resources/notice.toml"),
+            "notice.toml",
+        )
+        .unwrap();
+        let resource = normalize_resource(spec, "notice.toml", "test").unwrap();
+        assert_eq!(resource.access.owner_field.as_deref(), Some("created_by"));
+        let metadata = super::crud_resource_metadata(&resource);
+        assert_eq!(metadata["access"]["owner_field"], "created_by");
+
+        let mut without_owner = resource;
+        without_owner.access.owner_field = None;
+        let metadata = super::crud_resource_metadata(&without_owner);
+        assert!(metadata["access"].get("owner_field").is_none());
+    }
+
+    #[test]
     fn rust_json_keeps_full_integer_ranges_and_string_digits() {
         let value = serde_json::json!({"min":i64::MIN,"max":i64::MAX,"unsigned":u64::MAX,"small":7,"decimal":0.5,"text":"\"9223372036854775807\"\\end"});
         let source = super::rust_json(&value);

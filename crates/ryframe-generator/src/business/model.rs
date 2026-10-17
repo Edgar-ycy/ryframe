@@ -48,6 +48,7 @@ pub(super) fn descriptor_to_ir(
     let indexes = indexes(descriptor);
     let soft_delete = soft_delete(descriptor)?;
     let audit = audit(descriptor);
+    let owner_field = owner_field(descriptor)?;
     let module = package.module.replace('-', "_");
     let permission_module = package.module.replace('_', "-");
     let permission_name = descriptor.name.replace('_', "-");
@@ -116,7 +117,7 @@ pub(super) fn descriptor_to_ir(
         access: AccessSpec {
             system_tenant_only: descriptor.database == OwnedResourceDatabase::Control,
             capability: None,
-            owner_field: None,
+            owner_field,
             permissions: PermissionSpec {
                 create: format!("{permission_module}:{permission_name}:add"),
                 read: format!("{permission_module}:{permission_name}:list"),
@@ -154,6 +155,43 @@ pub(super) fn descriptor_to_ir(
         format!("{}::{}", descriptor.model_module, descriptor.model_type),
         hex::encode(Sha256::digest(source)),
     )
+}
+
+/// 数据范围字段来自 `#[resource(owner_field = "...")]`。
+///
+/// 控制库和租户库业务都可声明；控制库资源的系统租户专用约束由
+/// `system_tenant_only` 继续执行，租户库资源仍按 `tenant_id` 隔离。
+fn owner_field(descriptor: &OwnedResourceDescriptor) -> Result<Option<String>, ResourceError> {
+    let Some(name) = descriptor.owner_field.as_deref() else {
+        return Ok(None);
+    };
+    if name.trim().is_empty() {
+        return Err(error(format!(
+            "资源 {} 的 owner_field 不能为空；填写保存用户 ID 的 i64 字段名，或删除该属性",
+            descriptor.name
+        )));
+    }
+    if name.trim() != name {
+        return Err(error(format!(
+            "资源 {} 的 owner_field `{name}` 含有首尾空白；使用字段的 snake_case 名称，例如 owner_id",
+            descriptor.name
+        )));
+    }
+    let field = descriptor.fields.iter().find(|field| field.name == name);
+    let field = field.ok_or_else(|| {
+        error(format!(
+            "资源 {} 的 owner_field `{name}` 未在模型中声明；添加同名字段，或改为已有字段",
+            descriptor.name
+        ))
+    })?;
+    let (value_type, _) = value_type(&field.rust_type)?;
+    if value_type != ValueType::I64 {
+        return Err(error(format!(
+            "资源 {} 的 owner_field `{name}` 必须是 i64 或 Option<i64> 字段；当前类型为 `{}`",
+            descriptor.name, field.rust_type
+        )));
+    }
+    Ok(Some(name.to_owned()))
 }
 
 fn validate_descriptor(
@@ -451,4 +489,130 @@ fn audit(descriptor: &OwnedResourceDescriptor) -> Option<AuditSpec> {
 
 fn error(message: impl Into<String>) -> ResourceError {
     ResourceError::new(message, "修正业务 ResourceModel 后重新运行 cargo generate")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn package() -> BusinessPackage {
+        BusinessPackage {
+            name: "order-business".into(),
+            module: "order".into(),
+            root: std::path::PathBuf::from("order-business"),
+            workspace_root: std::path::PathBuf::from("."),
+        }
+    }
+
+    fn field(name: &str, rust_type: &str, primary_key: bool) -> OwnedFieldDescriptor {
+        OwnedFieldDescriptor {
+            name: name.into(),
+            column: name.into(),
+            rust_type: rust_type.into(),
+            sql_type: None,
+            sql_default: None,
+            sql_on_update: None,
+            sql_comment: None,
+            collation: None,
+            rename_from: None,
+            default: None,
+            primary_key,
+            generated: false,
+            auto_increment: false,
+            read_only: false,
+            filter: false,
+            sort: false,
+            unique: false,
+        }
+    }
+
+    fn descriptor(
+        database: OwnedResourceDatabase,
+        owner_field: Option<&str>,
+        owner_type: &str,
+    ) -> OwnedResourceDescriptor {
+        let (table, primary_key, fields) = match database {
+            OwnedResourceDatabase::Tenant => (
+                "biz_order",
+                vec!["tenant_id".into(), "id".into()],
+                vec![
+                    field("tenant_id", "String", true),
+                    field("id", "i64", true),
+                    field("owner_id", owner_type, false),
+                ],
+            ),
+            OwnedResourceDatabase::Control => (
+                "biz_global_order",
+                vec!["id".into()],
+                vec![
+                    field("id", "i64", true),
+                    field("owner_id", owner_type, false),
+                ],
+            ),
+        };
+        OwnedResourceDescriptor {
+            name: "order".into(),
+            title: "订单".into(),
+            table: table.into(),
+            collation: None,
+            database,
+            model_module: "order_business::resources".into(),
+            model_type: "Order".into(),
+            route: None,
+            frontend_page: None,
+            owner_field: owner_field.map(str::to_owned),
+            menu_parent: None,
+            menu_order: 100,
+            primary_key,
+            indexes: Vec::new(),
+            fields,
+        }
+    }
+
+    #[test]
+    fn owner_field_defaults_to_none_and_is_omitted_from_descriptor_json() {
+        let descriptor = descriptor(OwnedResourceDatabase::Tenant, None, "i64");
+        let resource = descriptor_to_ir(&package(), &descriptor).unwrap();
+        assert!(resource.access.owner_field.is_none());
+        let json = serde_json::to_value(&descriptor).unwrap();
+        assert!(json.get("owner_field").is_none());
+    }
+
+    #[test]
+    fn declared_owner_field_flows_to_tenant_and_control_resources() {
+        for database in [
+            OwnedResourceDatabase::Tenant,
+            OwnedResourceDatabase::Control,
+        ] {
+            for owner_type in ["i64", "Option<i64>"] {
+                let descriptor = descriptor(database, Some("owner_id"), owner_type);
+                let resource = descriptor_to_ir(&package(), &descriptor).unwrap();
+                assert_eq!(resource.access.owner_field.as_deref(), Some("owner_id"));
+                assert_eq!(
+                    resource.access.system_tenant_only,
+                    database == OwnedResourceDatabase::Control
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn owner_field_rejects_empty_missing_and_non_i64_fields() {
+        for (owner_field, owner_type, message) in [
+            (Some(""), "i64", "owner_field 不能为空"),
+            (Some(" owner_id"), "i64", "含有首尾空白"),
+            (Some("missing"), "i64", "未在模型中声明"),
+            (Some("owner_id"), "String", "必须是 i64 或 Option<i64> 字段"),
+        ] {
+            let error = descriptor_to_ir(
+                &package(),
+                &descriptor(OwnedResourceDatabase::Tenant, owner_field, owner_type),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(message),
+                "{owner_field:?} {owner_type}: {error}"
+            );
+        }
+    }
 }

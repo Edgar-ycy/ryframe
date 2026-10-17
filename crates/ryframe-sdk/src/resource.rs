@@ -46,6 +46,9 @@ pub struct ResourceDescriptor {
     pub route: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontend_page: Option<&'static str>,
+    /// 数据范围字段名；必须指向本资源中的 `i64` 或 `Option<i64>` 字段。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_field: Option<&'static str>,
     pub menu_parent: Option<&'static str>,
     pub menu_order: u16,
     pub primary_key: &'static [&'static str],

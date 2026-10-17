@@ -62,7 +62,11 @@ pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
 
 模型级 `#[resource(primary_key = ["tenant_id", "id"])]` 可明确索引顺序，与字段顺序独立，列表须恰好包含全部主键标记字段，省略时沿用字段顺序。反向导入从 PRIMARY 索引读取顺序，将业务主键映射到 Rust `id` 并用 `column="order_id"` 等属性保留物理列名；与已有 `id` 列冲突时拒绝生成。实体按主键顺序声明字段，DDL 保留原物理列顺序。租户主键必须以 `tenant_id` 开头，其他复合主键明确阻断，不自动修改原库。审计时间列组可省略，此时物理删除或软删除均不补写时间列；已声明的时间及操作者字段仍严格校验并由 Service 管理，请求级操作审计继续遵循原有事务策略。
 
-模型使用 `#[derive(ryframe_sdk::ResourceModel)]`。在 `resources/mod.rs` 定义模型后，将其描述符加入同文件的 `descriptors()`。`database="tenant"` 用于租户业务，表以 `biz_` 开头并把 `tenant_id` 放入联合主键；`database="control"` 用于无 `tenant_id` 的全局业务，Service 与持久化只允许系统租户访问，页面资产携带同样的访问限制。启用多租户不会使全局业务共享，跨租户共享读取须编写明确的用例扩展。ID 默认由应用生成雪花值；数据库自增主键使用 `#[resource(primary_key, auto_increment)] pub id: i64`（无符号列使用 `u64`），不声明默认值或表单写入。生成器为租户复合主键补充以 id 开头的非唯一索引，插入时省略 ID，在同一事务中取得实际自增值。然后运行：
+模型使用 `#[derive(ryframe_sdk::ResourceModel)]`。在 `resources/mod.rs` 定义模型后，将其描述符加入同文件的 `descriptors()`。`database="tenant"` 用于租户业务，表以 `biz_` 开头并把 `tenant_id` 放入联合主键；`database="control"` 用于无 `tenant_id` 的全局业务，Service 与持久化只允许系统租户访问，页面资产携带同样的访问限制。启用多租户不会使全局业务共享，跨租户共享读取须编写明确的用例扩展。ID 默认由应用生成雪花值；数据库自增主键使用 `#[resource(primary_key, auto_increment)] pub id: i64`（无符号列使用 `u64`），不声明默认值或表单写入。生成器为租户复合主键补充以 id 开头的非唯一索引，插入时省略 ID，在同一事务中取得实际自增值。
+
+数据范围字段用模型属性声明：`#[resource(name = "order", table = "biz_order", database = "tenant", owner_field = "owner_id")]`。`owner_field` 必须是同一结构体中保存用户 ID 的 `i64` 或 `Option<i64>` 字段，租户业务和控制库全局业务都可声明；控制库资源仍保持系统租户专用访问。生成器把该值写入 `resources.json` 描述符、OpenAPI `x-ryframe-crud-resources` 的 `access.owner_field` 和生成的列表、详情、更新、删除数据范围条件，分页与总数使用同一过滤。创建时是否自动写入当前用户取决于字段用途：名为 `created_by` 的审计创建人字段由 Service 写入，其他 owner 字段按普通可写字段或业务扩展赋值。省略 `owner_field` 时不按创建人过滤。字段不存在、类型不是 `i64`/`Option<i64>`、名称为空或含空白、重复属性都会在宏展开或生成预检阶段停止，并按提示修正字段名或类型。
+
+然后运行：
 
 ```powershell
 cargo generate -- resource --package order-business

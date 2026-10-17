@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Field, Fields, LitStr, parse_macro_input};
 
 mod field;
@@ -21,6 +21,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut database = None;
     let mut route = None;
     let mut frontend_page = None;
+    let mut owner_field = None;
     let mut menu_parent = None;
     let mut menu_order = 100_u16;
     let mut primary_key = None;
@@ -44,6 +45,8 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 route = Some(meta.value()?.parse::<LitStr>()?.value());
             } else if meta.path.is_ident("frontend_page") {
                 parse_single_string(&meta, &mut frontend_page, "frontend_page")?;
+            } else if meta.path.is_ident("owner_field") {
+                parse_single_string(&meta, &mut owner_field, "owner_field")?;
             } else if meta.path.is_ident("menu_parent") {
                 menu_parent = Some(meta.value()?.parse::<LitStr>()?.value());
             } else if meta.path.is_ident("menu_order") {
@@ -75,6 +78,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         }
     };
     let fields = named_fields(input)?;
+    let owner_field = validate_owner_field(owner_field, input, fields)?;
     let parsed_fields = fields
         .iter()
         .map(field::parse)
@@ -85,6 +89,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let model = &input.ident;
     let route = optional_string(route);
     let frontend_page = optional_string(frontend_page);
+    let owner_field = optional_string(owner_field);
     let menu_parent = optional_string(menu_parent);
     let collation = optional_string(collation);
     Ok(quote! {
@@ -100,6 +105,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     model_type: stringify!(#model),
                     route: #route,
                     frontend_page: #frontend_page,
+                    owner_field: #owner_field,
                     menu_parent: #menu_parent,
                     menu_order: #menu_order,
                     primary_key: &[#(#primary_key),*],
@@ -109,6 +115,64 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             }
         }
     })
+}
+
+fn validate_owner_field(
+    owner_field: Option<String>,
+    input: &DeriveInput,
+    fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
+) -> syn::Result<Option<String>> {
+    let Some(name) = owner_field else {
+        return Ok(None);
+    };
+    if name.is_empty() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "owner_field 不能为空；填写保存用户 ID 的 i64 字段名，或删除 owner_field",
+        ));
+    }
+    let mut characters = name.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && characters.all(|rest| rest == '_' || rest.is_ascii_alphanumeric());
+    if !valid {
+        return Err(syn::Error::new_spanned(
+            input,
+            format!(
+                "owner_field `{name}` 不是合法字段名；使用字段的 snake_case 名称，例如 owner_id"
+            ),
+        ));
+    }
+    let Some(field) = fields.iter().find(|field| {
+        field
+            .ident
+            .as_ref()
+            .is_some_and(|ident| ident.to_string() == name)
+    }) else {
+        return Err(syn::Error::new_spanned(
+            input,
+            format!(
+                "owner_field `{name}` 未在结构体中声明；添加同名字段，或把 owner_field 改为已有字段"
+            ),
+        ));
+    };
+    let rust_type = field
+        .ty
+        .to_token_stream()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    if !matches!(rust_type.as_str(), "i64" | "Option<i64>") {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            format!(
+                "owner_field `{name}` 必须是 i64 或 Option<i64> 字段；当前类型为 `{rust_type}`"
+            ),
+        ));
+    }
+    Ok(Some(name))
 }
 
 fn named_fields(
@@ -301,5 +365,66 @@ mod tests {
         let expanded = super::expand_inner(&input).unwrap().to_string();
         assert!(expanded.contains("auto_increment : true"));
         assert!(expanded.contains("generated : true"));
+    }
+
+    #[test]
+    fn owner_field_defaults_to_none_and_accepts_i64_and_optional_i64() {
+        let default = syn::parse_quote! {
+            #[resource(name = "item", table = "biz_item", database = "tenant")]
+            struct Item {
+                #[resource(primary_key)] tenant_id: String,
+                #[resource(primary_key)] id: i64,
+            }
+        };
+        assert!(
+            super::expand_inner(&default)
+                .unwrap()
+                .to_string()
+                .contains("owner_field : None")
+        );
+        for source in [
+            "#[resource(name = \"item\", table = \"biz_item\", database = \"tenant\", owner_field = \"owner_id\")] struct Item { #[resource(primary_key)] tenant_id: String, #[resource(primary_key)] id: i64, owner_id: i64 }",
+            "#[resource(name = \"item\", table = \"biz_item\", database = \"tenant\", owner_field = \"owner_id\")] struct Item { #[resource(primary_key)] tenant_id: String, #[resource(primary_key)] id: i64, owner_id: Option<i64> }",
+        ] {
+            let input = syn::parse_str(source).unwrap();
+            assert!(
+                super::expand_inner(&input)
+                    .unwrap()
+                    .to_string()
+                    .contains("owner_field : Some (\"owner_id\")")
+            );
+        }
+    }
+
+    #[test]
+    fn owner_field_rejects_duplicate_empty_invalid_missing_and_non_i64_fields() {
+        let duplicate = syn::parse_quote! {
+            #[resource(name = "item", table = "biz_item", database = "tenant", owner_field = "owner_id", owner_field = "other_id")]
+            struct Item {
+                #[resource(primary_key)] tenant_id: String,
+                #[resource(primary_key)] id: i64,
+                owner_id: i64,
+                other_id: i64,
+            }
+        };
+        assert!(
+            super::expand_inner(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("owner_field 只能声明一次")
+        );
+        for (attribute, expected) in [
+            ("owner_field = \"\"", "owner_field 不能为空"),
+            ("owner_field = \"owner-id\"", "不是合法字段名"),
+            ("owner_field = \"missing\"", "未在结构体中声明"),
+            ("owner_field = \"code\"", "必须是 i64 或 Option<i64> 字段"),
+        ] {
+            let source = format!(
+                "#[resource(name = \"item\", table = \"biz_item\", database = \"tenant\", {attribute})] struct Item {{ #[resource(primary_key)] tenant_id: String, #[resource(primary_key)] id: i64, owner_id: i64, code: String }}"
+            );
+            let input = syn::parse_str(&source).unwrap();
+            let error = super::expand_inner(&input).unwrap_err().to_string();
+            assert!(error.contains(expected), "{attribute}: {error}");
+        }
     }
 }
