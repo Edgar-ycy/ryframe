@@ -87,6 +87,7 @@ fn build_authorization_snapshot(
         tenant_session_version: identity.tenant.session_version,
         principal: RequestPrincipal {
             password_change_required: user.password_change_required,
+            user_authorization_version: user.authorization_version,
             actor: ActorContext {
                 user_id: user.id,
                 tenant_id: user.tenant_id.clone(),
@@ -129,7 +130,7 @@ fn mirrored_user_matches(
 fn principal_from_snapshot(
     claims: &Claims,
     expected_user_id: i64,
-    mut snapshot: AuthorizationSnapshot,
+    snapshot: AuthorizationSnapshot,
 ) -> AppResult<RequestPrincipal> {
     if snapshot.principal.actor.tenant_id != claims.tenant_id
         || snapshot.principal.actor.user_id != expected_user_id
@@ -142,13 +143,97 @@ fn principal_from_snapshot(
             "租户会话已失效，请重新登录".into(),
         ));
     }
-    snapshot.principal.tenant_authorization_epoch = snapshot.versions.tenant_authorization_epoch;
+    snapshot.validate_principal_versions()?;
     Ok(snapshot.principal)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snapshot() -> AuthorizationSnapshot {
+        let principal = RequestPrincipal {
+            actor: ActorContext {
+                user_id: 2,
+                tenant_id: "system".into(),
+                username: "user".into(),
+                dept_id: None,
+                dept_path: None,
+                data_scope: ryframe_kernel::DataScope::SelfOnly,
+                custom_dept_ids: Vec::new(),
+                include_self: true,
+                is_super_admin: false,
+            },
+            password_change_required: false,
+            user_authorization_version: 3,
+            tenant_authorization_epoch: 7,
+            preferred_locale: None,
+            roles: Vec::new(),
+            role_ids: Vec::new(),
+            permissions: Vec::new(),
+            tenant_request_limit_per_minute: 60,
+        };
+        AuthorizationSnapshot {
+            versions: AuthorizationVersions {
+                tenant_authorization_epoch: 7,
+                user_authorization_version: 3,
+            },
+            tenant_session_version: 1,
+            principal,
+        }
+    }
+
+    #[test]
+    fn snapshot_versions_remain_bound_to_the_authenticated_principal() {
+        let principal = principal_from_snapshot(&claims(3), 2, snapshot()).unwrap();
+        assert_eq!(principal.user_authorization_version, 3);
+        assert_eq!(principal.tenant_authorization_epoch, 7);
+        for (user, tenant) in [(2, 7), (4, 7), (3, 6), (3, 8)] {
+            let mut stale = snapshot();
+            stale.principal.user_authorization_version = user;
+            stale.principal.tenant_authorization_epoch = tenant;
+            assert!(
+                matches!(
+                    principal_from_snapshot(&claims(3), 2, stale),
+                    Err(AppError::Authentication(_))
+                ),
+                "不能把包装版本覆盖到旧主体"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_snapshot_is_rejected_before_any_cache_write() {
+        let cache =
+            crate::AuthorizationCache::new(None, None, crate::CacheAvailabilityPolicy::Optional);
+        let mut invalid = snapshot();
+        invalid.principal.tenant_authorization_epoch = 6;
+        assert!(matches!(
+            cache.store_snapshot(&invalid).await,
+            Err(AppError::Authentication(_))
+        ));
+        assert!(!cache.store_snapshot(&snapshot()).await.unwrap());
+    }
+
+    #[test]
+    fn serialized_principal_requires_both_exact_version_fields() {
+        let document = serde_json::to_value(snapshot().principal).unwrap();
+        assert!(serde_json::from_value::<RequestPrincipal>(document.clone()).is_ok());
+        for field in ["user_authorization_version", "tenant_authorization_epoch"] {
+            let mut missing = document.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<RequestPrincipal>(missing).is_err());
+            for value in [
+                serde_json::json!("3"),
+                serde_json::json!(true),
+                serde_json::Value::Null,
+            ] {
+                let mut invalid = document.clone();
+                invalid[field] = value;
+                assert!(serde_json::from_value::<RequestPrincipal>(invalid).is_err());
+            }
+        }
+    }
 
     fn claims(version: i32) -> Claims {
         Claims {

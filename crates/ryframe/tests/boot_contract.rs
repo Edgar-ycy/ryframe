@@ -66,6 +66,7 @@ mod authorization_cache_keyspace {
         assert!(epoch.contains("{tenant-a}"));
         assert!(user.contains("{tenant-a}"));
         assert!(snapshot.contains("{tenant-a}"));
+        assert!(snapshot.ends_with(":snapshots:v3"));
         assert_ne!(epoch, tenant_epoch_key("tenant-b"));
     }
 }

@@ -107,6 +107,7 @@ impl AuthorizationCache {
     }
 
     pub async fn store_snapshot(&self, snapshot: &AuthorizationSnapshot) -> AppResult<bool> {
+        snapshot.validate_principal_versions()?;
         let Some(backend) = &self.backend else {
             return if self.required {
                 Err(cache_unavailable())

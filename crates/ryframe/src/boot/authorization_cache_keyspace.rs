@@ -15,7 +15,7 @@ pub fn user_version_key(tenant_id: &str, user_id: i64) -> String {
 
 pub fn snapshot_hash_key(tenant_id: &str, user_id: i64) -> String {
     format!(
-        "ryframe:authorization:{}:user:{user_id}:snapshots:v2",
+        "ryframe:authorization:{}:user:{user_id}:snapshots:v3",
         tenant_hash_tag(tenant_id)
     )
 }

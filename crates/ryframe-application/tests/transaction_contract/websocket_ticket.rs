@@ -26,11 +26,12 @@ impl WebSocketTicketStore for MemoryTicketStore {
 async fn issued_ticket_can_only_be_consumed_once() {
     let store = Arc::new(MemoryTicketStore::default());
     let service = WebSocketTicketService::new(
-        Some(store),
+        Some(store.clone()),
         MessagingPolicy::new(true, 60, 7, 100).expect("策略应有效"),
     );
-    let principal = RequestPrincipal {
+    let mut principal = RequestPrincipal {
         password_change_required: false,
+        user_authorization_version: 4,
         actor: ActorContext {
             user_id: 42,
             tenant_id: "tenant-a".into(),
@@ -62,6 +63,16 @@ async fn issued_ticket_can_only_be_consumed_once() {
         exp: 2,
     };
 
+    principal.user_authorization_version = 3;
+    assert!(matches!(
+        service.issue(&principal, &claims, "en-GB").await,
+        Err(AppError::Authentication(_))
+    ));
+    assert!(
+        store.values.lock().await.is_empty(),
+        "主体与令牌版本不一致时不得写入票据"
+    );
+    principal.user_authorization_version = 4;
     let grant = service
         .issue(&principal, &claims, "en-GB")
         .await

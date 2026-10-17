@@ -9,8 +9,9 @@ pub struct RequestPrincipal {
     pub actor: ActorContext,
     /// 必须先修改初始密码，受限主体不能访问普通业务接口。
     pub password_change_required: bool,
+    /// 构造此主体时核验的用户授权版本，不能用后来读取的新版本覆盖旧主体。
+    pub user_authorization_version: i32,
     /// 解析当前主体时使用的租户授权纪元，用于客户端检测授权变化。
-    #[serde(default)]
     pub tenant_authorization_epoch: i32,
     /// 用户保存的语言偏好；请求头未指定可用语言时作为回退。
     pub preferred_locale: Option<String>,

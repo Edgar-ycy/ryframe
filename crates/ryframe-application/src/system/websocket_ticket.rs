@@ -65,7 +65,10 @@ impl WebSocketTicketService {
             .sub
             .parse::<i64>()
             .map_err(|_| AppError::Authentication("访问令牌中的用户标识无效".into()))?;
-        if claimed_user_id != principal.user_id || claims.tenant_id != principal.tenant_id {
+        if claimed_user_id != principal.user_id
+            || claims.tenant_id != principal.tenant_id
+            || claims.user_authorization_version != principal.user_authorization_version
+        {
             return Err(AppError::Authentication(
                 "访问令牌与当前认证主体不一致".into(),
             ));

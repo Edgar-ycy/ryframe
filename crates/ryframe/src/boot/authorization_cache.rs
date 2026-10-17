@@ -87,6 +87,11 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
             .map(serde_json::from_str::<AuthorizationSnapshot>)
             .transpose()
             .map_err(|error| format!("授权快照 JSON 无效: {error}"))?;
+        if let Some(snapshot) = &snapshot {
+            snapshot
+                .validate_principal_versions()
+                .map_err(|error| error.to_string())?;
+        }
         if let Some(snapshot) = &snapshot
             && (Some(snapshot.versions.tenant_authorization_epoch) != tenant_authorization_epoch
                 || Some(snapshot.versions.user_authorization_version) != user_authorization_version)

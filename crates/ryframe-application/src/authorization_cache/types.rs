@@ -17,6 +17,20 @@ pub struct AuthorizationSnapshot {
     pub principal: RequestPrincipal,
 }
 
+impl AuthorizationSnapshot {
+    /// 主体和包装版本来自同一次认证；不通过覆盖字段修补不一致的缓存。
+    pub fn validate_principal_versions(&self) -> ryframe_kernel::AppResult<()> {
+        if self.principal.user_authorization_version != self.versions.user_authorization_version
+            || self.principal.tenant_authorization_epoch != self.versions.tenant_authorization_epoch
+        {
+            return Err(ryframe_kernel::AppError::Authentication(
+                "授权快照主体与版本上下文不一致，请重新认证".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// 一次 Redis 乐观事务读取的结果。
 #[derive(Clone, Debug)]
 pub struct AuthorizationCacheLookup {
