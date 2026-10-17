@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Mapping
 
@@ -17,6 +18,26 @@ LOGIN_BUDGET_FIELDS = frozenset({
     "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS",
 })
 _ENCODING_NAMES = frozenset({"PYTHONUTF8", "PYTHONIOENCODING"})
+_HOST_PROCESS_NAMES = frozenset({
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "TEMP",
+    "TMP",
+})
+_HOST_PROCESS_ENVIRONMENT = {
+    key: value
+    for key, value in os.environ.items()
+    if key.upper() in _HOST_PROCESS_NAMES
+    or key.upper().startswith(("CARGO_", "RUSTUP_"))
+}
+_CARGO_EXECUTABLE = os.environ.get("CARGO") or shutil.which("cargo") or "cargo"
 
 
 def load_app_table(backend: Path, environment: Mapping[str, str]) -> dict:
@@ -82,7 +103,7 @@ def _invoke(operation: str, request: dict) -> dict:
         request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     argv = [
-        os.environ.get("CARGO") or "cargo",
+        os.environ.get("CARGO") or _CARGO_EXECUTABLE,
         "run",
         "--quiet",
         "--locked",
@@ -127,11 +148,14 @@ def _invoke(operation: str, request: dict) -> dict:
 
 
 def _child_environment() -> dict[str, str]:
-    return {
+    environment = {
         key: value
         for key, value in os.environ.items()
         if key.upper() not in _ENCODING_NAMES and not key.upper().startswith("APP_")
     }
+    for key, value in _HOST_PROCESS_ENVIRONMENT.items():
+        environment.setdefault(key, value)
+    return environment
 
 
 def _raise_error(value: object) -> None:

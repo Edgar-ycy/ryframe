@@ -75,6 +75,11 @@ class RateLimitClientTests(unittest.TestCase):
         self.assertNotIn("APP_DATABASE_PASSWORD", call.kwargs["env"])
         self.assertNotIn("PYTHONUTF8", call.kwargs["env"])
         self.assertNotIn("PYTHONIOENCODING", call.kwargs["env"])
+        if rate_limit_client._HOST_PROCESS_ENVIRONMENT:
+            self.assertTrue(
+                set(rate_limit_client._HOST_PROCESS_ENVIRONMENT)
+                & set(call.kwargs["env"])
+            )
         request = json.loads(call.kwargs["input"].decode("utf-8"))
         self.assertEqual(
             request,
@@ -83,6 +88,26 @@ class RateLimitClientTests(unittest.TestCase):
                 "environment": {"APP_ENV": "test", "APP_CONFIG_DIR": "fixture"},
             },
         )
+
+    def test_host_toolchain_locator_survives_environment_clear(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b'{"ok":true,"result":{}}', stderr=b""
+        )
+        with (
+            mock.patch.dict(os.environ, {"APP_ENV": "test"}, clear=True),
+            mock.patch.object(
+                rate_limit_client.subprocess, "run", return_value=completed
+            ) as run,
+        ):
+            self.assertEqual(
+                rate_limit_client.load_app_table(ROOT, {"APP_ENV": "test"}), {}
+            )
+        self.assertEqual(run.call_args.args[0][0], rate_limit_client._CARGO_EXECUTABLE)
+        if rate_limit_client._HOST_PROCESS_ENVIRONMENT:
+            self.assertTrue(
+                set(rate_limit_client._HOST_PROCESS_ENVIRONMENT)
+                & set(run.call_args.kwargs["env"])
+            )
 
     def test_login_budget_keeps_environment_nested_and_returns_exact_fields(self):
         response = {
