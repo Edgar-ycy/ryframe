@@ -25,7 +25,14 @@ pub(crate) struct RunLock {
 
 impl ProcessGuard {
     pub(crate) fn acquire(directory: &Path) -> Result<Self> {
-        let path = directory.join("run-control.guard");
+        Self::acquire_named(directory, "run-control.guard")
+    }
+
+    pub(crate) fn acquire_named(directory: &Path, name: &str) -> Result<Self> {
+        if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+            return Err("控制互斥文件名称无效".into());
+        }
+        let path = directory.join(name);
         let existing = fs::symlink_metadata(&path);
         let created = existing.is_err();
         if let Ok(metadata) = &existing

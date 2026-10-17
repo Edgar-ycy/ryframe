@@ -19,6 +19,7 @@ pub(crate) mod maintenance;
 mod metadata;
 mod physical;
 mod plan;
+pub(crate) mod resources;
 pub(crate) mod schedule;
 pub(crate) mod source;
 pub(crate) mod sql;
@@ -49,6 +50,7 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
             maintenance::verify(backend, &receipt)?;
             maintenance::verify_summary(&receipt)
         }
+        CloneCommand::Storage(_) => resources::run(command, backend)?,
         _ => return Err("clone 原生模块不处理该命令".into()),
     };
     println!("{}", serde_json::to_string(&value)?);

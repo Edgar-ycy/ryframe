@@ -61,10 +61,24 @@ pub(crate) fn run(
     stage: CloneStage,
     runner: &dyn StageRunner,
 ) -> Result<Value> {
+    run_named(
+        backend,
+        run_dir,
+        stage.as_str(),
+        stage.mode().as_str(),
+        runner,
+    )
+}
+
+pub(crate) fn run_named(
+    backend: &Path,
+    run_dir: &Path,
+    stage_name: &str,
+    mode: &str,
+    runner: &dyn StageRunner,
+) -> Result<Value> {
     validate_local_test_path(run_dir, backend, LocalTestPathKind::ExistingDirectory)
         .map_err(|error| format!("复制运行目录无效：{error}"))?;
-    let stage_name = stage.as_str();
-    let mode = stage.mode().as_str();
     let request = StageRequest {
         backend,
         run_dir,

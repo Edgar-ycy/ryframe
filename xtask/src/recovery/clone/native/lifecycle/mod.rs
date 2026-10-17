@@ -9,12 +9,12 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
-mod identity;
-mod lock;
-mod manifest;
-mod source;
+pub(crate) mod identity;
+pub(crate) mod lock;
+pub(crate) mod manifest;
+pub(crate) mod source;
 pub(crate) mod stage;
-mod state;
+pub(crate) mod state;
 mod status;
 
 pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {

@@ -100,6 +100,8 @@ mod clone_cli_tests;
 mod clone_lifecycle_tests;
 #[path = "internal/clone_native.rs"]
 mod clone_native_tests;
+#[path = "internal/clone_resources.rs"]
+mod clone_resources_tests;
 #[path = "internal/contract_source.rs"]
 mod contract_source_tests;
 #[path = "internal/contract_target.rs"]

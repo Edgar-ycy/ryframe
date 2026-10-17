@@ -89,6 +89,7 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
         | CloneCommand::Bridge { .. }
         | CloneCommand::MaintenanceBuild { .. }
         | CloneCommand::MaintenanceVerify { .. }
+        | CloneCommand::Storage(_)
             if !clone::requires_seed_to_arm_python(command) =>
         {
             return clone::native::run(command, &root_dir());

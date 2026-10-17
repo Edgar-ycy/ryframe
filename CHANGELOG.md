@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `cargo xtask check recovery clone storage` 的 RustFS 资源阶段迁至 Rust xtask。原生入口保留固定请求和登记摘要、数据目录与凭据引用、两端口就绪、原始启动和实际进程身份、失败与未知启动收据、服务身份变化拒绝、显式 `--write`、只读 `status` 和精确进程树回收；新增隔离测试覆盖成功绑定、参数/路径/链接、端口占用、请求摘要漂移、停止竞态、未知启动收据和 status 只读。`cache` 的 successor 与前代工具换代路径尚未完整实现，已回退原状态机并删除半完成 Rust 代码；其 Python 实现仍被 seed 和其余复制阶段调用，因此继续保留。
+
 - `cargo xtask check recovery clone bridge` 与 `maintenance build|verify` 迁至 Rust xtask：bridge 在原生代码中严格核验 API/Worker 或维护 CLI 构建收据、完整 Git 来源清单、文件集合、产物字节、构建上下文、当前产品输入和链接边界，以 create-new 发布逐字段兼容原 Python 的复用审计文件；维护构建通过统一进程层以 Cargo 离线模式执行三个固定定向构建，冻结二进制、JSON 事件、日志、源码、工具链与 target 收据，并在源码或工具链漂移、旧输出、构建失败和未知部分写入时失败关闭。`maintenance verify` 只读兼容既有收据，命令入口不再启动 Python。新增真实 Git/Python 输出对照、输入与产物漂移、链接、错误来源、重复执行、失败现场和收据字段回归。
 
 - `cargo xtask check recovery clone init|status|stage` 的 `source_to_seed` 生命周期状态迁至 Rust：原生完成严格清单绑定、create-new 运行目录、只读 status、进程互斥、控制器身份、单调 attempt、失败/取消/未知结果收据、阶段结果原子发布和源码终检；`init/status` 不启动 Python，stage 的未迁移 export、target-verify、copy 资源编排通过单一私有子进程执行，不再共享 Python 生命周期状态机。`seed_to_arm` 的目标文件树、外部存储代次和已发布来源深层校验尚未迁移，其三个命令整体回退原 Python 状态机，避免半迁移。保留 `.local-tests` 路径、链接与清单摘要校验，并增加与 Python init/status 输出、控制器观察和失败现场逐字段对照。
