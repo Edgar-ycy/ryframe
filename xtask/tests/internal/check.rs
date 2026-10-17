@@ -137,11 +137,7 @@ fn full_gate_discovers_repository_python_and_node_tests() {
             .into_iter()
             .map(|task| task.script)
             .collect::<Vec<_>>(),
-        [
-            "tools/python/check_deployment_assets.py",
-            "tools/python/check_permission_routes.py",
-            "tools/python/check_supply_chain.py",
-        ]
+        ["tools/python/check_supply_chain.py"]
     );
     assert_eq!(
         WORKSPACE_CLIPPY_ARGS,

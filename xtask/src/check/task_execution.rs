@@ -81,6 +81,10 @@ pub(crate) fn execute_registered_task(
         ),
         TaskExecutor::FeatureRegistry => check_feature_registry(&context.root),
         TaskExecutor::WorkspaceClippy => run_workspace_clippy(context),
+        TaskExecutor::DeploymentAssets => {
+            super::super::deployment_assets::run_source(&context.root)
+        }
+        TaskExecutor::PermissionRoutes => super::super::permission_routes::run(&context.root),
         TaskExecutor::PolicyChecks | TaskExecutor::BackendPolicyChecks => {
             run_policy_checks(context, policy_profile(mode))
         }

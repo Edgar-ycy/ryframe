@@ -27,6 +27,8 @@ fn full_tasks(scope: CheckScope) -> Vec<TaskExecutor> {
         TaskExecutor::FeatureRegistry,
         TaskExecutor::CargoFormat,
         TaskExecutor::WorkspaceClippy,
+        TaskExecutor::DeploymentAssets,
+        TaskExecutor::PermissionRoutes,
         if scope == CheckScope::Backend {
             TaskExecutor::BackendPolicyChecks
         } else {
@@ -72,6 +74,7 @@ fn smart_tasks(selection: &VerifySelection, scope: CheckScope) -> Vec<TaskExecut
             TaskExecutor::FeatureRegistry,
             TaskExecutor::CargoFormat,
             TaskExecutor::SmartBackendPackages,
+            TaskExecutor::PermissionRoutes,
             if scope == CheckScope::Backend {
                 TaskExecutor::BackendSmartPolicyChecks
             } else {

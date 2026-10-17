@@ -77,7 +77,7 @@ groups:
         annotations:
           summary: "Refresh-token replay detected"
           description: "At least one confirmed refresh-token replay was detected in the last 5 minutes."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#refresh-token-重放"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#refresh-token-重放与异常账号恢复"
 
       - alert: RyFrameRateLimitRejectionsHigh
         expr: sum by (instance, scope) (rate(ryframe_rate_limit_rejections_total[5m])) > 1

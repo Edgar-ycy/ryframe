@@ -16,11 +16,13 @@ resource = ["dep:ryframe-generator"]
 ryframe-config = { path = "../crates/ryframe-config", features = ["tools"] }
 chrono = { workspace = true }
 notify = "8.2"
-regex = { workspace = true }
+percent-encoding = { workspace = true }
 ryframe-generator = { path = "../crates/ryframe-generator", default-features = false, optional = true }
+regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "signal"] }
 toml = { workspace = true }
 

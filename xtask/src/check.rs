@@ -10,6 +10,8 @@ mod change_surface;
 mod context;
 #[path = "check/cyclonedx.rs"]
 pub(crate) mod cyclonedx;
+#[path = "check/deployment_assets.rs"]
+pub(crate) mod deployment_assets;
 #[path = "check/execution.rs"]
 mod execution;
 #[path = "check/feature.rs"]
@@ -22,6 +24,8 @@ pub(crate) mod metrics;
 mod model;
 #[path = "check/node_suite.rs"]
 mod node_suite;
+#[path = "check/permission_routes.rs"]
+pub(crate) mod permission_routes;
 #[path = "check/plan.rs"]
 mod plan;
 #[path = "check/policy_tasks.rs"]

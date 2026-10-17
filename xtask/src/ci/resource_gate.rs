@@ -17,7 +17,7 @@ use crate::{
         resource_workspace_compilation, targeted_resource_workspace_compilation,
         verify_backend_snapshots, verify_job_budget_from,
     },
-    process::{run as run_process, run_owned},
+    process::run_owned,
     workspace::root_dir,
 };
 
@@ -340,13 +340,18 @@ fn execute_targeted_cross_contracts(
     for step in steps {
         match step {
             GateStep::PermissionContract => {
-                let args = vec![
-                    permission_policy_script()?,
-                    "--backend-root".to_owned(),
-                    root.to_string_lossy().into_owned(),
-                    "--skip-cargo-check".to_owned(),
-                ];
-                run_owned(root, "python", &args)?;
+                let violations = crate::check::permission_routes::violations(root)?;
+                if !violations.is_empty() {
+                    return Err(format!(
+                        "访问边界违规：\n{}",
+                        violations
+                            .iter()
+                            .map(|item| format!("  - {item}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                    .into());
+                }
             }
             GateStep::MigrationContract => {
                 let args = preflight_migration_args(base);
@@ -359,17 +364,6 @@ fn execute_targeted_cross_contracts(
         }
     }
     Ok(())
-}
-
-fn permission_policy_script() -> Result<String> {
-    let runner_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("xtask manifest 缺少父目录")?;
-    let script = runner_root.join("tools/python/check_permission_routes.py");
-    if !script.is_file() {
-        return Err(format!("当前 runner 缺少权限门禁脚本：{}", script.display()).into());
-    }
-    Ok(script.to_string_lossy().into_owned())
 }
 
 pub(crate) fn targeted_contract_steps(
@@ -429,9 +423,7 @@ fn execute_step(
             "cargo",
             &affected_package_args_for_target("test", packages, &targets.backend, test_jobs)?,
         )?,
-        GateStep::PermissionContract => {
-            run_process(root, "python", &["tools/python/check_permission_routes.py"])?;
-        }
+        GateStep::PermissionContract => crate::check::permission_routes::run(root)?,
         GateStep::MigrationContract => {
             let args = preflight_migration_args(base);
             run_owned(root, "python", &args)?;

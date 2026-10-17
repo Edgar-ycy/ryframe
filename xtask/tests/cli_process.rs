@@ -58,6 +58,23 @@ fn default_backend_plan_does_not_require_frontend_checkout() {
     assert!(error.contains("frontend-absent-for-plan"));
 }
 
+#[test]
+fn full_plan_exposes_rust_deployment_and_permission_policy_nodes() {
+    let output = invoke(&["check", "--full", "--plan"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("任务 policy.deployment-assets"), "{text}");
+    assert!(text.contains("任务 policy.permission-routes"), "{text}");
+    assert!(text.contains("调用=check_deployment_assets"), "{text}");
+    assert!(text.contains("调用=check_permission_routes"), "{text}");
+    assert!(!text.contains("tools/python/check_deployment_assets.py"));
+    assert!(!text.contains("tools/python/check_permission_routes.py"));
+}
+
 fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {
     xtask_command()
         .args(arguments)

@@ -34,25 +34,11 @@ impl PythonPolicyTask {
 
 pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     PythonPolicyTask {
-        id: "deployment-assets",
-        script: "tools/python/check_deployment_assets.py",
-        full_order: Some(1),
-        smart_order: None,
-        ci_preflight_order: None,
-    },
-    PythonPolicyTask {
         id: "migration-history",
         script: MIGRATION_HISTORY_SCRIPT,
         full_order: None,
         smart_order: Some(1),
         ci_preflight_order: None,
-    },
-    PythonPolicyTask {
-        id: "permission-routes",
-        script: "tools/python/check_permission_routes.py",
-        full_order: Some(4),
-        smart_order: Some(2),
-        ci_preflight_order: Some(3),
     },
     PythonPolicyTask {
         id: "supply-chain",

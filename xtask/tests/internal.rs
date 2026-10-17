@@ -52,6 +52,10 @@ mod check_architecture_tests;
 mod check_cancellation_tests;
 #[path = "internal/check_cyclonedx.rs"]
 mod check_cyclonedx_tests;
+#[path = "internal/check_deployment_assets.rs"]
+mod check_deployment_assets_tests;
+#[path = "internal/check_permission_routes.rs"]
+mod check_permission_routes_tests;
 #[path = "internal/check_plan.rs"]
 mod check_plan_tests;
 #[path = "internal/check_policy_tasks.rs"]

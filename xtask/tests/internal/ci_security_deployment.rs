@@ -78,12 +78,7 @@ fn deployment_commands_preserve_fixed_images_paths_and_exact_check_counts() {
 
     let static_commands =
         deployment_commands(TaskExecutor::CiDeploymentStatic, &root, &source, None).unwrap();
-    assert_eq!(static_commands.len(), 1);
-    assert_eq!(static_commands[0].program, "python");
-    assert_eq!(
-        static_commands[0].arguments,
-        ["tools/python/check_deployment_assets.py"]
-    );
+    assert!(static_commands.is_empty());
 
     let compose =
         deployment_commands(TaskExecutor::CiDeploymentCompose, &root, &source, None).unwrap();
@@ -140,16 +135,18 @@ fn deployment_commands_preserve_fixed_images_paths_and_exact_check_counts() {
 
     let image_commands =
         deployment_commands(TaskExecutor::CiDeploymentImage, &root, &image, None).unwrap();
-    assert_eq!(image_commands.len(), 1);
+    assert!(image_commands.is_empty());
     assert_eq!(
-        image_commands[0].arguments,
-        [
-            "tools/python/check_deployment_assets.py",
-            "--image",
-            "ryframe-ci:test",
-            "--expected-commit",
-            SHA,
-        ]
+        TaskExecutor::CiDeploymentStatic
+            .definition()
+            .static_arguments,
+        None
+    );
+    assert_eq!(
+        TaskExecutor::CiDeploymentImage
+            .definition()
+            .static_arguments,
+        None
     );
 }
 

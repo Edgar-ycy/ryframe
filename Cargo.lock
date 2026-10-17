@@ -5076,6 +5076,7 @@ dependencies = [
  "chrono",
  "nix 0.29.0",
  "notify",
+ "percent-encoding",
  "processkit",
  "regex",
  "ryframe-config",

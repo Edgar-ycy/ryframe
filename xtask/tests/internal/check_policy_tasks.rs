@@ -31,23 +31,15 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
 
     assert_eq!(
         scripts(PolicyProfile::FullStatic),
-        [
-            "tools/python/check_deployment_assets.py",
-            "tools/python/check_permission_routes.py",
-            "tools/python/check_supply_chain.py",
-        ]
+        ["tools/python/check_supply_chain.py"]
     );
     assert_eq!(
         scripts(PolicyProfile::Smart),
         [
             "tools/python/check_migration_history.py",
-            "tools/python/check_permission_routes.py",
         ]
     );
-    assert_eq!(
-        scripts(PolicyProfile::CiPreflight),
-        ["tools/python/check_permission_routes.py"]
-    );
+    assert_eq!(scripts(PolicyProfile::CiPreflight), []);
     assert_eq!(
         scripts(PolicyProfile::FullStatic)
             .iter()
@@ -59,10 +51,15 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
         !scripts(PolicyProfile::CiPreflight).contains(&"tools/python/check_supply_chain.py"),
         "CI preflight 的供应链检查由始终执行的 security source job 覆盖"
     );
-    assert!(
-        !scripts(PolicyProfile::CiPreflight).contains(&"tools/python/check_deployment_assets.py"),
-        "CI preflight 的部署静态检查由始终执行的 security deployment source 覆盖"
-    );
+    for profile in [
+        PolicyProfile::FullStatic,
+        PolicyProfile::Smart,
+        PolicyProfile::CiPreflight,
+    ] {
+        let scripts = scripts(profile);
+        assert!(!scripts.contains(&"tools/python/check_deployment_assets.py"));
+        assert!(!scripts.contains(&"tools/python/check_permission_routes.py"));
+    }
 }
 
 #[test]

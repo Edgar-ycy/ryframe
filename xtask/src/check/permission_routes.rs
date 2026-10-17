@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::Result;
+use crate::{Result, process::PreservedFailure};
 
 struct Rule {
     label: &'static str,
@@ -42,10 +42,13 @@ fn compiled() -> &'static [(Rule, Regex)] {
             .iter()
             .map(|rule| {
                 let regex = Regex::new(rule.pattern).expect("固定权限路由正则");
-                (Rule {
-                    label: rule.label,
-                    pattern: rule.pattern,
-                }, regex)
+                (
+                    Rule {
+                        label: rule.label,
+                        pattern: rule.pattern,
+                    },
+                    regex,
+                )
             })
             .collect()
     })
@@ -85,7 +88,12 @@ pub(crate) fn violations(root: &Path) -> Result<Vec<String>> {
         let text = std::fs::read_to_string(&path)?;
         for (rule, regex) in compiled().iter() {
             if regex.is_match(&text) {
-                result.push(format!("{} :: {}", path.display(), rule.label));
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                result.push(format!("{relative} :: {}", rule.label));
             }
         }
     }
@@ -100,29 +108,22 @@ pub(crate) fn run(root: &Path) -> Result<()> {
         for item in &violations {
             println!("  - {item}");
         }
-        return Err(format!(
-            "访问目录与路由 policy 检查发现 {} 处违规",
-            violations.len()
+        return Err(PreservedFailure::new(
+            format!("访问目录与路由 policy 检查发现 {} 处违规", violations.len()),
+            Some(1),
         )
         .into());
     }
-    crate::process::run_owned(root, "cargo", &["check".into(), "--locked".into(), "-p".into(), "ryframe-api".into()])?;
+    crate::process::run_owned(
+        root,
+        "cargo",
+        &[
+            "check".into(),
+            "--locked".into(),
+            "-p".into(),
+            "ryframe-api".into(),
+        ],
+    )?;
     println!("访问目录与路由 policy 检查通过。");
-    Ok(())
-}
-
-pub(crate) fn run_scan_only(root: &Path) -> Result<()> {
-    let violations = violations(root)?;
-    if !violations.is_empty() {
-        println!("访问边界违规：");
-        for item in &violations {
-            println!("  - {item}");
-        }
-        return Err(format!(
-            "访问目录与路由 policy 检查发现 {} 处违规",
-            violations.len()
-        )
-        .into());
-    }
     Ok(())
 }

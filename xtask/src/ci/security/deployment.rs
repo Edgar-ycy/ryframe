@@ -36,7 +36,6 @@ pub(crate) const DEPLOYMENT_PATHS: &[&str] = &[
     "locales",
     "migrations",
     "openapi",
-    "tools/python/check_deployment_assets.py",
     "tools/fixtures/deployment/deploy.env",
     "vendor",
     "xtask",
@@ -237,8 +236,19 @@ fn valid_git_sha(value: &str) -> bool {
 }
 
 fn run_task(executor: TaskExecutor, root: &Path, options: &DeploymentOptions) -> Result<()> {
-    if executor == TaskExecutor::CiDeploymentNginx {
-        return run_nginx(root, options);
+    match executor {
+        TaskExecutor::CiDeploymentStatic => {
+            return crate::check::deployment_assets::run_source(root);
+        }
+        TaskExecutor::CiDeploymentImage => {
+            return crate::check::deployment_assets::run_image(
+                root,
+                options.image.as_deref().ok_or("镜像阶段缺少 --image")?,
+                options.expected_commit.as_deref(),
+            );
+        }
+        TaskExecutor::CiDeploymentNginx => return run_nginx(root, options),
+        _ => {}
     }
     for command in deployment_commands(executor, root, options, None)? {
         run_owned(root, command.program, &command.arguments)?;
@@ -249,17 +259,14 @@ fn run_task(executor: TaskExecutor, root: &Path, options: &DeploymentOptions) ->
 pub(crate) fn deployment_commands(
     executor: TaskExecutor,
     root: &Path,
-    options: &DeploymentOptions,
+    _options: &DeploymentOptions,
     certificate_dir: Option<&Path>,
 ) -> Result<Vec<DeploymentCommand>> {
     let root = absolute_utf8(root)?;
     let command = |program, arguments| DeploymentCommand { program, arguments };
     match executor {
         TaskExecutor::CiDeploymentChanges => Ok(Vec::new()),
-        TaskExecutor::CiDeploymentStatic => Ok(vec![command(
-            "python",
-            vec!["tools/python/check_deployment_assets.py".to_owned()],
-        )]),
+        TaskExecutor::CiDeploymentStatic => Ok(Vec::new()),
         TaskExecutor::CiDeploymentCompose => Ok(vec![command(
             "docker",
             vec![
@@ -278,19 +285,7 @@ pub(crate) fn deployment_commands(
             nginx_commands(&root, certificate_dir.ok_or("Nginx 校验缺少受控证书目录")?)
         }
         TaskExecutor::CiDeploymentPrometheus => Ok(prometheus_commands(&root)),
-        TaskExecutor::CiDeploymentImage => Ok(vec![command(
-            "python",
-            vec![
-                "tools/python/check_deployment_assets.py".to_owned(),
-                "--image".to_owned(),
-                options.image.clone().ok_or("镜像阶段缺少 --image")?,
-                "--expected-commit".to_owned(),
-                options
-                    .expected_commit
-                    .clone()
-                    .ok_or("镜像阶段缺少 --expected-commit")?,
-            ],
-        )]),
+        TaskExecutor::CiDeploymentImage => Ok(Vec::new()),
         _ => Err("非 Security deployment 节点不能由部署执行器运行".into()),
     }
 }

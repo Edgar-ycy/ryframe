@@ -17,6 +17,7 @@ const PREFLIGHT_TASKS: &[TaskExecutor] = &[
     TaskExecutor::PythonTests,
     TaskExecutor::NodeTests,
     TaskExecutor::PolicyChecks,
+    TaskExecutor::PermissionRoutes,
     TaskExecutor::MigrationHistory,
 ];
 const RUST_GATE_TASKS: &[TaskExecutor] = &[

@@ -195,7 +195,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         Backend,
         Static,
         Backend,
-        Some(&["tools/python/check_deployment_assets.py"]),
+        None,
         &[],
         &[],
         &[]

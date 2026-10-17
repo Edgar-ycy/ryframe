@@ -65,6 +65,8 @@ pub(crate) enum TaskExecutor {
     CargoFormat,
     FeatureRegistry,
     WorkspaceClippy,
+    DeploymentAssets,
+    PermissionRoutes,
     PolicyChecks,
     BackendPolicyChecks,
     SnapshotPrepare,
@@ -147,6 +149,8 @@ mod ci;
 mod language;
 #[path = "task_registry/perf.rs"]
 mod perf;
+#[path = "task_registry/policy.rs"]
+mod policy;
 #[path = "task_registry/release.rs"]
 mod release;
 
@@ -460,6 +464,7 @@ const TASK_COUNT: usize = CHECK_TASKS.len()
     + ci::TASKS.len()
     + release::TASKS.len()
     + perf::TASKS.len()
+    + policy::TASKS.len()
     + language::TASKS.len();
 
 const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
@@ -486,6 +491,12 @@ const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
         registry[index] = perf::TASKS[perf_index];
         index += 1;
         perf_index += 1;
+    }
+    let mut policy_index = 0;
+    while policy_index < policy::TASKS.len() {
+        registry[index] = policy::TASKS[policy_index];
+        index += 1;
+        policy_index += 1;
     }
     let mut language_index = 0;
     while language_index < language::TASKS.len() {
