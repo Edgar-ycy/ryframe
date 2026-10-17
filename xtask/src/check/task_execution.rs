@@ -203,8 +203,8 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
     super::super::architecture::run(&context.root)?;
     for task in policy_tasks(profile) {
         match task.invocation {
-            PolicyTaskInvocation::Python(script) => {
-                run_owned(&context.root, "python", &[script.to_owned()])?;
+            PolicyTaskInvocation::SupplyChain => {
+                super::super::supply_chain::run(&context.root, false)?;
             }
             PolicyTaskInvocation::MigrationHistory => {
                 run_migration_history_check(&context.root, false, "HEAD")?;

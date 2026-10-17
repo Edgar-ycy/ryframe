@@ -113,11 +113,11 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         CiSupplyChainSource,
         "ci.security.supply-chain",
         "verify_supply_chain_source",
-        "核对供应链策略和条件依赖例外",
+        "用 Rust 读取供应链策略并核对工作流、许可证与条件依赖例外",
         Backend,
         Static,
         Backend,
-        Some(&["tools/python/check_supply_chain.py", "--verify-cargo-graph"]),
+        None,
         &["Cargo feature graph"],
         &["Cargo registry cache"],
         &["Cargo registry"]

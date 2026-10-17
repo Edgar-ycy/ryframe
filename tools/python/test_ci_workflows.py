@@ -220,9 +220,10 @@ class CiWorkflowTests(unittest.TestCase):
                      "openapi/**", "tools/**", "scripts/requirements-ci.txt", "vendor/**", "xtask/**"):
             self.assertIn(f'"{path}"', workflow)
         self.assertNotIn('"tools/python/ci_full_stack.py"', workflow.split("schedule:", 1)[0])
-        for path in ("tools/python/check_supply_chain.py", "tools/policies/supply_chain_policy.json",
+        self.assertTrue((ROOT / "tools/policies/supply_chain_policy.json").is_file())
+        for path in ("tools/python/check_supply_chain.py",
                      "tools/python/test_check_supply_chain.py"):
-            self.assertTrue((ROOT / path).is_file())
+            self.assertFalse((ROOT / path).exists())
         self.assertNotIn("check_vulnerability_exceptions.py", workflow)
         self.assertNotIn("vulnerability-exceptions.json", workflow)
         self.assertIn("APP_ENV: test", block)
@@ -334,9 +335,21 @@ class CiWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
             for name in ("ci.yml", "extended-ci.yml")
         )
-        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 5)
-        self.assertEqual(workflow.count("--force-reinstall"), 4)
-        self.assertEqual(workflow.count("--require-hashes"), 4)
+        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 4)
+        self.assertEqual(workflow.count("--force-reinstall"), 3)
+        self.assertEqual(workflow.count("--require-hashes"), 3)
+
+    def test_ci_yaml_parser_requirement_is_exact_and_hashed(self) -> None:
+        requirements = (ROOT / "scripts/requirements-ci.txt").read_text(
+            encoding="utf-8"
+        )
+        for requirement in (
+            "PyYAML==6.0.3",
+            "tree-sitter==0.25.2",
+            "tree-sitter-rust==0.24.2",
+        ):
+            self.assertIn(requirement, requirements)
+        self.assertEqual(requirements.count("--hash=sha256:"), 11)
 
     def test_preflight_passes_the_fetched_trusted_base_to_xtask(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

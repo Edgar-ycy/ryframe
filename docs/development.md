@@ -141,7 +141,7 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 ## 框架维护检查
 
 框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。
-架构检查由 Rust xtask 执行，覆盖 crate 依赖图与声明边、system 业务域公开面、人工文档、源码与函数规模、旧持久化接口、异步端口、Workspace unsafe lint、测试布局及租户数据静态边界。函数规模与 unsafe 语法仍由固定版本的 tree-sitter helper 解析；运行该门禁需要按 `scripts/requirements-ci.txt` 准备 Python 环境，普通完整检查会先核验解释器和原生依赖。
+架构检查由 Rust xtask 执行，覆盖 crate 依赖图与声明边、system 业务域公开面、人工文档、源码与函数规模、旧持久化接口、异步端口、Workspace unsafe lint、测试布局及租户数据静态边界。函数规模与 unsafe 语法仍由固定版本的 tree-sitter helper 解析；运行该门禁需要按 `scripts/requirements-ci.txt` 准备 Python 环境，普通完整检查会先核验解释器和原生依赖。供应链来源检查同样由 Rust xtask 只读执行：以 `tools/policies/supply_chain_policy.json` 为事实源，校验策略 schema、本地 patch 许可证及 registry 原件、GitHub Action/可复用工作流/容器引用、service image digest、安装工具版本、工作流命令和 Cargo 条件依赖例外；`ci.security.supply-chain` 额外校验 API、Worker、Migrate 与默认生成器的定向 feature 树。工作流解析保留锚点、别名和 YAML 1.2 布尔语义，遇到重复键或未支持的静态结构会失败关闭；该检查不依赖 PyYAML，PyYAML 仍供其他 Python 测试和监控工具使用。
 
 前端改名或移动后，在后端 `config/tools.toml` 设置路径；仅本机使用的配置放在忽略目录 `.local-tests/tools.toml`：
 

@@ -4,7 +4,9 @@ pub(crate) fn print_help(topic: Option<&str>) {
             "cargo xtask dev [--measure-once]\n  只管理后端 API、Worker 与其进程树；只校验数据库迁移。前端请在前端仓库运行 corepack pnpm dev。--measure-once 仅供 DevEx 保存场景使用。"
         }
         Some("check") => {
-            println!("{CHECK_HELP}\n\n{CI_INTEGRATION_HELP}");
+            println!(
+                "{CHECK_HELP}\n\n{CI_INTEGRATION_HELP}\n\nsecurity source 的供应链策略、工作流固定引用、本地 patch 许可证和 Cargo feature 树由 Rust 只读校验，不启动 Python。"
+            );
             return;
         }
         Some("build") => {

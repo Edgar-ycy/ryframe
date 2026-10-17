@@ -40,6 +40,8 @@ mod resource;
 mod selection;
 #[path = "check/snapshot.rs"]
 mod snapshot;
+#[path = "check/supply_chain.rs"]
+pub(crate) mod supply_chain;
 #[path = "check/task_plan.rs"]
 mod task_plan;
 #[path = "check/task_registry.rs"]

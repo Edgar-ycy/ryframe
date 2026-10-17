@@ -172,7 +172,8 @@ impl Fixture {
         fs::create_dir_all(root.join("tools/policies")).unwrap();
         fs::write(
             root.join("tools/policies/supply_chain_policy.json"),
-            EMPTY_POLICY,
+            include_str!("../../../tools/policies/supply_chain_policy.json")
+                .replace("2026-12-31", "2099-12-31"),
         )
         .unwrap();
         fs::write(root.join("report.json"), EMPTY_REPORT).unwrap();

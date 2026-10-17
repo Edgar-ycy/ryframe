@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 供应链来源检查迁至 Rust xtask。策略 schema、本地 patch 许可证与 registry 原件、Action/可复用工作流/容器固定引用、service image digest、工具版本、工作流命令和 Cargo feature 树改用同一只读实现；工作流解析保留锚点、别名、重复键拒绝和 YAML 1.2 布尔语义，删除旧 Python 脚本及仅服务该脚本的测试，security job 不再为此安装 Python 依赖。
+
 - 将 AWS-LC TLS 出站集成门禁迁至 Rust xtask：原生生成临时回环 CA、运行 Redis TLS 代理与 HTTPS fixture，保留三类精确测试、900 秒单项超时、完整进程树终止、不可覆盖日志和失败摘要；CI 不再安装 Python 执行 TLS fixture，删除被替代的 Python 门禁、HTTPS helper 与测试。
 
 - CI 配套前端来源选择迁至 Rust xtask，原生完成事件解析、OpenAPI 基线分类、候选契约生成核验、发布 tag 映射和 GitHub job output；保留显式 marker、无效基线回退及命令失败诊断，删除被替代的 Python 实现与测试。

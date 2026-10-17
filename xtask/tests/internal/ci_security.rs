@@ -11,41 +11,30 @@ fn security_source_uses_one_ordered_task_plan_and_fixed_commands() {
     let plan = ci_execution_plan_for(&CiCommand::Security(SecurityCommand::Source)).unwrap();
     let expected = [
         (
-            TaskExecutor::PythonEnvironment,
-            "python.environment",
-            "python",
-            &["tools/python/check_python_environment.py"][..],
-        ),
-        (
             TaskExecutor::CiSupplyChainSource,
             "ci.security.supply-chain",
-            "python",
-            &["tools/python/check_supply_chain.py", "--verify-cargo-graph"][..],
+            None,
         ),
         (
             TaskExecutor::CiCargoAudit,
             "ci.security.audit",
-            "cargo",
-            &["audit", "--deny", "warnings"][..],
+            Some(("cargo", &["audit", "--deny", "warnings"][..])),
         ),
         (
             TaskExecutor::CiCargoDeny,
             "ci.security.deny",
-            "cargo",
-            &["deny", "check", "licenses", "bans", "sources"][..],
+            Some((
+                "cargo",
+                &["deny", "check", "licenses", "bans", "sources"][..],
+            )),
         ),
     ];
 
     assert_eq!(plan.tasks.len(), expected.len());
-    for (index, (task, (executor, id, program, arguments))) in
-        plan.tasks.iter().zip(expected).enumerate()
-    {
+    for (index, (task, (executor, id, command))) in plan.tasks.iter().zip(expected).enumerate() {
         assert_eq!(task.executor, executor);
         assert_eq!(task.id, id);
-        assert_eq!(
-            security_source_command(executor).unwrap(),
-            (program, arguments)
-        );
+        assert_eq!(security_source_command(executor).ok(), command);
         let expected_dependencies = if index == 0 {
             Vec::new()
         } else {

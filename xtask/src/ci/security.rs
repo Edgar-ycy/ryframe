@@ -1,6 +1,6 @@
 use crate::{
     Result,
-    check::{PYTHON_ENVIRONMENT_ARGS, TaskExecutor, TaskPlan},
+    check::{TaskExecutor, TaskPlan},
     cli::{SecurityCommand, SecurityReportKind, SecurityReportOptions},
     process::run as run_process,
     workspace::root_dir,
@@ -15,7 +15,6 @@ pub(crate) use deployment::{
 };
 
 pub(super) const SOURCE_TASKS: &[TaskExecutor] = &[
-    TaskExecutor::PythonEnvironment,
     TaskExecutor::CiSupplyChainSource,
     TaskExecutor::CiCargoAudit,
     TaskExecutor::CiCargoDeny,
@@ -89,6 +88,10 @@ fn run_source(plan: &TaskPlan) -> Result<()> {
     let root = root_dir();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
+        if task.executor == TaskExecutor::CiSupplyChainSource {
+            crate::check::supply_chain::run(&root, true)?;
+            continue;
+        }
         let (program, arguments) = source_command(task.executor)?;
         run_process(&root, program, arguments)?;
     }
@@ -99,16 +102,11 @@ pub(crate) fn source_command(
     executor: TaskExecutor,
 ) -> Result<(&'static str, &'static [&'static str])> {
     let program = match executor {
-        TaskExecutor::PythonEnvironment | TaskExecutor::CiSupplyChainSource => "python",
         TaskExecutor::CiCargoAudit | TaskExecutor::CiCargoDeny => "cargo",
         _ => return Err("非 Security source 节点不能由安全执行器运行".into()),
     };
-    let arguments = if executor == TaskExecutor::PythonEnvironment {
-        PYTHON_ENVIRONMENT_ARGS
-    } else {
-        executor
-            .static_arguments()
-            .ok_or("Security source 节点缺少固定参数")?
-    };
+    let arguments = executor
+        .static_arguments()
+        .ok_or("Security source 节点缺少固定参数")?;
     Ok((program, arguments))
 }

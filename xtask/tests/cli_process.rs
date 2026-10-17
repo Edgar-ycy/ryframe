@@ -71,8 +71,11 @@ fn full_plan_exposes_rust_deployment_and_permission_policy_nodes() {
     assert!(text.contains("任务 policy.permission-routes"), "{text}");
     assert!(text.contains("调用=check_deployment_assets"), "{text}");
     assert!(text.contains("调用=check_permission_routes"), "{text}");
+    assert!(text.contains("任务 policy.backend-complete"), "{text}");
+    assert!(text.contains("供应链"), "{text}");
     assert!(!text.contains("tools/python/check_deployment_assets.py"));
     assert!(!text.contains("tools/python/check_permission_routes.py"));
+    assert!(!text.contains("tools/python/check_supply_chain.py"));
 }
 
 fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {
@@ -615,20 +618,6 @@ fn invalid_security_report_arguments_exit_two_before_running_tasks() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
         assert!(result.stdout.is_empty());
     }
-}
-
-#[test]
-fn security_source_preserves_prerequisite_failure_exit_code() {
-    let result = xtask_command()
-        .args(["check", "ci", "security", "source"])
-        .env("RYFRAME_PYTHON", "missing-security-python-executable")
-        .output()
-        .unwrap();
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("开始 CI 原子任务：python.environment"));
-    assert!(!stdout.contains("开始 CI 原子任务：ci.security.supply-chain"));
-    assert!(!stdout.contains("开始 CI 原子任务：ci.security.audit"));
 }
 
 #[test]

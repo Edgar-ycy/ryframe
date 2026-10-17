@@ -9,7 +9,7 @@ pub(crate) const STRICT_MIGRATION_HISTORY_ARGS: &[&str] = &["--require-frozen"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyTaskInvocation {
-    Python(&'static str),
+    SupplyChain,
     MigrationHistory,
 }
 
@@ -30,14 +30,6 @@ impl PolicyTask {
             PolicyProfile::CiPreflight => self.ci_preflight_order,
         }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn python_script(self) -> Option<&'static str> {
-        match self.invocation {
-            PolicyTaskInvocation::Python(script) => Some(script),
-            PolicyTaskInvocation::MigrationHistory => None,
-        }
-    }
 }
 
 pub(crate) const POLICY_TASKS: &[PolicyTask] = &[
@@ -50,7 +42,7 @@ pub(crate) const POLICY_TASKS: &[PolicyTask] = &[
     },
     PolicyTask {
         id: "supply-chain",
-        invocation: PolicyTaskInvocation::Python("tools/python/check_supply_chain.py"),
+        invocation: PolicyTaskInvocation::SupplyChain,
         full_order: Some(6),
         smart_order: None,
         ci_preflight_order: None,

@@ -68,6 +68,8 @@ mod check_prerelease_tests;
 mod check_removed_identity_tests;
 #[path = "internal/check_snapshot.rs"]
 mod check_snapshot_tests;
+#[path = "internal/check_supply_chain.rs"]
+mod check_supply_chain_tests;
 #[path = "internal/check.rs"]
 mod check_tests;
 #[path = "internal/check_trivy.rs"]

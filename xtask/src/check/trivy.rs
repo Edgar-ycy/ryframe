@@ -2,123 +2,27 @@
 
 use std::{collections::BTreeSet, fs, path::Path};
 
-use chrono::{Local, NaiveDate};
-use serde::Deserialize;
 use serde_json::Value;
 
+use super::supply_chain::policy::{
+    self as supply_policy, VulnerabilityException, VulnerabilityGate,
+};
 use crate::{Result, process::PreservedFailure};
 
 const POLICY_PATH: &str = "tools/policies/supply_chain_policy.json";
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct Policy {
-    vulnerability_gate: VulnerabilityGate,
-}
+pub(crate) type Policy = VulnerabilityGate;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct VulnerabilityGate {
-    severities: Vec<String>,
-    exceptions: Vec<VulnerabilityException>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct VulnerabilityException {
-    id: String,
-    package: String,
-    installed_version: String,
-    owner: String,
-    expires: String,
-    reason: String,
-    target: Option<String>,
-}
-
-impl VulnerabilityException {
-    fn matches(&self, id: &str, package: &str, installed: &str, target: Option<&str>) -> bool {
-        self.id == id
-            && self.package == package
-            && self.installed_version == installed
-            && self
-                .target
-                .as_deref()
-                .is_none_or(|expected| target == Some(expected))
-    }
-}
-
+#[allow(dead_code)]
 pub(crate) fn parse_policy(source: &str) -> Result<Policy> {
-    let policy: Policy = serde_json::from_str(source).map_err(|_| {
-        PreservedFailure::new(
-            "无法读取供应链策略：vulnerability_gate 结构无效".to_owned(),
-            Some(1),
-        )
-    })?;
-    if !policy.vulnerability_gate.is_valid() {
-        return Err(PreservedFailure::new(
-            "无法读取供应链策略：vulnerability_gate 结构或取值无效".to_owned(),
-            Some(1),
-        )
-        .into());
-    }
-    Ok(policy)
-}
-
-impl VulnerabilityGate {
-    fn is_valid(&self) -> bool {
-        let severities = self
-            .severities
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        if severities.len() != self.severities.len()
-            || severities.len() != 2
-            || !severities.contains("HIGH")
-            || !severities.contains("CRITICAL")
-        {
-            return false;
-        }
-
-        let today = Local::now().date_naive();
-        let mut identities = BTreeSet::new();
-        self.exceptions.iter().all(|exception| {
-            valid_advisory_id(&exception.id)
-                && !exception.package.trim().is_empty()
-                && !exception.installed_version.trim().is_empty()
-                && exception.owner.trim().chars().count() >= 3
-                && exception.reason.trim().chars().count() >= 12
-                && exception
-                    .target
-                    .as_deref()
-                    .is_none_or(|target| !target.trim().is_empty())
-                && valid_future_expiry(&exception.expires, today)
-                && identities.insert((
-                    exception.id.as_str(),
-                    exception.package.as_str(),
-                    exception.installed_version.as_str(),
-                    exception.target.as_deref(),
-                ))
+    supply_policy::parse_vulnerability_gate(source)
+        .map_err(|_| {
+            PreservedFailure::new(
+                "无法读取供应链策略：vulnerability_gate 结构无效".to_owned(),
+                Some(1),
+            )
         })
-    }
-}
-
-fn valid_advisory_id(value: &str) -> bool {
-    let mut characters = value.chars();
-    let Some(first) = characters.next() else {
-        return false;
-    };
-    (first.is_ascii_uppercase() || first.is_ascii_digit())
-        && characters.next().is_some_and(valid_advisory_character)
-        && characters.all(valid_advisory_character)
-}
-
-fn valid_advisory_character(character: char) -> bool {
-    character.is_ascii_uppercase()
-        || character.is_ascii_digit()
-        || matches!(character, '.' | '_' | ':' | '-')
-}
-
-fn valid_future_expiry(value: &str, today: NaiveDate) -> bool {
-    NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").is_ok_and(|expires| expires > today)
+        .map_err(Into::into)
 }
 
 pub(crate) fn validate(source: &str, policy: &Policy) -> Vec<String> {
@@ -131,12 +35,11 @@ pub(crate) fn validate(source: &str, policy: &Policy) -> Vec<String> {
     };
 
     let severities = policy
-        .vulnerability_gate
         .severities
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let exceptions = &policy.vulnerability_gate.exceptions;
+    let exceptions = &policy.exceptions;
     let mut used = vec![false; exceptions.len()];
     let mut errors = Vec::new();
 
@@ -215,10 +118,9 @@ fn check_vulnerabilities(
             continue;
         };
         let target_text = target.and_then(Value::as_str);
-        let matched = exceptions
-            .iter()
-            .enumerate()
-            .find(|(_, exception)| exception.matches(id, package, installed, target_text));
+        let matched = exceptions.iter().enumerate().find(|(_, exception)| {
+            exception_matches(exception, id, package, installed, target_text)
+        });
         if let Some((index, _)) = matched {
             used[index] = true;
         } else {
@@ -236,6 +138,22 @@ fn target_label(target: Option<&Value>) -> String {
         .unwrap_or_else(|| "null".to_owned())
 }
 
+fn exception_matches(
+    exception: &VulnerabilityException,
+    id: &str,
+    package: &str,
+    installed: &str,
+    target: Option<&str>,
+) -> bool {
+    exception.id == id
+        && exception.package == package
+        && exception.installed_version == installed
+        && exception
+            .target
+            .as_deref()
+            .is_none_or(|expected| target == Some(expected))
+}
+
 pub(crate) fn check(path: &Path, policy: &Policy) -> Result<Vec<String>> {
     let source = fs::read_to_string(path).map_err(|_| {
         // 文件路径、JSON 片段和底层异常均可能携带凭据，诊断只报告固定原因。
@@ -248,14 +166,14 @@ pub(crate) fn check(path: &Path, policy: &Policy) -> Result<Vec<String>> {
 }
 
 pub(crate) fn run(path: &Path, backend_root: &Path) -> Result<()> {
-    let policy_source = fs::read_to_string(backend_root.join(POLICY_PATH)).map_err(|_| {
-        PreservedFailure::new(
-            "无法读取供应链策略：文件不可读取或 UTF-8 无效".to_owned(),
-            Some(1),
-        )
+    let policy = supply_policy::load_file(
+        &backend_root.join(POLICY_PATH),
+        chrono::Local::now().date_naive(),
+    )
+    .map_err(|_| {
+        PreservedFailure::new("无法读取供应链策略：策略结构或取值无效".to_owned(), Some(1))
     })?;
-    let policy = parse_policy(&policy_source)?;
-    let errors = check(path, &policy)?;
+    let errors = check(path, &policy.vulnerability_gate)?;
     if !errors.is_empty() {
         return Err(PreservedFailure::new(errors.join("\n"), Some(1)).into());
     }

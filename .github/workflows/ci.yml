@@ -572,7 +572,7 @@ jobs:
           retention-days: 14
 
   # ============================================================
-  # 安全、许可证与部署资产：复用同一 checkout 和 Python 环境
+  # 安全、许可证与部署资产：复用同一 checkout
   # ============================================================
   security-audit:
     name: Security, Supply Chain & Deployment
@@ -589,21 +589,6 @@ jobs:
         with:
           fetch-depth: 0
           path: backend
-
-      - name: 固定 CI Python 3.12
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-
-      - name: 安装固定并校验哈希的 CI Python 依赖
-        run: >-
-          python -m pip install
-          --disable-pip-version-check
-          --force-reinstall
-          --no-deps
-          --only-binary=:all:
-          --require-hashes
-          --requirement scripts/requirements-ci.txt
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
