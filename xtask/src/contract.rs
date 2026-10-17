@@ -7,7 +7,7 @@ mod candidate;
 #[path = "contract/formal.rs"]
 mod formal;
 #[path = "contract/model.rs"]
-mod model;
+pub(crate) mod model;
 #[path = "contract/ownership.rs"]
 mod ownership;
 #[path = "contract/readonly.rs"]

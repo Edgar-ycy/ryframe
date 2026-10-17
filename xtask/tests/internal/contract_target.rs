@@ -1,7 +1,6 @@
 use std::path::Path;
 
-#[path = "../../src/contract/model.rs"]
-mod model;
+use crate::contract::model;
 
 #[test]
 fn contract_export_resolves_cargo_target_against_the_backend_root() {
