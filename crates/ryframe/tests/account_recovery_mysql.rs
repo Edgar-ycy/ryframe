@@ -23,6 +23,75 @@ const NEW_PASSWORD: &str = "RecoveredUser123!";
 static NEXT_ID: AtomicI64 = AtomicI64::new(1_000_000);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_user_login_requires_and_completes_password_change() {
+    if !mysql::integration_enabled("RYFRAME_MYSQL_INTEGRATION") {
+        eprintln!("跳过初始用户首次改密真实协议测试：需显式 RYFRAME_MYSQL_INTEGRATION=1");
+        return;
+    }
+    initialize();
+    mysql::run_mysql_test("initial-user-login", |database| async move {
+        let hashes = migration::BootstrapHashes::new(
+            password::hash("ExplicitAdmin123!").map_err(message)?,
+            password::hash("123456").map_err(message)?,
+        )
+        .map_err(message)?;
+        migration::up(&database, Some(&hashes))
+            .await
+            .map_err(message)?;
+        let (_, auth) = services(database.clone())?;
+        let initial = auth
+            .login("system", "user", "123456")
+            .await
+            .map_err(message)?;
+        assert!(initial.user_info.password_change_required);
+
+        let cache = AuthorizationCache::disabled();
+        let profile = ProfileService::new(
+            application_ports::users::profile(
+                ControlDatabaseCluster::single(database.clone()),
+                cache.clone(),
+            ),
+            cache,
+        );
+        let user = ActorContext {
+            user_id: 2,
+            username: "user".into(),
+            is_super_admin: false,
+            data_scope: DataScope::SelfOnly,
+            ..administrator()
+        };
+        profile
+            .change_password(&user, "123456", "FirstLogin123!")
+            .await
+            .map_err(message)?;
+        assert_session_rejected(&auth, &initial).await;
+        assert!(auth.login("system", "user", "123456").await.is_err());
+        let changed = auth
+            .login("system", "user", "FirstLogin123!")
+            .await
+            .map_err(message)?;
+        assert!(!changed.user_info.password_change_required);
+        let refreshed = auth
+            .refresh_token(&changed.refresh_token, "first-login-changed")
+            .await
+            .map_err(message)?;
+        assert!(!refreshed.user_info.password_change_required);
+
+        migration::up(&database, None).await.map_err(message)?;
+        assert!(
+            !auth
+                .login("system", "user", "FirstLogin123!")
+                .await
+                .map_err(message)?
+                .user_info
+                .password_change_required
+        );
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn existing_abnormal_accounts_recover_explicitly_and_old_credentials_stay_invalid() {
     if !mysql::integration_enabled("RYFRAME_MYSQL_INTEGRATION") {
         eprintln!("跳过异常账号恢复真实协议测试：需显式 RYFRAME_MYSQL_INTEGRATION=1");
