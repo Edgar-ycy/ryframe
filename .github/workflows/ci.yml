@@ -369,6 +369,11 @@ jobs:
         working-directory: frontend
         run: corepack pnpm install --frozen-lockfile
 
+      - name: 验证 Rust 资源门禁回放器
+        if: ${{ needs.plan.outputs.resource_gate == 'true' }}
+        working-directory: backend
+        run: cargo test --locked -p xtask --test internal resource_gate_replay -- --test-threads=1
+
       - name: 执行资源影响闭包与消费者门禁
         if: ${{ needs.plan.outputs.resource_gate == 'true' }}
         working-directory: backend

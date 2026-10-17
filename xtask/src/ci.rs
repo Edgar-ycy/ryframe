@@ -13,7 +13,7 @@ use crate::{
         changed_paths_between, ci_target_policy, ci_test_jobs_from, classify_changes,
         complete_verify_selection, load_workspace_graph, resource_workspace_compilation,
     },
-    cli::{CiCommand, ResourceGateReplayOptions},
+    cli::CiCommand,
     contract::verify_contract_source,
     process::{command_output, run_owned},
     workspace::root_dir,
@@ -58,7 +58,9 @@ const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan => plan(),
-        CiCommand::ResourceGateReplay(options) => resource_gate_replay(&options, frontend_dir),
+        CiCommand::ResourceGateReplay(options) => {
+            resource_gate::replay::run(&options, frontend_dir)
+        }
         CiCommand::FrontendSource(options) => {
             let task_plan = frontend_source::plan(&options)?;
             if options.plan {
@@ -75,42 +77,6 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
 fn execute_ci_command(command: &CiCommand, frontend_dir: &Path) -> Result<()> {
     let plan = ci_execution_plan_for(command)?;
     task_plan::execute_ci_job(command, &plan, frontend_dir)
-}
-
-fn resource_gate_replay(options: &ResourceGateReplayOptions, frontend_dir: &Path) -> Result<()> {
-    let root = root_dir();
-    let arguments = resource_gate_replay_args(options, &root, frontend_dir)?;
-    run_owned(&root, "python", &arguments)
-}
-
-pub(crate) fn resource_gate_replay_args(
-    options: &ResourceGateReplayOptions,
-    backend: &Path,
-    frontend: &Path,
-) -> Result<Vec<String>> {
-    fn utf8(path: &Path) -> Result<String> {
-        path.to_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| "resource gate replay 路径必须能表示为 UTF-8".into())
-    }
-
-    let mut arguments = vec![
-        "tools/python/resource_gate_replay.py".to_owned(),
-        "--repository".to_owned(),
-        utf8(backend)?,
-        "--frontend-repository".to_owned(),
-        utf8(frontend)?,
-        "--manifest".to_owned(),
-        utf8(&options.manifest)?,
-        "--work-dir".to_owned(),
-        utf8(&options.work_dir)?,
-        "--report".to_owned(),
-        utf8(&options.report)?,
-    ];
-    if options.activation_gate {
-        arguments.push("--activation-gate".to_owned());
-    }
-    Ok(arguments)
 }
 
 fn plan() -> Result<()> {

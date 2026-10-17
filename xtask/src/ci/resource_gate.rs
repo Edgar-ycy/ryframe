@@ -28,6 +28,8 @@ mod cargo_surface;
 mod execution_support;
 #[path = "resource_gate/model.rs"]
 mod model;
+#[path = "resource_gate/replay/mod.rs"]
+pub(crate) mod replay;
 #[path = "resource_gate/repository.rs"]
 mod repository;
 #[path = "resource_gate/targeted_execution.rs"]

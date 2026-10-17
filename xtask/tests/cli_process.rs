@@ -191,6 +191,40 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
 }
 
 #[test]
+fn resource_gate_replay_configuration_error_exits_two_without_python() {
+    let fixture = tempfile::tempdir().unwrap();
+    let manifest = fixture.path().join("manifest.json");
+    std::fs::write(
+        &manifest,
+        r#"{"formatVersion":2,"targetedCommand":["targeted"],"fullCommand":["full"],"cases":[]}"#,
+    )
+    .unwrap();
+    let output = xtask_command()
+        .args([
+            "check",
+            "ci",
+            "resource-gate",
+            "replay",
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--work-dir",
+            ".local-tests/resource-gate-replay/configuration-error",
+            "--report",
+            ".local-tests/resource-gate-replay/configuration-error.json",
+            "--frontend-dir",
+            ".",
+        ])
+        .env_remove("GITHUB_OUTPUT")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("至少需要 20"), "{error}");
+    assert!(error.contains("配置错误"), "{error}");
+    assert!(!error.contains("python"), "{error}");
+}
+
+#[test]
 fn migration_history_invalid_arguments_exit_two_before_running_tasks() {
     for arguments in [
         ["data", "migrate", "reconcile"].as_slice(),

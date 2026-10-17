@@ -96,6 +96,12 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn(
             "cargo xtask check ci resource-gate --frontend-dir ../frontend", block
         )
+        self.assertIn(
+            "cargo test --locked -p xtask --test internal "
+            "resource_gate_replay -- --test-threads=1",
+            block,
+        )
+        self.assertNotIn("tools/python/resource_gate_replay.py", block)
         self.assertNotIn("RYFRAME_CI_CHANGED_PATHS", block)
         self.assertIn(
             "RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1",

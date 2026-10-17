@@ -1,4 +1,6 @@
-use super::cli::{CiCommand, ResourceGateReplayOptions};
+use std::path::Path;
+
+use super::cli::CiCommand;
 use super::{
     check::{
         BackendSnapshotProfile, CheckPlanMode, TaskExecutor, VerifySelection, WorkspaceGraph,
@@ -9,47 +11,12 @@ use super::{
         ci_selection_for_paths, integration_test_args_for_target, parse_changed_paths,
         plan_outputs,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
-        resource_gate_replay_args, resource_gate_required_for_ci_range,
-        verify_frontend_checkout_ref, windows_check_args, windows_process_test_args,
+        resource_gate_required_for_ci_range, verify_frontend_checkout_ref, windows_check_args,
+        windows_process_test_args,
     },
 };
-use std::path::Path;
-
 fn planned(plan: &[CiJob], job: CiJob) -> bool {
     plan.contains(&job)
-}
-
-#[test]
-fn resource_gate_replay_fixes_repository_paths_at_the_xtask_boundary() {
-    let options = ResourceGateReplayOptions {
-        manifest: "D:/证据/replay.json".into(),
-        work_dir: "D:/后端/.local-tests/resource-gate-replay/run".into(),
-        report: "D:/后端/.local-tests/resource-gate-replay/report.json".into(),
-        activation_gate: true,
-    };
-    let arguments = resource_gate_replay_args(
-        &options,
-        Path::new("D:/后端 worktree"),
-        Path::new("D:/前端 worktree"),
-    )
-    .unwrap();
-    assert_eq!(
-        arguments,
-        [
-            "tools/python/resource_gate_replay.py",
-            "--repository",
-            "D:/后端 worktree",
-            "--frontend-repository",
-            "D:/前端 worktree",
-            "--manifest",
-            "D:/证据/replay.json",
-            "--work-dir",
-            "D:/后端/.local-tests/resource-gate-replay/run",
-            "--report",
-            "D:/后端/.local-tests/resource-gate-replay/report.json",
-            "--activation-gate",
-        ]
-    );
 }
 
 #[test]

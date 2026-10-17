@@ -164,6 +164,10 @@ mod recovery_tests;
 mod release_tests;
 #[path = "internal/resource_gate_cargo_surface.rs"]
 mod resource_gate_cargo_surface_tests;
+#[path = "internal/resource_gate_replay_fixtures.rs"]
+mod resource_gate_replay_fixtures;
+#[path = "internal/resource_gate_replay.rs"]
+mod resource_gate_replay_tests;
 #[path = "internal/resource_gate.rs"]
 mod resource_gate_tests;
 #[cfg(feature = "resource")]
