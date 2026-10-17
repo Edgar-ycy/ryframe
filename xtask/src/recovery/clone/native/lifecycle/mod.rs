@@ -24,6 +24,10 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
     match command {
         CloneCommand::Init { manifest, run_dir } => init(backend, manifest, run_dir),
         CloneCommand::Status { run_dir } => status::run(backend, run_dir),
+        CloneCommand::Stage {
+            run_dir,
+            stage: stage @ crate::cli::CloneStage::Export(_),
+        } => stage::run(backend, run_dir, *stage, &stage::ExportRunner::new(backend)),
         CloneCommand::Stage { run_dir, stage } => {
             stage::run(backend, run_dir, *stage, &stage::PythonRunner::new(backend))
         }

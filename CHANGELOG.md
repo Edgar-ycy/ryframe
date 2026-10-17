@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - 正式恢复监控的公开 `result` 与只读 `status` 已迁至 Rust xtask，共享原生绑定、目录形状、阶段收据、规则告警、证据摘要、进程身份和端口关闭校验；`bind|start|observe|close` 仍由单一 Python 私有阶段状态机执行回环 HTTP、Prometheus、Alertmanager 和进程树操作，但 Rust 在启动前核验运行/目标 JSON、凭据引用和绑定结构。未知写入、成功/失败收据并存、pending 结果、证据漂移和链接路径均失败关闭。
+- `cargo xtask check recovery clone stage` 的 `source_to_seed` export 资源编排迁至 Rust xtask。原生实现复用生命周期锁、attempt 和 controller，严格核验源请求、构建、维护 CLI、运行与 producer 收据，以只读 MySQL/对象协议采集前后库存、完整 schema、SQL 转储和对象字节，并校验租户 placement/fence、调度关系、generation/storage 漂移、文件摘要、create-new 证据和失败现场；新增伪外部工具测试覆盖只读预检、链接路径、对象字节漂移和成功采集。`target-verify`、`copy` 继续走原 Python 资源子进程；Python 对象采集收据格式仍被保留供后续复制阶段读取。
 
 - `cargo xtask check recovery clone storage` 的 RustFS 资源阶段迁至 Rust xtask。原生入口保留固定请求和登记摘要、数据目录与凭据引用、两端口就绪、原始启动和实际进程身份、失败与未知启动收据、服务身份变化拒绝、显式 `--write`、只读 `status` 和精确进程树回收；新增隔离测试覆盖成功绑定、参数/路径/链接、端口占用、请求摘要漂移、停止竞态、未知启动收据和 status 只读。`cache` 的 successor 与前代工具换代路径尚未完整实现，已回退原状态机并删除半完成 Rust 代码；其 Python 实现仍被 seed 和其余复制阶段调用，因此继续保留。
 

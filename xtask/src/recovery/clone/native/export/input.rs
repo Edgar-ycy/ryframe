@@ -1,0 +1,390 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
+
+use regex::Regex;
+use serde_json::Value;
+
+use super::super::{
+    digest,
+    json::{self as json_io, exact, text},
+    lifecycle::{manifest, stage::StageRequest},
+};
+use crate::{
+    Result,
+    local_test_path::{LocalTestPathKind, validate_local_test_path},
+};
+
+const REQUEST_FIELDS: &[&str] = &[
+    "format_version",
+    "kind",
+    "id",
+    "source",
+    "tools",
+    "backend_build",
+    "maintenance_build",
+    "worktree_fingerprint",
+    "runtime",
+    "processes",
+    "producers_registry",
+    "max_object_bytes",
+];
+
+pub(crate) struct Context {
+    pub(crate) backend: PathBuf,
+    pub(crate) run_dir: PathBuf,
+    pub(crate) mode: String,
+    pub(crate) attempt: u64,
+    pub(crate) manifest: Value,
+    pub(crate) request: Value,
+    pub(crate) request_path: PathBuf,
+    pub(crate) environment: BTreeMap<String, String>,
+    pub(crate) execution_backend: PathBuf,
+}
+
+impl Context {
+    pub(crate) fn load(backend: &Path, request: &StageRequest<'_>) -> Result<Self> {
+        if request.stage != "export" {
+            return Err(format!("源导出阶段不匹配：{}", request.stage).into());
+        }
+        let attempt = request.attempt.unwrap_or(0);
+        if !matches!(request.mode, "run" | "reconcile" | "resume") {
+            return Err("源导出模式无效".into());
+        }
+        let loaded = manifest::load(backend, &request.run_dir.join("manifest.json"))?;
+        if loaded.value.get("copy_stage").and_then(Value::as_str) != Some("source_to_seed") {
+            return Err("原生源导出只处理 source_to_seed 清单".into());
+        }
+        let request_path = manifest::bound_file(
+            backend,
+            loaded
+                .value
+                .get("source_request")
+                .ok_or("复制运行清单缺少源请求")?,
+            "源请求",
+            true,
+        )?;
+        let request_value = json_io::read(&request_path)?;
+        validate_request(backend, &request_value)?;
+        let environment = load_environment(
+            backend,
+            loaded
+                .value
+                .get("source_environment")
+                .ok_or("复制运行清单缺少来源环境")?,
+        )?;
+        let execution_backend = execution_backend(backend, &request_value)?;
+        Ok(Self {
+            backend: backend.to_path_buf(),
+            run_dir: request.run_dir.to_path_buf(),
+            mode: request.mode.to_owned(),
+            attempt,
+            manifest: loaded.value,
+            request: request_value,
+            request_path,
+            environment,
+            execution_backend,
+        })
+    }
+
+    pub(crate) fn output(&self) -> PathBuf {
+        self.run_dir.join(format!("e{:04}", self.attempt))
+    }
+
+    pub(crate) fn source(&self) -> &Value {
+        self.request.get("source").expect("已校验来源请求")
+    }
+
+    pub(crate) fn databases(&self) -> Result<Vec<Value>> {
+        let values = self
+            .source()
+            .get("databases")
+            .and_then(Value::as_array)
+            .ok_or("源数据库目标不能为空")?;
+        Ok(values.clone())
+    }
+
+    pub(crate) fn tool(&self, name: &str) -> Result<PathBuf> {
+        let path = self
+            .request
+            .pointer(&format!("/tools/{name}/path"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("源导出缺少外部工具 {name}"))?;
+        let path = PathBuf::from(path);
+        if !path.is_absolute() || digest::linked_path(&path)?.into_iter().any(|value| value) {
+            return Err(format!("源导出外部工具 {name} 必须为无链接的绝对路径").into());
+        }
+        let expected = self
+            .request
+            .pointer(&format!("/tools/{name}/sha256"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("源导出外部工具 {name} 缺少摘要"))?;
+        if digest::file(&path)?.sha256 != expected {
+            return Err(format!("源导出外部工具 {name} 在计划确认后发生变化").into());
+        }
+        Ok(path)
+    }
+
+    pub(crate) fn maintenance_executable(&self, role: &str) -> Result<PathBuf> {
+        let path = manifest::bound_file(
+            &self.execution_backend,
+            self.request
+                .get("maintenance_build")
+                .ok_or("源导出缺少维护构建")?,
+            "维护构建",
+            true,
+        )?;
+        let receipt = json_io::read(&path)?;
+        let executable = receipt
+            .pointer(&format!("/artifacts/{role}/executable"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("维护构建缺少 {role} 工具"))?;
+        let executable = PathBuf::from(executable);
+        if !executable.is_absolute() {
+            return Err(format!("维护构建 {role} 工具必须是绝对路径").into());
+        }
+        Ok(executable)
+    }
+
+    pub(crate) fn source_export(&self) -> Option<&Value> {
+        self.manifest
+            .get("source_export")
+            .filter(|value| !value.is_null())
+    }
+}
+
+fn validate_request(backend: &Path, request: &Value) -> Result<()> {
+    let value = exact(request, REQUEST_FIELDS, "源导出请求")?;
+    if value.get("format_version").and_then(Value::as_u64) != Some(1)
+        || value.get("kind").and_then(Value::as_str) != Some("devex-clone-source-export")
+    {
+        return Err("源导出请求类型无效".into());
+    }
+    validate_name(text(value.get("id").unwrap(), "源导出 ID")?)?;
+    validate_source(backend, value.get("source").unwrap())?;
+    let fingerprint = text(value.get("worktree_fingerprint").unwrap(), "工作区指纹")?;
+    if !Regex::new(r"^sha256:[a-f0-9]{64}$")?.is_match(fingerprint) {
+        return Err("源导出须绑定完整工作区指纹".into());
+    }
+    let maximum = value
+        .get("max_object_bytes")
+        .and_then(Value::as_u64)
+        .ok_or("源导出缺少对象大小上限")?;
+    if maximum == 0 {
+        return Err("源导出对象大小上限必须大于零".into());
+    }
+    let tools = exact(
+        value.get("tools").unwrap(),
+        &["mysql", "mysqldump", "aws", "node"],
+        "源导出外部工具",
+    )?;
+    for item in tools.values() {
+        let item = exact(item, &["path", "sha256"], "源导出外部工具")?;
+        let path = PathBuf::from(text(item.get("path").unwrap(), "外部工具路径")?);
+        let expected = text(item.get("sha256").unwrap(), "外部工具摘要")?;
+        if !path.is_absolute()
+            || digest::linked_path(&path)?.into_iter().any(|value| value)
+            || digest::file(&path)?.sha256 != expected
+        {
+            return Err("源导出外部工具实际文件与绑定不符".into());
+        }
+    }
+    for field in ["backend_build", "runtime", "producers_registry"] {
+        manifest::bound_file(backend, value.get(field).unwrap(), field, true)?;
+    }
+    let runtime_path =
+        manifest::bound_file(backend, value.get("runtime").unwrap(), "运行收据", true)?;
+    let runtime = json_io::read(&runtime_path)?;
+    let execution = PathBuf::from(
+        runtime
+            .get("backend_root")
+            .and_then(Value::as_str)
+            .ok_or("源 runtime 缺少执行后端")?,
+    );
+    if !execution.is_absolute() || !execution.is_dir() {
+        return Err("源 runtime 的执行后端必须为绝对目录".into());
+    }
+    manifest::bound_file(
+        &execution,
+        value.get("maintenance_build").unwrap(),
+        "维护构建",
+        true,
+    )?;
+    let processes = exact(
+        value.get("processes").unwrap(),
+        &["api", "worker"],
+        "源进程收据",
+    )?;
+    let directory = PathBuf::from(
+        value
+            .get("source")
+            .and_then(|value| value.get("runtime_dir"))
+            .and_then(Value::as_str)
+            .ok_or("源请求缺少运行目录")?,
+    );
+    if runtime_path != directory.join("runtime.json") {
+        return Err("运行收据不属于源明确运行目录".into());
+    }
+    for (role, binding) in processes {
+        if manifest::bound_file(backend, binding, "源进程收据", true)?
+            != directory.join(format!("{role}.json"))
+        {
+            return Err("进程收据不属于源明确运行目录".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_source(backend: &Path, value: &Value) -> Result<()> {
+    let source = exact(
+        value,
+        &["scope_id", "runtime_dir", "api_url", "s3", "databases"],
+        "源配置",
+    )?;
+    validate_name(text(source.get("scope_id").unwrap(), "scope_id")?)?;
+    local_path(
+        backend,
+        text(source.get("runtime_dir").unwrap(), "运行目录")?,
+        LocalTestPathKind::ExistingDirectory,
+    )?;
+    endpoint(text(source.get("api_url").unwrap(), "API 地址")?)?;
+    let s3 = exact(
+        source.get("s3").unwrap(),
+        &["endpoint", "region", "access_key_env", "secret_key_env"],
+        "源对象配置",
+    )?;
+    endpoint(text(s3.get("endpoint").unwrap(), "对象端点")?)?;
+    let region = text(s3.get("region").unwrap(), "对象 region")?;
+    if !Regex::new(r"^[a-z0-9-]+$")?.is_match(region) {
+        return Err("源对象 region 无效".into());
+    }
+    let environment_name = Regex::new(r"^[A-Z][A-Z0-9_]+$")?;
+    for key in ["access_key_env", "secret_key_env"] {
+        if !environment_name.is_match(text(s3.get(key).unwrap(), key)?) {
+            return Err("源对象认证必须绑定显式环境变量名".into());
+        }
+    }
+    let databases = source
+        .get("databases")
+        .and_then(Value::as_array)
+        .ok_or("源数据库目标不能为空")?;
+    if databases.is_empty() {
+        return Err("源数据库目标不能为空".into());
+    }
+    let mut keys = BTreeSet::new();
+    let mut physical = BTreeSet::new();
+    let database_name = Regex::new(r"^[a-z0-9_]{1,64}$")?;
+    let server_uuid = Regex::new(r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$")?;
+    for database in databases {
+        let database = exact(
+            database,
+            &[
+                "key",
+                "kind",
+                "mode",
+                "database",
+                "server_uuid",
+                "defaults_file",
+                "defaults_sha256",
+            ],
+            "源数据库目标",
+        )?;
+        let key = validate_name(text(database.get("key").unwrap(), "数据库键")?)?;
+        let name = text(database.get("database").unwrap(), "database")?;
+        let uuid = text(database.get("server_uuid").unwrap(), "server_uuid")?;
+        let kind = text(database.get("kind").unwrap(), "数据库类型")?;
+        let mode = text(database.get("mode").unwrap(), "数据库模式")?;
+        if !database_name.is_match(name)
+            || !server_uuid.is_match(uuid)
+            || !matches!(kind, "combined" | "tenant")
+            || !matches!(mode, "shared" | "dedicated")
+            || (key == "shared-control") != (kind == "combined")
+            || (kind == "combined" && mode != "shared")
+            || !keys.insert(key.to_owned())
+            || !physical.insert((uuid.to_owned(), name.to_ascii_lowercase()))
+        {
+            return Err("源数据库逻辑目标重复、物理身份重叠或类型不符".into());
+        }
+        let defaults = PathBuf::from(text(
+            database.get("defaults_file").unwrap(),
+            "MySQL 凭据文件",
+        )?);
+        validate_local_test_path(&defaults, backend, LocalTestPathKind::ExistingFile)
+            .map_err(|error| format!("源数据库凭据文件无效：{error}"))?;
+        let expected = text(database.get("defaults_sha256").unwrap(), "MySQL 凭据摘要")?;
+        if digest::file(&defaults)?.sha256 != expected {
+            return Err("源数据库凭据文件已变化".into());
+        }
+    }
+    if !keys.contains("shared-control") {
+        return Err("源必须明确包含 combined 控制目标".into());
+    }
+    Ok(())
+}
+
+fn load_environment(backend: &Path, descriptor: &Value) -> Result<BTreeMap<String, String>> {
+    let path = manifest::bound_file(backend, descriptor, "来源环境", true)?;
+    let value = json_io::read(&path)?;
+    let root = exact(&value, &["environment"], "来源环境")?;
+    let values = json_io::object(root.get("environment").unwrap(), "来源环境变量")?;
+    values
+        .iter()
+        .map(|(key, value)| {
+            let value = value
+                .as_str()
+                .ok_or_else(|| format!("来源环境变量 {key} 必须为字符串"))?;
+            Ok((key.clone(), value.to_owned()))
+        })
+        .collect()
+}
+
+fn execution_backend(backend: &Path, request: &Value) -> Result<PathBuf> {
+    let path = manifest::bound_file(backend, request.get("runtime").unwrap(), "运行收据", true)?;
+    let value = json_io::read(&path)?;
+    let root = PathBuf::from(
+        value
+            .get("backend_root")
+            .and_then(Value::as_str)
+            .ok_or("源 runtime 缺少执行后端")?,
+    );
+    if !root.is_absolute()
+        || !root.is_dir()
+        || digest::linked_path(&root)?.into_iter().any(|value| value)
+    {
+        return Err("源 runtime 的执行后端必须是无链接的规范绝对目录".into());
+    }
+    Ok(root)
+}
+
+fn local_path(backend: &Path, value: &str, kind: LocalTestPathKind) -> Result<PathBuf> {
+    let path = PathBuf::from(value);
+    validate_local_test_path(&path, backend, kind)
+        .map(|_| path)
+        .map_err(|error| format!("源导出本地路径无效：{error}").into())
+}
+
+fn validate_name(value: &str) -> Result<&str> {
+    if Regex::new(r"^[a-z0-9][a-z0-9_-]{2,47}$")?.is_match(value) {
+        Ok(value)
+    } else {
+        Err("开发复制名称无效".into())
+    }
+}
+
+fn endpoint(value: &str) -> Result<()> {
+    let rest = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+        .ok_or("源端点只接受 HTTP 根地址")?;
+    let host = rest.split('/').next().unwrap_or_default();
+    let (name, port) = host.rsplit_once(':').ok_or("源端点必须包含明确端口")?;
+    if !matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+        || port.is_empty()
+        || !port.bytes().all(|byte| byte.is_ascii_digit())
+        || port.parse::<u16>().ok().is_none_or(|value| value == 0)
+    {
+        return Err("源端点只接受明确的本机 loopback 端口".into());
+    }
+    Ok(())
+}

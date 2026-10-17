@@ -146,6 +146,8 @@ mod devex_tests;
 mod diff_tests;
 #[path = "internal/doctor.rs"]
 mod doctor_tests;
+#[path = "internal/export_native.rs"]
+mod export_native_tests;
 #[path = "internal/fixture_control.rs"]
 mod fixture_control_tests;
 #[path = "internal/fixture_dataset_control.rs"]

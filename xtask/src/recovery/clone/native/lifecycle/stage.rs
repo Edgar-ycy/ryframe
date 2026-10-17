@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use serde_json::{Value, json};
 
+use super::super::export;
 use super::{
     super::json as json_io,
     lock::{ProcessGuard, RunLock},
@@ -31,6 +32,28 @@ pub(crate) trait StageRunner {
 
 pub(crate) struct PythonRunner {
     backend: PathBuf,
+}
+
+pub(crate) struct ExportRunner {
+    backend: PathBuf,
+}
+
+impl ExportRunner {
+    pub(crate) fn new(backend: &Path) -> Self {
+        Self {
+            backend: backend.to_path_buf(),
+        }
+    }
+}
+
+impl StageRunner for ExportRunner {
+    fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
+        export::preflight(&self.backend, request)
+    }
+
+    fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
+        export::execute(&self.backend, request)
+    }
 }
 
 impl PythonRunner {

@@ -54,6 +54,27 @@ pub(crate) fn canonical_binding(digest: &FileDigest) -> String {
     format!("{}:{}", digest.bytes, digest.sha256)
 }
 
+pub(crate) fn linked_path(path: &Path) -> Result<Vec<bool>> {
+    if !path.is_absolute() {
+        return Err("复制工具路径必须是绝对路径".into());
+    }
+    let mut result = Vec::new();
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => result.push(linked(&metadata)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                result.push(false);
+            }
+            Err(error) => {
+                return Err(format!("无法核验复制路径 {}：{error}", current.display()).into());
+            }
+        }
+    }
+    Ok(result)
+}
+
 pub(crate) fn safe_file(root: &Path, relative: &str) -> Result<PathBuf> {
     if relative.is_empty()
         || relative.contains(['\\', ':'])
