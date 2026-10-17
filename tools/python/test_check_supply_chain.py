@@ -1237,61 +1237,15 @@ tokio-rustls v0.26.4|aws_lc_rs
             ],
         )
 
-    def test_cyclonedx_requires_components_and_reproducible_identity(self) -> None:
-        document = {
-            "bomFormat": "CycloneDX",
-            "specVersion": "1.5",
-            "metadata": {"component": {"name": "ryframe"}},
-            "components": [{"name": "dependency"}],
-        }
-        with self.temporary_directory() as raw:
-            path = self.write_json(Path(raw), "bom.json", document)
-            self.assertEqual(
-                MODULE.validate_cyclonedx(path, require_reproducible=True),
-                [],
-            )
-            document["serialNumber"] = "urn:uuid:random"
-            self.write_json(Path(raw), "bom.json", document)
-            self.assertEqual(MODULE.validate_cyclonedx(path), [])
-            errors = MODULE.validate_cyclonedx(path, require_reproducible=True)
-        self.assertTrue(any("serialNumber" in error for error in errors))
-
-    def test_report_main_does_not_repeat_source_checks(self) -> None:
-        cyclone = {
-            "bomFormat": "CycloneDX",
-            "specVersion": "1.5",
-            "metadata": {"component": {"name": "ryframe"}},
-            "components": [{"name": "dependency"}],
-        }
+    def test_trivy_report_main_does_not_repeat_source_checks(self) -> None:
         trivy = {"Results": []}
         with self.temporary_directory() as raw:
             root = Path(raw)
-            cyclone_path = self.write_json(root, "cyclone.json", cyclone)
             trivy_path = self.write_json(root, "trivy.json", trivy)
-            cyclone_args = SimpleNamespace(
-                policy=Path("unused-policy.json"),
-                workflow_dir=Path("unused-workflows"),
-                trivy_report=None,
-                cyclonedx=cyclone_path,
-                require_reproducible_cyclonedx=True,
-                verify_cargo_graph=False,
-            )
-            with (
-                patch.object(MODULE, "parse_args", return_value=cyclone_args),
-                patch.object(MODULE, "load_policy", side_effect=AssertionError),
-                patch.object(
-                    MODULE, "validate_local_patch_licenses", side_effect=AssertionError
-                ),
-                patch.object(MODULE, "validate_workflows", side_effect=AssertionError),
-            ):
-                self.assertEqual(MODULE.main(), 0)
-
             trivy_args = SimpleNamespace(
                 policy=Path("policy.json"),
                 workflow_dir=Path("unused-workflows"),
                 trivy_report=trivy_path,
-                cyclonedx=None,
-                require_reproducible_cyclonedx=False,
                 verify_cargo_graph=False,
             )
             with (

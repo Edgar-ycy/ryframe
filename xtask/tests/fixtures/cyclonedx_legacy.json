@@ -1,0 +1,1336 @@
+{
+  "origin": "05b5652f2d85b77dd24ccab909fb1738a581c6f5:tools/python/check_supply_chain.py::validate_cyclonedx",
+  "legacy_sha256": "ad013e582e56e2996fe319ad077ea1ab56011db3ee5d5b3574630447ad0d0cdd",
+  "cases": [
+    {
+      "name": "original-valid",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "original-valid",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "original-serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": \"urn:uuid:random\"}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "original-serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": \"urn:uuid:random\"}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-bomFormat",
+      "source": "{\"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-bomFormat",
+      "source": "{\"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-0",
+      "source": "{\"bomFormat\": null, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-0",
+      "source": "{\"bomFormat\": null, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-1",
+      "source": "{\"bomFormat\": false, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-1",
+      "source": "{\"bomFormat\": false, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-2",
+      "source": "{\"bomFormat\": true, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-2",
+      "source": "{\"bomFormat\": true, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-3",
+      "source": "{\"bomFormat\": 0, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-3",
+      "source": "{\"bomFormat\": 0, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-4",
+      "source": "{\"bomFormat\": 1, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-4",
+      "source": "{\"bomFormat\": 1, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-5",
+      "source": "{\"bomFormat\": 1.5, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-5",
+      "source": "{\"bomFormat\": 1.5, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-6",
+      "source": "{\"bomFormat\": \"\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-6",
+      "source": "{\"bomFormat\": \"\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-7",
+      "source": "{\"bomFormat\": \"secret://user:password@example.invalid\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-7",
+      "source": "{\"bomFormat\": \"secret://user:password@example.invalid\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-8",
+      "source": "{\"bomFormat\": [], \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-8",
+      "source": "{\"bomFormat\": [], \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-9",
+      "source": "{\"bomFormat\": {}, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-9",
+      "source": "{\"bomFormat\": {}, \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-10",
+      "source": "{\"bomFormat\": [null], \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "bomFormat-type-10",
+      "source": "{\"bomFormat\": [null], \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-specVersion",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-specVersion",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-0",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": null, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-0",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": null, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-1",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": false, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-1",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": false, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-2",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": true, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-2",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": true, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-3",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": 0, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-3",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": 0, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": 1, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": 1, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": 1.5, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": 1.5, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"secret://user:password@example.invalid\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"secret://user:password@example.invalid\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": [], \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": null,
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": [], \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": null,
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-9",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": {}, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": null,
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-9",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": {}, \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": null,
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-10",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": [null], \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": null,
+      "accepted": false
+    },
+    {
+      "name": "specVersion-type-10",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": [null], \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": null,
+      "accepted": false
+    },
+    {
+      "name": "missing-metadata",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-metadata",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-0",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": null, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-0",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": null, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-1",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": false, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-1",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": false, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-2",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": true, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-2",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": true, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-3",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": 0, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-3",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": 0, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": 1, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": 1, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": 1.5, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": 1.5, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": \"\", \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": \"\", \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": \"secret://user:password@example.invalid\", \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": \"secret://user:password@example.invalid\", \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": [], \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": [], \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-9",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-9",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-10",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": [null], \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-type-10",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": [null], \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-components",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "missing-components",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-0",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": null}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-0",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": null}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-1",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": false}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-1",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": false}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-2",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": true}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-2",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": true}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-3",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": 0}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-3",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": 0}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": 1}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": 1}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": 1.5}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": 1.5}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": \"\"}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": \"\"}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": \"secret://user:password@example.invalid\"}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": \"secret://user:password@example.invalid\"}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": []}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": []}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-9",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": {}}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-9",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": {}}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须包含非空 components"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "components-type-10",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [null]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "components-type-10",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [null]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.4\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.4",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.4\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.6\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.6",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.6\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.7\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.7",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.7\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "version-1.8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.8\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.8",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.8\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.50",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.50\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.50",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.50\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version- 1.5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \" 1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version- 1.5",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \" 1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.5 ",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5 \", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "version-1.5 ",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5 \", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 规范版本不得低于 1.5"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": null}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": null}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": []}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": []}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": false}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": false}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": \"secret\"}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": \"secret\"}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "metadata-component",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": null}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": null}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": false}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": false}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": 0}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": 0}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": \"\"}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": \"\"}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": []}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": []}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": {}}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": {}}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": \"secret://user:password@example.invalid\"}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "serial",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"serialNumber\": \"secret://user:password@example.invalid\"}",
+      "require_reproducible": true,
+      "errors": [
+        "可复现 SBOM 不得包含随机 serialNumber"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "original-components",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "original-components",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}]}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "multiple-errors",
+      "source": "{}",
+      "require_reproducible": false,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX",
+        "SBOM 规范版本不得低于 1.5",
+        "SBOM 必须包含非空 components",
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "multiple-errors",
+      "source": "{}",
+      "require_reproducible": true,
+      "errors": [
+        "SBOM 的 bomFormat 必须是 CycloneDX",
+        "SBOM 规范版本不得低于 1.5",
+        "SBOM 必须包含非空 components",
+        "SBOM 必须声明顶层 metadata.component"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "unknown-fields",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"custom\": {\"secret\": \"never print\"}}",
+      "require_reproducible": false,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "unknown-fields",
+      "source": "{\"bomFormat\": \"CycloneDX\", \"specVersion\": \"1.5\", \"metadata\": {\"component\": {\"name\": \"ryframe\"}}, \"components\": [{\"name\": \"dependency\"}], \"custom\": {\"secret\": \"never print\"}}",
+      "require_reproducible": true,
+      "errors": [],
+      "accepted": true
+    },
+    {
+      "name": "root-null",
+      "source": "null",
+      "require_reproducible": false,
+      "errors": [
+        "无法读取 CycloneDX 清单：必须是 JSON 对象"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "root-null",
+      "source": "null",
+      "require_reproducible": true,
+      "errors": [
+        "无法读取 CycloneDX 清单：必须是 JSON 对象"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "root-list",
+      "source": "[]",
+      "require_reproducible": false,
+      "errors": [
+        "无法读取 CycloneDX 清单：必须是 JSON 对象"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "root-list",
+      "source": "[]",
+      "require_reproducible": true,
+      "errors": [
+        "无法读取 CycloneDX 清单：必须是 JSON 对象"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "root-string",
+      "source": "\"secret\"",
+      "require_reproducible": false,
+      "errors": [
+        "无法读取 CycloneDX 清单：必须是 JSON 对象"
+      ],
+      "accepted": false
+    },
+    {
+      "name": "root-string",
+      "source": "\"secret\"",
+      "require_reproducible": true,
+      "errors": [
+        "无法读取 CycloneDX 清单：必须是 JSON 对象"
+      ],
+      "accepted": false
+    }
+  ]
+}

@@ -6,6 +6,8 @@ mod cargo_command;
 mod change_surface;
 #[path = "check/context.rs"]
 mod context;
+#[path = "check/cyclonedx.rs"]
+pub(crate) mod cyclonedx;
 #[path = "check/execution.rs"]
 mod execution;
 #[path = "check/feature.rs"]

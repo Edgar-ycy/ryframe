@@ -56,66 +56,66 @@ fn security_source_uses_one_ordered_task_plan_and_fixed_commands() {
 }
 
 #[test]
-fn security_reports_use_one_typed_node_after_the_python_prerequisite() {
+fn cyclonedx_report_has_one_read_only_rust_node_without_python_or_source_tasks() {
+    let options = SecurityReportOptions {
+        kind: SecurityReportKind::CycloneDx,
+        input: std::env::current_dir()
+            .unwrap()
+            .join("target/供应链 report.json"),
+        require_reproducible: true,
+    };
+    let command = CiCommand::Security(SecurityCommand::Report(options.clone()));
+    let plan = ci_execution_plan_for(&command).unwrap();
+    assert_eq!(plan.tasks.len(), 1);
+    let task = &plan.tasks[0];
+    assert_eq!(task.executor, TaskExecutor::CiCycloneDxReport);
+    assert!(task.dependencies.is_empty());
+    assert!(task.definition().allowed_writes.is_empty());
+    assert!(task.definition().external_resources.is_empty());
+    assert!(task.definition().compilation_coverage.is_empty());
+    assert!(security_report_command(task.executor, &options).is_err());
+    assert!(security_report_command(TaskExecutor::PythonEnvironment, &options).is_err());
+}
+
+#[test]
+fn trivy_report_preserves_its_typed_node_and_python_prerequisite() {
     let input = std::env::current_dir()
         .unwrap()
         .join("target/供应链 report.json");
-    for (kind, report_task, option, reproducible) in [
+    let options = SecurityReportOptions {
+        kind: SecurityReportKind::Trivy,
+        input: input.clone(),
+        require_reproducible: false,
+    };
+    let command = CiCommand::Security(SecurityCommand::Report(options.clone()));
+    let plan = ci_execution_plan_for(&command).unwrap();
+    assert_eq!(
+        plan.tasks
+            .iter()
+            .map(|task| task.executor)
+            .collect::<Vec<_>>(),
+        [TaskExecutor::PythonEnvironment, TaskExecutor::CiTrivyReport]
+    );
+    assert_eq!(plan.tasks[1].dependencies, vec!["python.environment"]);
+    assert_eq!(
+        security_report_command(TaskExecutor::PythonEnvironment, &options).unwrap(),
         (
-            SecurityReportKind::CycloneDx,
-            TaskExecutor::CiCycloneDxReport,
-            "--cyclonedx",
-            true,
-        ),
+            "python",
+            vec!["tools/python/check_python_environment.py".to_owned()]
+        )
+    );
+    assert_eq!(
+        security_report_command(TaskExecutor::CiTrivyReport, &options).unwrap(),
         (
-            SecurityReportKind::Trivy,
-            TaskExecutor::CiTrivyReport,
-            "--trivy-report",
-            false,
-        ),
-    ] {
-        let options = SecurityReportOptions {
-            kind,
-            input: input.clone(),
-            require_reproducible: reproducible,
-        };
-        let command = CiCommand::Security(SecurityCommand::Report(options.clone()));
-        let plan = ci_execution_plan_for(&command).unwrap();
-        assert_eq!(
-            plan.tasks
-                .iter()
-                .map(|task| task.executor)
-                .collect::<Vec<_>>(),
-            [TaskExecutor::PythonEnvironment, report_task]
-        );
-        assert_eq!(plan.tasks[1].dependencies, vec!["python.environment"]);
-        assert!(plan.tasks.iter().all(|task| !matches!(
-            task.executor,
-            TaskExecutor::CiSupplyChainSource
-                | TaskExecutor::CiCargoAudit
-                | TaskExecutor::CiCargoDeny
-        )));
-        assert_eq!(
-            security_report_command(TaskExecutor::PythonEnvironment, &options).unwrap(),
-            (
-                "python",
-                vec!["tools/python/check_python_environment.py".to_owned()]
-            )
-        );
-        let (_, arguments) = security_report_command(report_task, &options).unwrap();
-        assert_eq!(
-            arguments[..3],
-            [
-                "tools/python/check_supply_chain.py",
-                option,
-                input.to_str().unwrap(),
+            "python",
+            vec![
+                "tools/python/check_supply_chain.py".to_owned(),
+                "--trivy-report".to_owned(),
+                input.to_str().unwrap().to_owned()
             ]
-        );
-        assert_eq!(
-            arguments.get(3).map(String::as_str),
-            reproducible.then_some("--require-reproducible-cyclonedx")
-        );
-    }
+        )
+    );
+    assert!(security_report_command(TaskExecutor::CiCycloneDxReport, &options).is_err());
 }
 
 #[test]

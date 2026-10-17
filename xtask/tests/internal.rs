@@ -48,6 +48,8 @@ mod data;
 mod build_tests;
 #[path = "internal/check_cancellation.rs"]
 mod check_cancellation_tests;
+#[path = "internal/check_cyclonedx.rs"]
+mod check_cyclonedx_tests;
 #[path = "internal/check_plan.rs"]
 mod check_plan_tests;
 #[path = "internal/check_policy_tasks.rs"]

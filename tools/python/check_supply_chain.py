@@ -1510,29 +1510,6 @@ def validate_workflows(workflow_dir: Path, policy: dict[str, Any]) -> list[str]:
     return errors
 
 
-def validate_cyclonedx(path: Path, *, require_reproducible: bool = False) -> list[str]:
-    try:
-        document = _object(json.loads(path.read_text(encoding="utf-8")), "CycloneDX")
-    except (OSError, json.JSONDecodeError, PolicyError) as exc:
-        return [f"无法读取 CycloneDX 清单 {path}: {exc}"]
-    errors: list[str] = []
-    if document.get("bomFormat") != "CycloneDX":
-        errors.append("SBOM 的 bomFormat 必须是 CycloneDX")
-    if document.get("specVersion") not in {"1.5", "1.6", "1.7"}:
-        errors.append("SBOM 规范版本不得低于 1.5")
-    components = document.get("components")
-    if not isinstance(components, list) or not components:
-        errors.append("SBOM 必须包含非空 components")
-    metadata = document.get("metadata")
-    if not isinstance(metadata, dict) or not isinstance(
-        metadata.get("component"), dict
-    ):
-        errors.append("SBOM 必须声明顶层 metadata.component")
-    if require_reproducible and document.get("serialNumber") is not None:
-        errors.append("可复现 SBOM 不得包含随机 serialNumber")
-    return errors
-
-
 def evaluate_trivy_report(report_path: Path, policy: dict[str, Any]) -> list[str]:
     try:
         report = _object(
@@ -1737,50 +1714,32 @@ def verify_cargo_graph(policy: dict[str, Any]) -> list[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="校验供应链策略、固定版本和安全报告")
+    parser = argparse.ArgumentParser(description="校验供应链策略、固定版本和 Trivy 报告")
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     parser.add_argument("--workflow-dir", type=Path, default=DEFAULT_WORKFLOWS)
     parser.add_argument("--trivy-report", type=Path)
-    parser.add_argument("--cyclonedx", type=Path)
-    parser.add_argument("--require-reproducible-cyclonedx", action="store_true")
     parser.add_argument("--verify-cargo-graph", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    report_count = int(args.cyclonedx is not None) + int(args.trivy_report is not None)
-    if report_count > 1:
-        print("参数错误：CycloneDX 与 Trivy 报告必须分别核验", file=sys.stderr)
-        return 2
-    if args.require_reproducible_cyclonedx and args.cyclonedx is None:
-        print(
-            "参数错误：--require-reproducible-cyclonedx 只适用于 --cyclonedx",
-            file=sys.stderr,
-        )
-        return 2
-    if report_count and args.verify_cargo_graph:
+    if args.trivy_report is not None and args.verify_cargo_graph:
         print("参数错误：报告核验不能同时执行 Cargo 来源图核验", file=sys.stderr)
         return 2
 
-    if args.cyclonedx is not None:
-        errors = validate_cyclonedx(
-            args.cyclonedx,
-            require_reproducible=args.require_reproducible_cyclonedx,
-        )
+    try:
+        policy = load_policy(args.policy)
+    except PolicyError as exc:
+        print(f"供应链策略无效：{exc}", file=sys.stderr)
+        return 1
+    if args.trivy_report is not None:
+        errors = evaluate_trivy_report(args.trivy_report, policy)
     else:
-        try:
-            policy = load_policy(args.policy)
-        except PolicyError as exc:
-            print(f"供应链策略无效：{exc}", file=sys.stderr)
-            return 1
-        if args.trivy_report is not None:
-            errors = evaluate_trivy_report(args.trivy_report, policy)
-        else:
-            errors = validate_local_patch_licenses(ROOT, policy)
-            errors.extend(validate_workflows(args.workflow_dir, policy))
-            if args.verify_cargo_graph:
-                errors.extend(verify_cargo_graph(policy))
+        errors = validate_local_patch_licenses(ROOT, policy)
+        errors.extend(validate_workflows(args.workflow_dir, policy))
+        if args.verify_cargo_graph:
+            errors.extend(verify_cargo_graph(policy))
     if errors:
         for error in errors:
             print(f"供应链门禁失败：{error}", file=sys.stderr)

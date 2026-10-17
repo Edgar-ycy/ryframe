@@ -152,7 +152,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         CiCycloneDxReport,
         "ci.security.report.cyclonedx",
         "verify_cyclonedx_report",
-        "核对单个 CycloneDX 报告",
+        "用 Rust 只读核对单个 CycloneDX 报告",
         Backend,
         Static,
         Backend,

@@ -20,10 +20,7 @@ pub(super) const SOURCE_TASKS: &[TaskExecutor] = &[
     TaskExecutor::CiCargoAudit,
     TaskExecutor::CiCargoDeny,
 ];
-const CYCLONEDX_REPORT_TASKS: &[TaskExecutor] = &[
-    TaskExecutor::PythonEnvironment,
-    TaskExecutor::CiCycloneDxReport,
-];
+const CYCLONEDX_REPORT_TASKS: &[TaskExecutor] = &[TaskExecutor::CiCycloneDxReport];
 const TRIVY_REPORT_TASKS: &[TaskExecutor] =
     &[TaskExecutor::PythonEnvironment, TaskExecutor::CiTrivyReport];
 
@@ -72,8 +69,12 @@ fn run_report(options: &SecurityReportOptions, plan: &TaskPlan) -> Result<()> {
     let root = root_dir();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
-        let (program, arguments) = report_command(task.executor, options)?;
-        run_owned(&root, program, &arguments)?;
+        if task.executor == TaskExecutor::CiCycloneDxReport {
+            crate::check::cyclonedx::run(&options.input, options.require_reproducible)?;
+        } else {
+            let (program, arguments) = report_command(task.executor, options)?;
+            run_owned(&root, program, &arguments)?;
+        }
     }
     Ok(())
 }
@@ -115,6 +116,9 @@ pub(crate) fn report_command(
     options: &SecurityReportOptions,
 ) -> Result<(&'static str, Vec<String>)> {
     validate_report_options(options)?;
+    if options.kind != SecurityReportKind::Trivy {
+        return Err("CycloneDX 报告由 Rust 直接校验，不执行外部命令".into());
+    }
     if executor == TaskExecutor::PythonEnvironment {
         return Ok((
             "python",
@@ -124,28 +128,17 @@ pub(crate) fn report_command(
                 .collect(),
         ));
     }
-    let expected = match options.kind {
-        SecurityReportKind::CycloneDx => TaskExecutor::CiCycloneDxReport,
-        SecurityReportKind::Trivy => TaskExecutor::CiTrivyReport,
-    };
-    if executor != expected {
+    if executor != TaskExecutor::CiTrivyReport {
         return Err("报告类型与 Security report 任务节点不一致".into());
     }
     let input = options
         .input
         .to_str()
         .ok_or("Security report 输入路径必须能表示为 UTF-8")?;
-    let report_option = match options.kind {
-        SecurityReportKind::CycloneDx => "--cyclonedx",
-        SecurityReportKind::Trivy => "--trivy-report",
-    };
-    let mut arguments = vec![
+    let arguments = vec![
         "tools/python/check_supply_chain.py".to_owned(),
-        report_option.to_owned(),
+        "--trivy-report".to_owned(),
         input.to_owned(),
     ];
-    if options.require_reproducible {
-        arguments.push("--require-reproducible-cyclonedx".to_owned());
-    }
     Ok(("python", arguments))
 }
