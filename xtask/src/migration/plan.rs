@@ -8,11 +8,12 @@ use chrono::Utc;
 use crate::{
     Result,
     cli::{MigrationCommand, MigrationOperation, MigrationScope, MigrationTarget},
-    process::{run as run_process, run_owned},
+    process::run_owned,
     workspace::root_dir,
 };
 
 use super::{
+    history,
     model::{MigrationLock, PlannedWrite},
     transaction::commit_writes,
 };
@@ -29,19 +30,16 @@ pub(super) fn migration_directory(root: &Path, scope: MigrationScope) -> PathBuf
 
 pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
     match command {
-        MigrationCommand::Baseline => run_process(
+        MigrationCommand::Baseline => history::run_refresh_baseline(&root_dir()),
+        MigrationCommand::Freeze => history::run_freeze(&root_dir()),
+        MigrationCommand::Reconcile => history::run_reconcile(&root_dir()),
+        MigrationCommand::Check {
+            require_frozen,
+            trusted_ref,
+        } => history::run_check(
             &root_dir(),
-            "python",
-            &[
-                "tools/python/check_migration_history.py",
-                "--refresh-baseline",
-                "--write",
-            ],
-        ),
-        MigrationCommand::Freeze => run_process(
-            &root_dir(),
-            "python",
-            &["tools/python/check_migration_history.py", "--freeze"],
+            *require_frozen,
+            trusted_ref.as_deref().unwrap_or("HEAD"),
         ),
         MigrationCommand::Run { operation, target } => {
             let args = migration_run_args(*operation, target);

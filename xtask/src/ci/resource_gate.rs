@@ -13,10 +13,11 @@ use crate::{
     Result,
     check::{
         BackendSnapshotProfile, BackendSnapshots, ci_consumer_contract_against_committed_snapshot,
-        ci_target_policy, preflight_migration_args, prepare_backend_snapshots,
+        ci_target_policy, preflight_trusted_ref, prepare_backend_snapshots,
         resource_workspace_compilation, targeted_resource_workspace_compilation,
         verify_backend_snapshots, verify_job_budget_from,
     },
+    migration::run_check as run_migration_history,
     process::run_owned,
     workspace::root_dir,
 };
@@ -354,8 +355,7 @@ fn execute_targeted_cross_contracts(
                 }
             }
             GateStep::MigrationContract => {
-                let args = preflight_migration_args(base);
-                run_owned(root, "python", &args)?;
+                run_migration_contract(root, base)?;
             }
             GateStep::OpenApiAndFrontendConsumer => {
                 ci_consumer_contract_against_committed_snapshot(root, frontend_dir)?;
@@ -425,12 +425,16 @@ fn execute_step(
         )?,
         GateStep::PermissionContract => crate::check::permission_routes::run(root)?,
         GateStep::MigrationContract => {
-            let args = preflight_migration_args(base);
-            run_owned(root, "python", &args)?;
+            run_migration_contract(root, base)?;
         }
         GateStep::OpenApiAndFrontendConsumer => {
             super::execute_ci_command(&crate::cli::CiCommand::ConsumerContract, frontend_dir)?
         }
     }
     Ok(())
+}
+
+fn run_migration_contract(root: &Path, base: Option<&str>) -> Result<()> {
+    let trusted_ref = preflight_trusted_ref(base).unwrap_or_else(|| "HEAD".to_owned());
+    run_migration_history(root, true, &trusted_ref)
 }

@@ -18,7 +18,7 @@
 
 ## 数据库迁移
 
-控制库使用默认目标；租户数据可操作全部已登记目标或单个目标。常用命令为 `cargo migrate -- control status`、`cargo migrate -- control verify`、`cargo migrate -- control up`、`cargo migrate -- tenant-data status --all`、`cargo migrate -- tenant-data up --target <目标键>` 和 `cargo migrate -- tenant-data verify --target <目标键>`。租户目标使用配置键而非数据库名；`--all` 只处理已登记目标，多个目标会先做物理身份预检，任何别名重复都会在 DDL 前拒绝。生产配置仍保持 `database.migration_mode="verify"`，DDL 只由显式迁移命令执行。
+控制库使用默认目标；租户数据可操作全部已登记目标或单个目标。常用命令为 `cargo migrate -- control status`、`cargo migrate -- control verify`、`cargo migrate -- control up`、`cargo migrate -- tenant-data status --all`、`cargo migrate -- tenant-data up --target <目标键>` 和 `cargo migrate -- tenant-data verify --target <目标键>`。租户目标使用配置键而非数据库名；`--all` 只处理已登记目标，多个目标会先做物理身份预检，任何别名重复都会在 DDL 前拒绝。修改迁移源码后，用 `cargo xtask data migrate check` 只读检查历史与注册，提交前用 `cargo xtask data migrate check --require-frozen`；开发版重整基线显式执行 `cargo xtask data migrate baseline --write`，稳定版只追加并执行 `cargo xtask data migrate freeze`。生产配置仍保持 `database.migration_mode="verify"`，DDL 只由显式迁移命令执行，迁移历史维护命令不连接数据库。
 
 生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
 

@@ -146,7 +146,7 @@ class SourceInventoryTests(unittest.TestCase):
 
     def test_product_classification_stays_conservative_and_tools_remain_separate(self):
         for name in ("Cargo.lock", "config/app.toml", "vendor/lib.rs", "xtask/src/main.rs",
-                     "tools/python/release_stage.py", "unknown/input.dat"):
+                     "unknown/input.dat"):
             self.assertEqual(sources.source_domain(name), "product")
         for name in ("tools/python/check.py", "crates/app/tests/fixture.json", ".github/workflows/ci.yml"):
             self.assertEqual(sources.source_domain(name), "test_tools")

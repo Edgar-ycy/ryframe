@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{
     Result,
+    migration::run_check as run_migration_history_check,
     process::{run as run_process, run_owned, run_owned_with_env, run_pnpm},
 };
 
@@ -18,7 +19,7 @@ use super::super::{
     model::BackendSnapshotProfile,
     node_suite::run_node_tests,
     plan::{CheckPlanMode, CheckTaskPlan},
-    policy_tasks::{PolicyProfile, policy_tasks},
+    policy_tasks::{PolicyProfile, PolicyTaskInvocation, policy_tasks},
     resource::resource_workspace_compilation,
     snapshot::{
         BackendSnapshots, export_and_verify_backend_snapshots, run_consumer_contract,
@@ -90,7 +91,7 @@ pub(crate) fn execute_registered_task(
         }
         TaskExecutor::PythonTests => run_process(&context.root, "python", PYTHON_TEST_ARGS),
         TaskExecutor::NodeTests => run_node_tests(&context.root),
-        TaskExecutor::MigrationHistory => run_migration_history(context, mode, executor),
+        TaskExecutor::MigrationHistory => run_migration_history(context, mode),
         TaskExecutor::WorkspaceGates => run_workspace_gates(context, mode, state, true),
         TaskExecutor::BackendWorkspaceGates => run_workspace_gates(context, mode, state, false),
         TaskExecutor::FrontendFull => run_pnpm(&context.frontend_dir, &["check", "--full"]),
@@ -201,7 +202,14 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
     }
     super::super::architecture::run(&context.root)?;
     for task in policy_tasks(profile) {
-        run_owned(&context.root, "python", &task.arguments())?;
+        match task.invocation {
+            PolicyTaskInvocation::Python(script) => {
+                run_owned(&context.root, "python", &[script.to_owned()])?;
+            }
+            PolicyTaskInvocation::MigrationHistory => {
+                run_migration_history_check(&context.root, false, "HEAD")?;
+            }
+        }
     }
     Ok(())
 }
@@ -216,34 +224,20 @@ fn policy_profile(mode: TaskExecutionMode<'_>) -> PolicyProfile {
 fn run_migration_history(
     context: &VerifyExecutionContext,
     mode: TaskExecutionMode<'_>,
-    executor: TaskExecutor,
 ) -> Result<()> {
-    if matches!(mode, TaskExecutionMode::Ci) {
+    let trusted_ref = if matches!(mode, TaskExecutionMode::Ci) {
         let base = std::env::var("RYFRAME_CI_BASE_SHA")
             .or_else(|_| std::env::var("GITHUB_BASE_SHA"))
             .ok();
-        return run_owned(
-            &context.root,
-            "python",
-            &preflight_migration_args(base.as_deref()),
-        );
-    }
-    run_process(
-        &context.root,
-        "python",
-        executor.static_arguments().ok_or("迁移历史任务缺少参数")?,
-    )
+        preflight_trusted_ref(base.as_deref()).unwrap_or_else(|| "HEAD".to_owned())
+    } else {
+        "HEAD".to_owned()
+    };
+    run_migration_history_check(&context.root, true, &trusted_ref)
 }
 
-pub(crate) fn preflight_migration_args(base: Option<&str>) -> Vec<String> {
-    let mut arguments = super::super::policy_tasks::STRICT_MIGRATION_HISTORY_ARGS
-        .iter()
-        .map(|argument| (*argument).to_owned())
-        .collect::<Vec<_>>();
-    if let Some(base) = base.filter(|value| valid_git_sha(value)) {
-        arguments.extend(["--trusted-ref".to_owned(), base.to_owned()]);
-    }
-    arguments
+pub(crate) fn preflight_trusted_ref(base: Option<&str>) -> Option<String> {
+    base.filter(|value| valid_git_sha(value)).map(str::to_owned)
 }
 
 fn valid_git_sha(value: &str) -> bool {

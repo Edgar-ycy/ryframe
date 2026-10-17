@@ -135,7 +135,7 @@ fn full_gate_discovers_repository_python_and_node_tests() {
     assert_eq!(
         policy_tasks(PolicyProfile::FullStatic)
             .into_iter()
-            .map(|task| task.script)
+            .filter_map(|task| task.python_script())
             .collect::<Vec<_>>(),
         ["tools/python/check_supply_chain.py"]
     );

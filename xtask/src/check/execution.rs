@@ -32,7 +32,7 @@ mod task_execution;
 
 use task_execution::execute_plan;
 pub(crate) use task_execution::{
-    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_migration_args,
+    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_trusted_ref,
 };
 
 pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[

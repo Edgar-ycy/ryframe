@@ -5,20 +5,24 @@ pub(crate) enum PolicyProfile {
     CiPreflight,
 }
 
-pub(crate) const MIGRATION_HISTORY_SCRIPT: &str = "tools/python/check_migration_history.py";
-pub(crate) const STRICT_MIGRATION_HISTORY_ARGS: &[&str] =
-    &[MIGRATION_HISTORY_SCRIPT, "--require-frozen"];
+pub(crate) const STRICT_MIGRATION_HISTORY_ARGS: &[&str] = &["--require-frozen"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PythonPolicyTask {
+pub(crate) enum PolicyTaskInvocation {
+    Python(&'static str),
+    MigrationHistory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PolicyTask {
     pub(crate) id: &'static str,
-    pub(crate) script: &'static str,
+    pub(crate) invocation: PolicyTaskInvocation,
     full_order: Option<u8>,
     smart_order: Option<u8>,
     ci_preflight_order: Option<u8>,
 }
 
-impl PythonPolicyTask {
+impl PolicyTask {
     const fn order(self, profile: PolicyProfile) -> Option<u8> {
         match profile {
             PolicyProfile::FullStatic => self.full_order,
@@ -27,30 +31,34 @@ impl PythonPolicyTask {
         }
     }
 
-    pub(crate) fn arguments(self) -> Vec<String> {
-        vec![self.script.to_owned()]
+    #[allow(dead_code)]
+    pub(crate) fn python_script(self) -> Option<&'static str> {
+        match self.invocation {
+            PolicyTaskInvocation::Python(script) => Some(script),
+            PolicyTaskInvocation::MigrationHistory => None,
+        }
     }
 }
 
-pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
-    PythonPolicyTask {
+pub(crate) const POLICY_TASKS: &[PolicyTask] = &[
+    PolicyTask {
         id: "migration-history",
-        script: MIGRATION_HISTORY_SCRIPT,
+        invocation: PolicyTaskInvocation::MigrationHistory,
         full_order: None,
         smart_order: Some(1),
         ci_preflight_order: None,
     },
-    PythonPolicyTask {
+    PolicyTask {
         id: "supply-chain",
-        script: "tools/python/check_supply_chain.py",
+        invocation: PolicyTaskInvocation::Python("tools/python/check_supply_chain.py"),
         full_order: Some(6),
         smart_order: None,
         ci_preflight_order: None,
     },
 ];
 
-pub(crate) fn policy_tasks(profile: PolicyProfile) -> Vec<&'static PythonPolicyTask> {
-    let mut tasks = PYTHON_POLICY_TASKS
+pub(crate) fn policy_tasks(profile: PolicyProfile) -> Vec<&'static PolicyTask> {
+    let mut tasks = POLICY_TASKS
         .iter()
         .filter(|task| task.order(profile).is_some())
         .collect::<Vec<_>>();

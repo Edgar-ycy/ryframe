@@ -188,6 +188,71 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
 }
 
 #[test]
+fn migration_history_invalid_arguments_exit_two_before_running_tasks() {
+    for arguments in [
+        ["data", "migrate", "reconcile"].as_slice(),
+        ["data", "migrate", "check", "--trusted-ref"].as_slice(),
+        [
+            "data",
+            "migrate",
+            "check",
+            "--require-frozen",
+            "--require-frozen",
+        ]
+        .as_slice(),
+    ] {
+        let result = invoke(arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(result.stdout.is_empty());
+    }
+}
+
+#[test]
+fn migration_history_cli_preserves_read_only_success_and_failure_exit_codes() {
+    let data_help = invoke(&["data", "--help"]);
+    assert!(data_help.status.success());
+    let help = String::from_utf8(data_help.stdout).unwrap();
+    assert!(help.contains("data migrate check"), "{help}");
+    assert!(help.contains("data migrate freeze"), "{help}");
+    assert!(help.contains("data migrate reconcile --write"), "{help}");
+
+    let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("catalog/migrations.lock.toml");
+    let before = std::fs::read(&lock_path).unwrap();
+    let checked = invoke(&["data", "migrate", "check", "--require-frozen"]);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let stdout = String::from_utf8(checked.stdout).unwrap();
+    assert!(
+        stdout.contains("迁移历史校验通过：源码、注册与迁移锁文件一致"),
+        "{stdout}"
+    );
+    assert_eq!(std::fs::read(lock_path).unwrap(), before);
+
+    let failed = invoke(&[
+        "data",
+        "migrate",
+        "check",
+        "--require-frozen",
+        "--trusted-ref",
+        "bad ref",
+    ]);
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(failed.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&failed.stderr).contains("迁移历史校验失败"),
+        "{}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
+}
+
+#[test]
 fn invalid_data_arguments_exit_two_before_starting_cargo() {
     for arguments in [
         ["data", "backup", "register", "--manifest", "relative.json"].as_slice(),

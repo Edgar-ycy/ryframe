@@ -71,7 +71,7 @@ pub(crate) use execution::ci_consumer_contract_against_committed_snapshot;
 pub(crate) use execution::verify;
 #[allow(unused_imports)]
 pub(crate) use execution::{
-    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_migration_args,
+    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_trusted_ref,
     run_parallel_tasks,
 };
 #[allow(unused_imports)]
@@ -96,8 +96,8 @@ pub(crate) use plan::{
 };
 #[allow(unused_imports)]
 pub(crate) use policy_tasks::{
-    MIGRATION_HISTORY_SCRIPT, PYTHON_POLICY_TASKS, PolicyProfile, PythonPolicyTask,
-    STRICT_MIGRATION_HISTORY_ARGS, policy_tasks,
+    POLICY_TASKS, PolicyProfile, PolicyTask, PolicyTaskInvocation, STRICT_MIGRATION_HISTORY_ARGS,
+    policy_tasks,
 };
 #[allow(unused_imports)]
 pub(crate) use resource::{

@@ -52,6 +52,8 @@ cargo migrate -- tenant-data status --all
 cargo migrate -- tenant-data verify --all
 ```
 
+框架维护者可用 `cargo xtask data migrate check` 只读核验迁移目录、注册顺序、生成迁移接线和 `catalog/migrations.lock.toml` 摘要；提交前检查使用 `cargo xtask data migrate check --require-frozen`。开发版显式重整基线使用 `cargo xtask data migrate baseline --write`，稳定版只冻结当前工作树中的新迁移，使用 `cargo xtask data migrate freeze`。`cargo xtask data migrate reconcile --write` 按当前版本阶段选择 baseline 或 freeze，全栈夹具复用它。以上命令不连接或修改数据库。
+
 ## 已有表接管
 
 已有表只能显式接管。先导入或手写模型、登记描述符并生成匹配迁移，停止 API/Worker，再保存、检查和应用计划：

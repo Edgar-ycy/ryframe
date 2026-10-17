@@ -764,6 +764,45 @@ fn data_groups_migrations_and_explicit_maintenance() {
         Command::Data(DataCommand::Migrate(MigrationCommand::Freeze))
     );
     assert_eq!(
+        parse_command(&["data", "migrate", "reconcile", "--write"]).unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Reconcile))
+    );
+    assert_eq!(
+        parse_command(&["data", "migrate", "check"]).unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Check {
+            require_frozen: false,
+            trusted_ref: None,
+        }))
+    );
+    assert_eq!(
+        parse_command(&[
+            "data",
+            "migrate",
+            "check",
+            "--require-frozen",
+            "--trusted-ref",
+            "HEAD"
+        ])
+        .unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Check {
+            require_frozen: true,
+            trusted_ref: Some("HEAD".into()),
+        }))
+    );
+    assert!(parse_command(&["data", "migrate", "reconcile"]).is_err());
+    assert!(
+        parse_command(&[
+            "data",
+            "migrate",
+            "check",
+            "--trusted-ref",
+            "HEAD",
+            "--trusted-ref",
+            "HEAD"
+        ])
+        .is_err()
+    );
+    assert_eq!(
         parse_command(&[
             "data",
             "migrate",

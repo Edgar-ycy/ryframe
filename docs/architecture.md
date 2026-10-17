@@ -29,7 +29,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | 模块 | 开发时用于 |
 |---|---|
 | `ryframe-kernel` | 通用 ID、Snowflake、分页、错误和值对象 |
-| `ryframe-config` | 配置结构、环境覆盖和校验 |
+| `ryframe-config` | 配置结构、环境覆盖、校验及工具共用版本阶段判定 |
 | `ryframe-auth` | 密码、JWT 与 RBAC 决策 |
 | `ryframe-application` | 业务用例、事务、状态机和出站端口 |
 | `ryframe-db` | 控制库查询、写入与迁移 |
@@ -54,7 +54,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 
 `ryframe-adapters` 默认不启用高成本能力；API 显式组合 `image-processing`、`monitoring`、`otel`、`redis-api` 与 `spreadsheet`，Worker 使用 `monitoring`、`otel`、`redis-client` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
 
-Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。Security Audit 解析真实 Cargo feature tree：API（含 Swagger UI）与 Worker 要求 JWT、HTTP、Rustls 和 SQLx 链路启用 AWS-LC，并拒绝实际 `ring` package/provider；Worker 额外禁止依赖 `ryframe-api`。迁移进程只保留数据库所需的 AWS-LC TLS 链路，禁止 API、Adapter、Web、Redis、图片处理、遥测和 HTTP client 依赖。生成器默认运行图禁止数据库与网络 runtime，unique package closure 上限为 90；schema import 依赖仅由对应 feature 引入。`aws-lc-rs` 自身的 `ring-io`、`ring-sig-verify` 兼容 feature 不属于 ring provider。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。
+Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。Security Audit 解析真实 Cargo feature tree：API（含 Swagger UI）与 Worker 要求 JWT、HTTP、Rustls 和 SQLx 链路启用 AWS-LC，并拒绝实际 `ring` package/provider；Worker 额外禁止依赖 `ryframe-api`。迁移进程只保留数据库所需的 AWS-LC TLS 链路，禁止 API、Adapter、Web、Redis、图片处理、遥测和 HTTP client 依赖。生成器默认运行图禁止数据库与网络 runtime，unique package closure 上限为 90；schema import 依赖仅由对应 feature 引入。`aws-lc-rs` 自身的 `ring-io`、`ring-sig-verify` 兼容 feature 不属于 ring provider。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。生成器与 xtask 的稳定版阶段判断共用 `ryframe-config` 的 tools 能力，只读取 Workspace 清单、Git tag 和历史提交；迁移历史冻结工具不调用 Python 或数据库。
 
 `ryframe-application::system` 按业务分为四个入口：
 

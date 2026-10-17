@@ -356,9 +356,42 @@ fn parse_migration(args: &[String]) -> Result<MigrationCommand, CliError> {
         }
         return Ok(MigrationCommand::Baseline);
     }
+    if operation == "reconcile" {
+        if args[1..] != ["--write"] {
+            return Err(CliError::new(
+                "用法：cargo xtask data migrate reconcile --write",
+            ));
+        }
+        return Ok(MigrationCommand::Reconcile);
+    }
     if operation == "freeze" {
         require_empty(&args[1..], "cargo xtask data migrate freeze")?;
         return Ok(MigrationCommand::Freeze);
+    }
+    if operation == "check" {
+        let mut require_frozen = false;
+        let mut trusted_ref = None;
+        let mut index = 1;
+        while index < args.len() {
+            match args[index].as_str() {
+                "--require-frozen" => {
+                    set_once(&mut require_frozen, "--require-frozen")?;
+                    index += 1;
+                }
+                "--trusted-ref" => {
+                    if trusted_ref.is_some() || index + 1 >= args.len() {
+                        return Err(CliError::new("--trusted-ref 必须且只能提供一次 ref/SHA"));
+                    }
+                    trusted_ref = Some(args[index + 1].clone());
+                    index += 2;
+                }
+                unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
+            }
+        }
+        return Ok(MigrationCommand::Check {
+            require_frozen,
+            trusted_ref,
+        });
     }
     let operation = match operation.as_str() {
         "verify" => MigrationOperation::Verify,
@@ -386,7 +419,7 @@ fn parse_migration(args: &[String]) -> Result<MigrationCommand, CliError> {
 }
 
 pub(super) fn migration_usage() -> &'static str {
-    "cargo xtask data migrate <verify|up|status> [control|tenant-data (--all|--target KEY)]\n  cargo xtask data migrate new <control|tenant-data> <迁移名>\n  cargo xtask data migrate baseline --write | freeze"
+    "cargo xtask data migrate <verify|up|status> [control|tenant-data (--all|--target KEY)]\n  cargo xtask data migrate new <control|tenant-data> <迁移名>\n  cargo xtask data migrate check [--require-frozen] [--trusted-ref <ref-or-sha>]\n  cargo xtask data migrate baseline --write | freeze | reconcile --write"
 }
 
 fn validate_name(name: &str) -> Result<(), CliError> {

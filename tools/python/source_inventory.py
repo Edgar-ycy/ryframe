@@ -102,9 +102,6 @@ def source_domain(relative: str) -> str:
             or ".." in path.parts or "\\" in relative
             or path.as_posix() != relative):
         raise ValueError("源码清单路径无效")
-    # 生成器嵌入的版本阶段实现属于产品构建输入。
-    if relative == "tools/python/release_stage.py":
-        return "product"
     if (path.parts[0] == "tests" or path.parts[:2] == ("xtask", "tests")
             or len(path.parts) >= 3 and path.parts[0] == "crates" and path.parts[2] == "tests"):
         return "test_tools"

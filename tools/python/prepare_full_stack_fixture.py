@@ -9,11 +9,9 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from full_stack_process import write_receipt
-from release_stage import release_stage
 from source_inventory import git, snapshot
 from reference_fixture_control_protocol import run_private
 
@@ -155,16 +153,7 @@ def revalidate_formal_sources(
 
 
 def register_fixture_migration(root: Path, log: Path) -> None:
-    options = (
-        ["--freeze"]
-        if release_stage(root)["stable"]
-        else ["--refresh-baseline", "--write"]
-    )
-    run(
-        [sys.executable, "-X", "utf8", "tools/python/check_migration_history.py", *options],
-        root,
-        log,
-    )
+    run(["cargo", "xtask", "data", "migrate", "reconcile", "--write"], root, log)
 
 
 def create_business_fixture(root: Path, log: Path) -> bytes:

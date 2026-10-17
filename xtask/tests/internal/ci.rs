@@ -2,7 +2,7 @@ use super::cli::{CiCommand, ResourceGateReplayOptions};
 use super::{
     check::{
         BackendSnapshotProfile, CheckPlanMode, TaskExecutor, VerifySelection, WorkspaceGraph,
-        preflight_migration_args, tasks_for,
+        preflight_trusted_ref, tasks_for,
     },
     ci::{
         CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for,
@@ -376,22 +376,10 @@ fn changed_paths_are_normalized_deduplicated_and_sorted() {
 #[test]
 fn preflight_uses_only_a_valid_nonzero_base_sha() {
     let sha = "0123456789abcdef0123456789abcdef01234567";
-    assert_eq!(
-        preflight_migration_args(Some(sha)),
-        [
-            "tools/python/check_migration_history.py",
-            "--require-frozen",
-            "--trusted-ref",
-            sha,
-        ]
-    );
-    assert_eq!(
-        preflight_migration_args(Some(&"0".repeat(40))),
-        [
-            "tools/python/check_migration_history.py",
-            "--require-frozen"
-        ]
-    );
+    assert_eq!(preflight_trusted_ref(Some(sha)), Some(sha.to_owned()));
+    assert_eq!(preflight_trusted_ref(Some(&"0".repeat(40))), None);
+    assert_eq!(preflight_trusted_ref(Some("HEAD")), None);
+    assert_eq!(preflight_trusted_ref(None), None);
 }
 
 #[test]

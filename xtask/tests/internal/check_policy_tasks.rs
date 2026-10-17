@@ -1,78 +1,86 @@
 use std::collections::BTreeSet;
 
 use super::check::{
-    MIGRATION_HISTORY_SCRIPT, PYTHON_POLICY_TASKS, PolicyProfile, STRICT_MIGRATION_HISTORY_ARGS,
-    policy_tasks,
+    POLICY_TASKS, PolicyProfile, PolicyTaskInvocation, STRICT_MIGRATION_HISTORY_ARGS, policy_tasks,
 };
 
 #[test]
-fn policy_tasks_have_unique_stable_ids_and_script_paths() {
-    let ids = PYTHON_POLICY_TASKS
+fn policy_tasks_have_unique_stable_ids_and_python_scripts() {
+    let ids = POLICY_TASKS
         .iter()
         .map(|task| task.id)
         .collect::<BTreeSet<_>>();
-    let scripts = PYTHON_POLICY_TASKS
+    let scripts = POLICY_TASKS
         .iter()
-        .map(|task| task.script)
+        .filter_map(|task| task.python_script())
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(ids.len(), PYTHON_POLICY_TASKS.len());
-    assert_eq!(scripts.len(), PYTHON_POLICY_TASKS.len());
+    assert_eq!(ids.len(), POLICY_TASKS.len());
+    assert_eq!(scripts.len() + 1, POLICY_TASKS.len());
+    assert!(
+        POLICY_TASKS
+            .iter()
+            .any(|task| task.invocation == PolicyTaskInvocation::MigrationHistory)
+    );
 }
 
 #[test]
 fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
-    let scripts = |profile| {
+    let definitions = |profile| {
         policy_tasks(profile)
             .into_iter()
-            .map(|task| task.script)
+            .map(|task| (task.id, task.python_script()))
             .collect::<Vec<_>>()
     };
 
     assert_eq!(
-        scripts(PolicyProfile::FullStatic),
-        ["tools/python/check_supply_chain.py"]
+        definitions(PolicyProfile::FullStatic),
+        [("supply-chain", Some("tools/python/check_supply_chain.py"))]
     );
     assert_eq!(
-        scripts(PolicyProfile::Smart),
-        [
-            "tools/python/check_migration_history.py",
-        ]
+        definitions(PolicyProfile::Smart),
+        [("migration-history", None)]
     );
-    assert_eq!(scripts(PolicyProfile::CiPreflight), []);
+    assert_eq!(definitions(PolicyProfile::CiPreflight), []);
     assert_eq!(
-        scripts(PolicyProfile::FullStatic)
+        definitions(PolicyProfile::FullStatic)
             .iter()
-            .filter(|script| **script == "tools/python/check_supply_chain.py")
+            .filter(|(_id, script)| *script == Some("tools/python/check_supply_chain.py"))
             .count(),
         1
     );
     assert!(
-        !scripts(PolicyProfile::CiPreflight).contains(&"tools/python/check_supply_chain.py"),
+        !definitions(PolicyProfile::CiPreflight)
+            .iter()
+            .any(|(_id, script)| *script == Some("tools/python/check_supply_chain.py")),
         "CI preflight 的供应链检查由始终执行的 security source job 覆盖"
     );
-    for profile in [
-        PolicyProfile::FullStatic,
-        PolicyProfile::Smart,
-        PolicyProfile::CiPreflight,
+    for retired in [
+        "tools/python/check_architecture.py",
+        "tools/python/check_deployment_assets.py",
+        "tools/python/check_permission_routes.py",
+        "tools/python/check_migration_history.py",
     ] {
-        let scripts = scripts(profile);
-        assert!(!scripts.contains(&"tools/python/check_deployment_assets.py"));
-        assert!(!scripts.contains(&"tools/python/check_permission_routes.py"));
+        assert!(
+            POLICY_TASKS
+                .iter()
+                .filter_map(|task| task.python_script())
+                .all(|script| script != retired)
+        );
     }
 }
 
 #[test]
-fn strict_migration_command_reuses_the_registered_script() {
-    let registered = PYTHON_POLICY_TASKS
+fn strict_migration_command_uses_the_native_registered_task() {
+    let registered = POLICY_TASKS
         .iter()
         .find(|task| task.id == "migration-history")
         .unwrap();
-    assert_eq!(registered.script, MIGRATION_HISTORY_SCRIPT);
     assert_eq!(
-        STRICT_MIGRATION_HISTORY_ARGS,
-        [MIGRATION_HISTORY_SCRIPT, "--require-frozen"]
+        registered.invocation,
+        PolicyTaskInvocation::MigrationHistory
     );
+    assert_eq!(STRICT_MIGRATION_HISTORY_ARGS, ["--require-frozen"]);
     assert!(
         policy_tasks(PolicyProfile::FullStatic)
             .into_iter()
@@ -82,9 +90,11 @@ fn strict_migration_command_reuses_the_registered_script() {
 
 #[test]
 fn python_policies_only_use_their_registered_script() {
-    for task in PYTHON_POLICY_TASKS {
+    for task in POLICY_TASKS {
         assert_ne!(task.id, "removed-identity");
         assert_ne!(task.id, "prerelease-dependencies");
-        assert_eq!(task.arguments(), [task.script]);
+        if let Some(script) = task.python_script() {
+            assert!(script.starts_with("tools/python/"));
+        }
     }
 }

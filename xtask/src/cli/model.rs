@@ -488,6 +488,11 @@ pub(crate) enum MigrationScope {
 pub(crate) enum MigrationCommand {
     Freeze,
     Baseline,
+    Reconcile,
+    Check {
+        require_frozen: bool,
+        trusted_ref: Option<String>,
+    },
     Run {
         operation: MigrationOperation,
         target: MigrationTarget,

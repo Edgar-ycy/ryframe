@@ -13,6 +13,8 @@ mod object_storage_config;
 mod pagination_config;
 mod rate_limit_config;
 mod redis_config;
+#[cfg(feature = "tools")]
+mod release_stage;
 mod reset_config;
 mod resource_scope;
 mod runtime_config;
@@ -22,6 +24,8 @@ mod tenant_data_config;
 #[cfg(feature = "tools")]
 mod tool_config;
 mod user_import_config;
+#[cfg(feature = "tools")]
+pub use release_stage::{ReleaseStage, release_stage, stable_version, workspace_version};
 #[cfg(feature = "tools")]
 pub use tool_config::{GeneratorSettings, ToolSettings, WorkspaceSettings};
 

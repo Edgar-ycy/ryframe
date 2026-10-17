@@ -140,6 +140,8 @@ mod fixture_prepare_tests;
 mod fixture_runtime_tests;
 #[path = "internal/language.rs"]
 mod language_tests;
+#[path = "internal/migration_history.rs"]
+mod migration_history_tests;
 #[path = "internal/migration.rs"]
 mod migration_tests;
 #[path = "internal/monitoring.rs"]

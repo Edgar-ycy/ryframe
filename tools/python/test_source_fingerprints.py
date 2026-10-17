@@ -275,7 +275,7 @@ class SourceFingerprintsTests(unittest.TestCase):
     def test_product_inputs_and_unknown_paths_are_conservative(self):
         for path in ("Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "crates/app/src/main.rs",
                      "vendor/dep/src/lib.rs", "config/app.toml", "locales/zh.json", "catalog/access.toml",
-                     "xtask/src/main.rs", "tools/python/embedded.rs", "tools/python/release_stage.py", "unknown/input.dat"):
+                     "xtask/src/main.rs", "tools/python/embedded.rs", "unknown/input.dat"):
             with self.subTest(path=path):
                 self.assertEqual(source_inventory.source_domain(path), "product")
         self.assertEqual(source_inventory.source_domain("tools/python/test_copy.py"), "test_tools")

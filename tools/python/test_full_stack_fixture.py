@@ -191,25 +191,13 @@ class FullStackFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "同时指定"):
             fixture.source_inputs(self.backend, self.frontend, "a" * 40, None)
 
-    def test_fixture_migration_respects_shared_release_stage(self):
-        for stable, options in (
-            (False, ["--refresh-baseline", "--write"]),
-            (True, ["--freeze"]),
-        ):
-            with (
-                self.subTest(stable=stable),
-                patch.object(fixture, "release_stage", return_value={"stable": stable}),
-                patch.object(fixture, "run") as run,
-            ):
-                fixture.register_fixture_migration(self.backend, self.root / "log")
-                self.assertEqual(run.call_args.args[0][4:], options)
-        with (
-            patch.object(fixture, "release_stage", side_effect=ValueError("禁止降级")),
-            patch.object(fixture, "run") as run,
-        ):
-            with self.assertRaisesRegex(ValueError, "禁止降级"):
-                fixture.register_fixture_migration(self.backend, self.root / "log")
-            run.assert_not_called()
+    def test_fixture_migration_reuses_xtask_stage_selection(self):
+        with patch.object(fixture, "run") as run:
+            fixture.register_fixture_migration(self.backend, self.root / "log")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["cargo", "xtask", "data", "migrate", "reconcile", "--write"],
+        )
 
     def test_business_fixture_is_created_and_explicitly_registered(self):
         cargo = self.backend / "crates/ryframe/Cargo.toml"

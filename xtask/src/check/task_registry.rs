@@ -314,8 +314,8 @@ const CHECK_TASKS: [TaskDefinition; 23] = [
     task_definition!(
         MigrationHistory,
         "migration.history",
-        "check_migration_history",
-        "以 --require-frozen 核验冻结迁移历史",
+        "migration_history",
+        "用 Rust 以 --require-frozen 核验冻结迁移历史",
         Backend,
         Contract,
         Backend,
