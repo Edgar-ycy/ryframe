@@ -32,6 +32,7 @@ where
     seed_access_catalog(db).await?;
     seed_product_baseline(db).await?;
     seed_tenant_data_placements(db).await?;
+    seed_data_scope_projection_events(db).await?;
     seed_retention_schedule(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
@@ -85,6 +86,31 @@ where
     db.execute_unprepared(TENANT_PLACEMENT_SEED_STATEMENT)
         .await?;
     Ok(())
+}
+
+async fn seed_data_scope_projection_events<C>(db: &C) -> Result<(), DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    db.execute_unprepared(&data_scope_projection_event_statement())
+        .await?;
+    Ok(())
+}
+
+fn data_scope_projection_event_statement() -> String {
+    format!(
+        "INSERT IGNORE INTO `sys_outbox_event` \
+         (`id`, `tenant_id`, `event_type`, `aggregate_type`, `aggregate_id`, `payload`, \
+          `status`, `available_at`, `attempts`, `max_attempts`, `dedupe_key`, \
+          `created_at`, `updated_at`) \
+         SELECT UUID_SHORT(), `tenant_id`, '{}', 'tenant_data_scope', `tenant_id`, \
+                JSON_OBJECT('tenant_id', `tenant_id`, 'source_version', `data_scope_version`), \
+                'pending', UTC_TIMESTAMP(), 0, 20, \
+                CONCAT('bootstrap:', `tenant_id`, ':', `data_scope_version`), \
+                UTC_TIMESTAMP(), UTC_TIMESTAMP() \
+         FROM `sys_tenant`",
+        ryframe_kernel::DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE
+    )
 }
 
 async fn seed_retention_schedule<C>(db: &C) -> Result<(), DbErr>

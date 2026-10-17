@@ -247,6 +247,12 @@ impl TenantDatabaseRouter {
     }
 }
 
+const DATA_SCOPE_TABLES: &[&str] = &[
+    "biz_data_scope_owner",
+    "biz_data_scope_dept",
+    "biz_data_scope_projection",
+];
+
 async fn clear_tenant_data_in_transaction(
     transaction: &DatabaseTransaction,
     provision: &FenceProvision,
@@ -297,6 +303,9 @@ async fn clear_tenant_data_in_transaction(
             ))
             .await
             .map_err(|error| target_write_error(provision, error, "租户 catalog 数据清理失败"))?;
+    }
+    for table in DATA_SCOPE_TABLES {
+        delete_tenant_table_rows(transaction, provision, table, "数据范围投影清理失败").await?;
     }
     if existing.is_some() {
         transaction
@@ -367,6 +376,56 @@ async fn verify_unowned_catalog_empty(
                 tenant_id: provision.tenant_id.clone(),
                 target_key: provision.target_key.clone(),
                 reason: "缺少 migration-owned frozen fence，拒绝删除 catalog 数据".into(),
+            });
+        }
+    }
+    ensure_tenant_tables_empty(transaction, provision, DATA_SCOPE_TABLES).await?;
+    Ok(())
+}
+
+async fn delete_tenant_table_rows(
+    transaction: &DatabaseTransaction,
+    provision: &FenceProvision,
+    table: &str,
+    operation: &'static str,
+) -> Result<(), TenantDataError> {
+    transaction
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            format!("DELETE FROM `{table}` WHERE `tenant_id` = ?"),
+            [provision.tenant_id.clone().into()],
+        ))
+        .await
+        .map(|_| ())
+        .map_err(|error| target_write_error(provision, error, operation))
+}
+
+async fn ensure_tenant_tables_empty(
+    transaction: &DatabaseTransaction,
+    provision: &FenceProvision,
+    tables: &[&str],
+) -> Result<(), TenantDataError> {
+    for table in tables {
+        let row = transaction
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                format!("SELECT EXISTS(SELECT 1 FROM `{table}` WHERE `tenant_id` = ? LIMIT 1)"),
+                [provision.tenant_id.clone().into()],
+            ))
+            .await
+            .map_err(|error| target_write_error(provision, error, "投影空数据检查失败"))?
+            .ok_or_else(|| TenantDataError::TargetUnavailable {
+                target_key: provision.target_key.clone(),
+            })?;
+        if row
+            .try_get_by_index::<i64>(0)
+            .map_err(|error| target_write_error(provision, error, "投影空数据结果无效"))?
+            != 0
+        {
+            return Err(TenantDataError::FenceRejected {
+                tenant_id: provision.tenant_id.clone(),
+                target_key: provision.target_key.clone(),
+                reason: "数据范围投影尚未清空".into(),
             });
         }
     }

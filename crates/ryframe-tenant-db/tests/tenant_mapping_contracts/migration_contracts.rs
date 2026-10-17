@@ -5,7 +5,8 @@ use ryframe_tenant_db::{
         business_cursor_columns, catalog_table, cursor_from_last_row, validate_batch_size,
     },
     migration::{
-        Migrator, RESOURCE_OWNERSHIP_DDL, TENANT_DATA_CATALOG, TENANT_DATA_MIGRATION_LEDGER,
+        DATA_SCOPE_DEPT_DDL, DATA_SCOPE_OWNER_DDL, DATA_SCOPE_PROJECTION_DDL, Migrator,
+        RESOURCE_OWNERSHIP_DDL, TENANT_DATA_CATALOG, TENANT_DATA_MIGRATION_LEDGER,
         TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL, expected_migration_names, normalize_check_clause,
         tenant_data_schema_fingerprint,
     },
@@ -89,10 +90,14 @@ fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
     assert_eq!(actual_names, expected_names);
     assert_eq!(
         migrations.len(),
-        1 + ryframe_tenant_db::generated::migrations().len()
+        2 + ryframe_tenant_db::generated::migrations().len()
     );
     assert_eq!(TENANT_DATA_MIGRATION_LEDGER, "seaql_tenant_data_migrations");
     assert_eq!(migrations[0].name(), "m20260820_000000_tenant_baseline");
+    assert_eq!(
+        migrations[1].name(),
+        "m20261017_000000_data_scope_projection"
+    );
 }
 
 #[test]
@@ -101,6 +106,9 @@ fn baseline_contains_complete_infrastructure_schema() {
     assert!(TENANT_FENCE_DDL.contains("ck_biz_tenant_fence_state"));
     assert!(TENANT_TARGET_SLOT_DDL.contains("ck_biz_tenant_target_slot_value"));
     assert!(RESOURCE_OWNERSHIP_DDL.contains("uq_resource_ownership_marker"));
+    assert!(DATA_SCOPE_PROJECTION_DDL.contains("biz_data_scope_projection"));
+    assert!(DATA_SCOPE_OWNER_DDL.contains("idx_data_scope_owner_dept"));
+    assert!(DATA_SCOPE_DEPT_DDL.contains("idx_data_scope_dept_ancestors"));
 }
 
 #[test]

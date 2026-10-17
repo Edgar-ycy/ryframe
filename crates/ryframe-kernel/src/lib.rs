@@ -21,7 +21,7 @@ mod tenant_id;
 
 pub use actor_context::ActorContext;
 pub use constants::*;
-pub use data_scope::{DataScope, DataScopeContext};
+pub use data_scope::{DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE, DataScope, DataScopeContext};
 pub use decimal::decimal_fits_precision;
 pub use enums::{BusinessType, UserStatus};
 pub use error::{AppError, ErrorCode};

@@ -76,6 +76,8 @@ pub fn mysql_snapshot_sql() -> String {
         append_snapshot_statement(&mut snapshot, statement);
     }
     append_snapshot_statement(&mut snapshot, TENANT_PLACEMENT_SEED_STATEMENT);
+    snapshot.push_str(&data_scope_projection_event_statement());
+    snapshot.push_str(";\n\n");
     append_snapshot_statement(&mut snapshot, RETENTION_SCHEDULE_SEED_STATEMENT);
     snapshot.truncate(snapshot.trim_end().len());
     snapshot.push('\n');

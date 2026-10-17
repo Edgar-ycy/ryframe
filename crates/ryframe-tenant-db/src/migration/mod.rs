@@ -10,11 +10,16 @@ mod catalog;
 #[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
 #[cfg(feature = "migration")]
+mod m20261017_000000_data_scope_projection;
+#[cfg(feature = "migration")]
 mod runtime;
 mod schema;
 mod status;
 
-const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_tenant_baseline"];
+const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[
+    "m20260820_000000_tenant_baseline",
+    "m20261017_000000_data_scope_projection",
+];
 
 pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
     HANDWRITTEN_MIGRATION_NAMES
@@ -30,7 +35,8 @@ pub use catalog::{
 };
 #[cfg(feature = "migration")]
 pub use m20260820_000000_tenant_baseline::{
-    RESOURCE_OWNERSHIP_DDL, TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
+    DATA_SCOPE_DEPT_DDL, DATA_SCOPE_OWNER_DDL, DATA_SCOPE_PROJECTION_DDL, RESOURCE_OWNERSHIP_DDL,
+    TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
 };
 #[cfg(feature = "migration")]
 pub use runtime::{Migrator, up, up_pending_business_migrations};

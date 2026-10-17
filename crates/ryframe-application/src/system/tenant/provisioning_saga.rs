@@ -300,6 +300,9 @@ impl TenantService {
         let tenant = transaction.lock_tenant(&pending.tenant_id).await?;
         if tenant.status == TENANT_STATUS_ENABLED {
             transaction.activate_placement(pending).await?;
+            transaction
+                .record_data_scope_change(&pending.tenant_id)
+                .await?;
             return transaction.commit(crate::TransactionAuditMode::Skip).await;
         }
         if tenant.status != TENANT_STATUS_PROVISIONING {
@@ -310,6 +313,9 @@ impl TenantService {
         transaction.activate_placement(pending).await?;
         transaction
             .update_status(&pending.tenant_id, TENANT_STATUS_ENABLED)
+            .await?;
+        transaction
+            .record_data_scope_change(&pending.tenant_id)
             .await?;
         transaction.commit(crate::TransactionAuditMode::Skip).await
     }

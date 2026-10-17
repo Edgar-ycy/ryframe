@@ -48,3 +48,9 @@ path = "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.
 sha256 = "5476433ea7c6ec636c3b58d9afb2d58b82976802a396f39086360cfd4a319b51"
 storage = "tenant-data"
 target = "m20260820_000000_tenant_baseline"
+
+[[files]]
+path = "crates/ryframe-tenant-db/src/migration/m20261017_000000_data_scope_projection.rs"
+sha256 = "b70336e6f6da32567218186ddfe1e50614c3e21555ef915351e535d03a94992d"
+storage = "tenant-data"
+target = "m20261017_000000_data_scope_projection"

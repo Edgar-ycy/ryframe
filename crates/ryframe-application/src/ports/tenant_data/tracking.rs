@@ -225,7 +225,9 @@ pub struct TenantMigrationContextRecord {
 
 /// 租户数据迁移状态机所拥有的控制库工作单元。
 #[async_trait::async_trait]
-pub trait TenantDataMigrationTransaction: crate::PersistenceTransaction + Send + Sync {
+pub trait TenantDataMigrationTransaction:
+    crate::PersistenceTransaction + crate::ports::data_scope::DataScopeMutationTransaction + Send + Sync
+{
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;

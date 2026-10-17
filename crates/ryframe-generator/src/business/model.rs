@@ -38,17 +38,27 @@ pub(super) fn descriptor_to_ir(
     descriptor: &OwnedResourceDescriptor,
 ) -> Result<ResourceIr, ResourceError> {
     validate_descriptor(package, descriptor)?;
-    let fields = descriptor
+    let owner_field = owner_field(descriptor)?;
+    let mut fields = descriptor
         .fields
         .iter()
         .enumerate()
         .map(|(index, field)| field_spec(field, index))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(owner_field) = &owner_field {
+        let field = fields
+            .iter_mut()
+            .find(|field| field.name == *owner_field)
+            .expect("owner_field 已在描述符校验中存在");
+        field.usage.create = false;
+        field.usage.create_optional = false;
+        field.usage.update = false;
+        field.usage.update_optional = false;
+    }
     let primary_key = descriptor.primary_key.clone();
     let indexes = indexes(descriptor);
     let soft_delete = soft_delete(descriptor)?;
     let audit = audit(descriptor);
-    let owner_field = owner_field(descriptor)?;
     let module = package.module.replace('-', "_");
     let permission_module = package.module.replace('_', "-");
     let permission_name = descriptor.name.replace('_', "-");
@@ -588,6 +598,13 @@ mod tests {
                 let descriptor = descriptor(database, Some("owner_id"), owner_type);
                 let resource = descriptor_to_ir(&package(), &descriptor).unwrap();
                 assert_eq!(resource.access.owner_field.as_deref(), Some("owner_id"));
+                let owner = resource
+                    .fields
+                    .iter()
+                    .find(|field| field.name == "owner_id")
+                    .unwrap();
+                assert!(!owner.usage.create && !owner.usage.update);
+                assert!(owner.usage.read && owner.usage.list);
                 assert_eq!(
                     resource.access.system_tenant_only,
                     database == OwnedResourceDatabase::Control

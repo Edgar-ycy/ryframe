@@ -6,4 +6,4 @@ use ryframe_application::ports::tenant_data::TenantDataTableDescriptor;
 pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[];
 
 pub const GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT: &str =
-    "fe40a7c738b129b8784b023ded31fa49201c1dd336a1ecd76261b0042c216909";
+    "1c96f731416bfbdc053aed132c7793567abdb854ffa0a4ad401d64adb133bae9";

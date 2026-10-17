@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// 租户数据范围投影的 Outbox 事件类型。
-pub const DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE: &str = "tenant.data_scope.projection";
+pub use ryframe_kernel::DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE;
 
 /// 身份或组织事实变更后需要发布的精确投影版本。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

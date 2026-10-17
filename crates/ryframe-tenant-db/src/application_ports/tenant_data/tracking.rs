@@ -1,6 +1,7 @@
 use ryframe_db::DbResultExt;
 use std::sync::Arc;
 
+use ryframe_application::DataScopeMutationTransaction;
 use ryframe_application::ports::{
     jobs::BackgroundJobTransaction,
     tenant_data::{
@@ -334,6 +335,13 @@ impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
             )
             .await
             .map(|record| record.is_some())
+    }
+}
+
+#[async_trait::async_trait]
+impl DataScopeMutationTransaction for TenantDataMigrationWorkUnit {
+    async fn record_data_scope_change(&self, tenant_id: &str) -> ryframe_kernel::AppResult<i64> {
+        self.transaction.record_data_scope_change(tenant_id).await
     }
 }
 

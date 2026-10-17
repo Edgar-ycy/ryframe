@@ -229,6 +229,17 @@ pub(super) async fn verify_empty_external_tenant(db: &DatabaseConnection) -> Res
             return Err(ResetError::new("外部租户业务表在重建后非空"));
         }
     }
+    for table in [
+        "biz_data_scope_owner",
+        "biz_data_scope_dept",
+        "biz_data_scope_projection",
+    ] {
+        if scalar_i64(db, &format!("SELECT COUNT(*) FROM `{table}`"), []).await? != Some(0) {
+            return Err(ResetError::new(format!(
+                "外部租户库数据范围表 {table} 在重建后非空"
+            )));
+        }
+    }
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 -- 自动生成文件：RyFrame 控制库新基线快照。
--- schema fingerprint: 9f0bde12fa587d4e
+-- schema fingerprint: 3f5f39d1b9783bb1
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -1719,5 +1719,7 @@ INSERT INTO `sys_product_plan_version` (`id`, `plan_id`, `version`, `name`, `des
 INSERT INTO `sys_tenant_product_plan` (`tenant_id`, `plan_version_id`, `changed_by`, `change_reason`, `created_at`, `updated_at`) SELECT `tenant_id`, IF(`tenant_id` = 'system', 2, 1), NULL, 'fresh_baseline', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) FROM `sys_tenant` ON DUPLICATE KEY UPDATE `tenant_id` = `sys_tenant_product_plan`.`tenant_id`;
 
 INSERT INTO `sys_tenant_data_placement` (`tenant_id`, `current_target_key`, `placement_generation`, `state`, `switch_token`, `created_at`, `updated_at`) SELECT `tenant_id`, 'shared-control', 1, 'active', SHA2(CONCAT('ryframe:tenant-data:shared-control:v1:', `tenant_id`), 256), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) FROM `sys_tenant` ON DUPLICATE KEY UPDATE `tenant_id` = `sys_tenant_data_placement`.`tenant_id`;
+
+INSERT IGNORE INTO `sys_outbox_event` (`id`, `tenant_id`, `event_type`, `aggregate_type`, `aggregate_id`, `payload`, `status`, `available_at`, `attempts`, `max_attempts`, `dedupe_key`, `created_at`, `updated_at`) SELECT UUID_SHORT(), `tenant_id`, 'tenant.data_scope.projection', 'tenant_data_scope', `tenant_id`, JSON_OBJECT('tenant_id', `tenant_id`, 'source_version', `data_scope_version`), 'pending', UTC_TIMESTAMP(), 0, 20, CONCAT('bootstrap:', `tenant_id`, ':', `data_scope_version`), UTC_TIMESTAMP(), UTC_TIMESTAMP() FROM `sys_tenant`;
 
 INSERT INTO `sys_job_schedule` (`id`, `tenant_id`, `name`, `handler_key`, `cron_expression`, `timezone`, `enabled`, `misfire_policy`, `concurrency_policy`, `max_runtime_seconds`, `next_run_at`, `last_run_at`, `version`, `del_flag`, `created_at`, `updated_at`) VALUES (3, 'system', '数据保留清理', 'system.data_retention_cleanup', '0 30 3 * * * *', 'UTC', 1, 'fire_once', 'forbid', 900, UTC_TIMESTAMP(6), NULL, 1, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `id` = `id`;

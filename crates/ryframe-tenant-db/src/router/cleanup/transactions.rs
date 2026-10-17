@@ -114,6 +114,7 @@ pub(super) async fn cleanup_ownership_in_transaction(
             return Ok(TenantDataCleanupOwnership::NotOwned);
         }
     }
+    ensure_tenant_tables_empty(transaction, provision, DATA_SCOPE_TABLES).await?;
     Ok(TenantDataCleanupOwnership::AlreadyClean)
 }
 
@@ -164,6 +165,7 @@ pub(super) async fn finish_tenant_cleanup_in_transaction(
             });
         }
     }
+    ensure_tenant_tables_empty(transaction, provision, DATA_SCOPE_TABLES).await?;
     if fence.is_some() {
         transaction
             .execute_raw(Statement::from_sql_and_values(

@@ -134,6 +134,15 @@ fn target_tables(control: bool) -> AppResult<TargetTables> {
         vec![ryframe_db::resource_ownership::RESOURCE_OWNERSHIP_TABLE.into()]
     };
     preserved.push(crate::migration::TENANT_DATA_MIGRATION_LEDGER.into());
+    preserved.extend(
+        [
+            "biz_data_scope_owner",
+            "biz_data_scope_dept",
+            "biz_data_scope_projection",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
     if crate::migration::tenant_data_catalog().tables().len()
         > crate::migration::TENANT_DATA_CATALOG.tables().len()
     {
@@ -267,7 +276,13 @@ mod tests {
         let tenant = target_tables(false).unwrap();
         assert_eq!(
             tenant.preserved,
-            ["ryframe_resource_ownership", "seaql_tenant_data_migrations"]
+            [
+                "biz_data_scope_dept",
+                "biz_data_scope_owner",
+                "biz_data_scope_projection",
+                "ryframe_resource_ownership",
+                "seaql_tenant_data_migrations",
+            ]
         );
         assert!(!tenant.business.is_empty());
         assert_eq!(

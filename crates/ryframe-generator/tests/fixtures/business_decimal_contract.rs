@@ -165,7 +165,7 @@ fn record() -> MemoItemRecord {
 }
 
 fn actor() -> ActorContext {
-    serde_json::from_value(json!({"user_id":1,"tenant_id":"system","username":"tester","dept_id":null,"dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":false,"is_super_admin":true})).unwrap()
+    serde_json::from_value(json!({"user_id":1,"tenant_id":"system","username":"tester","dept_id":null,"dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":false,"data_scope_version":1,"is_super_admin":true})).unwrap()
 }
 
 #[test]

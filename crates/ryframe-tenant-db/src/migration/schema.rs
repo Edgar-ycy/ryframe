@@ -255,7 +255,9 @@ async fn verify_data_scope_schema(db: &DatabaseConnection) -> Result<(), DbErr> 
     ] {
         let actual = canonical_table_schema(db, table).await?;
         if actual != expected {
-            return Err(schema_fingerprint_mismatch("data scope projection"));
+            return Err(DbErr::Custom(format!(
+                "tenant-data data scope schema mismatch for {table}: expected {expected}, actual {actual}"
+            )));
         }
     }
     Ok(())

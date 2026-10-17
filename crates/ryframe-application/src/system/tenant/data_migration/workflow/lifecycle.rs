@@ -171,6 +171,9 @@ impl TenantDataMigrationService {
             transaction
                 .increment_runtime_epoch(&migration.tenant_id)
                 .await?;
+            transaction
+                .record_data_scope_change(&migration.tenant_id)
+                .await?;
         }
         migration.state = TenantDataMigrationRecord::STATE_SUCCEEDED.into();
         migration.activated_at.get_or_insert(now);

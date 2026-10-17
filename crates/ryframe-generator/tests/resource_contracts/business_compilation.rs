@@ -357,7 +357,8 @@ const MODEL: &str = r#"#[derive(ryframe_sdk::ResourceModel)]
     title = "发票",
     table = "biz_invoice",
     database = "tenant",
-    primary_key = ["tenant_id", "id"]
+    primary_key = ["tenant_id", "id"],
+    owner_field = "owner_id"
 )]
 pub struct Invoice {
     #[resource(primary_key, auto_increment, column = "invoice_id")]
@@ -366,6 +367,8 @@ pub struct Invoice {
     pub tenant_id: String,
     #[resource(unique, filter, sort, sql_type = "VARCHAR(32)")]
     pub code: String,
+    #[resource(filter)]
+    pub owner_id: i64,
     #[resource(read_only)]
     pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
     #[resource(read_only)]

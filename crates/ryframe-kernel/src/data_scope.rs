@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// 租户数据范围投影的稳定 Outbox 事件类型。
+pub const DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE: &str = "tenant.data_scope.projection";
+
 /// 数据权限范围。
 ///
 /// 控制用户在查询时的行级可见范围，对应 `sys_role.data_scope` 字段：
