@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, backend_packages, frontend_profiles,
-    require_frontend_dependencies, run_parallel_tasks, run_removed_identity,
+    PYTHON_TEST_ARGS, backend_packages, frontend_profiles, require_frontend_dependencies,
+    run_parallel_tasks, run_removed_identity,
 };
 use crate::{
     Result,
@@ -72,9 +72,7 @@ pub(crate) fn execute_registered_task(
         ),
         TaskExecutor::PrereleaseDependencies => super::super::prerelease::run(&context.root),
         TaskExecutor::FrontendDependencies => require_frontend_dependencies(&context.frontend_dir),
-        TaskExecutor::PythonEnvironment => {
-            run_process(&context.root, "python", PYTHON_ENVIRONMENT_ARGS)
-        }
+        TaskExecutor::PythonEnvironment => super::super::python_environment::run(&context.root),
         TaskExecutor::CargoFormat => run_process(
             &context.root,
             "cargo",

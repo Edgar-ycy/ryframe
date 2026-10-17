@@ -10,14 +10,14 @@ use std::{
 use super::check::{
     BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR,
     BackendSnapshotProfile, ChangeCategory, ChangeSurfacePolicy, CheckPlanMode, FrontendProfile,
-    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, PolicyProfile, PolicyTaskInvocation,
-    RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR, RepositoryKind, ResourceWorkspaceProfile,
-    SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS, VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS,
-    WorkspaceGraph, analyze_change_surface, append_changed_file_size_warnings,
-    backend_package_operation_args, cargo_operation_jobs, changed_paths, ci_environment_from,
-    ci_target_policy_from, ci_test_jobs_from, classify_changes, complete_verify_selection,
-    consumer_contract_arguments, consumer_contract_command, consumer_contract_plan,
-    default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
+    PYTHON_TEST_ARGS, PolicyProfile, PolicyTaskInvocation, RESOURCE_CI_TARGET_DIR,
+    RESOURCE_VERIFY_TARGET_DIR, RepositoryKind, ResourceWorkspaceProfile, SMART_BACKEND_OPERATIONS,
+    SMART_FEATURE_OPERATIONS, VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph,
+    analyze_change_surface, append_changed_file_size_warnings, backend_package_operation_args,
+    cargo_operation_jobs, changed_paths, ci_environment_from, ci_target_policy_from,
+    ci_test_jobs_from, classify_changes, complete_verify_selection, consumer_contract_arguments,
+    consumer_contract_command, consumer_contract_plan, default_test_jobs_from,
+    feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
     parse_change_surface_policy, policy_tasks, resolve_frontend_dir, resolve_target_dir,
@@ -116,10 +116,6 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
 
 #[test]
 fn full_gate_discovers_repository_python_and_node_tests() {
-    assert_eq!(
-        PYTHON_ENVIRONMENT_ARGS,
-        ["tools/python/check_python_environment.py"]
-    );
     assert_eq!(
         PYTHON_TEST_ARGS,
         [

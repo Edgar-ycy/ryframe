@@ -2,8 +2,9 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
+    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
@@ -23,7 +24,7 @@ mod cancellation;
 pub(crate) use cancellation::{
     ProcessCancellation, is_process_cancellation, with_process_cancellation,
 };
-use cancellation::{command_output_result, command_status};
+use cancellation::{command_output_result, command_output_result_with_timeout, command_status};
 #[path = "process/cache.rs"]
 mod cache;
 use cache::configure_cargo_cache;
@@ -245,6 +246,39 @@ pub(crate) fn command_output_with_env(
     }
     String::from_utf8(output.stdout)
         .map_err(|error| format!("{executable} 输出不是 UTF-8：{error}").into())
+}
+
+/// 执行一次性 stdin/output 协议命令，并在超时后回收完整进程树。
+pub(crate) fn command_output_with_input_timeout(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+    input: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output> {
+    let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
+    let args = python_arguments(executable, args);
+    let mut command = child_command(&command_executable);
+    configure_cargo_cache(executable, &mut command);
+    configure_environment(&mut command, executable, environment, &[]);
+    command.args(&args).current_dir(dir);
+    if let Some(input) = input {
+        let mut file = tempfile::tempfile()?;
+        file.write_all(input)?;
+        file.seek(SeekFrom::Start(0))?;
+        command.stdin(Stdio::from(file));
+    } else {
+        command.stdin(Stdio::null());
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command_output_result_with_timeout(command, timeout).map_err(|error| {
+        format!(
+            "无法执行一次性 Python 输出协议 `{}`：{error}",
+            command_executable.to_string_lossy()
+        )
+        .into()
+    })
 }
 
 pub(crate) fn resolved_executable(

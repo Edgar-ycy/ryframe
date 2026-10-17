@@ -21,6 +21,7 @@ PARSER_DISTRIBUTIONS = {
     "tree-sitter": "0.25.2",
     "tree-sitter-rust": "0.24.2",
 }
+NATIVE_PROBE_ROUNDS = 64
 
 
 @dataclass(frozen=True)
@@ -570,10 +571,45 @@ def ast_json_request() -> int:
     return 0
 
 
+def native_probe() -> int:
+    """在隔离子进程中重复验证原生 AST runtime，阻止 CI 对话框阻塞。"""
+
+    if sys.platform == "win32":
+        import ctypes
+
+        # 访问冲突等原生崩溃应转换为退出码；禁止弹出等待人工关闭的系统错误对话框。
+        ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002)
+    errors: list[str] = []
+    if sys.version_info < (3, 11):
+        errors.append(
+            f"Python 版本过低：至少需要 3.11，实际为 "
+            f"{sys.version_info.major}.{sys.version_info.minor}"
+        )
+    runtime = load_ast_runtime(errors)
+    if runtime is not None:
+        source = b"pub fn probe() { let value = 1; }\n"
+        for iteration in range(NATIVE_PROBE_ROUNDS):
+            records = runtime.parse_records("native-probe.rs", source, errors)
+            if len(records) != 1 or records[0].symbol != "probe":
+                errors.append(f"Rust AST 原生探针第 {iteration + 1} 轮返回异常结果")
+                break
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 1
+    print(f"Rust AST native probe passed (rounds={NATIVE_PROBE_ROUNDS})")
+    return 0
+
+
 def main() -> int:
     if sys.argv[1:] == ["--ast-json"]:
         return ast_json_request()
-    print("用法：python tools/python/rust_function_size.py --ast-json", file=sys.stderr)
+    if sys.argv[1:] == ["--native-probe"]:
+        return native_probe()
+    print(
+        "用法：python tools/python/rust_function_size.py <--ast-json|--native-probe>",
+        file=sys.stderr,
+    )
     return 2
 
 

@@ -197,8 +197,8 @@ const CHECK_TASKS: [TaskDefinition; 23] = [
     task_definition!(
         PythonEnvironment,
         "python.environment",
-        "check_python_environment",
-        "核验固定 Python 解释器与原生 AST 依赖",
+        "validate_python_environment",
+        "用 Rust 核验固定 Python 解释器、依赖版本与原生 AST 探针",
         Backend,
         Prerequisite,
         Backend,

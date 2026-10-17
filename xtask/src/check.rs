@@ -32,6 +32,8 @@ mod plan;
 mod policy_tasks;
 #[path = "check/prerelease.rs"]
 pub(crate) mod prerelease;
+#[path = "check/python_environment.rs"]
+pub(crate) mod python_environment;
 #[path = "check/removed_identity.rs"]
 pub(crate) mod removed_identity;
 #[path = "check/resource.rs"]
@@ -77,9 +79,7 @@ pub(crate) use execution::{
     run_parallel_tasks,
 };
 #[allow(unused_imports)]
-pub(crate) use execution::{
-    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
-};
+pub(crate) use execution::{PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS};
 #[allow(unused_imports)]
 pub(crate) use feature::{
     feature_operation_args, feature_test_args, minimal_workspace_check_args,

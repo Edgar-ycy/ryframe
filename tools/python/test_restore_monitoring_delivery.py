@@ -191,9 +191,9 @@ class MonitoringBindingTests(unittest.TestCase):
             self.rule_heads[relative] = source.read_bytes()
         self.coordinator = {"root": str(self.backend), "head": "a" * 40, "inventory_sha256": "b" * 64}
         self.staged_sources = (
-            (staging.ENVIRONMENT_CHECK, b"# environment check\n"),
-            (staging.REQUIREMENTS, b"fixture==1\n"),
             (staging.RUNNER, b"# monitoring runner\n"),
+            (staging.PYTHON_PROBE, b"# native AST probe\n"),
+            (staging.REQUIREMENTS, b"fixture==1\n"),
             *((relative, self.rule_heads[relative]) for relative in staging.RESOURCES),
         )
         self.acl = {
@@ -263,8 +263,10 @@ class MonitoringBindingTests(unittest.TestCase):
 
     @staticmethod
     def _run(command, **_kwargs):
-        if "check_python_environment.py" in str(command[-1]):
-            return subprocess.CompletedProcess(command, 0, stdout=b"Python environment check passed\n")
+        if "--native-probe" in command:
+            return subprocess.CompletedProcess(
+                command, 0, stdout=b"Rust AST native probe passed (rounds=64)\n"
+            )
         name = Path(command[0]).stem
         if name == "python":
             return subprocess.CompletedProcess(
@@ -1136,7 +1138,7 @@ class MonitoringStagingModelTests(unittest.TestCase):
             path.relative_to(root).as_posix(): path.read_bytes()
             for path in (root / "tools" / "python").glob("*.py")
         }
-        pending = [staging.RUNNER, staging.ENVIRONMENT_CHECK]
+        pending = [staging.RUNNER, staging.PYTHON_PROBE]
         modules = set()
         while pending:
             relative = pending.pop()

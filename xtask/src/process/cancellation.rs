@@ -7,7 +7,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::Result;
@@ -111,6 +111,31 @@ pub(super) fn command_output_result(mut command: Command) -> Result<Output> {
     })
 }
 
+pub(super) fn command_output_result_with_timeout(
+    command: Command,
+    timeout: Duration,
+) -> Result<Output> {
+    let cancellation = current_process_cancellation();
+    if let Some(cancellation) = cancellation.as_ref() {
+        reject_cancelled_before_spawn(cancellation)?;
+    }
+    let group = ChildGroup::new()?;
+    let mut child = group.spawn(command)?;
+    let stdout = spawn_output_reader(child.take_stdout_reader()?);
+    let stderr = spawn_output_reader(child.take_stderr_reader()?);
+    let status = wait_for_command_with_timeout(&mut child, cancellation.as_ref(), timeout);
+    // 与普通捕获命令相同，先结束命令级进程树再等待输出管道关闭，避免后代进程
+    // 持有管道使读取线程永久阻塞。
+    drop(child);
+    let stdout = join_output_reader(stdout, "stdout");
+    let stderr = join_output_reader(stderr, "stderr");
+    Ok(Output {
+        status: status?,
+        stdout: stdout?,
+        stderr: stderr?,
+    })
+}
+
 fn reject_cancelled_before_spawn(cancellation: &ProcessCancellation) -> Result<()> {
     if cancellation.requested() {
         return Err(ProcessCancelled {
@@ -148,6 +173,45 @@ fn wait_for_command(
         if cancellation.requested() {
             let cleanup_error = stop_child(child).err().map(|error| error.to_string());
             return Err(ProcessCancelled { cleanup_error }.into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_command_with_timeout(
+    child: &mut ManagedChild,
+    cancellation: Option<&ProcessCancellation>,
+    timeout: Duration,
+) -> Result<ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            if let Err(error) = stop_child(child) {
+                return if status.success() {
+                    Err(error)
+                } else {
+                    Err(
+                        CommandFailure::new(format!("命令退出且进程树回收失败：{error}"), status)
+                            .into(),
+                    )
+                };
+            }
+            return Ok(status);
+        }
+        if cancellation.is_some_and(ProcessCancellation::requested) {
+            let cleanup_error = stop_child(child).err().map(|error| error.to_string());
+            return Err(ProcessCancelled { cleanup_error }.into());
+        }
+        if Instant::now() >= deadline {
+            let cleanup_error = stop_child(child).err().map(|error| error.to_string());
+            let suffix = cleanup_error
+                .map(|error| format!("；进程树回收报告：{error}"))
+                .unwrap_or_default();
+            return Err(format!(
+                "命令在 {:.3}s 内未退出，已终止进程树{suffix}",
+                timeout.as_secs_f64()
+            )
+            .into());
         }
         thread::sleep(Duration::from_millis(10));
     }

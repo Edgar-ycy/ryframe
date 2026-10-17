@@ -28,7 +28,7 @@ from restore_runtime_evidence import (
 DIRECTORY = "input-staging"
 MANIFEST = "manifest.json"
 RUNNER = "tools/python/restore_monitoring_delivery.py"
-ENVIRONMENT_CHECK = "tools/python/check_python_environment.py"
+PYTHON_PROBE = "tools/python/rust_function_size.py"
 REQUIREMENTS = "scripts/requirements-ci.txt"
 RESOURCES = (
     "deploy/prometheus/ryframe-alerts.yml",
@@ -117,9 +117,9 @@ def _local_imports(relative: str, content: bytes, available: set[str]) -> set[st
 def _committed_files(root_name: str, revision: str) -> tuple[tuple[str, bytes], ...]:
     root = Path(root_name)
     sources = _tree_python(root, revision)
-    if RUNNER not in sources or ENVIRONMENT_CHECK not in sources or REQUIREMENTS not in sources:
+    if RUNNER not in sources or PYTHON_PROBE not in sources or REQUIREMENTS not in sources:
         raise ValueError("监控 staging 的固定入口或 Python 依赖清单缺失")
-    pending = [RUNNER, ENVIRONMENT_CHECK]
+    pending = [RUNNER, PYTHON_PROBE]
     modules = set()
     while pending:
         relative = pending.pop()
@@ -233,18 +233,29 @@ def _run_command(command: list[str], cwd: Path, run=subprocess.run) -> str:
 
 def _version_receipts(root: Path, python: dict, tools: dict, run=subprocess.run) -> tuple[dict, dict]:
     python_path = root / Path(*PurePosixPath(python["path"]).parts)
-    check_path = root / Path(*PurePosixPath(ENVIRONMENT_CHECK).parts)
-    check = _run_command(
-        [str(python_path), "-X", "utf8", "-E", "-s", "-B", str(check_path)], root, run
+    probe_path = root / Path(*PurePosixPath(PYTHON_PROBE).parts)
+    probe = _run_command(
+        [
+            str(python_path),
+            "-X",
+            "utf8",
+            "-E",
+            "-s",
+            "-B",
+            str(probe_path),
+            "--native-probe",
+        ],
+        root,
+        run,
     )
     version = _run_command([str(python_path), "-E", "-s", "--version"], root, run)
     expected_python = "Python " + sys.version.split()[0]
-    if version != expected_python or not check.startswith("Python environment check passed"):
-        raise ValueError("监控 staging Python 版本或环境检查不符合固定合同")
+    if version != expected_python or not probe.startswith("Rust AST native probe passed"):
+        raise ValueError("监控 staging Python 版本或原生 AST 探针不符合固定合同")
     python_receipt = {
         **python,
         "version": sys.version.split()[0],
-        "environment_check_sha256": hashlib.sha256(check.encode()).hexdigest(),
+        "environment_check_sha256": hashlib.sha256(probe.encode()).hexdigest(),
     }
     tool_receipts = {}
     for name, binding in tools.items():

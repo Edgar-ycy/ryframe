@@ -158,6 +158,8 @@ mod node_tests_tests;
 mod performance_identities_tests;
 #[path = "internal/process.rs"]
 mod process_tests;
+#[path = "internal/python_environment.rs"]
+mod python_environment_tests;
 #[path = "internal/recovery_cli.rs"]
 mod recovery_cli_tests;
 #[path = "internal/recovery.rs"]

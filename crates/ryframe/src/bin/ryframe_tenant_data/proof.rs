@@ -266,12 +266,14 @@ fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
         PathBuf::from(value.trim())
     };
     let before = artifact_source(&path, "Python 解释器")?;
-    let environment = backend.join("tools/python/check_python_environment.py");
-    regular_path(&environment, "Python 环境核验器")?;
+    let environment = backend.join("tools/python/rust_function_size.py");
+    regular_path(&environment, "Python AST 原生探针")?;
     let mut command = Command::new(&before.path);
     command
         .arg("-I")
+        .arg("-B")
         .arg(&environment)
+        .arg("--native-probe")
         .current_dir(backend)
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH");

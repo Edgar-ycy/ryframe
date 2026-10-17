@@ -2,12 +2,12 @@ use std::path::Path;
 
 use crate::{
     Result,
-    check::{PYTHON_ENVIRONMENT_ARGS, TaskExecutor, TaskPlan, render_task_plan},
+    check::{TaskExecutor, TaskPlan, python_environment, render_task_plan},
     cli::{
         ReleaseCiEvidenceOptions, ReleaseCiOperation, ReleaseCiOptions, ReleaseCommand,
         ReleaseSourceOptions,
     },
-    process::{run as run_process, run_with_env_removed},
+    process::run_with_env_removed,
     workspace::root_dir,
 };
 
@@ -71,9 +71,7 @@ fn execute(command: &ReleaseCommand, plan: &TaskPlan, frontend_dir: &Path) -> Re
     for task in &plan.tasks {
         println!("开始发布核验原子任务：{}", task.id);
         match task.executor {
-            TaskExecutor::PythonEnvironment => {
-                run_process(&root_dir(), "python", PYTHON_ENVIRONMENT_ARGS)?;
-            }
+            TaskExecutor::PythonEnvironment => python_environment::run(&root_dir())?,
             TaskExecutor::ReleaseSource => {
                 let ReleaseCommand::Source(options) = command else {
                     return Err("发布来源任务收到错误的命令类型".into());
