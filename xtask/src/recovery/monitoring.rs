@@ -11,6 +11,15 @@ use crate::{
     process::run_with_env_removed,
 };
 
+#[path = "monitoring/binding.rs"]
+pub(crate) mod binding;
+#[path = "monitoring/contract.rs"]
+pub(crate) mod contract;
+#[path = "monitoring/receipts.rs"]
+pub(crate) mod receipts;
+#[path = "monitoring/status.rs"]
+pub(crate) mod status;
+
 const SCRIPT: &str = "tools/python/restore_monitoring_delivery.py";
 const PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_MONITORING";
 const KIND: &str = "ryframe-xtask-recovery-monitoring";
@@ -23,6 +32,25 @@ pub(crate) struct PrivateMonitoringInvocation {
 
 pub(super) fn run(command: &MonitoringCommand, root: &Path) -> Result<()> {
     if print_help(command) {
+        return Ok(());
+    }
+    if let MonitoringCommand::Lifecycle { operation, binding } = command {
+        let value = match operation {
+            crate::cli::MonitoringOperation::Result => status::result(root, binding)?,
+            crate::cli::MonitoringOperation::Status => status::status(root, binding)?,
+            _ => {
+                contract::read_binding(root, binding)?;
+                let invocation = private_invocation_at(command, root)?;
+                return run_with_env_removed(
+                    root,
+                    "python",
+                    &["-B", invocation.script],
+                    &[(PROTOCOL_KEY, invocation.protocol.as_str())],
+                    &[PROTOCOL_KEY],
+                );
+            }
+        };
+        println!("{}", serde_json::to_string(&value)?);
         return Ok(());
     }
     let invocation = private_invocation_at(command, root)?;
@@ -49,6 +77,14 @@ fn print_help(command: &MonitoringCommand) -> bool {
                 operation.as_str(),
                 if operation.writes() { " --write" } else { "" }
             );
+            if matches!(
+                operation,
+                crate::cli::MonitoringOperation::Result | crate::cli::MonitoringOperation::Status
+            ) {
+                println!(
+                    "该操作由 Rust 原生校验绑定、收据、规则、证据摘要和端口状态，不启动 Python"
+                );
+            }
             return true;
         }
         MonitoringCommand::Bind(_) | MonitoringCommand::Lifecycle { .. } => return false,
@@ -92,6 +128,12 @@ fn bind_protocol(options: &MonitoringBindOptions, root: &Path) -> Result<Value> 
         local(value, root, LocalTestPathKind::ExistingFile)?;
     }
     local(&options.output, root, LocalTestPathKind::OutputFile)?;
+    contract::read_document(&options.runtime_receipt, "监控恢复运行收据")?;
+    contract::read_document(&options.target_plan, "监控恢复目标计划")?;
+    let token = std::fs::metadata(&options.metrics_token_file)?;
+    if token.len() == 0 || token.len() > 4096 {
+        return Err("监控指标凭据文件大小无效".into());
+    }
     for value in [
         &options.tools.prometheus,
         &options.tools.promtool,

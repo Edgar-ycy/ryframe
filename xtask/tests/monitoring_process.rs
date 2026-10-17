@@ -83,20 +83,24 @@ fn invalid_requests_exit_two_without_starting_python() {
 }
 
 #[test]
-fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn read_only_and_result_commands_fail_closed_without_starting_python() {
     let fixture = Fixture::new();
-    let result = invoke(&status(&fixture.binding));
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("-B tools/python/restore_monitoring_delivery.py"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("--binding"), "{stdout}");
-    assert!(
-        !stdout.contains(fixture.binding.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(!stderr.contains("monitoring_protocol_error"), "{stderr}");
+    for operation in ["status", "result", "start", "observe", "close"] {
+        let mut arguments = status(&fixture.binding);
+        arguments[3] = operation.into();
+        if operation != "status" {
+            arguments.push("--write".into());
+        }
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(1), "{operation}");
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(!stdout.contains("-B tools/python/"), "{stdout}");
+        assert!(!stdout.contains("--binding"), "{stdout}");
+        assert!(
+            !stdout.contains(fixture.binding.to_str().unwrap()),
+            "{stdout}"
+        );
+        assert!(!stderr.contains("monitoring_protocol_error"), "{stderr}");
+    }
 }

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 正式恢复监控的公开 `result` 与只读 `status` 已迁至 Rust xtask，共享原生绑定、目录形状、阶段收据、规则告警、证据摘要、进程身份和端口关闭校验；`bind|start|observe|close` 仍由单一 Python 私有阶段状态机执行回环 HTTP、Prometheus、Alertmanager 和进程树操作，但 Rust 在启动前核验运行/目标 JSON、凭据引用和绑定结构。未知写入、成功/失败收据并存、pending 结果、证据漂移和链接路径均失败关闭。
+
 - `cargo xtask check recovery clone storage` 的 RustFS 资源阶段迁至 Rust xtask。原生入口保留固定请求和登记摘要、数据目录与凭据引用、两端口就绪、原始启动和实际进程身份、失败与未知启动收据、服务身份变化拒绝、显式 `--write`、只读 `status` 和精确进程树回收；新增隔离测试覆盖成功绑定、参数/路径/链接、端口占用、请求摘要漂移、停止竞态、未知启动收据和 status 只读。`cache` 的 successor 与前代工具换代路径尚未完整实现，已回退原状态机并删除半完成 Rust 代码；其 Python 实现仍被 seed 和其余复制阶段调用，因此继续保留。
 
 - `cargo xtask check recovery clone bridge` 与 `maintenance build|verify` 迁至 Rust xtask：bridge 在原生代码中严格核验 API/Worker 或维护 CLI 构建收据、完整 Git 来源清单、文件集合、产物字节、构建上下文、当前产品输入和链接边界，以 create-new 发布逐字段兼容原 Python 的复用审计文件；维护构建通过统一进程层以 Cargo 离线模式执行三个固定定向构建，冻结二进制、JSON 事件、日志、源码、工具链与 target 收据，并在源码或工具链漂移、旧输出、构建失败和未知部分写入时失败关闭。`maintenance verify` 只读兼容既有收据，命令入口不再启动 Python。新增真实 Git/Python 输出对照、输入与产物漂移、链接、错误来源、重复执行、失败现场和收据字段回归。

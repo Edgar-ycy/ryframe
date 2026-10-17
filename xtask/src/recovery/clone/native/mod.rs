@@ -13,7 +13,7 @@ mod business;
 mod catalog;
 pub(crate) mod digest;
 mod input;
-mod json;
+pub(crate) mod json;
 pub(crate) mod lifecycle;
 pub(crate) mod maintenance;
 mod metadata;

@@ -222,6 +222,9 @@ fn private_protocol_uses_exact_fields_and_rechecks_inputs() {
     assert_eq!(value["binding"], Value::Null);
     assert_eq!(value["output"], text(&fixture.binding()));
     assert_eq!(value["write"], true);
+    fs::write(&fixture.runtime, b"not-json").unwrap();
+    assert!(private_invocation_at(&command, &super::workspace::root_dir()).is_err());
+    fs::write(&fixture.runtime, b"{}\n").unwrap();
     fs::remove_file(&fixture.runtime).unwrap();
     assert!(private_invocation_at(&command, &super::workspace::root_dir()).is_err());
 }

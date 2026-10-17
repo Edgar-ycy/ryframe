@@ -166,6 +166,8 @@ mod language_tests;
 mod migration_history_tests;
 #[path = "internal/migration.rs"]
 mod migration_tests;
+#[path = "internal/monitoring_native.rs"]
+mod monitoring_native_tests;
 #[path = "internal/monitoring.rs"]
 mod monitoring_tests;
 #[path = "internal/node_test_discovery.rs"]
