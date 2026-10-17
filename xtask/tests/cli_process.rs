@@ -388,6 +388,35 @@ fn frontend_source_push_runs_the_native_implementation() {
 }
 
 #[test]
+fn frontend_source_appends_the_github_output_contract() {
+    let directory =
+        tempfile::tempdir_in(std::env::current_dir().unwrap().join(".local-tests")).unwrap();
+    let output_path = directory.path().join("github-output.txt");
+    let result = xtask_command()
+        .args([
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--release-ref",
+            "refs/heads/main",
+        ])
+        .env("GITHUB_OUTPUT", &output_path)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(output_path).unwrap(),
+        "ref=main\nchanged=false\n"
+    );
+}
+
+#[test]
 fn frontend_source_rejects_a_missing_event_before_selection() {
     let event = std::env::current_dir()
         .unwrap()
