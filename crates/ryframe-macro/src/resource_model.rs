@@ -14,6 +14,77 @@ pub(crate) fn expand(input: TokenStream) -> TokenStream {
 }
 
 fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let attributes = parse_resource_attributes(input)?;
+    let name = required(attributes.name, input, "name")?;
+    let title = attributes.title.unwrap_or_else(|| name.clone());
+    let menu_order = attributes.menu_order;
+    let table = required(attributes.table, input, "table")?;
+    let database = match required(attributes.database, input, "database")?.as_str() {
+        "control" => quote!(::ryframe_sdk::ResourceDatabase::Control),
+        "tenant" => quote!(::ryframe_sdk::ResourceDatabase::Tenant),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "resource database 只支持 control 或 tenant",
+            ));
+        }
+    };
+    let fields = named_fields(input)?;
+    let owner_field = validate_owner_field(attributes.owner_field, input, fields)?;
+    let parsed_fields = fields
+        .iter()
+        .map(field::parse)
+        .collect::<syn::Result<Vec<_>>>()?;
+    let primary_key = ordered_primary_key(attributes.primary_key, &parsed_fields, input)?;
+    let indexes = index::tokens(&attributes.indexes, &parsed_fields, input)?;
+    let field_descriptors = parsed_fields.iter().map(|field| &field.tokens);
+    let model = &input.ident;
+    let route = optional_string(attributes.route);
+    let frontend_page = optional_string(attributes.frontend_page);
+    let owner_field = optional_string(owner_field);
+    let menu_parent = optional_string(attributes.menu_parent);
+    let collation = optional_string(attributes.collation);
+    Ok(quote! {
+        impl ::ryframe_sdk::ResourceModel for #model {
+            fn descriptor() -> ::ryframe_sdk::ResourceDescriptor {
+                ::ryframe_sdk::ResourceDescriptor {
+                    name: #name,
+                    title: #title,
+                    table: #table,
+                    collation: #collation,
+                    database: #database,
+                    model_module: module_path!(),
+                    model_type: stringify!(#model),
+                    route: #route,
+                    frontend_page: #frontend_page,
+                    owner_field: #owner_field,
+                    menu_parent: #menu_parent,
+                    menu_order: #menu_order,
+                    primary_key: &[#(#primary_key),*],
+                    indexes: &[#(#indexes),*],
+                    fields: &[#(#field_descriptors),*],
+                }
+            }
+        }
+    })
+}
+
+struct ResourceAttributes {
+    name: Option<String>,
+    title: Option<String>,
+    table: Option<String>,
+    collation: Option<String>,
+    database: Option<String>,
+    route: Option<String>,
+    frontend_page: Option<String>,
+    owner_field: Option<String>,
+    menu_parent: Option<String>,
+    menu_order: u16,
+    primary_key: Option<syn::ExprArray>,
+    indexes: Vec<index::Index>,
+}
+
+fn parse_resource_attributes(input: &DeriveInput) -> syn::Result<ResourceAttributes> {
     let mut name = None;
     let mut title = None;
     let mut table = None;
@@ -64,56 +135,19 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             Ok(())
         })?;
     }
-    let name = required(name, input, "name")?;
-    let title = title.unwrap_or_else(|| name.clone());
-    let table = required(table, input, "table")?;
-    let database = match required(database, input, "database")?.as_str() {
-        "control" => quote!(::ryframe_sdk::ResourceDatabase::Control),
-        "tenant" => quote!(::ryframe_sdk::ResourceDatabase::Tenant),
-        _ => {
-            return Err(syn::Error::new_spanned(
-                input,
-                "resource database 只支持 control 或 tenant",
-            ));
-        }
-    };
-    let fields = named_fields(input)?;
-    let owner_field = validate_owner_field(owner_field, input, fields)?;
-    let parsed_fields = fields
-        .iter()
-        .map(field::parse)
-        .collect::<syn::Result<Vec<_>>>()?;
-    let primary_key = ordered_primary_key(primary_key, &parsed_fields, input)?;
-    let indexes = index::tokens(&indexes, &parsed_fields, input)?;
-    let field_descriptors = parsed_fields.iter().map(|field| &field.tokens);
-    let model = &input.ident;
-    let route = optional_string(route);
-    let frontend_page = optional_string(frontend_page);
-    let owner_field = optional_string(owner_field);
-    let menu_parent = optional_string(menu_parent);
-    let collation = optional_string(collation);
-    Ok(quote! {
-        impl ::ryframe_sdk::ResourceModel for #model {
-            fn descriptor() -> ::ryframe_sdk::ResourceDescriptor {
-                ::ryframe_sdk::ResourceDescriptor {
-                    name: #name,
-                    title: #title,
-                    table: #table,
-                    collation: #collation,
-                    database: #database,
-                    model_module: module_path!(),
-                    model_type: stringify!(#model),
-                    route: #route,
-                    frontend_page: #frontend_page,
-                    owner_field: #owner_field,
-                    menu_parent: #menu_parent,
-                    menu_order: #menu_order,
-                    primary_key: &[#(#primary_key),*],
-                    indexes: &[#(#indexes),*],
-                    fields: &[#(#field_descriptors),*],
-                }
-            }
-        }
+    Ok(ResourceAttributes {
+        name,
+        title,
+        table,
+        collation,
+        database,
+        route,
+        frontend_page,
+        owner_field,
+        menu_parent,
+        menu_order,
+        primary_key,
+        indexes,
     })
 }
 

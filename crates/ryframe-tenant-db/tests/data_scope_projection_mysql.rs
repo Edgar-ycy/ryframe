@@ -20,6 +20,69 @@ async fn projection_publish_is_versioned_atomic_and_fails_closed() {
 }
 
 async fn run(database: &DatabaseConnection) -> Result<(), String> {
+    initialize(database).await?;
+
+    let control = ControlDatabaseCluster::single(database.clone());
+    let router = TenantDatabaseRouter::new(
+        control.clone(),
+        &TenantDataConfig::default(),
+        SqlLogLevel::Off,
+        500,
+    )
+    .map_err(|error| error.to_string())?;
+    let publisher = ryframe_tenant_db::application_ports::data_scope_projection::publisher(
+        control,
+        router.clone(),
+    );
+    publisher
+        .publish(&event("system", 2))
+        .await
+        .map_err(|error| error.to_string())?;
+    publisher
+        .publish(&event("system", 2))
+        .await
+        .map_err(|error| format!("同版本重复发布应幂等: {error}"))?;
+
+    let (metadata, expected_owners) = assert_initial_projection(database, router.clone()).await?;
+
+    execute(
+        database,
+        "UPDATE `sys_tenant` SET `data_scope_version` = 3 WHERE `tenant_id` = 'system'",
+    )
+    .await?;
+    assert!(matches!(
+        router
+            .resolve("system")
+            .await
+            .map_err(|error| error.to_string())?
+            .begin_scoped_read(3)
+            .await,
+        Err(TenantDataError::DataScopeProjectionStale { .. })
+    ));
+
+    publisher
+        .publish(&event("system", 3))
+        .await
+        .map_err(|error| error.to_string())?;
+    publisher
+        .publish(&event("system", 2))
+        .await
+        .map_err(|error| format!("旧事件不得覆盖新投影: {error}"))?;
+    let latest = load_metadata(database).await?;
+    assert_eq!(latest.source_version, 3);
+    assert_ne!(latest.build_token, metadata.build_token);
+    assert_eq!(
+        count(
+            database,
+            "SELECT COUNT(*) AS `value` FROM `biz_data_scope_owner` WHERE `tenant_id` = 'system'"
+        )
+        .await?,
+        expected_owners
+    );
+    Ok(())
+}
+
+async fn initialize(database: &DatabaseConnection) -> Result<(), String> {
     ryframe_db::migration::up(database, Some(&bootstrap_hashes()))
         .await
         .map_err(|error| format!("初始化控制库失败: {error}"))?;
@@ -43,28 +106,13 @@ async fn run(database: &DatabaseConnection) -> Result<(), String> {
         "UPDATE `sys_tenant` SET `data_scope_version` = 2 WHERE `tenant_id` = 'system'",
     )
     .await?;
+    Ok(())
+}
 
-    let control = ControlDatabaseCluster::single(database.clone());
-    let router = TenantDatabaseRouter::new(
-        control.clone(),
-        &TenantDataConfig::default(),
-        SqlLogLevel::Off,
-        500,
-    )
-    .map_err(|error| error.to_string())?;
-    let publisher = ryframe_tenant_db::application_ports::data_scope_projection::publisher(
-        control,
-        router.clone(),
-    );
-    publisher
-        .publish(&event("system", 2))
-        .await
-        .map_err(|error| error.to_string())?;
-    publisher
-        .publish(&event("system", 2))
-        .await
-        .map_err(|error| format!("同版本重复发布应幂等: {error}"))?;
-
+async fn assert_initial_projection(
+    database: &DatabaseConnection,
+    router: TenantDatabaseRouter,
+) -> Result<(MetadataRow, i64), String> {
     let metadata = load_metadata(database).await?;
     let expected_owners = count(
         database,
@@ -105,42 +153,7 @@ async fn run(database: &DatabaseConnection) -> Result<(), String> {
     assert_eq!(owner.user_id, 1);
     assert_eq!(owner.dept_id, Some(10));
     scoped.finish().await.map_err(|error| error.to_string())?;
-
-    execute(
-        database,
-        "UPDATE `sys_tenant` SET `data_scope_version` = 3 WHERE `tenant_id` = 'system'",
-    )
-    .await?;
-    assert!(matches!(
-        router
-            .resolve("system")
-            .await
-            .map_err(|error| error.to_string())?
-            .begin_scoped_read(3)
-            .await,
-        Err(TenantDataError::DataScopeProjectionStale { .. })
-    ));
-
-    publisher
-        .publish(&event("system", 3))
-        .await
-        .map_err(|error| error.to_string())?;
-    publisher
-        .publish(&event("system", 2))
-        .await
-        .map_err(|error| format!("旧事件不得覆盖新投影: {error}"))?;
-    let latest = load_metadata(database).await?;
-    assert_eq!(latest.source_version, 3);
-    assert_ne!(latest.build_token, metadata.build_token);
-    assert_eq!(
-        count(
-            database,
-            "SELECT COUNT(*) AS `value` FROM `biz_data_scope_owner` WHERE `tenant_id` = 'system'"
-        )
-        .await?,
-        expected_owners
-    );
-    Ok(())
+    Ok((metadata, expected_owners))
 }
 
 async fn load_metadata(database: &DatabaseConnection) -> Result<MetadataRow, String> {

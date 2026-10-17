@@ -74,25 +74,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let control_transaction_methods = control_transaction_methods(resource);
     let scoped_tenant_owner =
         resource.access.owner_field.is_some() && resource.storage == StorageKind::TenantData;
-    let data_scope_module = if resource.module == "business" {
-        "ryframe_sdk::persistence::data_scope"
-    } else if resource.storage == StorageKind::ControlRow {
-        "crate::data_scope"
-    } else {
-        "ryframe_db::data_scope"
-    };
-    let (data_scope_lock_method, write_scope) = if scoped_tenant_owner {
-        (
-            format!(
-                "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()> {{\n        {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }}\n\n"
-            ),
-            format!(
-                "        let build_token = {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"
-            ),
-        )
-    } else {
-        (String::new(), String::new())
-    };
+    let (data_scope_lock_method, write_scope) = projected_write_scope(resource);
     if scoped_tenant_owner {
         detail_read = detail_read.replace("&database", "database");
     }
@@ -154,6 +136,25 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         },
         relation_mappers = relation_mappers,
         tenant_error = tenant_error,
+    )
+}
+
+fn projected_write_scope(resource: &ResourceIr) -> (String, String) {
+    if resource.access.owner_field.is_none() || resource.storage != StorageKind::TenantData {
+        return (String::new(), String::new());
+    }
+    let data_scope_module = if resource.module == "business" {
+        "ryframe_sdk::persistence::data_scope"
+    } else {
+        "ryframe_db::data_scope"
+    };
+    (
+        format!(
+            "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()> {{\n        {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }}\n\n"
+        ),
+        format!(
+            "        let build_token = {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"
+        ),
     )
 }
 
