@@ -78,6 +78,8 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(output.contains("check recovery full-stack <prepare|rate-limit|start|collect>"));
     assert!(output.contains("check language [--min-rust-percent <0..100>]"));
     assert!(output.contains("language 默认仅向 stdout 报告固定口径的原始文件字节"));
+    assert!(output.contains("Cargo 在独立降权进程中启动"));
+    assert!(output.contains("--plan 只输出同一任务图，不启动 sudo、不创建目录"));
     assert!(output.contains("ci integration 使用 Rust xtask 生成临时回环 CA"));
     assert!(output.contains("不调用 Python"));
 }

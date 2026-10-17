@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Linux DevEx cgroup 内存门禁迁至 Rust xtask：保留精确 CI run/attempt、nonce、源码 SHA、非 root uid/gid 与 cgroup 内核身份校验，由独立 Rust 子进程永久降权后启动 Cargo，并以另一 root 阶段在 freeze 后执行精确 `cgroup.kill` 和目录回收；进程登记、失败收据和清理观察改为只创建或追加文件，重新生成用例仍只接受恰好一个指定 ignored 测试通过。Extended CI 移除该 job 的 Python 安装，删除被替代的 Python 门禁与测试。
+
 - 资源门禁回放从 Python 脚本迁至 Rust xtask。原生实现保留 manifest 严格校验、两仓精确提交检查、隔离 worktree、ABBA 双分支、共享 Cargo target、专用 sccache、20 个以上案例与零分歧判断、创建式报告和激活预算；CI 在资源门禁 job 中直接运行 Rust 回放测试，旧 Python 源码及其测试已删除。
 
 - 供应链来源检查迁至 Rust xtask。策略 schema、本地 patch 许可证与 registry 原件、Action/可复用工作流/容器固定引用、service image digest、工具版本、工作流命令和 Cargo feature 树改用同一只读实现；工作流解析保留锚点、别名、重复键拒绝和 YAML 1.2 布尔语义，删除旧 Python 脚本及仅服务该脚本的测试，security job 不再为此安装 Python 依赖。

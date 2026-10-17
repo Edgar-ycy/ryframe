@@ -116,6 +116,8 @@ mod dev_tests;
 mod devex_acceptance_tests;
 #[path = "internal/devex_cgroup_cli.rs"]
 mod devex_cgroup_cli_tests;
+#[path = "internal/devex_cgroup.rs"]
+mod devex_cgroup_tests;
 #[path = "internal/devex_cli.rs"]
 mod devex_cli_tests;
 #[path = "internal/devex_memory.rs"]

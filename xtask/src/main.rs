@@ -39,6 +39,13 @@ fn main() {
         }
         unreachable!("成功的 exec 不会返回");
     }
+    if let Some(result) = devex::cgroup::run_hidden_if_requested() {
+        if let Err(error) = result {
+            eprintln!("DevEx cgroup 内部阶段失败：{error}");
+            std::process::exit(125);
+        }
+        return;
+    }
 
     let cli = match cli::parse(env::args().skip(1).collect()) {
         Ok(cli) => cli,

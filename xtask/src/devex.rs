@@ -2,8 +2,9 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::{Result, workspace::root_dir};
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 #[path = "devex/cgroup.rs"]
-mod cgroup;
+pub(crate) mod cgroup;
 #[path = "devex/run.rs"]
 mod execution;
 #[path = "devex/incremental.rs"]
@@ -359,7 +360,8 @@ pub(crate) fn usage() -> &'static str {
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
      cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n\
-     Linux 内存测量需要 RYFRAME_DEVEX_CGROUP_ROOT 指向已授权且启用 memory controller 的 cgroup v2 委托目录；缺失时保留不可用原因并阻止完整性能验收。"
+     Linux 内存测量需要 RYFRAME_DEVEX_CGROUP_ROOT 指向已授权且启用 memory controller 的 cgroup v2 委托目录；缺失时保留不可用原因并阻止完整性能验收。\n\
+     cgroup CI 门禁只允许 Linux GitHub Actions 的非 root runner；run 先创建精确证据目录，再由 Rust xtask 的 prepare、独立降权 Cargo runner、test 和 cleanup 阶段执行。cleanup 只处理同一 run/attempt/nonce 与内核身份匹配的 /sys/fs/cgroup/ryframe-devex-ci-*。"
 }
 
 fn suite_names() -> String {
@@ -371,7 +373,7 @@ fn suite_names() -> String {
 }
 
 #[allow(unused_imports)]
-pub(crate) use cgroup::{command_at as cgroup_command_at, plan_at as cgroup_plan_at};
+pub(crate) use cgroup::plan_at as cgroup_plan_at;
 #[allow(unused_imports)]
 pub(crate) use execution::read_resource_gate_decision;
 #[allow(unused_imports)]

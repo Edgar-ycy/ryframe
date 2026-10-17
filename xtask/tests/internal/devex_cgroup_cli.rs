@@ -3,7 +3,7 @@ use std::path::Path;
 use super::{
     check::TaskExecutor,
     cli::{CheckCommand, Command, parse},
-    devex::{DevexCgroupOperation, DevexCommand, cgroup_command_at, cgroup_plan_at},
+    devex::{DevexCgroupOperation, DevexCommand, cgroup_plan_at},
     workspace::root_dir,
 };
 
@@ -112,7 +112,7 @@ fn cgroup_cli_rejects_missing_duplicate_unknown_and_escaping_arguments() {
 }
 
 #[test]
-fn cgroup_command_consumes_the_same_registered_task_plan() {
+fn cgroup_execution_consumes_the_same_registered_task_plan_without_python() {
     let root = root_dir();
     for (operation, executor) in [
         ("run", TaskExecutor::PerfCgroupRun),
@@ -133,46 +133,7 @@ fn cgroup_command_consumes_the_same_registered_task_plan() {
         let plan = cgroup_plan_at(&options, &root).unwrap();
         assert_eq!(plan.tasks.len(), 1);
         assert_eq!(plan.tasks[0].executor, executor);
-        let (program, arguments) = cgroup_command_at(&options, &plan, &root).unwrap();
-        assert_eq!(program, "python");
-        assert_eq!(
-            arguments,
-            [
-                "-B".to_owned(),
-                "tools/python/ci_devex_cgroup.py".to_owned(),
-                operation.to_owned(),
-                "--output".to_owned(),
-                root.join(".local-tests/cgroup-plan")
-                    .to_string_lossy()
-                    .into_owned(),
-            ]
-        );
     }
-
-    let run = parse(strings(&[
-        "check",
-        "perf",
-        "cgroup",
-        "run",
-        "--output",
-        ".local-tests/cgroup-plan",
-    ]))
-    .unwrap();
-    let cleanup = parse(strings(&[
-        "check",
-        "perf",
-        "cgroup",
-        "cleanup",
-        "--output",
-        ".local-tests/cgroup-plan",
-    ]))
-    .unwrap();
-    let Command::Check(CheckCommand::Perf(DevexCommand::Cgroup(run))) = run.command else {
-        unreachable!()
-    };
-    let Command::Check(CheckCommand::Perf(DevexCommand::Cgroup(cleanup))) = cleanup.command else {
-        unreachable!()
-    };
-    let cleanup_plan = cgroup_plan_at(&cleanup, &root).unwrap();
-    assert!(cgroup_command_at(&run, &cleanup_plan, &root).is_err());
+    let source = std::fs::read_to_string(root.join("xtask/src/devex/cgroup.rs")).unwrap();
+    assert!(!source.contains("python"));
 }

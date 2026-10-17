@@ -397,15 +397,6 @@ pub(crate) enum DevexCgroupOperation {
     Cleanup,
 }
 
-impl DevexCgroupOperation {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Run => "run",
-            Self::Cleanup => "cleanup",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DevexCgroupOptions {
     pub(crate) operation: DevexCgroupOperation,
