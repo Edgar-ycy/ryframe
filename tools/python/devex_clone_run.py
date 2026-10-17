@@ -796,6 +796,35 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
             "result": result, "restore_qualified": False}
 
 
+def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
+                      number: int | None, *, preflight: bool = False) -> dict:
+    """只执行已拆分的资源编排；生命周期锁、attempt 和结果发布由 Rust 持有。"""
+    from source_fingerprints import artifact_sources, current_execution_source
+
+    if stage not in {"export", "target-verify", "copy"} or mode not in {"run", "reconcile", "resume"}:
+        raise ValueError("阶段与执行模式不匹配")
+    if stage == "target-verify" and mode != "run":
+        raise ValueError("target-verify 只支持首次 run，不得创建 reconcile 或 resume 阶段")
+    if preflight != (number is None):
+        raise ValueError("阶段资源编排 attempt 与预检模式不匹配")
+    value = read_manifest(backend, directory)
+    environment = environments(backend, value)
+    inherited = inherited_build_bridges(backend, value)
+    with artifact_sources(backend, value["build_bridges"], inherited):
+        if preflight:
+            return {"status": "stage_operation_preflight_ready", "stage": stage, "mode": mode}
+        sources = current_execution_source(backend)
+        if stage == "export":
+            result = run_export(backend, directory, value, environment, number, mode, sources)
+        elif stage == "target-verify":
+            result = run_target(backend, directory, value, environment, number)
+        else:
+            result = run_copy(backend, directory, value, environment, mode)
+        if read_manifest(backend, directory) != value:
+            raise ValueError("阶段运行期间验收清单发生变化")
+        return result
+
+
 def status(backend: Path, directory: Path) -> dict:
     from source_fingerprints import current_execution_source
 

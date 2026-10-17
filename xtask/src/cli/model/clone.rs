@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub(crate) const CLONE_USAGE: &str = "用法：cargo xtask check recovery clone <plan|verify|init|status|stage|runtime|recover|recover-copy|bridge|post-copy|seed-runtime|storage|cache|maintenance> ...\n  plan --input <.local-tests 内清单> --output <.local-tests 内新计划> --write\n  verify --plan <.local-tests 内计划>\n\nplan/verify 由 Rust 原生离线执行，不启动 Python，不访问数据库、网络或共享服务；其余资源阶段继续使用现有私有协议。";
+pub(crate) const CLONE_USAGE: &str = "用法：cargo xtask check recovery clone <plan|verify|init|status|stage|runtime|recover|recover-copy|bridge|post-copy|seed-runtime|storage|cache|maintenance> ...\n  plan --input <.local-tests 内清单> --output <.local-tests 内新计划> --write\n  verify --plan <.local-tests 内计划>\n  init --manifest <.local-tests 内清单> --run-dir <.local-tests 内新目录> --write\n  status --run-dir <.local-tests 内运行目录>\n  stage --run-dir <.local-tests 内运行目录> --stage <export|target-verify|copy> --mode <run|reconcile|resume> --write\n\nplan/verify 由 Rust 原生离线执行，不启动 Python，不访问数据库、网络或共享服务。source_to_seed 的 init/status 及 stage 目录锁、控制器、attempt、来源终检和结果发布由 Rust 执行；stage 的 export、target-verify、copy 资源编排尚未迁移，由单一私有 Python 子进程完成，不共享生命周期状态机。seed_to_arm 的 init/status/stage 需要尚未迁移的目标树和已发布来源深层校验，整体继续使用原 Python 状态机。其余 clone 资源阶段继续使用现有私有协议。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloneEffect {

@@ -81,7 +81,13 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
             println!("{}", crate::cli::CLONE_USAGE);
             return Ok(());
         }
-        CloneCommand::Plan { .. } | CloneCommand::Verify { .. } => {
+        CloneCommand::Plan { .. }
+        | CloneCommand::Verify { .. }
+        | CloneCommand::Init { .. }
+        | CloneCommand::Status { .. }
+        | CloneCommand::Stage { .. }
+            if !clone::requires_seed_to_arm_python(command) =>
+        {
             return clone::native::run(command, &root_dir());
         }
         _ => {}

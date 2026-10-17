@@ -55,6 +55,39 @@ pub(crate) fn write_new(path: &Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn write_replace(path: &Path, value: &Value) -> Result<()> {
+    let parent = path.parent().ok_or("复制状态文件缺少父目录")?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("复制状态文件名必须为 UTF-8")?;
+    let temporary = parent.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let result = (|| {
+        let mut stream = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| {
+                format!("无法创建复制状态临时文件 {}：{error}", temporary.display())
+            })?;
+        let mut encoded = serde_json::to_string_pretty(value)?;
+        encoded.push('\n');
+        stream.write_all(encoded.as_bytes())?;
+        stream.sync_all()?;
+        drop(stream);
+        replace(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn replace(source: &Path, target: &Path) -> Result<()> {
+    fs::rename(source, target)
+        .map_err(|error| format!("无法发布复制状态 {}：{error}", target.display()).into())
+}
+
 pub(crate) fn exact<'a>(
     value: &'a Value,
     fields: &[&str],

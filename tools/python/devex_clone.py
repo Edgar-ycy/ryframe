@@ -7,6 +7,7 @@ _PROTOCOL_NAMES = (
     "RYFRAME_XTASK_RECOVERY_FRESH_TARGET",
     "RYFRAME_XTASK_RECOVERY_SEED_SOURCE",
     "RYFRAME_XTASK_RECOVERY_CLONE",
+    "RYFRAME_XTASK_RECOVERY_CLONE_STAGE",
 )
 # 真实脚本进程在加载任何复制业务模块前移除协议，派生进程不能继承该请求。
 _STARTUP_PROTOCOLS = (
@@ -205,13 +206,16 @@ def main(argv=None) -> int:
     from devex_clone_run_cli import (
         FRESH_TARGET_PROTOCOL_ENV, FreshTargetProtocolError,
         SEED_SOURCE_PROTOCOL_ENV, SeedSourceProtocolError,
-        decode_fresh_target_protocol, decode_seed_source_protocol, dispatch,
+        STAGE_PROTOCOL_ENV, StageProtocolError,
+        decode_clone_stage_protocol, decode_fresh_target_protocol,
+        decode_seed_source_protocol, dispatch, dispatch_stage_operation,
     )
     from devex_clone_protocol import CloneProtocolError, PROTOCOL_ENV, decode as decode_clone_protocol
 
     fresh_protocol = protocols[FRESH_TARGET_PROTOCOL_ENV]
     seed_protocol = protocols[SEED_SOURCE_PROTOCOL_ENV]
     clone_protocol = protocols[PROTOCOL_ENV]
+    stage_protocol = protocols[STAGE_PROTOCOL_ENV]
     actual_argv = sys.argv[1:] if argv is None else list(argv)
     if sum(value is not None for value in protocols.values()) > 1:
         print("开发复制私有协议不能同时指定", file=sys.stderr)
@@ -225,6 +229,11 @@ def main(argv=None) -> int:
         return _run_private_protocol(
             seed_protocol, actual_argv, decode_seed_source_protocol,
             SeedSourceProtocolError, "seed source", dispatch,
+        )
+    if stage_protocol is not None:
+        return _run_private_protocol(
+            stage_protocol, actual_argv, decode_clone_stage_protocol,
+            StageProtocolError, "clone stage", dispatch_stage_operation,
         )
     if clone_protocol is None:
         print("开发复制脚本是私有实现，不接受公开 argv", file=sys.stderr)

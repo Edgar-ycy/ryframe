@@ -19,7 +19,7 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
         command,
         CloneCommand::Help | CloneCommand::Plan { .. } | CloneCommand::Verify { .. }
     ) {
-        return Err("clone 帮助及离线 plan/verify 由 Rust 原生入口处理".into());
+        return Err("clone 的帮助及离线 plan/verify 由 Rust 原生入口处理".into());
     }
     let payload = serde_json::to_string(&json!({
         "format_version": 1,
@@ -36,6 +36,24 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
         return Err("clone 私有协议过长或包含换行符/NUL".into());
     }
     Ok(payload)
+}
+
+pub(crate) fn requires_seed_to_arm_python(command: &CloneCommand) -> bool {
+    let path = match command {
+        CloneCommand::Init { manifest, .. } => manifest,
+        CloneCommand::Status { run_dir } | CloneCommand::Stage { run_dir, .. } => {
+            return is_seed_to_arm(&run_dir.join("manifest.json"));
+        }
+        _ => return false,
+    };
+    is_seed_to_arm(path)
+}
+
+fn is_seed_to_arm(path: &Path) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|value| value.get("copy_stage").and_then(Value::as_str) == Some("seed_to_arm"))
 }
 
 fn options(command: &CloneCommand, root: &Path) -> Result<Value> {

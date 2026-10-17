@@ -13,6 +13,7 @@ mod catalog;
 mod digest;
 mod input;
 mod json;
+pub(crate) mod lifecycle;
 mod metadata;
 mod physical;
 mod plan;
@@ -24,6 +25,9 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
     let value = match command {
         CloneCommand::Plan { input, output } => plan(backend, input, output)?,
         CloneCommand::Verify { plan } => verify(backend, plan)?,
+        CloneCommand::Init { .. } | CloneCommand::Status { .. } | CloneCommand::Stage { .. } => {
+            lifecycle::run(command, backend)?
+        }
         _ => return Err("clone 原生模块不处理该命令".into()),
     };
     println!("{}", serde_json::to_string(&value)?);

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `cargo xtask check recovery clone init|status|stage` 的 `source_to_seed` 生命周期状态迁至 Rust：原生完成严格清单绑定、create-new 运行目录、只读 status、进程互斥、控制器身份、单调 attempt、失败/取消/未知结果收据、阶段结果原子发布和源码终检；`init/status` 不启动 Python，stage 的未迁移 export、target-verify、copy 资源编排通过单一私有子进程执行，不再共享 Python 生命周期状态机。`seed_to_arm` 的目标文件树、外部存储代次和已发布来源深层校验尚未迁移，其三个命令整体回退原 Python 状态机，避免半迁移。保留 `.local-tests` 路径、链接与清单摘要校验，并增加与 Python init/status 输出、控制器观察和失败现场逐字段对照。
+
 - 全栈、身份环境和业务浏览器夹具的限流配置读取迁至 Rust xtask。原生实现统一完成 `app.toml` 与环境文件的递归表合并、限流布尔值、正整数和窗口上限校验、登录接口预算及 authority 生成，并通过不进入公开帮助的 `__rate-limit` 标准输入 JSON 协议输出结果；Node `pacing.mjs` 与单一 Python 薄客户端不再启动旧配置脚本，删除被替代的 Python 实现与测试，同步保留错误脱敏、路径边界、输出限额和现有 authority 字段。
 
 - `cargo xtask check recovery clone plan|verify` 的离线纯模型和证据校验迁至 Rust xtask：保留严格 JSON 字段集合与重复键拒绝、16 MiB 上限、schema/业务目录与 SQL 转储解析、对象五桶和安全元数据、租户 placement/fence/slot、任务与调度关系、确定性计划哈希、create-new 输出及写后复核；原生入口不启动 Python、不访问数据库或网络，其他 clone 资源阶段继续使用现有私有协议。同步补齐数据范围投影表的租户基线白名单，并增加 Windows 长路径、链接、输入漂移和策略漂移回归。
