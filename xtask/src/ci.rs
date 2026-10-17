@@ -20,7 +20,7 @@ use crate::{
 };
 
 #[path = "ci/frontend_source.rs"]
-mod frontend_source;
+pub(crate) mod frontend_source;
 #[path = "ci/required.rs"]
 mod required;
 #[path = "ci/resource_gate.rs"]

@@ -1,7 +1,8 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf, process::Command as ProcessCommand};
 
 use super::{
     check::TaskExecutor,
+    ci,
     ci::ci_execution_plan_for,
     cli::{CheckCommand, CiCommand, Command, FrontendSourceEvent, FrontendSourceOptions, parse},
 };
@@ -289,5 +290,189 @@ fn candidate_plan_alone_declares_api_compilation() {
             .compilation_coverage
             .iter()
             .any(|coverage| coverage.contains("export_openapi"))
+    );
+}
+
+fn git(root: &std::path::Path, arguments: &[&str]) -> String {
+    let output = ProcessCommand::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+#[test]
+fn detects_openapi_change_and_selects_the_exact_marker() {
+    let repository = tempfile::tempdir().unwrap();
+    git(repository.path(), &["init", "--quiet"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "ci@example.invalid"],
+    );
+    git(repository.path(), &["config", "user.name", "CI"]);
+    fs::create_dir(repository.path().join("openapi")).unwrap();
+    fs::write(
+        repository.path().join("openapi/openapi.json"),
+        "{\"openapi\":\"3.1.0\"}\n",
+    )
+    .unwrap();
+    git(repository.path(), &["add", "openapi/openapi.json"]);
+    git(repository.path(), &["commit", "--quiet", "-m", "baseline"]);
+    let base = git(repository.path(), &["rev-parse", "HEAD"]);
+    fs::write(
+        repository.path().join("openapi/openapi.json"),
+        "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"changed\"}}\n",
+    )
+    .unwrap();
+    git(repository.path(), &["add", "openapi/openapi.json"]);
+    git(repository.path(), &["commit", "--quiet", "-m", "contract"]);
+
+    let marker = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let event = repository.path().join("event.json");
+    fs::write(
+        &event,
+        format!("{{\"pull_request\":{{\"body\":\"Frontend-Commit: {marker}\"}}}}"),
+    )
+    .unwrap();
+    let options = FrontendSourceOptions {
+        event_name: FrontendSourceEvent::PullRequest,
+        event: Some(event),
+        base_sha: Some(base),
+        prefer_marker: false,
+        candidate_openapi: None,
+        release_ref: None,
+        fallback_main_on_invalid_base: false,
+        plan: false,
+    };
+    let selected =
+        ci::frontend_source::select_ci_frontend_ref(&options, repository.path()).unwrap();
+    assert_eq!(selected, (marker.to_ascii_lowercase(), true));
+}
+
+#[test]
+fn unresolvable_base_falls_back_only_when_explicitly_allowed() {
+    let repository = tempfile::tempdir().unwrap();
+    let event = repository.path().join("event.json");
+    fs::write(&event, "{\"pull_request\":{\"body\":null}}").unwrap();
+    let mut options = FrontendSourceOptions {
+        event_name: FrontendSourceEvent::PullRequest,
+        event: Some(event),
+        base_sha: Some("1111111111111111111111111111111111111111".to_owned()),
+        prefer_marker: true,
+        candidate_openapi: None,
+        release_ref: None,
+        fallback_main_on_invalid_base: false,
+        plan: false,
+    };
+    assert!(ci::frontend_source::select_ci_frontend_ref(&options, repository.path()).is_err());
+    options.fallback_main_on_invalid_base = true;
+    assert_eq!(
+        ci::frontend_source::select_ci_frontend_ref(&options, repository.path()).unwrap(),
+        ("main".to_owned(), false)
+    );
+}
+
+fn marker_sha(character: char) -> String {
+    std::iter::repeat_n(character, 40).collect()
+}
+
+#[test]
+fn unchanged_contract_uses_main_without_a_marker() {
+    assert_eq!(
+        ci::frontend_source::select_frontend_ref("Frontend-Commit: invalid", false, false).unwrap(),
+        "main"
+    );
+}
+
+#[test]
+fn exact_marker_accepts_case_and_line_endings() {
+    let value = marker_sha('A');
+    for body in [
+        format!("说明\nFrontend-Commit: {value}\n"),
+        format!("说明\r\nFrontend-Commit: {value}\r\n"),
+        format!("说明\rFrontend-Commit: {value}\r"),
+        format!("说明\n  Frontend-Commit: {value}  "),
+    ] {
+        assert_eq!(
+            ci::frontend_source::select_frontend_ref(&body, true, false).unwrap(),
+            value.to_ascii_lowercase()
+        );
+    }
+}
+
+#[test]
+fn preferred_marker_is_selected_even_when_contract_is_unchanged() {
+    let value = marker_sha('B');
+    assert_eq!(
+        ci::frontend_source::select_frontend_ref(
+            &format!("Frontend-Commit: {value}"),
+            false,
+            true,
+        )
+        .unwrap(),
+        value.to_ascii_lowercase()
+    );
+    assert_eq!(
+        ci::frontend_source::select_frontend_ref("没有配套提交", false, true).unwrap(),
+        "main"
+    );
+}
+
+#[test]
+fn invalid_duplicate_and_embedded_markers_fail_closed() {
+    let value = marker_sha('1');
+    for body in [
+        String::new(),
+        "Frontend-Commit: abc123".to_owned(),
+        format!("Frontend-Commit: {value}\nFrontend-Commit: {value}"),
+        format!("- Frontend-Commit: {value}"),
+        format!("Frontend-Commit: {value} trailing"),
+        format!("Frontend-Commit: {}", marker_sha('1').repeat(2)),
+    ] {
+        assert!(
+            ci::frontend_source::select_frontend_ref(&body, true, false).is_err(),
+            "{body}"
+        );
+    }
+    for body in [
+        "Frontend-Commit: abc123".to_owned(),
+        format!("Frontend-Commit: {}", marker_sha('1').repeat(2)),
+    ] {
+        assert!(ci::frontend_source::select_frontend_ref(&body, false, true).is_err());
+    }
+}
+
+#[test]
+fn release_refs_accept_only_stable_version_tags() {
+    let mut options = FrontendSourceOptions {
+        event_name: FrontendSourceEvent::Push,
+        event: None,
+        base_sha: None,
+        prefer_marker: false,
+        candidate_openapi: None,
+        release_ref: Some("refs/tags/v1.2.3".to_owned()),
+        fallback_main_on_invalid_base: false,
+        plan: false,
+    };
+    let root = std::env::current_dir().unwrap();
+    assert_eq!(
+        ci::frontend_source::select_ci_frontend_ref(&options, &root).unwrap(),
+        ("v1.2.3".to_owned(), false)
+    );
+    options.release_ref = Some("refs/tags/v1.2".to_owned());
+    assert_eq!(
+        ci::frontend_source::select_ci_frontend_ref(&options, &root).unwrap(),
+        ("main".to_owned(), false)
+    );
+    options.release_ref = None;
+    assert_eq!(
+        ci::frontend_source::select_ci_frontend_ref(&options, &root).unwrap(),
+        ("main".to_owned(), false)
     );
 }

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- CI 配套前端来源选择迁至 Rust xtask，原生完成事件解析、OpenAPI 基线分类、候选契约生成核验、发布 tag 映射和 GitHub job output；保留显式 marker、无效基线回退及命令失败诊断，删除被替代的 Python 实现与测试。
+
 - 架构检查迁至 Rust xtask，统一校验 crate 依赖事实源、system 业务域公开面、文档与测试布局、源码规模、持久化与异步端口约束、Workspace unsafe lint 及租户数据静态边界；函数规模和 unsafe 语法继续由固定版本的 tree-sitter helper 解析，Rust 负责策略、变更范围和失败诊断。
 
 - 部署资产与权限路由检查迁至 Rust xtask。部署静态、镜像归档及 CI 阶段保留文件、链接、Markdown 锚点、固定镜像、健康检查、配置、Action 和在线生成器边界，权限检查继续执行 `ryframe-api` 编译策略；删除被替代的 Python 脚本及仅服务部署脚本的测试。

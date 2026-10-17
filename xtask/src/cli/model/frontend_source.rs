@@ -8,17 +8,6 @@ pub(crate) enum FrontendSourceEvent {
     WorkflowDispatch,
 }
 
-impl FrontendSourceEvent {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::PullRequest => "pull_request",
-            Self::Push => "push",
-            Self::Schedule => "schedule",
-            Self::WorkflowDispatch => "workflow_dispatch",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FrontendSourceOptions {
     pub(crate) event_name: FrontendSourceEvent,

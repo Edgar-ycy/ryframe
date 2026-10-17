@@ -275,7 +275,7 @@ fn invalid_data_arguments_exit_two_before_starting_cargo() {
 }
 
 #[test]
-fn frontend_source_validates_all_inputs_before_starting_python() {
+fn frontend_source_validates_all_inputs_before_execution() {
     let event = std::env::current_dir()
         .unwrap()
         .join("target/CI event.json")
@@ -358,7 +358,7 @@ fn frontend_source_validates_all_inputs_before_starting_python() {
 }
 
 #[test]
-fn frontend_source_push_runs_the_private_implementation() {
+fn frontend_source_push_runs_the_native_implementation() {
     let result = invoke(&[
         "check",
         "ci",
@@ -385,7 +385,7 @@ fn frontend_source_push_runs_the_private_implementation() {
 }
 
 #[test]
-fn frontend_source_rejects_a_missing_event_before_python() {
+fn frontend_source_rejects_a_missing_event_before_selection() {
     let event = std::env::current_dir()
         .unwrap()
         .join("target/missing frontend event.json")
