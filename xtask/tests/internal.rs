@@ -84,6 +84,8 @@ mod ci_security_deployment_tests;
 mod ci_security_tests;
 #[path = "internal/ci.rs"]
 mod ci_tests;
+#[path = "internal/ci_tls.rs"]
+mod ci_tls_tests;
 #[path = "internal/cli.rs"]
 mod cli_tests;
 #[path = "internal/clone_cli.rs"]

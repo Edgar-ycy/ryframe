@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 将 AWS-LC TLS 出站集成门禁迁至 Rust xtask：原生生成临时回环 CA、运行 Redis TLS 代理与 HTTPS fixture，保留三类精确测试、900 秒单项超时、完整进程树终止、不可覆盖日志和失败摘要；CI 不再安装 Python 执行 TLS fixture，删除被替代的 Python 门禁、HTTPS helper 与测试。
+
 - CI 配套前端来源选择迁至 Rust xtask，原生完成事件解析、OpenAPI 基线分类、候选契约生成核验、发布 tag 映射和 GitHub job output；保留显式 marker、无效基线回退及命令失败诊断，删除被替代的 Python 实现与测试。
 
 - 架构检查迁至 Rust xtask，统一校验 crate 依赖事实源、system 业务域公开面、文档与测试布局、源码规模、持久化与异步端口约束、Workspace unsafe lint 及租户数据静态边界；函数规模和 unsafe 语法继续由固定版本的 tree-sitter helper 解析，Rust 负责策略、变更范围和失败诊断。

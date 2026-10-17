@@ -87,7 +87,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         CiIntegration,
         "ci.integration",
         "run_integration",
-        "执行真实协议集成门禁",
+        "执行真实协议与 Rust 原生 TLS fixture 集成门禁",
         Backend,
         Test,
         Backend,

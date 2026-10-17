@@ -9,7 +9,7 @@ use super::{
         ci_selection_for_paths, integration_test_args_for_target, parse_changed_paths,
         plan_outputs,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
-        resource_gate_replay_args, resource_gate_required_for_ci_range, tls_integration_args,
+        resource_gate_replay_args, resource_gate_required_for_ci_range,
         verify_frontend_checkout_ref, windows_check_args, windows_process_test_args,
     },
 };
@@ -437,15 +437,25 @@ fn integration_commands_share_the_ci_target_and_jobs() {
         ]
     );
     assert_eq!(
-        tls_integration_args("target/ci/backend", 4),
+        crate::ci::tls::test_command(&crate::ci::tls::TESTS[0], Path::new("target/ci/backend"), 4),
         [
-            "tools/python/tls_integration_gate.py",
-            "--backend-root",
-            ".",
+            "cargo",
+            "test",
+            "--locked",
             "--target-dir",
             "target/ci/backend",
+            "-p",
+            "ryframe-adapters",
+            "--features",
+            "redis-api",
+            "--test",
+            "redis_real_protocol",
             "--jobs",
             "4",
+            "tls_connection_round_trip_uses_real_redis",
+            "--",
+            "--exact",
+            "--nocapture",
         ]
     );
 }

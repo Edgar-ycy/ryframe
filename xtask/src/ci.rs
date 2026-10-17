@@ -29,6 +29,8 @@ pub(crate) mod resource_gate;
 mod security;
 #[path = "ci/task_plan.rs"]
 mod task_plan;
+#[path = "ci/tls.rs"]
+pub(crate) mod tls;
 
 #[allow(unused_imports)]
 pub(crate) use required::validate_required_jobs;
@@ -374,24 +376,7 @@ fn integration() -> Result<()> {
             &integration_test_args_for_target(package, target, features, &targets.backend, jobs),
         )?;
     }
-    run_owned(
-        &root,
-        "python",
-        &tls_integration_args(&targets.backend, jobs),
-    )?;
-    Ok(())
-}
-
-pub(crate) fn tls_integration_args(target_dir: &str, jobs: usize) -> Vec<String> {
-    vec![
-        "tools/python/tls_integration_gate.py".to_owned(),
-        "--backend-root".to_owned(),
-        ".".to_owned(),
-        "--target-dir".to_owned(),
-        target_dir.to_owned(),
-        "--jobs".to_owned(),
-        jobs.max(1).to_string(),
-    ]
+    tls::run_from_environment(&root, Path::new(&targets.backend), jobs).map(|_| ())
 }
 
 pub(crate) fn integration_test_args_for_target(

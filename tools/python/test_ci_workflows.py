@@ -289,6 +289,8 @@ class CiWorkflowTests(unittest.TestCase):
         )[0]
         self.assertIn("cargo xtask check ci integration", integration)
         self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)
+        self.assertNotIn("actions/setup-python", integration)
+        self.assertNotIn("scripts/requirements-ci.txt", integration)
         self.assertNotIn("cargo test --locked -p ryframe-db", integration)
         self.assertIn("path: backend", integration)
         self.assertIn("working-directory: backend", integration)
@@ -332,9 +334,9 @@ class CiWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
             for name in ("ci.yml", "extended-ci.yml")
         )
-        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 6)
-        self.assertEqual(workflow.count("--force-reinstall"), 5)
-        self.assertEqual(workflow.count("--require-hashes"), 5)
+        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 5)
+        self.assertEqual(workflow.count("--force-reinstall"), 4)
+        self.assertEqual(workflow.count("--require-hashes"), 4)
 
     def test_preflight_passes_the_fetched_trusted_base_to_xtask(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

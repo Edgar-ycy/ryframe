@@ -3,7 +3,10 @@ pub(crate) fn print_help(topic: Option<&str>) {
         Some("dev") => {
             "cargo xtask dev [--measure-once]\n  只管理后端 API、Worker 与其进程树；只校验数据库迁移。前端请在前端仓库运行 corepack pnpm dev。--measure-once 仅供 DevEx 保存场景使用。"
         }
-        Some("check") => check_help(),
+        Some("check") => {
+            println!("{CHECK_HELP}\n\n{CI_INTEGRATION_HELP}");
+            return;
+        }
         Some("build") => {
             "cargo xtask build [--profile release|dev] [--real] [--plan] [--frontend-dir PATH]\n  默认构建 release API、Worker 与前端生产产物；--real 追加真实前端构建收据；--plan 只输出同一构建计划，不执行或落盘。"
         }
@@ -18,9 +21,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
     println!("{help}");
 }
 
-fn check_help() -> &'static str {
-    CHECK_HELP
-}
+pub(crate) const CI_INTEGRATION_HELP: &str = "ci integration 使用 Rust xtask 生成临时回环 CA，并启动 Redis TLS 代理与 HTTPS fixture；需要本机 OpenSSL 和回环 Redis，不调用 Python。日志根目录默认 .local-tests/integration/tls，可用 RYFRAME_TLS_ARTIFACT_DIR 覆盖；RYFRAME_REDIS_HOST 只接受 127.0.0.1、::1 或 localhost，RYFRAME_OPENSSL 可指定 OpenSSL 可执行文件。";
 
 pub(crate) const CHECK_HELP: &str = "cargo xtask check [--full] [--plan] [--scope all|backend|frontend]\n  cargo xtask check language [--min-rust-percent <0..100>] [--output <.local-tests 内新 JSON> --write] [--plan]\n  cargo xtask check doctor\n  cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|frontend-source|required|security>\n  cargo xtask check ci frontend-source --event-name <事件> [--event <绝对文件>] [--base-sha <SHA>] [--prefer-marker] [--candidate-openapi <绝对文件>] [--release-ref <ref>] [--fallback-main-on-invalid-base] [--plan]\n  cargo xtask check ci security source\n  cargo xtask check ci security report <cyclonedx|trivy> --input <绝对文件> [--require-reproducible]\n  cargo xtask check ci security deployment <source|image> ...\n  cargo xtask check ci resource-gate replay ...\n  cargo xtask check ci required --event <push|pull_request> [--action <动作>] --needs-json <JSON>\n  cargo xtask check perf run|paired|summarize|compare ...\n  cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n  cargo xtask check release source --tag <tag> --backend-repository <owner/repo> --backend-commit <SHA> --frontend-repository <owner/repo> --frontend-commit <SHA> --manifest-path <绝对文件> [--frontend-dir <绝对目录>] [--plan]\n  cargo xtask check release ci --backend-repository <owner/repo> --frontend-repository <owner/repo> --backend-sha <SHA> --frontend-sha <SHA> [--backend-tag-oid <SHA> --frontend-tag-oid <SHA>] --tag <tag> --timeout <秒> --output <绝对文件> [--plan]\n  cargo xtask check release ci record-pair --output <绝对文件> [--frontend-dir <绝对目录>] [--plan]\n  cargo xtask check release ci verify-pair --input <绝对文件> [--frontend-dir <绝对目录>] [--plan]\n  cargo xtask check recovery <plan|check-dataset|check-existing|dataset|backup|restore|copy|damage> ...\n  cargo xtask check recovery inputs <reference|product|bindings> ...\n  cargo xtask check recovery clone <阶段> ...\n  cargo xtask check recovery <runtime|source> <阶段> ...\n  cargo xtask check recovery fresh-target ...\n  cargo xtask check recovery fixture --output-dir <目录> [--expected-backend-sha <SHA> --expected-frontend-sha <SHA>] --write\n  cargo xtask check recovery fixture <environment|review|request|successor|artifact|retention|services|source-pair|runtime|dataset> ...\n  cargo xtask check recovery fixture runtime --help\n  cargo xtask check recovery fixture services <rustfs|redis|buckets|status|close|reconcile|recover|restart> ...\n  cargo xtask check recovery full-stack <prepare|rate-limit|start|collect> ...\n  cargo xtask check recovery monitoring <bind|start|observe|close|result|status> ...\n  cargo xtask check recovery dataset-prepare ...\n\nlanguage 默认仅向 stdout 报告固定口径的原始文件字节；包含测试、生成代码和模板，vendor 单列。显式 --min-rust-percent 才校验阈值，未达或代码分母为空时失败。--output 必须同时指定 --write，仅创建忽略目录中的新文件，不创建父目录。--plan 不执行 Git 或落盘。\n\n恢复入口固定当前后端工作树；需要前端的阶段使用 --frontend-dir。发布核验的显式路径必须是绝对路径。默认只规划后端检查，不要求前端；--scope all 显式执行跨仓检查。--full 执行所选范围的完整本地门禁（不含真实浏览器）；--plan 只输出同一任务图。前端路径优先级：--frontend-dir、.local-tests/tools.toml、config/tools.toml，均以后端根目录解析。";
 

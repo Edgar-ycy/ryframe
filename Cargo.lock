@@ -5079,6 +5079,7 @@ dependencies = [
  "percent-encoding",
  "processkit",
  "regex",
+ "rustls",
  "ryframe-config",
  "ryframe-generator",
  "serde",
