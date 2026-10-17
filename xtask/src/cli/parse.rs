@@ -8,6 +8,8 @@ use super::model::*;
 mod ci;
 #[path = "parse/data.rs"]
 mod data;
+#[path = "parse/language.rs"]
+mod language;
 #[path = "parse/performance_identities.rs"]
 mod performance_identities;
 #[path = "parse/recovery.rs"]
@@ -140,6 +142,9 @@ fn parse_check(args: &[String]) -> Result<CheckCommand, CliError> {
             require_empty(&args[1..], "cargo xtask check doctor")?;
             Ok(CheckCommand::Doctor)
         }
+        "language" => Ok(CheckCommand::Language(language::parse_language(
+            &args[1..],
+        )?)),
         "ci" => Ok(CheckCommand::Ci(parse_ci(&args[1..])?)),
         "perf" => Ok(CheckCommand::Perf(
             devex::parse_command(&args[1..]).map_err(CliError::new)?,

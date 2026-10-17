@@ -126,6 +126,8 @@ mod fixture_dataset_control_tests;
 mod fixture_prepare_tests;
 #[path = "internal/fixture_runtime.rs"]
 mod fixture_runtime_tests;
+#[path = "internal/language.rs"]
+mod language_tests;
 #[path = "internal/migration.rs"]
 mod migration_tests;
 #[path = "internal/monitoring.rs"]

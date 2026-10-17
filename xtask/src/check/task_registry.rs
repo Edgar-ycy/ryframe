@@ -55,6 +55,9 @@ impl TaskWorkingDirectory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum TaskExecutor {
+    LanguageReport,
+    LanguageWrite,
+    LanguageThreshold,
     RemovedIdentity,
     FrontendDependencies,
     PythonEnvironment,
@@ -139,6 +142,8 @@ macro_rules! task_definition {
 
 #[path = "task_registry/ci.rs"]
 mod ci;
+#[path = "task_registry/language.rs"]
+mod language;
 #[path = "task_registry/perf.rs"]
 mod perf;
 #[path = "task_registry/release.rs"]
@@ -437,8 +442,11 @@ const CHECK_TASKS: [TaskDefinition; 22] = [
     ),
 ];
 
-const TASK_COUNT: usize =
-    CHECK_TASKS.len() + ci::TASKS.len() + release::TASKS.len() + perf::TASKS.len();
+const TASK_COUNT: usize = CHECK_TASKS.len()
+    + ci::TASKS.len()
+    + release::TASKS.len()
+    + perf::TASKS.len()
+    + language::TASKS.len();
 
 const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
     let mut registry = [CHECK_TASKS[0]; TASK_COUNT];
@@ -464,6 +472,12 @@ const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
         registry[index] = perf::TASKS[perf_index];
         index += 1;
         perf_index += 1;
+    }
+    let mut language_index = 0;
+    while language_index < language::TASKS.len() {
+        registry[index] = language::TASKS[language_index];
+        index += 1;
+        language_index += 1;
     }
     registry
 }

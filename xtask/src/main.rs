@@ -81,6 +81,7 @@ fn dispatch_check(command: CheckCommand, frontend_dir: &std::path::Path) -> Resu
             check::plan(options.scope, options.full, frontend_dir)
         }
         CheckCommand::Run(options) => check::verify(options.scope, options.full, frontend_dir),
+        CheckCommand::Language(options) => check::language::run(&options),
         CheckCommand::Doctor => doctor::run(frontend_dir),
         CheckCommand::Ci(command) => ci::run(command, frontend_dir),
         CheckCommand::Perf(command) => devex::run(&command, frontend_dir),

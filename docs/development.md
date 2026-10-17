@@ -141,7 +141,7 @@ TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redi
 真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。
 ## 框架维护检查
 
-框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。
+框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。
 
 前端改名或移动后，在后端 `config/tools.toml` 设置路径；仅本机使用的配置放在忽略目录 `.local-tests/tools.toml`：
 
@@ -152,7 +152,8 @@ frontend_dir = "../web"
 
 优先级为命令行 `--frontend-dir`、本机工具配置、公共工具配置；相对路径统一以后端 Cargo Workspace 根目录解析，与命令在哪个子目录运行无关。工具配置不放服务连接密码，也不影响 `cargo serve` 的运行时配置。后端范围只检查后端，显式跨仓范围找不到前端时会输出实际路径与配置位置。
 
-需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。
+语言与文件构成使用 `cargo xtask check language`，默认只向终端报告完整后端非 ignored 文件的原始字节；已跟踪但符合 ignore 的文件也排除。自维护代码包含手写、测试、生成物及源代码模板，vendor 单列，文档、配置、资源与全量文件体积另列；固定分类以 [language-policy.toml](../architecture/language-policy.toml) 为准。显式 `--min-rust-percent 80` 用精确整数运算校验阈值，未达或分母为空时失败，不隐式加入日常门禁；百分比允许 0 到 100、最多六位小数。`--output .local-tests/language/current.json --write` 在已存在的忽略目录创建未跟踪的新 JSON 报告，不覆盖或创建父目录；报告含口径摘要、HEAD 和逐文件字节及摘要，同时请求阈值时先保存结论再返回失败。`--plan` 只输出同一任务图，不启动 Git、不落盘。54.4% 缺少原始复现证据，只保留为旧参考，不计算增减趋势。
+
 ## 常见问题
 
 - 启动提示迁移不一致：运行 `cargo migrate -- control status` 与 `cargo migrate -- control verify`，确认后再执行 `cargo migrate -- control up`；Worker 未消费任务时，确认 API/Worker 使用 `APP_JOBS_MODE=external`，检查健康端口、lease 和数据库连接。

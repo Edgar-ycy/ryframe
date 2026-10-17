@@ -10,6 +10,8 @@ mod context;
 mod execution;
 #[path = "check/feature.rs"]
 mod feature;
+#[path = "check/language.rs"]
+pub(crate) mod language;
 #[path = "check/metrics.rs"]
 pub(crate) mod metrics;
 #[path = "check/model.rs"]

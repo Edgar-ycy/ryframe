@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
-use crate::devex;
+use crate::{check::language::LanguageOptions, devex};
 
 #[path = "model/release.rs"]
 mod release;
@@ -65,6 +65,7 @@ pub(crate) enum Command {
 pub(crate) enum CheckCommand {
     Run(CheckOptions),
     Doctor,
+    Language(LanguageOptions),
     Ci(CiCommand),
     Perf(devex::DevexCommand),
     Release(ReleaseCommand),

@@ -76,6 +76,8 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(output.contains("check release ci record-pair --output <绝对文件>"));
     assert!(output.contains("check perf cgroup <run|cleanup>"));
     assert!(output.contains("check recovery full-stack <prepare|rate-limit|start|collect>"));
+    assert!(output.contains("check language [--min-rust-percent <0..100>]"));
+    assert!(output.contains("language 默认仅向 stdout 报告固定口径的原始文件字节"));
 }
 
 #[test]
@@ -132,4 +134,122 @@ fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
         stderr.contains("期望后端仓库必须是 owner/repository"),
         "{stderr}"
     );
+}
+
+struct LanguageProcessFixture(std::path::PathBuf);
+
+impl LanguageProcessFixture {
+    fn new(label: &str) -> Self {
+        let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".local-tests");
+        std::fs::create_dir_all(&parent).unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = parent.join(format!(
+            "language-process-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(root.join("xtask")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        std::fs::write(root.join(".gitignore"), ".local-tests/\n").unwrap();
+        std::fs::write(root.join("check.py"), "print('python source')\n").unwrap();
+        let result = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        Self(root)
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+        command
+            .current_dir(&self.0)
+            .env("RYFRAME_WORKSPACE_ROOT", &self.0)
+            .env_remove("RYFRAME_DEVEX_TARGET_ROOT")
+            .env_remove("GITHUB_OUTPUT");
+        command
+    }
+}
+
+impl Drop for LanguageProcessFixture {
+    fn drop(&mut self) {
+        let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".local-tests");
+        assert_eq!(self.0.parent(), Some(parent.as_path()));
+        std::fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+#[test]
+fn language_plan_runs_without_git_and_does_not_create_the_requested_output() {
+    let fixture = LanguageProcessFixture::new("plan");
+    let result = fixture
+        .command()
+        .args([
+            "check",
+            "language",
+            "--min-rust-percent",
+            "80",
+            "--output",
+            ".local-tests/missing/new.json",
+            "--write",
+            "--plan",
+        ])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stderr.is_empty());
+    let output = String::from_utf8(result.stdout).unwrap();
+    for task in ["language.report", "language.write", "language.threshold"] {
+        assert!(output.contains(task), "{output}");
+    }
+    assert!(!fixture.0.join(".local-tests").exists());
+    assert!(!fixture.0.join("target").exists());
+}
+
+#[test]
+fn language_default_stdout_is_read_only_and_explicit_threshold_exits_one() {
+    let fixture = LanguageProcessFixture::new("report");
+    let read_only = fixture
+        .command()
+        .args(["check", "language"])
+        .output()
+        .unwrap();
+    assert!(
+        read_only.status.success(),
+        "{}",
+        String::from_utf8_lossy(&read_only.stderr)
+    );
+    let output = String::from_utf8(read_only.stdout).unwrap();
+    assert!(output.contains("Rust 占比：0.000000%"), "{output}");
+    assert!(output.contains("未请求阈值检查"), "{output}");
+    let checked = fixture
+        .command()
+        .args(["check", "language", "--min-rust-percent", "80"])
+        .output()
+        .unwrap();
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&checked.stdout).contains("未通过"));
+    assert!(!fixture.0.join(".local-tests").exists());
+    assert!(!fixture.0.join("target").exists());
+    let invalid = fixture
+        .command()
+        .args(["check", "language", "--output", ".local-tests/new.json"])
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
 }
