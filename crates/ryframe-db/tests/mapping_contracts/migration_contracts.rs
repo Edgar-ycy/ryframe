@@ -143,7 +143,7 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
 #[test]
 fn review_snapshot_matches_the_fresh_schema() {
     let snapshot = mysql_snapshot_sql();
-    assert!(snapshot.contains("schema fingerprint: 9f0bde12fa587d4e"));
+    assert!(snapshot.contains("schema fingerprint: 3f5f39d1b9783bb1"));
     assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
     for required in [
         "`sys_background_job`",
@@ -216,11 +216,15 @@ fn control_schema_contains_fresh_baseline_and_password_upgrade() {
     assert_eq!(actual_names, expected_names);
     assert_eq!(
         migrations.len(),
-        2 + ryframe_db::generated::migrations().len()
+        3 + ryframe_db::generated::migrations().len()
     );
     assert_eq!(CONTROL_MIGRATION_LEDGER, "seaql_migrations");
     assert_eq!(migrations[0].name(), "m20260820_000000_control_baseline");
     assert_eq!(migrations[1].name(), "m20261013_000000_password_change");
+    assert_eq!(
+        migrations[2].name(),
+        "m20261017_000000_data_scope_projection"
+    );
 }
 
 #[test]
@@ -334,5 +338,5 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     tables.dedup();
     assert_eq!(tables.len(), count);
     assert_eq!(count, 49);
-    assert_eq!(schema_fingerprint(), "9f0bde12fa587d4e");
+    assert_eq!(schema_fingerprint(), "3f5f39d1b9783bb1");
 }
