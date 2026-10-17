@@ -11,9 +11,15 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+#[path = "clone/native/mod.rs"]
+pub(crate) mod native;
+
 pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
-    if matches!(command, CloneCommand::Help) {
-        return Err("clone 帮助不启动私有阶段程序".into());
+    if matches!(
+        command,
+        CloneCommand::Help | CloneCommand::Plan { .. } | CloneCommand::Verify { .. }
+    ) {
+        return Err("clone 帮助及离线 plan/verify 由 Rust 原生入口处理".into());
     }
     let payload = serde_json::to_string(&json!({
         "format_version": 1,

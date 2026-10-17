@@ -432,3 +432,31 @@ fn private_protocol_binds_exact_paths_and_rechecks_file_identity() {
     fs::remove_file(&fixture.first).unwrap();
     assert!(protocol(&command, &super::workspace::root_dir()).is_err());
 }
+
+#[test]
+fn offline_plan_and_verify_never_construct_a_python_protocol() {
+    let fixture = Fixture::new();
+    let output = fixture.directory.join("native-plan.json");
+    for command in [
+        fixture
+            .parse(&[
+                "plan",
+                "--input",
+                Fixture::value(&fixture.first),
+                "--output",
+                Fixture::value(&output),
+                "--write",
+            ])
+            .unwrap(),
+        fixture
+            .parse(&["verify", "--plan", Fixture::value(&fixture.first)])
+            .unwrap(),
+    ] {
+        assert!(
+            protocol(&command, &super::workspace::root_dir())
+                .unwrap_err()
+                .to_string()
+                .contains("Rust 原生")
+        );
+    }
+}

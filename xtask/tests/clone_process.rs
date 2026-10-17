@@ -114,3 +114,41 @@ fn valid_request_replaces_inherited_protocol_and_hides_parameters_from_argv() {
     assert!(stderr.contains("任务失败"), "{stderr}");
     assert!(!stderr.contains("私有协议无效"), "{stderr}");
 }
+
+#[test]
+fn offline_plan_and_verify_fail_without_starting_python() {
+    let fixture = Fixture::new();
+    let input = fixture.directory.join("input.json");
+    fs::write(&input, b"{}").unwrap();
+    let output = fixture.directory.join("plan.json");
+    for arguments in [
+        vec![
+            "check".to_owned(),
+            "recovery".to_owned(),
+            "clone".to_owned(),
+            "plan".to_owned(),
+            "--input".to_owned(),
+            input.to_string_lossy().into_owned(),
+            "--output".to_owned(),
+            output.to_string_lossy().into_owned(),
+            "--write".to_owned(),
+        ],
+        vec![
+            "check".to_owned(),
+            "recovery".to_owned(),
+            "clone".to_owned(),
+            "verify".to_owned(),
+            "--plan".to_owned(),
+            input.to_string_lossy().into_owned(),
+        ],
+    ] {
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(1));
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(!stdout.contains("tools/python/devex_clone.py"), "{stdout}");
+        assert!(!stdout.contains("→ python"), "{stdout}");
+        assert!(!stderr.contains("tools/python/devex_clone.py"), "{stderr}");
+    }
+    assert!(!output.exists());
+}

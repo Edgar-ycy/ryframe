@@ -43,9 +43,12 @@ def schema_catalog(backend: Path) -> tuple[dict, dict]:
     if set(control) - EXCLUDED != CONTROL_TABLES:
         raise ValueError("控制库表与已审查复制白名单不同；须先审查新增/删除表的状态及物理引用")
     tenant = parse_schema((backend / "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs").read_text(encoding="utf-8"))
-    if set(tenant) != {"biz_tenant_fence", "biz_tenant_target_slot", "ryframe_resource_ownership"}:
+    if set(tenant) != {
+        "biz_tenant_fence", "biz_tenant_target_slot", "ryframe_resource_ownership",
+        "biz_data_scope_projection", "biz_data_scope_owner", "biz_data_scope_dept",
+    }:
         raise ValueError("租户基线含未审查表；须补齐复制白名单，不能过滤未知业务表")
-    tenant = {name: columns for name, columns in tenant.items() if name in {"biz_tenant_fence", "biz_tenant_target_slot"}}
+    tenant = {name: columns for name, columns in tenant.items() if name != "ryframe_resource_ownership"}
     if set(tenant) & set(generated_tenant):
         raise ValueError("生成租户表与固定基线表重复")
     tenant.update(generated_tenant)

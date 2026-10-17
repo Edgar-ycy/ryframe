@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub(crate) const CLONE_USAGE: &str = "用法：cargo xtask check recovery clone <plan|verify|init|status|stage|runtime|recover|recover-copy|bridge|post-copy|seed-runtime|storage|cache|maintenance> ...";
+pub(crate) const CLONE_USAGE: &str = "用法：cargo xtask check recovery clone <plan|verify|init|status|stage|runtime|recover|recover-copy|bridge|post-copy|seed-runtime|storage|cache|maintenance> ...\n  plan --input <.local-tests 内清单> --output <.local-tests 内新计划> --write\n  verify --plan <.local-tests 内计划>\n\nplan/verify 由 Rust 原生离线执行，不启动 Python，不访问数据库、网络或共享服务；其余资源阶段继续使用现有私有协议。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloneEffect {

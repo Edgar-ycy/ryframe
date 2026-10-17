@@ -76,9 +76,15 @@ fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
 }
 
 fn run_clone(command: &CloneCommand) -> Result<()> {
-    if matches!(command, CloneCommand::Help) {
-        println!("{}", crate::cli::CLONE_USAGE);
-        return Ok(());
+    match command {
+        CloneCommand::Help => {
+            println!("{}", crate::cli::CLONE_USAGE);
+            return Ok(());
+        }
+        CloneCommand::Plan { .. } | CloneCommand::Verify { .. } => {
+            return clone::native::run(command, &root_dir());
+        }
+        _ => {}
     }
     let root = root_dir();
     let payload = clone::protocol(command, &root)?;

@@ -92,6 +92,8 @@ mod ci_tls_tests;
 mod cli_tests;
 #[path = "internal/clone_cli.rs"]
 mod clone_cli_tests;
+#[path = "internal/clone_native.rs"]
+mod clone_native_tests;
 #[path = "internal/contract_source.rs"]
 mod contract_source_tests;
 #[path = "internal/contract_target.rs"]
