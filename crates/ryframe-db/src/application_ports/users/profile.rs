@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::{
     AutoFill, ControlDatabaseCluster, DeptRepository, FileRepository, FillContext,
-    PermissionRepository, ReadConsistency, Repository, RoleRepository, TenantRepository,
-    UserRepository,
+    PasswordResetRequestRepository, PermissionRepository, ReadConsistency, Repository,
+    RoleRepository, TenantRepository, UserRepository,
     entities::{sys_file, user},
 };
 use sea_orm::{ActiveModelTrait, TransactionTrait};
@@ -172,6 +172,17 @@ impl ProfileTransaction for DatabaseProfileTransaction {
             .await
             .map(|_| ())
             .db()
+    }
+
+    async fn expire_pending_requests<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> ryframe_kernel::AppResult<()> {
+        PasswordResetRequestRepository
+            .expire_pending_for_user_in_txn(&self.transaction, tenant_id, user_id, now)
+            .await
     }
 
     async fn increment_user_authorization_version<'a>(

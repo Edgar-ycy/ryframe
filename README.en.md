@@ -39,7 +39,7 @@ cargo serve
 
 `up` initializes or upgrades the selected control database; `verify` only validates. Initialize before starting: API and Worker do not automatically upgrade databases. The default API port is 8080. Run `cargo worker` in another terminal with the same configuration when background jobs are needed. Install and start the frontend separately, following its README.
 
-The initial ordinary account `user`, newly created users and imported ordinary users start with `123456`; administrators use the explicitly configured password. Every new account must change its password before business access, then sign in again. Repeated migration does not reset existing passwords or the change requirement.
+The initial ordinary account `user`, newly created users and imported ordinary users start with `123456`; administrators use the explicitly configured password. Every new account must change its password before business access, then sign in again. Repeated migration does not reset existing passwords or the change requirement. For an existing development account with an unknown password, use the [explicit recovery flow](docs/api.md#异常账号恢复): an administrator issues a one-time link and the user chooses a new password.
 
 New configurations default to single tenancy, using the internal system tenant without a login tenant selector. Enable multiple tenants with `multi_tenancy.enabled = true` or `APP_MULTI_TENANCY_ENABLED=true`. Existing explicit settings remain effective. Configuration transfer and data maintenance remain available in single tenancy.
 

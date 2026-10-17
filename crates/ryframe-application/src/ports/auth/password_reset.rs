@@ -87,6 +87,14 @@ pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync 
         updated_at: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool>;
 
+    /// 在当前改密事务内使该用户其余待处理重置请求过期。
+    async fn expire_pending_requests<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<()>;
+
     async fn record_user_mirror_update<'a>(
         &'a self,
         tenant_id: &'a str,

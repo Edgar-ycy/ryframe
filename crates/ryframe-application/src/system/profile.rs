@@ -128,6 +128,10 @@ impl ProfileService {
         transaction
             .update_password(tenant_id, actor.user_id, password::hash(new_password)?)
             .await?;
+        let now = transaction.database_now().await?;
+        transaction
+            .expire_pending_requests(tenant_id, actor.user_id, now)
+            .await?;
         let versions = transaction
             .increment_user_authorization_version(tenant_id, actor.user_id)
             .await?;

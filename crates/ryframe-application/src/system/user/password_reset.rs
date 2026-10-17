@@ -205,6 +205,9 @@ impl UserService {
         }
         let authorization_version = current_user.authorization_version.saturating_add(1);
         transaction
+            .expire_pending_requests(tenant_id, current_user.id, completed_at)
+            .await?;
+        transaction
             .record_user_mirror_update(tenant_id, current_user.id, authorization_version)
             .await?;
         Ok(PasswordResetCompletion::Completed {

@@ -71,6 +71,35 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
 }
 
 impl PasswordResetRequestRepository {
+    /// 调用方已锁定租户和用户；只使同租户同用户的未消费请求过期。
+    pub async fn expire_pending_for_user_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        user_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<()> {
+        use sea_orm::sea_query::Expr;
+        password_reset_request::Entity::update_many()
+            .col_expr(
+                password_reset_request::Column::Status,
+                Expr::value(password_reset_request::Model::STATUS_EXPIRED),
+            )
+            .col_expr(password_reset_request::Column::ExpiresAt, Expr::value(now))
+            .col_expr(password_reset_request::Column::UpdatedAt, Expr::value(now))
+            .filter(password_reset_request::Column::TenantId.eq(tenant_id))
+            .filter(password_reset_request::Column::TargetUserId.eq(user_id))
+            .filter(
+                password_reset_request::Column::Status
+                    .eq(password_reset_request::Model::STATUS_PENDING),
+            )
+            .filter(password_reset_request::Column::CompletedAt.is_null())
+            .exec(txn)
+            .await
+            .db()?;
+        Ok(())
+    }
+
     /// 仅使 `evaluated_at` 时仍处于 pending 状态的请求过期。赢得行锁的并发完成操作
     /// 不能被持有过期前旧模型的调用方覆盖。
     pub async fn expire_pending(

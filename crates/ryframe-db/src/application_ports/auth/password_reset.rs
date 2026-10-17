@@ -269,6 +269,17 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         Ok(result.rows_affected == 1)
     }
 
+    async fn expire_pending_requests<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> ryframe_kernel::AppResult<()> {
+        PasswordResetRequestRepository
+            .expire_pending_for_user_in_txn(&self.transaction, tenant_id, user_id, now)
+            .await
+    }
+
     async fn record_user_mirror_update<'a>(
         &'a self,
         tenant_id: &'a str,

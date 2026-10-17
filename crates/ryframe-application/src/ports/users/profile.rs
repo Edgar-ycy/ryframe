@@ -68,6 +68,14 @@ pub trait ProfileTransaction: PersistenceTransaction + Sync {
         password_hash: String,
     ) -> ryframe_kernel::AppResult<()>;
 
+    /// 自助改密同样撤销此前签发的待处理重置请求。
+    async fn expire_pending_requests<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<()>;
+
     async fn increment_user_authorization_version<'a>(
         &'a self,
         tenant_id: &'a str,
