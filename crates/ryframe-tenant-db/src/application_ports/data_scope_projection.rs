@@ -149,12 +149,14 @@ impl TenantDataScopeProjectionPublisher {
         save_metadata(
             target,
             &event.tenant_id,
-            source_version,
-            &token,
-            &placement,
-            &digest,
-            owner_count,
-            dept_count,
+            &ProjectionPublication {
+                source_version,
+                token: &token,
+                placement: &placement,
+                digest: &digest,
+                owner_count,
+                dept_count,
+            },
         )
         .await?;
         remove_old_builds(target, &event.tenant_id, &token).await?;
@@ -173,6 +175,15 @@ struct ProjectionPlacement {
     target_key: String,
     generation: i64,
     switch_token: String,
+}
+
+struct ProjectionPublication<'a> {
+    source_version: i64,
+    token: &'a str,
+    placement: &'a ProjectionPlacement,
+    digest: &'a str,
+    owner_count: i64,
+    dept_count: i64,
 }
 
 async fn session_identity(
@@ -446,12 +457,7 @@ async fn insert_dept_batch(
 async fn save_metadata(
     target: &DatabaseTransaction,
     tenant_id: &str,
-    source_version: i64,
-    token: &str,
-    placement: &ProjectionPlacement,
-    digest: &str,
-    owner_count: i64,
-    dept_count: i64,
+    publication: &ProjectionPublication<'_>,
 ) -> AppResult<()> {
     target
         .execute_raw(Statement::from_sql_and_values(
@@ -470,13 +476,13 @@ async fn save_metadata(
               `published_at` = CURRENT_TIMESTAMP(6)",
             [
                 tenant_id.to_string().into(),
-                source_version.into(),
-                token.to_string().into(),
-                placement.generation.into(),
-                placement.switch_token.clone().into(),
-                digest.to_string().into(),
-                owner_count.into(),
-                dept_count.into(),
+                publication.source_version.into(),
+                publication.token.to_string().into(),
+                publication.placement.generation.into(),
+                publication.placement.switch_token.clone().into(),
+                publication.digest.to_string().into(),
+                publication.owner_count.into(),
+                publication.dept_count.into(),
             ],
         ))
         .await

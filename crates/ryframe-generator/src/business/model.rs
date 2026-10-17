@@ -54,6 +54,8 @@ pub(super) fn descriptor_to_ir(
         field.usage.create_optional = false;
         field.usage.update = false;
         field.usage.update_optional = false;
+        field.default = Some(toml::Value::Integer(0));
+        field.widget = WidgetSpec::Hidden;
     }
     let primary_key = descriptor.primary_key.clone();
     let indexes = indexes(descriptor);
@@ -603,7 +605,8 @@ mod tests {
                     .iter()
                     .find(|field| field.name == "owner_id")
                     .unwrap();
-                assert!(!owner.usage.create && !owner.usage.update);
+                assert!(!owner.usage.create && !owner.usage.create_optional && !owner.usage.update);
+                assert!(matches!(owner.widget, crate::resource::WidgetIr::Hidden));
                 assert!(owner.usage.read && owner.usage.list);
                 assert_eq!(
                     resource.access.system_tenant_only,

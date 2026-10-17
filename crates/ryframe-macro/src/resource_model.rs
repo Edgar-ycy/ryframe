@@ -148,7 +148,7 @@ fn validate_owner_field(
         field
             .ident
             .as_ref()
-            .is_some_and(|ident| ident.to_string() == name)
+            .is_some_and(|ident| ident == name.as_str())
     }) else {
         return Err(syn::Error::new_spanned(
             input,

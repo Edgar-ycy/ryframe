@@ -52,8 +52,8 @@ pub use ryframe_application::{
 pub use ryframe_db::connection::execute_generated_mysql_ddl;
 #[cfg(feature = "runtime")]
 pub use ryframe_kernel::{
-    ActorContext, AppError, AppResult, PageResult, PaginationPolicy, ValidatedPageQuery,
-    decimal_fits_precision,
+    ActorContext, AppError, AppResult, DataScopeContext, PageResult, PaginationPolicy,
+    ValidatedPageQuery, decimal_fits_precision,
 };
 pub use ryframe_macro::{ResourceModel, capability, delete, get, patch, perm, post, put, route};
 #[cfg(feature = "persistence")]
@@ -73,6 +73,12 @@ pub use {serde, serde_json};
 /// 生成的业务持久化代码使用的依赖统一从此模块取得，业务模型不需要暴露 ORM 类型。
 #[cfg(feature = "persistence")]
 pub mod persistence {
+    pub mod data_scope {
+        pub use ryframe_db::data_scope::{
+            lock_projected_build, owner_id_condition, owner_username_condition,
+            projected_owner_id_condition,
+        };
+    }
     pub use ryframe_db::application_ports::audit::commit_current_audit;
     pub use ryframe_db::{ControlDatabaseCluster, DbResultExt, ReadConsistency, pagination};
     pub use ryframe_tenant_db::{TenantDataError, TenantDatabaseRouter};

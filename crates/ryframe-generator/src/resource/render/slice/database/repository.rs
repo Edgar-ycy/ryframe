@@ -28,8 +28,8 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let name = &resource.name;
     let persistence = persistence_parts(resource);
     let base_select = base_select(resource);
-    let id_query = scoped_id_query(resource, "id");
-    let (detail_type, detail_import, detail_read, relation_mappers) =
+    let id_query = scoped_id_query(resource, "id", "build_token");
+    let (detail_type, detail_import, mut detail_read, relation_mappers) =
         relation_detail_parts(resource, resources, &id_query);
     let filters = filter_statements(resource);
     let order = order_statements(resource);
@@ -72,25 +72,50 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         "QueryFilter, "
     };
     let control_transaction_methods = control_transaction_methods(resource);
-    let (data_scope_lock_method, write_scope) = if resource.access.owner_field.is_some()
-        && resource.storage == StorageKind::TenantData
-    {
+    let scoped_tenant_owner =
+        resource.access.owner_field.is_some() && resource.storage == StorageKind::TenantData;
+    let data_scope_module = if resource.module == "business" {
+        "ryframe_sdk::persistence::data_scope"
+    } else if resource.storage == StorageKind::ControlRow {
+        "crate::data_scope"
+    } else {
+        "ryframe_db::data_scope"
+    };
+    let (data_scope_lock_method, write_scope) = if scoped_tenant_owner {
         (
-            "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()> {\n        ryframe_db::data_scope::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }\n\n"
-                .to_owned(),
-            "        let build_token = ryframe_db::data_scope::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"
-                .to_owned(),
+            format!(
+                "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()> {{\n        {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }}\n\n"
+            ),
+            format!(
+                "        let build_token = {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"
+            ),
         )
     } else {
         (String::new(), String::new())
+    };
+    if scoped_tenant_owner {
+        detail_read = detail_read.replace("&database", "database");
+    }
+    let write_id_query = if scoped_tenant_owner {
+        scoped_id_query(resource, "id", "&build_token")
+    } else {
+        id_query.clone()
+    };
+    let pagination_db = if scoped_tenant_owner {
+        "database"
+    } else {
+        "&database"
     };
     format!(
         include_str!("repository.rs.tpl"),
         declaration = persistence.declaration,
         read_connection = persistence.read_connection,
         begin_transaction = persistence.begin_transaction,
-        read_scope_begin = persistence.read_scope_begin,
-        read_scope_finish = persistence.read_scope_finish,
+        read_scope_begin_by_id = persistence.read_scope_begin_by_id,
+        read_scope_begin_page = persistence.read_scope_begin_page,
+        read_wrap_open = persistence.read_wrap_open,
+        read_wrap_close = persistence.read_wrap_close,
+        pagination_db = pagination_db,
         pagination = pagination,
         generic_conflict = generic_conflict,
         header = header,
@@ -115,7 +140,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         control_transaction_methods = control_transaction_methods,
         data_scope_lock_method = data_scope_lock_method,
         write_scope = write_scope,
-        id_query = id_query,
+        write_id_query = write_id_query,
         unique_conflicts = unique_conflicts,
         delete = delete,
         commit = commit,

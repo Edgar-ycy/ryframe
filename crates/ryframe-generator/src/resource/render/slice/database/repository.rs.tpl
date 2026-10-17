@@ -34,12 +34,10 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
         id: {id_type},
 {scope_parameter}    ) -> AppResult<Option<{detail_type}>> {{
 {read_connection}
-{read_scope_begin}
-        let result = async {{
+{read_scope_begin_by_id}
+{read_wrap_open}
 {detail_read}
-        }}.await;
-{read_scope_finish}
-        result
+{read_wrap_close}
     }}
 
     async fn find_by_page(
@@ -49,20 +47,18 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
         {filter_argument}: {pascal}Filter{filter_lifetime},
     ) -> AppResult<PageResult<{pascal}Record>> {{
 {read_connection}
-{read_scope_begin}
-        let result = async {{
+{read_scope_begin_page}
+{read_wrap_open}
 {base_select}
 {filters}
 {order}
-            let result = {pagination}(&database, select, &page).await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_record).collect(),
-                result.total,
-                &page,
-            ))
-        }}.await;
-{read_scope_finish}
-        result
+        let result = {pagination}({pagination_db}, select, &page).await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_record).collect(),
+            result.total,
+            &page,
+        ))
+{read_wrap_close}
     }}
 
     async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn {pascal}Transaction>> {{
@@ -85,7 +81,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
 {scope_parameter}    ) -> AppResult<Option<{pascal}Record>> {{
         self.ensure_tenant(tenant_id)?;
 {write_scope}
-        Ok({id_query}
+        Ok({write_id_query}
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
