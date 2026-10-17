@@ -75,6 +75,11 @@ path = "tests/mapping_contracts.rs"
 required-features = ["repositories", "migration"]
 
 [[test]]
+name = "business_access_mysql"
+path = "tests/business_access_mysql.rs"
+required-features = ["repositories", "migration"]
+
+[[test]]
 name = "mysql_real_protocol"
 path = "tests/mysql_real_protocol.rs"
 required-features = ["repositories"]

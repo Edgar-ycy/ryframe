@@ -22,6 +22,7 @@ pub use ir::{
     FieldIr, IdGeneration, IndexIr, PermissionIr, RelationIr, RelationKind, ResourceIr,
     ResourceProfile, StorageKind, ValueType, WidgetIr,
 };
+pub(crate) use render::access_catalog as render_access_catalog;
 pub(crate) use render::business::render_business_resource;
 pub(crate) use render::business_frontend_assets;
 pub(crate) use render::tenant_catalog::canonical_schema;

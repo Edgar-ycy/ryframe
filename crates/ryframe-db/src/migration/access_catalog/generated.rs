@@ -13,19 +13,21 @@ struct GeneratedAccessCatalog {
     resources: Vec<GeneratedAccessResource>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GeneratedAccessResource {
     pub(super) name: String,
-    module: String,
+    pub(super) module: String,
     #[serde(default)]
-    capability: Option<String>,
+    pub(super) system_tenant_only: bool,
+    #[serde(default)]
+    pub(super) capability: Option<String>,
     labels: GeneratedLabels,
     pub(super) menu: GeneratedMenu,
-    route: GeneratedRoute,
+    pub(super) route: GeneratedRoute,
     pub(super) permissions: GeneratedPermissions,
     #[serde(default)]
-    extension_permissions: BTreeMap<String, String>,
+    pub(super) extension_permissions: BTreeMap<String, String>,
 }
 
 impl GeneratedAccessResource {
@@ -38,14 +40,14 @@ impl GeneratedAccessResource {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GeneratedLabels {
     pub(super) zh_cn: String,
     en: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GeneratedMenu {
     pub(super) key: String,
@@ -56,14 +58,14 @@ pub(super) struct GeneratedMenu {
     pub(super) labels: GeneratedLabels,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct GeneratedRoute {
-    key: String,
-    path: String,
+pub(super) struct GeneratedRoute {
+    pub(super) key: String,
+    pub(super) path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GeneratedPermissions {
     create: String,
@@ -74,7 +76,7 @@ pub(super) struct GeneratedPermissions {
 }
 
 impl GeneratedPermissions {
-    fn values(&self) -> [&str; 5] {
+    pub(super) fn values(&self) -> [&str; 5] {
         [
             &self.create,
             &self.read,
@@ -86,12 +88,15 @@ impl GeneratedPermissions {
 }
 
 pub(super) fn generated_access_resources() -> Result<Vec<GeneratedAccessResource>, DbErr> {
-    let mut catalog: GeneratedAccessCatalog =
-        toml::from_str(GENERATED_ACCESS_CATALOG).map_err(|error| {
-            DbErr::Custom(format!(
-                "catalog/access.generated.toml 不是有效的生成访问目录: {error}"
-            ))
-        })?;
+    parse_access_resources(GENERATED_ACCESS_CATALOG, "catalog/access.generated.toml")
+}
+
+pub(super) fn parse_access_resources(
+    source: &str,
+    origin: &str,
+) -> Result<Vec<GeneratedAccessResource>, DbErr> {
+    let mut catalog: GeneratedAccessCatalog = toml::from_str(source)
+        .map_err(|error| DbErr::Custom(format!("{origin} 不是有效的生成访问目录: {error}")))?;
     if catalog.version != ACCESS_CATALOG_VERSION {
         return Err(DbErr::Custom(format!(
             "生成访问目录版本必须为 {ACCESS_CATALOG_VERSION}，实际为 {}",

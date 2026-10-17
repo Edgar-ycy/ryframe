@@ -1,0 +1,49 @@
+version = 1
+
+[[resources]]
+name = "order_1"
+module = "business"
+[resources.labels]
+zh_cn = "订单"
+en = "Order"
+[resources.menu]
+key = "order.order-1"
+parent = "order"
+order = 10
+[resources.menu.labels]
+zh_cn = "订单"
+en = "Order"
+[resources.route]
+key = "order.order-1"
+path = "/order/order_1"
+[resources.permissions]
+create = "order:order-1:add"
+read = "order:order-1:list"
+list = "order:order-1:list"
+update = "order:order-1:edit"
+delete = "order:order-1:remove"
+[resources.extension_permissions]
+
+[[resources]]
+name = "order1"
+module = "business"
+[resources.labels]
+zh_cn = "订单"
+en = "Order"
+[resources.menu]
+key = "order.order1"
+parent = "order"
+order = 10
+[resources.menu.labels]
+zh_cn = "订单"
+en = "Order"
+[resources.route]
+key = "order.order1"
+path = "/order/order1"
+[resources.permissions]
+create = "order:order1:add"
+read = "order:order1:list"
+list = "order:order1:list"
+update = "order:order1:edit"
+delete = "order:order1:remove"
+[resources.extension_permissions]

@@ -61,7 +61,7 @@ cargo migrate -- control export-sql --output .local-tests/control-init.sql --wri
 
 `new-business` 创建业务 crate 与 SDK/进程装配；`resource` 根据手写 Rust 模型生成 CRUD、迁移与受管资产。默认预览，仅 `--write` 写入；骨架、注册和锁文件一起更新，不升级已有锁定依赖。在资源生成前按[开发指南](docs/development.md#创建业务-crate)编写并登记模型：
 
-租户业务模型使用 `database="tenant"` 和包含 `tenant_id` 的主键，表名保留 `biz_` 前缀；无 `tenant_id` 的全局模型使用 `database="control"`，表名可使用 `table1` 等安全标识，默认只允许系统租户访问。启用多租户不会自动共享全局表，共享读取需要明确的业务扩展。
+租户业务模型使用 `database="tenant"` 和包含 `tenant_id` 的主键，表名保留 `biz_` 前缀；无 `tenant_id` 的全局模型使用 `database="control"`，表名可使用 `table1` 等安全标识，默认只允许系统租户访问。启用多租户不会自动共享全局表，共享读取需要明确的业务扩展。生成后审阅并执行 `cargo migrate -- control up` 初始化业务菜单和权限，再执行 `control verify`；新租户管理员默认获得租户业务 CRUD，普通用户及扩展操作由管理员手工授权。
 
 ```powershell
 cargo generate -- new-business order-business --write

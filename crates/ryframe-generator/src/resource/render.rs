@@ -7,6 +7,7 @@ use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind};
 mod aggregate;
 pub(crate) mod business;
 mod catalog;
+pub(crate) use catalog::access_catalog;
 mod format;
 pub(crate) use format::rust_assets_in_workspace;
 mod schema;

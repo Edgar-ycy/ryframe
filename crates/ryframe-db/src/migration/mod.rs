@@ -24,7 +24,9 @@ mod schema;
 mod seeder;
 
 pub use access_catalog::{
-    AccessMenu, access_menus, access_permission_codes, access_permission_names,
+    AccessMenu, BusinessAccessCatalog, BusinessResourceAccess, access_menus,
+    access_permission_codes, access_permission_names, compile_business_access_catalog,
+    register_business_access_catalog, verify_business_access_catalog,
 };
 pub use baseline_contract::ddl_statements as control_ddl_statements;
 #[cfg(feature = "migration")]
@@ -158,7 +160,8 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
     }
     verify_current_schema(db)
         .await
-        .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
+        .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))?;
+    verify_business_access_catalog(db).await
 }
 
 /// 在不改变数据库状态的情况下读取迁移账本状态。
@@ -272,6 +275,7 @@ where
     seed(db, bootstrap)
         .await
         .map_err(|error| DbErr::Custom(format!("seed execution failed: {error}")))?;
+    verify_business_access_catalog(db).await?;
     verify_current_schema(db)
         .await
         .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))

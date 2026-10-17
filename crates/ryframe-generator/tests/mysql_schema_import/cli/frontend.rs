@@ -46,6 +46,19 @@ impl Candidate {
     }
 
     pub(super) fn verify(&self, backend: &Path) -> Result<(), String> {
+        let document: serde_json::Value = serde_json::from_slice(
+            &fs::read(backend.join("openapi/openapi.json")).map_err(message)?,
+        )
+        .map_err(message)?;
+        let directory = document["x-ryframe-menu-routes"]["routes"]
+            .as_array()
+            .ok_or("缺少候选菜单目录")?
+            .iter()
+            .find(|route| route["route_key"] == "cli-import")
+            .ok_or("缺少本批业务根目录")?;
+        assert_eq!(directory["menu_type"], "M");
+        assert!(directory["page_key"].is_null());
+        assert!(directory["permission_code"].is_null());
         assert_eq!(
             fs::read(backend.join("openapi/openapi.json")).map_err(message)?,
             fs::read(self.path.join("openapi/openapi.json")).map_err(message)?

@@ -108,6 +108,7 @@ bin-worker = [
 bin-migrate = [
     "dep:serde_json",
     "dep:ryframe-auth",
+    "dep:ryframe-application",
     "runtime-database",
     "ryframe-db/migration",
     "ryframe-tenant-db/migration",

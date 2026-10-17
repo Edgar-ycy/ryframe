@@ -1,3 +1,5 @@
+#[path = "mapping_contracts/business_access.rs"]
+mod business_access;
 #[path = "mapping_contracts/db_result_ext.rs"]
 mod db_result_ext;
 #[path = "mapping_contracts/export_mappings.rs"]

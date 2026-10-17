@@ -34,6 +34,7 @@ pub struct RyFrameBusinessModule {
     name: &'static str,
     dependencies: &'static [&'static str],
     resources: Vec<ResourceDescriptor>,
+    access_catalog: &'static str,
     tenant_data_tables: &'static [TenantDataTableDescriptor],
     control_tables: &'static [BusinessControlTableDescriptor],
     #[cfg(feature = "api")]
@@ -55,6 +56,9 @@ impl RyFrameBusinessModule {
 
     pub fn resources(&self) -> &[ResourceDescriptor] {
         &self.resources
+    }
+    pub fn access_catalog(&self) -> &'static str {
+        self.access_catalog
     }
     pub fn tenant_data_tables(&self) -> &'static [TenantDataTableDescriptor] {
         self.tenant_data_tables
@@ -91,6 +95,7 @@ impl BusinessModuleBuilder {
                 name,
                 dependencies: &[],
                 resources: Vec::new(),
+                access_catalog: "version = 1\n",
                 tenant_data_tables: &[],
                 control_tables: &[],
                 #[cfg(feature = "api")]
@@ -118,6 +123,12 @@ impl BusinessModuleBuilder {
     }
     pub fn tenant_data_tables(mut self, tables: &'static [TenantDataTableDescriptor]) -> Self {
         self.module.tenant_data_tables = tables;
+        self
+    }
+
+    /// 使用生成器产出的完整访问目录，不从 HTTP 文档反推数据库初始化事实。
+    pub fn access_catalog(mut self, catalog: &'static str) -> Self {
+        self.module.access_catalog = catalog;
         self
     }
     pub fn control_tables(mut self, tables: &'static [BusinessControlTableDescriptor]) -> Self {
@@ -164,6 +175,7 @@ pub fn compose_openapi(
     mut document: OpenApiDocument,
     modules: &[RyFrameBusinessModule],
 ) -> AppResult<OpenApiDocument> {
+    let access = crate::openapi_catalog::compile(modules)?;
     let mut operations = document_keys(&document)?;
     let mut resources = document
         .extensions
@@ -201,9 +213,10 @@ pub fn compose_openapi(
                 .cloned()
                 .unwrap_or_default(),
         );
-        crate::openapi_catalog::merge_business_catalog(&mut document, &fragment)?;
+        crate::openapi_catalog::validate_fragment(module, &fragment, &access)?;
         document.merge(fragment);
     }
+    crate::openapi_catalog::merge_business_catalog(&mut document, &access)?;
     resources.sort_by(|left, right| {
         left.get("name")
             .and_then(serde_json::Value::as_str)

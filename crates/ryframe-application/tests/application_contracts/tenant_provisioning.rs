@@ -1,6 +1,9 @@
 #[path = "../tenant_provisioning_support/fixtures.rs"]
 mod fixtures;
 
+#[path = "../tenant_provisioning_support/business_access.rs"]
+mod business_access;
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;

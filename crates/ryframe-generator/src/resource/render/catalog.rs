@@ -133,7 +133,7 @@ fn integer_boundary(field: &super::super::FieldIr, value: Option<i64>) -> serde_
     }
 }
 
-pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String {
+pub(crate) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String {
     let sources = if source.is_empty() {
         "# sources:".to_owned()
     } else {
@@ -151,6 +151,9 @@ pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String 
         output.push_str("[[resources]]\n");
         output.push_str(&format!("name = {:?}\n", resource.name));
         output.push_str(&format!("module = {:?}\n", resource.module));
+        if resource.access.system_tenant_only {
+            output.push_str("system_tenant_only = true\n");
+        }
         if let Some(capability) = &resource.access.capability {
             output.push_str(&format!("capability = {capability:?}\n"));
         }

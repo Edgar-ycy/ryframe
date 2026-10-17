@@ -77,6 +77,7 @@ fn filter_permissions(
         };
         permission.assign_user = permission.assign_admin
             && !managed_permission
+            && !super::super::platform_boundary::is_business_permission(&permission.code)
             && [":query", ":list", ":view"]
                 .iter()
                 .any(|suffix| permission.code.ends_with(suffix));
@@ -103,6 +104,9 @@ fn permission_allowed(code: &str) -> bool {
 }
 
 fn assign_standard_admin_permission(code: &str) -> bool {
+    if super::super::platform_boundary::is_business_permission(code) {
+        return super::super::platform_boundary::is_business_default_admin_permission(code);
+    }
     !code.starts_with("monitor:job:")
         && !code.starts_with("monitor:schedule:")
         && code != "monitor:overview:list"

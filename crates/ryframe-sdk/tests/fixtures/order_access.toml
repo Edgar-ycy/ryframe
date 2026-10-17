@@ -1,0 +1,25 @@
+version = 1
+
+[[resources]]
+name = "order"
+module = "business"
+[resources.labels]
+zh_cn = "订单"
+en = "Order"
+[resources.menu]
+key = "order.order"
+parent = "order"
+order = 10
+[resources.menu.labels]
+zh_cn = "订单"
+en = "Order"
+[resources.route]
+key = "order.order"
+path = "/order/order"
+[resources.permissions]
+create = "order:order:add"
+read = "order:order:list"
+list = "order:order:list"
+update = "order:order:edit"
+delete = "order:order:remove"
+[resources.extension_permissions]

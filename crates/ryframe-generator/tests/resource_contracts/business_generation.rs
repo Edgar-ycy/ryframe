@@ -187,6 +187,19 @@ pub struct Order {
 }
 
 fn assert_generated_business(workspace: &std::path::Path) {
+    let access =
+        fs::read_to_string(workspace.join("order-business/src/generated/access.toml")).unwrap();
+    let access: toml::Value = toml::from_str(&access).unwrap();
+    assert_eq!(
+        access["resources"][0]["menu"]["key"].as_str(),
+        Some("sales-orders.order")
+    );
+    assert_eq!(access["resources"][0]["module"].as_str(), Some("business"));
+    assert!(
+        fs::read_to_string(workspace.join("order-business/src/generated/access.rs"))
+            .unwrap()
+            .contains("include_str!(\"access.toml\")")
+    );
     let entity =
         fs::read_to_string(workspace.join("order-business/src/generated/entities/order.rs"))
             .unwrap();

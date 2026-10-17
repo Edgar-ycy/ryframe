@@ -4,7 +4,14 @@ use sea_orm::DbErr;
 #[cfg(feature = "migration")]
 use sea_orm::{ConnectionTrait, DbBackend, Statement, TryGetable};
 
+mod business;
 mod generated;
+
+pub use business::verify_business_access_catalog;
+pub use business::{
+    BusinessAccessCatalog, BusinessResourceAccess, compile_business_access_catalog,
+    register_business_access_catalog,
+};
 
 use generated::generated_access_resources;
 
@@ -192,7 +199,7 @@ where
     Ok(i64::try_get_by_index(&row, 0)?)
 }
 
-pub fn access_permission_codes() -> Result<Vec<String>, DbErr> {
+fn builtin_access_permission_codes() -> Result<Vec<String>, DbErr> {
     let mut values = Vec::new();
     let mut inside = false;
     for line in ACCESS_CATALOG.lines().map(str::trim) {
@@ -235,8 +242,8 @@ pub fn access_permission_codes() -> Result<Vec<String>, DbErr> {
     Ok(merged.into_iter().collect())
 }
 
-pub fn access_permission_names() -> Result<BTreeMap<String, String>, DbErr> {
-    let permissions = access_permission_codes()?;
+fn builtin_access_permission_names() -> Result<BTreeMap<String, String>, DbErr> {
+    let permissions = builtin_access_permission_codes()?;
     let mut names = BTreeMap::new();
     let mut inside = false;
     for line in ACCESS_CATALOG.lines().map(str::trim) {
@@ -268,7 +275,7 @@ pub fn access_permission_names() -> Result<BTreeMap<String, String>, DbErr> {
     Ok(names)
 }
 
-pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
+fn builtin_access_menus() -> Result<Vec<AccessMenu>, DbErr> {
     let mut menus = Vec::new();
     let mut current = None;
     for line in ACCESS_CATALOG.lines().map(str::trim) {
@@ -315,56 +322,7 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
     if let Some(menu) = current {
         menus.push(menu);
     }
-    if menus.iter().any(|menu| {
-        menu.route_key.is_empty()
-            || menu.name.is_empty()
-            || menu.name.chars().count() > 64
-            || !menu.sort_declared
-            || menu.sort < 0
-            || menu.icon.as_deref().is_some_and(|icon| {
-                icon.is_empty()
-                    || !icon
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
-            })
-            || !matches!(menu.menu_type.as_str(), "M" | "C")
-            || !menu
-                .route_key
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
-    }) {
-        return Err(DbErr::Custom("访问目录包含非法菜单定义".into()));
-    }
-    let permissions = access_permission_codes()?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let mut manual_route_keys = BTreeSet::new();
-    for menu in &mut menus {
-        if !manual_route_keys.insert(menu.route_key.clone()) {
-            return Err(DbErr::Custom(format!(
-                "手写访问目录重复拥有菜单 route_key: {}",
-                menu.route_key
-            )));
-        }
-        menu.parent_route_key = (menu.menu_type == "C")
-            .then(|| {
-                menu.route_key
-                    .split_once('.')
-                    .map(|(parent, _)| parent.to_owned())
-            })
-            .flatten();
-        if menu
-            .permission
-            .as_ref()
-            .is_some_and(|code| !permissions.contains(code))
-        {
-            return Err(DbErr::Custom(format!(
-                "菜单 {} 引用了未声明的权限码",
-                menu.route_key
-            )));
-        }
-    }
-
+    let manual_route_keys = validate_manual_menus(&mut menus)?;
     let mut route_owners = manual_route_keys.clone();
     for resource in generated_access_resources()? {
         if !manual_route_keys.contains(&resource.menu.parent) {
@@ -392,6 +350,91 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
         });
     }
     menus.sort_by(|left, right| left.route_key.cmp(&right.route_key));
+    Ok(menus)
+}
+
+fn validate_manual_menus(menus: &mut [AccessMenu]) -> Result<BTreeSet<String>, DbErr> {
+    if menus.iter().any(|menu| {
+        menu.route_key.is_empty()
+            || menu.name.is_empty()
+            || menu.name.chars().count() > 64
+            || !menu.sort_declared
+            || menu.sort < 0
+            || menu.icon.as_deref().is_some_and(|icon| {
+                icon.is_empty()
+                    || !icon
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+            })
+            || !matches!(menu.menu_type.as_str(), "M" | "C")
+            || !menu
+                .route_key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+    }) {
+        return Err(DbErr::Custom("访问目录包含非法菜单定义".into()));
+    }
+    let permissions = builtin_access_permission_codes()?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut manual_route_keys = BTreeSet::new();
+    for menu in menus {
+        if !manual_route_keys.insert(menu.route_key.clone()) {
+            return Err(DbErr::Custom(format!(
+                "手写访问目录重复拥有菜单 route_key: {}",
+                menu.route_key
+            )));
+        }
+        menu.parent_route_key = (menu.menu_type == "C")
+            .then(|| {
+                menu.route_key
+                    .split_once('.')
+                    .map(|(parent, _)| parent.to_owned())
+            })
+            .flatten();
+        if menu
+            .permission
+            .as_ref()
+            .is_some_and(|code| !permissions.contains(code))
+        {
+            return Err(DbErr::Custom(format!(
+                "菜单 {} 引用了未声明的权限码",
+                menu.route_key
+            )));
+        }
+    }
+
+    Ok(manual_route_keys)
+}
+
+pub fn access_permission_codes() -> Result<Vec<String>, DbErr> {
+    let mut codes = builtin_access_permission_codes()?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if let Some(business) = business::registered() {
+        codes.extend(business.permission_names().keys().cloned());
+    }
+    Ok(codes.into_iter().collect())
+}
+
+pub fn access_permission_names() -> Result<BTreeMap<String, String>, DbErr> {
+    let mut names = builtin_access_permission_names()?;
+    if let Some(business) = business::registered() {
+        names.extend(
+            business
+                .permission_names()
+                .iter()
+                .map(|(code, name)| (code.clone(), name.clone())),
+        );
+    }
+    Ok(names)
+}
+
+pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
+    let mut menus = builtin_access_menus()?;
+    if let Some(business) = business::registered() {
+        menus.extend(business.menus().iter().cloned());
+    }
     Ok(menus)
 }
 

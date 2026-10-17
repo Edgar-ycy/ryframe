@@ -90,7 +90,7 @@ RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-
 
 ## 访问控制与契约
 
-路由使用 `Public`、`Authenticated`、`Permission` 或 `Capability` 访问策略。菜单、权限、页面键和 capability 来自 `catalog/access.toml`；业务路由在 API 层关联对应策略。
+路由使用 `Public`、`Authenticated`、`Permission` 或 `Capability` 访问策略。框架菜单、权限、页面键和 capability 来自 `catalog/access.toml`；标准业务由 Rust 模型生成模块内 `access.toml`，初始化、SQL 导出和 OpenAPI 装配共用解析结果。业务路由在 API 层关联对应策略；组合根一次安装系统租户专用业务边界，租户开通、权限管理及会话投影使用同一边界。
 
 接口的请求与响应进入 OpenAPI 快照，前端从快照生成 operation descriptor。接口变更后的同步步骤见[开发指南](development.md#api-与前后端联调)。
 

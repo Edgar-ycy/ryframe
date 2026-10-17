@@ -99,9 +99,9 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
                 .map(String::as_str)
                 .unwrap_or(code.as_str());
             format!(
-                "({}, 'system', '{}', '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+                "({}, 'system', {}, '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
                 10_000 + index,
-                name,
+                seed_text(name),
                 code,
                 index
             )
@@ -131,14 +131,14 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
                 )
             },
         );
-        let menu_name = menu.name.replace('\'', "''");
+        let menu_name = seed_text(&menu.name);
         let icon = menu
             .icon()
             .map_or_else(|| "NULL".to_owned(), |icon| format!("'{icon}'"));
         statements.push(format!(
             "INSERT INTO `sys_menu` \
              (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
-             SELECT {}, 'system', '{}', {}, '{}', {}, '{}', {}, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+             SELECT {}, 'system', {}, {}, '{}', {}, '{}', {}, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
              WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{}')",
             20_000 + index,
             menu_name,
@@ -157,7 +157,7 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
         statements.push(format!(
             "UPDATE `sys_menu` AS `menu` \
              LEFT JOIN `sys_menu` AS `parent` ON `parent`.`tenant_id` = 'system' AND `parent`.`route_key` = {parent_route} \
-             SET `menu`.`name` = IF(`menu`.`name` = `menu`.`route_key`, '{}', `menu`.`name`), \
+             SET `menu`.`name` = IF(`menu`.`name` = `menu`.`route_key`, {}, `menu`.`name`), \
              `menu`.`parent_id` = `parent`.`id`, `menu`.`menu_type` = '{}', `menu`.`perm_id` = {}, \
              `menu`.`icon` = COALESCE({}, `menu`.`icon`), `menu`.`sort` = {}, `menu`.`status` = '1', `menu`.`del_flag` = '0' \
              WHERE `menu`.`tenant_id` = 'system' AND `menu`.`route_key` = '{}'",
@@ -170,4 +170,18 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
         ));
     }
     Ok(statements)
+}
+
+/// DML 名称使用模式无关的表达式；普通名称保持审阅快照的既有排版。
+fn seed_text(value: &str) -> String {
+    use std::fmt::Write;
+    if value.contains('\\') || value.chars().any(char::is_control) {
+        let mut hex = String::with_capacity(value.len() * 2);
+        for byte in value.as_bytes() {
+            write!(hex, "{byte:02x}").expect("字符串写入不会失败");
+        }
+        format!("CONVERT(0x{hex} USING utf8mb4)")
+    } else {
+        format!("'{}'", value.replace('\'', "''"))
+    }
 }

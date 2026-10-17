@@ -1,0 +1,25 @@
+version = 1
+
+[[resources]]
+name = "order_item"
+module = "business"
+[resources.labels]
+zh_cn = "订单明细"
+en = "OrderItem"
+[resources.menu]
+key = "sales-orders.order-item"
+parent = "sales-orders"
+order = 10
+[resources.menu.labels]
+zh_cn = "订单明细"
+en = "OrderItem"
+[resources.route]
+key = "sales-orders.order-item"
+path = "/sales_orders/order_item"
+[resources.permissions]
+create = "sales-orders:order-item:add"
+read = "sales-orders:order-item:list"
+list = "sales-orders:order-item:list"
+update = "sales-orders:order-item:edit"
+delete = "sales-orders:order-item:remove"
+[resources.extension_permissions]

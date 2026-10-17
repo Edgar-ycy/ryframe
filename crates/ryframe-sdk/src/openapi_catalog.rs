@@ -1,23 +1,116 @@
-//! 从业务资源事实源补齐组合后的权限与菜单契约。
+//! 业务访问目录与数据库初始化共用事实；HTTP 片段只负责证明接口契约一致。
+
+use std::collections::BTreeSet;
 
 use ryframe_api::openapi::OpenApiDocument;
+use ryframe_db::migration::{BusinessAccessCatalog, compile_business_access_catalog};
 use ryframe_kernel::{AppError, AppResult};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+
+use crate::{ResourceDatabase, RyFrameBusinessModule};
+
+pub(crate) fn compile(modules: &[RyFrameBusinessModule]) -> AppResult<BusinessAccessCatalog> {
+    let access = compile_business_access_catalog(
+        modules
+            .iter()
+            .map(|module| (module.name(), module.access_catalog())),
+    )
+    .map_err(|error| AppError::Config(error.to_string()))?;
+    for module in modules {
+        if access
+            .resources()
+            .filter(|resource| resource.module == module.name())
+            .count()
+            != module.resources().len()
+        {
+            return Err(invalid(
+                "业务模型与访问目录数量不一致；运行 cargo generate -- resource --write",
+            ));
+        }
+        for resource in module.resources() {
+            let binding = access
+                .resource(module.name(), resource.name)
+                .ok_or_else(|| invalid("业务模型缺少访问目录"))?;
+            if binding.system_tenant_only != (resource.database == ResourceDatabase::Control) {
+                return Err(invalid("业务模型与访问目录的租户边界不一致"));
+            }
+        }
+    }
+    Ok(access)
+}
+
+pub(crate) fn validate_fragment(
+    module: &RyFrameBusinessModule,
+    fragment: &OpenApiDocument,
+    access: &BusinessAccessCatalog,
+) -> AppResult<()> {
+    let rows = fragment
+        .extensions
+        .as_ref()
+        .and_then(|extensions| extensions.get("x-ryframe-crud-resources"))
+        .and_then(|value| value.get("resources"))
+        .and_then(Value::as_array);
+    let mut seen = BTreeSet::new();
+    for row in rows.into_iter().flatten() {
+        let name = text(row, "/name")?;
+        let binding = access
+            .resource(module.name(), name)
+            .ok_or_else(|| invalid("HTTP 片段包含未登记的业务资源"))?;
+        if !seen.insert(name) {
+            return Err(invalid("HTTP 片段重复声明业务资源"));
+        }
+        let permissions = row
+            .pointer("/access/permissions")
+            .and_then(Value::as_object)
+            .ok_or_else(|| invalid("业务权限"))?;
+        if permissions.len() != 5
+            || row.get("extension_permissions") != Some(&json!(binding.extension_permissions))
+        {
+            return Err(invalid("HTTP 权限集合与生成访问目录不一致"));
+        }
+        for (index, action) in ["create", "read", "list", "update", "delete"]
+            .iter()
+            .enumerate()
+        {
+            if permissions.get(*action).and_then(Value::as_str)
+                != Some(binding.permissions[index].as_str())
+            {
+                return Err(invalid("HTTP 权限与生成访问目录不一致"));
+            }
+        }
+        let menu = access
+            .menus()
+            .iter()
+            .find(|menu| menu.route_key == binding.route_key)
+            .ok_or_else(|| invalid("业务页面缺少菜单"))?;
+        let system_only = match row.pointer("/access/system_tenant_only") {
+            None => false,
+            Some(Value::Bool(value)) => *value,
+            Some(_) => return Err(invalid("HTTP 业务租户边界必须是布尔值")),
+        };
+        if text(row, "/route/key")? != binding.route_key
+            || text(row, "/route/path")? != binding.route_path
+            || text(row, "/menu/key")? != binding.route_key
+            || text(row, "/menu/parent")? != binding.parent
+            || text(row, "/menu/labels/zh_cn")? != menu.name
+            || system_only != binding.system_tenant_only
+        {
+            return Err(invalid("HTTP 菜单、路由或租户边界与生成访问目录不一致"));
+        }
+    }
+    if seen.len() != module.resources().len() {
+        return Err(invalid("HTTP 片段未包含完整业务资源目录"));
+    }
+    Ok(())
+}
 
 pub(crate) fn merge_business_catalog(
     document: &mut OpenApiDocument,
-    fragment: &OpenApiDocument,
+    access: &BusinessAccessCatalog,
 ) -> AppResult<()> {
-    let Some(resources) = fragment
-        .extensions
-        .as_ref()
-        .and_then(|value| value.get("x-ryframe-crud-resources"))
-        .and_then(|value| value.get("resources"))
-        .and_then(Value::as_array)
-    else {
+    if access.resources().next().is_none() {
         return Ok(());
-    };
+    }
     let extensions = document.extensions.get_or_insert_default();
     let mut codes = extensions
         .get("x-ryframe-permission-catalog")
@@ -25,6 +118,12 @@ pub(crate) fn merge_business_catalog(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    codes.extend(
+        access
+            .permission_names()
+            .keys()
+            .map(|code| Value::String(code.clone())),
+    );
     let mut routes = extensions
         .get("x-ryframe-menu-routes")
         .and_then(|value| value.get("routes"))
@@ -33,14 +132,14 @@ pub(crate) fn merge_business_catalog(
         .unwrap_or_default();
     let mut keys = routes
         .iter()
-        .filter_map(|value| {
-            value
+        .filter_map(|route| {
+            route
                 .get("route_key")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         })
         .collect::<BTreeSet<_>>();
-    let mut title_keys = routes
+    let mut titles = routes
         .iter()
         .filter_map(|route| {
             route
@@ -49,36 +148,31 @@ pub(crate) fn merge_business_catalog(
                 .map(str::to_owned)
         })
         .collect::<BTreeSet<_>>();
-    for resource in resources {
-        let permissions = resource
-            .pointer("/access/permissions")
-            .and_then(Value::as_object)
-            .ok_or_else(|| invalid("权限"))?;
-        for value in permissions.values() {
-            if value.as_str().is_none_or(str::is_empty) {
-                return Err(invalid("权限"));
-            }
-            codes.push(value.clone());
+    for menu in access.menus() {
+        if !keys.insert(menu.route_key.clone()) {
+            return Err(invalid("业务菜单路由与当前 HTTP 目录冲突"));
         }
-        let route_key = text(resource, "/route/key")?;
-        validate_route_key(route_key)?;
-        if !keys.insert(route_key.to_owned()) {
-            return Err(invalid("重复菜单路由"));
-        }
-        let title_key = title_key(text(resource, "/name")?)?;
-        if !title_keys.insert(title_key.clone()) {
+        let title = if menu.menu_type == "M" {
+            format!(
+                "{}BusinessDirectory",
+                title_key(&menu.route_key.replace('-', "_"))?
+            )
+        } else {
+            let resource = access
+                .resources()
+                .find(|resource| resource.route_key == menu.route_key)
+                .ok_or_else(|| invalid("业务页面缺少资源"))?;
+            title_key(&resource.resource)?
+        };
+        if !titles.insert(title.clone()) {
             return Err(AppError::Config(format!(
-                "业务菜单标题键冲突：{title_key}；为业务资源选择不同名称后重新生成，不覆盖已有菜单翻译"
+                "业务菜单标题键冲突：{title}；为业务资源选择不同名称后重新生成"
             )));
         }
         routes.push(json!({
-            "route_key": route_key,
-            "name": text(resource, "/menu/labels/zh_cn")?,
-            "title_key": title_key,
-            "menu_type": "C",
-            "page_key": route_key,
-            "permission_code": text(resource, "/access/permissions/list")?,
-            "capability_code": resource.pointer("/access/capability").cloned().unwrap_or(Value::Null),
+            "route_key": menu.route_key, "name": menu.name, "title_key": title,
+            "menu_type": menu.menu_type, "page_key": (menu.menu_type == "C").then_some(&menu.route_key),
+            "permission_code": menu.permission, "capability_code": Value::Null,
         }));
     }
     codes.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
@@ -118,27 +212,15 @@ fn title_key(name: &str) -> AppResult<String> {
     let mut key = parts.next().ok_or_else(|| invalid("资源名称"))?.to_owned();
     for part in parts {
         let mut bytes = part.bytes();
-        let first = bytes.next().ok_or_else(|| invalid("资源名称"))?;
-        key.push(char::from(first.to_ascii_uppercase()));
+        key.push(char::from(
+            bytes
+                .next()
+                .ok_or_else(|| invalid("资源名称"))?
+                .to_ascii_uppercase(),
+        ));
         key.extend(bytes.map(char::from));
     }
     Ok(key)
-}
-
-fn validate_route_key(key: &str) -> AppResult<()> {
-    if !key.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        || key.split(['.', '-']).any(|part| {
-            part.is_empty()
-                || !part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        })
-    {
-        return Err(AppError::Config(format!(
-            "业务菜单路由键无效：{key}；使用小写字母、数字以及 . 或 - 分段，不使用下划线"
-        )));
-    }
-    Ok(())
 }
 
 fn invalid(field: &str) -> AppError {
