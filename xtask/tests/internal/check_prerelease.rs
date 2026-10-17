@@ -108,10 +108,21 @@ fn prerelease_deployment_scanning_matches_python_oracle() {
 }
 
 #[test]
-fn prerelease_allowlist_acceptance_and_dates_match_python_oracle() {
+fn prerelease_allowlist_preserves_original_cases_with_two_strict_schema_rejections() {
+    // 原始对照保持不变；这两项有意收紧 Python 布尔/浮点数与整数相等的旧缺口。
+    let tightened = [
+        r#"{"schema": true, "entries": []}"#,
+        r#"{"schema": 1.0, "entries": []}"#,
+    ];
+    let mut tightened_count = 0;
     for case in oracle()["allowlists"].as_array().unwrap() {
-        let parsed = prerelease::parse_allowlist(string(case, "source"));
-        if case["allowed"].is_null() {
+        let source = string(case, "source");
+        let parsed = prerelease::parse_allowlist(source);
+        if tightened.contains(&source) {
+            assert!(!case["allowed"].is_null(), "旧实现接受这两个输入");
+            assert!(parsed.is_err(), "严格 schema 应拒绝：{case}");
+            tightened_count += 1;
+        } else if case["allowed"].is_null() {
             assert!(parsed.is_err(), "{case}");
         } else {
             let expected = case["allowed"]
@@ -129,12 +140,32 @@ fn prerelease_allowlist_acceptance_and_dates_match_python_oracle() {
             assert_eq!(parsed.unwrap(), expected, "{case}");
         }
     }
+    assert_eq!(tightened_count, 2);
     for invalid in ["", "{", "{\"schema\":1,\"entries\":[secret]}"] {
         let error = prerelease::parse_allowlist(invalid)
             .unwrap_err()
             .to_string();
         assert!(!error.contains("secret"));
     }
+}
+
+#[test]
+fn prerelease_allowlist_schema_accepts_only_json_integer_one() {
+    assert!(
+        prerelease::parse_allowlist(r#"{"schema":1,"entries":[]}"#)
+            .unwrap()
+            .is_empty()
+    );
+    for schema in [
+        "true", "false", "1.0", "1e0", "null", r#""1""#, "-1", "0", "2",
+    ] {
+        let source = format!(r#"{{"schema":{schema},"entries":[]}}"#);
+        let error = prerelease::parse_allowlist(&source)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("不支持的 schema"), "{schema}：{error}");
+    }
+    assert!(prerelease::parse_allowlist(r#"{"entries":[]}"#).is_err());
 }
 
 #[test]

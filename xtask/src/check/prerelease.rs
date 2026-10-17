@@ -48,9 +48,7 @@ fn invalid(source: &str, reason: &str) -> Box<dyn std::error::Error> {
 pub(crate) fn parse_allowlist(source: &str) -> Result<Allowlist> {
     let document: Value =
         serde_json::from_str(source).map_err(|_| invalid(ALLOWLIST, "JSON 格式错误"))?;
-    if !(document.get("schema").and_then(Value::as_f64) == Some(1.0)
-        || document.get("schema").and_then(Value::as_bool) == Some(true))
-    {
+    if document.get("schema").and_then(Value::as_u64) != Some(1) {
         return Err(invalid(ALLOWLIST, "不支持的 schema"));
     }
     let entries = document
