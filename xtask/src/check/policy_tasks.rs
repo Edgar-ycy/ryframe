@@ -55,13 +55,6 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         ci_preflight_order: None,
     },
     PythonPolicyTask {
-        id: "prerelease-dependencies",
-        script: "tools/python/check_prerelease_dependencies.py",
-        full_order: Some(3),
-        smart_order: None,
-        ci_preflight_order: Some(0),
-    },
-    PythonPolicyTask {
         id: "permission-routes",
         script: "tools/python/check_permission_routes.py",
         full_order: Some(4),

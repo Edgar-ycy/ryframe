@@ -69,6 +69,7 @@ pub(crate) fn execute_registered_task(
                 .include_frontend
                 .then_some(context.frontend_dir.as_path()),
         ),
+        TaskExecutor::PrereleaseDependencies => super::super::prerelease::run(&context.root),
         TaskExecutor::FrontendDependencies => require_frontend_dependencies(&context.frontend_dir),
         TaskExecutor::PythonEnvironment => {
             run_process(&context.root, "python", PYTHON_ENVIRONMENT_ARGS)
@@ -191,6 +192,9 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
             .include_frontend
             .then_some(context.frontend_dir.as_path()),
     )?;
+    if profile != PolicyProfile::Smart {
+        super::super::prerelease::run(&context.root)?;
+    }
     for task in policy_tasks(profile) {
         run_owned(&context.root, "python", &task.arguments())?;
     }

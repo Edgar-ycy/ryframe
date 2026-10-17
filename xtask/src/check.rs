@@ -22,6 +22,8 @@ mod node_suite;
 mod plan;
 #[path = "check/policy_tasks.rs"]
 mod policy_tasks;
+#[path = "check/prerelease.rs"]
+pub(crate) mod prerelease;
 #[path = "check/removed_identity.rs"]
 pub(crate) mod removed_identity;
 #[path = "check/resource.rs"]

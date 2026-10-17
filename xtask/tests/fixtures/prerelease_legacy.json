@@ -1,0 +1,2913 @@
+{
+  "python": "3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:09:58) [MSC v.1929 64 bit (AMD64)]",
+  "unicode": "15.1.0",
+  "legacy_sha256": "88bc249e43f9bec2c79e8d41ec967bf39f2b0aa17d916dfbe753c28080cdde66",
+  "origin": "e350f5b2a5793d4436a92587bd1436db8d75fe4b tools/python/check_prerelease_dependencies.py; frozen Python oracle, no runtime Python dependency",
+  "versions": [
+    {
+      "value": "",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-alpha",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "v1.2.3-RC.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-preview",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-preposterous",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "nightly",
+      "version": false,
+      "reference": true
+    },
+    {
+      "value": "rc",
+      "version": false,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-alpha+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-alpha_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "01.02.03-beta",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "١.٢.٣-rc.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-alpha",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-alpha.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-alpha-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-alphafoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-alpha+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-alpha_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-beta",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-beta.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-beta-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-betafoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-beta+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-beta_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-rc",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-rc.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-rc-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-rcfoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-rc+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-rc_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-pre",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-pre.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-pre-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-prefoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-pre+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-pre_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-preview",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-preview.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-preview-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-previewfoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-preview+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-preview_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-nightly",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-nightly.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-nightly-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-nightlyfoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-nightly+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-nightly_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-canary",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-canary.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-canary-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-canaryfoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-canary+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-canary_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-stable",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-stable.1",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-stable-a",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-stablefoo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-stable+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-stable_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-ALPHA",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-ALPHA.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-ALPHA-a",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-ALPHAfoo",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-ALPHA+build",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-ALPHA_foo",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "tool-rc-x",
+      "version": false,
+      "reference": true
+    },
+    {
+      "value": "tool-pre-x",
+      "version": false,
+      "reference": true
+    },
+    {
+      "value": "tool-canary-x",
+      "version": false,
+      "reference": true
+    },
+    {
+      "value": "tool-stable-x",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "tool-RC-x",
+      "version": false,
+      "reference": true
+    },
+    {
+      "value": "１.２.３-rc.1",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-nıghtly",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-rc.İ",
+      "version": true,
+      "reference": true
+    },
+    {
+      "value": "1.2.3-K",
+      "version": false,
+      "reference": false
+    },
+    {
+      "value": "1.2.3-beta²",
+      "version": false,
+      "reference": false
+    }
+  ],
+  "literals": [
+    {
+      "source": "  ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3 ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-alpha ",
+      "values": [
+        "1.2.3-alpha"
+      ]
+    },
+    {
+      "source": " v1.2.3-RC.1 ",
+      "values": [
+        "v1.2.3-RC.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-preview ",
+      "values": [
+        "1.2.3-preview"
+      ]
+    },
+    {
+      "source": " 1.2.3-preposterous ",
+      "values": [
+        "1.2.3-preposterous"
+      ]
+    },
+    {
+      "source": " nightly ",
+      "values": []
+    },
+    {
+      "source": " rc ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-alpha+build ",
+      "values": [
+        "1.2.3-alpha"
+      ]
+    },
+    {
+      "source": " 1.2.3-alpha_foo ",
+      "values": [
+        "1.2.3-alpha"
+      ]
+    },
+    {
+      "source": " 01.02.03-beta ",
+      "values": [
+        "01.02.03-beta"
+      ]
+    },
+    {
+      "source": " ١.٢.٣-rc.1 ",
+      "values": [
+        "١.٢.٣-rc.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-alpha ",
+      "values": [
+        "1.2.3-alpha"
+      ]
+    },
+    {
+      "source": " 1.2.3-alpha.1 ",
+      "values": [
+        "1.2.3-alpha.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-alpha-a ",
+      "values": [
+        "1.2.3-alpha-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-alphafoo ",
+      "values": [
+        "1.2.3-alphafoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-alpha+build ",
+      "values": [
+        "1.2.3-alpha"
+      ]
+    },
+    {
+      "source": " 1.2.3-alpha_foo ",
+      "values": [
+        "1.2.3-alpha"
+      ]
+    },
+    {
+      "source": " 1.2.3-beta ",
+      "values": [
+        "1.2.3-beta"
+      ]
+    },
+    {
+      "source": " 1.2.3-beta.1 ",
+      "values": [
+        "1.2.3-beta.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-beta-a ",
+      "values": [
+        "1.2.3-beta-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-betafoo ",
+      "values": [
+        "1.2.3-betafoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-beta+build ",
+      "values": [
+        "1.2.3-beta"
+      ]
+    },
+    {
+      "source": " 1.2.3-beta_foo ",
+      "values": [
+        "1.2.3-beta"
+      ]
+    },
+    {
+      "source": " 1.2.3-rc ",
+      "values": [
+        "1.2.3-rc"
+      ]
+    },
+    {
+      "source": " 1.2.3-rc.1 ",
+      "values": [
+        "1.2.3-rc.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-rc-a ",
+      "values": [
+        "1.2.3-rc-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-rcfoo ",
+      "values": [
+        "1.2.3-rcfoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-rc+build ",
+      "values": [
+        "1.2.3-rc"
+      ]
+    },
+    {
+      "source": " 1.2.3-rc_foo ",
+      "values": [
+        "1.2.3-rc"
+      ]
+    },
+    {
+      "source": " 1.2.3-pre ",
+      "values": [
+        "1.2.3-pre"
+      ]
+    },
+    {
+      "source": " 1.2.3-pre.1 ",
+      "values": [
+        "1.2.3-pre.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-pre-a ",
+      "values": [
+        "1.2.3-pre-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-prefoo ",
+      "values": [
+        "1.2.3-prefoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-pre+build ",
+      "values": [
+        "1.2.3-pre"
+      ]
+    },
+    {
+      "source": " 1.2.3-pre_foo ",
+      "values": [
+        "1.2.3-pre"
+      ]
+    },
+    {
+      "source": " 1.2.3-preview ",
+      "values": [
+        "1.2.3-preview"
+      ]
+    },
+    {
+      "source": " 1.2.3-preview.1 ",
+      "values": [
+        "1.2.3-preview.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-preview-a ",
+      "values": [
+        "1.2.3-preview-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-previewfoo ",
+      "values": [
+        "1.2.3-previewfoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-preview+build ",
+      "values": [
+        "1.2.3-preview"
+      ]
+    },
+    {
+      "source": " 1.2.3-preview_foo ",
+      "values": [
+        "1.2.3-preview"
+      ]
+    },
+    {
+      "source": " 1.2.3-nightly ",
+      "values": [
+        "1.2.3-nightly"
+      ]
+    },
+    {
+      "source": " 1.2.3-nightly.1 ",
+      "values": [
+        "1.2.3-nightly.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-nightly-a ",
+      "values": [
+        "1.2.3-nightly-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-nightlyfoo ",
+      "values": [
+        "1.2.3-nightlyfoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-nightly+build ",
+      "values": [
+        "1.2.3-nightly"
+      ]
+    },
+    {
+      "source": " 1.2.3-nightly_foo ",
+      "values": [
+        "1.2.3-nightly"
+      ]
+    },
+    {
+      "source": " 1.2.3-canary ",
+      "values": [
+        "1.2.3-canary"
+      ]
+    },
+    {
+      "source": " 1.2.3-canary.1 ",
+      "values": [
+        "1.2.3-canary.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-canary-a ",
+      "values": [
+        "1.2.3-canary-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-canaryfoo ",
+      "values": [
+        "1.2.3-canaryfoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-canary+build ",
+      "values": [
+        "1.2.3-canary"
+      ]
+    },
+    {
+      "source": " 1.2.3-canary_foo ",
+      "values": [
+        "1.2.3-canary"
+      ]
+    },
+    {
+      "source": " 1.2.3-stable ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-stable.1 ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-stable-a ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-stablefoo ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-stable+build ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-stable_foo ",
+      "values": []
+    },
+    {
+      "source": " 1.2.3-ALPHA ",
+      "values": [
+        "1.2.3-ALPHA"
+      ]
+    },
+    {
+      "source": " 1.2.3-ALPHA.1 ",
+      "values": [
+        "1.2.3-ALPHA.1"
+      ]
+    },
+    {
+      "source": " 1.2.3-ALPHA-a ",
+      "values": [
+        "1.2.3-ALPHA-a"
+      ]
+    },
+    {
+      "source": " 1.2.3-ALPHAfoo ",
+      "values": [
+        "1.2.3-ALPHAfoo"
+      ]
+    },
+    {
+      "source": " 1.2.3-ALPHA+build ",
+      "values": [
+        "1.2.3-ALPHA"
+      ]
+    },
+    {
+      "source": " 1.2.3-ALPHA_foo ",
+      "values": [
+        "1.2.3-ALPHA"
+      ]
+    },
+    {
+      "source": " tool-rc-x ",
+      "values": []
+    },
+    {
+      "source": " tool-pre-x ",
+      "values": []
+    },
+    {
+      "source": " tool-canary-x ",
+      "values": []
+    },
+    {
+      "source": " tool-stable-x ",
+      "values": []
+    },
+    {
+      "source": " tool-RC-x ",
+      "values": []
+    },
+    {
+      "source": "a1.2.3-rc.1",
+      "values": []
+    },
+    {
+      "source": "_v1.2.3-rc.1_",
+      "values": [
+        "v1.2.3-rc.1"
+      ]
+    },
+    {
+      "source": "1.2.3-rc.1+build",
+      "values": [
+        "1.2.3-rc.1"
+      ]
+    },
+    {
+      "source": "中文1.2.3-beta中文",
+      "values": [
+        "1.2.3-beta"
+      ]
+    },
+    {
+      "source": "v1.2.3-alpha v2.0.0-beta",
+      "values": [
+        "v1.2.3-alpha",
+        "v2.0.0-beta"
+      ]
+    },
+    {
+      "source": "1.2.3-preview",
+      "values": [
+        "1.2.3-preview"
+      ]
+    }
+  ],
+  "scalars": [
+    {
+      "source": "",
+      "value": ""
+    },
+    {
+      "source": " x # comment",
+      "value": "x"
+    },
+    {
+      "source": "x#tag",
+      "value": "x#tag"
+    },
+    {
+      "source": "\"x # tag\" # comment",
+      "value": "x # tag"
+    },
+    {
+      "source": "'x' trailing",
+      "value": "x"
+    },
+    {
+      "source": "\"unclosed",
+      "value": "unclosed"
+    },
+    {
+      "source": "image\t# a",
+      "value": "image"
+    },
+    {
+      "source": "x # comment",
+      "value": "x"
+    }
+  ],
+  "containers": [
+    {
+      "source": "x:1.2.3-rc.1@sha256:123",
+      "value": [
+        "x",
+        "1.2.3-rc.1"
+      ]
+    },
+    {
+      "source": "host:5000/x:beta",
+      "value": [
+        "host:5000/x",
+        "beta"
+      ]
+    },
+    {
+      "source": "host:5000/x",
+      "value": null
+    },
+    {
+      "source": "x@sha256:123",
+      "value": null
+    },
+    {
+      "source": ":beta",
+      "value": null
+    },
+    {
+      "source": "x:",
+      "value": null
+    },
+    {
+      "source": "",
+      "value": null
+    },
+    {
+      "source": " x:nightly ",
+      "value": [
+        "x",
+        "nightly"
+      ]
+    }
+  ],
+  "docker": [
+    {
+      "source": "x:1.2.3-rc.1 AS build",
+      "value": "x:1.2.3-rc.1"
+    },
+    {
+      "source": "--platform=linux/amd64 x:beta",
+      "value": "x:beta"
+    },
+    {
+      "source": "--platform linux/amd64 x:beta",
+      "value": "x:beta"
+    },
+    {
+      "source": "--a b --c=d x:rc",
+      "value": "x:rc"
+    },
+    {
+      "source": "\"x:beta\" # ok",
+      "value": "x:beta"
+    },
+    {
+      "source": "'x:rc",
+      "value": null
+    },
+    {
+      "source": "x:beta\\",
+      "value": null
+    },
+    {
+      "source": "--platform",
+      "value": null
+    },
+    {
+      "source": "\"\"",
+      "value": ""
+    },
+    {
+      "source": "x:rc#comment",
+      "value": "x:rc"
+    },
+    {
+      "source": "\"x:\\$beta\"",
+      "value": "x:\\$beta"
+    }
+  ],
+  "deployment": [
+    {
+      "source": "image: x:1.2.3-rc.1",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-rc.1",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: host:5000/x:beta@sha256:a",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "host:5000/x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: host:5000/x:beta@sha256:a",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "host:5000/x",
+          "version": "beta",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: owner/action@v1.2.3-beta.1",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "tool",
+          "name": "owner/action",
+          "version": "v1.2.3-beta.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: owner/action@v1.2.3-beta.1",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "tool",
+          "name": "owner/action",
+          "version": "v1.2.3-beta.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: owner/action@main",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "uses: owner/action@main",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "uses: docker://x:nightly",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "nightly",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: docker://x:nightly",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "nightly",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: $SECRET",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "tool",
+          "name": "$SECRET",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: $SECRET",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "tool",
+          "name": "$SECRET",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: ${MISSING}",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "${MISSING}",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: ${MISSING}",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "${MISSING}",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: ${MISSING:-x:1.2.3-rc.1}",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: ${MISSING:-x:1.2.3-rc.1}",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "env:\n  IMAGE: x:1.2.3-rc.1\nimage: ${{ env.IMAGE }}",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "IMAGE": "x:1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "env:\n  IMAGE: x:1.2.3-rc.1\nimage: ${{ env.IMAGE }}",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {
+        "IMAGE": "x:1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "ARG IMAGE=x:1.2.3-rc.1\nFROM $IMAGE",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "IMAGE": "x:1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "ARG IMAGE=x:1.2.3-rc.1\nFROM $IMAGE",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {
+        "IMAGE": "x:1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "ARG VER=1.2.3-rc.1\nFROM x:${VER}",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "VER": "1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "ARG VER=1.2.3-rc.1\nFROM x:${VER}",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {
+        "VER": "1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "FROM --platform linux/amd64 x:1.2.3-rc.1 AS builder",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "FROM --platform linux/amd64 x:1.2.3-rc.1 AS builder",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "FROM \"bad",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "\"bad",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "FROM \"bad",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "FROM x:rc\\",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x:rc\\",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "FROM x:rc\\",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "image: *anchor",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "*anchor",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: *anchor",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "*anchor",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: |\n x:1.2.3-beta",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "|",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        },
+        {
+          "ecosystem": "deployment-literal",
+          "name": "deploy/Dockerfile.fixture",
+          "version": "1.2.3-beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: |\n x:1.2.3-beta",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "|",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        },
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-beta",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "x: &anchor x:1.2.3-rc.1\nimage: *anchor",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "*anchor",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        },
+        {
+          "ecosystem": "deployment-literal",
+          "name": "deploy/Dockerfile.fixture",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "x: &anchor x:1.2.3-rc.1\nimage: *anchor",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "*anchor",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        },
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "x: {image: x:1.2.3-rc.1}",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": "deploy/Dockerfile.fixture",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "x: {image: x:1.2.3-rc.1}",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-rc.1\nimage: x:1.2.3-rc.1",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-rc.1\nimage: x:1.2.3-rc.1",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-rc.1\n# 1.2.3-rc.1",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        },
+        {
+          "ecosystem": "deployment-literal",
+          "name": "deploy/Dockerfile.fixture",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-rc.1\n# 1.2.3-rc.1",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        },
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: x@beta\nimage: x:rc",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        },
+        {
+          "ecosystem": "tool",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "uses: x@beta\nimage: x:rc",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        },
+        {
+          "ecosystem": "tool",
+          "name": "x",
+          "version": "beta",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "env:\n V: stable\n V: 1.2.3-rc.1\nimage: x:$V",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "V": "1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "env:\n V: stable\n V: 1.2.3-rc.1\nimage: x:$V",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "1.2.3-rc.1",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {
+        "V": "1.2.3-rc.1"
+      }
+    },
+    {
+      "source": "ARG A=$B\nARG B=$A\nFROM $A",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "$A",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "A": "$B",
+        "B": "$A"
+      }
+    },
+    {
+      "source": "ARG A=$B\nARG B=$A\nFROM $A",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {
+        "A": "$B",
+        "B": "$A"
+      }
+    },
+    {
+      "source": "ARG A=$B\nARG B=x:beta\nFROM $A",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "A": "$B",
+        "B": "x:beta"
+      }
+    },
+    {
+      "source": "ARG A=$B\nARG B=x:beta\nFROM $A",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {
+        "A": "$B",
+        "B": "x:beta"
+      }
+    },
+    {
+      "source": "'image': 'x:rc' # ok",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "'image': 'x:rc' # ok",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "- uses: docker://host:5000/x:1.2.3-beta",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "host:5000/x",
+          "version": "1.2.3-beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "- uses: docker://host:5000/x:1.2.3-beta",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "host:5000/x",
+          "version": "1.2.3-beta",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:stable",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "image: x:stable",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "FROM alpine:3.22",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "FROM alpine:3.22",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "FROM scratch",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "FROM scratch",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "image: ${{ matrix.image }}",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "${{ matrix.image }}",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: ${{ matrix.image }}",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "${{ matrix.image }}",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-alpha+build",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": "deploy/Dockerfile.fixture",
+          "version": "1.2.3-alpha",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:1.2.3-alpha+build",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "deployment-literal",
+          "name": ".github/workflows/fixture.yaml",
+          "version": "1.2.3-alpha",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "'image: x:rc",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "'image: x:rc",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "\"image: x:rc",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "\"image: x:rc",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "-image: x:beta",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "-image: x:beta",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "'IMAGE': x:rc\nimage: $IMAGE",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "$IMAGE",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "'IMAGE': x:rc\nimage: $IMAGE",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "$IMAGE",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "ARG image=x:beta\nFROM $image",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "$image",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {
+        "image": "x:beta"
+      }
+    },
+    {
+      "source": "ARG image=x:beta\nFROM $image",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {
+        "image": "x:beta"
+      }
+    },
+    {
+      "source": "image: x:beta\ruses: x@rc",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        },
+        {
+          "ecosystem": "tool",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:beta\ruses: x@rc",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": ".github/workflows/fixture.yaml"
+        },
+        {
+          "ecosystem": "tool",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:beta uses: x@rc",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        },
+        {
+          "ecosystem": "tool",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:beta uses: x@rc",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": ".github/workflows/fixture.yaml"
+        },
+        {
+          "ecosystem": "tool",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "FROM x:beta  AS build",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "FROM x:beta  AS build",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "image: x:alpha",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "alpha",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:alpha",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "alpha",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:beta",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:beta",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "beta",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:rc",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:rc",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "rc",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:pre",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "pre",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:pre",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "pre",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:preview",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "preview",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:preview",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "preview",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:nightly",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "nightly",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:nightly",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "nightly",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:canary",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "canary",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:canary",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x",
+          "version": "canary",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x:stable",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "image: x:stable",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [],
+      "variables": {}
+    },
+    {
+      "source": "image: *x",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "*x",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: *x",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "*x",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: >x",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": ">x",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: >x",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": ">x",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: `x`",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "`x`",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: `x`",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "`x`",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x\\y",
+      "path": "deploy/Dockerfile.fixture",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x\\y",
+          "version": "unresolved",
+          "source": "deploy/Dockerfile.fixture"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "source": "image: x\\y",
+      "path": ".github/workflows/fixture.yaml",
+      "findings": [
+        {
+          "ecosystem": "container",
+          "name": "x\\y",
+          "version": "unresolved",
+          "source": ".github/workflows/fixture.yaml"
+        }
+      ],
+      "variables": {}
+    }
+  ],
+  "resolve": [
+    {
+      "source": "$A",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "$A",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$A"
+    },
+    {
+      "source": "$A",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": ""
+    },
+    {
+      "source": "$A",
+      "variables": {},
+      "value": "$A"
+    },
+    {
+      "source": "${A}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "${A}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$A"
+    },
+    {
+      "source": "${A}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": ""
+    },
+    {
+      "source": "${A}",
+      "variables": {},
+      "value": "${A}"
+    },
+    {
+      "source": "${A:-x:nightly}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "${A:-x:nightly}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$A"
+    },
+    {
+      "source": "${A:-x:nightly}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": ""
+    },
+    {
+      "source": "${A:-x:nightly}",
+      "variables": {},
+      "value": "x:nightly"
+    },
+    {
+      "source": "$B",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "$B",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$B"
+    },
+    {
+      "source": "$B",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "x:rc"
+    },
+    {
+      "source": "$B",
+      "variables": {},
+      "value": "$B"
+    },
+    {
+      "source": "${C}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "${C}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "${C}"
+    },
+    {
+      "source": "${C}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "${C}"
+    },
+    {
+      "source": "${C}",
+      "variables": {},
+      "value": "${C}"
+    },
+    {
+      "source": "${MISSING:-x:rc}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:rc"
+    },
+    {
+      "source": "${MISSING:-x:rc}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "x:rc"
+    },
+    {
+      "source": "${MISSING:-x:rc}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "x:rc"
+    },
+    {
+      "source": "${MISSING:-x:rc}",
+      "variables": {},
+      "value": "x:rc"
+    },
+    {
+      "source": "${{ env.A }}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "${{ env.A }}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$A"
+    },
+    {
+      "source": "${{ env.A }}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": ""
+    },
+    {
+      "source": "${{ env.A }}",
+      "variables": {},
+      "value": "${{ env.A }}"
+    },
+    {
+      "source": "${{env.B}}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta"
+    },
+    {
+      "source": "${{env.B}}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "${{env.B}}"
+    },
+    {
+      "source": "${{env.B}}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "x:rc"
+    },
+    {
+      "source": "${{env.B}}",
+      "variables": {},
+      "value": "${{env.B}}"
+    },
+    {
+      "source": "$a",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "$a"
+    },
+    {
+      "source": "$a",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$a"
+    },
+    {
+      "source": "$a",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "$a"
+    },
+    {
+      "source": "$a",
+      "variables": {},
+      "value": "$a"
+    },
+    {
+      "source": "${A:-${B}}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:beta}"
+    },
+    {
+      "source": "${A:-${B}}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "$A}"
+    },
+    {
+      "source": "${A:-${B}}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "}"
+    },
+    {
+      "source": "${A:-${B}}",
+      "variables": {},
+      "value": "${B}"
+    },
+    {
+      "source": "x:$A/${B}",
+      "variables": {
+        "A": "x:beta",
+        "B": "$A",
+        "C": "${B}"
+      },
+      "value": "x:x:beta/x:beta"
+    },
+    {
+      "source": "x:$A/${B}",
+      "variables": {
+        "A": "$A"
+      },
+      "value": "x:$A/${B}"
+    },
+    {
+      "source": "x:$A/${B}",
+      "variables": {
+        "A": "",
+        "B": "x:rc"
+      },
+      "value": "x:/x:rc"
+    },
+    {
+      "source": "x:$A/${B}",
+      "variables": {},
+      "value": "x:$A/${B}"
+    }
+  ],
+  "allowlists": [
+    {
+      "source": "{\"schema\": true, \"entries\": []}",
+      "allowed": []
+    },
+    {
+      "source": "{\"schema\": 1.0, \"entries\": []}",
+      "allowed": []
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": []}",
+      "allowed": []
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "[]",
+      "allowed": null
+    },
+    {
+      "source": "null",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 2, \"entries\": []}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": {}}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [null]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}, {\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": null, \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": 1, \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"   \", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": null, \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": 1, \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"   \", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": null, \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": 1, \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"   \", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": null, \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": 1, \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"   \", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": null, \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": 1, \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"   \", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": null, \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": 1, \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"   \", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": null}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": 1}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"   \"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"rc\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "rc",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"nightly\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "nightly",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-beta\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-beta",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-02-29\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"0000-01-01\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-1-1\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"20261101\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-W44-7\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026W447\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-W44\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-10-26"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026W44\", \"reason\": \"reviewed\", \"evidence\": \"https://example.invalid/source\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-10-26"
+        }
+      ]
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"http://example.invalid\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"HTTPS://example.invalid\"}]}",
+      "allowed": null
+    },
+    {
+      "source": "{\"schema\": 1, \"entries\": [{\"ecosystem\": \"cargo\", \"name\": \"x\", \"version\": \"1.2.3-rc.1\", \"source\": \"Cargo.lock\", \"review_after\": \"2026-11-01\", \"reason\": \"reviewed\", \"evidence\": \"https://\"}]}",
+      "allowed": [
+        {
+          "finding": {
+            "ecosystem": "cargo",
+            "name": "x",
+            "version": "1.2.3-rc.1",
+            "source": "Cargo.lock"
+          },
+          "date": "2026-11-01"
+        }
+      ]
+    }
+  ],
+  "current": [
+    {
+      "ecosystem": "cargo",
+      "name": "sea-orm-arrow",
+      "version": "2.0.0-rc.5",
+      "source": "Cargo.lock"
+    },
+    {
+      "ecosystem": "container",
+      "name": "ghcr.io/rustfs/rustfs",
+      "version": "1.0.0-rc.5-glibc",
+      "source": ".github/workflows/extended-ci.yml"
+    }
+  ]
+}

@@ -59,6 +59,7 @@ pub(crate) enum TaskExecutor {
     LanguageWrite,
     LanguageThreshold,
     RemovedIdentity,
+    PrereleaseDependencies,
     FrontendDependencies,
     PythonEnvironment,
     CargoFormat,
@@ -149,13 +150,26 @@ mod perf;
 #[path = "task_registry/release.rs"]
 mod release;
 
-const CHECK_TASKS: [TaskDefinition; 22] = [
+const CHECK_TASKS: [TaskDefinition; 23] = [
     task_definition!(
         RemovedIdentity,
         "policy.removed-identity",
         "check_removed_identity",
         "用 Rust 核对前后端已移除的服务身份能力",
         CrossRepository,
+        Static,
+        Backend,
+        None,
+        &[],
+        &[],
+        &[]
+    ),
+    task_definition!(
+        PrereleaseDependencies,
+        "policy.prerelease-dependencies",
+        "check_prerelease_dependencies",
+        "用 Rust 只读核验锁定依赖、部署引用及预发布例外",
+        Backend,
         Static,
         Backend,
         None,
@@ -232,7 +246,7 @@ const CHECK_TASKS: [TaskDefinition; 22] = [
         BackendPolicyChecks,
         "policy.backend-complete",
         "run_policy_checks",
-        "执行 Rust 身份残留与完整后端政策检查，不读取前端",
+        "执行 Rust 身份残留、预发布依赖与完整后端政策检查，不读取前端",
         Backend,
         Static,
         Backend,
@@ -245,7 +259,7 @@ const CHECK_TASKS: [TaskDefinition; 22] = [
         PolicyChecks,
         "policy.complete",
         "run_policy_checks",
-        "执行 Rust 身份残留与完整政策检查集合",
+        "执行 Rust 身份残留、预发布依赖与完整政策检查集合",
         CrossRepository,
         Static,
         Backend,

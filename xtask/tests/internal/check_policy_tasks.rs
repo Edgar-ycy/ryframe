@@ -34,7 +34,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
         [
             "tools/python/check_architecture.py",
             "tools/python/check_deployment_assets.py",
-            "tools/python/check_prerelease_dependencies.py",
             "tools/python/check_permission_routes.py",
             "tools/python/check_supply_chain.py",
         ]
@@ -50,7 +49,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
     assert_eq!(
         scripts(PolicyProfile::CiPreflight),
         [
-            "tools/python/check_prerelease_dependencies.py",
             "tools/python/check_architecture.py",
             "tools/python/check_permission_routes.py",
         ]
@@ -94,6 +92,7 @@ fn strict_migration_command_reuses_the_registered_script() {
 fn python_policies_only_use_their_registered_script() {
     for task in PYTHON_POLICY_TASKS {
         assert_ne!(task.id, "removed-identity");
+        assert_ne!(task.id, "prerelease-dependencies");
         assert_eq!(task.arguments(), [task.script]);
     }
 }

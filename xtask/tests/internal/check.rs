@@ -140,7 +140,6 @@ fn full_gate_discovers_repository_python_and_node_tests() {
         [
             "tools/python/check_architecture.py",
             "tools/python/check_deployment_assets.py",
-            "tools/python/check_prerelease_dependencies.py",
             "tools/python/check_permission_routes.py",
             "tools/python/check_supply_chain.py",
         ]
