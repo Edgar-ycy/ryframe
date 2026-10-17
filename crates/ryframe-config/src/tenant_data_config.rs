@@ -32,7 +32,7 @@ pub enum TenantDatabaseTargetKind {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TenantDataConfig {
-    /// 新租户 provision 时使用的默认目标；运行时缺失 placement 仍会 fail-closed。
+    /// 生成器选择 local 租户结构来源时的默认目标；开通时显式选择目标，运行时缺失 placement 拒绝路由。
     #[serde(default = "default_target")]
     pub default_target: String,
     /// 单个 API/Worker 进程最多同时缓存的独立 MySQL 目标池数量。

@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use super::foreign_key::{ForeignKeyAction, ForeignKeyMatch};
+
 /// 既有表的稳定结构描述；不依赖数据库连接实现。
 #[derive(Debug, Clone, Serialize)]
 pub struct TableInfo {
@@ -21,12 +23,16 @@ pub struct IndexInfo {
     pub columns: Vec<String>,
 }
 
+/// 只读来源约束；保留引用动作不代表生成器能够写入该外键。
 #[derive(Debug, Clone, Serialize)]
 pub struct ForeignKeyInfo {
     pub name: String,
     pub columns: Vec<String>,
     pub referenced_table: String,
     pub referenced_columns: Vec<String>,
+    pub update_rule: ForeignKeyAction,
+    pub delete_rule: ForeignKeyAction,
+    pub match_option: ForeignKeyMatch,
 }
 
 #[derive(Debug, Clone, Serialize)]

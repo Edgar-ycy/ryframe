@@ -17,7 +17,8 @@ port = 8080
 enabled = false
 
 [tenant_data]
-# 新租户默认 placement；已有租户始终以控制库权威 placement 为准，缺失时拒绝路由。
+# 生成器 source="local" 的默认租户结构来源；开通租户显式选择 data_target_key。
+# 运行时始终以控制库权威 placement 为准，缺失时拒绝路由；此值不迁移已有数据。
 default_target = "shared-control"
 max_open_targets = 32
 max_total_connections = 200

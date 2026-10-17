@@ -38,7 +38,13 @@ fn tenant_catalog_keeps_empty_and_control_only_resources_valid() {
     assert!(asset(&empty, CATALOG).contains("GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT"));
     assert_eq!(
         fingerprint(&asset(&empty, CATALOG)),
-        "a0a5cf5e7aae4ec0cdfe15765d450539dd32e7b7119846aac319ec98e122b04e"
+        "1c96f731416bfbdc053aed132c7793567abdb854ffa0a4ad401d64adb133bae9"
+    );
+    #[cfg(feature = "schema-import")]
+    assert_eq!(
+        fingerprint(&asset(&empty, CATALOG)),
+        ryframe_tenant_db::migration::TenantDataCatalog::new(&[]).schema_fingerprint(),
+        "离线生成的空目录指纹必须包含运行时要求的数据范围投影表"
     );
     assert!(
         asset(&control, "crates/ryframe-tenant-db/src/generated/mod.rs")

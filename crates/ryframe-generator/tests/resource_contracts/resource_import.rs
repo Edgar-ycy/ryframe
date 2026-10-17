@@ -3,8 +3,8 @@ use ryframe_generator::{
     ResourceIdentitySpec, ResourceProfile, ResourceSpec, RouteSpec, StorageKind, StorageSpec,
     WidgetSpec,
     import::{
-        ColumnInfo, ForeignKeyInfo, IndexInfo, ResourceDraftMetadata, TableInfo,
-        draft_resource_from_table,
+        ColumnInfo, ForeignKeyAction, ForeignKeyInfo, ForeignKeyMatch, IndexInfo,
+        ResourceDraftMetadata, TableInfo, draft_resource_from_table,
     },
 };
 
@@ -110,6 +110,9 @@ fn table() -> TableInfo {
             columns: vec!["tenant_id".into()],
             referenced_table: "sys_tenant".into(),
             referenced_columns: vec!["tenant_id".into()],
+            update_rule: ForeignKeyAction::Restrict,
+            delete_rule: ForeignKeyAction::Restrict,
+            match_option: ForeignKeyMatch::None,
         }],
         foreign_key_dependencies: vec!["sys_tenant".into()],
         schema_canonical: "stable-schema".into(),

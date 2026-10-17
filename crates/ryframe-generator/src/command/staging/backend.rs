@@ -12,6 +12,10 @@ use crate::{
     import::{TableInfo, plan_import_models},
 };
 
+#[cfg(test)]
+#[path = "../../../tests/command_staging/imported_schema.rs"]
+mod tests;
+
 pub(super) fn generate(
     plan: &GenerationPlan,
     candidate: &Path,

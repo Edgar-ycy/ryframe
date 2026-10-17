@@ -5,6 +5,8 @@ use sea_orm::TransactionTrait;
 mod business_evolution;
 #[path = "mysql_schema_import/cli.rs"]
 mod cli;
+#[path = "mysql_schema_import/foreign_keys.rs"]
+mod foreign_keys;
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
 #[path = "mysql_schema_import/sql_comments.rs"]

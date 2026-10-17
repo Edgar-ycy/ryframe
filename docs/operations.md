@@ -11,7 +11,7 @@ docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml conf
 docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml up -d
 ```
 
-Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。
+Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；SQL 导入后仍须 `control verify`，并为实际租户目标运行 `tenant-data up/verify`。
 
 当前版本只接受全新生产库。已有真实生产旧库需要先设计并演练非破坏升级方案，不能使用 reset 代替升级。
 
@@ -21,15 +21,14 @@ Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后
 
 ```powershell
 $env:APP_ENV = "test"
-cargo xtask data reset plan
-cargo xtask data reset execute --plan-hash <sha256> --confirm-reset <精确短语> --write
+$env:RYFRAME_RESET_STATE_DIR = "D:/project/rustProject/ryframe/ryframe/.local-tests/reset/<本次目录>"
+cargo reset -- plan
+cargo reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
 ```
 
-执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。
+执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。`cargo reset` 是使用者直接入口；框架维护工具 `cargo xtask data reset` 消费同一任务图并要求显式 `--write`。排障时不要混用两种入口的状态目录，也不要通过删除 ledger 启动新的重建。
 
-报告的 `status` 区分 `completed`（本次完成）、`reused`（复用同一 ledger 的原完成）和 `failed`。`completed_at` 记录锁释放后持久化的原完成时间，重复执行不更新该值，也不重新运行预检或破坏性阶段；`reported_at` 仅表示报告生成时间。锁释放失败、中断或缺少完成证据时，重复执行仍失败，必须人工核对服务停止状态、MySQL 环境锁及清单内精确资源，保留原始失败记录。
-
-新的绝对 `RYFRAME_RESET_STATE_DIR` 表示一次新的维护操作，必须重新生成并核验 plan、ownership 和资源范围；不得通过删除或覆盖旧 ledger 触发重置。当前开发版本使用 ledger v4 和 report v2，旧版账本明确拒绝，不自动转换，旧本地证据继续保留。
+报告的 `status` 区分 `completed`（本次完成）、`reused`（复用同一 ledger 的原完成）和 `failed`。`completed_at` 记录锁释放后持久化的原完成时间，重复执行不更新该值，也不重新运行预检或破坏性阶段；`reported_at` 仅表示报告生成时间。锁释放失败、中断或缺少完成证据时，重复执行仍失败，必须人工核对服务停止状态、MySQL 环境锁及清单内精确资源，保留原始失败记录。新的绝对 `RYFRAME_RESET_STATE_DIR` 表示一次新的维护操作，必须重新生成并核验 plan、ownership 和资源范围；不得通过删除或覆盖旧 ledger 触发重置。当前开发版本使用 ledger v4 和 report v2，旧版账本明确拒绝，不自动转换，旧本地证据继续保留。
 
 ## HTTP 5xx 与高延迟
 
@@ -166,7 +165,7 @@ cargo xtask data backup status
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
 
-正式备份源按[数据文档](data.md#开发数据复制与性能-seed)在原复制账本完成 source-generation start，再执行 `cargo xtask check recovery source verify --source-generation <同代START外层结果> --output <同代gNNNN/verification/source-runtime.json> --write`。构建、原数据集血缘、当前 scope、API、前端 Origin 与 pacing 均由已绑定的 start 和 lineage 推导，不接受另一份计划、构建或旧 dataset 作为替代输入。复验从协调器和产品执行 commit 创建同代不可覆盖的 Node 工具 staging；Node 先预载静态 ESM 闭包、OpenAPI 和血缘并发布 ready 摘要，Python 在服务授权前核对完整文件集合及摘要。业务阶段只使用内存中的预载契约，因此授权窗口修改后再恢复 staging 也不能改变实际请求。复验同时核对 API/Worker 的摘要、配置、创建身份、监听端口和就绪状态，并披露登录注销的精确行级副作用。
+正式备份源按[数据文档](data.md#备份恢复与保留)在原复制账本完成 source-generation start，再执行 `cargo xtask check recovery source verify --source-generation <同代START外层结果> --output <同代gNNNN/verification/source-runtime.json> --write`。构建、原数据集血缘、当前 scope、API、前端 Origin 与 pacing 均由已绑定的 start 和 lineage 推导，不接受另一份计划、构建或旧 dataset 作为替代输入。复验从协调器和产品执行 commit 创建同代不可覆盖的 Node 工具 staging；Node 先预载静态 ESM 闭包、OpenAPI 和血缘并发布 ready 摘要，Python 在服务授权前核对完整文件集合及摘要。业务阶段只使用内存中的预载契约，因此授权窗口修改后再恢复 staging 也不能改变实际请求。复验同时核对 API/Worker 的摘要、配置、创建身份、监听端口和就绪状态，并披露登录注销的精确行级副作用。
 
 成功后在同一账本执行 source-generation-stop，显式消费该 `source-runtime.json`。停止阶段亲自回收已登记 API/Worker 树，核对完整前后像并记录停止观察时间，然后才允许唯一 source-export。给 `backup` 传入同一停止外层结果、共享导出外层结果及其原始库存；备份前后均验证源没有换代，以及当前复验、实际停止观察、正式库存的时间顺序。清单先采集、进程后来才停止的流程会失败。验证或停止失败均保留证据且不可重放；不改写历史计划、收据、摘要或完成时间。
 

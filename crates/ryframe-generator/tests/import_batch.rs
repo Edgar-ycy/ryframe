@@ -1,6 +1,8 @@
 use std::fs;
 
-use ryframe_generator::import::{ColumnInfo, TableInfo, plan_import_models};
+use ryframe_generator::import::{
+    ColumnInfo, ForeignKeyAction, ForeignKeyInfo, ForeignKeyMatch, TableInfo, plan_import_models,
+};
 
 fn workspace() -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
@@ -39,7 +41,17 @@ fn table(name: &str) -> TableInfo {
 #[test]
 fn two_models_register_together_preserve_schema_and_repeat_without_writes() {
     let root = workspace();
-    let tables = [table("biz_order"), table("biz_order_item")];
+    let mut tables = [table("biz_order"), table("biz_order_item")];
+    tables[1].foreign_keys.push(ForeignKeyInfo {
+        name: "fk_item_order".into(),
+        columns: vec!["id".into()],
+        referenced_table: "biz_order".into(),
+        referenced_columns: vec!["id".into()],
+        update_rule: ForeignKeyAction::Cascade,
+        delete_rule: ForeignKeyAction::Restrict,
+        match_option: ForeignKeyMatch::None,
+    });
+    tables[1].foreign_key_dependencies.push("biz_order".into());
     let preview =
         plan_import_models(root.path(), root.path(), &tables, "control", Some("biz_")).unwrap();
     assert_eq!(preview.created.len(), 4);
@@ -61,6 +73,17 @@ fn two_models_register_together_preserve_schema_and_repeat_without_writes() {
             .unwrap();
     assert_eq!(schema["schema_canonical"], "canonical-biz_order");
     assert_eq!(schema["columns"][0]["column_type"], "bigint");
+    let item: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.path().join(".ryframe/imports/order_item.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(item["foreign_keys"][0]["update_rule"], "CASCADE");
+    assert_eq!(item["foreign_keys"][0]["delete_rule"], "RESTRICT");
+    assert_eq!(item["foreign_keys"][0]["match_option"], "NONE");
+    assert_eq!(
+        item["foreign_key_dependencies"],
+        serde_json::json!(["biz_order"])
+    );
     let modified = fs::metadata(root.path().join("src/resources/mod.rs"))
         .unwrap()
         .modified()

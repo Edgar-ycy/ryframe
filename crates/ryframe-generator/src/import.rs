@@ -3,6 +3,7 @@
 mod batch;
 mod defaults;
 mod draft;
+mod foreign_key;
 mod model;
 
 #[cfg(feature = "schema-import")]
@@ -11,6 +12,7 @@ mod type_mapping;
 
 pub use batch::{ImportModelPlan, plan_import_models};
 pub use draft::{ResourceDraft, ResourceDraftMetadata, draft_resource_from_table};
+pub use foreign_key::{ForeignKeyAction, ForeignKeyMatch};
 pub use model::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, rust_model_source};
 pub use type_mapping::mysql_rust_type;
 

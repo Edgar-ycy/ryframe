@@ -10,10 +10,10 @@ The business runtime is Rust. API, Worker, migration, reset and generation have 
 
 ## First run after downloading
 
-Backend and frontend are separate repositories. Run these commands from the backend root. Examples use Windows PowerShell; MySQL, Redis and RustFS may run on any suitable platform or remote server. WSL is not required.
+Backend and frontend are separate repositories. Run these commands from the backend root. Examples use Windows PowerShell; MySQL, Redis and RustFS/MinIO/S3-compatible storage may run on any suitable platform or remote server. WSL is not required.
 
 1. Install rustup and run `rustup show` in the repository to select the stable toolchain, rustfmt and Clippy pinned by `rust-toolchain.toml`.
-2. Prepare MySQL 8.0.16 or newer, Redis, and a database account with schema, migration and application permissions. MariaDB is not a substitute. File storage defaults to a local directory; RustFS, MinIO and S3 are also supported.
+2. Prepare MySQL 8.0.16 or newer (MariaDB is not a substitute) and an account with the required schema, migration and application permissions. Redis uses a RESP connection; Redis 7.x is the current acceptance baseline (CI uses 7.4.9), with AUTH, an isolated database index and TLS configured as required by the deployment. File storage defaults to a local directory and also supports RustFS, MinIO and S3-compatible services.
 3. Create an empty database with a database client, for example:
 
 ```sql
@@ -32,12 +32,16 @@ $env:APP_DATABASE_USERNAME = "ryframe_app"
 $env:APP_DATABASE_PASSWORD_FILE = ".local-tests/secrets/mysql-password.txt"
 $env:APP_AUTH_JWT_SECRET_FILE = ".local-tests/secrets/jwt-secret.txt"
 $env:RYFRAME_INIT_ADMIN_PASSWORD_FILE = ".local-tests/secrets/admin-password.txt"
+$env:APP_OBJECT_STORAGE_BACKEND = "local"
+$env:APP_OBJECT_STORAGE_LOCAL_BASE_DIR = ".local-tests/uploads"
 cargo migrate -- control up
 cargo migrate -- control verify
+cargo migrate -- tenant-data up --target shared-control
+cargo migrate -- tenant-data verify --target shared-control
 cargo serve
 ```
 
-`up` initializes or upgrades the selected control database; `verify` only validates. Initialize before starting: API and Worker do not automatically upgrade databases. The default API port is 8080. Run `cargo worker` in another terminal with the same configuration when background jobs are needed. Install and start the frontend separately, following its README.
+`up` initializes or upgrades the selected control database; `verify` only validates. On a new empty database, running `control verify` first reports an incomplete ledger or schema; it cannot replace first-time initialization. The control database and the `shared-control` tenant data plane have separate ledgers, so the default single-tenant setup also requires both initialization and verification commands. API and Worker do not execute DDL at startup. The default API port is 8080. In nonproduction environments, `jobs.mode="embedded"` is the default and `cargo serve` consumes background jobs in the same process. To run a separate Worker, set `$env:APP_JOBS_MODE = "external"` in both terminals, then run `cargo serve` and `cargo worker` separately. The overrides above switch the development configuration from RustFS to `.local-tests/uploads`; for RustFS, MinIO or S3, set the corresponding backend, HTTPS endpoint, credentials and region, then confirm the service protocol and connectivity. If the isolated development MySQL server does not enable TLS, set `$env:APP_DATABASE_TLS_MODE = "disabled"` explicitly; remote production must use `verify_identity`. Install and start the frontend separately, following its README.
 
 The initial ordinary account `user`, newly created users and imported ordinary users start with `123456`; administrators use the explicitly configured password. Every new account must change its password before business access, then sign in again. Repeated migration does not reset existing passwords or the change requirement. For an existing development account with an unknown password, use the [explicit recovery flow](docs/api.md#异常账号恢复): an administrator issues a one-time link and the user chooses a new password.
 
@@ -45,7 +49,7 @@ New configurations default to single tenancy, using the internal system tenant w
 
 ## Databases, configuration and SQL import
 
-Configuration merges the base file, environment file and environment overrides. Select the environment with `APP_ENV`; supported secrets accept a corresponding `_FILE`. The [data guide](docs/data.md#租户路由) explains primary, replicas, sources, shared control storage, shared business storage, dedicated tenant databases, TLS, pool limits and array replacement.
+Configuration applies `app.toml`, `app.<environment>.toml` and `APP_*` environment overrides in that order. Set the exact value `APP_ENV=dev|test|prod`; `APP_CONFIG_DIR` can select another configuration directory. Supported secrets accept a corresponding `_FILE`, and the direct variable cannot be set together with its `_FILE`. Arrays are replaced as a whole at every layer and cannot be patched item by item. The [data guide](docs/data.md#租户路由) explains primary, replicas, sources, shared control storage, shared business storage, dedicated tenant databases, placement, TLS, pool limits and a complete TOML example.
 
 Migration is the recommended initialization path. To import through a database tool, export a complete script:
 
@@ -53,9 +57,9 @@ Migration is the recommended initialization path. To import through a database t
 cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
 ```
 
-Choose an empty database and import with stop-on-error behavior as described in the [data guide](docs/data.md#控制库初始化-sql), then run `cargo migrate -- control verify`. The deployment export includes password hashes, deferred constraints, seeds and the migration ledger. `sql/ryframe_config.sql` is a source review snapshot, not a deployment script. Interrupted imports are not automatically replayed or cleared.
+Choose an empty database and import with stop-on-error behavior as described in the [data guide](docs/data.md#控制库初始化-sql), then run `cargo migrate -- control verify`. The deployment export includes password hashes, deferred constraints, seeds and the migration ledger. `sql/ryframe_config.sql` is a source review snapshot, not a deployment script. Interrupted imports are not automatically replayed or cleared, and `control up` is not used to guess how to repair them. This SQL initializes the control database only; tenant business targets still require `tenant-data up` and `verify`.
 
-Create and register empty tenant business databases before running `cargo migrate -- tenant-data up --target <target-key>` and `verify`. Use `cargo reset -- <arguments>` for controlled nonproduction rebuilding; see the [operations guide](docs/operations.md).
+Create and register empty tenant business databases before running `cargo migrate -- tenant-data up --target <target-key>` and `verify`. `--target` takes the configured target key, not the database name; `--all` processes registered targets only. Use `cargo reset -- <arguments>` for controlled nonproduction rebuilding after stopping API, Worker and schedulers; see the [operations guide](docs/operations.md).
 
 ## Develop business modules
 
@@ -69,7 +73,13 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-Keep handwritten code in `resources/` and `extensions/`. The default generator is offline. With `schema-import`, `import --tables biz_order,biz_order_item` generates models, CRUD and migrations as one batch, preserving original schemas in `.ryframe/imports/` without modifying the database. Enable `generator.sync_frontend` or `--sync-frontend` to generate the current candidate OpenAPI, typed callers, lists, forms and routes; type and lint checks finish before both repositories are installed together. Preview writes only isolated caches; `--no-sync-frontend` temporarily disables synchronization. Unsupported structures reject the whole batch; generation does not adopt existing tables. Field `sql_type` preserves supported physical types, capacities and datetime precision; table and column collations participate in verification. Configure tool defaults and the frontend directory in `config/tools.toml`; ignored `.local-tests/tools.toml` supplies local overrides, and CLI options take precedence. `cargo generate -- run` consumes configured `tables` or `models`. The Rust `GenerationBuilder` accepts `.include_tables(["biz_order", "biz_order_item"])`; edit and run the [example](crates/ryframe-generator/examples/generate.rs). See the development guide for the complete workflow and the [data guide](docs/data.md) for explicit adoption plans, execution and failure inspection of existing tables.
+Keep handwritten code in `resources/` and `extensions/`. The default generator is offline; enable `schema-import` for an existing database:
+
+```powershell
+cargo generate --features schema-import -- import --package order-business --connection primary --database tenant --tables biz_order,biz_order_item
+```
+
+`--connection` selects only the read-only schema source and accepts `primary`, `sources.<name>` or `tenant_data.targets.<target-key>`. `--database` independently selects the generated models' runtime scope; the two settings are not coupled. Import generates models, CRUD and migrations as one batch, preserves original schemas in `.ryframe/imports/`, and changes neither the database nor ownership of existing tables. `owner_field` names an `i64` or `Option<i64>` field containing a user ID; generated creation writes the current user, and list, detail, update and delete use the same data scope. Enable `generator.sync_frontend` or `--sync-frontend` to generate the current candidate OpenAPI, typed callers, lists, forms and routes; type and lint checks finish before both repositories are installed together. Preview writes only isolated caches; `--no-sync-frontend` temporarily disables synchronization. Unsupported structures reject the whole batch. Field `sql_type` preserves supported physical types, capacities and datetime precision; table and column collations participate in verification. Configure tool defaults and the frontend directory in `config/tools.toml`; ignored `.local-tests/tools.toml` supplies local overrides, and CLI options take precedence. `cargo generate -- run` consumes configured `tables` or `models`. The Rust `GenerationBuilder` accepts `.include_tables(["biz_order", "biz_order_item"])`; edit and run the [example](crates/ryframe-generator/examples/generate.rs). See the development guide for the complete workflow and the [data guide](docs/data.md#已有表接管) for explicit adoption plans, execution and failure inspection of existing tables.
 
 Exact Decimal fields must declare `sql_type="DECIMAL(p,s)"` explicitly. The current native type supports the complete domain for 1≤p≤28 and 0≤s≤p. API payloads and forms use decimal strings; values exceeding the declared capacity are rejected. See the development guide for models and defaults.
 

@@ -10,10 +10,10 @@ RyFrame 是面向企业后台的 Rust 2024 框架，与 Vue 3 管理端配套使
 
 ## 下载后首次运行
 
-后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell；MySQL、Redis、RustFS 可以在满足版本和协议要求的任意平台或远程服务器运行，不要求 WSL。
+后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell；MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
 
 1. 安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
-2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代）、Redis，以及数据库用户的建表、迁移和业务读写权限。文件存储默认使用本地目录，也支持 RustFS、MinIO 和 S3。
+2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。文件存储默认使用本地目录，也支持 RustFS、MinIO 和 S3 兼容服务。
 3. 使用数据库客户端创建空库，例如：
 
 ```sql
@@ -32,12 +32,16 @@ $env:APP_DATABASE_USERNAME = "ryframe_app"
 $env:APP_DATABASE_PASSWORD_FILE = ".local-tests/secrets/mysql-password.txt"
 $env:APP_AUTH_JWT_SECRET_FILE = ".local-tests/secrets/jwt-secret.txt"
 $env:RYFRAME_INIT_ADMIN_PASSWORD_FILE = ".local-tests/secrets/admin-password.txt"
+$env:APP_OBJECT_STORAGE_BACKEND = "local"
+$env:APP_OBJECT_STORAGE_LOCAL_BASE_DIR = ".local-tests/uploads"
 cargo migrate -- control up
 cargo migrate -- control verify
+cargo migrate -- tenant-data up --target shared-control
+cargo migrate -- tenant-data verify --target shared-control
 cargo serve
 ```
 
-`up` 初始化或升级明确选择的控制库，`verify` 只校验。先初始化再启动，API/Worker 不自动升级数据库。API 默认端口为 8080；需要后台任务时，在继承相同配置的另一终端运行 `cargo worker`。前端单独安装和启动，见前端 README。
+`up` 初始化或升级明确选择的控制库，`verify` 只校验。新空库上直接运行 `control verify` 会报告迁移账本或结构不完整；它不能代替首次初始化。控制库和 `shared-control` 租户数据面使用独立账本，因此默认单租户也需要完成两条初始化与校验命令。API/Worker 启动时不执行 DDL。API 默认端口为 8080；非生产环境默认 `jobs.mode="embedded"`，由 `cargo serve` 同时消费后台任务。若要单独运行 Worker，在 API 和 Worker 两个终端都设置 `$env:APP_JOBS_MODE = "external"`，再分别运行 `cargo serve` 与 `cargo worker`。以上环境覆盖把开发配置中的 RustFS 改成 `.local-tests/uploads` 本地存储；若要使用 RustFS/MinIO/S3，设置对应 backend、HTTPS endpoint、凭据和区域，并确认服务协议与连接可用。若隔离开发用的 MySQL 未启用 TLS，可显式设置 `$env:APP_DATABASE_TLS_MODE = "disabled"`；远程生产必须使用 `verify_identity`。前端单独安装和启动，见前端 README。
 
 普通初始用户 `user`、新建及批量导入的普通用户初始密码为 `123456`；管理员使用显式配置的密码。所有新账号首次登录必须改密，改密前不能操作业务，改密成功后重新登录。重复迁移不会重置已有密码或改密状态。已有开发版普通账号密码未知时，按[显式账号恢复流程](docs/api.md#异常账号恢复)生成一次性链接，由用户自行设置密码。
 
@@ -45,7 +49,7 @@ cargo serve
 
 ## 数据库、配置与 SQL 导入
 
-配置按基础文件、环境文件、环境变量覆盖；运行环境由 `APP_ENV` 选择，秘密支持对应 `_FILE`。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，TLS、连接池和数组替换规则见[数据指南](docs/data.md#租户路由)。
+配置按 `app.toml`、`app.<环境>.toml`、`APP_*` 环境变量依次覆盖；运行环境由精确值 `APP_ENV=dev|test|prod` 选择，`APP_CONFIG_DIR` 可指向另一套配置目录。秘密项可使用对应 `_FILE`，直接变量与 `_FILE` 不能同时设置。数组在任何一层都整体替换，不能只覆盖其中一项。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，placement、TLS、连接池和完整 TOML 示例见[数据指南](docs/data.md#租户路由)。
 
 默认推荐迁移初始化。需要数据库工具直接导入时，生成完整 SQL：
 
@@ -53,9 +57,9 @@ cargo serve
 cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
 ```
 
-选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库。
+选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 只初始化控制库；使用租户业务数据时仍须对实际目标执行 `tenant-data up` 和 `verify`。
 
-租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- tenant-data up --target <目标键>` 和 `verify`。非生产重建使用 `cargo reset -- <参数>`，步骤见[运维指南](docs/operations.md)。
+租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- tenant-data up --target <目标键>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 
 ## 开发业务
 
@@ -69,7 +73,13 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；`import --tables biz_order,biz_order_item` 按需启用 `schema-import`，整批生成模型、CRUD 和迁移，原始结构保存在 `.ryframe/imports/`，不修改数据库。开启 `generator.sync_frontend` 或 `--sync-frontend` 后，候选 OpenAPI、typed caller、列表表单和路由经过类型及 lint 检查，再统一安装两仓文件；预览只写隔离缓存，`--no-sync-frontend` 临时关闭同步。不支持的结构整批报错，不接管原表。字段 `sql_type` 保留受支持的物理类型、容量和时间精度；表与字符串列的排序规则参与核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表使用显式接管计划，命令与失败核验见[数据指南](docs/data.md)。
+手写代码放在 `resources/` 和 `extensions/`。默认生成器离线；已有数据库按需启用 `schema-import`：
+
+```powershell
+cargo generate --features schema-import -- import --package order-business --connection primary --database tenant --tables biz_order,biz_order_item
+```
+
+`--connection` 只选择只读结构来源，可写 `primary`、`sources.<名称>` 或 `tenant_data.targets.<目标键>`；`--database` 单独决定生成模型的运行范围，二者不会自动联动。导入整批生成模型、CRUD 和迁移，原始结构保存在 `.ryframe/imports/`，不修改数据库，也不接管已有表。字段 `owner_field` 声明模型内保存用户 ID 的 `i64` 或 `Option<i64>` 字段；生成器会在创建时写入当前用户，并在列表、详情、更新和删除中应用同一数据范围。开启 `generator.sync_frontend` 或 `--sync-frontend` 后，候选 OpenAPI、typed caller、列表表单和路由经过类型及 lint 检查，再统一安装两仓文件；预览只写隔离缓存，`--no-sync-frontend` 临时关闭同步。不支持的结构整批报错。字段 `sql_type` 保留受支持的物理类型、容量和时间精度；表与字符串列的排序规则参与核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于 `.local-tests/tools.toml`，命令行优先；`cargo generate -- run` 消费 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表必须先生成匹配模型，再使用显式接管计划，命令与失败核验见[数据指南](docs/data.md#已有表接管)。
 
 精确 Decimal 字段须显式声明 `sql_type="DECIMAL(p,s)"`，目前支持完整数值域可容纳的 1≤p≤28、0≤s≤p。接口与表单使用十进制字符串，超出容量会拒绝，具体模型和默认值写法见开发指南。
 

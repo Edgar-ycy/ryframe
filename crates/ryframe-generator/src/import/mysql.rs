@@ -1,7 +1,10 @@
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 
-use super::model::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo};
+use super::model::{ColumnInfo, IndexInfo, TableInfo};
+
+mod foreign_keys;
+use foreign_keys::query_foreign_keys;
 
 /// 只读取既有 MySQL 表结构，供调用方生成并人工确认资源清单草案。
 ///
@@ -249,66 +252,6 @@ async fn query_indexes(db: &DatabaseConnection, table_name: &str) -> AppResult<V
         });
     }
     Ok(indexes)
-}
-
-#[derive(Debug, FromQueryResult)]
-struct ForeignKeyColumnRow {
-    constraint_name: String,
-    column_name: String,
-    referenced_table_schema: String,
-    current_schema: String,
-    referenced_table_name: String,
-    referenced_column_name: String,
-}
-
-async fn query_foreign_keys(
-    db: &DatabaseConnection,
-    table_name: &str,
-) -> AppResult<Vec<ForeignKeyInfo>> {
-    let rows = ForeignKeyColumnRow::find_by_statement(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        "SELECT constraint_name AS `constraint_name`, column_name AS `column_name`, \
-         referenced_table_schema AS `referenced_table_schema`, \
-         DATABASE() AS `current_schema`, \
-         referenced_table_name AS `referenced_table_name`, \
-         referenced_column_name AS `referenced_column_name` \
-         FROM information_schema.key_column_usage \
-         WHERE table_schema = DATABASE() AND table_name = ? \
-           AND referenced_table_name IS NOT NULL \
-         ORDER BY constraint_name, ordinal_position",
-        [table_name.into()],
-    ))
-    .all(db)
-    .await
-    .map_err(|error| AppError::Database(format!("查询外键结构失败: {error}")))?;
-    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
-    for row in rows {
-        if row.referenced_table_schema != row.current_schema {
-            return Err(AppError::Validation(format!(
-                "租户业务表 {table_name} 的外键 {} 跨 schema 引用 {}，已拒绝生成",
-                row.constraint_name, row.referenced_table_schema
-            )));
-        }
-        if let Some(foreign_key) = foreign_keys.last_mut()
-            && foreign_key.name == row.constraint_name
-        {
-            if foreign_key.referenced_table != row.referenced_table_name {
-                return Err(AppError::Validation("外键引用表结构不一致".into()));
-            }
-            foreign_key.columns.push(row.column_name);
-            foreign_key
-                .referenced_columns
-                .push(row.referenced_column_name);
-            continue;
-        }
-        foreign_keys.push(ForeignKeyInfo {
-            name: row.constraint_name,
-            columns: vec![row.column_name],
-            referenced_table: row.referenced_table_name,
-            referenced_columns: vec![row.referenced_column_name],
-        });
-    }
-    Ok(foreign_keys)
 }
 
 #[derive(Debug, FromQueryResult)]
