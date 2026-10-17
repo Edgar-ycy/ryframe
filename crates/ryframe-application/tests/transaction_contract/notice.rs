@@ -1,6 +1,9 @@
 use chrono::TimeZone;
 use ryframe_kernel::DataScope;
 
+#[path = "notice_data_scope.rs"]
+mod data_scope;
+
 use super::*;
 use ryframe_application::{
     TransactionAuditMode,

@@ -2,6 +2,7 @@ use super::super::{ResourceIr, StorageKind};
 use super::queries::*;
 
 pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], header: &str) -> String {
+    let scope_parameter = super::super::owner_scope_parameter(resource);
     let pascal = &resource.pascal_name;
     let filter_lifetime = super::super::filter_lifetime(resource, "'_");
     let filter_argument = if super::super::uses_filters(resource) {
@@ -27,7 +28,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let name = &resource.name;
     let persistence = persistence_parts(resource);
     let base_select = base_select(resource);
-    let id_query = id_query(resource, "id");
+    let id_query = scoped_id_query(resource, "id");
     let (detail_type, detail_import, detail_read, relation_mappers) =
         relation_detail_parts(resource, resources, &id_query);
     let filters = filter_statements(resource);
@@ -80,6 +81,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         generic_conflict = generic_conflict,
         header = header,
         id_type = super::super::id_type(resource),
+        scope_parameter = scope_parameter,
         name = name,
         pascal = pascal,
         filter_lifetime = filter_lifetime,

@@ -170,3 +170,10 @@ pub(super) fn sql_literal(value: &toml::Value) -> String {
         _ => unreachable!("SQL literal 类型已经在 Resource IR 中严格校验"),
     }
 }
+pub(crate) fn owner_scope_parameter(resource: &ResourceIr) -> &'static str {
+    if resource.access.owner_field.is_some() {
+        "        data_scope: &ryframe_kernel::DataScopeContext,\n"
+    } else {
+        ""
+    }
+}

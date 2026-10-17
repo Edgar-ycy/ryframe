@@ -313,7 +313,11 @@ impl PostTransaction for FakeTransaction {
             });
             fail_if_requested(&mut state, PostFailure::FindByIdForUpdate)?;
         }
-        Ok(self.lock_view().get(&id).cloned())
+        Ok(self
+            .lock_view()
+            .get(&id)
+            .filter(|record| record.del_flag == "0")
+            .cloned())
     }
 
     async fn insert(&self, record: PostRecord) -> AppResult<PostRecord> {

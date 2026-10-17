@@ -113,7 +113,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/notice/fake.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "cd2b1858a1c15664c890465505231133dd6d579790b73f4cc1b8a91e883181e3"
+content_hash = "f7276d14dac89f837401559210be073bab59afd219c56ce11ae2b1c8593f28cb"
 
 [[entries]]
 resource = "notice"
@@ -137,7 +137,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/notice/port.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "40ac5ddb24df226adfa5b694c2dd6a565562c6e48ef1bfdc5b446176050792f7"
+content_hash = "dde3dda3032de8233d1c7c72fef2dfe8ce3deb298a235922290069e8bec51aa3"
 
 [[entries]]
 resource = "notice"
@@ -145,7 +145,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/notice/service.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "a5754cc346c082061049fc24e8e8cec7e1115fc3c2a1a5ee93ea298f67600585"
+content_hash = "544e78bce5f71aeafe9ea7b768867a547c0fab988c3e06de2a0e07382138ec3f"
 
 [[entries]]
 resource = "post"
@@ -153,7 +153,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/post/fake.rs"
 source_hash = "1e4cc234204ac1def97cf88ed4548ec2fa3990698e32477838dd45a31269e63f"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "88f3b2a1de6c56a05b55b1625e1f689dfc11d8df7bfcc1c0d3fee0d6eadf4216"
+content_hash = "a704d1db93f75f4707c4dddb1d2b4cf73ceecd7abb9482f569cc626109fdd049"
 
 [[entries]]
 resource = "post"
@@ -223,7 +223,7 @@ root = "backend"
 path = "crates/ryframe-db/src/generated/notice/repository.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "0024802c513378c6f5dce172fbdac87dd4e7d684ff7a241abaf04ceca645e13c"
+content_hash = "fefa8c591fa4c4715f82a70399c08b99313e77a6cb7ccac9d4505c83c1a7e6ba"
 
 [[entries]]
 resource = "post"

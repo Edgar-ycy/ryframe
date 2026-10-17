@@ -2,6 +2,7 @@ use super::super::{ResourceIr, StorageKind, ValueType, rust_literal, uses_partia
 use super::{business_index_fields, method_arguments, unique_business_indexes, unique_method_name};
 
 pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
+    let scope_parameter = super::super::owner_scope_parameter(resource);
     let pascal = &resource.pascal_name;
     let id_type = super::super::id_type(resource);
     let filter_lifetime = super::super::filter_lifetime(resource, "'_");
@@ -42,16 +43,24 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     let (active_record_filter_method, active_record_filter) = fake_active_record_filters(resource);
     let record_order = fake_record_order(resource);
     let filters = fake_filters(resource);
-    let owner_filter = resource.access.owner_field.as_ref().map(|field| {
-        let owner = resource.fields.iter().find(|candidate| candidate.name == *field).expect("数据范围字段已由 IR 校验");
-        if owner.nullable {
-            format!("            if !record.{field}.is_some_and(|owner_id| owner_visible(owner_id, filter.data_scope, &state.owner_departments)) {{ return None; }}")
-        } else {
-            format!("            if !owner_visible(record.{field}, filter.data_scope, &state.owner_departments) {{ return None; }}")
-        }
-    }).unwrap_or_default();
+    let owner_filter = owner_expression(resource).map(|owner| format!(
+        "            if !owner_visible({owner}, filter.data_scope, &state.owner_departments) {{ return None; }}"
+    )).unwrap_or_default();
+    let owner_read_filter = owner_expression(resource).map(|owner| format!(
+        "\n            .filter(|record| owner_visible({owner}, data_scope, &state.owner_departments))"
+    )).unwrap_or_default();
+    let owner_transaction_filter = owner_expression(resource)
+        .map(|owner| {
+            format!(".filter(|record| owner_visible({owner}, data_scope, &owner_departments))")
+        })
+        .unwrap_or_default();
+    let owner_transaction_context = if resource.access.owner_field.is_some() {
+        "        let owner_departments = self.lock_state().owner_departments.clone();\n"
+    } else {
+        ""
+    };
     let owner_helper = resource.access.owner_field.as_ref().map(|_| {
-        "\nfn owner_visible(\n    owner_id: i64,\n    scope: &ryframe_kernel::DataScopeContext,\n    departments: &BTreeMap<i64, (Option<i64>, BTreeSet<i64>)>,\n) -> bool {\n    let department = departments.get(&owner_id);\n    match scope.scope {\n        ryframe_kernel::DataScope::All => true,\n        ryframe_kernel::DataScope::SelfOnly => owner_id == scope.user_id,\n        ryframe_kernel::DataScope::Dept => scope.dept_id.is_some_and(|dept_id| {\n            department.is_some_and(|(owner_dept, _)| *owner_dept == Some(dept_id))\n        }),\n        ryframe_kernel::DataScope::DeptAndChildren => scope.dept_id.is_some_and(|dept_id| {\n            department.is_some_and(|(owner_dept, ancestors)| {\n                *owner_dept == Some(dept_id) || ancestors.contains(&dept_id)\n            })\n        }),\n        ryframe_kernel::DataScope::Custom => {\n            (scope.include_self && owner_id == scope.user_id)\n                || department.is_some_and(|(owner_dept, _)| {\n                    owner_dept.is_some_and(|dept_id| scope.custom_dept_ids.contains(&dept_id))\n                })\n        }\n    }\n}\n"
+        "\nfn owner_visible(\n    owner_id: Option<i64>,\n    scope: &ryframe_kernel::DataScopeContext,\n    departments: &BTreeMap<i64, (Option<i64>, BTreeSet<i64>)>,\n) -> bool {\n    if scope.scope == ryframe_kernel::DataScope::All { return true; }\n    let Some(owner_id) = owner_id else { return false; };\n    let department = departments.get(&owner_id);\n    match scope.scope {\n        ryframe_kernel::DataScope::All => true,\n        ryframe_kernel::DataScope::SelfOnly => owner_id == scope.user_id,\n        ryframe_kernel::DataScope::Dept => scope.dept_id.is_some_and(|dept_id| {\n            department.is_some_and(|(owner_dept, _)| *owner_dept == Some(dept_id))\n        }),\n        ryframe_kernel::DataScope::DeptAndChildren => scope.dept_id.is_some_and(|dept_id| {\n            department.is_some_and(|(owner_dept, ancestors)| {\n                *owner_dept == Some(dept_id) || ancestors.contains(&dept_id)\n            })\n        }),\n        ryframe_kernel::DataScope::Custom => {\n            (scope.include_self && owner_id == scope.user_id)\n                || department.is_some_and(|(owner_dept, _)| {\n                    owner_dept.is_some_and(|dept_id| scope.custom_dept_ids.contains(&dept_id))\n                })\n        }\n    }\n}\n"
     }).unwrap_or_default();
     let owner_state = resource
         .access
@@ -67,6 +76,10 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     format!(
         include_str!("fake.rs.tpl"),
         header = header,
+        scope_parameter = scope_parameter,
+        owner_read_filter = owner_read_filter,
+        owner_transaction_filter = owner_transaction_filter,
+        owner_transaction_context = owner_transaction_context,
         id_type = id_type,
         collections = collections,
         pascal = pascal,
@@ -135,6 +148,21 @@ fn fake_active_record_filters(resource: &ResourceIr) -> (String, String) {
             field.name
         ),
     )
+}
+
+fn owner_expression(resource: &ResourceIr) -> Option<String> {
+    resource.access.owner_field.as_ref().map(|name| {
+        let field = resource
+            .fields
+            .iter()
+            .find(|field| &field.name == name)
+            .expect("数据范围字段已经由 IR 校验");
+        if field.nullable {
+            format!("record.{name}")
+        } else {
+            format!("Some(record.{name})")
+        }
+    })
 }
 
 fn fake_record_order(resource: &ResourceIr) -> String {

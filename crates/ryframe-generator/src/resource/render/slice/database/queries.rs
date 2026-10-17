@@ -108,6 +108,11 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
         },
     };
     let guard = super::super::system_tenant_guard(resource, "ryframe_application");
+    if resource.access.owner_field.is_some() && resource.storage == StorageKind::ControlRow {
+        parts.read_connection = parts
+            .read_connection
+            .replace("ReadConsistency::Eventual", "ReadConsistency::Strong");
+    }
     parts.read_connection.insert_str(0, &guard);
     parts.begin_transaction.insert_str(0, &guard);
     parts
@@ -193,6 +198,21 @@ pub(crate) fn filter_statements(resource: &ResourceIr) -> String {
         }))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(crate) fn scoped_id_query(resource: &ResourceIr, id: &str) -> String {
+    let query = id_query(resource, id);
+    let Some(owner) = &resource.access.owner_field else {
+        return query;
+    };
+    let module = match resource.storage {
+        StorageKind::ControlRow => "crate",
+        StorageKind::TenantData => "ryframe_db",
+    };
+    format!(
+        "{{\n            let mut select = {query};\n            if let Some(condition) = {module}::data_scope::owner_id_condition(entity::Column::{column}, tenant_id, data_scope) {{\n                select = select.filter(condition);\n            }}\n            select\n        }}",
+        column = column_variant(owner),
+    )
 }
 
 pub(crate) fn order_statements(resource: &ResourceIr) -> String {

@@ -131,10 +131,16 @@ fn fail_if_requested(state: &mut FakeState, failure: NoticeFailure) -> AppResult
 }
 
 fn owner_visible(
-    owner_id: i64,
+    owner_id: Option<i64>,
     scope: &ryframe_kernel::DataScopeContext,
     departments: &BTreeMap<i64, (Option<i64>, BTreeSet<i64>)>,
 ) -> bool {
+    if scope.scope == ryframe_kernel::DataScope::All {
+        return true;
+    }
+    let Some(owner_id) = owner_id else {
+        return false;
+    };
     let department = departments.get(&owner_id);
     match scope.scope {
         ryframe_kernel::DataScope::All => true,
@@ -158,7 +164,12 @@ fn owner_visible(
 
 #[async_trait]
 impl NoticePersistencePort for NoticeFakePersistence {
-    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<NoticeRecord>> {
+    async fn find_by_id(
+        &self,
+        tenant_id: &str,
+        id: i64,
+        data_scope: &ryframe_kernel::DataScopeContext,
+    ) -> AppResult<Option<NoticeRecord>> {
         let mut state = self.lock();
         state.calls.push(NoticeCall::FindById {
             tenant_id: tenant_id.into(),
@@ -169,6 +180,7 @@ impl NoticePersistencePort for NoticeFakePersistence {
             .records
             .get(&(tenant_id.into(), id))
             .filter(|record| record.del_flag == "0")
+            .filter(|record| owner_visible(record.created_by, data_scope, &state.owner_departments))
             .cloned())
     }
 
@@ -195,9 +207,11 @@ impl NoticePersistencePort for NoticeFakePersistence {
                 if record.del_flag != "0" {
                     return None;
                 }
-                if !record.created_by.is_some_and(|owner_id| {
-                    owner_visible(owner_id, filter.data_scope, &state.owner_departments)
-                }) {
+                if !owner_visible(
+                    record.created_by,
+                    filter.data_scope,
+                    &state.owner_departments,
+                ) {
                     return None;
                 }
                 if let Some(value) = filter.title.filter(|value| !value.is_empty())
@@ -294,6 +308,7 @@ impl NoticeTransaction for FakeTransaction {
         &self,
         tenant_id: &str,
         id: i64,
+        data_scope: &ryframe_kernel::DataScopeContext,
     ) -> AppResult<Option<NoticeRecord>> {
         self.ensure_tenant(tenant_id)?;
         {
@@ -304,7 +319,13 @@ impl NoticeTransaction for FakeTransaction {
             });
             fail_if_requested(&mut state, NoticeFailure::FindByIdForUpdate)?;
         }
-        Ok(self.lock_view().get(&id).cloned())
+        let owner_departments = self.lock_state().owner_departments.clone();
+        Ok(self
+            .lock_view()
+            .get(&id)
+            .filter(|record| record.del_flag == "0")
+            .filter(|record| owner_visible(record.created_by, data_scope, &owner_departments))
+            .cloned())
     }
 
     async fn insert(&self, record: NoticeRecord) -> AppResult<NoticeRecord> {

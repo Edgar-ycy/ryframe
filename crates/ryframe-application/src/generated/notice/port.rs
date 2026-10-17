@@ -16,6 +16,7 @@ pub trait NoticeTransaction: PersistenceTransaction + Sync {
         &self,
         tenant_id: &str,
         id: i64,
+        data_scope: &ryframe_kernel::DataScopeContext,
     ) -> AppResult<Option<NoticeRecord>>;
 
     async fn insert(&self, record: NoticeRecord) -> AppResult<NoticeRecord>;
@@ -27,7 +28,12 @@ pub trait NoticeTransaction: PersistenceTransaction + Sync {
 
 #[async_trait]
 pub trait NoticePersistencePort: Send + Sync {
-    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<NoticeRecord>>;
+    async fn find_by_id(
+        &self,
+        tenant_id: &str,
+        id: i64,
+        data_scope: &ryframe_kernel::DataScopeContext,
+    ) -> AppResult<Option<NoticeRecord>>;
 
     async fn find_by_page(
         &self,

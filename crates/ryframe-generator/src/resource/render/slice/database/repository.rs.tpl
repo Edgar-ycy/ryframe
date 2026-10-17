@@ -32,7 +32,7 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
         &self,
         tenant_id: &str,
         id: {id_type},
-    ) -> AppResult<Option<{detail_type}>> {{
+{scope_parameter}    ) -> AppResult<Option<{detail_type}>> {{
 {read_connection}
 {detail_read}
     }}
@@ -71,7 +71,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
         &self,
         tenant_id: &str,
         id: {id_type},
-    ) -> AppResult<Option<{pascal}Record>> {{
+{scope_parameter}    ) -> AppResult<Option<{pascal}Record>> {{
         self.ensure_tenant(tenant_id)?;
         Ok({id_query}
             .lock(LockType::Update)

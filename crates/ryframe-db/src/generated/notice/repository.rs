@@ -44,18 +44,33 @@ impl DatabaseNoticeTransaction {
 
 #[async_trait]
 impl NoticePersistencePort for DatabaseNoticePersistence {
-    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<NoticeRecord>> {
+    async fn find_by_id(
+        &self,
+        tenant_id: &str,
+        id: i64,
+        data_scope: &ryframe_kernel::DataScopeContext,
+    ) -> AppResult<Option<NoticeRecord>> {
         let database = self
             .database
-            .select_read(crate::ReadConsistency::Eventual)
+            .select_read(crate::ReadConsistency::Strong)
             .connection;
-        Ok(entity::Entity::find_by_id(id)
-            .filter(entity::Column::TenantId.eq(tenant_id))
-            .filter(entity::Column::DelFlag.eq(String::from("0")))
-            .one(&database)
-            .await
-            .db()?
-            .map(to_record))
+        Ok({
+            let mut select = entity::Entity::find_by_id(id)
+                .filter(entity::Column::TenantId.eq(tenant_id))
+                .filter(entity::Column::DelFlag.eq(String::from("0")));
+            if let Some(condition) = crate::data_scope::owner_id_condition(
+                entity::Column::CreatedBy,
+                tenant_id,
+                data_scope,
+            ) {
+                select = select.filter(condition);
+            }
+            select
+        }
+        .one(&database)
+        .await
+        .db()?
+        .map(to_record))
     }
 
     async fn find_by_page(
@@ -66,7 +81,7 @@ impl NoticePersistencePort for DatabaseNoticePersistence {
     ) -> AppResult<PageResult<NoticeRecord>> {
         let database = self
             .database
-            .select_read(crate::ReadConsistency::Eventual)
+            .select_read(crate::ReadConsistency::Strong)
             .connection;
         let mut select = entity::Entity::find();
         select = select.filter(entity::Column::TenantId.eq(tenant_id));
@@ -113,16 +128,27 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
         &self,
         tenant_id: &str,
         id: i64,
+        data_scope: &ryframe_kernel::DataScopeContext,
     ) -> AppResult<Option<NoticeRecord>> {
         self.ensure_tenant(tenant_id)?;
-        Ok(entity::Entity::find_by_id(id)
-            .filter(entity::Column::TenantId.eq(tenant_id))
-            .filter(entity::Column::DelFlag.eq(String::from("0")))
-            .lock(LockType::Update)
-            .one(&self.transaction)
-            .await
-            .db()?
-            .map(to_record))
+        Ok({
+            let mut select = entity::Entity::find_by_id(id)
+                .filter(entity::Column::TenantId.eq(tenant_id))
+                .filter(entity::Column::DelFlag.eq(String::from("0")));
+            if let Some(condition) = crate::data_scope::owner_id_condition(
+                entity::Column::CreatedBy,
+                tenant_id,
+                data_scope,
+            ) {
+                select = select.filter(condition);
+            }
+            select
+        }
+        .lock(LockType::Update)
+        .one(&self.transaction)
+        .await
+        .db()?
+        .map(to_record))
     }
 
     async fn insert(&self, record: NoticeRecord) -> AppResult<NoticeRecord> {

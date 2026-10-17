@@ -98,13 +98,13 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         &self,
         tenant_id: &str,
         id: {id_type},
-    ) -> AppResult<Option<{detail_type}>> {{
+{scope_parameter}    ) -> AppResult<Option<{detail_type}>> {{
 {system_tenant_guard}        let mut state = self.lock();
         state.calls.push({pascal}Call::FindById {{ tenant_id: tenant_id.into(), id }});
         fail_if_requested(&mut state, {pascal}Failure::FindById)?;
         Ok(state
             .records
-            .get(&(tenant_id.into(), id)){active_record_filter_method}
+            .get(&(tenant_id.into(), id)){active_record_filter_method}{owner_read_filter}
             .cloned(){detail_mapping})
     }}
 
@@ -188,14 +188,14 @@ impl {pascal}Transaction for FakeTransaction {{
         &self,
         tenant_id: &str,
         id: {id_type},
-    ) -> AppResult<Option<{pascal}Record>> {{
+{scope_parameter}    ) -> AppResult<Option<{pascal}Record>> {{
         self.ensure_tenant(tenant_id)?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::FindByIdForUpdate {{ tenant_id: tenant_id.into(), id }});
             fail_if_requested(&mut state, {pascal}Failure::FindByIdForUpdate)?;
         }}
-        Ok(self.lock_view().get(&id).cloned())
+{owner_transaction_context}        Ok(self.lock_view().get(&id){active_record_filter_method}{owner_transaction_filter}.cloned())
     }}
 
     async fn insert(&self, {record_mut}record: {pascal}Record) -> AppResult<{pascal}Record> {{

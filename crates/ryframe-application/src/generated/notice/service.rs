@@ -30,7 +30,9 @@ impl NoticeService {
         id: i64,
     ) -> AppResult<Option<NoticeRecord>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.persistence.find_by_id(tenant_id, id).await
+        self.persistence
+            .find_by_id(tenant_id, id, &actor.data_scope_context())
+            .await
     }
 
     pub async fn create(
@@ -72,7 +74,7 @@ impl NoticeService {
         let transaction = self.persistence.begin(tenant_id).await?;
         let operation = async {
             let mut record = transaction
-                .find_by_id_for_update(tenant_id, id)
+                .find_by_id_for_update(tenant_id, id, &actor.data_scope_context())
                 .await?
                 .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
             let now = Utc::now();
@@ -95,7 +97,7 @@ impl NoticeService {
         let transaction = self.persistence.begin(tenant_id).await?;
         let operation = async {
             transaction
-                .find_by_id_for_update(tenant_id, id)
+                .find_by_id_for_update(tenant_id, id, &actor.data_scope_context())
                 .await?
                 .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
             transaction.delete(tenant_id, id).await?;
