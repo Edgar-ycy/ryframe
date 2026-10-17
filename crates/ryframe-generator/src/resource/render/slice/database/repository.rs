@@ -81,7 +81,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let write_id_query = if scoped_tenant_owner {
         scoped_id_query(resource, "id", "&build_token")
     } else {
-        id_query.clone()
+        id_query
     };
     let pagination_db = if scoped_tenant_owner {
         "database"
