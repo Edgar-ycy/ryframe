@@ -17,9 +17,16 @@ pub(crate) mod native;
 pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
     if matches!(
         command,
-        CloneCommand::Help | CloneCommand::Plan { .. } | CloneCommand::Verify { .. }
+        CloneCommand::Help
+            | CloneCommand::Plan { .. }
+            | CloneCommand::Verify { .. }
+            | CloneCommand::Bridge { .. }
+            | CloneCommand::MaintenanceBuild { .. }
+            | CloneCommand::MaintenanceVerify { .. }
     ) {
-        return Err("clone 的帮助及离线 plan/verify 由 Rust 原生入口处理".into());
+        return Err(
+            "clone 的帮助、离线 plan/verify、bridge 与 maintenance 由 Rust 原生入口处理".into(),
+        );
     }
     let payload = serde_json::to_string(&json!({
         "format_version": 1,

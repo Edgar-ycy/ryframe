@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `cargo xtask check recovery clone bridge` 与 `maintenance build|verify` 迁至 Rust xtask：bridge 在原生代码中严格核验 API/Worker 或维护 CLI 构建收据、完整 Git 来源清单、文件集合、产物字节、构建上下文、当前产品输入和链接边界，以 create-new 发布逐字段兼容原 Python 的复用审计文件；维护构建通过统一进程层以 Cargo 离线模式执行三个固定定向构建，冻结二进制、JSON 事件、日志、源码、工具链与 target 收据，并在源码或工具链漂移、旧输出、构建失败和未知部分写入时失败关闭。`maintenance verify` 只读兼容既有收据，命令入口不再启动 Python。新增真实 Git/Python 输出对照、输入与产物漂移、链接、错误来源、重复执行、失败现场和收据字段回归。
+
 - `cargo xtask check recovery clone init|status|stage` 的 `source_to_seed` 生命周期状态迁至 Rust：原生完成严格清单绑定、create-new 运行目录、只读 status、进程互斥、控制器身份、单调 attempt、失败/取消/未知结果收据、阶段结果原子发布和源码终检；`init/status` 不启动 Python，stage 的未迁移 export、target-verify、copy 资源编排通过单一私有子进程执行，不再共享 Python 生命周期状态机。`seed_to_arm` 的目标文件树、外部存储代次和已发布来源深层校验尚未迁移，其三个命令整体回退原 Python 状态机，避免半迁移。保留 `.local-tests` 路径、链接与清单摘要校验，并增加与 Python init/status 输出、控制器观察和失败现场逐字段对照。
 
 - 全栈、身份环境和业务浏览器夹具的限流配置读取迁至 Rust xtask。原生实现统一完成 `app.toml` 与环境文件的递归表合并、限流布尔值、正整数和窗口上限校验、登录接口预算及 authority 生成，并通过不进入公开帮助的 `__rate-limit` 标准输入 JSON 协议输出结果；Node `pacing.mjs` 与单一 Python 薄客户端不再启动旧配置脚本，删除被替代的 Python 实现与测试，同步保留错误脱敏、路径边界、输出限额和现有 authority 字段。

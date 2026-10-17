@@ -92,6 +92,8 @@ mod ci_tests;
 mod ci_tls_tests;
 #[path = "internal/cli.rs"]
 mod cli_tests;
+#[path = "internal/clone_bridge.rs"]
+mod clone_bridge_tests;
 #[path = "internal/clone_cli.rs"]
 mod clone_cli_tests;
 #[path = "internal/clone_lifecycle.rs"]

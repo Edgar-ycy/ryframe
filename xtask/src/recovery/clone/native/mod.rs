@@ -8,16 +8,19 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+pub(crate) mod bridge;
 mod business;
 mod catalog;
-mod digest;
+pub(crate) mod digest;
 mod input;
 mod json;
 pub(crate) mod lifecycle;
+pub(crate) mod maintenance;
 mod metadata;
 mod physical;
 mod plan;
 pub(crate) mod schedule;
+pub(crate) mod source;
 pub(crate) mod sql;
 mod state;
 
@@ -27,6 +30,24 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
         CloneCommand::Verify { plan } => verify(backend, plan)?,
         CloneCommand::Init { .. } | CloneCommand::Status { .. } | CloneCommand::Stage { .. } => {
             lifecycle::run(command, backend)?
+        }
+        CloneCommand::Bridge {
+            build,
+            inventory,
+            output,
+        } => bridge::write(backend, build, inventory, output)?,
+        CloneCommand::MaintenanceBuild { output } => {
+            maintenance::build(backend, output)?;
+            maintenance::build_summary(output)
+        }
+        CloneCommand::MaintenanceVerify { output } => {
+            let receipt = if output.is_dir() {
+                output.join("build.json")
+            } else {
+                output.clone()
+            };
+            maintenance::verify(backend, &receipt)?;
+            maintenance::verify_summary(&receipt)
         }
         _ => return Err("clone 原生模块不处理该命令".into()),
     };

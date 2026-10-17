@@ -60,12 +60,10 @@ class CloneProtocolTests(unittest.TestCase):
             ("runtime", {"run_dir": str(self.run), "side": "target", "operation": "status", "roles": ["api"]}, False),
             ("recover", {"run_dir": str(self.run), "owner_binding": str(self.file)}, True),
             ("recover-copy", {"run_dir": str(self.run), "owner_binding": str(self.file)}, True),
-            ("bridge", {"build": str(self.file), "inventory": str(self.file), "output": str(self.file.with_name("bridge.json"))}, True),
             ("post-copy", {"run_dir": str(self.run), "operation": "register", "request": str(self.file), "producer_binding": None}, True),
             ("seed-runtime", {"run_dir": str(self.run), "operation": "status", "request": None, "producer_binding": None}, False),
             ("storage", {"run_dir": str(self.run), "side": "source", "operation": "restart", "request": None}, True),
             ("cache", {"run_dir": str(self.run), "operation": "status", "request": None}, False),
-            ("maintenance", {"operation": "verify", "output": str(self.file)}, False),
         ]
         for command, options, write in cases:
             with self.subTest(command=command):
@@ -156,11 +154,7 @@ class CloneProtocolTests(unittest.TestCase):
 
     def test_rejects_hostile_json_and_paths_before_dispatch(self):
         outside = self.backend / "Cargo.toml"
-        bridge = self.payload("bridge", {
-            "build": str(outside),
-            "inventory": str(self.file),
-            "output": str(self.directory / "bridge.json"),
-        }, True)
+        bridge = self.payload("status", {"run_dir": str(outside)}, False)
         hostile = (
             "[" * 5000 + "0" + "]" * 5000,
             "9" * 5000,

@@ -255,23 +255,6 @@ def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
 
 
 def dispatch(args, backend: Path) -> dict:
-    if args.command == "maintenance":
-        from devex_clone_tools import build, verify
-
-        output = evidence_path(backend, args.output, new=args.operation == "build")
-        if args.operation == "build":
-            if not args.write:
-                raise ValueError("maintenance build 需要显式 --write")
-            build(backend, output)
-            return {"status": "maintenance_build_created", "receipt": str(output / "build.json"),
-                    "resources_modified": False, "restore_qualified": False}
-        if args.write:
-            raise ValueError("maintenance verify 是只读操作，不接受 --write")
-        if output.is_dir():
-            output = evidence_path(backend, output / "build.json")
-        verify(backend, output)
-        return {"status": "maintenance_build_verified", "receipt": str(output),
-                "resources_modified": False, "restore_qualified": False}
     if args.command == "fresh-target":
         from devex_clone_target_cli import initialize as initialize_target, reconcile_preflight
         from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, status as target_status, verify
@@ -303,14 +286,6 @@ def dispatch(args, backend: Path) -> dict:
         if args.operation == "reconcile-preflight":
             return reconcile_preflight(backend, workspace)
         return verify(backend, workspace, evidence_path(backend, args.observation_dir, new=True))
-    if args.command == "bridge":
-        if not args.write:
-            raise ValueError("bridge 需要显式 --write")
-        from source_fingerprints import write_bridge
-
-        write_bridge(backend, args.build, args.inventory, args.output)
-        return {"status": "artifact_reuse_audited", "receipt": str(args.output), "compiled": False,
-                "restore_qualified": False}
     directory = evidence_path(backend, args.run_dir)
     if args.command == "init":
         if not args.write:

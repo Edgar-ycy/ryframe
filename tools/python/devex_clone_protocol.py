@@ -12,8 +12,7 @@ PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_CLONE"
 PROTOCOL_KIND = "ryframe-xtask-recovery-clone"
 COMMANDS = {
     "plan", "verify", "init", "status", "stage", "runtime", "recover",
-    "recover-copy", "bridge", "post-copy", "seed-runtime", "storage",
-    "cache", "maintenance",
+    "recover-copy", "post-copy", "seed-runtime", "storage", "cache",
 }
 
 
@@ -129,16 +128,12 @@ def _validate_paths(backend, command, options):
         "runtime": (("run_dir", "existing-directory"),),
         "recover": (("run_dir", "existing-directory"), ("owner_binding", "existing-file")),
         "recover-copy": (("run_dir", "existing-directory"), ("owner_binding", "existing-file")),
-        "bridge": (("build", "existing-file"), ("inventory", "existing-file"),
-                   ("output", "output-file")),
         "post-copy": (("run_dir", "existing-directory"), ("request", "existing-file"),
                       ("producer_binding", "existing-file")),
         "seed-runtime": (("run_dir", "existing-directory"), ("request", "existing-file"),
                          ("producer_binding", "existing-file")),
         "storage": (("run_dir", "existing-directory"), ("request", "existing-file")),
         "cache": (("run_dir", "existing-directory"), ("request", "existing-file")),
-        "maintenance": (("output", "new-directory" if options.get("operation") == "build"
-                         else "existing"),),
     }
     for name, kind in mappings[command]:
         value = options.get(name)
@@ -167,7 +162,7 @@ def _enum(value, allowed, label):
 def effect(command, options):
     if command in {"verify", "status"}:
         return "read-only"
-    if command in {"plan", "init", "recover", "recover-copy", "bridge"}:
+    if command in {"plan", "init", "recover", "recover-copy"}:
         return "evidence-write"
     if command == "stage":
         return ("business-write" if options["stage"] == "copy"
@@ -196,8 +191,6 @@ def effect(command, options):
         if options["operation"] == "status":
             return "read-only"
         return "evidence-write" if options["operation"] == "reconcile" else "business-write"
-    if command == "maintenance":
-        return "evidence-write" if options["operation"] == "build" else "read-only"
     raise CloneProtocolError("clone 私有协议 command 缺少副作用分类")
 
 
@@ -231,13 +224,6 @@ def _base(command, options):
         _exact(options, {"run_dir", "owner_binding"}, f"{command} options")
         return {"run_dir": _path(options["run_dir"], "run_dir"),
                 "owner_binding": _path(options["owner_binding"], "owner_binding")}
-    if command == "bridge":
-        _exact(options, {"build", "inventory", "output"}, "bridge options")
-        return {name: _path(options[name], name) for name in ("build", "inventory", "output")}
-    if command == "maintenance":
-        _exact(options, {"operation", "output"}, "maintenance options")
-        return {"operation": _enum(options["operation"], {"build", "verify"}, "operation"),
-                "output": _path(options["output"], "output")}
     return None
 
 

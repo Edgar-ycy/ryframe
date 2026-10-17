@@ -42,6 +42,10 @@ mod logging;
 #[allow(unused_imports)]
 pub(crate) use logging::with_process_log;
 use logging::{configure_output, process_log_active};
+#[path = "process/redirect.rs"]
+mod redirect;
+#[allow(unused_imports)]
+pub(crate) use redirect::run_owned_with_env_redirected;
 #[path = "process/python.rs"]
 mod python;
 use python::configure_environment;
@@ -202,22 +206,39 @@ pub(crate) fn command_output(dir: &Path, executable: &str, args: &[&str]) -> Res
     command_output_with_env(dir, executable, args, &[])
 }
 
+pub(crate) fn command_output_quiet(dir: &Path, executable: &str, args: &[&str]) -> Result<String> {
+    command_output_impl(dir, executable, args, &[], false, false)
+}
+
 pub(crate) fn command_output_with_env(
     dir: &Path,
     executable: &str,
     args: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<String> {
+    command_output_impl(dir, executable, args, environment, true, true)
+}
+
+fn command_output_impl(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+    visible: bool,
+    configure_cache: bool,
+) -> Result<String> {
     let started = Instant::now();
     let logged = process_log_active();
     let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
     let command_label = command_executable.to_string_lossy();
     let args = python_arguments(executable, args);
-    if !logged {
+    if visible && !logged {
         println!("→ {command_label} {}", args.join(" "));
     }
     let mut command = child_command(&command_executable);
-    configure_cargo_cache(executable, &mut command);
+    if configure_cache {
+        configure_cargo_cache(executable, &mut command);
+    }
     configure_environment(&mut command, executable, environment, &[]);
     command
         .args(&args)
@@ -241,7 +262,7 @@ pub(crate) fn command_output_with_env(
         )
         .into());
     }
-    if !logged {
+    if visible && !logged {
         println!("✓ {elapsed:.1}s");
     }
     String::from_utf8(output.stdout)

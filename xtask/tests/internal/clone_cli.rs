@@ -407,13 +407,11 @@ fn private_protocol_binds_exact_paths_and_rechecks_file_identity() {
     let fixture = Fixture::new();
     let command = fixture
         .parse(&[
-            "bridge",
-            "--build",
+            "init",
+            "--manifest",
             Fixture::value(&fixture.first),
-            "--inventory",
-            Fixture::value(&fixture.second),
-            "--output",
-            Fixture::value(&fixture.directory.join("bridge.json")),
+            "--run-dir",
+            Fixture::value(&fixture.directory.join("new-run")),
             "--write",
         ])
         .unwrap();
@@ -421,11 +419,11 @@ fn private_protocol_binds_exact_paths_and_rechecks_file_identity() {
     let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(value["format_version"], 1);
     assert_eq!(value["kind"], "ryframe-xtask-recovery-clone");
-    assert_eq!(value["request"]["command"], "bridge");
+    assert_eq!(value["request"]["command"], "init");
     assert_eq!(value["request"]["effect"], "evidence-write");
     assert_eq!(value["request"]["write"], true);
     assert_eq!(
-        PathBuf::from(value["request"]["options"]["build"].as_str().unwrap()),
+        PathBuf::from(value["request"]["options"]["manifest"].as_str().unwrap()),
         fixture.first
     );
 
@@ -434,7 +432,7 @@ fn private_protocol_binds_exact_paths_and_rechecks_file_identity() {
 }
 
 #[test]
-fn native_plan_and_verify_never_construct_a_python_protocol() {
+fn native_offline_commands_never_construct_a_python_protocol() {
     let fixture = Fixture::new();
     let output = fixture.directory.join("native-plan.json");
     for command in [
@@ -450,6 +448,37 @@ fn native_plan_and_verify_never_construct_a_python_protocol() {
             .unwrap(),
         fixture
             .parse(&["verify", "--plan", Fixture::value(&fixture.first)])
+            .unwrap(),
+        fixture
+            .parse(&[
+                "bridge",
+                "--build",
+                Fixture::value(&fixture.first),
+                "--inventory",
+                Fixture::value(&fixture.second),
+                "--output",
+                Fixture::value(&fixture.directory.join("bridge.json")),
+                "--write",
+            ])
+            .unwrap(),
+        fixture
+            .parse(&[
+                "maintenance",
+                "--operation",
+                "build",
+                "--output",
+                Fixture::value(&fixture.directory.join("maintenance")),
+                "--write",
+            ])
+            .unwrap(),
+        fixture
+            .parse(&[
+                "maintenance",
+                "--operation",
+                "verify",
+                "--output",
+                Fixture::value(&fixture.first),
+            ])
             .unwrap(),
     ] {
         assert!(
