@@ -2,7 +2,7 @@ use crate::{
     Result,
     check::{PYTHON_ENVIRONMENT_ARGS, TaskExecutor, TaskPlan},
     cli::{SecurityCommand, SecurityReportKind, SecurityReportOptions},
-    process::{run as run_process, run_owned},
+    process::run as run_process,
     workspace::root_dir,
 };
 
@@ -21,8 +21,7 @@ pub(super) const SOURCE_TASKS: &[TaskExecutor] = &[
     TaskExecutor::CiCargoDeny,
 ];
 const CYCLONEDX_REPORT_TASKS: &[TaskExecutor] = &[TaskExecutor::CiCycloneDxReport];
-const TRIVY_REPORT_TASKS: &[TaskExecutor] =
-    &[TaskExecutor::PythonEnvironment, TaskExecutor::CiTrivyReport];
+const TRIVY_REPORT_TASKS: &[TaskExecutor] = &[TaskExecutor::CiTrivyReport];
 
 pub(super) fn plan(command: &SecurityCommand) -> Result<TaskPlan> {
     match command {
@@ -69,11 +68,14 @@ fn run_report(options: &SecurityReportOptions, plan: &TaskPlan) -> Result<()> {
     let root = root_dir();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
-        if task.executor == TaskExecutor::CiCycloneDxReport {
-            crate::check::cyclonedx::run(&options.input, options.require_reproducible)?;
-        } else {
-            let (program, arguments) = report_command(task.executor, options)?;
-            run_owned(&root, program, &arguments)?;
+        match task.executor {
+            TaskExecutor::CiCycloneDxReport => {
+                crate::check::cyclonedx::run(&options.input, options.require_reproducible)?;
+            }
+            TaskExecutor::CiTrivyReport => {
+                crate::check::trivy::run(&options.input, &root)?;
+            }
+            _ => return Err("报告类型与 Security report 任务节点不一致".into()),
         }
     }
     Ok(())
@@ -109,36 +111,4 @@ pub(crate) fn source_command(
             .ok_or("Security source 节点缺少固定参数")?
     };
     Ok((program, arguments))
-}
-
-pub(crate) fn report_command(
-    executor: TaskExecutor,
-    options: &SecurityReportOptions,
-) -> Result<(&'static str, Vec<String>)> {
-    validate_report_options(options)?;
-    if options.kind != SecurityReportKind::Trivy {
-        return Err("CycloneDX 报告由 Rust 直接校验，不执行外部命令".into());
-    }
-    if executor == TaskExecutor::PythonEnvironment {
-        return Ok((
-            "python",
-            PYTHON_ENVIRONMENT_ARGS
-                .iter()
-                .map(|argument| (*argument).to_owned())
-                .collect(),
-        ));
-    }
-    if executor != TaskExecutor::CiTrivyReport {
-        return Err("报告类型与 Security report 任务节点不一致".into());
-    }
-    let input = options
-        .input
-        .to_str()
-        .ok_or("Security report 输入路径必须能表示为 UTF-8")?;
-    let arguments = vec![
-        "tools/python/check_supply_chain.py".to_owned(),
-        "--trivy-report".to_owned(),
-        input.to_owned(),
-    ];
-    Ok(("python", arguments))
 }

@@ -64,6 +64,8 @@ mod check_removed_identity_tests;
 mod check_snapshot_tests;
 #[path = "internal/check.rs"]
 mod check_tests;
+#[path = "internal/check_trivy.rs"]
+mod check_trivy_tests;
 #[path = "internal/child_environment.rs"]
 mod child_environment_tests;
 #[path = "internal/ci_frontend_source.rs"]

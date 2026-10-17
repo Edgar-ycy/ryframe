@@ -11,8 +11,6 @@ import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parent / "check_supply_chain.py"
@@ -26,7 +24,6 @@ SPEC.loader.exec_module(MODULE)
 
 def policy(
     *,
-    vulnerabilities: list[dict[str, str]] | None = None,
     service_images: list[dict[str, str]] | None = None,
     local_patch_licenses: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
@@ -86,7 +83,7 @@ def policy(
         "service_images": service_images or [],
         "vulnerability_gate": {
             "severities": ["HIGH", "CRITICAL"],
-            "exceptions": vulnerabilities or [],
+            "exceptions": [],
         },
         "runtime_feature_tree_gate": {
             "profiles": [
@@ -1069,41 +1066,6 @@ jobs:
             MODULE.yaml = parser
         self.assertTrue(any("缺少 PyYAML" in error for error in errors))
 
-    def test_trivy_gate_matches_exact_package_version_and_rejects_unused_exception(
-        self,
-    ) -> None:
-        exception = {
-            "id": "CVE-2099-0001",
-            "package": "libexample",
-            "installed_version": "1.0.0",
-            "owner": "security-team",
-            "expires": "2099-12-31",
-            "reason": "等待上游发布兼容的安全修复版本",
-        }
-        configured = policy(vulnerabilities=[exception])
-        report = {
-            "Results": [
-                {
-                    "Target": "runtime",
-                    "Vulnerabilities": [
-                        {
-                            "VulnerabilityID": "CVE-2099-0001",
-                            "PkgName": "libexample",
-                            "InstalledVersion": "1.0.0",
-                            "Severity": "CRITICAL",
-                        }
-                    ],
-                }
-            ]
-        }
-        with self.temporary_directory() as raw:
-            report_path = self.write_json(Path(raw), "trivy.json", report)
-            self.assertEqual(MODULE.evaluate_trivy_report(report_path, configured), [])
-            report["Results"][0]["Vulnerabilities"] = []
-            self.write_json(Path(raw), "trivy.json", report)
-            errors = MODULE.evaluate_trivy_report(report_path, configured)
-        self.assertTrue(any("例外未被报告使用" in error for error in errors))
-
     def test_resolved_graph_exception_fails_closed(self) -> None:
         errors = MODULE.resolved_graph_violations(
             "root v0.1.0\noptional-package v1.2.3\n",
@@ -1236,28 +1198,6 @@ tokio-rustls v0.26.4|aws_lc_rs
                 *expected_suffix,
             ],
         )
-
-    def test_trivy_report_main_does_not_repeat_source_checks(self) -> None:
-        trivy = {"Results": []}
-        with self.temporary_directory() as raw:
-            root = Path(raw)
-            trivy_path = self.write_json(root, "trivy.json", trivy)
-            trivy_args = SimpleNamespace(
-                policy=Path("policy.json"),
-                workflow_dir=Path("unused-workflows"),
-                trivy_report=trivy_path,
-                verify_cargo_graph=False,
-            )
-            with (
-                patch.object(MODULE, "parse_args", return_value=trivy_args),
-                patch.object(MODULE, "load_policy", return_value=policy()),
-                patch.object(
-                    MODULE, "validate_local_patch_licenses", side_effect=AssertionError
-                ),
-                patch.object(MODULE, "validate_workflows", side_effect=AssertionError),
-            ):
-                self.assertEqual(MODULE.main(), 0)
-
 
 if __name__ == "__main__":
     unittest.main()

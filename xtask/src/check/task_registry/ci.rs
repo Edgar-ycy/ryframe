@@ -165,7 +165,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         CiTrivyReport,
         "ci.security.report.trivy",
         "verify_trivy_report",
-        "核对单个 Trivy 漏洞报告",
+        "用 Rust 只读核对单个 Trivy 漏洞报告",
         Backend,
         Static,
         Backend,

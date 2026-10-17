@@ -38,6 +38,8 @@ mod snapshot;
 mod task_plan;
 #[path = "check/task_registry.rs"]
 mod task_registry;
+#[path = "check/trivy.rs"]
+pub(crate) mod trivy;
 
 pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]

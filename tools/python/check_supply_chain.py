@@ -1510,68 +1510,6 @@ def validate_workflows(workflow_dir: Path, policy: dict[str, Any]) -> list[str]:
     return errors
 
 
-def evaluate_trivy_report(report_path: Path, policy: dict[str, Any]) -> list[str]:
-    try:
-        report = _object(
-            json.loads(report_path.read_text(encoding="utf-8")), "Trivy 报告"
-        )
-    except (OSError, json.JSONDecodeError, PolicyError) as exc:
-        return [f"无法读取 Trivy 报告 {report_path}: {exc}"]
-    results = report.get("Results")
-    if not isinstance(results, list):
-        return ["Trivy 报告缺少 Results 数组"]
-
-    gate = policy["vulnerability_gate"]
-    severities = set(gate["severities"])
-    exceptions = gate["exceptions"]
-    used: set[int] = set()
-    errors: list[str] = []
-    for result in results:
-        if not isinstance(result, dict):
-            errors.append("Trivy Results 包含非对象条目")
-            continue
-        target = result.get("Target")
-        vulnerabilities = result.get("Vulnerabilities") or []
-        if not isinstance(vulnerabilities, list):
-            errors.append(f"Trivy 目标 {target!r} 的 Vulnerabilities 不是数组")
-            continue
-        for vulnerability in vulnerabilities:
-            if not isinstance(vulnerability, dict):
-                errors.append(f"Trivy 目标 {target!r} 包含无效漏洞条目")
-                continue
-            severity = vulnerability.get("Severity")
-            if severity not in severities:
-                continue
-            advisory_id = vulnerability.get("VulnerabilityID")
-            package = vulnerability.get("PkgName")
-            installed = vulnerability.get("InstalledVersion")
-            matched = False
-            for index, exception in enumerate(exceptions):
-                if (
-                    exception["id"] == advisory_id
-                    and exception["package"] == package
-                    and exception["installed_version"] == installed
-                    and (
-                        exception.get("target") is None or exception["target"] == target
-                    )
-                ):
-                    used.add(index)
-                    matched = True
-                    break
-            if not matched:
-                errors.append(
-                    f"未放行的 {severity} 漏洞：{advisory_id} "
-                    f"{package}@{installed} target={target}"
-                )
-    for index, exception in enumerate(exceptions):
-        if index not in used:
-            errors.append(
-                "漏洞例外未被报告使用，必须删除或校正："
-                f"{exception['id']} {exception['package']}@{exception['installed_version']}"
-            )
-    return errors
-
-
 def resolved_graph_violations(tree_output: str, policy: dict[str, Any]) -> list[str]:
     resolved = {line.strip() for line in tree_output.splitlines() if line.strip()}
     errors: list[str] = []
@@ -1714,37 +1652,29 @@ def verify_cargo_graph(policy: dict[str, Any]) -> list[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="校验供应链策略、固定版本和 Trivy 报告")
+    parser = argparse.ArgumentParser(description="校验供应链策略、固定版本和 Cargo 依赖图")
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     parser.add_argument("--workflow-dir", type=Path, default=DEFAULT_WORKFLOWS)
-    parser.add_argument("--trivy-report", type=Path)
     parser.add_argument("--verify-cargo-graph", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if args.trivy_report is not None and args.verify_cargo_graph:
-        print("参数错误：报告核验不能同时执行 Cargo 来源图核验", file=sys.stderr)
-        return 2
-
     try:
         policy = load_policy(args.policy)
     except PolicyError as exc:
         print(f"供应链策略无效：{exc}", file=sys.stderr)
         return 1
-    if args.trivy_report is not None:
-        errors = evaluate_trivy_report(args.trivy_report, policy)
-    else:
-        errors = validate_local_patch_licenses(ROOT, policy)
-        errors.extend(validate_workflows(args.workflow_dir, policy))
-        if args.verify_cargo_graph:
-            errors.extend(verify_cargo_graph(policy))
+    errors = validate_local_patch_licenses(ROOT, policy)
+    errors.extend(validate_workflows(args.workflow_dir, policy))
+    if args.verify_cargo_graph:
+        errors.extend(verify_cargo_graph(policy))
     if errors:
         for error in errors:
             print(f"供应链门禁失败：{error}", file=sys.stderr)
         return 1
-    print("供应链策略、固定版本和安全报告校验通过")
+    print("供应链策略、固定版本和依赖图校验通过")
     return 0
 
 

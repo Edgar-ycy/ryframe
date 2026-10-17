@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use super::{
     check::TaskExecutor,
-    ci::{ci_execution_plan_for, security_report_command, security_source_command},
+    ci::{ci_execution_plan_for, security_source_command},
     cli::{CiCommand, SecurityCommand, SecurityReportKind, SecurityReportOptions},
 };
 
@@ -64,7 +64,7 @@ fn cyclonedx_report_has_one_read_only_rust_node_without_python_or_source_tasks()
             .join("target/供应链 report.json"),
         require_reproducible: true,
     };
-    let command = CiCommand::Security(SecurityCommand::Report(options.clone()));
+    let command = CiCommand::Security(SecurityCommand::Report(options));
     let plan = ci_execution_plan_for(&command).unwrap();
     assert_eq!(plan.tasks.len(), 1);
     let task = &plan.tasks[0];
@@ -73,49 +73,27 @@ fn cyclonedx_report_has_one_read_only_rust_node_without_python_or_source_tasks()
     assert!(task.definition().allowed_writes.is_empty());
     assert!(task.definition().external_resources.is_empty());
     assert!(task.definition().compilation_coverage.is_empty());
-    assert!(security_report_command(task.executor, &options).is_err());
-    assert!(security_report_command(TaskExecutor::PythonEnvironment, &options).is_err());
 }
 
 #[test]
-fn trivy_report_preserves_its_typed_node_and_python_prerequisite() {
+fn trivy_report_has_one_read_only_rust_node_without_python_or_source_tasks() {
     let input = std::env::current_dir()
         .unwrap()
         .join("target/供应链 report.json");
     let options = SecurityReportOptions {
         kind: SecurityReportKind::Trivy,
-        input: input.clone(),
+        input,
         require_reproducible: false,
     };
-    let command = CiCommand::Security(SecurityCommand::Report(options.clone()));
+    let command = CiCommand::Security(SecurityCommand::Report(options));
     let plan = ci_execution_plan_for(&command).unwrap();
-    assert_eq!(
-        plan.tasks
-            .iter()
-            .map(|task| task.executor)
-            .collect::<Vec<_>>(),
-        [TaskExecutor::PythonEnvironment, TaskExecutor::CiTrivyReport]
-    );
-    assert_eq!(plan.tasks[1].dependencies, vec!["python.environment"]);
-    assert_eq!(
-        security_report_command(TaskExecutor::PythonEnvironment, &options).unwrap(),
-        (
-            "python",
-            vec!["tools/python/check_python_environment.py".to_owned()]
-        )
-    );
-    assert_eq!(
-        security_report_command(TaskExecutor::CiTrivyReport, &options).unwrap(),
-        (
-            "python",
-            vec![
-                "tools/python/check_supply_chain.py".to_owned(),
-                "--trivy-report".to_owned(),
-                input.to_str().unwrap().to_owned()
-            ]
-        )
-    );
-    assert!(security_report_command(TaskExecutor::CiCycloneDxReport, &options).is_err());
+    assert_eq!(plan.tasks.len(), 1);
+    let task = &plan.tasks[0];
+    assert_eq!(task.executor, TaskExecutor::CiTrivyReport);
+    assert!(task.dependencies.is_empty());
+    assert!(task.definition().allowed_writes.is_empty());
+    assert!(task.definition().external_resources.is_empty());
+    assert!(task.definition().compilation_coverage.is_empty());
 }
 
 #[test]
