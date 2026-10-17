@@ -15,11 +15,12 @@ pub(super) fn render_catalog(
     generated.push_str("const MENU_ROUTES: &[MenuRouteDescriptor] = &[\n");
     for menu in &catalog.menus {
         generated.push_str(&format!(
-            "    MenuRouteDescriptor {{ route_key: {:?}, name: {:?}, title_key: {:?}, menu_type: {:?}, page_key: {:?}, permission_code: {:?}, capability_code: {:?} }},\n",
+            "    MenuRouteDescriptor {{ route_key: {:?}, name: {:?}, title_key: {:?}, menu_type: {:?}, icon: {:?}, page_key: {:?}, permission_code: {:?}, capability_code: {:?} }},\n",
             menu.route_key,
             menu.name,
             menu.title_key,
             menu.menu_type,
+            menu.icon,
             menu.page_key,
             menu.permission,
             menu.capability

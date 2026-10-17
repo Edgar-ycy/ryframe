@@ -201,6 +201,7 @@ fn widget(value: WidgetSpec) -> WidgetIr {
         WidgetSpec::Select => WidgetIr::Select,
         WidgetSpec::Date => WidgetIr::Date,
         WidgetSpec::DateTime => WidgetIr::DateTime,
+        WidgetSpec::Json => WidgetIr::Json,
         WidgetSpec::Hidden => WidgetIr::Hidden,
     }
 }

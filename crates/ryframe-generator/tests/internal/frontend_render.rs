@@ -60,6 +60,59 @@ fn wide(count: usize) -> ResourceIr {
     resource
 }
 
+fn common_types() -> ResourceIr {
+    let mut resource = order();
+    resource.module = "business".into();
+    let template = resource
+        .fields
+        .iter()
+        .find(|field| field.name == "name")
+        .unwrap()
+        .clone();
+    let mut fields = Vec::new();
+    for (name, value_type, typescript_type, widget) in [
+        ("enabled", ValueType::Bool, "boolean", WidgetIr::Switch),
+        ("due_on", ValueType::Date, "string", WidgetIr::Date),
+        (
+            "happens_at",
+            ValueType::DateTime,
+            "string",
+            WidgetIr::DateTime,
+        ),
+        ("amount", ValueType::Decimal, "string", WidgetIr::Text),
+        ("metadata", ValueType::Json, "unknown", WidgetIr::Json),
+        ("note", ValueType::String, "string", WidgetIr::Textarea),
+        ("count", ValueType::I32, "number", WidgetIr::Number),
+    ] {
+        let mut field = template.clone();
+        field.name = name.into();
+        field.column = name.into();
+        field.value_type = value_type;
+        field.wire_type = if matches!(value_type, ValueType::Decimal) {
+            ValueType::String
+        } else {
+            value_type
+        };
+        field.rust_type = value_type.rust_type(false);
+        field.typescript_type = typescript_type.into();
+        field.widget = widget;
+        field.nullable = false;
+        field.default = None;
+        field.enum_values.clear();
+        field.usage.create = true;
+        field.usage.update = true;
+        field.usage.read = true;
+        field.usage.list = true;
+        field.usage.filter = false;
+        field.usage.sort = false;
+        field.validation.required = true;
+        field.sql_type = (value_type == ValueType::Decimal).then(|| "DECIMAL(20,6)".into());
+        fields.push(field);
+    }
+    resource.fields.extend(fields);
+    resource
+}
+
 fn assets(resource: &ResourceIr) -> Vec<crate::GeneratedAsset> {
     crate::resource::business_frontend_assets(std::slice::from_ref(resource)).unwrap()
 }
@@ -334,6 +387,36 @@ fn assert_local_imports_exist(assets: &[crate::GeneratedAsset]) {
 }
 
 #[test]
+fn common_form_types_generate_matching_controls_and_json_roundtrip() {
+    let resource = common_types();
+    let generated = assets(&resource);
+    assert_local_imports_exist(&generated);
+    let frontend = generated
+        .iter()
+        .filter(|asset| asset.path.ends_with(".ts") || asset.path.ends_with(".vue"))
+        .map(|asset| asset.content.as_str())
+        .collect::<String>();
+    for kind in [
+        "switch",
+        "date",
+        "date_time",
+        "json",
+        "textarea",
+        "text",
+        "number",
+    ] {
+        assert!(
+            frontend.contains(&format!("kind: {kind:?}")),
+            "缺少表单控件 {kind}"
+        );
+    }
+    assert!(frontend.contains("metadata: string"));
+    assert!(frontend.contains("JSON.stringify(record.metadata, null, 2)"));
+    assert!(frontend.contains("JSON.parse(form.metadata)"));
+    assert!(frontend.contains("display: 'json'"));
+}
+
+#[test]
 fn date_formatter_is_emitted_only_for_visible_datetime_columns() {
     let mut resource = order();
     assert!(presentation::fields(&resource).contains("formatDate: (value: string) => string"));
@@ -412,6 +495,7 @@ fn generated_modules_typecheck_and_execute_with_real_frontend_types() {
         ("wide", wide(1000)),
         ("empty", empty),
         ("labels", import_like_labels()),
+        ("common", common_types()),
     ] {
         let root = temp.path().join(name);
         for asset in assets(&resource) {

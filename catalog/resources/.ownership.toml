@@ -324,7 +324,7 @@ root = "frontend"
 path = "src/generated/resources/post/fields.ts"
 source_hash = "1e4cc234204ac1def97cf88ed4548ec2fa3990698e32477838dd45a31269e63f"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "fe4eaab84c07463f4a76ce606a0ce478ac6c884bb53e4bd8be1e292fd1008a53"
+content_hash = "1a3fb8046f380e2b20a1333618c71d4ffa23b59a006a983f7c2b88983fa28977"
 
 [[entries]]
 resource = "post"

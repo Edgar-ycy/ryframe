@@ -83,6 +83,8 @@ cargo generate --features schema-import -- import --package order-business --con
 
 精确 Decimal 字段须显式声明 `sql_type="DECIMAL(p,s)"`，目前支持完整数值域可容纳的 1≤p≤28、0≤s≤p。接口与表单使用十进制字符串，超出容量会拒绝，具体模型和默认值写法见开发指南。
 
+标准生成表单按字段类型使用文本或文本域、整数、开关、日期、日期时间、枚举单选和精确 Decimal 文本；JSON 使用可编辑文本域并在提交前严格解析。JSON 标准查询参数筛选会被拒绝，需要结构化条件时编写强类型扩展。
+
 ## 检查、契约与构建
 
 后端日常检查不需要前端。跨仓完整检查显式选择 all；前端目录改名后更新工具配置：

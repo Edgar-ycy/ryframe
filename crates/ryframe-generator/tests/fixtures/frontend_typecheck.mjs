@@ -122,9 +122,29 @@ const form = zh.resource.emptyForm()
 assert.deepEqual(Object.keys(form), formFields.map(field => field.name))
 assert.deepEqual(Object.keys(zh.resource.createInput(form)), fields.filter(field => field.usage.create).map(field => field.name))
 assert.deepEqual(Object.keys(zh.resource.updateInput(form)), fields.filter(field => field.usage.update).map(field => field.name))
-const recordValues = Object.fromEntries(fields.map(field => [field.name, field.nullable ? null : field.wire_type === 'string' ? '12345678901234567890.125000' : 1]))
+const sampleRecordValue = field => {
+  if (field.nullable) return null
+  if (field.wire_type === 'string') return '12345678901234567890.125000'
+  if (field.value_type === 'bool') return true
+  if (field.value_type === 'date') return '2026-10-18'
+  if (field.value_type === 'date_time') return '2026-10-18T08:30:00.000Z'
+  if (field.value_type === 'json') return { key: 'value', count: 2 }
+  if (['string'].includes(field.value_type)) return 'text'
+  return 1
+}
+const recordValues = Object.fromEntries(fields.map(field => [field.name, sampleRecordValue(field)]))
 const editForm = zh.resource.editForm(recordValues)
-for (const field of formFields) assert.equal(editForm[field.name], recordValues[field.name])
+for (const field of formFields) {
+  if (field.value_type === 'json') {
+    const recordValue = recordValues[field.name]
+    assert.equal(
+      editForm[field.name],
+      recordValue === null ? '' : JSON.stringify(recordValue, null, 2),
+    )
+  } else {
+    assert.equal(editForm[field.name], recordValues[field.name])
+  }
+}
 for (const field of queryFields.filter(field => field.value_type === 'string')) assert.equal(zh.resource.initialQuery()[field.name], '')
 for (const field of fields) {
   const column = zh.columns.find(column => column.key === field.name)
@@ -145,12 +165,37 @@ for (const field of fields) {
   const englishControl = en.formFields.find(control => control.key === field.name)
   assert.equal(control.label, field.labels.zh_cn)
   assert.equal(englishControl.label, field.labels.en)
-  if (field.widget === 'text' || field.widget === 'textarea') {
+  if (['text', 'textarea', 'date', 'date_time', 'json'].includes(field.widget)) {
     assert.equal(control.placeholder, `请输入${field.labels.zh_cn}`)
     assert.equal(englishControl.placeholder, `Enter ${field.labels.en}`)
   }
   assert.equal(control.disabledOnEdit === true, field.usage.create && !field.usage.update)
   assert.equal(control.editOnly === true, field.usage.update && !field.usage.create)
+  const expectedKind = field.value_type === 'bool'
+    ? 'switch'
+    : field.value_type === 'date'
+      ? 'date'
+      : field.value_type === 'date_time'
+        ? 'date_time'
+        : field.value_type === 'json'
+          ? 'json'
+          : Object.keys(field.enum_values).length
+            ? 'radio'
+            : field.widget === 'number'
+              ? 'number'
+              : field.widget === 'textarea'
+                ? 'textarea'
+                : 'text'
+  assert.equal(control.kind, expectedKind)
+  if (field.value_type === 'json') {
+    assert.equal(control.invalidMessage, '请输入有效的 JSON')
+    const conversion = recordValues[field.name]
+    for (const action of ['create', 'update']) {
+      if (!field.usage[action]) continue
+      const converted = zh.resource[`${action}Input`](editForm)
+      assert.deepEqual(converted[field.name], conversion)
+    }
+  }
   if (['decimal', 'i64', 'u64'].includes(field.value_type) && field.wire_type === 'string') {
     assert.equal(form[field.name], '')
     const precise = { ...form, [field.name]: '18446744073709551615.125000' }

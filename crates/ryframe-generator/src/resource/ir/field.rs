@@ -232,18 +232,14 @@ fn validate_widgets(
             "使用 text；整数也可使用有限枚举 select，保持表单、JSON 和 Rust 精确数值一致",
         ));
     }
-    if (field.usage.create || field.usage.update)
-        && !matches!(
-            field.widget,
-            WidgetSpec::Text | WidgetSpec::Number | WidgetSpec::Select
-        )
-    {
+    let editable = field.usage.create || field.usage.update;
+    if editable && matches!(field.widget, WidgetSpec::Hidden) {
         return Err(field_error(
             resource,
             &field.name,
             source_path,
-            "可编辑字段使用了 FlatCrud 尚不支持的控件",
-            "v1 仅支持 text、number、select；其他控件放入强类型 frontend extension",
+            "可编辑字段不能使用 hidden 控件",
+            "为创建或更新字段选择与 value_type 匹配的可编辑控件",
         ));
     }
     if !field.enum_values.is_empty() && !matches!(field.widget, WidgetSpec::Select) {
@@ -262,6 +258,32 @@ fn validate_widgets(
             source_path,
             "select 控件缺少 enum_values",
             "声明有限枚举项，复杂选项加载放入前端扩展",
+        ));
+    }
+    let compatible = match field.widget {
+        WidgetSpec::Text => {
+            matches!(field.value_type, ValueType::String | ValueType::Decimal)
+                || field.value_type.integer_bounds().is_some()
+        }
+        WidgetSpec::Textarea => field.value_type == ValueType::String,
+        WidgetSpec::Number => field.value_type.integer_bounds().is_some(),
+        WidgetSpec::Switch => field.value_type == ValueType::Bool,
+        WidgetSpec::Select => !field.enum_values.is_empty(),
+        WidgetSpec::Date => field.value_type == ValueType::Date,
+        WidgetSpec::DateTime => field.value_type == ValueType::DateTime,
+        WidgetSpec::Json => field.value_type == ValueType::Json,
+        WidgetSpec::Hidden => true,
+    };
+    if !compatible {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            format!(
+                "控件 {:?} 与 value_type={:?} 不匹配",
+                field.widget, field.value_type
+            ),
+            "text/textarea 用于 string，number 用于整数，switch 用于 bool，select 用于枚举，date/date_time/json 分别用于对应类型",
         ));
     }
     for (key, labels) in &field.enum_values {
@@ -318,6 +340,15 @@ fn validate_usage(
             source_path,
             "filter_exact 只用于区分字符串精确筛选与包含筛选",
             "非字符串字段已经使用精确筛选，请删除 filter_exact",
+        ));
+    }
+    if field.usage.filter && field.value_type == ValueType::Json {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "JSON 字段不支持标准 FlatCrud 查询参数筛选",
+            "移除 usage.filter，或编写强类型扩展接收结构明确的 JSON 筛选条件",
         ));
     }
     if field.usage.sort_desc && !field.usage.sort {

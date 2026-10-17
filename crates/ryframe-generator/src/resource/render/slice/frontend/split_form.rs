@@ -1,5 +1,5 @@
 use super::modules::{Function, Modules};
-use super::values::{form_input, ts_default};
+use super::values::{edit_form_value, form_input, form_typescript_type, ts_default};
 use super::{FieldIr, ResourceIr, ValueType, WidgetIr};
 
 pub(super) fn render(modules: &mut Modules<'_>) {
@@ -63,7 +63,11 @@ fn form_part(resource: &ResourceIr, fields: &[&FieldIr]) -> String {
         "import type {{\n  {pascal}CreateInput,\n  {pascal}UpdateInput,\n  {pascal}Record,\n}} from '../api'\n\ninterface FormPart {{\n"
     );
     for field in fields {
-        output.push_str(&format!("  {}: {}\n", field.name, field.typescript_type));
+        output.push_str(&format!(
+            "  {}: {}\n",
+            field.name,
+            form_typescript_type(field)
+        ));
     }
     output.push_str("}\n");
     for mode in ["empty", "edit", "create", "update"] {
@@ -95,8 +99,7 @@ fn form_part(resource: &ResourceIr, fields: &[&FieldIr]) -> String {
             .map(|field| {
                 let value = match mode {
                     "empty" => ts_default(field).to_owned(),
-                    "edit" if field.nullable => format!("record.{} ?? null", field.name),
-                    "edit" => format!("record.{}", field.name),
+                    "edit" => edit_form_value(field),
                     "create" => form_input(field, field.usage.create_optional),
                     _ => form_input(field, field.usage.update_optional),
                 };

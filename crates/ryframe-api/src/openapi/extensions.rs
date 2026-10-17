@@ -83,6 +83,7 @@ fn menu_route_contract() -> serde_json::Value {
                 "name": menu.name,
                 "title_key": menu.title_key,
                 "menu_type": menu.menu_type,
+                "icon": menu.icon,
                 "page_key": menu.page_key,
                 "permission_code": menu.permission_code,
                 "capability_code": menu.capability_code,
@@ -91,7 +92,7 @@ fn menu_route_contract() -> serde_json::Value {
         .collect::<Vec<_>>();
 
     serde_json::json!({
-        "version": 2,
+        "version": 3,
         "routes": routes,
     })
 }

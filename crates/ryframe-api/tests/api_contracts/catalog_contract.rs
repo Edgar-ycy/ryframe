@@ -212,6 +212,7 @@ mod openapi {
                     "name": menu.name,
                     "title_key": menu.title_key,
                     "menu_type": menu.menu_type,
+                    "icon": menu.icon,
                     "page_key": menu.page_key,
                     "permission_code": menu.permission_code,
                     "capability_code": menu.capability_code,

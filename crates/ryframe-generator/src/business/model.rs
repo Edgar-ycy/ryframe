@@ -324,7 +324,8 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
                 ValueType::Bool => WidgetSpec::Switch,
                 ValueType::Date => WidgetSpec::Date,
                 ValueType::DateTime => WidgetSpec::DateTime,
-                ValueType::Json | ValueType::String => WidgetSpec::Text,
+                ValueType::Json => WidgetSpec::Json,
+                ValueType::String => WidgetSpec::Text,
             }
         },
         enum_values: BTreeMap::new(),

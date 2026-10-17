@@ -83,6 +83,8 @@ cargo generate --features schema-import -- import --package order-business --con
 
 Exact Decimal fields must declare `sql_type="DECIMAL(p,s)"` explicitly. The current native type supports the complete domain for 1≤p≤28 and 0≤s≤p. API payloads and forms use decimal strings; values exceeding the declared capacity are rejected. See the development guide for models and defaults.
 
+Generated forms use text or textarea, integer, switch, date, date-time, enumerated radio and exact Decimal text controls according to the field type. JSON uses an editable textarea that is parsed strictly before submission. JSON filters are rejected in standard query parameters; use a strongly typed extension for structured conditions.
+
 ## Checks, contracts and builds
 
 Daily backend checks do not require the frontend. Explicitly choose `all` for complete cross-repository checks. Update tool configuration when renaming or relocating the frontend:

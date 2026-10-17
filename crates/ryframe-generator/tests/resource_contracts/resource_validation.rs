@@ -66,16 +66,32 @@ fn string_filter_can_select_exact_matching_explicitly() {
 }
 
 #[test]
-fn editable_widgets_and_patterns_fail_before_rendering() {
+fn editable_widgets_must_match_value_types_and_patterns_fail_before_rendering() {
     let source = order_source();
-    let unsupported = changed(
+    let textarea = changed(
         &source,
         "name = \"name\"\nvalue_type = \"string\"\norder = 30\nwidget = \"text\"",
         "name = \"name\"\nvalue_type = \"string\"\norder = 30\nwidget = \"textarea\"",
     );
-    let error = normalize(&unsupported, "order").expect_err("可编辑 textarea 必须被拒绝");
+    let order = normalize(&textarea, "order").expect("可编辑 textarea 应生成标准表单");
+    let field = order
+        .fields
+        .iter()
+        .find(|field| field.name == "name")
+        .unwrap();
+    assert!(matches!(
+        field.widget,
+        ryframe_generator::resource::WidgetIr::Textarea
+    ));
+
+    let mismatched = changed(
+        &source,
+        "name = \"name\"\nvalue_type = \"string\"\norder = 30\nwidget = \"text\"",
+        "name = \"name\"\nvalue_type = \"string\"\norder = 30\nwidget = \"switch\"",
+    );
+    let error = normalize(&mismatched, "order").expect_err("控件与字段类型不匹配必须被拒绝");
     assert!(error.contains("字段 name"));
-    assert!(error.contains("frontend extension"));
+    assert!(error.contains("控件 Switch 与 value_type=String 不匹配"));
 
     let pattern = changed(
         &source,
@@ -85,6 +101,147 @@ fn editable_widgets_and_patterns_fail_before_rendering() {
     let error = normalize(&pattern, "order").expect_err("未生成的 pattern 必须被拒绝");
     assert!(error.contains("validation.pattern"));
     assert!(error.contains("强类型 DTO"));
+}
+
+const COMMON_FORM_FIELDS: &str = r#"
+[[fields]]
+name = "enabled"
+value_type = "bool"
+order = 35
+default = false
+widget = "switch"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "启用"
+en = "Enabled"
+
+[[fields]]
+name = "due_on"
+value_type = "date"
+order = 45
+nullable = true
+widget = "date"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "到期日"
+en = "Due on"
+
+[[fields]]
+name = "happens_at"
+value_type = "date_time"
+order = 47
+nullable = true
+widget = "date_time"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "发生时间"
+en = "Happens at"
+
+[[fields]]
+name = "amount"
+value_type = "decimal"
+sql_type = "DECIMAL(20,6)"
+order = 48
+nullable = true
+widget = "text"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "金额"
+en = "Amount"
+
+[[fields]]
+name = "metadata"
+value_type = "json"
+order = 49
+nullable = true
+widget = "json"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "元数据"
+en = "Metadata"
+
+[[fields]]
+name = "note"
+value_type = "string"
+order = 51
+nullable = true
+widget = "textarea"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "说明"
+en = "Note"
+
+[api]"#;
+
+#[test]
+fn common_form_types_validate_widgets_and_reject_json_filters() {
+    let fields = COMMON_FORM_FIELDS;
+    let source = changed(&order_source(), "[api]", fields);
+    let resource = normalize(&source, "order").expect("常见表单类型应通过资源校验");
+    let widgets = resource
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), field.widget))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (name, expected) in [
+        ("enabled", ryframe_generator::resource::WidgetIr::Switch),
+        ("due_on", ryframe_generator::resource::WidgetIr::Date),
+        (
+            "happens_at",
+            ryframe_generator::resource::WidgetIr::DateTime,
+        ),
+        ("amount", ryframe_generator::resource::WidgetIr::Text),
+        ("metadata", ryframe_generator::resource::WidgetIr::Json),
+        ("note", ryframe_generator::resource::WidgetIr::Textarea),
+    ] {
+        assert_eq!(widgets[name], expected, "{name}");
+    }
+
+    let filtered_json = changed(
+        fields,
+        "list = true\n\n[fields.labels]\nzh_cn = \"元数据\"",
+        "list = true\nfilter = true\n\n[fields.labels]\nzh_cn = \"元数据\"",
+    );
+    let invalid = changed(&order_source(), "[api]", &filtered_json);
+    let error = normalize(&invalid, "order").expect_err("JSON 筛选必须显式拒绝");
+    assert!(error.contains("字段 metadata"));
+    assert!(error.contains("JSON 字段不支持标准 FlatCrud 查询参数筛选"));
 }
 
 #[test]

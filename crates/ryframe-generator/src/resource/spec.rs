@@ -269,6 +269,7 @@ pub enum WidgetSpec {
     Select,
     Date,
     DateTime,
+    Json,
     Hidden,
 }
 

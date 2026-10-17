@@ -14,6 +14,7 @@ pub struct MenuRouteDescriptor {
     pub name: &'static str,
     pub title_key: &'static str,
     pub menu_type: &'static str,
+    pub icon: Option<&'static str>,
     pub page_key: Option<&'static str>,
     pub permission_code: Option<&'static str>,
     pub capability_code: Option<&'static str>,

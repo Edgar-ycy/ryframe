@@ -125,6 +125,7 @@ fn composed_business_resources_keep_core_catalog_and_add_authoritative_access() 
         .unwrap();
     assert_eq!(directory["menu_type"], "M");
     assert_eq!(directory["title_key"], "orderBusinessDirectory");
+    assert_eq!(directory["icon"], "FolderOpened");
     assert!(directory["page_key"].is_null());
     assert!(directory["permission_code"].is_null());
 }

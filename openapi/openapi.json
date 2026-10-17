@@ -35780,6 +35780,7 @@
     "routes": [
       {
         "capability_code": null,
+        "icon": "Grid",
         "menu_type": "M",
         "name": "业务管理",
         "page_key": null,
@@ -35789,6 +35790,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "首页",
         "page_key": "home",
@@ -35798,6 +35800,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "M",
         "name": "系统监控",
         "page_key": null,
@@ -35807,6 +35810,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "缓存监控",
         "page_key": "monitor.cache",
@@ -35816,6 +35820,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "连接池监控",
         "page_key": "monitor.db-pool",
@@ -35825,6 +35830,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "后台任务",
         "page_key": "monitor.jobs",
@@ -35834,6 +35840,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "在线用户",
         "page_key": "monitor.online",
@@ -35843,6 +35850,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "运维总览",
         "page_key": "monitor.overview",
@@ -35852,6 +35860,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "数据保留",
         "page_key": "monitor.retention",
@@ -35861,6 +35870,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "运行时监控",
         "page_key": "monitor.runtime",
@@ -35870,6 +35880,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "定时任务",
         "page_key": "monitor.schedules",
@@ -35879,6 +35890,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "服务监控",
         "page_key": "monitor.server",
@@ -35888,6 +35900,7 @@
       },
       {
         "capability_code": null,
+        "icon": "OfficeBuilding",
         "menu_type": "M",
         "name": "平台管理",
         "page_key": null,
@@ -35897,6 +35910,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "配置迁移",
         "page_key": "platform.config-transfer",
@@ -35906,6 +35920,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "数据目标",
         "page_key": "platform.data-targets",
@@ -35915,6 +35930,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "产品套餐",
         "page_key": "platform.product-plans",
@@ -35924,6 +35940,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "租户管理",
         "page_key": "platform.tenant",
@@ -35933,6 +35950,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "M",
         "name": "系统管理",
         "page_key": null,
@@ -35942,6 +35960,7 @@
       },
       {
         "capability_code": null,
+        "icon": "View",
         "menu_type": "C",
         "name": "权限诊断",
         "page_key": "system.authorization-diagnostics",
@@ -35951,6 +35970,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "参数设置",
         "page_key": "system.config",
@@ -35960,6 +35980,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "部门管理",
         "page_key": "system.dept",
@@ -35969,6 +35990,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "字典管理",
         "page_key": "system.dict",
@@ -35978,6 +36000,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "登录日志",
         "page_key": "system.logininfor",
@@ -35987,6 +36010,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "菜单管理",
         "page_key": "system.menu",
@@ -35996,6 +36020,7 @@
       },
       {
         "capability_code": "system.notice",
+        "icon": null,
         "menu_type": "C",
         "name": "通知公告",
         "page_key": "system.notice",
@@ -36005,6 +36030,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "操作日志",
         "page_key": "system.operlog",
@@ -36014,6 +36040,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "权限管理",
         "page_key": "system.perm",
@@ -36023,6 +36050,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "岗位管理",
         "page_key": "system.post",
@@ -36032,6 +36060,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "角色管理",
         "page_key": "system.role",
@@ -36041,6 +36070,7 @@
       },
       {
         "capability_code": null,
+        "icon": null,
         "menu_type": "C",
         "name": "用户管理",
         "page_key": "system.user",
@@ -36049,7 +36079,7 @@
         "title_key": "user"
       }
     ],
-    "version": 2
+    "version": 3
   },
   "x-ryframe-notice-policy": {
     "content_markdown": {

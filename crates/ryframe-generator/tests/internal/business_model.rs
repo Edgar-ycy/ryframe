@@ -128,3 +128,47 @@ fn owner_field_rejects_empty_missing_and_non_i64_fields() {
         );
     }
 }
+
+#[test]
+fn resource_model_types_map_to_supported_form_widgets() {
+    let mut descriptor = descriptor(OwnedResourceDatabase::Tenant, None, "i64");
+    descriptor.fields = vec![
+        field("tenant_id", "String", true),
+        field("id", "i64", true),
+        field("enabled", "bool", false),
+        field("due_on", "ryframe_sdk::chrono::NaiveDate", false),
+        field(
+            "happens_at",
+            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
+            false,
+        ),
+        field("amount", "ryframe_sdk::rust_decimal::Decimal", false),
+        field("metadata", "ryframe_sdk::serde_json::Value", false),
+        field("note", "String", false),
+        field("count", "i32", false),
+        field("large_count", "i64", false),
+    ];
+    descriptor
+        .fields
+        .iter_mut()
+        .find(|field| field.name == "amount")
+        .unwrap()
+        .sql_type = Some("DECIMAL(20,6)".into());
+    let resource = descriptor_to_ir(&package(), &descriptor).unwrap();
+    let widget = |name: &str| {
+        resource
+            .fields
+            .iter()
+            .find(|field| field.name == name)
+            .unwrap()
+            .widget
+    };
+    assert_eq!(widget("enabled"), crate::resource::WidgetIr::Switch);
+    assert_eq!(widget("due_on"), crate::resource::WidgetIr::Date);
+    assert_eq!(widget("happens_at"), crate::resource::WidgetIr::DateTime);
+    assert_eq!(widget("amount"), crate::resource::WidgetIr::Text);
+    assert_eq!(widget("metadata"), crate::resource::WidgetIr::Json);
+    assert_eq!(widget("note"), crate::resource::WidgetIr::Text);
+    assert_eq!(widget("count"), crate::resource::WidgetIr::Number);
+    assert_eq!(widget("large_count"), crate::resource::WidgetIr::Text);
+}

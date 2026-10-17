@@ -157,6 +157,7 @@ export function createPostPresentation(
       key: "status",
       kind: "radio",
       label: translate("状态", "Status"),
+      requiredMessage: translate("请输入状态", "Enter Status"),
       options: statusOptions,
       editOnly: true,
     },

@@ -171,7 +171,8 @@ pub(crate) fn merge_business_catalog(
         }
         routes.push(json!({
             "route_key": menu.route_key, "name": menu.name, "title_key": title,
-            "menu_type": menu.menu_type, "page_key": (menu.menu_type == "C").then_some(&menu.route_key),
+            "menu_type": menu.menu_type, "icon": menu.icon(),
+            "page_key": (menu.menu_type == "C").then_some(&menu.route_key),
             "permission_code": menu.permission, "capability_code": Value::Null,
         }));
     }
@@ -184,7 +185,7 @@ pub(crate) fn merge_business_catalog(
     );
     extensions.insert(
         "x-ryframe-menu-routes".into(),
-        json!({"version": 2, "routes": routes}),
+        json!({"version": 3, "routes": routes}),
     );
     Ok(())
 }

@@ -1,4 +1,4 @@
-use super::values::{form_input, ts_default};
+use super::values::{edit_form_value, form_input, ts_default};
 use super::{FieldIr, ResourceIr, ValueType, WidgetIr};
 
 pub(super) fn render_crud_resource(
@@ -22,14 +22,7 @@ pub(super) fn render_crud_resource(
         .collect::<String>();
     let edit_form = form_fields
         .iter()
-        .map(|field| {
-            let value = if field.nullable {
-                format!("record.{} ?? null", field.name)
-            } else {
-                format!("record.{}", field.name)
-            };
-            format!("      {}: {value},\n", field.name)
-        })
+        .map(|field| format!("      {}: {},\n", field.name, edit_form_value(field)))
         .collect::<String>();
     let create_input = resource
         .fields

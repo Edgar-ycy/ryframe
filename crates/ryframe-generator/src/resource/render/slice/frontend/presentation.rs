@@ -1,5 +1,5 @@
 use super::resource::render_crud_resource;
-use super::values::{form_widget, push_typescript_object, ts_enum_value};
+use super::values::{form_typescript_type, form_widget, push_typescript_object, ts_enum_value};
 use super::{FieldIr, ResourceIr, ValueType, WidgetIr, has_date_column, slash_header};
 
 pub(super) fn fields(resource: &ResourceIr) -> String {
@@ -30,7 +30,11 @@ fn render_presentation(resource: &ResourceIr, form_fields: &[&FieldIr], output: 
     ));
     output.push_str(&format!("export interface {pascal}Form {{\n"));
     for field in form_fields {
-        output.push_str(&format!("  {}: {}\n", field.name, field.typescript_type));
+        output.push_str(&format!(
+            "  {}: {}\n",
+            field.name,
+            form_typescript_type(field)
+        ));
     }
     output.push_str("}\n\n");
     output.push_str(&format!(
@@ -136,6 +140,8 @@ pub(super) fn column_properties(field: &FieldIr) -> Vec<String> {
     } else if matches!(field.value_type, ValueType::DateTime) {
         properties.push("display: 'datetime'".into());
         properties.push("format: formatDate".into());
+    } else if field.value_type == ValueType::Json {
+        properties.push("display: 'json'".into());
     }
     properties
 }
@@ -149,19 +155,22 @@ pub(super) fn form_properties(field: &FieldIr) -> Vec<String> {
             field.labels.zh_cn, field.labels.en
         ),
     ];
-    if matches!(field.widget, WidgetIr::Text | WidgetIr::Textarea) {
+    if matches!(
+        field.widget,
+        WidgetIr::Text | WidgetIr::Textarea | WidgetIr::Date | WidgetIr::DateTime | WidgetIr::Json
+    ) {
         properties.push(format!(
             "placeholder: translate({:?}, {:?})",
             format!("请输入{}", field.labels.zh_cn),
             format!("Enter {}", field.labels.en)
         ));
-        if field.validation.required {
-            properties.push(format!(
-                "requiredMessage: translate({:?}, {:?})",
-                format!("请输入{}", field.labels.zh_cn),
-                format!("Enter {}", field.labels.en)
-            ));
-        }
+    }
+    if field.validation.required && !matches!(field.widget, WidgetIr::Switch | WidgetIr::Hidden) {
+        properties.push(format!(
+            "requiredMessage: translate({:?}, {:?})",
+            format!("请输入{}", field.labels.zh_cn),
+            format!("Enter {}", field.labels.en)
+        ));
     }
     if matches!(field.widget, WidgetIr::Number) {
         if let Some(minimum) = field.validation.minimum {
@@ -173,6 +182,12 @@ pub(super) fn form_properties(field: &FieldIr) -> Vec<String> {
     }
     if !field.enum_values.is_empty() {
         properties.push(format!("options: {}Options", field.name));
+    }
+    if matches!(field.widget, WidgetIr::Json) {
+        properties.push(format!(
+            "invalidMessage: translate({:?}, {:?})",
+            "请输入有效的 JSON", "Enter valid JSON"
+        ));
     }
     if field.usage.create && !field.usage.update {
         properties.push("disabledOnEdit: true".into());
