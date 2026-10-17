@@ -18,6 +18,7 @@ chrono = { workspace = true }
 hex = { workspace = true }
 notify = "8.2"
 percent-encoding = { workspace = true }
+quick-xml = { workspace = true }
 ryframe-generator = { path = "../crates/ryframe-generator", default-features = false, optional = true }
 regex = { workspace = true }
 rustls = { workspace = true }

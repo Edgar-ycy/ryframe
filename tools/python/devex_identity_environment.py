@@ -6,14 +6,16 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
-from user_import_fixture import read_model, template_archive
 from full_stack_migration_mysql import MysqlSession, identifier, ownership
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import verify_runtime
 from full_stack_rate_limit_config import load_app_table
 from process_sockets import verify_listener
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def file_hash(path: Path) -> str:
@@ -143,11 +145,34 @@ def inspect(environment: dict, groups: list[dict], phase: str) -> dict:
             "api_process": process, "tenants": result}
 
 
-def template(path: str, sha256: str) -> dict:
-    with template_archive(Path(path), sha256) as archive:
-        _, department = read_model(archive)
-    return {"template_sha256": sha256, "department_path": department,
-            "department_sha256": hashlib.sha256(department.encode()).hexdigest()}
+def template(path: str, sha256: str, runner=subprocess.run) -> dict:
+    if not Path(path).is_absolute() or not re.fullmatch(r"[a-f0-9]{64}", sha256):
+        raise ValueError("invalid_template_binding")
+    completed = runner(
+        [os.environ.get("CARGO", "cargo"), "run", "--quiet", "--locked", "-p", "xtask", "--",
+         "__import-samples", "template", "--template", path, "--template-sha256", sha256],
+        cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        timeout=60, check=False,
+    )
+    if completed.returncode != 0 or len(completed.stdout) > 1024 * 1024:
+        raise ValueError("template_inspection_failed")
+    try:
+        response = json.loads(completed.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("template_inspection_failed") from error
+    if not isinstance(response, dict) or set(response) != {"ok", "receipt"} or response["ok"] is not True:
+        raise ValueError("template_inspection_failed")
+    receipt = response["receipt"]
+    if (not isinstance(receipt, dict)
+            or set(receipt) != {"template_sha256", "department_path", "department_sha256"}
+            or receipt["template_sha256"] != sha256
+            or not isinstance(receipt["department_path"], str)
+            or not receipt["department_path"].strip()
+            or not isinstance(receipt["department_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", receipt["department_sha256"])
+            or receipt["department_sha256"] != hashlib.sha256(receipt["department_path"].encode()).hexdigest()):
+        raise ValueError("template_inspection_failed")
+    return receipt
 
 
 def main() -> int:

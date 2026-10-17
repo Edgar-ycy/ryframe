@@ -31,6 +31,9 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    if let Some(code) = devex::import_samples::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     #[cfg(target_os = "linux")]
     if let Some(result) = devex::memory::run_trampoline_if_requested() {
         if let Err(error) = result {

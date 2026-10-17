@@ -7,6 +7,8 @@ use crate::{Result, workspace::root_dir};
 pub(crate) mod cgroup;
 #[path = "devex/run.rs"]
 mod execution;
+#[path = "devex/import_samples.rs"]
+pub(crate) mod import_samples;
 #[path = "devex/incremental.rs"]
 mod incremental;
 #[path = "devex/memory.rs"]

@@ -36,7 +36,7 @@ hex = { workspace = true }
 hmac = { workspace = true }
 image = { workspace = true, optional = true, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 percent-encoding = { workspace = true }
-quick-xml = "0.41.0"
+quick-xml = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
 chrono = { workspace = true, features = ["serde"] }
 calamine = { workspace = true, optional = true }

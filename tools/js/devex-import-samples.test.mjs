@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { hash } from './config.mjs'
-import { importSampleModel, importSpecification, prepareImportSamples, sampleReader } from './import-samples.mjs'
+import { importSampleInvocation, importSampleModel, importSpecification, prepareImportSamples, sampleReader } from './import-samples.mjs'
 import { Session } from './request.mjs'
 import { measure } from './measure.mjs'
 import { identityPool } from './devex-selection-fixture.mjs'
@@ -17,10 +17,19 @@ function config() {
     workloads: { jobs: [{ name: 'import', identity_pool: 'users', job: { kind: 'import' } }] },
     import_samples: { template_sha256: 'a'.repeat(64), model_sha256: hash(importSampleModel) } },
   bindings: { identity_pools: { users: pool.binding },
-    import_samples: { template: path.resolve('template.xlsx'), python: path.resolve('python') } } }
+    import_samples: { template: path.resolve('template.xlsx') } } }
 }
 
-async function produced(_executable, request) {
+test('性能样本通过Cargo隐藏入口且不拼接shell', () => {
+  const invocation = importSampleInvocation('cargo-fixture')
+  assert.equal(invocation.cargo, 'cargo-fixture')
+  assert.deepEqual(invocation.arguments, [
+    'run', '--quiet', '--locked', '-p', 'xtask', '--', '__import-samples', 'performance',
+  ])
+  assert.ok(path.isAbsolute(invocation.cwd))
+})
+
+async function produced(request) {
   await mkdir(request.directory)
   const files = []
   for (let worker = 0; worker < request.concurrency; worker++) {
@@ -66,7 +75,7 @@ test('manifest拒绝跨目录文件、重复样本和伪造当前namespace', asy
   t.after(() => rm(root, { recursive: true, force: true }))
   const request = { ...importSpecification(config()), directory: path.join(root, 'files'),
     namespace: 'b'.repeat(20), concurrency: 2, cycles: 2 }
-  const manifest = await produced('unused', request)
+  const manifest = await produced(request)
   await assert.rejects(sampleReader(request.directory, { ...manifest, namespace: 'c'.repeat(20) }, request), /不一致/)
   const escaped = structuredClone(manifest)
   escaped.files[0].filename = '../outside.xlsx'
@@ -103,6 +112,17 @@ test('准备失败保存收据，不生成批量环境变量或进入业务测�
   assert.equal(receipt.success, false)
   assert.equal(receipt.failure, 'import_sample_preparation_failed')
   assert.throws(() => importSpecification({ contract: {}, bindings: {} }), /固定全有效模型/)
+  const valid = config()
+  for (const change of [
+    (value) => { value.bindings.import_samples = {} },
+    (value) => { value.bindings.import_samples.python = path.resolve('python') },
+    (value) => { value.bindings.import_samples.template = 'relative.xlsx' },
+    (value) => { value.contract.import_samples.model_sha256 = 'b'.repeat(64) },
+  ]) {
+    const value = structuredClone(valid)
+    change(value)
+    assert.throws(() => importSpecification(value), /当前模板/)
+  }
 })
 
 test('准备和catalog在资源观察/HTTP计时前完成，attempt收据在资源观察结束后完成', async (t) => {

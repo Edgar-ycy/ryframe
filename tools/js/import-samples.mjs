@@ -4,31 +4,41 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hash } from './config.mjs'
-import { pythonInvocation } from './python_process.mjs'
 
 export const importSampleModel = Object.freeze({ version: 1, rows_per_file: 1,
   username: 'dv{namespace}{worker:02x}{cycle:04x}', nickname: '性能导入',
   email: '{username}@example.test', phone: '', department: 'current_template_sheet2_A2' })
 const digest = (content) => createHash('sha256').update(content).digest('hex')
-const producer = fileURLToPath(new URL('../python/user_import_fixture.py', import.meta.url))
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 export function importSpecification(config) {
   const contract = config.contract.import_samples
   const binding = config.bindings.import_samples
   if (!contract || Object.keys(contract).sort().join() !== 'model_sha256,template_sha256' ||
-      contract.model_sha256 !== hash(importSampleModel) || !/^[a-f0-9]{64}$/.test(contract.template_sha256) ||
-      !binding || Object.keys(binding).sort().join() !== 'python,template' ||
-      !path.isAbsolute(binding.python) || !path.isAbsolute(binding.template)) {
-    throw new Error('导入性能样本必须显式绑定当前模板、固定全有效模型和 Python')
+      typeof contract.model_sha256 !== 'string' || contract.model_sha256 !== hash(importSampleModel) ||
+      typeof contract.template_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(contract.template_sha256) ||
+      !binding || Object.keys(binding).join() !== 'template' || typeof binding.template !== 'string' ||
+      !path.isAbsolute(binding.template)) {
+    throw new Error('导入性能样本必须显式绑定当前模板和固定全有效模型')
   }
   return { ...binding, ...contract }
 }
 
-function python(executable, request) {
+export function importSampleInvocation(cargo = process.env.CARGO || 'cargo') {
+  return Object.freeze({
+    cargo,
+    arguments: Object.freeze([
+      'run', '--quiet', '--locked', '-p', 'xtask', '--', '__import-samples', 'performance',
+    ]),
+    cwd: root,
+  })
+}
+
+function rust(request) {
   return new Promise((resolve, reject) => {
-    const invocation = pythonInvocation({ script: producer, arguments: ['performance'] })
-    const child = spawn(executable, invocation.argv, {
-      env: invocation.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
+    const invocation = importSampleInvocation()
+    const child = spawn(invocation.cargo, invocation.arguments, {
+      cwd: invocation.cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     })
     const chunks = []
     let bytes = 0
@@ -88,7 +98,7 @@ export async function sampleReader(directory, manifest, expected) {
   }
 }
 
-export async function prepareImportSamples(config, suite, concurrency, artifacts, run = python) {
+export async function prepareImportSamples(config, suite, concurrency, artifacts, run = rust) {
   if (!config.contract.workloads?.[suite]?.some((workflow) => workflow.job?.kind === 'import')) return undefined
   const specification = importSpecification(config)
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 100 ||
@@ -99,20 +109,19 @@ export async function prepareImportSamples(config, suite, concurrency, artifacts
   await mkdir(artifacts, { recursive: true })
   const namespace = randomBytes(10).toString('hex')
   const directory = path.resolve(artifacts, `import-${namespace}`)
-  const { python: executable, ...input } = specification
-  const request = { ...input, namespace, directory, concurrency, cycles: config.contract.cycles }
+  const request = { ...specification, namespace, directory, concurrency, cycles: config.contract.cycles }
   const started = performance.now()
   let manifest, failure
   try {
-    manifest = await run(executable, request)
+    manifest = await run(request)
     const reader = await sampleReader(directory, manifest, request)
     for (const file of manifest.files) await reader(file.sample)
     return reader
   } catch (error) { failure = 'import_sample_preparation_failed'; throw error }
   finally {
     await writeFile(path.join(artifacts, 'import-preparation.json'), JSON.stringify({
-      format_version: 1, namespace, directory, template_sha256: input.template_sha256,
-      model_sha256: input.model_sha256, duration_ms: performance.now() - started,
+      format_version: 1, namespace, directory, template_sha256: specification.template_sha256,
+      model_sha256: specification.model_sha256, duration_ms: performance.now() - started,
       success: !failure, failure, manifest,
     }, null, 2) + '\n', { flag: 'wx' })
   }

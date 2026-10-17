@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 用户导入的性能、浏览器和身份模板夹具迁至 Rust xtask。性能入口保留原标准输入清单协议，浏览器入口生成三行受控样本，模板入口返回部门路径与摘要；ZIP/XML 实现统一限制模板 16 MiB、输出 10 MiB 和 3 MiB 未压缩大文件样本，拒绝路径穿越、重复、加密、符号链接及超额成员，保留其他成员原字节并以临时文件加硬链接创建新输出。Node 与身份环境不再启动 Python，`bindings.import_samples` 只要求绝对模板路径，删除被替代的 Python 实现与测试。
+
 - 发布来源、精确源码 CI、GitHub job/artifact、远端 tag 与全栈来源组合校验迁移到 Rust xtask，保留固定私有收据字段、总等待截止时间、失败收据、路径及摘要绑定和 `--plan` 只读语义；Release 与 Extended CI 不再安装或调用发布核验 Python。
 
 - Python 环境门禁迁至 Rust xtask。Rust 严格解析 `scripts/requirements-ci.txt`，通过一次固定 stdin/UTF-8 协议核验解释器身份、最低 Python 3.11 与固定发行版版本，再调用 `tools/python/rust_function_size.py --native-probe` 执行 64 轮 AST 探针；保留缺失解释器、版本或依赖不匹配、探针非零/无输出/超时和 Windows 原生崩溃诊断，`RYFRAME_PYTHON`、统一进程层 UTF-8 清理及 `--plan` 不启动 Python 的行为保持一致。删除被替代的 Python 环境检查脚本与测试，恢复监控和租户数据证明改用保留的 AST 探针入口。

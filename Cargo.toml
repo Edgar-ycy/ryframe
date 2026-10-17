@@ -78,6 +78,7 @@ dashmap = "6"
 zip = { version = "8.6", default-features = false, features = [
     "deflate-flate2-zlib-rs",
 ] }
+quick-xml = "0.41.0"
 prometheus = { version = "0.14", default-features = false }
 lazy_static = "1"
 futures-util = "0.3"

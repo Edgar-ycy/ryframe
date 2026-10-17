@@ -1,17 +1,53 @@
 """身份准备工具只使用离线模型和本测试进程内的假后端。"""
 import copy
+import hashlib
 import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from devex_identity_environment import quota_sql, validate_quota, validate_target_bindings
+from devex_identity_environment import quota_sql, template, validate_quota, validate_target_bindings
 from workspace_directory import WorkspaceDirectory
 
 
 class IdentityPreparationTests(unittest.TestCase):
+    def test_template_uses_only_the_hidden_xtask_json_protocol(self):
+        path = str((Path.cwd() / "template.xlsx").resolve())
+        sha256 = "a" * 64
+        department = "总公司/研发部"
+        receipt = {"template_sha256": sha256, "department_path": department,
+                   "department_sha256": hashlib.sha256(department.encode()).hexdigest()}
+        calls = []
+
+        def runner(arguments, **options):
+            calls.append((arguments, options))
+            return SimpleNamespace(returncode=0, stdout=json.dumps(
+                {"ok": True, "receipt": receipt}, ensure_ascii=False).encode())
+
+        self.assertEqual(template(path, sha256, runner), receipt)
+        arguments, options = calls[0]
+        self.assertEqual(arguments[:10], [
+            "cargo", "run", "--quiet", "--locked", "-p", "xtask", "--",
+            "__import-samples", "template", "--template"])
+        self.assertNotIn("shell", options)
+        self.assertEqual(options["timeout"], 60)
+        for stdout in [
+            json.dumps({"ok": True, "receipt": {**receipt, "extra": True}}).encode(),
+            json.dumps({"ok": True, "receipt": {**receipt, "department_sha256": "0" * 64}}).encode(),
+            b"not-json",
+        ]:
+            with self.subTest(stdout=stdout), self.assertRaises(ValueError):
+                template(path, sha256, lambda *_args, **_options: SimpleNamespace(
+                    returncode=0, stdout=stdout))
+        with self.assertRaises(ValueError):
+            template(path, sha256, lambda *_args, **_options: SimpleNamespace(
+                returncode=1, stdout=b"{\"ok\":true,\"receipt\":{}}"))
+        with self.assertRaises(ValueError):
+            template("relative.xlsx", sha256)
+
     def test_quota_checks_current_non_deleted_users_and_explicit_limit(self):
         sql = quota_sql("fixture_control", "fixture-1")
         self.assertIn("u.del_flag='0'", sql)

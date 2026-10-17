@@ -5079,6 +5079,7 @@ dependencies = [
  "notify",
  "percent-encoding",
  "processkit",
+ "quick-xml",
  "regex",
  "rustls",
  "ryframe-config",
