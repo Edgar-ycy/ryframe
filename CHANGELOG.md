@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 发布来源、精确源码 CI、GitHub job/artifact、远端 tag 与全栈来源组合校验迁移到 Rust xtask，保留固定私有收据字段、总等待截止时间、失败收据、路径及摘要绑定和 `--plan` 只读语义；Release 与 Extended CI 不再安装或调用发布核验 Python。
+
 - Python 环境门禁迁至 Rust xtask。Rust 严格解析 `scripts/requirements-ci.txt`，通过一次固定 stdin/UTF-8 协议核验解释器身份、最低 Python 3.11 与固定发行版版本，再调用 `tools/python/rust_function_size.py --native-probe` 执行 64 轮 AST 探针；保留缺失解释器、版本或依赖不匹配、探针非零/无输出/超时和 Windows 原生崩溃诊断，`RYFRAME_PYTHON`、统一进程层 UTF-8 清理及 `--plan` 不启动 Python 的行为保持一致。删除被替代的 Python 环境检查脚本与测试，恢复监控和租户数据证明改用保留的 AST 探针入口。
 
 - Linux DevEx cgroup 内存门禁迁至 Rust xtask：保留精确 CI run/attempt、nonce、源码 SHA、非 root uid/gid 与 cgroup 内核身份校验，由独立 Rust 子进程永久降权后启动 Cargo，并以另一 root 阶段在 freeze 后执行精确 `cgroup.kill` 和目录回收；进程登记、失败收据和清理观察改为只创建或追加文件，重新生成用例仍只接受恰好一个指定 ignored 测试通过。Extended CI 移除该 job 的 Python 安装，删除被替代的 Python 门禁与测试。

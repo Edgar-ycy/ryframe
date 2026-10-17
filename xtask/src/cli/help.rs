@@ -5,7 +5,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
         }
         Some("check") => {
             println!(
-                "{CHECK_HELP}\n\n{CHECK_REPLAY_HELP}\n\n{CGROUP_HELP}\n\n{CI_INTEGRATION_HELP}\n\n{SUPPLY_CHAIN_HELP}"
+                "{CHECK_HELP}\n\n{CHECK_REPLAY_HELP}\n\n{CGROUP_HELP}\n\n{CI_INTEGRATION_HELP}\n\n{SUPPLY_CHAIN_HELP}\n\n{RELEASE_HELP}"
             );
             return;
         }
@@ -32,6 +32,8 @@ pub(crate) const CHECK_HELP: &str = "cargo xtask check [--full] [--plan] [--scop
 pub(crate) const CHECK_REPLAY_HELP: &str = "资源门禁回放入口由 Rust xtask 原生执行：\n  cargo xtask check ci resource-gate replay --manifest <文件> --work-dir <.local-tests/resource-gate-replay 内目录> --report <同一目录内新文件> [--activation-gate]\n  manifest 的 targeted/full 命令共用同一计划，report 拒绝覆盖；回放会为两个仓库创建隔离 worktree，复用会话级 target 与专用 sccache，并在退出前停止服务、删除登记目录。\n  --activation-gate 额外要求隔离 MySQL、Redis、TLS 环境和固定任务数，核验 20 个以上案例、至少 10 个成功 targeted 案例、零分歧、缓存健康及 P95 预算。";
 
 const SUPPLY_CHAIN_HELP: &str = "security source 的供应链策略、工作流固定引用、本地 patch 许可证和 Cargo feature 树由 Rust 只读校验，不启动 Python。";
+
+const RELEASE_HELP: &str = "发布核验直接由 Rust xtask 执行，不依赖 Python。";
 
 fn generate_help() -> &'static str {
     "cargo xtask generate resource <资源名> [--check|--write|--explain]\n  cargo xtask generate resource --all <--check|--write>\n  cargo xtask generate api [--write]\n  cargo xtask generate api --commit <SHA> --write\n\n未传 --write 时只预览或核验，不更新文件。--all --write 在一个事务中更新相互关联的资源资产。"

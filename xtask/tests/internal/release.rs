@@ -1,9 +1,9 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 use super::{
     check::TaskExecutor,
     cli::{CheckCommand, Command, ReleaseCiOperation, ReleaseCommand, parse},
-    release::{PROTOCOL_KEYS, ci_invocation, plan, source_invocation},
+    release::plan,
 };
 
 fn workspace_path(name: &str) -> PathBuf {
@@ -70,12 +70,8 @@ fn ci_cli(output: &str) -> Vec<String> {
     ]
 }
 
-fn environment(values: &[(&'static str, String)]) -> BTreeMap<&'static str, String> {
-    values.iter().cloned().collect()
-}
-
 #[test]
-fn source_and_ci_have_one_registered_task_after_python_environment() {
+fn source_and_ci_have_one_rust_release_task() {
     let frontend = workspace_path("frontend");
     let output = workspace_path("evidence/source.json");
     let source = release_command(source_cli(
@@ -91,7 +87,7 @@ fn source_and_ci_have_one_registered_task_after_python_environment() {
             .iter()
             .map(|task| task.executor)
             .collect::<Vec<_>>(),
-        [TaskExecutor::PythonEnvironment, TaskExecutor::ReleaseSource]
+        [TaskExecutor::ReleaseSource]
     );
     assert_eq!(
         plan(&ci)
@@ -100,80 +96,24 @@ fn source_and_ci_have_one_registered_task_after_python_environment() {
             .iter()
             .map(|task| task.executor)
             .collect::<Vec<_>>(),
-        [TaskExecutor::PythonEnvironment, TaskExecutor::ReleaseCi]
+        [TaskExecutor::ReleaseCi]
+    );
+    assert!(
+        plan(&source)
+            .unwrap()
+            .tasks
+            .iter()
+            .all(|task| task.executor != TaskExecutor::PythonEnvironment)
     );
 }
 
 #[test]
-fn source_and_evidence_use_fixed_scripts_and_typed_environment() {
-    let frontend = workspace_path("前端 existing 空格");
-    fs::create_dir_all(&frontend).unwrap();
-    let source_output = workspace_path("证据/source.json");
-    let (source, parsed_frontend) = release_command(source_cli(
-        source_output.to_str().unwrap(),
-        frontend.to_str().unwrap(),
-    ));
-    let ReleaseCommand::Source(source) = source else {
-        panic!("应为来源核验");
-    };
-    let invocation = source_invocation(&source, &parsed_frontend).unwrap();
-    assert_eq!(invocation.script, "tools/python/validate_release.py");
-    let source_environment = environment(&invocation.environment);
-    assert_eq!(source_environment["RYFRAME_RELEASE_PROTOCOL_VERSION"], "1");
-    assert_eq!(source_environment["RYFRAME_RELEASE_MODE"], "source");
-    assert_eq!(
-        source_environment["RYFRAME_RELEASE_FRONTEND_DIR"],
-        frontend.canonicalize().unwrap().to_str().unwrap()
-    );
-    assert_eq!(
-        source_environment["RYFRAME_RELEASE_MANIFEST_PATH"],
-        source_output.to_str().unwrap()
-    );
-    assert!(!source_environment.contains_key("GH_TOKEN"));
-    assert!(!PROTOCOL_KEYS.contains(&"GH_TOKEN"));
-    assert!(!PROTOCOL_KEYS.contains(&"GITHUB_RUN_ID"));
-    assert!(!PROTOCOL_KEYS.contains(&"GITHUB_RUN_ATTEMPT"));
-
-    let ci_output = workspace_path("证据/ci.json");
-    let (ci, _) = release_command(ci_cli(ci_output.to_str().unwrap()));
-    let ReleaseCommand::Ci(ci) = ci else {
-        panic!("应为 CI 核验");
-    };
-    let invocation = ci_invocation(&ci, &frontend).unwrap();
-    assert_eq!(invocation.script, "tools/python/verify_release_ci.py");
-    let ci_environment = environment(&invocation.environment);
-    assert_eq!(ci_environment["RYFRAME_RELEASE_MODE"], "ci-evidence");
-    assert_eq!(
-        ci_environment["RYFRAME_RELEASE_BACKEND_SHA"],
-        "a".repeat(40)
-    );
-    assert_eq!(
-        ci_environment["RYFRAME_RELEASE_FRONTEND_SHA"],
-        "b".repeat(40)
-    );
-    assert_eq!(
-        ci_environment["RYFRAME_RELEASE_OUTPUT_PATH"],
-        ci_output.to_str().unwrap()
-    );
-}
-
-#[test]
-fn source_pair_modes_bind_current_worktrees_through_protocol() {
+fn pair_modes_are_typed_and_never_launch_python() {
     let frontend = workspace_path("frontend pair");
     fs::create_dir_all(&frontend).unwrap();
-    for (operation, mode, path_option, protocol_path) in [
-        (
-            "record-pair",
-            "ci-record-pair",
-            "--output",
-            "RYFRAME_RELEASE_OUTPUT_PATH",
-        ),
-        (
-            "verify-pair",
-            "ci-verify-pair",
-            "--input",
-            "RYFRAME_RELEASE_INPUT_PATH",
-        ),
+    for (operation, path_option, variant) in [
+        ("record-pair", "--output", "record"),
+        ("verify-pair", "--input", "verify"),
     ] {
         let receipt = workspace_path(&format!("pair/{operation}.json"));
         let (command, parsed_frontend) = release_command(vec![
@@ -186,29 +126,29 @@ fn source_pair_modes_bind_current_worktrees_through_protocol() {
             "--frontend-dir".to_owned(),
             frontend.to_string_lossy().into_owned(),
         ]);
+        assert_eq!(parsed_frontend, frontend);
         let ReleaseCommand::Ci(options) = command else {
             panic!("应为 CI 核验");
         };
         assert!(matches!(
-            (&options.operation, operation),
-            (ReleaseCiOperation::RecordPair { .. }, "record-pair")
-                | (ReleaseCiOperation::VerifyPair { .. }, "verify-pair")
+            (&options.operation, variant),
+            (ReleaseCiOperation::RecordPair { .. }, "record")
+                | (ReleaseCiOperation::VerifyPair { .. }, "verify")
         ));
-        let invocation = ci_invocation(&options, &parsed_frontend).unwrap();
-        assert_eq!(invocation.script, "tools/python/verify_release_ci.py");
-        let values = environment(&invocation.environment);
-        assert_eq!(values["RYFRAME_RELEASE_MODE"], mode);
-        assert_eq!(values[protocol_path], receipt.to_str().unwrap());
         assert_eq!(
-            values["RYFRAME_RELEASE_FRONTEND_DIR"],
-            frontend.canonicalize().unwrap().to_str().unwrap()
+            plan(&ReleaseCommand::Ci(options))
+                .unwrap()
+                .tasks
+                .iter()
+                .map(|task| task.executor)
+                .collect::<Vec<_>>(),
+            [TaskExecutor::ReleaseCi]
         );
-        assert!(values.contains_key("RYFRAME_RELEASE_BACKEND_DIR"));
     }
 }
 
 #[test]
-fn protocol_rejects_paths_with_line_breaks_before_execution() {
+fn protocol_paths_reject_line_breaks_before_execution() {
     let frontend = workspace_path("frontend newline");
     let output = workspace_path("evidence/bad\nreceipt.json");
     let command = release_command(source_cli(
@@ -218,4 +158,19 @@ fn protocol_rejects_paths_with_line_breaks_before_execution() {
     .0;
     let error = plan(&command).unwrap_err().to_string();
     assert!(error.contains("换行符"));
+}
+
+#[test]
+fn plan_is_read_only_and_does_not_require_frontend_or_python() {
+    let output = workspace_path("evidence/missing/source.json");
+    let frontend = workspace_path("frontend missing");
+    let command = release_command(source_cli(
+        output.to_str().unwrap(),
+        frontend.to_str().unwrap(),
+    ))
+    .0;
+    assert!(!output.parent().unwrap().exists());
+    let planned = plan(&command).unwrap();
+    assert_eq!(planned.tasks.len(), 1);
+    assert!(!output.parent().unwrap().exists());
 }

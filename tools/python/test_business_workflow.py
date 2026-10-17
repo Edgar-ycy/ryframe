@@ -1,13 +1,10 @@
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from verify_release_ci import requirements
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -17,14 +14,6 @@ class BusinessWorkflowTests(unittest.TestCase):
         self.job = workflow["jobs"]["full-stack-e2e"]
         self.matrix = self.job["strategy"]["matrix"]["include"]
         self.steps = {step["name"]: step for step in self.job["steps"]}
-
-    def test_release_requires_every_full_stack_fixture_job(self):
-        args = SimpleNamespace(backend_repository="owner/backend", frontend_repository="owner/frontend",
-                               backend_sha="a" * 40, frontend_sha="b" * 40, tag="v0.13.0")
-        required = requirements(args)[1]
-        self.assertEqual({entry["fixture"] for entry in self.matrix}, {"core", "business"})
-        self.assertEqual(set(required.jobs), {entry["name"] for entry in self.matrix} | {"Linux DevEx Cgroup Memory"})
-        self.assertFalse(self.job["strategy"]["fail-fast"])
 
     def test_fixture_generation_is_between_source_receipt_and_service_preparation(self):
         names = list(self.steps)

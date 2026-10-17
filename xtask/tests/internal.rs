@@ -164,8 +164,18 @@ mod python_environment_tests;
 mod recovery_cli_tests;
 #[path = "internal/recovery.rs"]
 mod recovery_tests;
+#[path = "internal/release_archive.rs"]
+mod release_archive_tests;
+#[path = "internal/release_ci.rs"]
+mod release_ci_tests;
+#[path = "internal/release_evidence.rs"]
+mod release_evidence_tests;
+#[path = "internal/release_source.rs"]
+mod release_source_tests;
 #[path = "internal/release.rs"]
 mod release_tests;
+#[path = "internal/release_workflow.rs"]
+mod release_workflow_tests;
 #[path = "internal/resource_gate_cargo_surface.rs"]
 mod resource_gate_cargo_surface_tests;
 #[path = "internal/resource_gate_replay_fixtures.rs"]

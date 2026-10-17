@@ -631,8 +631,8 @@ fn release_plan_uses_registered_tasks_without_spawning_or_writing() {
     assert!(result.stderr.is_empty());
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(stdout.contains("发布核验计划：source"), "{stdout}");
-    assert!(stdout.contains("任务 python.environment"), "{stdout}");
     assert!(stdout.contains("任务 release.source"), "{stdout}");
+    assert!(!stdout.contains("python.environment"), "{stdout}");
     assert!(!output.parent().unwrap().exists());
     assert!(!missing_frontend.exists());
 }

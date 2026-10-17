@@ -5074,6 +5074,7 @@ name = "xtask"
 version = "0.13.1"
 dependencies = [
  "chrono",
+ "hex",
  "nix 0.29.0",
  "notify",
  "percent-encoding",
@@ -5090,6 +5091,7 @@ dependencies = [
  "toml",
  "uuid",
  "winsafe",
+ "zip",
 ]
 
 [[package]]

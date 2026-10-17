@@ -74,6 +74,7 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(output.contains("check release source --tag <tag>"));
     assert!(output.contains("check release ci --backend-repository <owner/repo>"));
     assert!(output.contains("check release ci record-pair --output <绝对文件>"));
+    assert!(output.contains("发布核验直接由 Rust xtask 执行，不依赖 Python"));
     assert!(output.contains("check perf cgroup <run|cleanup>"));
     assert!(output.contains("check recovery full-stack <prepare|rate-limit|start|collect>"));
     assert!(output.contains("check language [--min-rust-percent <0..100>]"));
