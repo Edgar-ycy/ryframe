@@ -151,9 +151,7 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 [workspace]
 frontend_dir = "../web"
 ```
-
 优先级为命令行 `--frontend-dir`、本机工具配置、公共工具配置；相对路径统一以后端 Cargo Workspace 根目录解析，与命令在哪个子目录运行无关。工具配置不放服务连接密码，也不影响 `cargo serve` 的运行时配置。后端范围只检查后端，显式跨仓范围找不到前端时会输出实际路径与配置位置。
-
 语言与文件构成使用 `cargo xtask check language`，默认只向终端报告完整后端非 ignored 文件的原始字节；已跟踪但符合 ignore 的文件也排除。自维护代码包含手写、测试、生成物及源代码模板，vendor 单列，文档、配置、资源与全量文件体积另列；固定分类以 [language-policy.toml](../architecture/language-policy.toml) 为准。显式 `--min-rust-percent 80` 用精确整数运算校验阈值，未达或分母为空时失败，不隐式加入日常门禁；百分比允许 0 到 100、最多六位小数。`--output .local-tests/language/current.json --write` 在已存在的忽略目录创建未跟踪的新 JSON 报告，不覆盖或创建父目录；报告含口径摘要、HEAD 和逐文件字节及摘要，同时请求阈值时先保存结论再返回失败。`--plan` 只输出同一任务图，不启动 Git、不落盘。54.4% 缺少原始复现证据，只保留为旧参考，不计算增减趋势。
 
 ## 常见问题
