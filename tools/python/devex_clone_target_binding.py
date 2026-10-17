@@ -18,7 +18,7 @@ from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file, require_closed_port, verify_api_address
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
-from full_stack_rate_limit_config import load_app_table
+from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, identifier, plan_hash
 from restore_source_binding import defaults_connection, source_binding

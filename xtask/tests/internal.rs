@@ -24,6 +24,8 @@ mod local_test_path;
 mod migration;
 #[path = "../src/process.rs"]
 mod process;
+#[path = "../src/rate_limit.rs"]
+mod rate_limit;
 #[path = "../src/recovery.rs"]
 mod recovery;
 #[path = "../src/release.rs"]
@@ -168,6 +170,10 @@ mod performance_identities_tests;
 mod process_tests;
 #[path = "internal/python_environment.rs"]
 mod python_environment_tests;
+#[path = "internal/rate_limit_protocol.rs"]
+mod rate_limit_protocol_tests;
+#[path = "internal/rate_limit.rs"]
+mod rate_limit_tests;
 #[path = "internal/recovery_cli.rs"]
 mod recovery_cli_tests;
 #[path = "internal/recovery.rs"]

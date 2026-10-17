@@ -17,6 +17,7 @@ mod doctor;
 mod local_test_path;
 mod migration;
 mod process;
+mod rate_limit;
 mod recovery;
 mod release;
 mod resource;
@@ -31,6 +32,9 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    if let Some(code) = rate_limit::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = devex::import_samples::run_hidden_if_requested() {
         std::process::exit(code);
     }

@@ -17,7 +17,7 @@ from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import verify_runtime
-from full_stack_rate_limit_config import load_app_table
+from rate_limit_client import load_app_table
 from process_sockets import endpoint, verify_windows_port_idle
 from restore_build import file_digest, verify_build_artifacts
 from restore_reference_plan import identifier, plan_hash

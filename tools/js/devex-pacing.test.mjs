@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { hash } from './config.mjs'
-import { createPacing } from './pacing.mjs'
+import { createPacing, rateLimitEnvironment, rateLimitInvocation } from './pacing.mjs'
 import { fixedPacer, validatePacingAuthority } from './pacing-model.mjs'
 import { Session } from './request.mjs'
 import { load } from './load.mjs'
@@ -50,6 +50,21 @@ function virtualClock() {
   let current = 0
   return { now: () => current, sleep: async (milliseconds) => { current += milliseconds } }
 }
+
+test('限流authority通过Cargo隐藏入口且不继承应用或编码环境', () => {
+  const invocation = rateLimitInvocation('cargo-fixture')
+  assert.equal(invocation.cargo, 'cargo-fixture')
+  assert.deepEqual(invocation.arguments, [
+    'run', '--quiet', '--locked', '-p', 'xtask', '--', '__rate-limit', 'authority',
+  ])
+  assert.ok(path.isAbsolute(invocation.cwd))
+  const environment = rateLimitEnvironment({
+    PATH: '/fixture/bin', CARGO_HOME: '/fixture/cargo', PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'cp936', APP_DATABASE_PASSWORD: 'secret',
+  })
+  assert.deepEqual(environment, { PATH: '/fixture/bin', CARGO_HOME: '/fixture/cargo' })
+  assert.equal(JSON.stringify(environment).includes('secret'), false)
+})
 
 test('节奏按真实全局、用户、CSRF、登录及其他接口规则校验，示例不是固定门槛', () => {
   assert.doesNotThrow(() => validatePacingAuthority(pacing(), authority, catalog))

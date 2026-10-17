@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlsplit
 
-from full_stack_rate_limit_config import load_app_table
+from rate_limit_client import load_app_table
 
 
 class BindingError(ValueError):

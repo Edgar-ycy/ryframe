@@ -1,25 +1,73 @@
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { promisify } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { hash } from './config.mjs'
 import { operationCatalog } from './request.mjs'
 import { fixedPacer, validatePacingAuthority } from './pacing-model.mjs'
-import { pythonInvocation } from './python_process.mjs'
 
-const authorityScript = fileURLToPath(new URL('../python/full_stack_rate_limit_config.py', import.meta.url))
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const encodingEnvironmentNames = new Set(['PYTHONUTF8', 'PYTHONIOENCODING'])
 
-async function readAuthority(python, backend) {
-  try {
-    const invocation = pythonInvocation({ script: authorityScript, arguments: ['--authority'] })
-    const result = await promisify(execFile)(python, invocation.argv, {
-      cwd: backend, env: invocation.env, windowsHide: true, timeout: 10000,
-      maxBuffer: 64 * 1024, encoding: 'utf8',
+export function rateLimitInvocation(cargo = process.env.CARGO || 'cargo') {
+  return Object.freeze({
+    cargo,
+    arguments: Object.freeze([
+      'run', '--quiet', '--locked', '-p', 'xtask', '--', '__rate-limit', 'authority',
+    ]),
+    cwd: root,
+  })
+}
+
+export function rateLimitEnvironment(environment = process.env) {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => {
+    const upper = name.toUpperCase()
+    return !encodingEnvironmentNames.has(upper) && !upper.startsWith('APP_')
+  }))
+}
+
+function requestEnvironment(environment = process.env) {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([, value]) => typeof value === 'string'),
+  )
+}
+
+function readAuthority(backend) {
+  return new Promise((resolve, reject) => {
+    const invocation = rateLimitInvocation()
+    const child = spawn(invocation.cargo, invocation.arguments, {
+      cwd: invocation.cwd, env: rateLimitEnvironment(), windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     })
-    return JSON.parse(result.stdout)
-  } catch { throw new Error('无法从实际 APP 配置取得限流 authority') }
+    const chunks = []
+    let bytes = 0
+    let failure
+    const fail = () => {
+      failure = '无法从实际 APP 配置取得限流 authority'
+      reject(new Error(failure))
+    }
+    const timer = setTimeout(() => { fail(); child.kill() }, 10000)
+    child.on('error', () => { clearTimeout(timer); fail() })
+    child.stdout.on('data', (chunk) => {
+      bytes += chunk.length
+      if (bytes > 64 * 1024) { clearTimeout(timer); fail(); child.kill() }
+      else chunks.push(chunk)
+    })
+    child.stdin.on('error', () => {
+      if (!failure) { clearTimeout(timer); fail(); child.kill() }
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (failure || code !== 0) { if (!failure) fail(); return }
+      try {
+        const result = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if (!result || Object.keys(result).sort().join() !== 'ok,result' || result.ok !== true ||
+            !result.result || typeof result.result !== 'object' || Array.isArray(result.result)) throw new Error()
+        resolve(result.result)
+      } catch { fail() }
+    })
+    child.stdin.end(JSON.stringify({ backend: path.resolve(backend), environment: requestEnvironment() }))
+  })
 }
 
 export async function createPacing(config, { backend, runner_frontend, artifacts }, dependencies = {}) {
@@ -34,7 +82,7 @@ export async function createPacing(config, { backend, runner_frontend, artifacts
     if (!binding || Object.keys(binding).sort().join() !== 'login_budget_state,python' ||
         !path.isAbsolute(binding.python) || !path.isAbsolute(binding.login_budget_state))
       throw new Error('固定节奏必须显式绑定 Python 和共享登录预算账本')
-    authority = await (dependencies.readAuthority ?? readAuthority)(binding.python, backend)
+    authority = await (dependencies.readAuthority ?? readAuthority)(backend)
     catalog = dependencies.catalog ?? await operationCatalog(backend)
     validatePacingAuthority(pacing, authority, catalog)
     if (hash(authority) !== pacing.authority_sha256) throw new Error('限流 authority 与固定负载摘要不一致')

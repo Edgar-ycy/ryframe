@@ -12,7 +12,7 @@ import sys
 from full_stack_migration_mysql import MysqlSession, identifier, ownership
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import verify_runtime
-from full_stack_rate_limit_config import load_app_table
+from rate_limit_client import load_app_table
 from process_sockets import verify_listener
 
 ROOT = Path(__file__).resolve().parents[2]

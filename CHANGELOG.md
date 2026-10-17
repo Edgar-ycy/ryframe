@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 全栈、身份环境和业务浏览器夹具的限流配置读取迁至 Rust xtask。原生实现统一完成 `app.toml` 与环境文件的递归表合并、限流布尔值、正整数和窗口上限校验、登录接口预算及 authority 生成，并通过不进入公开帮助的 `__rate-limit` 标准输入 JSON 协议输出结果；Node `pacing.mjs` 与单一 Python 薄客户端不再启动旧配置脚本，删除被替代的 Python 实现与测试，同步保留错误脱敏、路径边界、输出限额和现有 authority 字段。
+
 - `cargo xtask check recovery clone plan|verify` 的离线纯模型和证据校验迁至 Rust xtask：保留严格 JSON 字段集合与重复键拒绝、16 MiB 上限、schema/业务目录与 SQL 转储解析、对象五桶和安全元数据、租户 placement/fence/slot、任务与调度关系、确定性计划哈希、create-new 输出及写后复核；原生入口不启动 Python、不访问数据库或网络，其他 clone 资源阶段继续使用现有私有协议。同步补齐数据范围投影表的租户基线白名单，并增加 Windows 长路径、链接、输入漂移和策略漂移回归。
 
 - 用户导入的性能、浏览器和身份模板夹具迁至 Rust xtask。性能入口保留原标准输入清单协议，浏览器入口生成三行受控样本，模板入口返回部门路径与摘要；ZIP/XML 实现统一限制模板 16 MiB、输出 10 MiB 和 3 MiB 未压缩大文件样本，拒绝路径穿越、重复、加密、符号链接及超额成员，保留其他成员原字节并以临时文件加硬链接创建新输出。Node 与身份环境不再启动 Python，`bindings.import_samples` 只要求绝对模板路径，删除被替代的 Python 实现与测试。

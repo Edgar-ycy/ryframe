@@ -23,7 +23,7 @@ from full_stack_process_tree import (
     read_process_tree,
     terminate_owned_process_tree,
 )
-from full_stack_rate_limit_config import login_budget_environment
+from rate_limit_client import login_budget_environment
 from full_stack_runtime import register_runtime
 from full_stack_worker import control as control_worker
 from full_stack_worker import ensure_port_free, wait_for_port_free

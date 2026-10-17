@@ -15,7 +15,7 @@ from devex_clone_capture import read_json
 from process_environment import configured
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import require_closed_port
-from full_stack_rate_limit_config import rate_limit_settings
+from rate_limit_client import rate_limit_settings
 from reference_fixture_browser_evidence import (
     ArtifactManifestSnapshot,
     artifact_manifest_snapshot,
