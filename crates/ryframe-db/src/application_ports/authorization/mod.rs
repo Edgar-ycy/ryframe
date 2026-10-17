@@ -1,3 +1,4 @@
+mod data_scope;
 mod diagnostic;
 mod mirror;
 

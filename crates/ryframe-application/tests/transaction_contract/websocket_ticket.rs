@@ -32,6 +32,7 @@ async fn issued_ticket_can_only_be_consumed_once() {
     let mut principal = RequestPrincipal {
         password_change_required: false,
         user_authorization_version: 4,
+        data_scope_version: 1,
         actor: ActorContext {
             user_id: 42,
             tenant_id: "tenant-a".into(),
@@ -41,6 +42,7 @@ async fn issued_ticket_can_only_be_consumed_once() {
             data_scope: DataScope::SelfOnly,
             custom_dept_ids: Vec::new(),
             include_self: true,
+            data_scope_version: 1,
             is_super_admin: false,
         },
         tenant_authorization_epoch: 0,

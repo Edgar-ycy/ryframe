@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod authorization;
 pub mod backup;
+pub mod data_scope;
 pub mod export;
 pub mod files;
 pub mod health;

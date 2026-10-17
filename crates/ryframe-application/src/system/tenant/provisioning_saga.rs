@@ -178,6 +178,9 @@ impl TenantService {
         let record = build_provision_tenant_record(params, quota, pending, resources)?;
         provision_new_tenant_in_transaction(transaction, &record).await?;
         transaction
+            .record_data_scope_change(&params.tenant_id)
+            .await?;
+        transaction
             .assign_initial_product(&params.tenant_id, params.plan_version_id, actor.user_id)
             .await?;
         transaction.create_pending(pending).await
@@ -262,6 +265,9 @@ impl TenantService {
                 .update_status(&params.tenant_id, TENANT_STATUS_PROVISIONING)
                 .await?;
         }
+        transaction
+            .record_data_scope_change(&params.tenant_id)
+            .await?;
         Ok(false)
     }
 

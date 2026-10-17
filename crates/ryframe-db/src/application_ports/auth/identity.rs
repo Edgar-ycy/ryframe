@@ -34,6 +34,7 @@ impl IdentityAuthorizationReadPort for DatabaseIdentityAuthorization {
                 max_requests_per_min: tenant.max_requests_per_min,
                 session_version: tenant.session_version,
                 authorization_epoch: tenant.authorization_epoch,
+                data_scope_version: tenant.data_scope_version,
             }))
     }
 

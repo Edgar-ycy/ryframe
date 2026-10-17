@@ -63,6 +63,8 @@ pub struct DataScopeContext {
     pub custom_dept_ids: Vec<i64>,
     /// 多角色合并后是否还需要包含“仅本人”范围。
     pub include_self: bool,
+    /// 已认证主体对应的租户数据范围投影版本。
+    pub data_scope_version: i64,
 }
 
 impl DataScopeContext {
@@ -75,6 +77,7 @@ impl DataScopeContext {
             ancestors: None,
             custom_dept_ids: vec![],
             include_self: false,
+            data_scope_version: 1,
         }
     }
 
@@ -139,6 +142,7 @@ impl DataScopeContext {
                 ancestors: None,
                 custom_dept_ids: vec![],
                 include_self: true,
+                data_scope_version: 1,
             };
         }
 
@@ -168,6 +172,11 @@ impl DataScopeContext {
         custom_dept_ids.dedup();
 
         let include_self = scopes.iter().any(|item| item.scope == DataScope::SelfOnly);
+        let data_scope_version = scopes
+            .iter()
+            .map(|scope| scope.data_scope_version)
+            .max()
+            .unwrap_or(1);
         Self {
             scope: if custom_dept_ids.is_empty() {
                 DataScope::SelfOnly
@@ -179,6 +188,7 @@ impl DataScopeContext {
             ancestors,
             custom_dept_ids,
             include_self,
+            data_scope_version,
         }
     }
 }

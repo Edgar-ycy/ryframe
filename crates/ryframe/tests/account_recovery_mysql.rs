@@ -507,6 +507,7 @@ fn administrator() -> ActorContext {
         data_scope: DataScope::All,
         custom_dept_ids: vec![],
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: true,
     }
 }

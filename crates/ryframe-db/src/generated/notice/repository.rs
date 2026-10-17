@@ -54,23 +54,29 @@ impl NoticePersistencePort for DatabaseNoticePersistence {
             .database
             .select_read(crate::ReadConsistency::Strong)
             .connection;
-        Ok({
-            let mut select = entity::Entity::find_by_id(id)
-                .filter(entity::Column::TenantId.eq(tenant_id))
-                .filter(entity::Column::DelFlag.eq(String::from("0")));
-            if let Some(condition) = crate::data_scope::owner_id_condition(
-                entity::Column::CreatedBy,
-                tenant_id,
-                data_scope,
-            ) {
-                select = select.filter(condition);
+
+        let result = async {
+            Ok({
+                let mut select = entity::Entity::find_by_id(id)
+                    .filter(entity::Column::TenantId.eq(tenant_id))
+                    .filter(entity::Column::DelFlag.eq(String::from("0")));
+                if let Some(condition) = crate::data_scope::owner_id_condition(
+                    entity::Column::CreatedBy,
+                    tenant_id,
+                    data_scope,
+                ) {
+                    select = select.filter(condition);
+                }
+                select
             }
-            select
+            .one(&database)
+            .await
+            .db()?
+            .map(to_record))
         }
-        .one(&database)
-        .await
-        .db()?
-        .map(to_record))
+        .await;
+
+        result
     }
 
     async fn find_by_page(
@@ -83,34 +89,40 @@ impl NoticePersistencePort for DatabaseNoticePersistence {
             .database
             .select_read(crate::ReadConsistency::Strong)
             .connection;
-        let mut select = entity::Entity::find();
-        select = select.filter(entity::Column::TenantId.eq(tenant_id));
-        select = select.filter(entity::Column::DelFlag.eq(String::from("0")));
-        if let Some(condition) = crate::data_scope::owner_id_condition(
-            entity::Column::CreatedBy,
-            tenant_id,
-            filter.data_scope,
-        ) {
-            select = select.filter(condition);
+
+        let result = async {
+            let mut select = entity::Entity::find();
+            select = select.filter(entity::Column::TenantId.eq(tenant_id));
+            select = select.filter(entity::Column::DelFlag.eq(String::from("0")));
+            if let Some(condition) = crate::data_scope::owner_id_condition(
+                entity::Column::CreatedBy,
+                tenant_id,
+                filter.data_scope,
+            ) {
+                select = select.filter(condition);
+            }
+            if let Some(value) = filter.title.filter(|value| !value.is_empty()) {
+                select = select.filter(entity::Column::Title.contains(value));
+            }
+            if let Some(value) = filter.notice_type.filter(|value| !value.is_empty()) {
+                select = select.filter(entity::Column::NoticeType.eq(value));
+            }
+            if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
+                select = select.filter(entity::Column::Status.eq(value));
+            }
+            select = select
+                .order_by_desc(entity::Column::CreatedAt)
+                .order_by_desc(entity::Column::Id);
+            let result = crate::pagination::paginate(&database, select, &page).await?;
+            Ok(PageResult::new(
+                result.records.into_iter().map(to_record).collect(),
+                result.total,
+                &page,
+            ))
         }
-        if let Some(value) = filter.title.filter(|value| !value.is_empty()) {
-            select = select.filter(entity::Column::Title.contains(value));
-        }
-        if let Some(value) = filter.notice_type.filter(|value| !value.is_empty()) {
-            select = select.filter(entity::Column::NoticeType.eq(value));
-        }
-        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(entity::Column::Status.eq(value));
-        }
-        select = select
-            .order_by_desc(entity::Column::CreatedAt)
-            .order_by_desc(entity::Column::Id);
-        let result = crate::pagination::paginate(&database, select, &page).await?;
-        Ok(PageResult::new(
-            result.records.into_iter().map(to_record).collect(),
-            result.total,
-            &page,
-        ))
+        .await;
+
+        result
     }
 
     async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn NoticeTransaction>> {
@@ -131,6 +143,7 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
         data_scope: &ryframe_kernel::DataScopeContext,
     ) -> AppResult<Option<NoticeRecord>> {
         self.ensure_tenant(tenant_id)?;
+
         Ok({
             let mut select = entity::Entity::find_by_id(id)
                 .filter(entity::Column::TenantId.eq(tenant_id))

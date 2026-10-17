@@ -681,6 +681,7 @@ fn data_scope(scope: DataScope, user_id: i64, dept_id: Option<i64>) -> DataScope
         ancestors: None,
         custom_dept_ids: Vec::new(),
         include_self: false,
+        data_scope_version: 1,
     }
 }
 

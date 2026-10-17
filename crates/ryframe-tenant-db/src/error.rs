@@ -46,4 +46,12 @@ pub enum TenantDataError {
     },
     #[error("dedicated 目标 {target_key} 已存在其他 active 租户")]
     DedicatedTargetOccupied { target_key: String },
+    #[error(
+        "租户 {tenant_id} 的数据范围投影不可用或版本不匹配: expected={expected}, actual={actual:?}"
+    )]
+    DataScopeProjectionStale {
+        tenant_id: String,
+        expected: i64,
+        actual: Option<i64>,
+    },
 }

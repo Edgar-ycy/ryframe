@@ -15,6 +15,8 @@ pub struct ActorContext {
     pub data_scope: DataScope,
     pub custom_dept_ids: Vec<i64>,
     pub include_self: bool,
+    /// 本次认证看到的租户数据范围投影版本；查询必须与目标投影精确一致。
+    pub data_scope_version: i64,
     pub is_super_admin: bool,
 }
 
@@ -28,6 +30,7 @@ impl ActorContext {
             ancestors: self.dept_path.clone(),
             custom_dept_ids: self.custom_dept_ids.clone(),
             include_self: self.include_self,
+            data_scope_version: self.data_scope_version,
         }
     }
 }

@@ -141,6 +141,7 @@ impl AuthorizationResolver {
                 ancestors: ancestors.clone(),
                 custom_dept_ids: scope_dept_ids,
                 include_self: false,
+                data_scope_version: 1,
             });
         }
 
@@ -152,6 +153,7 @@ impl AuthorizationResolver {
                 ancestors,
                 custom_dept_ids: Vec::new(),
                 include_self: true,
+                data_scope_version: 1,
             });
         }
         Ok(DataScopeContext::merge(scopes))

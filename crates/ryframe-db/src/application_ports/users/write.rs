@@ -12,6 +12,7 @@ use sea_orm::{
     TransactionTrait, sea_query::LockType,
 };
 
+use ryframe_application::DataScopeMutationTransaction;
 use ryframe_application::ports::users::{
     ManageableUserState, NewUserRecord, USER_STATUS_NORMAL, UpdateUserRecord, UserAssignmentRole,
     UserAssignmentState, UserWritePersistencePort, UserWriteRecord, UserWriteTransaction,
@@ -284,6 +285,13 @@ impl ryframe_application::PersistenceTransaction for DatabaseUserWriteTransactio
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
         self.transaction.rollback().await.db()
+    }
+}
+
+#[async_trait::async_trait]
+impl DataScopeMutationTransaction for DatabaseUserWriteTransaction {
+    async fn record_data_scope_change(&self, tenant_id: &str) -> ryframe_kernel::AppResult<i64> {
+        self.transaction.record_data_scope_change(tenant_id).await
     }
 }
 

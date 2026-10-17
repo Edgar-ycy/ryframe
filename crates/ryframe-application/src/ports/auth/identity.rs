@@ -9,6 +9,7 @@ pub struct IdentityTenantRecord {
     pub max_requests_per_min: i32,
     pub session_version: i32,
     pub authorization_epoch: i32,
+    pub data_scope_version: i64,
 }
 
 impl IdentityTenantRecord {

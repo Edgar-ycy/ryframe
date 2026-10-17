@@ -54,6 +54,7 @@ struct WorkerStartup {
 
 struct WorkerRuntime {
     database: ControlDatabaseCluster,
+    tenant_data: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
     redis: Option<RedisClient>,
     queue: Arc<JobQueue>,
     schedules: Option<Arc<JobScheduleService>>,
@@ -176,6 +177,7 @@ async fn prepare_runtime(startup: &WorkerStartup) -> Result<WorkerRuntime, AppEr
     let authorization_cache = background.authorization_cache;
     Ok(WorkerRuntime {
         database,
+        tenant_data: Arc::clone(&tenant_data),
         redis,
         queue,
         schedules,
@@ -198,7 +200,13 @@ async fn run_once(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<(),
         &startup.policies.job_worker,
         runtime.execution_tenant_scope,
     )?
-    .with_authorization_cache(runtime.authorization_cache);
+    .with_authorization_cache(runtime.authorization_cache)
+    .with_data_scope_projection(
+        ryframe_tenant_db::application_ports::data_scope_projection::publisher(
+            runtime.database.clone(),
+            (*runtime.tenant_data).clone(),
+        ),
+    );
     let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
     let job_result = runtime.worker.run_once("ryframe-worker-once-job").await?;
     tracing::info!(
@@ -277,6 +285,12 @@ async fn run_continuous(runtime: WorkerRuntime, startup: &WorkerStartup) -> Resu
             runtime.execution_tenant_scope,
         )?
         .with_authorization_cache(runtime.authorization_cache)
+        .with_data_scope_projection(
+            ryframe_tenant_db::application_ports::data_scope_projection::publisher(
+                runtime.database.clone(),
+                (*runtime.tenant_data).clone(),
+            ),
+        )
         .spawn(shutdown_receiver),
     );
     tracing::info!(

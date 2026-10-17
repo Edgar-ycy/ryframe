@@ -19,6 +19,7 @@ fn actor(scope: DataScope) -> ActorContext {
         data_scope: scope,
         custom_dept_ids: vec![90013],
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: false,
     }
 }

@@ -93,6 +93,7 @@ impl TenantConfigTransferService {
             let configuration_version = transaction
                 .increment_configuration_version(tenant_id)
                 .await?;
+            transaction.record_data_scope_change(tenant_id).await?;
             let authorization_epoch = self
                 .authorization_cache
                 .increment_tenant_epoch_in_transaction(

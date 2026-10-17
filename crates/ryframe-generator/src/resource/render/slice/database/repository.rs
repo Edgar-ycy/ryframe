@@ -72,11 +72,25 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         "QueryFilter, "
     };
     let control_transaction_methods = control_transaction_methods(resource);
+    let (data_scope_lock_method, write_scope) = if resource.access.owner_field.is_some()
+        && resource.storage == StorageKind::TenantData
+    {
+        (
+            "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()> {\n        ryframe_db::data_scope::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }\n\n"
+                .to_owned(),
+            "        let build_token = ryframe_db::data_scope::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"
+                .to_owned(),
+        )
+    } else {
+        (String::new(), String::new())
+    };
     format!(
         include_str!("repository.rs.tpl"),
         declaration = persistence.declaration,
         read_connection = persistence.read_connection,
         begin_transaction = persistence.begin_transaction,
+        read_scope_begin = persistence.read_scope_begin,
+        read_scope_finish = persistence.read_scope_finish,
         pagination = pagination,
         generic_conflict = generic_conflict,
         header = header,
@@ -99,6 +113,8 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         filters = filters,
         order = order,
         control_transaction_methods = control_transaction_methods,
+        data_scope_lock_method = data_scope_lock_method,
+        write_scope = write_scope,
         id_query = id_query,
         unique_conflicts = unique_conflicts,
         delete = delete,

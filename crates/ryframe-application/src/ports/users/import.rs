@@ -155,7 +155,11 @@ pub struct UserImportReadFilter<'a> {
 }
 
 #[async_trait::async_trait]
-pub trait UserImportTransaction: crate::PersistenceTransaction + BackgroundJobTransaction {
+pub trait UserImportTransaction:
+    crate::PersistenceTransaction
+    + BackgroundJobTransaction
+    + crate::ports::data_scope::DataScopeMutationTransaction
+{
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;

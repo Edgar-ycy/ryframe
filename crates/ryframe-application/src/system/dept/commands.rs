@@ -156,6 +156,7 @@ impl DeptService {
             transaction
                 .increment_configuration_version(tenant_id)
                 .await?;
+            transaction.record_data_scope_change(tenant_id).await?;
             Ok((value, authorization_epoch))
         }
         .await;

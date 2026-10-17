@@ -35,6 +35,8 @@ const TARGET_SLOT_QUERY: &str = "SELECT tenant_id, placement_generation, switch_
 FROM biz_tenant_target_slot WHERE slot_id = 1 LIMIT 1";
 const TARGET_SLOT_LOCK_QUERY: &str = "SELECT tenant_id, placement_generation, switch_token \
 FROM biz_tenant_target_slot WHERE slot_id = 1 LIMIT 1 FOR UPDATE";
+const DATA_SCOPE_PROJECTION_QUERY: &str = "SELECT source_version, build_token, ready \
+FROM biz_data_scope_projection WHERE tenant_id = ? LIMIT 1 FOR SHARE";
 
 #[derive(Debug, FromQueryResult)]
 struct PlacementRow {
@@ -112,6 +114,13 @@ struct TargetSlotRow {
     switch_token: Option<String>,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct DataScopeProjectionRow {
+    source_version: i64,
+    build_token: String,
+    ready: bool,
+}
+
 #[derive(Clone, Debug)]
 struct FenceProvision {
     tenant_id: String,
@@ -174,6 +183,31 @@ pub struct TenantDataSession {
     placement: TenantDataPlacement,
     target_mode: TenantDatabaseTargetMode,
     database: connection::SessionDatabase,
+}
+
+/// 固定到已发布投影版本的只读事务；事务和 fence 同时保持到显式完成。
+pub struct ScopedTenantRead {
+    transaction: DatabaseTransaction,
+    build_token: String,
+}
+
+impl ScopedTenantRead {
+    pub fn transaction(&self) -> &DatabaseTransaction {
+        &self.transaction
+    }
+
+    pub fn build_token(&self) -> &str {
+        &self.build_token
+    }
+
+    pub async fn finish(self) -> Result<(), TenantDataError> {
+        self.transaction
+            .commit()
+            .await
+            .map_err(|_| TenantDataError::TargetUnavailable {
+                target_key: "<scoped-read>".into(),
+            })
+    }
 }
 
 mod cleanup;

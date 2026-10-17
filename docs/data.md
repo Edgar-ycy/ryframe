@@ -64,6 +64,8 @@ cargo migrate -- control verify
 
 授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。仅允许对可接受陈旧的列表读使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。列表排序必须带 ID tie-breaker。批量扫描使用 `id ASC` 游标和固定上界，不使用 offset 扫描大集合。
 
+租户数据范围使用独立于授权纪元的 `sys_tenant.data_scope_version`。用户归属或部门树变化、配置应用与回滚、租户开通在同一控制库事务内推进该版本并写入 `tenant.data_scope.projection` Outbox。Worker 锁定租户行取得一致快照，再在 placement 目标内锁定 fence 与投影元数据，写入新的 Owner/部门事实 build 后原子切换 `biz_data_scope_projection`；事件重试按版本与构建令牌复用，旧版本不会覆盖较高版本。租户业务查询和写入必须在同一事务中使用与认证主体完全一致的已就绪 build，版本缺失、落后或目标投影不可用时失败关闭。控制库权威变更先提交，随后才允许新的投影发布；两个数据库之间没有分布式事务，因此不能撤销已经并发进入租户库执行的写操作。
+
 ## 开发数据复制与性能 seed
 
 开发复制先用 `cargo xtask check recovery clone plan --input <输入清单> --output <新计划> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <计划>` 只读复核。已登记 fresh target 的准备、续作、初始化、复核和只读状态使用 `cargo xtask check recovery fresh-target ...`；`status` 从原账本派生最后成功阶段与下一合法动作，保持零写入。固定请求若已不能通过当前审阅、来源或路径等可执行条件，状态会转为 reconciliation、清空下一动作并说明阻塞，不再建议 `resume-prepare`；修复阻塞条件后才能重新核对，不改写登记请求或自动重放。输入、证据和运行目录必须位于当前后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。受控工作目录和证据路径可以使用当前后端 `.local-tests` 下的相对路径，入口会先规范化并拒绝链接或越界路径。xtask 固定当前后端目录，不接受调用方传入其他 `--backend-dir`；`status` 不接受 `--write`，其他阶段仍由私有状态机要求显式 `--write` 并核对登记、前后像与控制器身份。

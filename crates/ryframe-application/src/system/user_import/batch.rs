@@ -163,7 +163,13 @@ impl UserImportService {
         let (success_count, skipped_count, failure_count) =
             batch_counts(users.len(), &prepared.issues)?;
 
+        let imported_count = users.len();
         transaction.insert_users(&import.tenant_id, users).await?;
+        if imported_count > 0 {
+            transaction
+                .record_data_scope_change(&import.tenant_id)
+                .await?;
+        }
         let row_records = prepared
             .issues
             .into_iter()

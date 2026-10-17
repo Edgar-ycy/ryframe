@@ -131,6 +131,13 @@ impl PersistenceTransaction for FakeTransaction {
 }
 
 #[async_trait]
+impl ryframe_application::DataScopeMutationTransaction for FakeTransaction {
+    async fn record_data_scope_change(&self, _tenant_id: &str) -> AppResult<i64> {
+        Ok(2)
+    }
+}
+
+#[async_trait]
 impl ProductTransactionPort for FakeTransaction {
     async fn current_tenant_product<'a>(
         &'a self,
@@ -422,6 +429,7 @@ fn actor() -> ActorContext {
         data_scope: DataScope::All,
         custom_dept_ids: Vec::new(),
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: true,
     }
 }
@@ -468,6 +476,7 @@ fn tenant(tenant_id: &str, status: &str) -> TenantRecord {
         max_requests_per_min: 1000,
         session_version: 1,
         authorization_epoch: 1,
+        data_scope_version: 1,
         runtime_epoch: 1,
         configuration_version: 0,
         created_at: now,

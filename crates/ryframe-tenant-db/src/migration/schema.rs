@@ -1,4 +1,7 @@
-use super::catalog::{TenantDataCatalog, tenant_data_schema_fingerprint};
+use super::catalog::{
+    TenantDataCatalog, data_scope_dept_schema_canonical, data_scope_owner_schema_canonical,
+    data_scope_projection_schema_canonical, tenant_data_schema_fingerprint,
+};
 use super::status::{TENANT_DATA_MIGRATION_LEDGER, status_after_server_validation};
 use super::tenant_data_catalog;
 use ryframe_db::migration::normalize_check_clause;
@@ -132,6 +135,9 @@ fn expected_mysql_target_table_names(catalog: &TenantDataCatalog) -> Vec<String>
         TENANT_DATA_MIGRATION_LEDGER.to_owned(),
         "biz_tenant_fence".to_owned(),
         "biz_tenant_target_slot".to_owned(),
+        "biz_data_scope_projection".to_owned(),
+        "biz_data_scope_owner".to_owned(),
+        "biz_data_scope_dept".to_owned(),
         "ryframe_resource_ownership".to_owned(),
     ];
     expected.extend(
@@ -193,7 +199,13 @@ async fn verify_fence_schema(
         .filter(|table| table.table_name.starts_with("biz_"))
         .map(|table| table.table_name.as_str())
         .collect::<Vec<_>>();
-    let mut expected_business_tables = vec!["biz_tenant_fence", "biz_tenant_target_slot"];
+    let mut expected_business_tables = vec![
+        "biz_tenant_fence",
+        "biz_tenant_target_slot",
+        "biz_data_scope_projection",
+        "biz_data_scope_owner",
+        "biz_data_scope_dept",
+    ];
     expected_business_tables.extend(catalog.tables().iter().map(|table| table.table));
     actual_business_tables.sort_unstable();
     expected_business_tables.sort_unstable();
@@ -222,10 +234,28 @@ async fn verify_fence_schema(
     verify_fence_constraints(db).await?;
     verify_target_slot_schema(db, &tables).await?;
     verify_resource_ownership_schema(db).await?;
+    verify_data_scope_schema(db).await?;
     for descriptor in catalog.tables() {
         let actual = canonical_table_schema(db, descriptor.table).await?;
         if actual != descriptor.schema_canonical {
             return Err(schema_fingerprint_mismatch("catalog table structure"));
+        }
+    }
+    Ok(())
+}
+
+async fn verify_data_scope_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+    for (table, expected) in [
+        (
+            "biz_data_scope_projection",
+            data_scope_projection_schema_canonical(),
+        ),
+        ("biz_data_scope_owner", data_scope_owner_schema_canonical()),
+        ("biz_data_scope_dept", data_scope_dept_schema_canonical()),
+    ] {
+        let actual = canonical_table_schema(db, table).await?;
+        if actual != expected {
+            return Err(schema_fingerprint_mismatch("data scope projection"));
         }
     }
     Ok(())

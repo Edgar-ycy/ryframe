@@ -122,6 +122,35 @@ impl TenantRepository {
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
+    /// 在已锁定租户的控制事务内推进数据范围投影版本并返回新值。
+    pub async fn increment_data_scope_version_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+    ) -> AppResult<i64> {
+        self.lock_tenant_in_txn(txn, tenant_id).await?;
+        let result = tenant::Entity::update_many()
+            .col_expr(
+                tenant::Column::DataScopeVersion,
+                Expr::col(tenant::Column::DataScopeVersion).add(1),
+            )
+            .col_expr(tenant::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .exec(txn)
+            .await
+            .db()?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("租户不存在".into()));
+        }
+        tenant::Entity::find()
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .one(txn)
+            .await
+            .db()?
+            .map(|tenant| tenant.data_scope_version)
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))
+    }
+
     /// 在已锁定租户的控制事务内递增运行时纪元并返回新值。
     pub async fn increment_runtime_epoch_in_txn(
         &self,

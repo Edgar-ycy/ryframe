@@ -55,7 +55,9 @@ pub trait DeptReadPort: Send + Sync {
 }
 
 #[async_trait]
-pub trait DeptWriteTransaction: PersistenceTransaction + Sync {
+pub trait DeptWriteTransaction:
+    PersistenceTransaction + crate::ports::data_scope::DataScopeMutationTransaction + Sync
+{
     async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
     async fn find_by_id_for_update(

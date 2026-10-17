@@ -20,6 +20,7 @@ fn tenant_mapping_preserves_every_field() {
         max_requests_per_min: 1000,
         session_version: 3,
         authorization_epoch: 4,
+        data_scope_version: 1,
         runtime_epoch: 5,
         configuration_version: 6,
         created_at: now,

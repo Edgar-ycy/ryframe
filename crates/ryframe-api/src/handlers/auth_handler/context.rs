@@ -175,6 +175,7 @@ pub fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
         data_scope: DataScope::SelfOnly,
         custom_dept_ids: Vec::new(),
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: user.is_super_admin,
     }
 }

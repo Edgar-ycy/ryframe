@@ -90,6 +90,7 @@ async fn clean_is_committed_by_application_use_case() {
         data_scope: DataScope::SelfOnly,
         custom_dept_ids: Vec::new(),
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: false,
     };
 

@@ -12,7 +12,8 @@ use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::operations::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
-    AuthorizationCache, AuthorizationMirrorUpdate, EnqueueJob,
+    AuthorizationCache, AuthorizationMirrorUpdate, DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE,
+    DataScopeProjectionEvent, DataScopeProjectionPublisher, EnqueueJob,
     ports::jobs::{
         ClaimedOutboxEvent, ExecutionTenantScope, OutboxFailureOutcome, OutboxPersistencePort,
     },
@@ -44,6 +45,7 @@ pub struct OutboxWorker {
     lease_recovery_interval: StdDuration,
     concurrency: usize,
     authorization_cache: AuthorizationCache,
+    data_scope_projection: Option<Arc<dyn DataScopeProjectionPublisher>>,
 }
 
 impl OutboxWorker {
@@ -65,12 +67,22 @@ impl OutboxWorker {
             lease_recovery_interval: policy.lease_recovery_interval,
             concurrency: policy.concurrency,
             authorization_cache: AuthorizationCache::disabled(),
+            data_scope_projection: None,
         })
     }
 
     /// 注入授权版本镜像修复器；生产 Worker 必须与 API 使用相同 Redis 配置。
     pub fn with_authorization_cache(mut self, authorization_cache: AuthorizationCache) -> Self {
         self.authorization_cache = authorization_cache;
+        self
+    }
+
+    /// 注入租户数据范围投影发布器；未注入时相关 Outbox 事件失败并保留重试。
+    pub fn with_data_scope_projection(
+        mut self,
+        publisher: Arc<dyn DataScopeProjectionPublisher>,
+    ) -> Self {
+        self.data_scope_projection = Some(publisher);
         self
     }
 
@@ -207,6 +219,11 @@ impl OutboxWorker {
         if event.event_type == AUDIT_OPERATION_OUTBOX_EVENT_TYPE {
             return self.publish_audit_event(event, worker_id, now).await;
         }
+        if event.event_type == DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE {
+            return self
+                .publish_data_scope_projection(event, worker_id, now)
+                .await;
+        }
         let job_type = match event.event_type.as_str() {
             MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE => MESSAGE_DISPATCH_JOB_TYPE,
             _ => {
@@ -242,6 +259,29 @@ impl OutboxWorker {
             self.queue.notify_background_jobs().await;
         }
         Ok(published)
+    }
+
+    async fn publish_data_scope_projection(
+        &self,
+        event: ClaimedOutboxEvent,
+        worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let payload: DataScopeProjectionEvent = serde_json::from_value(event.payload)
+            .map_err(|error| AppError::Validation(format!("数据范围投影事件载荷无效: {error}")))?;
+        if event.tenant_id.as_deref() != Some(payload.tenant_id.as_str()) {
+            return Err(AppError::Authorization(
+                "数据范围投影事件的租户与 Outbox 信封不一致".into(),
+            ));
+        }
+        crate::enforce_tenant_scope(&payload.tenant_id)?;
+        let publisher = self.data_scope_projection.as_ref().ok_or_else(|| {
+            AppError::Config("数据范围投影事件缺少发布器，请检查 Worker 组合根".into())
+        })?;
+        publisher.publish(&payload).await?;
+        self.persistence
+            .mark_published(event.id, worker_id, now)
+            .await
     }
 
     async fn publish_audit_event(

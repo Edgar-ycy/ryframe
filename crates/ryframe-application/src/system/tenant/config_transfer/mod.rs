@@ -251,6 +251,7 @@ mod scope_tests {
             data_scope: DataScope::All,
             custom_dept_ids: Vec::new(),
             include_self: true,
+            data_scope_version: 1,
             is_super_admin: true,
         }
     }

@@ -63,6 +63,12 @@ pub(crate) fn service(resource: &ResourceIr, header: &str) -> String {
         .as_ref()
         .map(|_| "        let data_scope = actor.data_scope_context();\n")
         .unwrap_or_default();
+    let lock_data_scope =
+        if resource.access.owner_field.is_some() && resource.storage == StorageKind::TenantData {
+            "            transaction.lock_data_scope(&actor.data_scope_context()).await?;\n"
+        } else {
+            ""
+        };
     let WriteStages {
         create_before,
         create_after,
@@ -84,7 +90,7 @@ pub(crate) fn service(resource: &ResourceIr, header: &str) -> String {
     let decimal_record = decimal_checks(resource, "record", false);
     let decimal_filter = decimal_checks(resource, "params", true);
     let output = format!(
-        "{header}use std::sync::Arc;\n\n{time_import}use ryframe_kernel::{{ActorContext, AppError, AppResult, PageResult}};\n\nuse crate::{{TransactionAuditMode, complete_transaction}};\n\nuse super::model::{{Create{pascal}Command, {pascal}Filter, {pascal}ListParams, {pascal}Record, Update{pascal}Command}};\nuse super::port::{pascal}PersistencePort;\n\npub struct {pascal}Service {{\n    persistence: Arc<dyn {pascal}PersistencePort>,\n}}\n\nimpl {pascal}Service {{\n    pub fn new(persistence: Arc<dyn {pascal}PersistencePort>) -> Self {{\n        Self {{ persistence }}\n    }}\n\n    pub async fn find_by_id(\n        &self,\n        actor: &ActorContext,\n        id: {id_type},\n    ) -> AppResult<Option<{pascal}Record>> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}        self.persistence.find_by_id(tenant_id, id{scope_argument}).await\n    }}\n\n    pub async fn create(\n        &self,\n        actor: &ActorContext,\n        command: Create{pascal}Command,\n    ) -> AppResult<{pascal}Record> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}{create_clock}        let record = {pascal}Record {{\n{record_fields}\n        }};\n{decimal_record}        let transaction = self.persistence.begin(tenant_id).await?;\n        let operation = async {{\n{create_before}\n            let saved = transaction.insert(record).await?;\n{create_after}\n            Ok(saved)\n        }}\n        .await;\n        complete_transaction(transaction, operation, {audit_mode}).await\n    }}\n\n    pub async fn update(\n        &self,\n        actor: &ActorContext,\n        id: {id_type},\n        command: Update{pascal}Command,\n    ) -> AppResult<{pascal}Record> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}        let transaction = self.persistence.begin(tenant_id).await?;\n        let operation = async {{\n{write_before}\n            let mut record = transaction\n                .find_by_id_for_update(tenant_id, id{scope_argument})\n                .await?\n                .ok_or_else(|| AppError::NotFound({not_found:?}.into()))?;\n{update_clock}{updates}\n{decimal_record}            let saved = transaction.update(record).await?;\n{write_after}\n            Ok(saved)\n        }}\n        .await;\n        complete_transaction(transaction, operation, {audit_mode}).await\n    }}\n\n    pub async fn delete(&self, actor: &ActorContext, id: {id_type}) -> AppResult<()> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}        let transaction = self.persistence.begin(tenant_id).await?;\n        let operation = async {{\n{write_before}\n            transaction\n                .find_by_id_for_update(tenant_id, id{scope_argument})\n                .await?\n                .ok_or_else(|| AppError::NotFound({not_found:?}.into()))?;\n            transaction.delete(tenant_id, id).await?;\n{write_after}\n            Ok(())\n        }}\n        .await;\n        complete_transaction(transaction, operation, {audit_mode}).await\n    }}\n\n    pub async fn find_by_page(\n        &self,\n        actor: &ActorContext,\n        params: {pascal}ListParams,\n    ) -> AppResult<PageResult<{pascal}Record>> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}{decimal_filter}{data_scope}        let filter = {pascal}Filter {{\n{filter_fields}\n        }};\n        self.persistence\n            .find_by_page(tenant_id, params.page, filter)\n            .await\n    }}\n}}\n",
+        "{header}use std::sync::Arc;\n\n{time_import}use ryframe_kernel::{{ActorContext, AppError, AppResult, PageResult}};\n\nuse crate::{{TransactionAuditMode, complete_transaction}};\n\nuse super::model::{{Create{pascal}Command, {pascal}Filter, {pascal}ListParams, {pascal}Record, Update{pascal}Command}};\nuse super::port::{pascal}PersistencePort;\n\npub struct {pascal}Service {{\n    persistence: Arc<dyn {pascal}PersistencePort>,\n}}\n\nimpl {pascal}Service {{\n    pub fn new(persistence: Arc<dyn {pascal}PersistencePort>) -> Self {{\n        Self {{ persistence }}\n    }}\n\n    pub async fn find_by_id(\n        &self,\n        actor: &ActorContext,\n        id: {id_type},\n    ) -> AppResult<Option<{pascal}Record>> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}        self.persistence.find_by_id(tenant_id, id{scope_argument}).await\n    }}\n\n    pub async fn create(\n        &self,\n        actor: &ActorContext,\n        command: Create{pascal}Command,\n    ) -> AppResult<{pascal}Record> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}{create_clock}        let record = {pascal}Record {{\n{record_fields}\n        }};\n{decimal_record}        let transaction = self.persistence.begin(tenant_id).await?;\n        let operation = async {{\n{lock_data_scope}{create_before}\n            let saved = transaction.insert(record).await?;\n{create_after}\n            Ok(saved)\n        }}\n        .await;\n        complete_transaction(transaction, operation, {audit_mode}).await\n    }}\n\n    pub async fn update(\n        &self,\n        actor: &ActorContext,\n        id: {id_type},\n        command: Update{pascal}Command,\n    ) -> AppResult<{pascal}Record> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}        let transaction = self.persistence.begin(tenant_id).await?;\n        let operation = async {{\n{write_before}\n            let mut record = transaction\n                .find_by_id_for_update(tenant_id, id{scope_argument})\n                .await?\n                .ok_or_else(|| AppError::NotFound({not_found:?}.into()))?;\n{update_clock}{updates}\n{decimal_record}            let saved = transaction.update(record).await?;\n{write_after}\n            Ok(saved)\n        }}\n        .await;\n        complete_transaction(transaction, operation, {audit_mode}).await\n    }}\n\n    pub async fn delete(&self, actor: &ActorContext, id: {id_type}) -> AppResult<()> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}        let transaction = self.persistence.begin(tenant_id).await?;\n        let operation = async {{\n{write_before}\n            transaction\n                .find_by_id_for_update(tenant_id, id{scope_argument})\n                .await?\n                .ok_or_else(|| AppError::NotFound({not_found:?}.into()))?;\n            transaction.delete(tenant_id, id).await?;\n{write_after}\n            Ok(())\n        }}\n        .await;\n        complete_transaction(transaction, operation, {audit_mode}).await\n    }}\n\n    pub async fn find_by_page(\n        &self,\n        actor: &ActorContext,\n        params: {pascal}ListParams,\n    ) -> AppResult<PageResult<{pascal}Record>> {{\n        let tenant_id = crate::validated_tenant_id(actor)?;\n{system_tenant_guard}{decimal_filter}{data_scope}        let filter = {pascal}Filter {{\n{filter_fields}\n        }};\n        self.persistence\n            .find_by_page(tenant_id, params.page, filter)\n            .await\n    }}\n}}\n",
     );
     if resource.relations.is_empty() {
         output
@@ -108,6 +114,13 @@ fn create_expression(resource: &ResourceIr, field: &FieldIr) -> String {
     }
     if field.name == "tenant_id" {
         return "tenant_id.to_owned()".into();
+    }
+    if resource.access.owner_field.as_deref() == Some(field.name.as_str()) {
+        return if field.nullable {
+            "Some(actor.user_id)".into()
+        } else {
+            "actor.user_id".into()
+        };
     }
     if let Some(audit) = &resource.audit
         && (audit.created_at == field.name || audit.updated_at == field.name)
@@ -166,7 +179,10 @@ fn update_fields(resource: &ResourceIr) -> String {
     resource
         .fields
         .iter()
-        .filter(|field| field.usage.update)
+        .filter(|field| {
+            field.usage.update
+                && resource.access.owner_field.as_deref() != Some(field.name.as_str())
+        })
         .map(|field| {
             if field.usage.update_optional {
                 format!(

@@ -29,6 +29,7 @@ pub struct TenantRecord {
     pub max_requests_per_min: i32,
     pub session_version: i32,
     pub authorization_epoch: i32,
+    pub data_scope_version: i64,
     pub runtime_epoch: i64,
     pub configuration_version: i64,
     pub created_at: DateTime<Utc>,
@@ -73,7 +74,9 @@ pub struct ProvisionTenantRecord {
 
 /// 租户管理用例所拥有的控制库工作单元。
 #[async_trait::async_trait]
-pub trait TenantTransaction: crate::PersistenceTransaction + Send + Sync {
+pub trait TenantTransaction:
+    crate::PersistenceTransaction + crate::ports::data_scope::DataScopeMutationTransaction + Send + Sync
+{
     fn product(&self) -> &dyn ProductTransactionPort;
 
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;

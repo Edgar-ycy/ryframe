@@ -39,6 +39,39 @@ pub const RESOURCE_OWNERSHIP_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `ryframe_
     UNIQUE KEY `uq_resource_ownership_scope` (`scope_id`, `resource_kind`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='物理数据库资源作用域所有权'"#;
 
+pub const DATA_SCOPE_PROJECTION_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_data_scope_projection` (
+    `tenant_id` VARCHAR(64) NOT NULL,
+    `source_version` BIGINT NOT NULL,
+    `build_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `placement_generation` BIGINT NOT NULL,
+    `switch_token` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `digest` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `owner_count` BIGINT NOT NULL,
+    `dept_count` BIGINT NOT NULL,
+    `ready` TINYINT(1) NOT NULL,
+    `published_at` DATETIME(6) DEFAULT NULL,
+    `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户数据范围投影发布状态'"#;
+
+pub const DATA_SCOPE_OWNER_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_data_scope_owner` (
+    `tenant_id` VARCHAR(64) NOT NULL,
+    `build_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `user_id` BIGINT NOT NULL,
+    `dept_id` BIGINT DEFAULT NULL,
+    PRIMARY KEY (`tenant_id`, `build_token`, `user_id`),
+    KEY `idx_data_scope_owner_dept` (`tenant_id`, `build_token`, `dept_id`, `user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户数据范围用户归属投影'"#;
+
+pub const DATA_SCOPE_DEPT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_data_scope_dept` (
+    `tenant_id` VARCHAR(64) NOT NULL,
+    `build_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `dept_id` BIGINT NOT NULL,
+    `ancestors` VARCHAR(512) NOT NULL,
+    PRIMARY KEY (`tenant_id`, `build_token`, `dept_id`),
+    KEY `idx_data_scope_dept_ancestors` (`tenant_id`, `build_token`, `ancestors`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户数据范围部门树投影'"#;
+
 pub(crate) const RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR: &str = "v2|table=\"ryframe_resource_ownership\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"resource_kind\":\"varchar(32)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"PRI\":None:\"\":\"\";\"scope_id\":\"varchar(48)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"MUL\":None:\"\":\"\";\"marker\":\"varchar(128)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"UNI\":None:\"\":\"\";\"created_at\":\"datetime(6)\":\"NO\":None:None:\"\":Some(\"current_timestamp(6)\"):\"\":\"\";\"updated_at\":\"datetime(6)\":\"NO\":None:None:\"\":Some(\"current_timestamp(6)\"):\"on update current_timestamp(6)\":\"\";]|indexes=[\"PRIMARY\":\"resource_kind\":1:0:\"btree\":None:\"YES\";\"uq_resource_ownership_marker\":\"marker\":1:0:\"btree\":None:\"YES\";\"uq_resource_ownership_scope\":\"scope_id\":1:0:\"btree\":None:\"YES\";\"uq_resource_ownership_scope\":\"resource_kind\":2:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";\"uq_resource_ownership_marker\":\"UNIQUE\":\"YES\";\"uq_resource_ownership_scope\":\"UNIQUE\":\"YES\";]|checks=[]|foreign_keys=[]";
 
 #[derive(DeriveMigrationName)]
@@ -61,6 +94,11 @@ impl MigrationTrait for Migration {
         connection
             .execute_unprepared(RESOURCE_OWNERSHIP_DDL)
             .await?;
+        connection
+            .execute_unprepared(DATA_SCOPE_PROJECTION_DDL)
+            .await?;
+        connection.execute_unprepared(DATA_SCOPE_OWNER_DDL).await?;
+        connection.execute_unprepared(DATA_SCOPE_DEPT_DDL).await?;
         connection
             .execute_unprepared(
                 "INSERT INTO `biz_tenant_target_slot` (`slot_id`, `updated_at`) \

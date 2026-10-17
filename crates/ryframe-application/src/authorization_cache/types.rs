@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct AuthorizationVersions {
     pub tenant_authorization_epoch: i32,
     pub user_authorization_version: i32,
+    pub data_scope_version: i64,
 }
 
 /// Redis 中保存的完整请求授权快照。
@@ -22,6 +23,7 @@ impl AuthorizationSnapshot {
     pub fn validate_principal_versions(&self) -> ryframe_kernel::AppResult<()> {
         if self.principal.user_authorization_version != self.versions.user_authorization_version
             || self.principal.tenant_authorization_epoch != self.versions.tenant_authorization_epoch
+            || self.principal.data_scope_version != self.versions.data_scope_version
         {
             return Err(ryframe_kernel::AppError::Authentication(
                 "授权快照主体与版本上下文不一致，请重新认证".into(),

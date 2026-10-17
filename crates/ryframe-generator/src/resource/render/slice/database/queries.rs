@@ -83,6 +83,8 @@ pub(crate) struct PersistenceParts {
     pub(crate) declaration: String,
     pub(crate) read_connection: String,
     pub(crate) begin_transaction: String,
+    pub(crate) read_scope_begin: String,
+    pub(crate) read_scope_finish: String,
 }
 
 pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
@@ -96,6 +98,8 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
                 .into(),
             begin_transaction: "        let transaction = self\n            .database\n            .write()\n            .begin()\n            .await\n            .db()?;"
                 .into(),
+            read_scope_begin: String::new(),
+            read_scope_finish: String::new(),
         },
         StorageKind::TenantData => PersistenceParts {
             declaration: format!(
@@ -105,6 +109,8 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
                 .into(),
             begin_transaction: "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;\n        let transaction = session.begin_write().await.map_err(tenant_data_error)?;"
                 .into(),
+            read_scope_begin: String::new(),
+            read_scope_finish: String::new(),
         },
     };
     let guard = super::super::system_tenant_guard(resource, "ryframe_application");
@@ -112,6 +118,15 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
         parts.read_connection = parts
             .read_connection
             .replace("ReadConsistency::Eventual", "ReadConsistency::Strong");
+    }
+    if resource.access.owner_field.is_some() && resource.storage == StorageKind::TenantData {
+        parts.read_connection.clear();
+        parts.read_connection.push_str(
+            "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;",
+        );
+        parts.read_scope_begin = "        let read = session\n            .begin_scoped_read(data_scope.data_scope_version)\n            .await\n            .map_err(tenant_data_error)?;\n        let database = read.transaction();\n        let build_token = read.build_token();"
+            .into();
+        parts.read_scope_finish = "        read.finish().await.map_err(tenant_data_error)?;".into();
     }
     parts.read_connection.insert_str(0, &guard);
     parts.begin_transaction.insert_str(0, &guard);
@@ -164,14 +179,16 @@ pub(crate) fn id_query(resource: &ResourceIr, id: &str) -> String {
 
 pub(crate) fn filter_statements(resource: &ResourceIr) -> String {
     let owner = resource.access.owner_field.as_ref().map(|field| {
-        let module = match resource.storage {
-            StorageKind::ControlRow => "crate",
-            StorageKind::TenantData => "ryframe_db",
-        };
-        format!(
-            "        if let Some(condition) = {module}::data_scope::owner_id_condition(\n            entity::Column::{},\n            tenant_id,\n            filter.data_scope,\n        ) {{\n            select = select.filter(condition);\n        }}",
-            column_variant(field),
-        )
+        match resource.storage {
+            StorageKind::ControlRow => format!(
+                "        if let Some(condition) = crate::data_scope::owner_id_condition(\n            entity::Column::{},\n            tenant_id,\n            filter.data_scope,\n        ) {{\n            select = select.filter(condition);\n        }}",
+                column_variant(field),
+            ),
+            StorageKind::TenantData => format!(
+                "        select = select.filter(ryframe_db::data_scope::projected_owner_id_condition(\n            entity::Column::{},\n            tenant_id,\n            build_token,\n            filter.data_scope,\n        ));",
+                column_variant(field),
+            ),
+        }
     });
     owner.into_iter().chain(resource
         .fields
@@ -205,14 +222,16 @@ pub(crate) fn scoped_id_query(resource: &ResourceIr, id: &str) -> String {
     let Some(owner) = &resource.access.owner_field else {
         return query;
     };
-    let module = match resource.storage {
-        StorageKind::ControlRow => "crate",
-        StorageKind::TenantData => "ryframe_db",
-    };
-    format!(
-        "{{\n            let mut select = {query};\n            if let Some(condition) = {module}::data_scope::owner_id_condition(entity::Column::{column}, tenant_id, data_scope) {{\n                select = select.filter(condition);\n            }}\n            select\n        }}",
-        column = column_variant(owner),
-    )
+    match resource.storage {
+        StorageKind::ControlRow => format!(
+            "{{\n            let mut select = {query};\n            if let Some(condition) = crate::data_scope::owner_id_condition(entity::Column::{column}, tenant_id, data_scope) {{\n                select = select.filter(condition);\n            }}\n            select\n        }}",
+            column = column_variant(owner),
+        ),
+        StorageKind::TenantData => format!(
+            "{{\n            let mut select = {query};\n            select = select.filter(ryframe_db::data_scope::projected_owner_id_condition(entity::Column::{column}, tenant_id, build_token, data_scope));\n            select\n        }}",
+            column = column_variant(owner),
+        ),
+    }
 }
 
 pub(crate) fn order_statements(resource: &ResourceIr) -> String {
@@ -307,6 +326,9 @@ pub(crate) fn tenant_error_mapper() -> String {
         crate::TenantDataError::InvalidTenantId(_) => AppError::Validation(message),
         crate::TenantDataError::StalePlacementGeneration { .. } => {
             AppError::StalePlacementGeneration(message)
+        }
+        crate::TenantDataError::DataScopeProjectionStale { .. } => {
+            AppError::StaleRuntimeEpoch(message)
         }
         crate::TenantDataError::TenantDataMaintenance { .. }
         | crate::TenantDataError::FenceRejected { .. } => {

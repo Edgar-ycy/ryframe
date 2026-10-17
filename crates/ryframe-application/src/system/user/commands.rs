@@ -54,6 +54,7 @@ impl UserService {
                     .replace_roles(tenant_id, saved.id, &role_ids)
                     .await?;
             }
+            transaction.record_data_scope_change(tenant_id).await?;
             Ok(saved)
         }
         .await;
@@ -107,6 +108,7 @@ impl UserService {
             let versions = transaction
                 .increment_authorization_versions(tenant_id, &[saved.id])
                 .await?;
+            transaction.record_data_scope_change(tenant_id).await?;
             Ok((saved, versions))
         }
         .await;
@@ -173,6 +175,7 @@ impl UserService {
             let versions = transaction
                 .increment_authorization_versions(tenant_id, &ids)
                 .await?;
+            transaction.record_data_scope_change(tenant_id).await?;
             let affected = transaction.delete_users(tenant_id, &ids).await?;
             if affected != ids.len() as u64 {
                 return Err(AppError::NotFound("用户不存在".into()));

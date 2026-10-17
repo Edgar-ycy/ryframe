@@ -60,7 +60,9 @@ pub struct ManageableUserState {
 }
 
 #[async_trait::async_trait]
-pub trait UserWriteTransaction: crate::PersistenceTransaction + Send + Sync {
+pub trait UserWriteTransaction:
+    crate::PersistenceTransaction + crate::ports::data_scope::DataScopeMutationTransaction
+{
     async fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;

@@ -159,6 +159,7 @@ async fn cache_clear_commits_authoritative_version_first() {
         data_scope: DataScope::SelfOnly,
         custom_dept_ids: Vec::new(),
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: false,
     };
 
@@ -188,6 +189,7 @@ async fn shell_settings_only_read_fixed_keys_in_the_authenticated_tenant() {
         data_scope: DataScope::SelfOnly,
         custom_dept_ids: Vec::new(),
         include_self: true,
+        data_scope_version: 1,
         is_super_admin: false,
     };
     for tenant in ["tenant-a", "tenant-b", "empty"] {

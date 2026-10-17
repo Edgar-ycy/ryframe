@@ -1,6 +1,7 @@
 use ryframe_db::DbResultExt;
 use std::sync::Arc;
 
+use ryframe_application::DataScopeMutationTransaction;
 use ryframe_application::ports::{
     authorization::AuthorizationMirrorTransaction,
     product::ProductTransactionPort,
@@ -271,6 +272,13 @@ impl TenantTransaction for TenantWorkUnit {
 }
 
 #[async_trait::async_trait]
+impl DataScopeMutationTransaction for TenantWorkUnit {
+    async fn record_data_scope_change(&self, tenant_id: &str) -> ryframe_kernel::AppResult<i64> {
+        self.transaction.record_data_scope_change(tenant_id).await
+    }
+}
+
+#[async_trait::async_trait]
 impl ryframe_application::PersistenceTransaction for TenantWorkUnit {
     async fn commit(
         self: Box<Self>,
@@ -303,6 +311,7 @@ pub fn map_tenant(tenant: tenant::Model) -> TenantRecord {
         max_requests_per_min: tenant.max_requests_per_min,
         session_version: tenant.session_version,
         authorization_epoch: tenant.authorization_epoch,
+        data_scope_version: tenant.data_scope_version,
         runtime_epoch: tenant.runtime_epoch,
         configuration_version: tenant.configuration_version,
         created_at: tenant.created_at,
@@ -324,6 +333,7 @@ pub fn map_tenant_model(tenant: TenantRecord) -> tenant::Model {
         max_requests_per_min: tenant.max_requests_per_min,
         session_version: tenant.session_version,
         authorization_epoch: tenant.authorization_epoch,
+        data_scope_version: tenant.data_scope_version,
         runtime_epoch: tenant.runtime_epoch,
         configuration_version: tenant.configuration_version,
         created_at: tenant.created_at,

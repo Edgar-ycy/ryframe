@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod data_scope_projection;
 pub mod tenant_data;
 pub mod tenants;
 
@@ -32,6 +33,13 @@ fn map_error(error: TenantDataError) -> AppError {
         TenantDataError::DedicatedTargetOccupied { target_key } => {
             AppError::TenantOperationConflict(format!("专属租户数据目标已被占用: {target_key}"))
         }
+        TenantDataError::DataScopeProjectionStale {
+            tenant_id,
+            expected,
+            actual,
+        } => AppError::StaleRuntimeEpoch(format!(
+            "租户 {tenant_id} 的数据范围投影版本不匹配: expected={expected}, actual={actual:?}；请刷新会话后重试"
+        )),
         TenantDataError::UnknownTarget { target_key }
         | TenantDataError::TargetUnavailable { target_key } => {
             AppError::TenantDataTargetUnavailable(format!("租户数据目标不可用: {target_key}"), 5)

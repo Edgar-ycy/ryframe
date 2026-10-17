@@ -35,9 +35,9 @@ pub use registry::{
 };
 #[cfg(feature = "repositories")]
 pub use router::{
-    TenantDataCleanupBatch, TenantDataCleanupOwnership, TenantDataPlacementMetric,
-    TenantDataSession, TenantDataTargetHandle, TenantDataTargetHealth, TenantDataTargetOccupancy,
-    TenantDataTargetVerification, TenantDatabaseRouter,
+    ScopedTenantRead, TenantDataCleanupBatch, TenantDataCleanupOwnership,
+    TenantDataPlacementMetric, TenantDataSession, TenantDataTargetHandle, TenantDataTargetHealth,
+    TenantDataTargetOccupancy, TenantDataTargetVerification, TenantDatabaseRouter,
 };
 #[cfg(feature = "connection")]
 pub use ryframe_config::SHARED_CONTROL_TARGET_KEY;

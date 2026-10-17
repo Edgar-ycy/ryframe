@@ -49,13 +49,19 @@ impl PostPersistencePort for DatabasePostPersistence {
             .database
             .select_read(crate::ReadConsistency::Eventual)
             .connection;
-        Ok(entity::Entity::find_by_id(id)
-            .filter(entity::Column::TenantId.eq(tenant_id))
-            .filter(entity::Column::DelFlag.eq(String::from("0")))
-            .one(&database)
-            .await
-            .db()?
-            .map(to_record))
+
+        let result = async {
+            Ok(entity::Entity::find_by_id(id)
+                .filter(entity::Column::TenantId.eq(tenant_id))
+                .filter(entity::Column::DelFlag.eq(String::from("0")))
+                .one(&database)
+                .await
+                .db()?
+                .map(to_record))
+        }
+        .await;
+
+        result
     }
 
     async fn find_by_page(
@@ -68,27 +74,33 @@ impl PostPersistencePort for DatabasePostPersistence {
             .database
             .select_read(crate::ReadConsistency::Eventual)
             .connection;
-        let mut select = entity::Entity::find();
-        select = select.filter(entity::Column::TenantId.eq(tenant_id));
-        select = select.filter(entity::Column::DelFlag.eq(String::from("0")));
-        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(entity::Column::Name.contains(value));
+
+        let result = async {
+            let mut select = entity::Entity::find();
+            select = select.filter(entity::Column::TenantId.eq(tenant_id));
+            select = select.filter(entity::Column::DelFlag.eq(String::from("0")));
+            if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
+                select = select.filter(entity::Column::Name.contains(value));
+            }
+            if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
+                select = select.filter(entity::Column::Code.contains(value));
+            }
+            if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
+                select = select.filter(entity::Column::Status.eq(value));
+            }
+            select = select
+                .order_by_asc(entity::Column::Sort)
+                .order_by_asc(entity::Column::Id);
+            let result = crate::pagination::paginate(&database, select, &page).await?;
+            Ok(PageResult::new(
+                result.records.into_iter().map(to_record).collect(),
+                result.total,
+                &page,
+            ))
         }
-        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
-            select = select.filter(entity::Column::Code.contains(value));
-        }
-        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(entity::Column::Status.eq(value));
-        }
-        select = select
-            .order_by_asc(entity::Column::Sort)
-            .order_by_asc(entity::Column::Id);
-        let result = crate::pagination::paginate(&database, select, &page).await?;
-        Ok(PageResult::new(
-            result.records.into_iter().map(to_record).collect(),
-            result.total,
-            &page,
-        ))
+        .await;
+
+        result
     }
 
     async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn PostTransaction>> {
@@ -146,6 +158,7 @@ impl PostTransaction for DatabasePostTransaction {
         id: i64,
     ) -> AppResult<Option<PostRecord>> {
         self.ensure_tenant(tenant_id)?;
+
         Ok(entity::Entity::find_by_id(id)
             .filter(entity::Column::TenantId.eq(tenant_id))
             .filter(entity::Column::DelFlag.eq(String::from("0")))

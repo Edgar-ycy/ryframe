@@ -205,6 +205,7 @@ async fn prepare_runtime(
     let worker_tasks = start_embedded_workers(
         startup,
         &database,
+        &tenant_database,
         &services,
         redis.client.clone(),
         shutdown_receiver.clone(),
@@ -340,6 +341,7 @@ async fn bind_listener(startup: &ApiStartup) -> Result<tokio::net::TcpListener, 
 fn start_embedded_workers(
     startup: &ApiStartup,
     database: &ryframe_db::ControlDatabaseCluster,
+    tenant_database: &Arc<ryframe_tenant_db::TenantDatabaseRouter>,
     services: &ryframe_api::AppServices,
     redis_client: Option<ryframe_adapters::RedisClient>,
     shutdown_receiver: watch::Receiver<bool>,
@@ -386,6 +388,12 @@ fn start_embedded_workers(
                     execution_tenant_scope,
                 )?
                 .with_authorization_cache(authorization_cache)
+                .with_data_scope_projection(
+                    ryframe_tenant_db::application_ports::data_scope_projection::publisher(
+                        database.clone(),
+                        (**tenant_database).clone(),
+                    ),
+                )
                 .spawn(shutdown_receiver),
             );
             Ok(tasks)

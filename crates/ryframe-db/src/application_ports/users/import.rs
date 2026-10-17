@@ -17,7 +17,7 @@ use sea_orm::{EntityTrait, TransactionTrait};
 use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    EnqueueJob, EnqueueJobResult,
+    DataScopeMutationTransaction, EnqueueJob, EnqueueJobResult,
     ports::jobs::BackgroundJobTransaction,
     ports::users::{
         NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportAuthorizationSnapshot,
@@ -404,6 +404,13 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
             .save_in_txn(&self.transaction, job_model(record))
             .await
             .map(job_record)
+    }
+}
+
+#[async_trait::async_trait]
+impl DataScopeMutationTransaction for DatabaseUserImportTransaction {
+    async fn record_data_scope_change(&self, tenant_id: &str) -> ryframe_kernel::AppResult<i64> {
+        self.transaction.record_data_scope_change(tenant_id).await
     }
 }
 

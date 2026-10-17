@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
     `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
+    `data_scope_version`     BIGINT       NOT NULL DEFAULT 1 COMMENT '租户数据范围投影权威版本',
     `runtime_epoch`          BIGINT       NOT NULL DEFAULT 1 COMMENT '租户运行时产品上下文纪元',
     `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

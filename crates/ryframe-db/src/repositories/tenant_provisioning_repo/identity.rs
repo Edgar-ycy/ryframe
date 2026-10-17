@@ -78,6 +78,7 @@ async fn insert_tenant_and_request(
         max_requests_per_min: ActiveValue::Set(record.max_requests_per_minute),
         session_version: ActiveValue::Set(1),
         authorization_epoch: ActiveValue::Set(1),
+        data_scope_version: ActiveValue::Set(1),
         runtime_epoch: ActiveValue::Set(1),
         configuration_version: ActiveValue::Set(0),
         created_at: ActiveValue::Set(now),

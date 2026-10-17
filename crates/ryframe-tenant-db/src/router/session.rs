@@ -61,6 +61,64 @@ impl TenantDataSession {
         Ok(transaction)
     }
 
+    /// 开启只读事务，锁定 fence 与投影元数据，并返回同一活跃 build token。
+    pub async fn begin_scoped_read(
+        &self,
+        expected_version: i64,
+    ) -> Result<ScopedTenantRead, TenantDataError> {
+        let transaction = self.database.writer().begin().await.map_err(|error| {
+            tracing::warn!(
+                target = self.target_key(),
+                tenant_id = self.tenant_id(),
+                %error,
+                "租户范围读事务开启失败"
+            );
+            TenantDataError::TargetUnavailable {
+                target_key: self.target_key().into(),
+            }
+        })?;
+        if let Err(error) = self
+            .verify_fence_on(&transaction, TenantDataAccess::Read, true)
+            .await
+        {
+            let _ = transaction.rollback().await;
+            return Err(error);
+        }
+        let projection = DataScopeProjectionRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            DATA_SCOPE_PROJECTION_QUERY,
+            [self.tenant_id().to_owned().into()],
+        ))
+        .one(&transaction)
+        .await
+        .map_err(|error| {
+            tracing::warn!(
+                target = self.target_key(),
+                tenant_id = self.tenant_id(),
+                %error,
+                "数据范围投影元数据读取失败"
+            );
+            TenantDataError::TargetUnavailable {
+                target_key: self.target_key().into(),
+            }
+        })?;
+        let actual = projection.as_ref().map(|row| row.source_version);
+        if projection.as_ref().is_none_or(|row| {
+            !row.ready || row.source_version != expected_version || row.build_token.len() != 64
+        }) {
+            let _ = transaction.rollback().await;
+            return Err(TenantDataError::DataScopeProjectionStale {
+                tenant_id: self.tenant_id().into(),
+                expected: expected_version,
+                actual,
+            });
+        }
+        Ok(ScopedTenantRead {
+            transaction,
+            build_token: projection.expect("投影已确认存在").build_token,
+        })
+    }
+
     pub(super) async fn verify_target_fence(
         &self,
         access: TenantDataAccess,

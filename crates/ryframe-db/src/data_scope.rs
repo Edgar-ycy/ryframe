@@ -1,6 +1,8 @@
 use ryframe_kernel::{DataScope, DataScopeContext};
-use sea_orm::sea_query::{Expr, Query};
-use sea_orm::{ColumnTrait, Condition};
+use sea_orm::sea_query::{Alias, Expr, Query};
+use sea_orm::{
+    ColumnTrait, Condition, ConnectionTrait, DbBackend, ExprTrait, FromQueryResult, Statement,
+};
 
 use crate::entities::user;
 
@@ -131,6 +133,186 @@ where
         }
     }
     Some(Condition::all().add(owner_column.in_subquery(users.take())))
+}
+
+/// 为租户业务表生成只读取当前已发布投影 build 的数据范围条件。
+///
+/// 调用方必须先从目标库元数据取得与认证主体完全一致的 build token；
+/// 本函数不再访问控制库用户或部门表。
+pub fn projected_owner_id_condition<C>(
+    owner_column: C,
+    tenant_id: &str,
+    build_token: &str,
+    ctx: &DataScopeContext,
+) -> Condition
+where
+    C: ColumnTrait,
+{
+    match ctx.scope {
+        DataScope::All => Condition::all(),
+        DataScope::SelfOnly => owner_column.eq(ctx.user_id).into(),
+        DataScope::Dept => match ctx.dept_id {
+            Some(dept_id) => owner_column
+                .in_subquery(projected_users(
+                    tenant_id,
+                    build_token,
+                    Expr::cust_with_values("o.dept_id = ?", [dept_id]),
+                ))
+                .into(),
+            None => denied(),
+        },
+        DataScope::DeptAndChildren => match ctx.dept_id {
+            Some(dept_id) => {
+                let dept_ids = projected_departments(tenant_id, build_token, dept_id);
+                owner_column
+                    .in_subquery(projected_users_with_dept_scope(
+                        tenant_id,
+                        build_token,
+                        dept_ids,
+                    ))
+                    .into()
+            }
+            None => denied(),
+        },
+        DataScope::Custom => {
+            let mut visible = Condition::any();
+            if !ctx.custom_dept_ids.is_empty() {
+                visible = visible.add(owner_column.in_subquery(projected_users(
+                    tenant_id,
+                    build_token,
+                    Expr::cust("o.dept_id").is_in(ctx.custom_dept_ids.clone()),
+                )));
+            }
+            if ctx.include_self {
+                visible = visible.add(owner_column.eq(ctx.user_id));
+            }
+            if visible.is_empty() {
+                denied()
+            } else {
+                visible
+            }
+        }
+    }
+}
+
+fn projected_users(
+    tenant_id: &str,
+    build_token: &str,
+    predicate: Expr,
+) -> sea_orm::sea_query::SelectStatement {
+    projected_users_with_predicate(tenant_id, build_token, [predicate])
+}
+
+fn projected_users_with_dept_scope(
+    tenant_id: &str,
+    build_token: &str,
+    dept_ids: sea_orm::sea_query::SelectStatement,
+) -> sea_orm::sea_query::SelectStatement {
+    projected_users_with_predicate(
+        tenant_id,
+        build_token,
+        [Expr::cust("o.dept_id").in_subquery(dept_ids)],
+    )
+}
+
+fn projected_users_with_predicate(
+    tenant_id: &str,
+    build_token: &str,
+    predicates: impl IntoIterator<Item = Expr>,
+) -> sea_orm::sea_query::SelectStatement {
+    let mut query = Query::select();
+    query
+        .expr(Expr::cust("o.user_id"))
+        .from_as(Alias::new("biz_data_scope_owner"), Alias::new("o"))
+        .and_where(Expr::cust_with_values("o.tenant_id = ?", [tenant_id]))
+        .and_where(Expr::cust_with_values("o.build_token = ?", [build_token]));
+    for predicate in predicates {
+        query.and_where(predicate);
+    }
+    query.take()
+}
+
+fn projected_departments(
+    tenant_id: &str,
+    build_token: &str,
+    dept_id: i64,
+) -> sea_orm::sea_query::SelectStatement {
+    let mut query = Query::select();
+    query
+        .expr(Expr::cust("d.dept_id"))
+        .from_as(Alias::new("biz_data_scope_dept"), Alias::new("d"))
+        .and_where(Expr::cust_with_values("d.tenant_id = ?", [tenant_id]))
+        .and_where(Expr::cust_with_values("d.build_token = ?", [build_token]))
+        .cond_where(
+            Condition::any()
+                .add(Expr::cust_with_values("d.dept_id = ?", [dept_id]))
+                .add(Expr::cust_with_values(
+                    "d.ancestors = ?",
+                    [dept_id.to_string()],
+                ))
+                .add(Expr::cust_with_values(
+                    "d.ancestors LIKE ?",
+                    [format!("{dept_id},%")],
+                ))
+                .add(Expr::cust_with_values(
+                    "d.ancestors LIKE ?",
+                    [format!("%,{dept_id},%")],
+                ))
+                .add(Expr::cust_with_values(
+                    "d.ancestors LIKE ?",
+                    [format!("%,{dept_id}")],
+                )),
+        );
+    query.take()
+}
+
+fn denied() -> Condition {
+    Condition::all().add(Expr::cust("1 = 0"))
+}
+
+/// 在租户目标写事务内锁定并核对当前投影版本，返回查询使用的 build token。
+pub async fn lock_projected_build<C>(
+    db: &C,
+    tenant_id: &str,
+    expected_version: i64,
+) -> ryframe_kernel::AppResult<String>
+where
+    C: ConnectionTrait,
+{
+    let row = ProjectedBuildRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        "SELECT `source_version`, `build_token`, `ready` \
+         FROM `biz_data_scope_projection` WHERE `tenant_id` = ? LIMIT 1 FOR UPDATE",
+        [tenant_id.to_owned().into()],
+    ))
+    .one(db)
+    .await
+    .map_err(|error| {
+        ryframe_kernel::AppError::Database(format!("数据范围投影元数据锁定失败: {error}"))
+    })?;
+    match row {
+        Some(row)
+            if row.ready
+                && row.source_version == expected_version
+                && row.build_token.len() == 64 =>
+        {
+            Ok(row.build_token)
+        }
+        Some(row) => Err(ryframe_kernel::AppError::StaleRuntimeEpoch(format!(
+            "租户 {tenant_id} 的数据范围投影版本不匹配: expected={expected_version}, actual={}；请刷新会话后重试",
+            row.source_version
+        ))),
+        None => Err(ryframe_kernel::AppError::StaleRuntimeEpoch(format!(
+            "租户 {tenant_id} 尚无可用的数据范围投影，请稍后重试"
+        ))),
+    }
+}
+
+#[derive(Debug, FromQueryResult)]
+struct ProjectedBuildRow {
+    source_version: i64,
+    build_token: String,
+    ready: bool,
 }
 
 fn base_user_id_query(tenant_id: &str) -> sea_orm::sea_query::SelectStatement {

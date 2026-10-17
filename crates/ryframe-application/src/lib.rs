@@ -53,6 +53,10 @@ pub use jobs::{
     validate_persisted_schedule_configuration,
 };
 pub use persistence::{PersistenceTransaction, TransactionAuditMode, complete_transaction};
+pub use ports::data_scope::{
+    DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE, DataScopeMutationTransaction,
+    DataScopeProjectionEvent, DataScopeProjectionPublisher,
+};
 pub use principal_resolver::PrincipalResolver;
 pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use runtime_policy::{

@@ -15,7 +15,7 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    AuthorizationCache, PersistenceTransaction, TransactionAuditMode,
+    AuthorizationCache, DataScopeMutationTransaction, PersistenceTransaction, TransactionAuditMode,
     ports::system::{
         DeptFilter, DeptReadPort, DeptRecord, DeptTreeRecord, DeptWritePort, DeptWriteTransaction,
     },
@@ -264,6 +264,13 @@ impl PersistenceTransaction for DatabaseDeptWriteTransaction {
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
         self.transaction.rollback().await.db()
+    }
+}
+
+#[async_trait::async_trait]
+impl DataScopeMutationTransaction for DatabaseDeptWriteTransaction {
+    async fn record_data_scope_change(&self, tenant_id: &str) -> AppResult<i64> {
+        self.transaction.record_data_scope_change(tenant_id).await
     }
 }
 

@@ -117,6 +117,9 @@ impl TenantConfigTransferService {
                 &prepared.tenant_id,
             )
             .await?;
+        transaction
+            .record_data_scope_change(&prepared.tenant_id)
+            .await?;
         let namespace_version = self
             .authorization_cache
             .record_namespace_version_in_transaction(

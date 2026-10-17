@@ -62,6 +62,7 @@ fn map_error(error: TenantDataError) -> AppError {
         TenantDataError::StalePlacementGeneration { .. } => {
             AppError::StalePlacementGeneration(message)
         }
+        TenantDataError::DataScopeProjectionStale { .. } => AppError::StaleRuntimeEpoch(message),
         TenantDataError::TenantDataMaintenance { .. } => {
             AppError::TenantDataMaintenance(message, 5)
         }

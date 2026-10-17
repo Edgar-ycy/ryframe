@@ -83,11 +83,13 @@ fn build_authorization_snapshot(
         versions: AuthorizationVersions {
             tenant_authorization_epoch: identity.tenant.authorization_epoch,
             user_authorization_version: user.authorization_version,
+            data_scope_version: identity.tenant.data_scope_version,
         },
         tenant_session_version: identity.tenant.session_version,
         principal: RequestPrincipal {
             password_change_required: user.password_change_required,
             user_authorization_version: user.authorization_version,
+            data_scope_version: identity.tenant.data_scope_version,
             actor: ActorContext {
                 user_id: user.id,
                 tenant_id: user.tenant_id.clone(),
@@ -97,6 +99,7 @@ fn build_authorization_snapshot(
                 data_scope: authorization.data_scope.scope,
                 custom_dept_ids: authorization.data_scope.custom_dept_ids,
                 include_self: authorization.data_scope.include_self,
+                data_scope_version: identity.tenant.data_scope_version,
                 is_super_admin,
             },
             tenant_authorization_epoch: identity.tenant.authorization_epoch,
@@ -162,10 +165,12 @@ mod tests {
                 data_scope: ryframe_kernel::DataScope::SelfOnly,
                 custom_dept_ids: Vec::new(),
                 include_self: true,
+                data_scope_version: 1,
                 is_super_admin: false,
             },
             password_change_required: false,
             user_authorization_version: 3,
+            data_scope_version: 1,
             tenant_authorization_epoch: 7,
             preferred_locale: None,
             roles: Vec::new(),
@@ -177,6 +182,7 @@ mod tests {
             versions: AuthorizationVersions {
                 tenant_authorization_epoch: 7,
                 user_authorization_version: 3,
+                data_scope_version: 1,
             },
             tenant_session_version: 1,
             principal,
@@ -219,7 +225,11 @@ mod tests {
     fn serialized_principal_requires_both_exact_version_fields() {
         let document = serde_json::to_value(snapshot().principal).unwrap();
         assert!(serde_json::from_value::<RequestPrincipal>(document.clone()).is_ok());
-        for field in ["user_authorization_version", "tenant_authorization_epoch"] {
+        for field in [
+            "user_authorization_version",
+            "tenant_authorization_epoch",
+            "data_scope_version",
+        ] {
             let mut missing = document.clone();
             missing.as_object_mut().unwrap().remove(field);
             assert!(serde_json::from_value::<RequestPrincipal>(missing).is_err());

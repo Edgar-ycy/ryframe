@@ -116,6 +116,7 @@ impl UserService {
             data_scope: resolved.data_scope.scope.clone(),
             custom_dept_ids: resolved.data_scope.custom_dept_ids.clone(),
             include_self: resolved.data_scope.include_self,
+            data_scope_version: tenant.data_scope_version,
             is_super_admin,
         };
         let fingerprint = calculate_export_authorization_fingerprint(

@@ -20,6 +20,7 @@ use sea_orm::{
 
 use super::super::transaction::DatabasePortTransaction;
 
+use ryframe_application::DataScopeMutationTransaction;
 use ryframe_application::ports::tenant_config::{
     TenantConfigBundleRecord, TenantConfigOperationLeaseRecord, TenantConfigRequesterRecord,
     TenantConfigTransferItemRecord, TenantConfigTransferPersistencePort,
@@ -386,6 +387,13 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
             .await
             .db()
             .map(|jobs| jobs.into_iter().map(|job| job.id).collect())
+    }
+}
+
+#[async_trait::async_trait]
+impl DataScopeMutationTransaction for DatabaseTenantConfigTransferTransaction {
+    async fn record_data_scope_change(&self, tenant_id: &str) -> ryframe_kernel::AppResult<i64> {
+        self.transaction.record_data_scope_change(tenant_id).await
     }
 }
 

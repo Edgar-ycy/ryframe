@@ -19,6 +19,8 @@ mod bootstrap;
 mod m20260820_000000_control_baseline;
 #[cfg(feature = "migration")]
 mod m20261013_000000_password_change;
+#[cfg(feature = "migration")]
+mod m20261017_000000_data_scope_projection;
 mod schema;
 #[cfg(feature = "migration")]
 mod seeder;
@@ -47,6 +49,7 @@ pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
 const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[
     "m20260820_000000_control_baseline",
     "m20261013_000000_password_change",
+    "m20261017_000000_data_scope_projection",
 ];
 
 pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
@@ -111,6 +114,7 @@ impl MigratorTrait for Migrator {
         let mut migrations: Vec<Box<dyn MigrationTrait>> = vec![
             Box::new(m20260820_000000_control_baseline::Migration),
             Box::new(m20261013_000000_password_change::Migration),
+            Box::new(m20261017_000000_data_scope_projection::Migration),
         ];
         migrations.extend(crate::generated::migrations());
         migrations

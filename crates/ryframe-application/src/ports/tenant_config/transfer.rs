@@ -141,7 +141,9 @@ pub struct TenantConfigRequesterRecord {
 
 /// 租户配置迁移用例所拥有的控制库工作单元。
 #[async_trait::async_trait]
-pub trait TenantConfigTransferTransaction: crate::PersistenceTransaction + Send + Sync {
+pub trait TenantConfigTransferTransaction:
+    crate::PersistenceTransaction + crate::ports::data_scope::DataScopeMutationTransaction + Send + Sync
+{
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
     fn product(&self) -> &dyn ProductTransactionPort;

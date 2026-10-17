@@ -34,6 +34,8 @@ pub struct Model {
     pub session_version: i32,
     /// 租户级授权规则版本，角色权限、菜单权限或部门层级变化时递增。
     pub authorization_epoch: i32,
+    /// 用户所属部门与部门树投影的权威版本；独立于权限缓存纪元。
+    pub data_scope_version: i64,
     /// 套餐版本或能力覆盖变化时递增；HTTP 契约以十进制字符串传输。
     pub runtime_epoch: i64,
     /// 部门、岗位、字典、可迁移参数、权限、菜单或角色关系变化时递增。
