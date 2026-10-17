@@ -174,7 +174,7 @@ pub(super) fn form_properties(field: &FieldIr) -> Vec<String> {
     if !field.enum_values.is_empty() {
         properties.push(format!("options: {}Options", field.name));
     }
-    if field.usage.create && !field.usage.update && form_widget(field) == "text" {
+    if field.usage.create && !field.usage.update {
         properties.push("disabledOnEdit: true".into());
     }
     if field.usage.update && !field.usage.create {

@@ -8,9 +8,13 @@ use crate::import::{TableInfo, inspect_existing_table};
 pub(super) async fn execute(plan: &GenerationPlan) -> Result<(), String> {
     crate::business::locate_business_package(&plan.workspace_root, &plan.package)
         .map_err(|error| error.to_string())?;
-    let config =
-        AppConfig::load_from_env(Environment::from_env().map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
+    let environment = Environment::from_env().map_err(|error| error.to_string())?;
+    let config = if std::env::var_os("APP_CONFIG_DIR").is_some() {
+        AppConfig::load_from_env(environment)
+    } else {
+        AppConfig::load(plan.workspace_root.join("config"), environment)
+    }
+    .map_err(|error| error.to_string())?;
     let tables = inspect(&config, plan).await?;
     println!(
         "读取 {} 张表；只读来源={}，模型目标={}。",

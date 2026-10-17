@@ -69,7 +69,7 @@ cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
 
-命令可从工作区根目录或该 crate 的子目录执行。预览在隔离缓存编译模型、生成 CRUD 与迁移并报告差异；`sync_frontend=true` 或 `--sync-frontend` 还会导出本次候选 OpenAPI、同步 typed caller、生成列表表单和路由，并执行前端类型与 lint 检查。需先安装前端依赖；`--no-sync-frontend` 可临时关闭。全部成功后，`--write` 统一安装两仓受管文件；并发改动拒绝覆盖，失败回滚未完成时报告备份路径。默认页面使用生成的 page.vue，模型的 `frontend_page="@/views/…/index.vue"` 可指定手写页面。`resource` 不写手写目录或覆盖历史迁移。描述符 reader 离线使用 Workspace 锁定版本、来源、校验和及 patch，不修改项目锁文件。配置支持 `package`、`models`、`tables`、`source`、`storage`、`strip_table_prefix` 和 `sync_frontend`；`resource --models Order,OrderItem` 覆盖模型列表，`import --tables biz_order,biz_order_item` 选择完整表批次。`run` 根据 tables 是否为空选择导入或模型生成，导入需 `--features schema-import`；`--plan` 只列同一执行计划，不编译、不连接数据库、不落盘。
+命令可从工作区根目录或该 crate 的子目录执行。导入默认读取工作区的 `config`；显式 `APP_CONFIG_DIR` 仍以进程目录解析相对路径，建议使用绝对路径。预览在隔离缓存编译模型、生成 CRUD 与迁移并报告差异；`sync_frontend=true` 或 `--sync-frontend` 还会导出本次候选 OpenAPI、同步 typed caller、生成列表表单和路由，并执行前端类型与 lint 检查。需先安装前端依赖；`--no-sync-frontend` 可临时关闭。全部成功后，`--write` 统一安装两仓受管文件；并发改动拒绝覆盖，失败回滚未完成时报告备份路径。默认页面使用生成的 page.vue，模型的 `frontend_page="@/views/…/index.vue"` 可指定手写页面。`resource` 不写手写目录或覆盖历史迁移。描述符 reader 离线使用 Workspace 锁定版本、来源、校验和及 patch，不修改项目锁文件。配置支持 `package`、`models`、`tables`、`source`、`storage`、`strip_table_prefix` 和 `sync_frontend`；`resource --models Order,OrderItem` 覆盖模型列表，`import --tables biz_order,biz_order_item` 选择完整表批次。`run` 根据 tables 是否为空选择导入或模型生成，导入需 `--features schema-import`；`--plan` 只列同一执行计划，不编译、不连接数据库、不落盘。
 
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
 
@@ -92,7 +92,7 @@ cargo generate -- resource --package order-business --model Order --write
 - 新增可空列、带显式默认值的非空列、整数或字符串扩宽、放宽非空约束及新增索引可生成向前 DDL；唯一索引仍须先核对存量重复值。
 - 删除或重命名列、收窄类型、收紧非空约束、改变主键/表名/存储范围、调整已有列顺序或删除/修改索引只输出审阅原因，整批停止，不覆盖初始迁移或发布半批注册。非空新列没有默认值时，先用可空列分阶段回填。
 - 审阅迁移后停止生产者，再显式执行 control 或所选 tenant-data 目标的 `up` 和 `verify`。数据库被直接改动时 verify 报告漂移，生成器不会反向覆盖模型或猜测已执行状态。
-- 可空可写字段使用完整替换：创建时省略或传 null 均为空，更新时省略或传 null 均清空该字段；非空可选更新省略时保留原值。需要三态补丁时编写明确扩展。业务 `i64/u64` 默认字符串传输，正文、查询、返回值及文本表单保持精确十进制；不使用 number 控件。空文本提交为可空字段的 null 或可选字段的省略值，必填字段仍由表单与服务端校验；有限枚举保留字符串值，不转换为浮点数。
+- 可空可写字段使用完整替换：创建时省略或传 null 均为空，更新时省略或传 null 均清空该字段；非空可选更新省略时保留原值。需要三态补丁时编写明确扩展。业务 `i64/u64` 默认字符串传输，正文、查询、返回值及文本表单保持精确十进制；不使用 number 控件。空文本提交为可空字段的 null 或可选字段的省略值，必填字段仍由表单与服务端校验；有限枚举保留字符串值，不转换为浮点数。契约中字符串传输的 64 位整数范围同样使用规范十进制字符串，前端以 BigInt 校验，禁止将边界先解析为 Number。
 
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 

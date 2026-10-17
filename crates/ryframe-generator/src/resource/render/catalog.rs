@@ -67,8 +67,8 @@ pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value
                 "required": field.validation.required,
                 "min_length": field.validation.min_length,
                 "max_length": field.validation.max_length,
-                "minimum": field.validation.minimum,
-                "maximum": field.validation.maximum,
+                "minimum": integer_boundary(field, field.validation.minimum),
+                "maximum": integer_boundary(field, field.validation.maximum),
             });
             if let Some(minimum) = field.validation.min_utf8_bytes {
                 validation
@@ -116,6 +116,21 @@ pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value
             .insert("relations".into(), serde_json::json!(resource.relations));
     }
     metadata
+}
+
+/// 范围与字段使用相同的传输精度，避免 JSON 消费者先解析为浮点数。
+fn integer_boundary(field: &super::super::FieldIr, value: Option<i64>) -> serde_json::Value {
+    use super::super::ValueType;
+    match value {
+        Some(value)
+            if field.wire_type == ValueType::String
+                && matches!(field.value_type, ValueType::I64 | ValueType::U64) =>
+        {
+            value.to_string().into()
+        }
+        Some(value) => value.into(),
+        None => serde_json::Value::Null,
+    }
 }
 
 pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String {
@@ -174,6 +189,46 @@ pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn metadata_preserves_exact_string_integer_boundaries() {
+        use crate::{ResourceSpec, ValueType, normalize_resource};
+        let spec = ResourceSpec::parse(
+            include_str!("../../../tests/fixtures/order.toml"),
+            "order.toml",
+        )
+        .unwrap();
+        let mut resource = normalize_resource(spec, "order.toml", "test").unwrap();
+        let field = resource
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "id")
+            .unwrap();
+        field.value_type = ValueType::I64;
+        field.wire_type = ValueType::String;
+        field.validation.minimum = Some(i64::MIN);
+        field.validation.maximum = Some(i64::MAX);
+        let metadata = super::crud_resource_metadata(&resource);
+        let field = metadata["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["name"] == "id")
+            .unwrap();
+        assert_eq!(field["validation"]["minimum"], i64::MIN.to_string());
+        assert_eq!(field["validation"]["maximum"], i64::MAX.to_string());
+        let field = resource
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "id")
+            .unwrap();
+        field.value_type = ValueType::U64;
+        assert_eq!(super::integer_boundary(field, Some(0)), "0");
+        assert!(super::integer_boundary(field, None).is_null());
+        field.value_type = ValueType::I32;
+        field.wire_type = ValueType::I32;
+        assert_eq!(super::integer_boundary(field, Some(42)), 42);
+    }
+
     #[test]
     fn rust_json_keeps_full_integer_ranges_and_string_digits() {
         let value = serde_json::json!({"min":i64::MIN,"max":i64::MAX,"unsigned":u64::MAX,"small":7,"decimal":0.5,"text":"\"9223372036854775807\"\\end"});

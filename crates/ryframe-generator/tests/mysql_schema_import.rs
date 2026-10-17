@@ -3,6 +3,8 @@ use sea_orm::TransactionTrait;
 
 #[path = "mysql_schema_import/business_evolution.rs"]
 mod business_evolution;
+#[path = "mysql_schema_import/cli.rs"]
+mod cli;
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
 #[path = "mysql_schema_import/sql_comments.rs"]

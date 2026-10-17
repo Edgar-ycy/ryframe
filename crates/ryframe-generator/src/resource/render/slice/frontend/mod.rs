@@ -28,4 +28,5 @@ fn has_date_column(resource: &ResourceIr) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../../../../../tests/internal/frontend_render.rs"]
 mod tests;

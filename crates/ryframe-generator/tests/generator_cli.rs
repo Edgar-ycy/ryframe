@@ -65,3 +65,56 @@ fn ambiguous_arguments_fail_before_any_task() {
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }
+
+#[cfg(feature = "schema-import")]
+#[test]
+fn import_from_business_subdirectory_uses_workspace_config_and_honors_explicit_override() {
+    let root = tempfile::tempdir().unwrap();
+    let business = root.path().join("crates/orders-business");
+    fs::create_dir_all(business.join("src")).unwrap();
+    fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers=['crates/orders-business']\nresolver='3'\n",
+    )
+    .unwrap();
+    fs::write(business.join("Cargo.toml"), "[package]\nname='orders-business'\nversion='0.1.0'\nedition='2024'\n[package.metadata.ryframe]\nkind='business'\nmodule='orders'\n").unwrap();
+    fs::write(business.join("src/lib.rs"), "").unwrap();
+    fs::create_dir(root.path().join("config")).unwrap();
+    fs::write(root.path().join("config/app.toml"), "root_config_marker").unwrap();
+    let explicit = root.path().join("explicit-config");
+    fs::create_dir(&explicit).unwrap();
+    fs::write(explicit.join("app.toml"), "override_config_marker").unwrap();
+    for configured in [None, Some(explicit.as_os_str())] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ryframe-generate"));
+        command
+            .args([
+                "import",
+                "--package",
+                "orders-business",
+                "--database",
+                "control",
+                "--connection",
+                "primary",
+                "--table",
+                "table1",
+            ])
+            .current_dir(business.join("src"))
+            .env("APP_ENV", "dev")
+            .env_remove("APP_CONFIG_DIR");
+        if let Some(path) = configured {
+            command.env("APP_CONFIG_DIR", path);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let error = String::from_utf8_lossy(&output.stderr);
+        let expected = if configured.is_some() {
+            "override_config_marker"
+        } else {
+            "root_config_marker"
+        };
+        assert!(error.contains(expected), "{error}");
+        assert!(!root.path().join("target").exists());
+        assert!(!root.path().join(".local-tests").exists());
+        assert!(!root.path().join("Cargo.lock").exists());
+    }
+}

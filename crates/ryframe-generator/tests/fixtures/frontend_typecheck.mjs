@@ -149,9 +149,7 @@ for (const field of fields) {
     assert.equal(control.placeholder, `请输入${field.labels.zh_cn}`)
     assert.equal(englishControl.placeholder, `Enter ${field.labels.en}`)
   }
-  // 当前控件仅在文本分支读取 disabledOnEdit，数字和单选保留原有编辑行为。
-  const textControl = !Object.keys(field.enum_values).length && field.widget !== 'number'
-  assert.equal(control.disabledOnEdit === true, textControl && field.usage.create && !field.usage.update)
+  assert.equal(control.disabledOnEdit === true, field.usage.create && !field.usage.update)
   assert.equal(control.editOnly === true, field.usage.update && !field.usage.create)
   if (['decimal', 'i64', 'u64'].includes(field.value_type) && field.wire_type === 'string') {
     assert.equal(form[field.name], '')

@@ -4,11 +4,7 @@ use super::*;
 use crate::{ResourceSpec, normalize_resource};
 
 fn order() -> ResourceIr {
-    let spec = ResourceSpec::parse(
-        include_str!("../../../../../tests/fixtures/order.toml"),
-        "order.toml",
-    )
-    .unwrap();
+    let spec = ResourceSpec::parse(include_str!("../fixtures/order.toml"), "order.toml").unwrap();
     normalize_resource(spec, "order.toml", "test").unwrap()
 }
 
@@ -66,6 +62,54 @@ fn wide(count: usize) -> ResourceIr {
 
 fn assets(resource: &ResourceIr) -> Vec<crate::GeneratedAsset> {
     crate::resource::business_frontend_assets(std::slice::from_ref(resource)).unwrap()
+}
+
+#[test]
+fn create_only_fields_disable_editing_for_every_form_widget() {
+    let mut resource = wide(24);
+    resource
+        .fields
+        .iter_mut()
+        .find(|field| field.name == "value_0")
+        .unwrap()
+        .usage
+        .update = false;
+    let text = resource
+        .fields
+        .iter()
+        .find(|field| field.name == "value_2")
+        .unwrap();
+    let number = resource
+        .fields
+        .iter()
+        .find(|field| field.name == "value_23")
+        .unwrap();
+    let radio = resource
+        .fields
+        .iter()
+        .find(|field| field.name == "value_0")
+        .unwrap();
+    for (field, kind) in [(text, "text"), (number, "number"), (radio, "radio")] {
+        assert!(field.usage.create && !field.usage.update);
+        assert!(presentation::form_properties(field).contains(&format!("kind: {kind:?}")));
+        assert!(presentation::form_properties(field).contains(&"disabledOnEdit: true".into()));
+        let mut editable = field.clone();
+        editable.usage.update = true;
+        assert!(!presentation::form_properties(&editable).contains(&"disabledOnEdit: true".into()));
+    }
+    let count = assets(&resource)
+        .iter()
+        .filter(|asset| asset.path.contains("/form-fields"))
+        .map(|asset| asset.content.matches("disabledOnEdit: true").count())
+        .sum::<usize>();
+    assert_eq!(
+        count,
+        resource
+            .fields
+            .iter()
+            .filter(|field| field.usage.create && !field.usage.update)
+            .count()
+    );
 }
 
 fn import_like_labels() -> ResourceIr {
