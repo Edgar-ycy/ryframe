@@ -139,6 +139,8 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。
 
+Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
+
 ## 框架维护检查
 
 框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。 DevEx 导入测量的 XLSX 样本由 Rust xtask 的隐藏内部入口生成，不需要 Python 解析器。`.local-tests/devex/runtime.json` 的 `bindings.import_samples` 只绑定绝对 `template` 路径；`contract.import_samples` 继续固定真实模板 SHA-256 与当前样本模型 SHA-256。Node 驱动通过 `cargo run --quiet --locked -p xtask` 的标准输入协议取得清单，继续限制超时、输出大小和失败信息，不拼接 shell 命令。性能样本按 namespace、worker、cycle 生成独立用户名和文件；浏览器样本包含成功行、重复行和无效部门行。读取和重写共用同一 ZIP/XML 校验核心，保留原模板其他成员、表头样式与表格结构，并拒绝路径穿越、重复或加密成员、符号链接、超出限额的归档和大文件保留成员冲突。身份环境模板检查也只调用该 Rust 入口并严格解析 JSON，不再维护第二套 XLSX 解析。限流配置的 TOML 深合并、字段校验、authority 与登录预算同样由 xtask 的 `__rate-limit` 隐藏入口统一执行；Node 与 Python 薄客户端只通过 stdin JSON 调用并严格解析结果，错误只返回稳定标识，不输出路径或环境内容。

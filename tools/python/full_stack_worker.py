@@ -53,6 +53,7 @@ from full_stack_worker_protocol import (
     _validate_child,
     _validate_progress,
     _validate_request,
+    _validate_result,
     _write_operation_receipt,
 )
 from process_guard import process_guard
@@ -532,6 +533,33 @@ def _reconcile_legacy(directory: Path, receipt: dict, source: str) -> str:
     return state
 
 
+def _archive_completed(operation: dict, receipt: dict) -> dict:
+    result = _validate_result(operation)
+    if result["operation"] == "start" and result["outcome"] == "failed":
+        for name, kind in (
+            ("supervisor.json", "full-stack-worker-control-supervisor"),
+            ("candidate.json", "full-stack-worker-control-candidate"),
+        ):
+            if not (operation["path"] / name).is_file():
+                continue
+            child = _validate_child(operation, name, kind)
+            identity = child["identity"]
+            if assert_identity(process_identity(identity["pid"]), identity):
+                raise _PendingStart("Worker 启动失败，正在等待监督进程退出")
+            if name == "supervisor.json":
+                from full_stack_process_monitor import wait_startup_cleanup
+
+                wait_startup_cleanup(
+                    operation["path"].parent,
+                    "worker",
+                    receipt["scope_id"],
+                    operation["owner"]["operation_id"],
+                    identity,
+                )
+            break
+    return _archive(operation)
+
+
 def _reconcile_active(
     backend: Path,
     directory: Path,
@@ -551,7 +579,7 @@ def _reconcile_active(
         raise ValueError("Worker 控制器仍在运行，拒绝并发操作")
     result_path = operation["path"] / "result.json"
     if result_path.is_file():
-        return _archive(operation)
+        return _archive_completed(operation, receipt)
     supervisor_path = operation["path"] / "supervisor.json"
     if supervisor_path.is_file():
         supervisor = _validate_child(
@@ -560,7 +588,7 @@ def _reconcile_active(
         if process_identity(supervisor["identity"]["pid"]) == supervisor["identity"]:
             raise _PendingStart("Worker 后台启动仍在执行")
         if result_path.is_file():
-            return _archive(_operation(directory, source))
+            return _archive_completed(_operation(directory, source), receipt)
     else:
         candidate_path = operation["path"] / "candidate.json"
         if candidate_path.is_file():

@@ -129,6 +129,13 @@ class WorkerControlTests(unittest.TestCase):
             return listener.getsockname()[1]
 
     def cleanup(self):
+        result = getattr(self._outcome, "result", None)
+        failures = [] if result is None else result.errors + result.failures
+        if any(getattr(test, "test_case", test) is self for test, _ in failures):
+            evidence = self.root.parent.parent / "python-failures" / self.root.name
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.root, evidence)
+            print(f"Worker 失败收据与日志已保留：{evidence}", file=sys.stderr)
         for process in self.controllers:
             if process.poll() is None:
                 process.kill()
@@ -321,6 +328,23 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
                         self.assertEqual(result["state"], "running")
                         self.control("stop")
                 self.assertFalse(lock.exists())
+
+    def test_parent_death_preserves_failed_start_and_waits_for_cleanup(self):
+        with mock.patch.dict(os.environ, {"RYFRAME_FAKE_WORKER_MODE": "exit"}):
+            self.launch_interrupted_controller("authorized")
+            lock = self.directory / worker.LOCK
+            self.wait_for(lambda: (lock / "result.json").is_file())
+            failure = json.loads((lock / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(failure["outcome"], "failed")
+            self.assertIn("退出", failure["error"])
+            self.assertEqual(self.control("status")["state"], "stopped")
+            archive = self.directory / worker.ARCHIVE / failure["operation_id"]
+            self.assertEqual(
+                json.loads((archive / "result.json").read_text(encoding="utf-8")),
+                failure,
+            )
+            self.assertTrue((self.directory / failure["log"]).is_file())
+            self.assertFalse(lock.exists())
 
     def test_parent_death_reconciles_simple_operations_to_their_exact_goal(self):
         started = self.control("start")
