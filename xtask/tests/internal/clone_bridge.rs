@@ -188,6 +188,112 @@ impl maintenance::Runner for FakeRunner {
 }
 
 #[test]
+fn source_paths_accept_valid_names_and_keep_domains() {
+    for (path, domain) in [
+        ("crates/业务 模块/src/file..rs", "product"),
+        (".hidden", "product"),
+        ("crates/.hidden/file..rs", "product"),
+        ("file..rs", "product"),
+        ("tests/中文 空格/.hidden", "test_tools"),
+        ("xtask/tests/file..rs", "test_tools"),
+        ("crates/业务 模块/tests/file..rs", "test_tools"),
+        ("tools/中文 空格/check..py", "test_tools"),
+        (".github/workflows/中文 空格.yml", "test_tools"),
+        ("docs/中文 空格/.hidden", "support"),
+        ("README.md", "support"),
+    ] {
+        let records = vec![source::FileRecord {
+            path: path.into(),
+            sha256: "a".repeat(64),
+        }];
+        let fingerprints = source::fingerprints(&records).unwrap();
+        for group in ["product", "test_tools", "support"] {
+            assert_eq!(
+                fingerprints[group]["files"],
+                json!(usize::from(group == domain)),
+                "{path}: {group}"
+            );
+        }
+        assert_eq!(
+            fingerprints[domain]["sha256"],
+            json!(digest::plan_hash(&json!([{"path": path, "sha256": "a".repeat(64)}])).unwrap()),
+            "{path}"
+        );
+        let inventory = source::validate_inventory(&source_path_inventory(path)).unwrap();
+        assert_eq!(inventory.files, records, "{path}");
+        assert_eq!(inventory.source.snapshot.files, records, "{path}");
+    }
+}
+
+#[test]
+fn source_paths_reject_aliases_and_nonrelative_names() {
+    for path in [
+        "",
+        ".",
+        "..",
+        "a//b",
+        "a/./b",
+        "a/../b",
+        "a/b/",
+        "a/b//",
+        "a/.",
+        "a/..",
+        "./a/b",
+        "../a/b",
+        "/a/b",
+        "//server/share/file.rs",
+        "a\\b",
+        "\\a\\b",
+        "C:/a/b",
+        "C:a/b",
+        "z:/a/b",
+        "z:a/b",
+        "tests//file.rs",
+        "xtask/tests/./file.rs",
+        "crates/example/tests/file.rs/",
+        "tools//check.py",
+        ".github/./workflow.yml",
+        "docs//guide.md",
+        "README.md/",
+    ] {
+        let records = [source::FileRecord {
+            path: path.into(),
+            sha256: "a".repeat(64),
+        }];
+        assert!(source::fingerprints(&records).is_err(), "{path:?}");
+        for pointer in ["/files/0/path", "/source/snapshot/files/0/path"] {
+            let mut inventory = source_path_inventory("valid/file.rs");
+            *inventory.pointer_mut(pointer).unwrap() = json!(path);
+            assert!(
+                source::validate_inventory(&inventory).is_err(),
+                "{path:?}: {pointer}"
+            );
+        }
+    }
+}
+
+fn source_path_inventory(path: &str) -> Value {
+    let file = json!({"path": path, "sha256": "a".repeat(64)});
+    json!({
+        "source": {
+            "snapshot": {
+                "head": "b".repeat(40),
+                "patch_sha256": "c".repeat(64),
+                "files": [file],
+                "clean": false,
+            },
+            "worktree_fingerprint": format!("sha256:{}", "d".repeat(64)),
+        },
+        "files": [file],
+        "guard": {
+            "head": "b".repeat(40),
+            "index_sha256": "e".repeat(64),
+            "modes_sha256": "f".repeat(64),
+        },
+    })
+}
+
+#[test]
 fn bridge_output_matches_python_and_rejects_drift_and_existing_output() {
     let fixture = Fixture::new();
     let (build, inventory) = fixture.restore_inputs();

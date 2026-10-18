@@ -5,6 +5,9 @@ use crate::Result;
 pub(super) fn source_domain(relative: &str) -> Result<&'static str> {
     let path = Path::new(relative);
     if relative.is_empty()
+        || relative
+            .split('/')
+            .any(|part| matches!(part, "" | "." | ".."))
         || path.is_absolute()
         || path
             .components()
