@@ -9,16 +9,18 @@ from pathlib import Path
 import re
 import stat
 
-from artifact_digests import file_digest, protect_binaries
+from artifact_digests import file_digest, protect_binary_invocation
 
 
 TOOL_ENVIRONMENT = "RYFRAME_RATE_LIMIT_TOOL_BINDING"
+# 协调器在启动测试进程时明确绑定工具；清理服务环境不能丢失宿主工具身份。
+_COORDINATOR_BINDING = os.environ.get(TOOL_ENVIRONMENT)
 FIELDS = frozenset({"format_version", "kind", "path", "bytes", "sha256"})
 MAX_BINDING_BYTES = 16 * 1024
 
 
 def tool_binding() -> dict | None:
-    raw = os.environ.get(TOOL_ENVIRONMENT)
+    raw = os.environ.get(TOOL_ENVIRONMENT, _COORDINATOR_BINDING)
     if raw is None:
         return None
     if not raw or len(raw.encode("utf-8")) > MAX_BINDING_BYTES:
@@ -78,7 +80,7 @@ def verified_tool(value: dict | None):
     path = Path(value["path"])
     _reject_links(path)
     expected = {key: value[key] for key in ("bytes", "sha256")}
-    with protect_binaries([{key: value[key] for key in ("path", "sha256")}]):
+    with protect_binary_invocation({key: value[key] for key in ("path", "sha256")}):
         before = path.stat()
         if file_digest(path) != expected:
             raise ValueError("限流工具字节或摘要与当前协调器绑定不同")

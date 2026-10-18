@@ -209,6 +209,7 @@ fn python_bound_tool_reloads_configuration_without_starting_cargo() {
             r#"
 import json, os, sys
 from pathlib import Path
+from unittest.mock import patch
 sys.path.insert(0, str(Path(sys.argv[1]) / 'tools/python'))
 from rate_limit_client import load_app_table, rate_limit_settings
 backend = Path(sys.argv[2])
@@ -220,7 +221,8 @@ assert first['rate_limit']['capacity'] == 100
 second = load_app_table(backend, environment)
 assert second['rate_limit']['capacity'] == 137
 assert second['rate_limit']['window_secs'] == 61
-third = rate_limit_settings(backend, {**environment, 'APP_RATE_LIMIT_CAPACITY': '149'})
+with patch.dict(os.environ, {}, clear=True):
+    third = rate_limit_settings(backend, {**environment, 'APP_RATE_LIMIT_CAPACITY': '149'})
 assert third['capacity'] == 149
 assert second['rate_limit']['capacity'] == 137
 print(json.dumps({'calls': 3, 'capacities': [100, 137, 149]}))

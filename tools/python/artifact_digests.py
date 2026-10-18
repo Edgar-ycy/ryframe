@@ -1,4 +1,4 @@
-"""仅在明确复制阶段保护已登记的 Windows 二进制，复用不可写文件的摘要。"""
+"""保护明确登记的 Windows 文件；阶段摘要只复用持有不可写句柄的文件。"""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -285,6 +285,36 @@ def _protect(bindings: list[dict], *, binary: bool):
             if primary is None:
                 raise cleanup
             primary.add_note(f"阶段二进制保护收尾同时失败：{type(cleanup).__name__}")
+
+
+@contextmanager
+def protect_binary_invocation(binding: dict):
+    """为单次只读工具调用持有独立句柄，不占用控制器的阶段保护集合。"""
+    if not _WINDOWS:
+        yield
+        return
+    path, expected = next(iter(_bindings([binding], binary=True).values()))
+    protected = _Protected(path, expected, binary=True)
+    primary = None
+    try:
+        yield
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        cleanup = None
+        try:
+            protected.check()
+        except BaseException as error:
+            cleanup = error
+        released = _release([protected])
+        if cleanup is not None and released is not None:
+            cleanup.add_note(f"单次工具保护句柄释放同时失败：{type(released).__name__}")
+        cleanup = cleanup or released
+        if cleanup is not None:
+            if primary is None:
+                raise cleanup
+            primary.add_note(f"单次工具保护收尾同时失败：{type(cleanup).__name__}")
 
 
 @contextmanager

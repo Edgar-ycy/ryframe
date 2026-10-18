@@ -8,6 +8,8 @@ import struct
 import subprocess
 import sys
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import unittest
 from unittest import mock
 
@@ -23,6 +25,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class DescriptorTests(unittest.TestCase):
     def setUp(self):
+        coordinator = mock.patch.object(tool, "_COORDINATOR_BINDING", None)
+        coordinator.start()
+        self.addCleanup(coordinator.stop)
         self.value = {
             "format_version": 1,
             "kind": "ryframe-native-rate-limit-tool",
@@ -51,6 +56,15 @@ class DescriptorTests(unittest.TestCase):
                 self.parse(json.dumps(missing))
         with self.assertRaises(ValueError):
             self.parse(json.dumps({**self.value, "extra": "private-value"}))
+
+    def test_coordinator_binding_survives_service_environment_cleanup(self):
+        with mock.patch.object(tool, "_COORDINATOR_BINDING", json.dumps(self.value)):
+            with mock.patch.dict(os.environ, {"APP_ENV": "test"}, clear=True):
+                self.assertEqual(tool.tool_binding(), self.value)
+            override = {**self.value, "bytes": 333}
+            self.assertEqual(self.parse(json.dumps(override)), override)
+            with self.assertRaises(ValueError):
+                self.parse("")
 
     def test_strict_types_versions_sizes_absolute_paths_and_hashes(self):
         invalid = {
@@ -248,7 +262,7 @@ class ProtectionTests(ToolFixture):
                         with tool.verified_tool(self.value) as executable:
                             self.assertEqual(executable, str(self.executable))
                             if os.name == "nt":
-                                self.assertIsNotNone(artifact_digests._ACTIVE)
+                                self.assertIsNone(artifact_digests._ACTIVE)
                                 with self.assertRaises(OSError):
                                     self.executable.write_bytes(b"changed")
                             if failure is not None:
@@ -336,6 +350,21 @@ class ProtectionTests(ToolFixture):
                 self.assertIs(raised.exception, primary)
                 self.assertTrue(any("OSError" in note for note in primary.__notes__))
             self.assert_released()
+
+    def test_parallel_invocations_keep_independent_guards_inside_stage_protection(self):
+        rendezvous = threading.Barrier(4)
+
+        def invoke(index):
+            with tool.verified_tool(self.value):
+                rendezvous.wait(timeout=2)
+                return index
+
+        with artifact_digests.protect_binaries([
+            {key: self.value[key] for key in ("path", "sha256")}
+        ]):
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                self.assertEqual(list(executor.map(invoke, range(4))), list(range(4)))
+        self.assert_released()
 
     def test_directory_and_special_files_are_rejected_before_reading(self):
         directory_binding = {**self.value, "path": str(self.directory)}

@@ -8,12 +8,18 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rate_limit_client
+import rate_limit_tool
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class RateLimitClientTests(unittest.TestCase):
+    def setUp(self):
+        coordinator = mock.patch.object(rate_limit_tool, "_COORDINATOR_BINDING", None)
+        coordinator.start()
+        self.addCleanup(coordinator.stop)
+
     def call(self, response, *, code=0, operation="load-table"):
         completed = subprocess.CompletedProcess(
             args=[], returncode=code, stdout=json.dumps(response).encode("utf-8"), stderr=b""
