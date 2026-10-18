@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::{
-    PYTHON_TEST_ARGS, backend_packages, frontend_profiles, require_frontend_dependencies,
+    backend_packages, frontend_profiles, require_frontend_dependencies,
     run_parallel_tasks, run_removed_identity,
 };
 use crate::{
@@ -87,7 +87,7 @@ pub(crate) fn execute_registered_task(
         TaskExecutor::PolicyChecks | TaskExecutor::BackendPolicyChecks => {
             run_policy_checks(context, policy_profile(mode))
         }
-        TaskExecutor::PythonTests => run_process(&context.root, "python", PYTHON_TEST_ARGS),
+        TaskExecutor::PythonTests => super::super::python_tests::run(&context.root),
         TaskExecutor::NodeTests => run_node_tests(&context.root),
         TaskExecutor::MigrationHistory => run_migration_history(context, mode),
         TaskExecutor::WorkspaceGates => run_workspace_gates(context, mode, state, true),

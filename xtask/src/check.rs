@@ -34,6 +34,8 @@ mod policy_tasks;
 pub(crate) mod prerelease;
 #[path = "check/python_environment.rs"]
 pub(crate) mod python_environment;
+#[path = "check/python_tests.rs"]
+pub(crate) mod python_tests;
 #[path = "check/removed_identity.rs"]
 pub(crate) mod removed_identity;
 #[path = "check/resource.rs"]

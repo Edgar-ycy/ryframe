@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from typing import Mapping
 
+from rate_limit_tool import TOOL_ENVIRONMENT, tool_binding, verified_tool
+
 ROOT = Path(__file__).resolve().parents[2]
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 OPERATIONS = frozenset({"authority", "load-table", "settings", "login-budget"})
@@ -102,32 +104,36 @@ def _invoke(operation: str, request: dict) -> dict:
     payload = json.dumps(
         request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    argv = [
-        os.environ.get("CARGO") or _CARGO_EXECUTABLE,
-        "run",
-        "--quiet",
-        "--locked",
-        "-p",
-        "xtask",
-        "--",
-        "__rate-limit",
-        operation,
-    ]
     options = {}
     if os.name == "nt":
         options["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        result = subprocess.run(
-            argv,
-            cwd=ROOT,
-            env=_child_environment(),
-            input=payload,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-            check=False,
-            **options,
-        )
+        with verified_tool(tool_binding()) as executable:
+            if executable is not None:
+                argv = [executable, "__rate-limit", operation]
+            else:
+                argv = [
+                    os.environ.get("CARGO") or _CARGO_EXECUTABLE,
+                    "run",
+                    "--quiet",
+                    "--locked",
+                    "-p",
+                    "xtask",
+                    "--",
+                    "__rate-limit",
+                    operation,
+                ]
+            result = subprocess.run(
+                argv,
+                cwd=ROOT,
+                env=_child_environment(),
+                input=payload,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+                **options,
+            )
     except (OSError, subprocess.SubprocessError):
         raise RuntimeError("无法启动 Rust 限流配置入口") from None
     if len(result.stdout) > MAX_OUTPUT_BYTES:
@@ -151,7 +157,8 @@ def _child_environment() -> dict[str, str]:
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key.upper() not in _ENCODING_NAMES and not key.upper().startswith("APP_")
+        if key.upper() not in {*_ENCODING_NAMES, TOOL_ENVIRONMENT}
+        and not key.upper().startswith("APP_")
     }
     for key, value in _HOST_PROCESS_ENVIRONMENT.items():
         environment.setdefault(key, value)

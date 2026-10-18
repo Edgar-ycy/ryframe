@@ -18,7 +18,15 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let directory = TempDir::new().expect("应创建限流协议临时目录");
+        let local = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask 必须位于后端工作区")
+            .join(".local-tests/xtask-rate-limit");
+        fs::create_dir_all(&local).expect("应准备工作区中的限流协议测试目录");
+        let directory = tempfile::Builder::new()
+            .prefix("protocol-")
+            .tempdir_in(local)
+            .expect("应创建限流协议临时目录");
         let backend = directory.path().to_path_buf();
         fs::create_dir(backend.join("config")).unwrap();
         fs::write(
@@ -183,6 +191,57 @@ fn hidden_binary_is_absent_from_help_and_reads_the_request_from_stdin() {
         "invalid_request"
     );
     assert!(failed.stderr.is_empty());
+}
+
+#[test]
+fn python_bound_tool_reloads_configuration_without_starting_cargo() {
+    let executable = Path::new(env!("CARGO_BIN_EXE_xtask"));
+    let Some(binding) = super::check::python_tests::binding(executable).unwrap() else {
+        // 链接或 UNC 布局保留原入口；不能伪造为本机受保护二进制。
+        return;
+    };
+    let fixture = Fixture::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let output = Command::new("python")
+        .args([
+            "-B",
+            "-c",
+            r#"
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'tools/python'))
+from rate_limit_client import load_app_table, rate_limit_settings
+backend = Path(sys.argv[2])
+environment = {'APP_ENV': 'test'}
+first = load_app_table(backend, environment)
+assert first['rate_limit']['capacity'] == 100
+(backend / 'config/app.toml').write_text(
+    '[rate_limit]\ncapacity = 137\nwindow_secs = 61\n', encoding='utf-8')
+second = load_app_table(backend, environment)
+assert second['rate_limit']['capacity'] == 137
+assert second['rate_limit']['window_secs'] == 61
+third = rate_limit_settings(backend, {**environment, 'APP_RATE_LIMIT_CAPACITY': '149'})
+assert third['capacity'] == 149
+assert second['rate_limit']['capacity'] == 137
+print(json.dumps({'calls': 3, 'capacities': [100, 137, 149]}))
+"#,
+        ])
+        .args([root, &fixture.backend])
+        .env("RYFRAME_RATE_LIMIT_TOOL_BINDING", binding)
+        .env("CARGO", "ryframe-cargo-must-not-be-started")
+        .env("APP_RATE_LIMIT_CAPACITY", "991")
+        .env("PYTHONUTF8", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"calls": 3, "capacities": [100, 137, 149]})
+    );
 }
 
 #[test]
