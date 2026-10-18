@@ -201,6 +201,7 @@ fn source_paths_accept_valid_names_and_keep_domains() {
         (".github/workflows/中文 空格.yml", "test_tools"),
         ("docs/中文 空格/.hidden", "support"),
         ("README.md", "support"),
+        ("README.en.md", "support"),
     ] {
         let records = vec![source::FileRecord {
             path: path.into(),
@@ -270,6 +271,19 @@ fn source_paths_reject_aliases_and_nonrelative_names() {
             );
         }
     }
+}
+
+#[test]
+fn translated_readme_changes_keep_product_inputs_and_complete_source_evidence() {
+    let before = source::validate_inventory(&source_path_inventory("README.en.md")).unwrap();
+    let mut after = before.clone();
+    after.files[0].sha256 = "9".repeat(64);
+    after.source.snapshot.files[0].sha256 = "9".repeat(64);
+    let before = source::backend_domains(&before).unwrap();
+    let after = source::backend_domains(&after).unwrap();
+    assert_eq!(before["product"], after["product"]);
+    assert_eq!(before["tools"], after["tools"]);
+    assert_ne!(before["full"], after["full"]);
 }
 
 fn source_path_inventory(path: &str) -> Value {

@@ -37,7 +37,10 @@ pub(super) fn source_domain(relative: &str) -> Result<&'static str> {
         return Ok("test_tools");
     }
     if parts.first() == Some(&"docs")
-        || matches!(relative, "README.md" | "CHANGELOG.md" | "LICENSE")
+        || matches!(
+            relative,
+            "README.md" | "README.en.md" | "CHANGELOG.md" | "LICENSE"
+        )
     {
         return Ok("support");
     }
@@ -101,6 +104,7 @@ pub(super) fn backend_product_roles(relative: &str) -> Result<&'static [&'static
         "CHANGELOG.md"
             | "LICENSE"
             | "README.md"
+            | "README.en.md"
             | ".dockerignore"
             | ".editorconfig"
             | ".gitattributes"
