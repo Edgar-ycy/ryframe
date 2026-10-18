@@ -184,7 +184,7 @@ fn storage_failure_identity_and_unknown_write_receipts_fail_closed() {
     let current = common::process_identity(std::process::id())
         .unwrap()
         .unwrap();
-    let mut changed = current.clone();
+    let mut changed = current;
     changed["started"] = json!("changed");
     assert!(storage::process::running(&changed, &request, false).is_err());
 }

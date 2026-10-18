@@ -83,7 +83,7 @@ fn run_twenty_case_fixture() -> FixtureOutput {
     );
     let run = execute_configured(
         backend.clone(),
-        frontend.clone(),
+        frontend,
         manifest,
         work_dir.clone(),
         report.clone(),

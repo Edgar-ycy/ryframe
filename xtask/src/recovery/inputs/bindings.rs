@@ -53,7 +53,7 @@ pub(crate) fn build(backend: &Path, options: &BindingsInputOptions) -> Result<Va
     }
     let value = json!({
         "record": record_value,
-        "manifest": manifest.value.clone(),
+        "manifest": manifest.value,
     });
     require_bindings(&value)?;
     record.assert_unchanged()?;

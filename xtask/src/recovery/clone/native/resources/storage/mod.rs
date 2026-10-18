@@ -109,7 +109,7 @@ pub(crate) fn execute(
         }
         let (request, descriptor) = registered::registration(backend, run_dir, options.side)?;
         (
-            request.clone(),
+            request,
             descriptor,
             model::Validated {
                 private: Default::default(),

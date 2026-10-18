@@ -498,7 +498,7 @@ fn switch_worktree_does_not_checkout_an_unchanged_commit() {
             "checkout".to_owned(),
             "--quiet".to_owned(),
             "--detach".to_owned(),
-            commit.clone(),
+            commit,
         ]
     );
     assert!(!checkout[1].contains(&"--force".to_owned()));

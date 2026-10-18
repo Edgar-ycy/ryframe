@@ -250,7 +250,7 @@ fn protocol_browser_errors_hide_template_and_output_paths() {
     let arguments = [
         OsString::from("browser"),
         OsString::from("--template"),
-        private.clone().into_os_string(),
+        private.into_os_string(),
         OsString::from("--template-sha256"),
         OsString::from("0".repeat(64)),
         OsString::from("--output"),

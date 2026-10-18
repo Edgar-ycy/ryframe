@@ -374,7 +374,7 @@ fn walk(
         .map_err(|_| "监控 staging 路径越界")?
         .to_string_lossy()
         .replace('\\', "/");
-    directories.insert(relative.clone());
+    directories.insert(relative);
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let metadata = fs::symlink_metadata(entry.path())?;

@@ -129,7 +129,7 @@ fn login_budget_protocol_returns_only_the_three_runtime_values() {
             "APP_ENV": "test",
             "APP_DATABASE_PASSWORD": "private-value"
         },
-        "state_path": state.clone()
+        "state_path": state
     });
     let (code, response) = invoke("login-budget", &request);
     assert_eq!(code, 0);

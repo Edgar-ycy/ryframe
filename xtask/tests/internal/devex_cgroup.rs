@@ -298,11 +298,11 @@ fn process_registration_accepts_only_known_live_ancestry() {
     let unknown = fact(13, "103", 9, 1001);
     let current = ProcessSnapshot::from([
         (10, parent.clone()),
-        (11, child.clone()),
+        (11, child),
         (12, grandchild.clone()),
         (13, unknown.clone()),
     ]);
-    let mut registry = ProcessSnapshot::from([(10, parent.clone())]);
+    let mut registry = ProcessSnapshot::from([(10, parent)]);
     let additions = register_children(&current, &mut registry, 1001).expect("已知 ancestry 应登记");
     assert_eq!(registry.keys().copied().collect::<Vec<_>>(), [10, 11, 12]);
     assert_eq!(additions.len(), 2);
@@ -320,7 +320,7 @@ fn process_registration_accepts_only_known_live_ancestry() {
         },
         ProcessFact {
             uid: 0,
-            ..grandchild.clone()
+            ..grandchild
         },
     ] {
         assert!(

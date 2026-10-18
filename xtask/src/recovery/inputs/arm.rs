@@ -172,7 +172,7 @@ pub(crate) fn load(
     {
         return Err("正式恢复输入未绑定同一 arm、目标侧或维护源码".into());
     }
-    let initialized = registration.initialized.clone();
+    let initialized = registration.initialized;
     let fresh = fresh::validate(
         backend,
         fresh_path,

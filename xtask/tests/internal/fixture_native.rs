@@ -156,8 +156,8 @@ fn review_renewal_derives_all_sides_and_is_create_only() {
         &review_fixture(&fixture.directory, &execution),
     );
     let options = fixture.review_options(
-        template_path.clone(),
-        fixture_path.clone(),
+        template_path,
+        fixture_path,
         execution
             .join(".local-tests")
             .join("reference-fixture")
@@ -387,7 +387,7 @@ fn review_fixture(root: &Path, execution: &Path) -> Value {
     let generated = source::capture(execution).unwrap();
     let snapshot = generated.source.snapshot;
     let generated = json!({
-        "head": snapshot.head.clone(),
+        "head": snapshot.head,
         "patch_sha256": snapshot.patch_sha256,
         "files": snapshot.files.into_iter()
             .map(|file| json!({"path": file.path, "sha256": file.sha256}))
