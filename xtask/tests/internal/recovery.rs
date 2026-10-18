@@ -110,10 +110,6 @@ fn private_recovery_scripts_exist_in_checkout() {
             .is_file()
     );
     assert!(
-        root.join("tools/python/restore_monitoring_delivery.py")
-            .is_file()
-    );
-    assert!(
         root.join("tools/python/prepare_full_stack_fixture.py")
             .is_file()
     );

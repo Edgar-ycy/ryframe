@@ -4,14 +4,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
-use super::{
-    cli::{
-        CheckCommand, Command, MonitoringBindOptions, MonitoringCommand, MonitoringOperation,
-        MonitoringPorts, MonitoringTools, RecoveryCommand, parse,
-    },
-    recovery::monitoring::private_invocation_at,
+use super::cli::{
+    CheckCommand, Command, MonitoringBindOptions, MonitoringCommand, MonitoringOperation,
+    MonitoringPorts, MonitoringTools, RecoveryCommand, parse,
 };
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
@@ -204,27 +199,4 @@ fn rejects_ambiguous_unsafe_or_incomplete_requests_before_python() {
         parse_monitoring(vec!["start".into(), "--help".into()]).unwrap(),
         MonitoringCommand::LifecycleHelp(MonitoringOperation::Start)
     );
-}
-
-#[test]
-fn private_protocol_uses_exact_fields_and_rechecks_inputs() {
-    let fixture = Fixture::new();
-    let command = parse_monitoring(fixture.bind_arguments()).unwrap();
-    let invocation = private_invocation_at(&command, &super::workspace::root_dir()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/restore_monitoring_delivery.py"
-    );
-    let value: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(value["format_version"], 1);
-    assert_eq!(value["kind"], "ryframe-xtask-recovery-monitoring");
-    assert_eq!(value["operation"], "bind");
-    assert_eq!(value["binding"], Value::Null);
-    assert_eq!(value["output"], text(&fixture.binding()));
-    assert_eq!(value["write"], true);
-    fs::write(&fixture.runtime, b"not-json").unwrap();
-    assert!(private_invocation_at(&command, &super::workspace::root_dir()).is_err());
-    fs::write(&fixture.runtime, b"{}\n").unwrap();
-    fs::remove_file(&fixture.runtime).unwrap();
-    assert!(private_invocation_at(&command, &super::workspace::root_dir()).is_err());
 }

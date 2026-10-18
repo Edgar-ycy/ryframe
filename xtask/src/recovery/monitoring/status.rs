@@ -1,6 +1,4 @@
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
     path::Path,
 };
@@ -165,7 +163,13 @@ pub(crate) fn result(backend: &Path, binding_path: &Path) -> Result<Value> {
         "close": close_document.descriptor(),
         "run_id": binding.value["run_id"],
         "scope_id": binding.value["scope_id"],
-        "alerts": observation["prometheus"]["alerts"],
+        "alerts": observation["prometheus"]["alerts"].as_array()
+            .map(|values| {
+                let mut values = values.clone();
+                values.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+                values
+            })
+            .ok_or("监控告警证据无效")?,
         "targets": observation["prometheus"]["targets"].as_array()
             .map(|values| {
                 let mut values = values.clone();
@@ -190,7 +194,7 @@ pub(crate) fn result(backend: &Path, binding_path: &Path) -> Result<Value> {
     ] {
         document.assert_unchanged()?;
     }
-    publish_terminal_success(&binding.run, &result)?;
+    super::publish::terminal(&binding.run, &result)?;
     Ok(result)
 }
 
@@ -203,54 +207,6 @@ fn require_closed(url: &str, port: u16) -> Result<()> {
     TcpListener::bind(address)
         .map(drop)
         .map_err(|error| format!("监控端口 {port} 仍被占用或无法核验：{error}").into())
-}
-
-fn publish_terminal_success(directory: &Path, value: &Value) -> Result<()> {
-    let entries = fs::read_dir(directory)?.collect::<std::result::Result<Vec<_>, _>>()?;
-    if entries.iter().any(|entry| {
-        entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".result.json.") && name.ends_with(".pending"))
-    }) {
-        return Err("监控最终成功收据存在待核对 pending，拒绝重放".into());
-    }
-    let target = directory.join("result.json");
-    if target.exists() {
-        return Err("监控最终成功收据已存在，拒绝覆盖或重放".into());
-    }
-    let mut content = serde_json::to_string_pretty(value)?;
-    content.push('\n');
-    if content.len() > 1024 * 1024 {
-        return Err("监控最终成功收据不能规范化为有效 JSON".into());
-    }
-    let pending = directory.join(format!(
-        ".result.json.{}.pending",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let write_result = (|| -> Result<()> {
-        let mut stream = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pending)?;
-        stream.write_all(content.as_bytes())?;
-        stream.sync_all()?;
-        drop(stream);
-        if fs::read(&pending)? != content.as_bytes() {
-            return Err("监控最终成功收据临时文件在提交前发生变化".into());
-        }
-        fs::hard_link(&pending, &target)
-            .map_err(|error| format!("监控最终成功收据被并发创建或无法发布：{error}"))?;
-        if fs::read(&target)? != content.as_bytes() {
-            return Err("监控最终成功收据提交后的内容无效".into());
-        }
-        fs::remove_file(&pending)?;
-        Ok(())
-    })();
-    if write_result.is_err() && pending.exists() && !target.exists() {
-        let _ = fs::remove_file(&pending);
-    }
-    write_result
 }
 
 fn utc_now() -> String {

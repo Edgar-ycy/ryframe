@@ -3,8 +3,8 @@ use std::{collections::BTreeSet, path::Path};
 use serde_json::{Map, Value};
 
 use super::contract::{
-    STAGED_RUNNER, STAGING_DIRECTORY, STAGING_MANIFEST, TOKEN_NAME, absolute_text, artifact, exact,
-    hex_text, loopback_port, process_identity, receipt_descriptor, timestamp, valid_run_id,
+    STAGING_DIRECTORY, STAGING_MANIFEST, TOKEN_NAME, absolute_text, artifact, exact, hex_text,
+    loopback_port, process_identity, receipt_descriptor, timestamp, valid_run_id,
 };
 use crate::Result;
 
@@ -20,8 +20,6 @@ pub(crate) fn validate_binding(value: &Value) -> Result<Value> {
             "authority",
             "coordinator",
             "staging",
-            "python",
-            "runner",
             "environment",
             "credential",
             "tools",
@@ -54,12 +52,19 @@ pub(crate) fn validate_binding(value: &Value) -> Result<Value> {
     }
     let coordinator = exact(
         binding.get("coordinator").ok_or("监控绑定缺少协调来源")?,
-        &["root", "head", "inventory_sha256"],
+        &["root", "head", "inventory_sha256", "executable"],
         "监控协调源码",
     )?;
     let coordinator_root = absolute_text(coordinator.get("root"), "监控协调源码根")?;
     hex_text(coordinator.get("head"), 40, "监控协调提交")?;
     hex_text(coordinator.get("inventory_sha256"), 64, "监控协调库存摘要")?;
+    receipt_descriptor(
+        coordinator
+            .get("executable")
+            .ok_or("监控协调来源缺少可执行文件")?,
+        "监控协调可执行文件",
+        true,
+    )?;
     let staging = receipt_descriptor(
         binding.get("staging").ok_or("监控绑定缺少 staging")?,
         "监控 staging 清单",
@@ -79,14 +84,6 @@ pub(crate) fn validate_binding(value: &Value) -> Result<Value> {
     let run_directory = staging_root.parent().ok_or("监控 staging 缺少 run 目录")?;
     if !run_directory.starts_with(coordinator_root.join(".local-tests")) {
         return Err("监控 staging 必须位于协调器忽略目录".into());
-    }
-    validate_python_receipt(binding.get("python").ok_or("监控绑定缺少 Python")?)?;
-    let runner = staged_receipt(
-        binding.get("runner").ok_or("监控绑定缺少 runner")?,
-        "监控 runner",
-    )?;
-    if absolute_text(runner.get("path"), "监控 runner")? != staging_root.join(STAGED_RUNNER) {
-        return Err("监控 runner 必须来自固定 staging 路径".into());
     }
     if binding.get("environment") != authority.get("environment") {
         return Err("监控绑定环境与正式运行权威不同".into());
@@ -151,18 +148,6 @@ fn validate_staging_inputs(
             return Err(format!("监控工具 {name} 必须来自固定 staging 路径").into());
         }
     }
-    let python_path = staging_root.join("python").join(if cfg!(windows) {
-        "python.exe"
-    } else {
-        "python"
-    });
-    if absolute_text(
-        binding.get("python").and_then(|value| value.get("path")),
-        "监控 Python",
-    )? != python_path
-    {
-        return Err("监控 Python 必须来自固定 staging 路径".into());
-    }
     let rules = exact(
         binding.get("rules").ok_or("监控绑定缺少规则")?,
         &["alerts", "tests"],
@@ -193,7 +178,7 @@ fn validate_staging_inputs(
     Ok(())
 }
 
-fn validate_authority(value: &Value) -> Result<Value> {
+pub(crate) fn validate_authority(value: &Value) -> Result<Value> {
     let authority = exact(
         value,
         &[
@@ -436,46 +421,6 @@ fn validate_endpoints(binding: &Map<String, Value>) -> Result<()> {
             .map(Value::from)
     }) {
         return Err("监控投递写入边界无效".into());
-    }
-    Ok(())
-}
-
-fn validate_python_receipt(value: &Value) -> Result<()> {
-    let python = exact(
-        value,
-        &[
-            "path",
-            "bytes",
-            "sha256",
-            "device",
-            "inode",
-            "version",
-            "environment_check_sha256",
-        ],
-        "监控 Python",
-    )?;
-    absolute_text(python.get("path"), "监控 Python")?;
-    if python
-        .get("bytes")
-        .and_then(Value::as_u64)
-        .is_none_or(|value| value == 0)
-        || python.get("device").and_then(Value::as_u64).is_none()
-        || python.get("inode").and_then(Value::as_u64).is_none()
-    {
-        return Err("监控 Python 文件身份无效".into());
-    }
-    hex_text(python.get("sha256"), 64, "监控 Python 摘要")?;
-    hex_text(
-        python.get("environment_check_sha256"),
-        64,
-        "监控 Python 环境摘要",
-    )?;
-    if python
-        .get("version")
-        .and_then(Value::as_str)
-        .is_none_or(str::is_empty)
-    {
-        return Err("监控 Python 版本无效".into());
     }
     Ok(())
 }

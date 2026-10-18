@@ -2,7 +2,6 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -16,6 +15,9 @@ use super::{
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[path = "monitoring_binding_execution.rs"]
+mod binding_execution;
+
 struct Fixture {
     backend: PathBuf,
     run: PathBuf,
@@ -24,9 +26,9 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(alert: &str) -> Self {
+    fn new(_alert: &str) -> Self {
         let backend = root_dir().join(".local-tests").join(format!(
-            "xtask-monitoring-native-{}-{}",
+            "mn-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -54,12 +56,22 @@ impl Fixture {
         fs::create_dir_all(&rules).unwrap();
         let alerts = rules.join("ryframe-alerts.yml");
         let tests = rules.join("ryframe-alerts.test.yml");
+        let alerts_text = format!(
+            "groups:\n  - name: fixture\n    rules:\n{}",
+            contract::MONITORING_ALERTS
+                .iter()
+                .map(|alert| format!("      - alert: {alert}\n"))
+                .collect::<String>()
+        );
+        fs::write(&alerts, alerts_text).unwrap();
         fs::write(
-            &alerts,
-            format!("groups:\n  - name: fixture\n    rules:\n      - alert: {alert}\n"),
+            &tests,
+            contract::MONITORING_ALERTS
+                .iter()
+                .map(|alert| format!("alertname: {alert}\n"))
+                .collect::<String>(),
         )
         .unwrap();
-        fs::write(&tests, format!("alertname: {alert}\n")).unwrap();
         let value = binding(&backend, &run, &staging, &alerts, &tests);
         let binding = run.join("binding.json");
         write_json(&binding, &value);
@@ -78,8 +90,17 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        if self.backend.exists() {
-            fs::remove_dir_all(&self.backend).unwrap();
+        if self.backend.exists()
+            && let Err(error) = fs::remove_dir_all(&self.backend)
+        {
+            if std::thread::panicking() {
+                eprintln!(
+                    "监控测试失败现场清理失败，保留 {}：{error}",
+                    self.backend.display()
+                );
+            } else {
+                panic!("监控测试目录清理失败：{error}");
+            }
         }
     }
 }
@@ -128,7 +149,7 @@ fn alert_and_evidence_mismatches_fail_closed() {
 }
 
 #[test]
-fn read_only_status_matches_python_for_bound_run_and_writes_nothing() {
+fn read_only_status_for_bound_run_writes_nothing() {
     let fixture = Fixture::new("RyFrameFixtureAlert");
     let before = directory_snapshot(&fixture.run);
     let binding_before = fs::read(&fixture.binding).unwrap();
@@ -139,18 +160,9 @@ fn read_only_status_matches_python_for_bound_run_and_writes_nothing() {
     assert_eq!(directory_snapshot(&fixture.run), before);
     assert_eq!(fs::read(&fixture.binding).unwrap(), binding_before);
 
-    let Some(python) = python_status(&fixture) else {
-        return;
-    };
-    for key in [
-        "status",
-        "run_id",
-        "scope_id",
-        "next_action",
-        "processes_alive",
-    ] {
-        assert_eq!(native[key], python[key], "{key}");
-    }
+    assert_eq!(native["run_id"], "restore-monitoring-24");
+    assert_eq!(native["scope_id"], "restore-scope");
+    assert!(native["processes_alive"].as_object().unwrap().is_empty());
 }
 
 #[test]
@@ -209,7 +221,9 @@ fn native_result_publishes_once_after_complete_evidence_and_then_status_reads_pa
     prepare_complete_run(&fixture);
     let result = status::result(&fixture.backend, &fixture.binding).unwrap();
     assert_eq!(result["status"], "passed");
-    assert_eq!(result["alerts"], json!(["RyFrameFixtureAlert"]));
+    let mut expected_alerts = contract::MONITORING_ALERTS.to_vec();
+    expected_alerts.sort_unstable();
+    assert_eq!(result["alerts"], json!(expected_alerts));
     let status = status::status(&fixture.backend, &fixture.binding).unwrap();
     assert_eq!(status["status"], "passed");
     assert_eq!(status["next_action"], Value::Null);
@@ -246,24 +260,9 @@ fn binding(backend: &Path, run: &Path, staging: &Path, alerts: &Path, tests: &Pa
             "root": backend,
             "head": "a".repeat(40),
             "inventory_sha256": "c".repeat(64),
+            "executable": descriptor(&std::env::current_exe().unwrap()),
         },
         "staging": descriptor(&staging.join("manifest.json")),
-        "python": {
-            "path": staging.join("python").join(format!("python{}", std::env::consts::EXE_SUFFIX)),
-            "bytes": 2,
-            "sha256": "d".repeat(64),
-            "device": 1,
-            "inode": 3,
-            "version": "3.13.0",
-            "environment_check_sha256": "e".repeat(64),
-        },
-        "runner": {
-            "path": staging.join("tools/python/restore_monitoring_delivery.py"),
-            "bytes": 2,
-            "sha256": "f".repeat(64),
-            "device": 1,
-            "inode": 4,
-        },
         "environment": receipt("environment.json"),
         "credential": {
             "path": run.join(contract::TOKEN_NAME),
@@ -375,7 +374,9 @@ fn write_stage_files(fixture: &Fixture) {
 mod run_fixture;
 use run_fixture::prepare_complete_run;
 
-fn passed_result(fixture: &Fixture, alerts: &[&str]) -> Value {
+fn passed_result(fixture: &Fixture, _alerts: &[&str]) -> Value {
+    let mut alerts = contract::MONITORING_ALERTS.to_vec();
+    alerts.sort_unstable();
     json!({
         "format_version": 1,
         "kind": "restore-monitoring-result",
@@ -395,32 +396,6 @@ fn passed_result(fixture: &Fixture, alerts: &[&str]) -> Value {
         "external_contacts": 0,
         "completed_at": "2026-09-12T08:00:00Z",
     })
-}
-
-fn python_status(fixture: &Fixture) -> Option<Value> {
-    let source = r#"
-import json, sys
-from pathlib import Path
-import restore_monitoring_evidence as evidence
-import restore_monitoring_runtime as runtime
-path = Path(sys.argv[1])
-document = evidence.read_json_document(path)
-binding = evidence.validate_binding(document.value)
-print(json.dumps(runtime.status(document, binding), sort_keys=True))
-"#;
-    let output = Command::new(std::env::var("RYFRAME_PYTHON").unwrap_or_else(|_| "python".into()))
-        .args(["-B", "-c", source])
-        .arg(&fixture.binding)
-        .current_dir(root_dir())
-        .env("PYTHONPATH", root_dir().join("tools/python"))
-        .output()
-        .ok()?;
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).ok()
 }
 
 fn descriptor(path: &Path) -> Value {

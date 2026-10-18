@@ -17,19 +17,14 @@ pub(super) fn prepare_complete_run(fixture: &Fixture) {
             "executable": fixture.backend.join(format!("{role}.exe")),
         });
         let tree = json!({
-            "format_version": 2,
-            "kind": "full-stack-process-tree",
+            "format_version": 3,
+            "kind": "restore-monitoring-process-tree",
             "runtime_directory": fixture.run.join("processes"),
             "role": role,
             "scope_id": fixture.value["scope_id"],
             "operation_id": operation_ids[index],
             "supervisor": identity,
             "process": identity,
-            "monitor": {
-                "pid": 4_000_000_100_u64 - index as u64,
-                "started": (2000 + index).to_string(),
-                "executable": fixture.backend.join(format!("{role}-monitor.exe")),
-            },
             "group_id": identity["pid"],
         });
         let tree_path = fixture
@@ -124,7 +119,7 @@ pub(super) fn prepare_complete_run(fixture: &Fixture) {
         "prometheus": {
             "targets": ["ryframe-api", "ryframe-worker"],
             "targets_artifact": descriptor(&evidence.join("prometheus-targets.json")),
-            "alerts": ["RyFrameFixtureAlert"],
+            "alerts": contract::MONITORING_ALERTS,
             "rules_artifact": descriptor(&evidence.join("prometheus-rules.json")),
         },
         "boundaries": {

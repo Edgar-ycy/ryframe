@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::contract::{
     CONFIG_NAMES, ROLES, VALIDATION_NAMES, absolute_text, artifact, exact, process_identity,
@@ -86,7 +86,7 @@ pub(crate) fn validate_start(
         || start.get("intent") != Some(intent_receipt)
         || start.get("run_id") != binding.get("run_id")
         || start.get("scope_id") != binding.get("scope_id")
-        || start.get("endpoints") != Some(&ready_endpoints(binding))
+        || start.get("endpoints") != Some(&super::contract::ready_endpoints(binding))
     {
         return Err("监控启动收据与当前绑定不同".into());
     }
@@ -491,15 +491,6 @@ fn validate_start_artifacts(start: &Map<String, Value>, run: &Path) -> Result<()
     Ok(())
 }
 
-fn ready_endpoints(binding: &Value) -> Value {
-    let endpoints = &binding["endpoints"];
-    json!({
-        "webhook": format!("{}/readyz", endpoints["webhook"].as_str().unwrap_or_default()),
-        "alertmanager": format!("{}/-/ready", endpoints["alertmanager"].as_str().unwrap_or_default()),
-        "prometheus": format!("{}/-/ready", endpoints["prometheus"].as_str().unwrap_or_default()),
-    })
-}
-
 fn string_set(value: Option<&Value>, label: &str) -> Result<BTreeSet<String>> {
     value
         .and_then(Value::as_array)
@@ -529,6 +520,17 @@ pub(crate) fn process_trees(
     scope: &str,
     operations: &Map<String, Value>,
 ) -> Result<BTreeMap<String, Value>> {
+    Ok(read_process_trees(run, scope, operations)?
+        .into_iter()
+        .map(|(role, receipt)| (role, receipt.get("process").cloned().unwrap_or(Value::Null)))
+        .collect())
+}
+
+pub(crate) fn read_process_trees(
+    run: &Path,
+    scope: &str,
+    operations: &Map<String, Value>,
+) -> Result<BTreeMap<String, Value>> {
     let mut result = BTreeMap::new();
     for role in ROLES {
         let path = run.join("processes").join(format!("{role}-tree.json"));
@@ -544,22 +546,31 @@ pub(crate) fn process_trees(
                 "operation_id",
                 "supervisor",
                 "process",
-                "monitor",
                 "group_id",
             ],
             &format!("监控进程树 {role}"),
         )?;
-        if receipt.get("format_version").and_then(Value::as_u64) != Some(2)
-            || receipt.get("kind").and_then(Value::as_str) != Some("full-stack-process-tree")
+        if receipt.get("format_version").and_then(Value::as_u64) != Some(3)
+            || receipt.get("kind").and_then(Value::as_str)
+                != Some("restore-monitoring-process-tree")
             || receipt.get("role").and_then(Value::as_str) != Some(role)
             || receipt.get("scope_id").and_then(Value::as_str) != Some(scope)
             || receipt.get("operation_id") != operations.get(role)
+            || receipt.get("runtime_directory").and_then(Value::as_str)
+                != Some(&run.join("processes").to_string_lossy())
+            || receipt.get("group_id") != receipt.get("process").and_then(|value| value.get("pid"))
         {
             return Err("监控进程树收据与角色、scope 或操作不匹配".into());
         }
+        process_identity(
+            receipt
+                .get("supervisor")
+                .ok_or("监控进程树缺少 supervisor")?,
+            &format!("监控进程监督器 {role}"),
+        )?;
         let process = receipt.get("process").ok_or("监控进程树缺少产品进程")?;
         process_identity(process, &format!("监控进程 {role}"))?;
-        result.insert(role.to_owned(), process.clone());
+        result.insert(role.to_owned(), document.value);
     }
     Ok(result)
 }

@@ -265,7 +265,20 @@ pub(crate) fn pipe_to_file(command: &mut Command, stdout: &Path, stderr: &Path) 
 }
 
 #[cfg(windows)]
-fn device_inode_for(path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
+pub(crate) fn device_inode_for(path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
+    let information = windows_file_information(path)?;
+    let inode =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    Ok((u64::from(information.dwVolumeSerialNumber), inode))
+}
+
+#[cfg(windows)]
+pub(crate) fn link_count_for(path: &Path, _metadata: &fs::Metadata) -> Result<u64> {
+    Ok(u64::from(windows_file_information(path)?.nNumberOfLinks))
+}
+
+#[cfg(windows)]
+fn windows_file_information(path: &Path) -> Result<winsafe::BY_HANDLE_FILE_INFORMATION> {
     use winsafe::{self as w, co, prelude::*};
 
     let text = path.to_str().ok_or("Windows 数据目录必须为 UTF-8")?;
@@ -282,19 +295,28 @@ fn device_inode_for(path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)>
     )?;
     let mut information = w::BY_HANDLE_FILE_INFORMATION::default();
     handle.GetFileInformationByHandle(&mut information)?;
-    let inode =
-        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-    Ok((u64::from(information.dwVolumeSerialNumber), inode))
+    Ok(information)
 }
 
 #[cfg(unix)]
-fn device_inode_for(_path: &Path, metadata: &fs::Metadata) -> Result<(u64, u64)> {
+pub(crate) fn device_inode_for(_path: &Path, metadata: &fs::Metadata) -> Result<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     Ok((metadata.dev(), metadata.ino()))
 }
 
+#[cfg(unix)]
+pub(crate) fn link_count_for(_path: &Path, metadata: &fs::Metadata) -> Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(metadata.nlink())
+}
+
 #[cfg(not(any(unix, windows)))]
-fn device_inode_for(_path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
+pub(crate) fn link_count_for(_path: &Path, _metadata: &fs::Metadata) -> Result<u64> {
+    Err("当前平台无法核验文件硬链接数量".into())
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn device_inode_for(_path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
     Err("当前平台无法取得资源目录文件身份".into())
 }
 

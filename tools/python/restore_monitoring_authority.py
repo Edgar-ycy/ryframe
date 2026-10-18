@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import sys
 
 from restore_build import repository
 from restore_business_proof import _verified_target
@@ -15,6 +17,30 @@ from restore_runtime_evidence import (
     validate_runtime_receipt,
 )
 from restore_runtime_static import verify_static_runtime
+
+MAX_PROTOCOL_BYTES = 16 * 1024
+
+
+def preflight_protocol(value: dict) -> dict:
+    value = exact_fields(value, {"format_version", "kind", "backend", "runtime", "target"}, "监控预检协议")
+    if type(value["format_version"]) is not int or value["format_version"] != 1 or value["kind"] != "monitoring-preflight":
+        raise ValueError("监控预检协议版本或类型无效")
+    for name in ("backend", "runtime", "target"):
+        if not isinstance(value[name], str) or not Path(value[name]).is_absolute():
+            raise ValueError("监控预检协议只接受明确绝对路径")
+    return monitoring_preflight(Path(value["backend"]), Path(value["runtime"]), Path(value["target"]))
+
+
+def main() -> int:
+    if len(sys.argv) != 1:
+        raise ValueError("监控预检只接受 Rust 入口的标准输入协议")
+    raw = sys.stdin.buffer.read(MAX_PROTOCOL_BYTES + 1)
+    if len(raw) > MAX_PROTOCOL_BYTES:
+        raise ValueError("监控预检协议过大")
+    from restore_runtime_evidence import decode_object
+    result = preflight_protocol(decode_object(raw, "监控预检协议"))
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return 0
 
 
 def _descriptor(document) -> dict:
@@ -124,3 +150,12 @@ def monitoring_preflight(backend: Path, runtime_path: Path, target_path: Path) -
     for document in (runtime_document, target_document, launch_document):
         document.assert_unchanged()
     return result
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        # 上游运行环境文件含有秘密，私有桥接不透传异常载荷。
+        print(f"正式恢复预检失败：{type(error).__name__}；请核对 runtime verify 的来源与代次证据", file=sys.stderr)
+        raise SystemExit(1)

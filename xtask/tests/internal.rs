@@ -172,6 +172,12 @@ mod migration_history_tests;
 mod migration_tests;
 #[path = "internal/monitoring_native.rs"]
 mod monitoring_native_tests;
+#[path = "internal/monitoring_observation.rs"]
+mod monitoring_observation_tests;
+#[path = "internal/monitoring_runtime.rs"]
+mod monitoring_runtime_tests;
+#[path = "internal/monitoring_security.rs"]
+mod monitoring_security_tests;
 #[path = "internal/monitoring.rs"]
 mod monitoring_tests;
 #[path = "internal/node_test_discovery.rs"]

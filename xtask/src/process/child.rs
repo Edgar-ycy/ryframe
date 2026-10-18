@@ -41,6 +41,12 @@ impl ChildGroup {
 }
 
 impl ManagedChild {
+    pub(crate) fn id(&self) -> u32 {
+        self.child
+            .id()
+            .expect("ManagedChild 在 wait 完成前仍应保留进程 ID")
+    }
+
     pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         self.child.try_wait()
     }

@@ -17,7 +17,6 @@ use crate::{
 pub(crate) const TOKEN_NAME: &str = "metrics-token.txt";
 pub(crate) const STAGING_DIRECTORY: &str = "input-staging";
 pub(crate) const STAGING_MANIFEST: &str = "manifest.json";
-pub(crate) const STAGED_RUNNER: &str = "tools/python/restore_monitoring_delivery.py";
 pub(crate) const BASE_NAMES: [&str; 3] = ["binding.json", TOKEN_NAME, STAGING_DIRECTORY];
 pub(crate) const RUNTIME_DIRECTORIES: [&str; 5] = [
     "configs",
@@ -57,6 +56,16 @@ pub(crate) const OBSERVATION_FILES: [&str; 6] = [
     "prometheus-rules.json",
     "promtool-boundaries.log",
     "webhook-events.jsonl",
+];
+pub(crate) const MONITORING_ALERTS: [&str; 8] = [
+    "RyFrameBackupAging",
+    "RyFrameBackupStale",
+    "RyFrameBackupMissing",
+    "RyFrameBackupExpired",
+    "RyFrameBackupInvalid",
+    "RyFrameBackupMetricMissing",
+    "RyFrameRestoreFailed",
+    "RyFrameRestoreOverdue",
 ];
 
 #[derive(Debug, Clone)]
@@ -144,6 +153,11 @@ pub(crate) fn descriptor(path: &Path, bytes: u64, sha256: String) -> Value {
         "bytes": bytes,
         "sha256": sha256,
     })
+}
+
+pub(crate) fn file_descriptor(path: &Path) -> Result<Value> {
+    let current = digest::file(path)?;
+    Ok(descriptor(path, current.bytes, current.sha256))
 }
 
 pub(crate) fn artifact(value: &Value, label: &str, expected: Option<&Path>) -> Result<Value> {
@@ -303,7 +317,13 @@ pub(crate) fn validate_runtime_layout(
             format!("{role}-tree-{operation}-result.json"),
         ] {
             allowed.insert(expected.clone());
-            if !names.contains(&expected) {
+        }
+        for required in [
+            format!("{role}.log"),
+            format!("{role}-tree.json"),
+            format!("{role}-members-{operation}-ready.json"),
+        ] {
+            if !names.contains(&required) {
                 return Err("监控进程树目录缺少登记成员".into());
             }
         }
@@ -359,12 +379,17 @@ pub(crate) fn rule_alerts(binding: &Value) -> Result<BTreeSet<String>> {
     }
     let text = String::from_utf8(fs::read(path)?).map_err(|_| "监控告警规则不是 UTF-8")?;
     let pattern = Regex::new(r"(?m)^\s*-\s*alert:\s*([A-Za-z][A-Za-z0-9_]*)\s*$")?;
-    let alerts = pattern
+    let defined = pattern
         .captures_iter(&text)
         .map(|capture| capture[1].to_owned())
         .collect::<BTreeSet<_>>();
-    if alerts.is_empty() {
-        return Err("监控告警规则没有定义任何告警".into());
+    let alerts = MONITORING_ALERTS
+        .iter()
+        .filter(|name| defined.contains(**name))
+        .map(|name| (*name).to_owned())
+        .collect::<BTreeSet<_>>();
+    if alerts.len() != MONITORING_ALERTS.len() {
+        return Err("监控告警规则没有定义完整的固定恢复告警".into());
     }
     Ok(alerts)
 }
@@ -518,4 +543,13 @@ pub(crate) fn valid_run_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && !value.ends_with('-')
         && !value.contains("--")
+}
+
+pub(crate) fn ready_endpoints(binding: &Value) -> Value {
+    let endpoints = &binding["endpoints"];
+    serde_json::json!({
+        "webhook": format!("{}/readyz", endpoints["webhook"].as_str().unwrap_or_default()),
+        "alertmanager": format!("{}/-/ready", endpoints["alertmanager"].as_str().unwrap_or_default()),
+        "prometheus": format!("{}/-/ready", endpoints["prometheus"].as_str().unwrap_or_default()),
+    })
 }
