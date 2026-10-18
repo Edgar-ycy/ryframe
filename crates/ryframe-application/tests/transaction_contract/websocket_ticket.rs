@@ -75,6 +75,16 @@ async fn issued_ticket_can_only_be_consumed_once() {
         "主体与令牌版本不一致时不得写入票据"
     );
     principal.user_authorization_version = 4;
+    principal.password_change_required = true;
+    assert!(matches!(
+        service.issue(&principal, &claims, "en-GB").await,
+        Err(AppError::PermissionDenied(_))
+    ));
+    assert!(
+        store.values.lock().await.is_empty(),
+        "必须改密的会话即使令牌版本有效，也不得生成或保存消息票据"
+    );
+    principal.password_change_required = false;
     let grant = service
         .issue(&principal, &claims, "en-GB")
         .await
