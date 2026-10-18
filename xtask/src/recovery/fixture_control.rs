@@ -1,12 +1,21 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
-use serde_json::{Map, Value};
+use regex::Regex;
+use serde_json::{Map, Value, json};
 
 use crate::{
     Result,
     cli::{FIXTURE_CONTROL_PROTOCOL_KIND, FIXTURE_CONTROL_USAGE, FixtureControlCommand},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     process::run_with_env_removed,
+    recovery::clone::native::{
+        digest,
+        json::{self as native_json, exact, text},
+    },
 };
 
 #[path = "fixture_control/artifact.rs"]
@@ -24,7 +33,7 @@ mod review;
 #[path = "fixture_control/services.rs"]
 mod services;
 #[path = "fixture_control/source_pair.rs"]
-mod source_pair;
+pub(crate) mod source_pair;
 #[path = "fixture_control/successor.rs"]
 mod successor;
 
@@ -40,6 +49,9 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
     if command.is_help() {
         println!("{FIXTURE_CONTROL_USAGE}");
         return Ok(());
+    }
+    if let FixtureControlCommand::SourcePair(command) = command {
+        return source_pair::run(command, root);
     }
     let invocation = private_invocation_at(command, root)?;
     run_with_env_removed(
@@ -57,6 +69,9 @@ pub(crate) fn private_invocation_at(
 ) -> Result<PrivateFixtureControlInvocation> {
     if command.is_help() {
         return Err("fixture 控制帮助不启动私有阶段程序".into());
+    }
+    if matches!(command, FixtureControlCommand::SourcePair(_)) {
+        return Err("来源组合收据由 Rust 原生实现".into());
     }
     let (script, fields) = match command {
         FixtureControlCommand::Artifact(command) => (
@@ -83,10 +98,7 @@ pub(crate) fn private_invocation_at(
             "tools/python/reference_fixture_request.py",
             request::fields(command, root)?,
         ),
-        FixtureControlCommand::SourcePair(command) => (
-            "tools/python/reference_fixture_source_pair.py",
-            source_pair::fields(command, root)?,
-        ),
+        FixtureControlCommand::SourcePair(_) => unreachable!("原生来源组合已提前返回"),
         FixtureControlCommand::Successor(command) => (
             "tools/python/reference_fixture_successor.py",
             successor::fields(command, root)?,
@@ -185,4 +197,110 @@ fn serialize_protocol(protocol: Value) -> Result<String> {
         return Err("fixture 控制私有协议不能包含换行符或 NUL".into());
     }
     Ok(serialized)
+}
+
+pub(super) fn read_json(path: &Path, label: &str, limit: u64) -> Result<Value> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("无法读取{label} {}：{error}", path.display()))?;
+    if !metadata.file_type().is_file() || digest::linked(&metadata) {
+        return Err(format!("{label}必须是普通文件，不能经过链接或 junction").into());
+    }
+    if metadata.len() > limit {
+        return Err(format!("{label}超过允许大小").into());
+    }
+    let bytes = fs::read(path).map_err(|error| format!("无法读取{label}：{error}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{label}超过允许大小").into());
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| format!("{label}必须是 UTF-8 JSON"))?;
+    let value = native_json::parse_fragment(text, label)?;
+    if !value.is_object() {
+        return Err(format!("{label}必须是 JSON 对象").into());
+    }
+    Ok(value)
+}
+
+pub(super) fn file_binding(path: &Path, label: &str) -> Result<Value> {
+    let digest = digest::file(path)?;
+    Ok(json!({
+        "path": path_text_canonical(path, label)?,
+        "bytes": digest.bytes,
+        "sha256": digest.sha256,
+    }))
+}
+
+pub(super) fn path_text_canonical(path: &Path, label: &str) -> Result<String> {
+    let resolved = fs::canonicalize(path)
+        .map_err(|error| format!("无法解析{label} {}：{error}", path.display()))?;
+    let path = portable_path(path);
+    let resolved = portable_path(&resolved);
+    if resolved != path {
+        return Err(format!("{label}必须使用规范绝对路径").into());
+    }
+    digest::path_text(&path, label)
+}
+
+pub(super) fn write_new(path: &Path, value: &Value) -> Result<()> {
+    native_json::write_new(path, value)
+}
+
+pub(super) fn print_json(value: &Value) -> Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    Ok(())
+}
+
+pub(super) fn exact_object<'a>(
+    value: &'a Value,
+    fields: &[&str],
+    label: &str,
+) -> Result<&'a Map<String, Value>> {
+    exact(value, fields, label)
+}
+
+pub(super) fn text_field<'a>(value: &'a Value, field: &str, label: &str) -> Result<&'a str> {
+    text(
+        value
+            .get(field)
+            .ok_or_else(|| format!("{label}缺少 {field}"))?,
+        &format!("{label} {field}"),
+    )
+}
+
+pub(super) fn valid_sha256(value: &str, label: &str) -> Result<()> {
+    if Regex::new(r"^[a-f0-9]{64}$")?.is_match(value) {
+        Ok(())
+    } else {
+        Err(format!("{label}必须是 64 位小写十六进制摘要").into())
+    }
+}
+
+pub(super) fn git_root(path: &Path, label: &str) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--show-toplevel"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .map_err(|error| format!("无法核验{label} Git 根目录：{error}"))?;
+    if !output.status.success() {
+        return Err(format!("{label}不是 Git 工作树").into());
+    }
+    let text =
+        String::from_utf8(output.stdout).map_err(|_| format!("{label} Git 根目录不是 UTF-8"))?;
+    let root = PathBuf::from(text.trim());
+    fs::canonicalize(&root)
+        .map(|path| portable_path(&path))
+        .map_err(|error| format!("无法解析{label} Git 根目录：{error}").into())
+}
+
+pub(super) fn portable_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else {
+        value
+            .strip_prefix(r"\\?\")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| path.to_path_buf())
+    }
 }

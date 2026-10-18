@@ -152,6 +152,8 @@ mod export_native_tests;
 mod fixture_control_tests;
 #[path = "internal/fixture_dataset_control.rs"]
 mod fixture_dataset_control_tests;
+#[path = "internal/fixture_native.rs"]
+mod fixture_native_tests;
 #[path = "internal/fixture_prepare.rs"]
 mod fixture_prepare_tests;
 #[path = "internal/fixture_runtime.rs"]

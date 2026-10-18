@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 业务夹具的 `fixture source-pair` 来源收据发布迁至 Rust，保留来源摘要、受控路径、create-only 和命令结果结构；其余 fixture 操作继续使用已验证的私有阶段入口，未提前切换尚未迁移的命令。
+
 - 正式恢复的 `inputs reference|product|bindings` 迁至 Rust xtask，在进程内核验共享导出、arm、fresh ownership、备份和产品来源；保留严格 JSON、独立路径、只读预览、create-only 原子发布、发布前后漂移与并发写入拒绝，显式指定的备份必须与目标计划一致。删除被替代的 Python 输入协议，浏览器证据继续复用保留的 JSON 发布工具。
 
 - 正式恢复监控的公开 `result` 与只读 `status` 已迁至 Rust xtask，共享原生绑定、目录形状、阶段收据、规则告警、证据摘要、进程身份和端口关闭校验；`bind|start|observe|close` 仍由单一 Python 私有阶段状态机执行回环 HTTP、Prometheus、Alertmanager 和进程树操作，但 Rust 在启动前核验运行/目标 JSON、凭据引用和绑定结构。未知写入、成功/失败收据并存、pending 结果、证据漂移和链接路径均失败关闭。

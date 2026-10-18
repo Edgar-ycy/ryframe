@@ -704,7 +704,7 @@ fn parses_successor_arm_request() {
 }
 
 #[test]
-fn source_pair_publish_is_typed_and_uses_the_fixed_private_script() {
+fn source_pair_publish_is_typed_and_native() {
     let fixture = Fixture::new();
     let output = fixture.path("source-pair.json");
     let command = parse_control(command(
@@ -717,16 +717,7 @@ fn source_pair_publish_is_typed_and_uses_the_fixed_private_script() {
         command,
         FixtureControlCommand::SourcePair(FixtureSourcePairCommand::Publish(_))
     ));
-    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/reference_fixture_source_pair.py"
-    );
-    let document: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(document["domain"], "source-pair");
-    assert_eq!(document["operation"], "publish");
-    assert_eq!(document["output"], text(&output));
-    assert_eq!(document["write"], true);
+    assert!(private_invocation_at(&command, &root_dir()).is_err());
 }
 
 #[test]

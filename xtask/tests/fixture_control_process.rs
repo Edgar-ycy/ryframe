@@ -215,7 +215,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
 }
 
 #[test]
-fn source_pair_request_uses_the_same_private_protocol_without_forwarded_paths() {
+fn source_pair_request_runs_without_python_and_keeps_create_only_output() {
     let fixture = Fixture::new();
     let output = fixture.directory.join("source-pair.json");
     let arguments = vec![
@@ -231,16 +231,8 @@ fn source_pair_request_uses_the_same_private_protocol_without_forwarded_paths() 
     assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/reference_fixture_source_pair.py"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("--output"), "{stdout}");
-    assert!(!stdout.contains(output.to_str().unwrap()), "{stdout}");
-    assert!(
-        stderr.contains("reference_fixture_source-pair_failed"),
-        "{stderr}"
-    );
+    assert!(!stdout.contains(".py"), "{stdout}");
+    assert!(stderr.contains("fixture.json"), "{stderr}");
     assert!(!output.exists());
 }
 
