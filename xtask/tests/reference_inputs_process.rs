@@ -99,7 +99,7 @@ fn reference_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
 }
 
 #[test]
-fn restore_inputs_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn restore_inputs_run_in_process_without_private_python_arguments() {
     let fixture = Fixture::new();
     let reference = fixture.file("reference.json");
     let target = fixture.file("target.json");
@@ -124,14 +124,12 @@ fn restore_inputs_request_replaces_inherited_protocol_and_hides_paths_from_argv(
         ]
         .concat(),
     );
-    assert!(
-        String::from_utf8_lossy(&result.stderr).contains("restore_inputs_failed"),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert_private_invocation(
-        result,
-        "tools/python/restore_input_plan.py",
-        &[&reference, &target, &backup, &record],
-    );
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(!stdout.contains("restore_input_plan.py"), "{stdout}");
+    assert!(!stderr.contains("restore_inputs_failed"), "{stderr}");
+    for path in [&reference, &target, &backup, &record] {
+        assert!(!stdout.contains(path.to_str().unwrap()), "{stdout}");
+    }
 }

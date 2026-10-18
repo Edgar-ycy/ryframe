@@ -28,7 +28,7 @@ pub(crate) mod fixture_control;
 pub(crate) mod fixture_prepare;
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
-#[path = "recovery/inputs.rs"]
+#[path = "recovery/inputs/mod.rs"]
 pub(crate) mod inputs;
 #[path = "recovery/monitoring.rs"]
 pub(crate) mod monitoring;

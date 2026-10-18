@@ -147,7 +147,7 @@ cargo xtask data backup status
 
 随后用 `inputs product --reference-plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <恢复ID> --fault-at <UTC时间>` 预览产品计划，追加 `--output <本侧产品计划.json> --write` 发布。该入口从同一备份、比较来源、arm、fresh 目标和对应侧产品 SHA 推导原生 `RestorePlan`，并校验 `fault_at` 位于备份实际采集后 24 小时内；`--output` 与 `--write` 必须同时出现。参考计划的源侧只记录备份所需 API，目标侧另记录 API、Worker 和前端三个端点。
 
-`plan` 的摘要、目标计划复核和完整输入预览，以及 `check-dataset`、`check-existing` 均为只读操作，不接受 `--write`。`inputs reference|product|bindings` 默认只在标准输出预览，只有同时给出新的 `--output` 和 `--write` 才发布证据。`dataset`、`backup`、`restore`、`copy`、`damage` 会创建会话、阶段证据或修改明确登记的隔离资源，必须显式传入 `--write`；该授权不放宽账本、前后像、ownership、幂等和未知结果核验。
+`plan` 的摘要、目标计划复核和完整输入预览，以及 `check-dataset`、`check-existing` 均为只读操作，不接受 `--write`。`inputs reference|product|bindings` 在 Rust 进程内只读推导并复核完整来源链，默认只在标准输出预览，只有同时给出新的 `--output` 和 `--write` 才发布证据。`dataset`、`backup`、`restore`、`copy`、`damage` 会创建会话、阶段证据或修改明确登记的隔离资源，必须显式传入 `--write`；该授权不放宽账本、前后像、ownership、幂等和未知结果核验。
 
 | 阶段 | 操作与输出 |
 | --- | --- |

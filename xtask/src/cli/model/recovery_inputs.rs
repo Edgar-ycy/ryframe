@@ -59,23 +59,3 @@ pub(crate) enum RecoveryInputsCommand {
     Product(ProductInputOptions),
     Bindings(BindingsInputOptions),
 }
-
-impl RecoveryInputsCommand {
-    pub(crate) const fn operation(&self) -> Option<&'static str> {
-        Some(match self {
-            Self::Help => return None,
-            Self::Reference(_) => "reference",
-            Self::Product(_) => "product",
-            Self::Bindings(_) => "bindings",
-        })
-    }
-
-    pub(crate) const fn writes(&self) -> bool {
-        match self {
-            Self::Help => false,
-            Self::Reference(options) => options.publication.is_some(),
-            Self::Product(options) => options.publication.is_some(),
-            Self::Bindings(options) => options.publication.is_some(),
-        }
-    }
-}

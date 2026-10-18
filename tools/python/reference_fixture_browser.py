@@ -33,8 +33,7 @@ from reference_fixture_browser_responses import preview_responses
 from reference_fixture_browser_security import browser_environment, secret_values
 from restore_build import file_digest
 from restore_frontend_build import validate_frontend_build
-from restore_input_plan import _publish_json
-from restore_runtime_evidence import artifact_snapshot
+from restore_runtime_evidence import artifact_snapshot, publish_json as _publish_json
 from source_inventory import capture_inventory, source_file
 
 

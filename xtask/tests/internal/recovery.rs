@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use super::cli::{
-    BindingsInputOptions, ExistingReferenceSide, FreshTargetOperation, FreshTargetOptions,
-    FullStackCommand, RecoveryInputsCommand, RecoveryReferenceCommand,
+    ExistingReferenceSide, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
+    RecoveryReferenceCommand,
 };
-use super::recovery::{fresh_target_protocol, full_stack_environment, inputs, reference};
+use super::recovery::{fresh_target_protocol, full_stack_environment, reference};
 
 #[test]
 fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
@@ -70,36 +70,6 @@ fn full_stack_stages_use_typed_environment() {
 }
 
 #[test]
-fn restore_input_plans_use_a_versioned_private_protocol_without_forwarded_argv() {
-    let root = super::workspace::root_dir();
-    let directory = root.join(format!(
-        ".local-tests/inputs-protocol-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
-    let file = |name: &str| {
-        let path = directory.join(name);
-        std::fs::write(&path, "{}").unwrap();
-        path
-    };
-    let command = RecoveryInputsCommand::Bindings(BindingsInputOptions {
-        reference_plan: file("reference.json"),
-        target_plan: file("target.json"),
-        backup_receipt: file("backup.json"),
-        record: file("record.json"),
-        publication: None,
-    });
-    let document: serde_json::Value =
-        serde_json::from_str(&inputs::protocol_at(&command, &root).unwrap()).unwrap();
-    assert_eq!(document["format_version"], 1);
-    assert_eq!(document["kind"], "ryframe-xtask-recovery-inputs");
-    assert_eq!(document["request"]["operation"], "bindings");
-    assert_eq!(document["request"]["write"], false);
-    assert!(document["request"].get("output").is_none());
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
     let root = super::workspace::root_dir();
     let options = FreshTargetOptions {
@@ -152,5 +122,5 @@ fn private_recovery_scripts_exist_in_checkout() {
             .is_file()
     );
     assert!(root.join("tools/python/restore_reference.py").is_file());
-    assert!(root.join("tools/python/restore_input_plan.py").is_file());
+    assert!(!root.join("tools/python/restore_input_plan.py").exists());
 }
