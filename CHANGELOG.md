@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 参考夹具的 `fixture review` 审阅续签迁至 Rust，保留三侧隔离资源派生、端口冲突拒绝、未执行状态、模板与业务工作树终检及新文件发布；加入真实 Git 夹具与既有实现的逐字段对照，统一 Windows 凭据路径分隔符。
+
 - 业务夹具的 `fixture source-pair` 来源收据发布迁至 Rust，保留来源摘要、受控路径、create-only 和命令结果结构；其余 fixture 操作继续使用已验证的私有阶段入口，未提前切换尚未迁移的命令。
 
 - 正式恢复的 `inputs reference|product|bindings` 迁至 Rust xtask，在进程内核验共享导出、arm、fresh ownership、备份和产品来源；保留严格 JSON、独立路径、只读预览、create-only 原子发布、发布前后漂移与并发写入拒绝，显式指定的备份必须与目标计划一致。删除被替代的 Python 输入协议，浏览器证据继续复用保留的 JSON 发布工具。

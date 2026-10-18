@@ -29,7 +29,7 @@ mod request;
 #[path = "fixture_control/retention.rs"]
 mod retention;
 #[path = "fixture_control/review.rs"]
-mod review;
+pub(crate) mod review;
 #[path = "fixture_control/services.rs"]
 mod services;
 #[path = "fixture_control/source_pair.rs"]
@@ -50,8 +50,10 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         println!("{FIXTURE_CONTROL_USAGE}");
         return Ok(());
     }
-    if let FixtureControlCommand::SourcePair(command) = command {
-        return source_pair::run(command, root);
+    match command {
+        FixtureControlCommand::SourcePair(command) => return source_pair::run(command, root),
+        FixtureControlCommand::Review(command) => return review::run(command, root),
+        _ => {}
     }
     let invocation = private_invocation_at(command, root)?;
     run_with_env_removed(
@@ -70,8 +72,11 @@ pub(crate) fn private_invocation_at(
     if command.is_help() {
         return Err("fixture 控制帮助不启动私有阶段程序".into());
     }
-    if matches!(command, FixtureControlCommand::SourcePair(_)) {
-        return Err("来源组合收据由 Rust 原生实现".into());
+    if matches!(
+        command,
+        FixtureControlCommand::SourcePair(_) | FixtureControlCommand::Review(_)
+    ) {
+        return Err("该夹具操作由 Rust 原生实现".into());
     }
     let (script, fields) = match command {
         FixtureControlCommand::Artifact(command) => (
@@ -90,10 +95,7 @@ pub(crate) fn private_invocation_at(
             "tools/python/full_stack_migration_history.py",
             retention::fields(command, root)?,
         ),
-        FixtureControlCommand::Review(command) => (
-            "tools/python/reference_fixture_review.py",
-            review::fields(command, root)?,
-        ),
+        FixtureControlCommand::Review(_) => unreachable!("原生审阅续签已提前返回"),
         FixtureControlCommand::Request(command) => (
             "tools/python/reference_fixture_request.py",
             request::fields(command, root)?,
