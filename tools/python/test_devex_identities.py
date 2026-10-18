@@ -2,8 +2,10 @@
 import copy
 import hashlib
 import json
+import os
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,10 +29,12 @@ class IdentityPreparationTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout=json.dumps(
                 {"ok": True, "receipt": receipt}, ensure_ascii=False).encode())
 
-        self.assertEqual(template(path, sha256, runner), receipt)
+        cargo = str((Path.cwd() / "fixture toolchain" / "cargo.exe").resolve())
+        with patch.dict(os.environ, {"CARGO": cargo}):
+            self.assertEqual(template(path, sha256, runner), receipt)
         arguments, options = calls[0]
         self.assertEqual(arguments[:10], [
-            "cargo", "run", "--quiet", "--locked", "-p", "xtask", "--",
+            cargo, "run", "--quiet", "--locked", "-p", "xtask", "--",
             "__import-samples", "template", "--template"])
         self.assertNotIn("shell", options)
         self.assertEqual(options["timeout"], 60)

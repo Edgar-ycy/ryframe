@@ -152,7 +152,14 @@ class TargetResumeTests(unittest.TestCase):
         (run / "manifest.json").write_text(
             json.dumps({"kind": "reference-fixture-service-run"}), encoding="utf-8"
         )
-        generation = f.bound(results / "restart.json", {"generation": "restart"})
+        # 重启结果经 generation 文件绑定 Redis 请求中的真实 WSL 工具指纹。
+        redis_request = f.bound(results / "redis-request.json", {
+            "wsl": copy.deepcopy(f.request["storage"]["redis"]["wsl"]),
+        })
+        restarted = f.bound(results / "restart-generation.json", {
+            "redis": {"request": redis_request},
+        })
+        generation = f.bound(results / "restart.json", {"generation": restarted})
         directory = Path(f.review["services"]["rustfs"]["data_dir"])
         storage_runtime = {
             "storage": copy.deepcopy(f.request["storage"]["rustfs"]),

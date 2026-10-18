@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from workspace_directory import WorkspaceDirectory
 from unittest import mock
@@ -41,8 +42,13 @@ class RuntimeControlTests(unittest.TestCase):
             patch = mock.patch.object(runtime, field, return_value=value)
             setattr(self, field, patch.start())
             self.addCleanup(patch.stop)
-        patch = mock.patch.object(runtime.subprocess, "Popen", side_effect=self.spawn)
-        self.launch = patch.start()
+        self.launch = mock.Mock(side_effect=self.spawn)
+        process_port = SimpleNamespace(
+            Popen=self.launch, DEVNULL=subprocess.DEVNULL, STDOUT=subprocess.STDOUT,
+            CREATE_NO_WINDOW=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        patch = mock.patch.object(runtime, "subprocess", process_port)
+        patch.start()
         self.addCleanup(patch.stop)
 
     def cleanup_children(self):
