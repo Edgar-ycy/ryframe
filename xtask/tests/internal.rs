@@ -100,6 +100,9 @@ mod clone_cli_tests;
 mod clone_lifecycle_tests;
 #[path = "internal/clone_native.rs"]
 mod clone_native_tests;
+#[cfg(windows)]
+#[path = "internal/clone_process_identity.rs"]
+mod clone_process_identity_tests;
 #[path = "internal/clone_resources.rs"]
 mod clone_resources_tests;
 #[path = "internal/contract_source.rs"]
@@ -229,6 +232,30 @@ mod resource_tests;
 mod runtime_source_tests;
 #[path = "internal/seed_source.rs"]
 mod seed_source_tests;
+#[path = "internal/target_authority_native.rs"]
+mod target_authority_native;
+#[path = "internal/target_configuration_fixture.rs"]
+mod target_configuration_fixture;
+#[path = "internal/target_database_native.rs"]
+mod target_database_native;
+#[path = "internal/target_guard_native.rs"]
+mod target_guard_native_tests;
+#[path = "internal/target_proof_native.rs"]
+mod target_proof_native_tests;
+#[path = "internal/target_publication_native.rs"]
+mod target_publication_native_tests;
+#[path = "internal/target_reset_native.rs"]
+mod target_reset_native_tests;
+#[path = "internal/target_stage_protocol.rs"]
+mod target_stage_protocol;
+#[path = "internal/target_storage_model.rs"]
+mod target_storage_model_tests;
+#[path = "internal/target_storage_redis.rs"]
+mod target_storage_redis;
+#[path = "internal/target_storage_redis_state.rs"]
+mod target_storage_redis_state;
+#[path = "internal/target_verify_native.rs"]
+mod target_verify_native_tests;
 #[path = "internal/watch.rs"]
 mod watch_tests;
 #[path = "internal/workspace.rs"]

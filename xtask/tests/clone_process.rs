@@ -98,14 +98,14 @@ fn malformed_requests_exit_two_before_starting_python() {
 }
 
 #[test]
-fn valid_request_replaces_inherited_protocol_and_hides_parameters_from_argv() {
+fn valid_status_uses_native_path_and_ignores_inherited_protocol() {
     let fixture = Fixture::new();
     let arguments = status_arguments(&fixture.directory);
     let result = invoke(&arguments);
     assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&result.stdout);
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stdout.contains("tools/python/devex_clone.py"), "{stdout}");
+    assert!(!stdout.contains("tools/python/devex_clone.py"), "{stdout}");
     assert!(!stdout.contains("--run-dir"), "{stdout}");
     assert!(
         !stdout.contains(fixture.directory.to_str().unwrap()),
@@ -113,6 +113,9 @@ fn valid_request_replaces_inherited_protocol_and_hides_parameters_from_argv() {
     );
     assert!(stderr.contains("任务失败"), "{stderr}");
     assert!(!stderr.contains("私有协议无效"), "{stderr}");
+    assert!(!stderr.contains("untrusted clone value"), "{stderr}");
+    assert!(!stderr.contains("untrusted seed value"), "{stderr}");
+    assert!(!stderr.contains("untrusted fresh value"), "{stderr}");
 }
 
 #[test]

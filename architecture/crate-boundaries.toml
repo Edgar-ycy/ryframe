@@ -72,7 +72,6 @@ disabled_bin_test_targets = [
     "ryframe:ryframe-tenant-data",
     "ryframe:ryframe-worker",
     "ryframe-db:export_mysql_snapshot",
-    "xtask:xtask",
 ]
 
 # 官方框架与工具 crate；使用者业务 crate 由 package metadata 单独识别。

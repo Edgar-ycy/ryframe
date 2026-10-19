@@ -14,13 +14,9 @@
 
 非生产默认 `jobs.mode="embedded"`，`cargo serve` 已消费后台任务。需要独立 Worker 时，在两个终端保持相同配置并设置 `$env:APP_JOBS_MODE = "external"`，分别运行 `cargo serve` 和 `cargo worker`。前端单独运行 `corepack pnpm dev`。非生产重建使用直接入口 `cargo reset`；执行前先停止全部生产者，完整安全步骤见[运维指南](operations.md#非生产重建)。
 
-框架维护者用 `cargo xtask dev` 验证热切换；它只验证已登记数据库，不自动升级。常用排障从 `cargo xtask check doctor` 开始。
-
 ## 数据库迁移
 
 控制库使用默认目标；租户数据可操作全部已登记目标或单个目标。常用命令为 `cargo migrate -- control status`、`cargo migrate -- control verify`、`cargo migrate -- control up`、`cargo migrate -- tenant-data status --all`、`cargo migrate -- tenant-data up --target <目标键>` 和 `cargo migrate -- tenant-data verify --target <目标键>`。租户目标使用配置键而非数据库名；`--all` 只处理已登记目标，多个目标会先做物理身份预检，任何别名重复都会在 DDL 前拒绝。修改迁移源码后，用 `cargo xtask data migrate check` 只读检查历史与注册，提交前用 `cargo xtask data migrate check --require-frozen`；开发版重整基线显式执行 `cargo xtask data migrate baseline --write`，稳定版只追加并执行 `cargo xtask data migrate freeze`。生产配置仍保持 `database.migration_mode="verify"`，DDL 只由显式迁移命令执行，迁移历史维护命令不连接数据库。
-
-生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
 
 初始化前设置 `RYFRAME_INIT_ADMIN_PASSWORD_FILE` 指向 UTF-8 密码文件，也可通过 `RYFRAME_INIT_ADMIN_PASSWORD` 提供；两者不能同时设置。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。
 
@@ -141,9 +137,11 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
 
+复制前的 `source_to_seed` 目标复核由 Rust 编排数据库、对象和 Redis 的只读观察；完整初始化历史及恢复谱系仍由现有只读核验器提供，`seed_to_arm` 继续使用完整状态机。复核绑定初始化收据、完整文件树、配置、工具和实际进程身份，并在外部观察前后核对固定输入；MySQL 原始输出通过同一个持有句柄采集和复读，不重新按路径打开。只有全部检查及锁释放后的复查通过，才在新的 attempt 观察目录将完整 JSON 写入并同步同目录临时文件，再以不覆盖方式发布 `verify.json`。失败保留原始观察及 `failure.json`，不自动重放或清理未知写入；复核通过也不等于已经完成复制或取得恢复验收资格。
+
 ## 框架维护检查
 
-框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。 DevEx 导入测量的 XLSX 样本由 Rust xtask 的隐藏内部入口生成，不需要 Python 解析器。`.local-tests/devex/runtime.json` 的 `bindings.import_samples` 只绑定绝对 `template` 路径；`contract.import_samples` 继续固定真实模板 SHA-256 与当前样本模型 SHA-256。Node 驱动通过 `cargo run --quiet --locked -p xtask` 的标准输入协议取得清单，继续限制超时、输出大小和失败信息，不拼接 shell 命令。性能样本按 namespace、worker、cycle 生成独立用户名和文件；浏览器样本包含成功行、重复行和无效部门行。读取和重写共用同一 ZIP/XML 校验核心，保留原模板其他成员、表头样式与表格结构，并拒绝路径穿越、重复或加密成员、符号链接、超出限额的归档和大文件保留成员冲突。身份环境模板检查也只调用该 Rust 入口并严格解析 JSON，不再维护第二套 XLSX 解析。限流配置的 TOML 深合并、字段校验、authority 与登录预算同样由 xtask 的 `__rate-limit` 隐藏入口统一执行；Node 与 Python 薄客户端只通过 stdin JSON 调用并严格解析结果，错误只返回稳定标识，不输出路径或环境内容。
+`cargo xtask dev` 验证热切换，只校验已登记数据库，不自动升级；常用排障从 `cargo xtask check doctor` 开始。框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。 DevEx 导入测量的 XLSX 样本由 Rust xtask 的隐藏内部入口生成，不需要 Python 解析器。`.local-tests/devex/runtime.json` 的 `bindings.import_samples` 只绑定绝对 `template` 路径；`contract.import_samples` 继续固定真实模板 SHA-256 与当前样本模型 SHA-256。Node 驱动通过 `cargo run --quiet --locked -p xtask` 的标准输入协议取得清单，继续限制超时、输出大小和失败信息，不拼接 shell 命令。性能样本按 namespace、worker、cycle 生成独立用户名和文件；浏览器样本包含成功行、重复行和无效部门行。读取和重写共用同一 ZIP/XML 校验核心，保留原模板其他成员、表头样式与表格结构，并拒绝路径穿越、重复或加密成员、符号链接、超出限额的归档和大文件保留成员冲突。身份环境模板检查也只调用该 Rust 入口并严格解析 JSON，不再维护第二套 XLSX 解析。限流配置的 TOML 深合并、字段校验、authority 与登录预算同样由 xtask 的 `__rate-limit` 隐藏入口统一执行；Node 与 Python 薄客户端只通过 stdin JSON 调用并严格解析结果，错误只返回稳定标识，不输出路径或环境内容。
 资源门禁回放由 `cargo xtask check ci resource-gate replay` 原生执行。manifest 每个案例绑定前后端精确提交；回放器在 `.local-tests/resource-gate-replay` 创建隔离 worktree，交替执行 targeted 与 full arm，只安装一次前端离线依赖并复用 session 级 Cargo target。报告只创建新文件，`--work-dir` 与报告都必须位于该证据根目录的子路径。`--activation-gate` 还要求隔离 MySQL、Redis 与 TLS 服务、至少 20 个案例、10 个成功 targeted 案例、双模式与 pass/fail 覆盖、零分歧、健康 sccache 和 60 秒 P95 预算；失败保留命令末尾、退出码及清理错误，不自动重放未知写入。
 架构检查由 Rust xtask 执行，覆盖 crate 依赖图与声明边、system 业务域公开面、人工文档、源码与函数规模、旧持久化接口、异步端口、Workspace unsafe lint、测试布局及租户数据静态边界。函数规模与 unsafe 语法仍由固定版本的 tree-sitter helper 解析；运行该门禁需要按 `scripts/requirements-ci.txt` 准备 Python 环境。`python.environment` 由 Rust 严格解析该清单，使用一次固定 stdin/UTF-8 协议读取解释器身份、版本和每个固定发行版的实际版本，再调用 `tools/python/rust_function_size.py --native-probe` 执行 64 轮原生 AST 解析。检查要求 Python 3.11+，保留缺失解释器、版本或依赖不匹配、探针非零/无输出/超时及 Windows 原生崩溃诊断；可用 `RYFRAME_PYTHON` 指定隔离解释器，`--plan` 不启动 Python。供应链来源检查同样由 Rust xtask 只读执行：以 `tools/policies/supply_chain_policy.json` 为事实源，校验策略 schema、本地 patch 许可证及 registry 原件、GitHub Action/可复用工作流/容器引用、service image digest、安装工具版本、工作流命令和 Cargo 条件依赖例外；`ci.security.supply-chain` 额外校验 API、Worker、Migrate 与默认生成器的定向 feature 树。工作流解析保留锚点、别名和 YAML 1.2 布尔语义，遇到重复键或未支持的静态结构会失败关闭；该检查不依赖 PyYAML，PyYAML 仍供其他 Python 测试和监控工具使用。
 

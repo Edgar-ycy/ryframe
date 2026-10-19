@@ -53,6 +53,23 @@ impl Runtime for FakeRuntime {
         if self.fail_role.as_deref() == Some(protocol.role.as_str()) {
             return Err(format!("fixture {} launch failure", protocol.role).into());
         }
-        supervisor::supervisor_invocation_with_executable(protocol, &self.supervisor_executable)
+        let mut protocol = protocol.clone();
+        // PowerShell 会短暂生成策略探针；替身进程的临时文件独立于被严格核验的 run。
+        let temporary = protocol
+            .cwd
+            .parent()
+            .and_then(std::path::Path::parent)
+            .ok_or("监控测试缺少临时文件父目录")?
+            .join(format!(
+                "powershell-temp-{}-{}",
+                protocol.role, protocol.operation_id
+            ));
+        std::fs::create_dir(&temporary)?;
+        for name in ["TEMP", "TMP"] {
+            protocol
+                .environment
+                .insert(name.into(), temporary.to_string_lossy().into_owned());
+        }
+        supervisor::supervisor_invocation_with_executable(&protocol, &self.supervisor_executable)
     }
 }

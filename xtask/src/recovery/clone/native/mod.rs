@@ -10,7 +10,7 @@ use crate::{
 
 pub(crate) mod bridge;
 mod business;
-mod catalog;
+pub(crate) mod catalog;
 pub(crate) mod digest;
 pub(crate) mod export;
 pub(crate) mod input;
@@ -25,6 +25,7 @@ pub(crate) mod schedule;
 pub(crate) mod source;
 pub(crate) mod sql;
 mod state;
+pub(crate) mod target_verify;
 
 pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
     let value = match command {

@@ -55,7 +55,7 @@ pub(crate) fn same(expected: &Value, actual: Option<&Value>) -> Result<(bool, bo
 
 #[cfg(windows)]
 fn platform(pid: u32) -> Result<Option<Value>> {
-    use winsafe::{FILETIME, HPROCESS, co, prelude::kernel_Hprocess};
+    use winsafe::{HPROCESS, co, prelude::kernel_Hprocess};
 
     let handle = match HPROCESS::OpenProcess(
         co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
@@ -69,23 +69,58 @@ fn platform(pid: u32) -> Result<Option<Value>> {
     if handle.WaitForSingleObject(Some(0))? == co::WAIT::OBJECT_0 {
         return Ok(None);
     }
+    let observation = windows_snapshot(&handle, pid);
+    // 退出期间映像查询可能先失败，必须由同一已持有句柄证明退出，不能吞掉权限错误。
+    let timeout = if observation.is_err() { 1000 } else { 0 };
+    confirm_live_observation(
+        observation,
+        handle
+            .WaitForSingleObject(Some(timeout))
+            .map(|status| status == co::WAIT::OBJECT_0)
+            .map_err(Into::into),
+    )
+}
+
+#[cfg(windows)]
+fn windows_snapshot(handle: &winsafe::HPROCESS, pid: u32) -> Result<Value> {
+    use winsafe::{FILETIME, co, prelude::kernel_Hprocess};
+
     let mut creation = FILETIME::default();
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();
     let mut user = FILETIME::default();
-    handle.GetProcessTimes(&mut creation, &mut exit, &mut kernel, &mut user)?;
-    let executable = handle.QueryFullProcessImageName(co::PROCESS_NAME::WIN32)?;
+    handle
+        .GetProcessTimes(&mut creation, &mut exit, &mut kernel, &mut user)
+        .map_err(|error| format!("无法读取进程 {pid} 创建时间：{error}"))?;
+    let executable = handle
+        .QueryFullProcessImageName(co::PROCESS_NAME::WIN32)
+        .map_err(|error| format!("无法读取进程 {pid} 映像：{error}"))?;
     let executable = executable
         .strip_prefix(r"\\?\UNC\")
         .map(|value| format!(r"\\{value}"))
         .or_else(|| executable.strip_prefix(r"\\?\").map(ToOwned::to_owned))
         .unwrap_or(executable);
     let started = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
-    Ok(Some(json!({
+    Ok(json!({
         "pid": pid,
         "started": started.to_string(),
         "executable": executable.replace('/', "\\"),
-    })))
+    }))
+}
+
+#[cfg(windows)]
+pub(crate) fn confirm_live_observation<T>(
+    observation: Result<T>,
+    exited: Result<bool>,
+) -> Result<Option<T>> {
+    match (observation, exited) {
+        (_, Ok(true)) => Ok(None),
+        (value, Ok(false)) => value.map(Some),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(observation), Err(wait)) => {
+            Err(format!("{observation}；同一进程句柄的退出状态也无法核验：{wait}").into())
+        }
+    }
 }
 
 #[cfg(unix)]

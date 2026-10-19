@@ -220,7 +220,15 @@ pub(crate) fn validate_root_shape(run_directory: &Path) -> Result<BTreeSet<Strin
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
     if !observed.is_subset(&allowed) || !BASE_NAMES.iter().all(|name| observed.contains(*name)) {
-        return Err("监控 run 包含未知写入或缺少固定绑定".into());
+        let unknown = observed.difference(&allowed).collect::<Vec<_>>();
+        let missing = BASE_NAMES
+            .iter()
+            .filter(|name| !observed.contains(**name))
+            .collect::<Vec<_>>();
+        return Err(format!(
+            "监控 run 包含未知写入或缺少固定绑定；未知成员={unknown:?}；缺少绑定={missing:?}"
+        )
+        .into());
     }
     for entry in entries {
         let name = entry

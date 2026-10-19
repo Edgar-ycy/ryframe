@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     Result,
-    process::{ChildGroup, child_command, stop_child},
+    process::{ChildGroup, ManagedChild, child_command, stop_child},
 };
 
 const MAX_CAPTURE_BYTES: u64 = 16 * 1024 * 1024;
@@ -20,6 +20,7 @@ const MAX_CAPTURE_BYTES: u64 = 16 * 1024 * 1024;
 pub(crate) enum StdoutTarget {
     Capture,
     File(PathBuf),
+    HeldFile { path: PathBuf, file: File },
 }
 
 pub(crate) struct CommandSpec {
@@ -82,26 +83,23 @@ impl Transport for SystemTransport {
         let token = Uuid::new_v4().simple().to_string();
         let captured_stdout = matches!(spec.stdout, StdoutTarget::Capture)
             .then(|| spec.work_dir.join(format!(".{token}.stdout")));
-        let stdout_path = captured_stdout
-            .as_ref()
-            .cloned()
-            .or_else(|| match &spec.stdout {
-                StdoutTarget::File(path) => Some(path.clone()),
-                StdoutTarget::Capture => None,
-            })
-            .expect("stdout 目标必须存在");
+        let stdout_path = match &spec.stdout {
+            StdoutTarget::Capture => captured_stdout
+                .as_ref()
+                .expect("Capture 具有输出路径")
+                .clone(),
+            StdoutTarget::File(path) | StdoutTarget::HeldFile { path, .. } => path.clone(),
+        };
         let stderr_path = spec.work_dir.join(format!(".{token}.stderr"));
         let stdin_path = spec.work_dir.join(format!(".{token}.stdin"));
-        let stdout = create_file(&stdout_path, "stdout")?;
-        let stderr = create_file(&stderr_path, "stderr")?;
-        let stdin = if let Some(input) = spec.stdin.as_deref() {
-            let mut file = create_file(&stdin_path, "stdin")?;
-            file.write_all(input)?;
-            file.flush()?;
-            Some(file)
-        } else {
-            None
+        let stdout = match &spec.stdout {
+            StdoutTarget::HeldFile { file, .. } => file
+                .try_clone()
+                .map_err(|error| format!("无法复制已持有的 stdout 句柄：{error}"))?,
+            StdoutTarget::Capture | StdoutTarget::File(_) => create_file(&stdout_path, "stdout")?,
         };
+        let stderr = create_file(&stderr_path, "stderr")?;
+        let stdin = create_stdin(&stdin_path, spec.stdin.as_deref())?;
 
         let mut command = child_command(&spec.program);
         command
@@ -128,23 +126,7 @@ impl Transport for SystemTransport {
                 spec.program.display()
             )
         })?;
-        let deadline = Instant::now() + spec.timeout;
-        let status = loop {
-            match child.try_wait()? {
-                Some(status) => break status,
-                None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
-                None => {
-                    let _ = stop_child(&mut child);
-                    return Err(format!(
-                        "{} 超过 {} 秒，已回收完整子进程树；诊断保留在 {}",
-                        spec.label,
-                        spec.timeout.as_secs(),
-                        stderr_path.display()
-                    )
-                    .into());
-                }
-            }
-        };
+        let status = wait_status(&mut child, &spec, &stderr_path)?;
         let stdout_bytes = if captured_stdout.is_some() {
             read_limited(&stdout_path, &spec.label)?
         } else {
@@ -165,6 +147,36 @@ impl Transport for SystemTransport {
             stderr: stderr_bytes,
         })
     }
+}
+
+fn wait_status(child: &mut ManagedChild, spec: &CommandSpec, stderr: &Path) -> Result<ExitStatus> {
+    let deadline = Instant::now() + spec.timeout;
+    loop {
+        match child.try_wait()? {
+            Some(status) => return Ok(status),
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            None => {
+                let _ = stop_child(child);
+                return Err(format!(
+                    "{} 超过 {} 秒，已回收完整子进程树；诊断保留在 {}",
+                    spec.label,
+                    spec.timeout.as_secs(),
+                    stderr.display()
+                )
+                .into());
+            }
+        }
+    }
+}
+
+fn create_stdin(path: &Path, input: Option<&[u8]>) -> Result<Option<File>> {
+    let Some(input) = input else {
+        return Ok(None);
+    };
+    let mut file = create_file(path, "stdin")?;
+    file.write_all(input)?;
+    file.flush()?;
+    Ok(Some(file))
 }
 
 fn create_file(path: &Path, label: &str) -> Result<File> {

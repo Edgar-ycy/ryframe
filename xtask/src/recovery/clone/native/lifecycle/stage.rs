@@ -286,7 +286,7 @@ fn finish_unstarted_failure(
     state::finish(run_dir, number, None, Some(&error_type))
 }
 
-fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result<Value> {
+pub(crate) fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result<Value> {
     let payload = protocol(request, operation)?;
     let output = process::command_output_with_env(
         backend,
@@ -302,9 +302,14 @@ fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result
     Ok(value)
 }
 
-fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<String> {
+pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<String> {
     let attempt = request.attempt;
-    if (operation == "run") != attempt.is_some() {
+    if !matches!(operation, "preflight" | "target-authority" | "run")
+        || (operation == "target-authority"
+            && (request.stage != "target-verify" || request.mode != "run"))
+        || (operation == "run") != attempt.is_some()
+        || attempt == Some(0)
+    {
         return Err("阶段资源编排 operation 与 attempt 不匹配".into());
     }
     let value = json!({

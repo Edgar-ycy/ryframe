@@ -29,6 +29,8 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 #[path = "monitoring_runtime_failure.rs"]
 mod failure;
 
+#[path = "monitoring_runtime_cleanup.rs"]
+mod cleanup;
 #[path = "monitoring_runtime_driver.rs"]
 mod driver;
 
@@ -135,6 +137,10 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("监控测试失败现场保留在 {}", self.directory.display());
+            return;
+        }
         if self.directory.exists() {
             fs::remove_dir_all(&self.directory).unwrap();
         }

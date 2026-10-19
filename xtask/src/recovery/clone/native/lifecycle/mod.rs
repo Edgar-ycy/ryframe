@@ -28,6 +28,15 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
             run_dir,
             stage: stage @ crate::cli::CloneStage::Export(_),
         } => stage::run(backend, run_dir, *stage, &stage::ExportRunner::new(backend)),
+        CloneCommand::Stage {
+            run_dir,
+            stage: crate::cli::CloneStage::TargetVerify,
+        } => stage::run(
+            backend,
+            run_dir,
+            crate::cli::CloneStage::TargetVerify,
+            &super::target_verify::TargetVerifyRunner::new(backend),
+        ),
         CloneCommand::Stage { run_dir, stage } => {
             stage::run(backend, run_dir, *stage, &stage::PythonRunner::new(backend))
         }

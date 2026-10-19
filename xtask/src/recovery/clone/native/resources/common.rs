@@ -281,9 +281,9 @@ pub(crate) fn link_count_for(path: &Path, _metadata: &fs::Metadata) -> Result<u6
 fn windows_file_information(path: &Path) -> Result<winsafe::BY_HANDLE_FILE_INFORMATION> {
     use winsafe::{self as w, co, prelude::*};
 
-    let text = path.to_str().ok_or("Windows 数据目录必须为 UTF-8")?;
+    let text = windows_path(path)?;
     let (handle, _) = w::HFILE::CreateFile(
-        text,
+        &text,
         co::GENERIC::default(),
         Some(co::FILE_SHARE::READ | co::FILE_SHARE::WRITE | co::FILE_SHARE::DELETE),
         None,
@@ -296,6 +296,24 @@ fn windows_file_information(path: &Path) -> Result<winsafe::BY_HANDLE_FILE_INFOR
     let mut information = w::BY_HANDLE_FILE_INFORMATION::default();
     handle.GetFileInformationByHandle(&mut information)?;
     Ok(information)
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_path(path: &Path) -> Result<String> {
+    if !path.is_absolute() {
+        return Err("Windows 内核路径必须为绝对路径".into());
+    }
+    let text = path
+        .to_str()
+        .ok_or("Windows 内核路径必须为 UTF-8")?
+        .replace('/', "\\");
+    if text.starts_with(r"\\?\") {
+        Ok(text)
+    } else if let Some(unc) = text.strip_prefix(r"\\") {
+        Ok(format!(r"\\?\UNC\{unc}"))
+    } else {
+        Ok(format!(r"\\?\{text}"))
+    }
 }
 
 #[cfg(unix)]
