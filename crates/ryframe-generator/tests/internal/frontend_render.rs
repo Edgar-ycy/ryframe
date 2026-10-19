@@ -508,12 +508,18 @@ fn generated_modules_typecheck_and_execute_with_real_frontend_types() {
             serde_json::to_vec(&resource).unwrap(),
         )
         .unwrap();
-        let output = Command::new("node")
-            .arg(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/frontend_typecheck.mjs"),
-            )
+        let corepack = if cfg!(windows) {
+            "corepack.cmd"
+        } else {
+            "corepack"
+        };
+        let output = Command::new(corepack)
+            .args(["pnpm", "exec", "node"])
+            .arg(Path::new(&frontend).join("scripts/resource-render/typecheck.mjs"))
             .arg(&frontend)
             .arg(&root)
+            .current_dir(&frontend)
+            .env("COREPACK_ENABLE_NETWORK", "0")
             .output()
             .unwrap();
         if !output.status.success() {

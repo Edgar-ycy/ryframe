@@ -7,7 +7,7 @@ use super::{
     model::descriptor_to_ir,
     writer::{BusinessAsset, install_assets},
 };
-use crate::{ResourceError, resource::business_frontend_assets};
+use crate::{ResourceError, render_frontend_assets};
 
 /// 从全部已注册业务模型生成页面，沿用标准 CRUD 模板，不修改框架生成目录的入口。
 pub(crate) fn generate_business_frontend(
@@ -28,7 +28,7 @@ pub(crate) fn generate_business_frontend(
             resources.push(descriptor_to_ir(&package, &descriptor)?);
         }
     }
-    let assets = business_frontend_assets(&resources)?
+    let assets = render_frontend_assets(&resources, frontend, false)?
         .into_iter()
         .map(|asset| BusinessAsset::new(asset.resource, asset.path, asset.content))
         .collect();

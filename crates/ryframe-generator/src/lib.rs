@@ -16,5 +16,5 @@ pub use resource::{
     ResourceProfile, ResourceSpec, ResourceWorkspace, RouteSpec, SafeWriteReport, SoftDeleteSpec,
     StorageKind, StorageSpec, ValidationSpec, ValueType, WidgetSpec, load_resource,
     normalize_resource, plan_all_resource_changes, plan_resource_assets, plan_resource_changes,
-    render_resources, write_resource, write_resources,
+    render_frontend_assets, render_resources, write_resource, write_resources,
 };

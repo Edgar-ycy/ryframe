@@ -324,6 +324,7 @@ fn validate_relation_targets(resources: &[ResourceIr]) -> Result<(), ResourceErr
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn business_frontend_assets(
     resources: &[ResourceIr],
 ) -> Result<Vec<GeneratedAsset>, ResourceError> {

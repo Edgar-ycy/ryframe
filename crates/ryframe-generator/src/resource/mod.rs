@@ -7,6 +7,7 @@ mod collation;
 pub(crate) mod decimal;
 mod error;
 mod explain;
+mod frontend;
 mod ir;
 mod render;
 mod spec;
@@ -18,12 +19,14 @@ pub(crate) use writer::transaction as write_transaction;
 
 pub use error::ResourceError;
 pub use explain::{ExplainNode, ResourceExplanation};
+pub use frontend::render_frontend_assets;
 pub use ir::{
     FieldIr, IdGeneration, IndexIr, PermissionIr, RelationIr, RelationKind, ResourceIr,
     ResourceProfile, StorageKind, ValueType, WidgetIr,
 };
 pub(crate) use render::access_catalog as render_access_catalog;
 pub(crate) use render::business::render_business_resource;
+#[cfg(test)]
 pub(crate) use render::business_frontend_assets;
 pub(crate) use render::tenant_catalog::canonical_schema;
 pub(crate) use render::tenant_catalog::{business_tenant_manifest, render_business_tenant_catalog};
