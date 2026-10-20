@@ -67,6 +67,8 @@ Worker 的健康状态模型与数据库监控端口位于 application，不依�
 
 ## 选择开发方式
 
+跨仓 OpenAPI 派生文件以开发者前端仓库的 `scripts/api-artifact-manifest.json` 为清单事实源，前端生成器与后端契约事务共同读取。版本必须为 1，`files` 是非空、无重复的安全 `src/` 相对路径；清单、渲染器及其他输入均参与事务前后快照校验，变化时拒绝安装候选结果。
+
 RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-business <业务包名> --write` 在 `crates/` 下创建业务 crate，例如 `order-business`、`inventory-business`，通过 `ryframe-sdk` 使用框架扩展接口。省略 `--write` 预览；脚手架原子写入工作区成员、组合根依赖和唯一注册表。一个业务 crate 默认同时包含模型、用例、Repository、Handler、路由和迁移；业务复杂后再按实际边界拆分。
 
 业务模块通过普通 Cargo 依赖显式接入。`crates/ryframe` 是唯一组合根，`business_modules()` 是唯一注册表；API、Worker 和迁移程序共用该列表。该结构不会使用运行时目录扫描、自动链接注册或构建脚本改写源码，Cargo 依赖图和模块依赖图都可以静态检查无环。

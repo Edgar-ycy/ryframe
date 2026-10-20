@@ -60,16 +60,14 @@ impl TestFrontend {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, format!("original:{relative}")).unwrap();
         }
-        let manifest = root.join("scripts/api-artifacts.mjs");
+        let manifest = root.join("scripts/api-artifact-manifest.json");
         fs::create_dir_all(manifest.parent().unwrap()).unwrap();
-        let entries = CANDIDATE_MANAGED_PATHS[1..]
-            .iter()
-            .map(|path| format!("  '{path}',"))
-            .collect::<Vec<_>>()
-            .join("\n");
         fs::write(
             manifest,
-            format!("export const generatedArtifactPaths = Object.freeze([\n{entries}\n])\n"),
+            serde_json::to_vec(&serde_json::json!({
+                "format_version": 1, "files": &CANDIDATE_MANAGED_PATHS[1..]
+            }))
+            .unwrap(),
         )
         .unwrap();
         fs::write(
@@ -223,13 +221,13 @@ fn candidate_sync_keeps_formal_source_metadata() {
 #[test]
 fn candidate_sync_rejects_changed_generation_inputs_before_install() {
     let frontend = TestFrontend::new();
-    let manifest = frontend.0.join("scripts/api-artifacts.mjs");
+    let manifest = frontend.0.join("scripts/api-artifact-manifest.json");
     let result = apply_candidate_with_staging_hook(
         &frontend.backend(),
         &frontend.0,
         candidate(),
         |_| {
-            fs::write(&manifest, "export const generatedArtifactPaths = []\n")?;
+            fs::write(&manifest, br#"{"format_version":1,"files":[]}"#)?;
             Ok(())
         },
         |_| Ok(()),
@@ -619,25 +617,31 @@ fn reads_frontend_generated_artifact_manifest_and_rejects_traversal() {
         generated_artifact_paths(&frontend.0).unwrap(),
         CANDIDATE_MANAGED_PATHS[1..]
     );
-    fs::write(
-        frontend.0.join("scripts/api-artifacts.mjs"),
-        "export const generatedOperationArtifactPaths = Object.freeze([\n  'src/api/generated/operations/core.ts',\n  'src/api/generated/operations/system.ts',\n])\nexport const generatedArtifactPaths = Object.freeze([\n  ...generatedOperationArtifactPaths,\n  'src/api/generated/permissions.ts',\n])\n",
-    )
-    .unwrap();
-    assert_eq!(
-        generated_artifact_paths(&frontend.0).unwrap(),
-        [
-            "src/api/generated/operations/core.ts",
-            "src/api/generated/operations/system.ts",
-            "src/api/generated/permissions.ts",
-        ]
-    );
-    fs::write(
-        frontend.0.join("scripts/api-artifacts.mjs"),
-        "export const generatedArtifactPaths = Object.freeze([\n  '../outside.ts',\n])\n",
-    )
-    .unwrap();
-    assert!(generated_artifact_paths(&frontend.0).is_err());
+    let manifest = frontend.0.join("scripts/api-artifact-manifest.json");
+    for invalid in [
+        serde_json::json!({"format_version":2,"files":["src/api/a.ts"]}),
+        serde_json::json!({"format_version":1,"files":[]}),
+        serde_json::json!({"format_version":1,"files":["src/api/a.ts","src/api/a.ts"]}),
+        serde_json::json!({"format_version":1,"files":["../outside.ts"]}),
+        serde_json::json!({"format_version":1,"files":["src/api/../a.ts"]}),
+        serde_json::json!({"format_version":1,"files":["src//a.ts"]}),
+        serde_json::json!({"format_version":1,"files":["src/api/a:stream.ts"]}),
+        serde_json::json!({"format_version":1,"files":["src/api/a\\b.ts"]}),
+        serde_json::json!({"format_version":1,"files":["src/api/a\nb.ts"]}),
+        serde_json::json!({"format_version":1,"files":[7]}),
+        serde_json::json!({"format_version":1,"files":["src/api/a.ts"],"extra":true}),
+    ] {
+        fs::write(&manifest, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(generated_artifact_paths(&frontend.0).is_err(), "{invalid}");
+    }
+    for invalid in [
+        br#"{"format_version":1,"files":["src/a.ts"],"files":["src/b.ts"]}"#.as_slice(),
+        br#"{"format_version":1,"format_version":1,"files":["src/a.ts"]}"#.as_slice(),
+        b"not-json".as_slice(),
+    ] {
+        fs::write(&manifest, invalid).unwrap();
+        assert!(generated_artifact_paths(&frontend.0).is_err());
+    }
 }
 
 #[test]

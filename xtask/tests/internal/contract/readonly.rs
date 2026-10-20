@@ -256,7 +256,7 @@ fn readonly_api_generation_rejects_derived_drift_and_concurrent_input_changes() 
     assert!(contract_staging_directories(&frontend).is_empty());
 
     prepare_readonly_fixture(&frontend);
-    let manifest = frontend.0.join("scripts/api-artifacts.mjs");
+    let manifest = frontend.0.join("scripts/api-artifact-manifest.json");
     let error = check_current_with(
         &frontend.backend(),
         &frontend.0,
@@ -266,10 +266,7 @@ fn readonly_api_generation_rejects_derived_drift_and_concurrent_input_changes() 
         },
         |staging| {
             write_generated_artifacts(staging)?;
-            fs::write(
-                &manifest,
-                "export const generatedArtifactPaths = Object.freeze([])\n",
-            )?;
+            fs::write(&manifest, br#"{"format_version":1,"files":[]}"#)?;
             Ok(())
         },
     )

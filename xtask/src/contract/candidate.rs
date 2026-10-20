@@ -226,7 +226,7 @@ fn candidate_marker(candidate: &[u8], formal_source: &[u8]) -> Result<Vec<u8>> {
 
 #[allow(dead_code)]
 pub(crate) fn generated_artifact_paths(frontend_dir: &Path) -> Result<Vec<String>> {
-    let manifest = frontend_dir.join("scripts/api-artifacts.mjs");
+    let manifest = frontend_dir.join("scripts/api-artifact-manifest.json");
     let source = fs::read(&manifest).map_err(|error| {
         format!(
             "无法读取前端 OpenAPI 派生文件清单 {}：{error}",
@@ -236,74 +236,38 @@ pub(crate) fn generated_artifact_paths(frontend_dir: &Path) -> Result<Vec<String
     generated_artifact_paths_from_source(&source)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactManifest {
+    format_version: serde_json::Number,
+    files: Vec<String>,
+}
+
 fn generated_artifact_paths_from_source(source: &[u8]) -> Result<Vec<String>> {
-    let source = std::str::from_utf8(source)
-        .map_err(|error| format!("前端 api-artifacts.mjs 不是 UTF-8：{error}"))?;
-    let body = frozen_array_body(source, "generatedArtifactPaths")?;
-    let mut paths = Vec::new();
+    let manifest: ArtifactManifest = serde_json::from_slice(source)
+        .map_err(|_| "前端 API 派生清单不是严格的版本化 JSON；请检查 api-artifact-manifest.json")?;
+    if manifest.format_version.as_f64() != Some(1.0)
+        || manifest.files.is_empty()
+        || manifest.files.len() > 10_000
+    {
+        return Err("前端 API 派生清单要求版本 1 和 1～10000 条 files 路径".into());
+    }
     let mut seen = std::collections::BTreeSet::new();
-    for line in body.lines() {
-        let value = line.trim().trim_end_matches(',').trim();
-        if value.is_empty() {
-            continue;
-        }
-        if let Some(name) = value.strip_prefix("...") {
-            for nested in frozen_array_body(source, name)?.lines() {
-                push_generated_path(nested, &mut paths, &mut seen)?;
-            }
-        } else {
-            push_generated_path(value, &mut paths, &mut seen)?;
+    for path in &manifest.files {
+        validate_frontend_relative_path(path)?;
+        if !seen.insert(path) {
+            return Err(format!("API 派生清单包含重复路径：{path}").into());
         }
     }
-    if paths.is_empty() {
-        return Err("generatedArtifactPaths 不能为空".into());
-    }
-    Ok(paths)
-}
-
-fn frozen_array_body<'a>(source: &'a str, name: &str) -> Result<&'a str> {
-    let marker = format!("export const {name} = Object.freeze([");
-    let start = source
-        .find(&marker)
-        .map(|index| index + marker.len())
-        .ok_or_else(|| format!("前端 api-artifacts.mjs 缺少 {name} 清单"))?;
-    let end = source[start..]
-        .find("])")
-        .map(|index| start + index)
-        .ok_or_else(|| format!("前端 {name} 清单缺少结束标记"))?;
-    Ok(&source[start..end])
-}
-
-fn push_generated_path(
-    source: &str,
-    paths: &mut Vec<String>,
-    seen: &mut std::collections::BTreeSet<String>,
-) -> Result<()> {
-    let value = source.trim().trim_end_matches(',').trim();
-    if value.is_empty() {
-        return Ok(());
-    }
-    let value = value
-        .strip_prefix('\'')
-        .and_then(|value| value.strip_suffix('\''))
-        .or_else(|| {
-            value
-                .strip_prefix('"')
-                .and_then(|value| value.strip_suffix('"'))
-        })
-        .ok_or_else(|| format!("generatedArtifactPaths 包含不受支持的条目：{value}"))?;
-    validate_frontend_relative_path(value)?;
-    if !seen.insert(value.to_owned()) {
-        return Err(format!("generatedArtifactPaths 包含重复路径：{value}").into());
-    }
-    paths.push(value.to_owned());
-    Ok(())
+    Ok(manifest.files)
 }
 
 fn validate_frontend_relative_path(value: &str) -> Result<()> {
     let path = Path::new(value);
     if path.is_absolute()
-        || value.contains('\\')
+        || value.contains(['\\', ':'])
+        || value.chars().any(char::is_control)
+        || value.split('/').any(|part| matches!(part, "" | "." | ".."))
         || path
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
@@ -360,7 +324,7 @@ pub(super) fn artifact_paths_from_inputs(
     inputs: &[Snapshot],
     frontend_dir: &Path,
 ) -> Result<Vec<String>> {
-    let manifest = frontend_dir.join("scripts/api-artifacts.mjs");
+    let manifest = frontend_dir.join("scripts/api-artifact-manifest.json");
     let source = inputs
         .iter()
         .find(|snapshot| snapshot.path == manifest)
