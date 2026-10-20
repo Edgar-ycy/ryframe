@@ -41,6 +41,17 @@ mod workspace;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+#[path = "internal/job_evidence_model.rs"]
+mod job_evidence_model_tests;
+#[path = "internal/job_evidence_mysql.rs"]
+mod job_evidence_mysql_tests;
+#[path = "internal/job_evidence_process.rs"]
+mod job_evidence_process_tests;
+#[path = "internal/job_evidence_protocol.rs"]
+mod job_evidence_protocol_tests;
+#[path = "internal/job_evidence_wait.rs"]
+mod job_evidence_wait_tests;
+
 #[path = "../src/build.rs"]
 mod build;
 #[path = "../src/data.rs"]

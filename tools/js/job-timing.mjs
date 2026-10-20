@@ -1,12 +1,49 @@
 import { spawn } from 'node:child_process'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { lstatSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { expand } from './config.mjs'
-import { pythonInvocation } from './python_process.mjs'
+import { strictScalarJsonObject } from './private_json_protocol.mjs'
 
-const collector = fileURLToPath(new URL('../python/devex_job_timings.py', import.meta.url))
+const nativeToolCache = new Map()
+
+export function nativeInvocation(operation, environment = process.env, force = false) {
+  if (!['collect', 'wait'].includes(operation)) throw new Error('原生任务采集动作无效')
+  try {
+    const source = environment.RYFRAME_DEVEX_NATIVE_TOOL
+    const binding = strictScalarJsonObject(source, Error, '原生工具绑定')
+    if (Object.keys(binding).sort().join() !== 'bytes,format_version,kind,path,sha256' ||
+        binding.format_version !== 1 || binding.kind !== 'ryframe-devex-native-tool' ||
+        typeof binding.path !== 'string' || !path.isAbsolute(binding.path) || /[\n\r\0]/u.test(binding.path) ||
+        !Number.isSafeInteger(binding.bytes) || binding.bytes <= 0 ||
+        !/^[a-f0-9]{64}$/.test(binding.sha256)) throw new Error()
+    const facts = () => {
+      const value = lstatSync(binding.path, { bigint: true })
+      if (!value.isFile() || value.isSymbolicLink() || value.size !== BigInt(binding.bytes)) throw new Error()
+      return [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs].join(':')
+    }
+    const before = facts()
+    if (force || nativeToolCache.get(source) !== before) {
+      const sha256 = createHash('sha256').update(readFileSync(binding.path)).digest('hex')
+      if (sha256 !== binding.sha256 || facts() !== before) throw new Error()
+      if (nativeToolCache.size >= 8) nativeToolCache.clear()
+      nativeToolCache.set(source, before)
+    }
+    return { executable: binding.path, arguments: ['__job-evidence', operation], binding }
+  } catch { throw new Error('原生任务采集器产物绑定缺失、无效或已变化') }
+}
+
+export async function guardNativeTool(artifacts, environment = process.env) {
+  const before = nativeInvocation('collect', environment, true).binding
+  await writeFile(path.join(artifacts, 'native-tool-before.json'), JSON.stringify(before) + '\n', { flag: 'wx' })
+  return async () => {
+    const after = nativeInvocation('collect', environment, true).binding
+    if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error('运行期间原生采集器绑定发生变化')
+    await writeFile(path.join(artifacts, 'native-tool-after.json'), JSON.stringify(after) + '\n', { flag: 'wx' })
+  }
+}
 
 export function jobSelection(workflow, variables) {
   const job = expand(workflow.job, variables)
@@ -24,14 +61,12 @@ export function jobSelection(workflow, variables) {
   return { kind: job.kind, id: job.id, job_type: job.job_type, tenant_id: variables.tenant_id }
 }
 
-function python(binding, request, timeout) {
-  if (!binding || !path.isAbsolute(binding.python)) throw new Error('缺少显式 Python 采集器路径')
+function native(request, timeout) {
+  const invocation = nativeInvocation('collect')
   return new Promise((resolve, reject) => {
-    const invocation = pythonInvocation({ script: collector })
-    const child = spawn(binding.python, invocation.argv, {
+    const child = spawn(invocation.executable, invocation.arguments, {
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
-      env: invocation.env,
     })
     const chunks = []
     let bytes = 0
@@ -78,17 +113,16 @@ function python(binding, request, timeout) {
   })
 }
 
-export async function collectJob(config, workflow, variables, artifacts, run = python) {
+export async function collectJob(config, workflow, variables, artifacts, run = native) {
   const started = performance.now()
   let selection
   let result
   try {
     selection = jobSelection(workflow, variables)
-    const { python: executable, ...binding } = config.bindings.job_timings || {}
+    const binding = config.bindings.job_timings || {}
     const request = { binding, scope_id: config.bindings.scope_id, selection }
     do {
       result = await run(
-        { python: executable },
         request,
         Math.min(config.contract.timeout_ms, 60000),
       )
@@ -128,6 +162,6 @@ export async function collectJob(config, workflow, variables, artifacts, run = p
       ...result,
     }) + '\n',
   )
-  if (!result.valid) throw new Error(`任务时间证据无效：${result.reason}`)
+  if (!result.valid) throw new Error(`任务时间证据无效：${result.reason}${typeof result.hint === 'string' ? `；${result.hint}` : ''}`)
   return [result.queue_ms, result.execution_ms]
 }

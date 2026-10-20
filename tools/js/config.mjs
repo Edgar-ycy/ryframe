@@ -114,9 +114,11 @@ export async function configuration(backend, suite, environment = process.env) {
       }
       if (
         workflow.job &&
-        (!bindings.job_timings || !path.isAbsolute(bindings.job_timings.python))
+        (!bindings.job_timings || typeof bindings.job_timings !== 'object' ||
+          Array.isArray(bindings.job_timings) ||
+          Object.keys(bindings.job_timings).sort().join() !== 'control,mysql_client,server_uuid')
       ) {
-        throw new Error('任务场景缺少显式 Python 与隔离控制库采集绑定')
+        throw new Error('任务场景缺少明确的隔离控制库、服务器身份与 MySQL 客户端绑定')
       }
     }
   }

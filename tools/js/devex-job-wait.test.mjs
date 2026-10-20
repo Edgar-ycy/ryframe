@@ -19,7 +19,6 @@ const config = {
     scope_id: 'job-wait-test',
     identity_pools: { system: pool.binding },
     job_timings: {
-      python: path.resolve('python-fixture'),
       mysql_client: path.resolve('mysql-fixture'),
     },
   },
@@ -111,13 +110,17 @@ function observerChild(transform = (value) => value) {
   return child
 }
 
+const invocationFor = () => ({ executable: 'native-tool-fixture', arguments: ['__job-evidence', 'wait'] })
+
 test('多个等待通过同一子进程且逐个绑定精确租户与任务ID', async () => {
   let calls = 0
   const child = observerChild()
-  const waiter = await jobWaiter(config, () => {
+  const waiter = await jobWaiter(config, (executable, arguments_) => {
+    assert.equal(executable, 'native-tool-fixture')
+    assert.deepEqual(arguments_, ['__job-evidence', 'wait'])
     calls++
     return child
-  })
+  }, invocationFor)
   const results = await Promise.all(
     ['101', '102'].map((message_id) => waiter.wait(workflow, { tenant_id: 'system', message_id })),
   )
@@ -132,7 +135,7 @@ test('多个等待通过同一子进程且逐个绑定精确租户与任务ID', 
 
 test('错误scope导致全部待完成测量失败且关闭阶段不能掩盖观察器故障', async () => {
   const child = observerChild((value) => ({ ...value, scope_id: 'other-scope' }))
-  const waiter = await jobWaiter(config, () => child)
+  const waiter = await jobWaiter(config, () => child, invocationFor)
   const result = await waiter.wait(workflow, { tenant_id: 'system', message_id: '101' })
   assert.equal(result.valid, false)
   assert.equal(result.reason, 'job_observer_invalid_response')

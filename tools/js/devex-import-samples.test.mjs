@@ -134,6 +134,7 @@ test('准备和catalog在资源观察/HTTP计时前完成，attempt收据在资�
   const order = [], reader = async () => Buffer.from('sample')
   const dependencies = {
     verifyProvenance: async () => { order.push('verify-before'); return async () => { order.push('verify-after') } },
+    guardNativeTool: async () => { order.push('native-before'); return async () => { order.push('native-after') } },
     createPacing: async () => ({ prepareSample: async () => { order.push('sample-window') },
       close: async () => { order.push('pacing-close') } }),
     prepareImportSamples: async () => { order.push('prepare'); return reader },
@@ -144,7 +145,7 @@ test('准备和catalog在资源观察/HTTP计时前完成，attempt收据在资�
   }
   const output = path.join(root, 'first.json')
   await measure(config(), { suite: 'jobs', output }, 'warm', dependencies)
-  assert.deepEqual(order, ['verify-before', 'sample-window', 'prepare', 'catalog', 'observe', 'http', 'stop', 'attempts', 'pacing-close', 'verify-after'])
+  assert.deepEqual(order, ['verify-before', 'native-before', 'sample-window', 'prepare', 'catalog', 'observe', 'http', 'stop', 'attempts', 'pacing-close', 'verify-after', 'native-after'])
   const selection = JSON.parse(await readFile(path.join(output + '.artifacts', 'identity-selection.json')))
   assert.equal(selection.selections[0].count, 10)
   assert.equal(Object.keys(selection.selections[0].tenant_distribution).length, 10)
@@ -153,7 +154,7 @@ test('准备和catalog在资源观察/HTTP计时前完成，attempt收据在资�
   await assert.rejects(measure(config(), { suite: 'jobs', output: path.join(root, 'failed.json') }, 'warm', {
     ...dependencies, prepareImportSamples: async () => { throw new Error('prepare failed') },
   }), /prepare failed/)
-  assert.deepEqual(order, ['verify-before', 'sample-window', 'pacing-close', 'verify-after'])
+  assert.deepEqual(order, ['verify-before', 'native-before', 'sample-window', 'pacing-close', 'verify-after', 'native-after'])
   order.length = 0
   await assert.rejects(measure({ ...config(), bindings: { ...config().bindings, identity_pools: { users: [] } } },
     { suite: 'jobs', output: path.join(root, 'invalid.json') }, 'warm', dependencies), /独立用户/)

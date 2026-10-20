@@ -9,6 +9,7 @@ import { homepage } from './homepage.mjs'
 import { prepareImportSamples } from './import-samples.mjs'
 import { verifyProvenance } from './provenance.mjs'
 import { createPacing } from './pacing.mjs'
+import { guardNativeTool } from './job-timing.mjs'
 
 export async function measure(config, values, cache, dependencies = {}, environment = process.env) {
   const concurrency = values.suite === 'homepage' ? 0 : boundedInteger(
@@ -18,6 +19,9 @@ export async function measure(config, values, cache, dependencies = {}, environm
   await mkdir(artifacts, { recursive: true })
   await writeFile(path.join(artifacts, 'identity-selection.json'), JSON.stringify(selection, null, 2) + '\n', { flag: 'wx' })
   const verifyAfter = await (dependencies.verifyProvenance ?? verifyProvenance)(config, values, artifacts)
+  const verifyNativeAfter = config.contract.workloads?.[values.suite]?.some((workflow) => workflow.job)
+    ? await (dependencies.guardNativeTool ?? guardNativeTool)(artifacts)
+    : undefined
   let result, failure, pacing
   try {
     pacing = await (dependencies.createPacing ?? createPacing)(config, { ...values, artifacts })
@@ -28,6 +32,8 @@ export async function measure(config, values, cache, dependencies = {}, environm
   try { await pacing?.close() }
   catch (error) { failure = failure ? new AggregateError([failure, error], `${failure.message}; ${error.message}`) : error }
   try { await verifyAfter() }
+  catch (error) { failure = failure ? new AggregateError([failure, error], `${failure.message}; ${error.message}`) : error }
+  try { await verifyNativeAfter?.() }
   catch (error) { failure = failure ? new AggregateError([failure, error], `${failure.message}; ${error.message}`) : error }
   if (failure) throw failure
   return result

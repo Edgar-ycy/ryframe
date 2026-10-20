@@ -32,6 +32,9 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    if let Some(code) = devex::job_evidence::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::monitoring::run_hidden_if_requested() {
         std::process::exit(code);
     }

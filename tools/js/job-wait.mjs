@@ -1,18 +1,13 @@
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { fileURLToPath } from 'node:url'
-import { jobSelection } from './job-timing.mjs'
-import { pythonInvocation } from './python_process.mjs'
+import { jobSelection, nativeInvocation } from './job-timing.mjs'
 
-const script = fileURLToPath(new URL('../python/devex_job_wait.py', import.meta.url))
-
-export async function jobWaiter(config, launch = spawn) {
-  const { python, ...binding } = config.bindings.job_timings
-  const invocation = pythonInvocation({ script })
-  const child = launch(python, invocation.argv, {
+export async function jobWaiter(config, launch = spawn, invocationFor = nativeInvocation) {
+  const binding = config.bindings.job_timings
+  const invocation = invocationFor('wait')
+  const child = launch(invocation.executable, invocation.arguments, {
     stdio: ['pipe', 'pipe', 'ignore'],
     windowsHide: true,
-    env: invocation.env,
   })
   const pending = new Map()
   let ticket = 0,

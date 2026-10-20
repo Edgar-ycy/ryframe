@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { collectJob, jobSelection } from './job-timing.mjs'
+import { collectJob, guardNativeTool, jobSelection, nativeInvocation } from './job-timing.mjs'
 import { completeMeasurements } from './load.mjs'
 
 const workflow = {
@@ -15,7 +16,6 @@ const config = {
   bindings: {
     scope_id: 'devex-test-scope',
     job_timings: {
-      python: path.resolve('python-fixture'),
       control: { database: 'test_control' },
       server_uuid: 'fixture',
       mysql_client: path.resolve('mysql-fixture'),
@@ -49,6 +49,52 @@ async function artifacts(t) {
   return directory
 }
 
+async function nativeFixture(directory) {
+  const executable = path.join(directory, 'controller-fixture.exe')
+  const bytes = Buffer.from('native-tool-fixture')
+  await writeFile(executable, bytes)
+  const binding = { format_version: 1, kind: 'ryframe-devex-native-tool', path: executable,
+    bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+  return { binding, environment: { RYFRAME_DEVEX_NATIVE_TOOL: JSON.stringify(binding) } }
+}
+
+test('原生采集器只使用已绑定的精确产物，不搜索PATH或触发Cargo', async (t) => {
+  const directory = await artifacts(t)
+  const { binding, environment } = await nativeFixture(directory)
+  for (const operation of ['collect', 'wait']) {
+    const invocation = nativeInvocation(operation, environment)
+    assert.equal(invocation.executable, binding.path)
+    assert.deepEqual(invocation.arguments, ['__job-evidence', operation])
+    assert.deepEqual(invocation.binding, binding)
+  }
+  assert.throws(() => nativeInvocation('other', environment))
+  for (const change of [{ format_version: 2 }, { bytes: true }, { bytes: 0 },
+    { sha256: 'a'.repeat(64) }, { path: 'relative.exe' }, { unknown: true }]) {
+    assert.throws(() => nativeInvocation('collect', {
+      RYFRAME_DEVEX_NATIVE_TOOL: JSON.stringify({ ...binding, ...change }),
+    }))
+  }
+  assert.throws(() => nativeInvocation('collect', { RYFRAME_DEVEX_NATIVE_TOOL: '{"bytes":1,"bytes":1}' }))
+  assert.throws(() => nativeInvocation('collect', {}))
+  await writeFile(binding.path, Buffer.alloc(binding.bytes, 120))
+  assert.throws(() => nativeInvocation('collect', environment), /产物绑定/)
+})
+
+test('原生工具来源在测量前后完整复核，变化不能成为成功样本', async (t) => {
+  const directory = await artifacts(t)
+  const { binding, environment } = await nativeFixture(directory)
+  const after = await guardNativeTool(directory, environment)
+  await after()
+  assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'native-tool-before.json'))), binding)
+  assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'native-tool-after.json'))), binding)
+  const changedDirectory = path.join(directory, 'changed')
+  await mkdir(changedDirectory)
+  const changed = await guardNativeTool(changedDirectory, environment)
+  await writeFile(binding.path, Buffer.alloc(binding.bytes, 121))
+  await assert.rejects(changed(), /产物绑定/)
+  await assert.rejects(readFile(path.join(changedDirectory, 'native-tool-after.json')), { code: 'ENOENT' })
+})
+
 test('任务采集使用保存的精确业务ID且保留所有重试事实', async (t) => {
   const directory = await artifacts(t)
   const result = await collectJob(
@@ -56,8 +102,7 @@ test('任务采集使用保存的精确业务ID且保留所有重试事实', asy
     workflow,
     variables,
     directory,
-    async (binding, request) => {
-      assert.equal(binding.python, config.bindings.job_timings.python)
+    async (request) => {
       assert.deepEqual(request.selection, {
         kind: 'export',
         id: '101',
@@ -77,13 +122,17 @@ test('任务采集使用保存的精确业务ID且保留所有重试事实', asy
 test('失败取消和来源不符的采集不能进入成功耗时统计', async (t) => {
   const directory = await artifacts(t)
   for (const value of [
-    { ...proof, valid: false, reason: 'job_cancelled' },
+    { ...proof, valid: false, reason: 'job_cancelled', hint: '核对任务实际状态。' },
     { ...proof, scope_id: 'other-scope' },
     { ...proof, execution_ms: Number.NaN },
   ]) {
     await assert.rejects(
       collectJob(config, workflow, variables, directory, async () => value),
-      /任务时间证据无效/,
+      (error) => {
+        assert.match(error.message, /任务时间证据无效/)
+        if (value.hint) assert.ok(error.message.includes(value.hint))
+        return true
+      },
     )
   }
   const saved = (await readFile(path.join(directory, 'job-attempts.jsonl'), 'utf8'))

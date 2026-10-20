@@ -11,6 +11,8 @@ mod execution;
 pub(crate) mod import_samples;
 #[path = "devex/incremental.rs"]
 mod incremental;
+#[path = "devex/job_evidence.rs"]
+pub(crate) mod job_evidence;
 #[path = "devex/memory.rs"]
 pub(crate) mod memory;
 #[path = "devex/metadata.rs"]

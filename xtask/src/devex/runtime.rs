@@ -90,6 +90,10 @@ pub(super) fn prepare(
     environment.insert("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256".into(), hash);
     environment.insert("RYFRAME_DEVEX_CACHE".into(), cache.as_str().into());
     environment.insert(
+        super::job_evidence::artifact::ENVIRONMENT_KEY.into(),
+        super::job_evidence::artifact::current_binding()?,
+    );
+    environment.insert(
         "RYFRAME_DEVEX_DRIVER_FINGERPRINT".into(),
         driver_fingerprint,
     );

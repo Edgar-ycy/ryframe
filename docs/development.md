@@ -66,8 +66,6 @@ cargo generate -- resource --package order-business --model Order --write
 
 生成接管计划时控制库运行 `cargo migrate -- control adopt --module order --output .local-tests/order-adopt.json --write`，租户库把 `control` 改为 `tenant-data` 并增加 `--target business-shared`，输出另取新文件。先 `--inspect` 该计划，只读核对物理实例、数据库、表、迁移前缀和指纹，再用同一计划 `--apply ... --write` 和对应 `verify`。`--module` 预览的 `--plan` 不读配置或数据库；`--output` 必须配 `--write`，`--inspect` 拒绝写入。部分登记、前像不符、来源不同或结构漂移都失败关闭；未知结果先 inspect 原计划，不能换计划重放。目标为空、只把已有表当结构模板时不需要 adopt，按正常 `up` 建表。
 
-完整的控制库与租户命令、失败核验见[数据指南](data.md#已有表接管)。
-
 ### 模型结构演进
 
 修改 Rust 模型后继续运行相同的 `cargo generate -- resource --package order-business` 预览，审阅后加 `--write`。生成器保留全部历史迁移原字节及摘要，只追加稳定编号的新迁移，`src/generated/migrations/history.json` 与 ownership 一起保存前后结构链；这一步不连接或修改数据库。
@@ -153,6 +151,8 @@ frontend_dir = "../web"
 ```
 优先级为命令行 `--frontend-dir`、本机工具配置、公共工具配置；相对路径统一以后端 Cargo Workspace 根目录解析，与命令在哪个子目录运行无关。工具配置不放服务连接密码，也不影响 `cargo serve` 的运行时配置。后端范围只检查后端，显式跨仓范围找不到前端时会输出实际路径与配置位置。
 语言与文件构成使用 `cargo xtask check language`，默认只向终端报告完整后端非 ignored 文件的原始字节；已跟踪但符合 ignore 的文件也排除。自维护代码包含手写、测试、生成物及源代码模板，vendor 单列，文档、配置、资源与全量文件体积另列；固定分类以 [language-policy.toml](../architecture/language-policy.toml) 为准。显式 `--min-rust-percent 80` 用精确整数运算校验阈值，未达或分母为空时失败，不隐式加入日常门禁；百分比允许 0 到 100、最多六位小数。`--output .local-tests/language/current.json --write` 在已存在的忽略目录创建未跟踪的新 JSON 报告，不覆盖或创建父目录；报告含口径摘要、HEAD 和逐文件字节及摘要，同时请求阈值时先保存结论再返回失败。`--plan` 只输出同一任务图，不启动 Git、不落盘。54.4% 缺少原始复现证据，只保留为旧参考，不计算增减趋势。
+
+任务性能样本的 `.local-tests/devex/runtime.json` 中，`bindings.job_timings` 只包含 `control`、`server_uuid` 和 `mysql_client`，不再配置 Python 采集器。`control` 明确登记隔离回环控制库的 `host`、整数 `port`、`database`、`username`、`password_env`、`tls_mode`；`mysql_client` 是客户端二进制的绝对路径。控制器自动向内部采集入口传递当前原生产物绑定，在样本目录保存 `native-tool-before.json` 与 `native-tool-after.json`；不要手动指定或临时编译另一个采集器。采集会同时核对服务器 UUID、scope 和 ownership，完成观察复用只读连接并为每轮建立新快照，最终耗时使用全部持久化尝试的排队和执行时间。警告输出不会使有效查询失败；退出、超时、响应不完整或归属变化都不能成为成功样本，诊断保留固定分类并隐藏凭据和原始 SQL 输出。
 
 ## 常见问题
 
