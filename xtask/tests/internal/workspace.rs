@@ -81,4 +81,24 @@ fn loads_and_explains_catalog_resources() {
     let resources = resource::load_catalog(&workspace::root_dir()).unwrap();
     let catalog = ryframe_generator::render_resources(&resources).unwrap();
     assert!(catalog.explanation("post").is_some());
+    assert!(
+        catalog
+            .assets
+            .iter()
+            .all(|asset| asset.root == ryframe_generator::AssetRoot::Backend)
+    );
+}
+
+#[cfg(feature = "resource")]
+#[test]
+fn resource_explanation_does_not_require_a_frontend_checkout() {
+    let missing_frontend =
+        workspace::root_dir().join(".local-tests/absent-frontend-for-explanation");
+    assert!(!missing_frontend.exists());
+    let command = crate::cli::ResourceCommand {
+        target: crate::cli::ResourceTarget::Named("post".into()),
+        action: crate::cli::ResourceAction::Explain,
+    };
+    resource::run(&command, &missing_frontend).unwrap();
+    assert!(!missing_frontend.exists());
 }

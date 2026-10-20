@@ -52,7 +52,6 @@ fn unsigned_full_capacity_uses_native_storage_and_exact_wire_defaults() {
     assert!(dto.contains("value_type = Option<String>"));
     assert!(dto.contains("crate::http::integer::parse_u64"));
     assert!(dto.contains("18446744073709551615_u64"));
-    assert!(content("order/fields.ts").contains("value: \"18446744073709551615\""));
 }
 
 #[test]

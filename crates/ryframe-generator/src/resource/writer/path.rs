@@ -30,6 +30,9 @@ pub(super) fn target_path(
 pub(super) fn validate_managed_path(root: AssetRoot, relative: &str) -> Result<(), ResourceError> {
     let path = Path::new(relative);
     if relative.contains('\\')
+        || relative
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
         || path.is_absolute()
         || path
             .components()

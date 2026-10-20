@@ -203,10 +203,6 @@ fn signed_i64_string_wire_stays_text_in_dto_schema_form_and_enum_options() {
     assert!(content("order/dto.rs").contains("deserialize_optional_i64"));
     assert!(content("order/dto.rs").contains("value_type = Option<String>"));
     assert!(content("order/dto.rs").contains("crate::http::integer::parse_i64"));
-    let form = content("order/fields.ts");
-    assert!(form.contains("value: \"1\"") && !form.contains("value: 1,"));
-    assert!(form.contains("status: ''"));
-    assert!(form.contains("form.status === '' ? undefined : form.status"));
     let field = input
         .fields
         .iter_mut()

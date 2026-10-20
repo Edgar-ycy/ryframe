@@ -156,15 +156,6 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert_control_database_repository_gates(&generated);
     let fake = content("post/fake.rs");
     assert_post_fake(fake);
-    let page = content("post/page.vue");
-    assert!(page.contains("name=\"actions\""));
-    assert!(page.contains(":last-successful-query=\"lastSuccessfulQuery ?? null\""));
-    assert!(page.contains("lastSuccessfulQuery: PostQuery | null"));
-    assert!(page.contains("actions?(props:"));
-    assert!(page.contains("<template v-if=\"slots.actions\" #actions=\"{ selectedExportIds, captureSelectionOwnership }\">"));
-    assert!(page.contains(":selected-export-ids=\"selectedExportIds\""));
-    assert!(page.contains(":capture-selection-ownership=\"captureSelectionOwnership\""));
-    assert!(page.contains("import { computed } from 'vue'"));
     let access = generated
         .assets
         .iter()
@@ -183,22 +174,6 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
         .nth(1)
         .expect("应生成 rollback");
     assert!(!rollback.contains("state.records.insert"));
-    let fields = content("post/fields.ts");
-    assert!(fields.contains("disabledOnEdit: true"));
-    assert!(fields.contains("editOnly: true"));
-    assert!(fields.contains("String(record.name)"));
-    assert!(fields.contains("const queryFields = [\n    {\n      key:"));
-    assert!(!fields.contains("{ key: \"name\", kind:"));
-    let api = content("post/api.ts");
-    assert!(api.contains("ApiSchema, OperationJsonBody, OperationQuery"));
-    assert!(api.contains("export type PostRecord = ApiSchema<'PostVo'>"));
-    assert!(api.contains("export type PostQuery = OperationQuery<'get_system_posts'>"));
-    assert!(api.contains("OperationJsonBody<'post_system_posts'>"));
-    assert!(!api.contains("export interface PostRecord"));
-    let registration = content("post/registration.ts");
-    assert!(registration.contains("routeKey: \"system.post\""));
-    assert!(registration.contains("permissionCode: \"system:post:list\""));
-    assert!(registration.contains("page: () => import(\"@/views/system/post/index.vue\")"));
     let handler = content("post/handler.rs");
     assert!(handler.contains("tag = \"岗位管理\""));
     assert!(!handler.contains("tag = \"岗位\","));
@@ -266,9 +241,14 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
     let second = render_resources(&[resource]).expect("再次生成应成功");
 
     assert_eq!(first.assets, second.assets);
+    assert!(
+        first
+            .assets
+            .iter()
+            .all(|asset| asset.root == AssetRoot::Backend)
+    );
     assert_order_asset_set(&first.assets);
     assert_order_backend_contracts(&first.assets);
-    assert_order_frontend_contracts(&first.assets);
     assert_order_openapi_contracts(&first.assets);
 }
 
@@ -293,10 +273,6 @@ fn assert_order_asset_set(assets: &[GeneratedAsset]) {
         "crates/ryframe-api/src/generated/crud_resources.rs",
         "crates/ryframe-tenant-db/src/generated/order/migration.rs",
         "catalog/access.generated.toml",
-        "src/generated/resources/order/api.ts",
-        "src/generated/resources/order/fields.ts",
-        "src/generated/resources/order/page.vue",
-        "src/generated/resources/order/registration.ts",
     ] {
         assert!(
             assets.iter().any(|asset| asset.path == expected),
@@ -359,29 +335,6 @@ fn assert_order_backend_contracts(assets: &[GeneratedAsset]) {
     }
 }
 
-fn assert_order_frontend_contracts(assets: &[GeneratedAsset]) {
-    let page = generated_asset(assets, "order/page.vue");
-    assert!(page.content.contains("@/components/business/flat-crud"));
-    assert!(!page.content.contains("@/components/FlatCrudPage"));
-    let frontend_api = generated_asset(assets, "order/api.ts");
-    assert!(!frontend_api.content.contains("requestOperation"));
-    assert!(
-        frontend_api
-            .content
-            .contains("@/api/generated/operations/system")
-    );
-    assert!(!frontend_api.content.contains("url:"));
-    for operation in [
-        "get_system_orders",
-        "get_system_orders_by_id",
-        "post_system_orders",
-        "put_system_orders_by_id",
-        "delete_system_orders_by_id",
-    ] {
-        assert!(frontend_api.content.contains(operation));
-    }
-}
-
 fn assert_order_openapi_contracts(assets: &[GeneratedAsset]) {
     let aggregate = assets
         .iter()
@@ -429,7 +382,6 @@ fn empty_catalog_generates_stable_compile_ready_aggregates() {
         "crates/ryframe-api/src/generated/router.rs",
         "crates/ryframe-api/src/generated/openapi.rs",
         "crates/ryframe-api/src/generated/crud_resources.rs",
-        "src/generated/resources/index.ts",
         "catalog/access.generated.toml",
     ] {
         assert!(
@@ -617,11 +569,13 @@ fn safe_writer_is_idempotent_and_detects_manual_edits() {
     assert!(error.contains("人工修改"));
     assert!(error.contains("model.rs"));
 
-    let unaffected = frontend.path().join("src/generated/resources/order/api.ts");
+    let unaffected = backend
+        .path()
+        .join("crates/ryframe-api/src/generated/order/handler.rs");
     assert!(
         fs::read_to_string(unaffected)
-            .expect("前端文件应保留")
-            .contains("export function listOrder")
+            .expect("未修改的生成接口应保留")
+            .contains("use crate::handler_utils::parse_id;")
     );
 }
 
@@ -729,9 +683,9 @@ fn change_plan_reports_obsolete_assets_as_deletions() {
     let mut installed = render_resources(std::slice::from_ref(&post)).expect("Post 应生成");
     installed.assets.push(GeneratedAsset {
         resource: "post".into(),
-        root: AssetRoot::Frontend,
-        path: "src/generated/resources/post/obsolete.ts".into(),
-        content: "// 已废弃生成资产\nexport const obsolete = true;\n".into(),
+        root: AssetRoot::Backend,
+        path: "crates/ryframe-api/src/generated/post/obsolete.rs".into(),
+        content: "// 已废弃生成资产\n".into(),
     });
     let workspace = ResourceWorkspace {
         backend_root: backend.path(),
@@ -744,10 +698,10 @@ fn change_plan_reports_obsolete_assets_as_deletions() {
     let obsolete = plan
         .assets
         .iter()
-        .find(|asset| asset.path.ends_with("/obsolete.ts"))
+        .find(|asset| asset.path.ends_with("/obsolete.rs"))
         .expect("预览不能隐藏 ownership 中的删除");
     assert_eq!(obsolete.action, PlanAction::Delete);
-    assert!(obsolete.before.contains("obsolete = true"));
+    assert!(obsolete.before.contains("已废弃生成资产"));
     assert!(obsolete.after.is_empty());
 
     let report = write_resource(&current, "post", workspace).expect("写入应执行同一删除");
@@ -755,7 +709,7 @@ fn change_plan_reports_obsolete_assets_as_deletions() {
         report
             .removed
             .iter()
-            .any(|path| path.ends_with("/obsolete.ts"))
+            .any(|path| path.ends_with("/obsolete.rs"))
     );
 }
 

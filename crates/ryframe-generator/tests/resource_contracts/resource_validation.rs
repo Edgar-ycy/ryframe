@@ -622,15 +622,6 @@ fn generated_dto_validates_nonempty_strings_and_finite_enums() {
     assert!(dto.contains("fn validate_status_enum(value: &str)"));
     assert!(dto.contains("custom(function = \"validate_status_enum\")"));
     assert!(dto.contains("invalid_status"));
-
-    let fields = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("post/fields.ts"))
-        .expect("应生成 Post 表单字段")
-        .content
-        .as_str();
-    assert!(fields.contains("key: \"status\",\n      kind: \"radio\""));
 }
 
 #[test]

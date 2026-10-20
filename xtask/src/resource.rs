@@ -18,7 +18,7 @@ use crate::{
 use ryframe_generator::{
     GeneratedCatalog, PlanAction, ResourceAssetPlan, ResourceError, ResourceIr, ResourceWorkspace,
     load_resource, plan_all_resource_changes, plan_resource_changes, render_resources,
-    write_resource, write_resources,
+    render_resources_with_frontend, write_resource, write_resources,
 };
 
 #[cfg(feature = "resource")]
@@ -30,7 +30,11 @@ pub(crate) fn run(command: &ResourceCommand, frontend_dir: &Path) -> Result<()> 
     {
         return Err(missing_resource(name).into());
     }
-    let catalog = render_resources(&resources)?;
+    let catalog = if command.action == ResourceAction::Explain {
+        render_resources(&resources)?
+    } else {
+        render_resources_with_frontend(&resources, frontend_dir)?
+    };
 
     match (&command.target, command.action) {
         (ResourceTarget::Named(name), ResourceAction::Preview) => {

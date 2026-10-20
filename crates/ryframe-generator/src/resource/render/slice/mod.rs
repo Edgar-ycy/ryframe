@@ -1,7 +1,6 @@
 mod api;
 mod application;
 mod database;
-mod frontend;
 pub(super) mod migration;
 
 use super::super::{FieldIr, IndexIr, ResourceIr, StorageKind, ValueType};
@@ -89,22 +88,6 @@ pub(super) fn database_repository(
     header: &str,
 ) -> String {
     database::repository(resource, resources, header)
-}
-
-pub(super) fn frontend_api(resource: &ResourceIr) -> String {
-    frontend::api(resource)
-}
-
-pub(super) fn frontend_fields(resource: &ResourceIr) -> Vec<(String, String)> {
-    frontend::fields(resource)
-}
-
-pub(super) fn frontend_page(resource: &ResourceIr) -> String {
-    frontend::page(resource)
-}
-
-pub(super) fn frontend_registration(resource: &ResourceIr) -> String {
-    frontend::registration(resource)
 }
 
 pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {

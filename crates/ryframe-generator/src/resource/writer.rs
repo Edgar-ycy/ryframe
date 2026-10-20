@@ -17,7 +17,8 @@ pub use model::{
 pub use plan::{plan_all_resource_changes, plan_resource_assets, plan_resource_changes};
 
 use ownership::{
-    desired_entries, load_manifest, load_manifest_snapshot, manifests_equal, validate_workspace,
+    desired_entries, load_manifest, load_manifest_snapshot, manifests_equal,
+    preserve_unrequested_entries, scoped_manifest, scoped_workspace, validate_workspace,
     verify_no_resource_removal, verify_owned_files, verify_unselected_resource_sources,
 };
 use path::{content_hash, display_path, target_path, validate_managed_path};

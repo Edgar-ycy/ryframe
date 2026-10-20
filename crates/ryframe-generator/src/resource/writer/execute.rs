@@ -8,10 +8,10 @@ use super::{
     AssetRoot, ExpectedFile, GeneratedAsset, GeneratedCatalog, InstalledFile, MANIFEST_PATH,
     OwnershipManifest, ResourceError, ResourceWorkspace, SafeWriteReport, content_hash,
     desired_entries, display_path, install_staged, load_manifest, load_manifest_snapshot,
-    manifests_equal, move_to_backup, persist_recovery_directories, rollback, schema,
-    selected_assets, target_path, validate_workspace, verify_expected_file,
-    verify_no_resource_removal, verify_owned_files, verify_unselected_resource_sources,
-    write_staged,
+    manifests_equal, move_to_backup, persist_recovery_directories, preserve_unrequested_entries,
+    rollback, schema, scoped_manifest, scoped_workspace, selected_assets, target_path,
+    validate_workspace, verify_expected_file, verify_no_resource_removal, verify_owned_files,
+    verify_unselected_resource_sources, write_staged,
 };
 
 mod changes;
@@ -26,8 +26,10 @@ pub fn write_resource(
     resource: &str,
     workspace: ResourceWorkspace<'_>,
 ) -> Result<SafeWriteReport, ResourceError> {
+    let workspace = scoped_workspace(catalog, workspace)?;
     validate_workspace(workspace)?;
     let manifest = load_manifest(&workspace.backend_root.join(MANIFEST_PATH))?;
+    let manifest = scoped_manifest(catalog, &manifest);
     verify_owned_files(&manifest, workspace)?;
     verify_unselected_resource_sources(catalog, resource, &manifest)?;
     schema::validate_evolution(catalog, &manifest, workspace)?;
@@ -59,6 +61,7 @@ pub fn write_resource(
         assets,
         explanations: catalog.explanations.clone(),
         resources: catalog.resources.clone(),
+        frontend_renderer: catalog.frontend_renderer.clone(),
     };
     write_resources(&effective, workspace)
 }
@@ -71,9 +74,11 @@ pub fn write_resources(
     catalog: &GeneratedCatalog,
     workspace: ResourceWorkspace<'_>,
 ) -> Result<SafeWriteReport, ResourceError> {
+    let workspace = scoped_workspace(catalog, workspace)?;
     validate_workspace(workspace)?;
     let manifest_path = workspace.backend_root.join(MANIFEST_PATH);
-    let (old_manifest, old_manifest_bytes) = load_manifest_snapshot(&manifest_path)?;
+    let (full_manifest, old_manifest_bytes) = load_manifest_snapshot(&manifest_path)?;
+    let old_manifest = scoped_manifest(catalog, &full_manifest);
     verify_owned_files(&old_manifest, workspace)?;
     verify_no_resource_removal(catalog, &old_manifest)?;
 
@@ -84,11 +89,15 @@ pub fn write_resources(
         workspace,
         true,
     )?;
-    let desired_entries = desired_entries(&desired_assets, &catalog.resources);
+    let desired_entries = preserve_unrequested_entries(
+        catalog,
+        &full_manifest,
+        desired_entries(&desired_assets, &catalog.resources),
+    );
     let mut changes = ChangeSet::prepare(workspace, &old_manifest, &desired_assets)?;
     if changes.changed.is_empty()
         && changes.obsolete.is_empty()
-        && manifests_equal(&old_manifest, &desired_entries)
+        && manifests_equal(&full_manifest, &desired_entries)
     {
         changes.report.unchanged.sort();
         return Ok(changes.report);

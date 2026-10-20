@@ -5,9 +5,56 @@ use std::{
 };
 
 use super::{
-    GeneratedAsset, GeneratedCatalog, MANIFEST_PATH, OwnershipEntry, OwnershipManifest,
+    AssetRoot, GeneratedAsset, GeneratedCatalog, MANIFEST_PATH, OwnershipEntry, OwnershipManifest,
     ResourceError, ResourceIr, ResourceWorkspace, content_hash, target_path, validate_managed_path,
 };
+
+/// 未请求前端时只核验后端文件，不访问独立前端仓库。
+pub(super) fn scoped_workspace<'a>(
+    catalog: &GeneratedCatalog,
+    mut workspace: ResourceWorkspace<'a>,
+) -> Result<ResourceWorkspace<'a>, ResourceError> {
+    for asset in &catalog.assets {
+        validate_managed_path(asset.root, &asset.path)?;
+    }
+    if !catalog.includes_frontend() {
+        workspace.frontend_root = None;
+    }
+    Ok(workspace)
+}
+
+/// 只选取本次请求范围的受管文件，完整 manifest 前像仍用于 CAS。
+pub(super) fn scoped_manifest(
+    catalog: &GeneratedCatalog,
+    manifest: &OwnershipManifest,
+) -> OwnershipManifest {
+    let mut scoped = manifest.clone();
+    if !catalog.includes_frontend() {
+        scoped
+            .entries
+            .retain(|entry| entry.root == AssetRoot::Backend);
+    }
+    scoped
+}
+
+/// 后端生成保留未请求的前端 ownership 前像；不能把未渲染解释为删除。
+pub(super) fn preserve_unrequested_entries(
+    catalog: &GeneratedCatalog,
+    manifest: &OwnershipManifest,
+    mut entries: Vec<OwnershipEntry>,
+) -> Vec<OwnershipEntry> {
+    if !catalog.includes_frontend() {
+        entries.extend(
+            manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.root == AssetRoot::Frontend)
+                .cloned(),
+        );
+    }
+    entries.sort_by(|left, right| left.root.cmp(&right.root).then(left.path.cmp(&right.path)));
+    entries
+}
 
 pub(super) fn validate_workspace(workspace: ResourceWorkspace<'_>) -> Result<(), ResourceError> {
     if !workspace.backend_root.is_dir() {

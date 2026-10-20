@@ -73,6 +73,8 @@ RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-
 
 标准 CRUD 从手写 Rust `ResourceModel` 生成到业务 crate 自己的 `src/generated/` 与 `migrations/`。目录按 `entities`、`dto`、`repositories`、`services`、`handlers`、`openapi` 分类，便于阅读；`resources/` 和 `extensions/` 始终由开发者维护。默认 catalog 编译只依赖轻量 SDK，不引入数据库或网络 runtime。
 
+框架资源的 `render_resources` 只离线生成后端资产；需要两仓资产时使用 `render_resources_with_frontend` 显式指定前端模板来源，`cargo xtask generate resource` 沿用跨仓检查与写入，`--explain` 无需前端。后端单独计划与写入不读取或校验前端路径，完整保留旧前端 ownership 条目；显式跨仓操作重新核验全部请求范围的受管文件。命名生成绑定实际渲染来源并只注册已受管资源和本次资源，不把未请求的前端输出当作删除。
+
 需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
 
 1. 在业务 crate 的 `extensions/` 定义请求、结果和业务流程。

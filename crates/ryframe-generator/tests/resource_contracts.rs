@@ -35,6 +35,8 @@ mod sql_comments;
 #[path = "resource_contracts/sql_defaults.rs"]
 mod sql_defaults;
 
+#[path = "resource_contracts/backend_scope.rs"]
+mod backend_scope;
 #[path = "resource_contracts/resource_schema_evolution.rs"]
 mod resource_schema_evolution;
 #[path = "resource_contracts/tenant_catalog.rs"]

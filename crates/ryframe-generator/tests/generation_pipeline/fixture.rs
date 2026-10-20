@@ -59,7 +59,12 @@ pub(super) fn verify() {
     )
     .unwrap();
     let fault = frontend.join("src/generation_pipeline_failure.ts");
-    fs::write(&fault, "export const generationFailure: string = 1\n").unwrap();
+    fs::copy(
+        frontend_source
+            .join("scripts/tests/fixtures/resource-workspace/generation-failure.ts.part"),
+        &fault,
+    )
+    .unwrap();
     let failed_backend = snapshot::SourceSnapshot::capture(&backend).unwrap();
     let failed_frontend = snapshot::SourceSnapshot::capture(&frontend).unwrap();
     assert!(generate(&backend, true).unwrap_err().contains("本批未安装"));

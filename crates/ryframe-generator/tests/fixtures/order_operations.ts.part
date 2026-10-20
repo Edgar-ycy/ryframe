@@ -1,5 +1,0 @@
-export const delete_system_orders_by_id = bindJsonOperation({"operationId":"delete_system_orders_by_id","method":"delete","path":"/system/orders/{id}"})
-export const get_system_orders = bindJsonOperation({"operationId":"get_system_orders","method":"get","path":"/system/orders"})
-export const get_system_orders_by_id = bindJsonOperation({"operationId":"get_system_orders_by_id","method":"get","path":"/system/orders/{id}"})
-export const post_system_orders = bindJsonOperation({"operationId":"post_system_orders","method":"post","path":"/system/orders"})
-export const put_system_orders_by_id = bindJsonOperation({"operationId":"put_system_orders_by_id","method":"put","path":"/system/orders/{id}"})

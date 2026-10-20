@@ -8,12 +8,14 @@ use std::{
 
 use ryframe_generator::{
     AssetRoot, OwnershipManifest, RelationIr, RelationKind, ResourceWorkspace, load_resource,
-    render_resources, write_resource,
+    render_resources_with_frontend, write_resource,
 };
 
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 #[path = "resource_contracts/business_compilation.rs"]
 mod business_compilation;
+#[path = "resource_contracts/frontend_workspace.rs"]
+mod frontend_workspace;
 #[path = "generation_pipeline/fixture.rs"]
 mod generation_pipeline;
 #[path = "resource_contracts/unsigned_compilation.rs"]
@@ -76,104 +78,6 @@ fn notice_control_slice_compiles_in_temporary_real_workspace() {
 }
 
 #[test]
-fn missing_order_frontend_contract_is_injected_once() {
-    let permissions = "export const permissionCatalog = [\n]\n".to_owned();
-    let operations = "import { bindJsonOperation } from '../operationRequest'\n".to_owned();
-    let schema = concat!(
-        "export interface components {\n    schemas: {\n    }\n}\n",
-        "export interface operations {\n}\n",
-    )
-    .to_owned();
-
-    let injected = prepare_order_frontend_contract(permissions, operations, schema)
-        .expect("缺失的 Order 契约应可装配")
-        .expect("首次装配应返回修改内容");
-    assert!(
-        order_frontend_contract_is_complete(&injected.0, &injected.1, &injected.2)
-            .expect("装配后的契约应可判定")
-    );
-    assert!(
-        prepare_order_frontend_contract(injected.0, injected.1, injected.2)
-            .expect("重复装配应成功")
-            .is_none(),
-        "重复装配完整 fixture 契约必须零修改"
-    );
-}
-
-#[test]
-fn basic_generated_order_frontend_contract_is_upgraded_once() {
-    let operation_names = [
-        "delete_system_orders_by_id",
-        "get_system_orders",
-        "get_system_orders_by_id",
-        "post_system_orders",
-        "put_system_orders_by_id",
-    ];
-    let operations = operation_names
-        .map(|name| format!("export const {name} = bindJsonOperation({{}})\n"))
-        .concat();
-    let schema_operations = operation_names
-        .map(|name| format!("    {name}: {{}}\n"))
-        .concat();
-    let schema = format!(
-        concat!(
-            "export interface components {{\n    schemas: {{\n",
-            "        ApiPageResponse_OrderVo: {{}};\n",
-            "        ApiResponse_OrderVo: {{ data?: {{ id: string }} }};\n",
-            "        CreateOrderDto: {{}};\n",
-            "        UpdateOrderDto: {{}};\n",
-            "    }};\n}}\n",
-            "export interface operations {{\n{schema_operations}}}\n",
-        ),
-        schema_operations = schema_operations,
-    );
-    let permissions = "\"system:order:list\"".to_owned();
-
-    let upgraded = prepare_order_frontend_contract(permissions.clone(), operations.clone(), schema)
-        .expect("完整 basic generated 契约应可升级")
-        .expect("首次升级应补充 OrderDetailVo");
-    assert_eq!(upgraded.0, permissions, "升级不得改写已生成权限清单");
-    assert_eq!(upgraded.1, operations, "升级不得改写已生成 operation");
-    let order_vo_reference = "import(\"./core\").components[\"schemas\"][\"OrderVo\"]";
-    assert_eq!(
-        upgraded.2.matches(order_vo_reference).count(),
-        2,
-        "OrderDetailVo 本体与 parent 必须复用现有 OrderVo 的强类型引用"
-    );
-    assert_eq!(upgraded.2.matches("OrderDetailVo:").count(), 1);
-    assert!(
-        prepare_order_frontend_contract(upgraded.0, upgraded.1, upgraded.2)
-            .expect("升级后的 generated 契约应可识别")
-            .is_none(),
-        "升级后的 generated 契约必须零修改"
-    );
-}
-
-#[test]
-fn partial_order_frontend_contract_fails_closed() {
-    let partial_contracts = [
-        (
-            "export const permissionCatalog = [\n  \"system:order:list\",\n]\n",
-            "",
-            "",
-        ),
-        ("", "", "OrderDetailVo: {}"),
-        (
-            "\"system:order:list\"",
-            "export const get_system_orders = bindJsonOperation({})",
-            "ApiPageResponse_OrderVo:\nApiResponse_OrderVo:",
-        ),
-    ];
-    for (permissions, operations, schema) in partial_contracts {
-        assert!(
-            prepare_order_frontend_contract(permissions.into(), operations.into(), schema.into())
-                .is_err(),
-            "部分存在的 Order 契约必须失败，不能猜测补齐"
-        );
-    }
-}
-
-#[test]
 fn verification_profile_defaults_to_full_and_rejects_unknown_values() {
     assert_eq!(
         VerificationProfile::from_value(None).unwrap(),
@@ -188,6 +92,42 @@ fn verification_profile_defaults_to_full_and_rejects_unknown_values() {
             VerificationProfile::from_value(Some(value)).is_err(),
             "未知模式 {value:?} 必须失败关闭"
         );
+    }
+}
+
+#[test]
+#[ignore = "需要显式前端目录与已安装依赖，验证实际标准输入协议"]
+fn order_frontend_fixture_protocol_is_repeatable_and_preserves_source() {
+    let source = std::env::var_os(FRONTEND_DIR_ENV).expect("应显式指定前端来源");
+    let source = std::path::absolute(source).unwrap();
+    let parent = source.join(".local-tests/resource-workspace-contract");
+    fs::create_dir_all(&parent).unwrap();
+    let scope = tempfile::tempdir_in(parent).unwrap();
+    let files = [
+        "src/api/generated/permissions.ts",
+        "src/api/generated/operations/system.ts",
+        "src/api/generated/schema/system.ts",
+    ];
+    let before = files.map(|file| fs::read(source.join(file)).unwrap());
+    for (file, bytes) in files.iter().zip(&before) {
+        let target = scope.path().join(file);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, bytes).unwrap();
+    }
+    let result = std::panic::catch_unwind(|| {
+        frontend_workspace::register(&source, scope.path());
+        let first = files.map(|file| fs::read(scope.path().join(file)).unwrap());
+        frontend_workspace::register(&source, scope.path());
+        let repeated = files.map(|file| fs::read(scope.path().join(file)).unwrap());
+        assert_eq!(first, repeated);
+        assert_eq!(
+            files.map(|file| fs::read(source.join(file)).unwrap()),
+            before
+        );
+    });
+    if let Err(error) = result {
+        eprintln!("前端契约协议失败现场保留：{}", scope.keep().display());
+        std::panic::resume_unwind(error);
     }
 }
 
@@ -222,7 +162,7 @@ fn run_shared_workspace() -> Result<(), String> {
     }
     register_order_capability(&workspace.backend);
     register_generated_backend_modules(&workspace.backend);
-    register_order_frontend_contract(&workspace.frontend);
+    frontend_workspace::register(&workspace.frontend_source, &workspace.frontend);
     write_order_fake_transaction_test(&workspace.backend);
     unsigned_compilation::prepare(&workspace.backend);
     assert_backend_checks(&workspace);
@@ -370,7 +310,9 @@ fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationPr
             .join("catalog/resources/notice.toml"),
     )
     .expect("临时 Workspace 中既有的 Notice 清单应有效");
-    let catalog = render_resources(&[order, notice, post]).expect("Order 与既有资源应能共同生成");
+    let catalog =
+        render_resources_with_frontend(&[order, notice, post], &workspace.frontend_source)
+            .expect("Order 与既有资源应能共同生成");
     let initial_resources: &[&str] = if profile == VerificationProfile::Targeted {
         &["notice", "post", "order"]
     } else {
@@ -664,178 +606,6 @@ fn sync_file(source: &Path, target: &Path) {
             target.display()
         )
     });
-}
-
-fn register_order_frontend_contract(frontend: &Path) {
-    let permissions_path = frontend.join("src/api/generated/permissions.ts");
-    let permissions = fs::read_to_string(&permissions_path).expect("应读取候选权限清单");
-    let operations_path = frontend.join("src/api/generated/operations/system.ts");
-    let operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
-    let schema_path = frontend.join("src/api/generated/schema/system.ts");
-    let schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
-
-    let Some((permissions, operations, schema)) =
-        prepare_order_frontend_contract(permissions, operations, schema)
-            .unwrap_or_else(|error| panic!("候选 Order 前端契约不完整：{error}"))
-    else {
-        return;
-    };
-    fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
-    fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
-    fs::write(schema_path, schema).expect("应写入临时候选 OpenAPI schema");
-}
-
-fn prepare_order_frontend_contract(
-    permissions: String,
-    mut operations: String,
-    mut schema: String,
-) -> Result<Option<(String, String, String)>, String> {
-    match order_frontend_contract_state(&permissions, &operations, &schema)? {
-        OrderFrontendContractState::Complete => return Ok(None),
-        OrderFrontendContractState::GeneratedBasic => {
-            add_generated_order_detail_schema(&mut schema)?;
-            debug_assert!(
-                order_frontend_contract_is_complete(&permissions, &operations, &schema)
-                    .expect("刚升级的 Order 前端契约应完整")
-            );
-            return Ok(Some((permissions, operations, schema)));
-        }
-        OrderFrontendContractState::Missing => {}
-    }
-
-    let permission_marker = "export const permissionCatalog = [\n";
-    if !permissions.contains(permission_marker) {
-        return Err("权限清单缺少 permissionCatalog".into());
-    }
-    let permissions = permissions.replacen(
-        permission_marker,
-        "export const permissionCatalog = [\n  \"system:order:list\",\n",
-        1,
-    );
-
-    operations.push('\n');
-    operations.push_str(include_str!("fixtures/order_operations.ts.part"));
-
-    let component_marker = "export interface components {\n    schemas: {\n";
-    if !schema.contains(component_marker) {
-        return Err("OpenAPI schema 缺少 components 接口".into());
-    }
-    schema = schema.replacen(
-        component_marker,
-        &format!(
-            "{component_marker}        OrderVo: OrderContractRecord;\n        OrderDetailVo: OrderContractRecord & {{ parent?: OrderContractRecord | null }};\n"
-        ),
-        1,
-    );
-    let marker = "export interface operations {\n";
-    if !schema.contains(marker) {
-        return Err("OpenAPI schema 缺少 operations 接口".into());
-    }
-    let schema = schema.replacen(marker, include_str!("fixtures/order_schema.ts.part"), 1);
-    debug_assert!(
-        order_frontend_contract_is_complete(&permissions, &operations, &schema)
-            .expect("刚装配的 Order 前端契约应完整")
-    );
-    Ok(Some((permissions, operations, schema)))
-}
-
-fn add_generated_order_detail_schema(schema: &mut String) -> Result<(), String> {
-    let component_marker = "export interface components {\n    schemas: {\n";
-    if schema.matches(component_marker).count() != 1 {
-        return Err("OpenAPI schema 必须包含唯一的 components 接口".into());
-    }
-    let detail_schema = concat!(
-        "        OrderDetailVo: import(\"./core\").components[\"schemas\"][\"OrderVo\"] & {\n",
-        "            parent?: import(\"./core\").components[\"schemas\"][\"OrderVo\"] | null;\n",
-        "        };\n",
-    );
-    *schema = schema.replacen(
-        component_marker,
-        &format!("{component_marker}{detail_schema}"),
-        1,
-    );
-    Ok(())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OrderFrontendContractState {
-    Missing,
-    GeneratedBasic,
-    Complete,
-}
-
-fn order_frontend_contract_is_complete(
-    permissions: &str,
-    operations: &str,
-    schema: &str,
-) -> Result<bool, String> {
-    Ok(matches!(
-        order_frontend_contract_state(permissions, operations, schema)?,
-        OrderFrontendContractState::Complete
-    ))
-}
-
-fn order_frontend_contract_state(
-    permissions: &str,
-    operations: &str,
-    schema: &str,
-) -> Result<OrderFrontendContractState, String> {
-    const OPERATION_NAMES: [&str; 5] = [
-        "delete_system_orders_by_id",
-        "get_system_orders",
-        "get_system_orders_by_id",
-        "post_system_orders",
-        "put_system_orders_by_id",
-    ];
-    const GENERATED_SCHEMA_MARKERS: [&str; 4] = [
-        "ApiPageResponse_OrderVo:",
-        "ApiResponse_OrderVo:",
-        "CreateOrderDto:",
-        "UpdateOrderDto:",
-    ];
-    const FIXTURE_SCHEMA_MARKERS: [&str; 3] = [
-        "type OrderContractRecord = {",
-        "OrderVo: OrderContractRecord;",
-        "OrderDetailVo: OrderContractRecord & {",
-    ];
-    const GENERATED_DETAIL_MARKER: &str = "OrderDetailVo:";
-
-    let permission_present = permissions.contains("\"system:order:list\"");
-    let operation_constants =
-        OPERATION_NAMES.map(|name| operations.contains(&format!("export const {name} =")));
-    let schema_operations = OPERATION_NAMES.map(|name| schema.contains(&format!("    {name}: {{")));
-    let generated_schema = GENERATED_SCHEMA_MARKERS.map(|marker| schema.contains(marker));
-    let fixture_schema = FIXTURE_SCHEMA_MARKERS.map(|marker| schema.contains(marker));
-
-    let common_complete = permission_present
-        && operation_constants.iter().all(|present| *present)
-        && schema_operations.iter().all(|present| *present);
-    let generated_complete = generated_schema.iter().all(|present| *present);
-    let generated_any = generated_schema.iter().any(|present| *present);
-    let fixture_complete = fixture_schema.iter().all(|present| *present);
-    let fixture_any = fixture_schema.iter().any(|present| *present);
-    let generated_detail_present = schema.contains(GENERATED_DETAIL_MARKER);
-    if common_complete && fixture_complete && !generated_any {
-        return Ok(OrderFrontendContractState::Complete);
-    }
-    if common_complete && generated_complete && !fixture_any {
-        return Ok(if generated_detail_present {
-            OrderFrontendContractState::Complete
-        } else {
-            OrderFrontendContractState::GeneratedBasic
-        });
-    }
-
-    let any_present = permission_present
-        || operation_constants.iter().any(|present| *present)
-        || schema_operations.iter().any(|present| *present)
-        || generated_any
-        || fixture_any
-        || generated_detail_present;
-    if any_present {
-        return Err("只发现部分权限、operation 或 schema 标记，拒绝猜测并重复装配".into());
-    }
-    Ok(OrderFrontendContractState::Missing)
 }
 
 fn write_order_fake_transaction_test(backend: &Path) {

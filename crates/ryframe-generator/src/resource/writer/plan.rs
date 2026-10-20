@@ -6,9 +6,9 @@ use std::{
 use super::{
     AssetRoot, GeneratedAsset, GeneratedCatalog, MANIFEST_PATH, OwnershipManifest, PlanAction,
     PlannedAsset, ResourceAssetPlan, ResourceError, ResourceWorkspace, desired_entries,
-    load_manifest, load_manifest_snapshot, manifests_equal, schema, target_path,
-    validate_workspace, verify_no_resource_removal, verify_owned_files,
-    verify_unselected_resource_sources,
+    load_manifest, load_manifest_snapshot, manifests_equal, preserve_unrequested_entries, schema,
+    scoped_manifest, scoped_workspace, target_path, validate_workspace, verify_no_resource_removal,
+    verify_owned_files, verify_unselected_resource_sources,
 };
 
 /// 计算单个资源本次会新增或更新的资产。
@@ -20,8 +20,10 @@ pub fn plan_resource_assets(
     resource: &str,
     workspace: ResourceWorkspace<'_>,
 ) -> Result<Vec<GeneratedAsset>, ResourceError> {
+    let workspace = scoped_workspace(catalog, workspace)?;
     validate_workspace(workspace)?;
     let manifest = load_manifest(&workspace.backend_root.join(MANIFEST_PATH))?;
+    let manifest = scoped_manifest(catalog, &manifest);
     verify_owned_files(&manifest, workspace)?;
     verify_unselected_resource_sources(catalog, resource, &manifest)?;
     schema::validate_evolution(catalog, &manifest, workspace)?;
@@ -35,9 +37,11 @@ pub fn plan_resource_changes(
     resource: &str,
     workspace: ResourceWorkspace<'_>,
 ) -> Result<ResourceAssetPlan, ResourceError> {
+    let workspace = scoped_workspace(catalog, workspace)?;
     let desired = plan_resource_assets(catalog, resource, workspace)?;
-    let (manifest, manifest_bytes) =
+    let (full_manifest, manifest_bytes) =
         load_manifest_snapshot(&workspace.backend_root.join(MANIFEST_PATH))?;
+    let manifest = scoped_manifest(catalog, &full_manifest);
     let mut effective = desired.clone();
     for entry in manifest
         .entries
@@ -131,7 +135,13 @@ pub fn plan_resource_changes(
             after: String::new(),
         });
     }
-    append_manifest_change(&mut assets, &effective, catalog, &manifest, manifest_bytes)?;
+    append_manifest_change(
+        &mut assets,
+        &effective,
+        catalog,
+        &full_manifest,
+        manifest_bytes,
+    )?;
     assets.sort_by(|left, right| left.root.cmp(&right.root).then(left.path.cmp(&right.path)));
     Ok(ResourceAssetPlan { assets })
 }
@@ -144,9 +154,11 @@ pub fn plan_all_resource_changes(
     catalog: &GeneratedCatalog,
     workspace: ResourceWorkspace<'_>,
 ) -> Result<ResourceAssetPlan, ResourceError> {
+    let workspace = scoped_workspace(catalog, workspace)?;
     validate_workspace(workspace)?;
     let manifest_path = workspace.backend_root.join(MANIFEST_PATH);
-    let (manifest, manifest_bytes) = load_manifest_snapshot(&manifest_path)?;
+    let (full_manifest, manifest_bytes) = load_manifest_snapshot(&manifest_path)?;
+    let manifest = scoped_manifest(catalog, &full_manifest);
     verify_owned_files(&manifest, workspace)?;
     verify_no_resource_removal(catalog, &manifest)?;
     schema::validate_evolution(catalog, &manifest, workspace)?;
@@ -225,7 +237,13 @@ pub fn plan_all_resource_changes(
         });
     }
 
-    append_manifest_change(&mut assets, &desired, catalog, &manifest, manifest_bytes)?;
+    append_manifest_change(
+        &mut assets,
+        &desired,
+        catalog,
+        &full_manifest,
+        manifest_bytes,
+    )?;
 
     assets.sort_by(|left, right| left.root.cmp(&right.root).then(left.path.cmp(&right.path)));
     Ok(ResourceAssetPlan { assets })
@@ -238,7 +256,11 @@ fn append_manifest_change(
     manifest: &OwnershipManifest,
     manifest_bytes: Option<Vec<u8>>,
 ) -> Result<(), ResourceError> {
-    let entries = desired_entries(desired_assets, &catalog.resources);
+    let entries = preserve_unrequested_entries(
+        catalog,
+        manifest,
+        desired_entries(desired_assets, &catalog.resources),
+    );
     if manifests_equal(manifest, &entries) {
         return Ok(());
     }
@@ -276,6 +298,12 @@ pub(super) fn selected_assets(
     resource: &str,
     manifest: &OwnershipManifest,
 ) -> Result<Vec<GeneratedAsset>, ResourceError> {
+    if catalog.includes_frontend() && catalog.frontend_renderer.is_none() {
+        return Err(ResourceError::new(
+            "命名前端生成缺少已登记的渲染来源；本批未写入",
+            "通过 render_resources_with_frontend 显式装配前端来源，或对完整的外部资产批次使用全量计划与写入；不能把缺失的渲染结果推断为删除",
+        ));
+    }
     if !catalog.resources.contains_key(resource) {
         return Err(ResourceError::new(
             format!("资源 `{resource}` 不在当前清单中，不能把缺失清单当作删除指令"),
@@ -305,7 +333,10 @@ pub(super) fn selected_assets(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let managed = super::super::render_resources(&resources)?;
+    let managed = match &catalog.frontend_renderer {
+        Some(frontend) => super::super::render_resources_with_frontend(&resources, frontend)?,
+        None => super::super::render_resources(&resources)?,
+    };
     Ok(managed
         .assets
         .into_iter()

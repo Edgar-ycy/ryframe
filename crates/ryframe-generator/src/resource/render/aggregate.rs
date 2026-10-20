@@ -88,18 +88,6 @@ pub(super) fn render_shared(resources: &[&ResourceIr], assets: &mut Vec<Generate
         .map(|resource| resource.source_path.clone())
         .collect::<Vec<_>>()
         .join(",");
-    let aggregate = aggregate_header();
-    let frontend_exports = resources
-        .iter()
-        .map(|resource| format!("export * from './{}'", resource.name))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assets.push(GeneratedAsset {
-        resource: "__catalog__".into(),
-        root: AssetRoot::Frontend,
-        path: "src/generated/resources/index.ts".into(),
-        content: format!("{aggregate}{frontend_exports}\n"),
-    });
     assets.push(GeneratedAsset {
         resource: "__catalog__".into(),
         root: AssetRoot::Backend,

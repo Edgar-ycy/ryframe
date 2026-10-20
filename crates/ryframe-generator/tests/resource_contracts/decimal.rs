@@ -52,9 +52,6 @@ fn decimal_model_preserves_precision_defaults_and_all_transport_boundaries() {
     let service = content("order/service.rs");
     assert!(service.contains("Decimal::from_i128_with_scale(125000_i128, 6)"));
     assert!(service.matches("decimal_fits_precision").count() >= 3);
-    let fields = content("order/fields.ts");
-    assert!(fields.contains("status: ''"));
-    assert!(fields.contains("form.status === '' ? undefined : form.status"));
 }
 
 #[test]

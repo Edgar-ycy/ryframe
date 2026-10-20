@@ -54,7 +54,6 @@ fn global_business_keeps_original_columns_and_guards_all_entry_points() {
     assert!(!repository.contains("Column::TenantId"));
     assert!(!repository.contains("record.tenant_id"));
     assert!(repository.contains("LAST_INSERT_ID()"));
-    assert!(asset("order/registration.ts").contains("requiresSystemTenant: true"));
     assert_eq!(
         asset("order/fake.rs")
             .matches("ensure_system_tenant_id(tenant_id)?")

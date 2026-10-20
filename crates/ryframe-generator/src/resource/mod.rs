@@ -26,11 +26,11 @@ pub use ir::{
 };
 pub(crate) use render::access_catalog as render_access_catalog;
 pub(crate) use render::business::render_business_resource;
-#[cfg(test)]
-pub(crate) use render::business_frontend_assets;
 pub(crate) use render::tenant_catalog::canonical_schema;
 pub(crate) use render::tenant_catalog::{business_tenant_manifest, render_business_tenant_catalog};
-pub use render::{AssetRoot, GeneratedAsset, GeneratedCatalog, render_resources};
+pub use render::{
+    AssetRoot, GeneratedAsset, GeneratedCatalog, render_resources, render_resources_with_frontend,
+};
 pub(crate) use render::{column_definition, schema_column_type};
 pub use spec::{
     AccessSpec, ApiSpec, AuditSpec, DatabaseSpec, EnumValueSpec, ExtensionSpec, FieldSpec,

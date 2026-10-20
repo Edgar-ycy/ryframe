@@ -62,9 +62,6 @@ fn belongs_to_relation_generates_one_read_slice_and_all_registrations() {
     assert!(handler.contains("body = ApiResponse<OrderDetailVo>"));
     let openapi = content(&catalog, "order/openapi.rs");
     assert!(openapi.contains("super::dto::OrderDetailVo"));
-    let frontend = content(&catalog, "order/api.ts");
-    assert!(frontend.contains("export type OrderDetail = ApiSchema<'OrderDetailVo'>"));
-
     let app_registry = content(&catalog, "ryframe-application/src/generated/services.rs");
     assert!(app_registry.contains("pub order: Arc<OrderService>"));
     let api_registry = content(&catalog, "ryframe-api/src/generated/router.rs");
