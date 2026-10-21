@@ -61,19 +61,14 @@ pub(crate) fn validate(
         );
     }
     let configuration = json!({"directory": manifest::path_text(&directory, "配置目录")?, "files": files, "environment_sha256": digest::plan_hash(&serde_json::to_value(names)?)?});
-    let mut secrets = BTreeMap::new();
-    for key in [
-        "RYFRAME_RESET_ADMIN_PASSWORD",
-        "RYFRAME_RESET_USER_PASSWORD",
-    ] {
-        secrets.insert(
-            key,
-            environment
-                .get(key)
-                .filter(|value| !value.is_empty())
-                .ok_or("必须显式提供两项初始化密码")?,
-        );
-    }
+    let key = "RYFRAME_RESET_ADMIN_PASSWORD";
+    let secrets = BTreeMap::from([(
+        key,
+        environment
+            .get(key)
+            .filter(|value| !value.is_empty())
+            .ok_or("必须显式提供初始化管理员密码")?,
+    )]);
     if configuration_files(root, environment)? != (directory, files) {
         return Err("目标配置在静态绑定核验期间变化".into());
     }

@@ -87,7 +87,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             "mysql-client.cnf": "[client]\npassword=Database!Secret123\n",
             "rustfs-access-key.txt": "RustfsAccess123", "rustfs-secret-key.txt": "Rustfs!Secret123",
             "redis-password.txt": "Redis!Secret123", "reset-admin-password.txt": "Admin!Secret123",
-            "reset-user-password.txt": "User!Secret123", "jwt-secret.txt": "Jwt!Secret123",
+            "jwt-secret.txt": "Jwt!Secret123",
             "metrics-token.txt": "Metrics!Token123",
         }
         for name, value in secret_values.items():
@@ -298,7 +298,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             values = security.browser_environment(context["private"], binding)
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "RustfsAccess123")
         self.assertEqual(values["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
-        self.assertNotIn("RYFRAME_RESET_USER_PASSWORD", values)
+        self.assertNotIn("RYFRAME_RESET_ADMIN_PASSWORD", values)
         # 运行收据的配置摘要覆盖进程内全部 APP_*；浏览器环境必须与运行环境保持同一集合。
         runtime_app = {key: value for key, value in context["private"].items() if key.startswith("APP_")}
         runtime_app["APP_API_DOCS_ENABLED"] = "false"

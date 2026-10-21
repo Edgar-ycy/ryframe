@@ -637,9 +637,9 @@ def generation(backend: Path, request: dict, run) -> dict:
     for field in ("api_url", "worker_ready_url", "frontend_url"):
         require_closed_port(selected[field])
     # 种子密码不属于 APP_*，同样只保存摘要，防止同代次 reset 凭据变更。
-    secrets = {key: os.environ.get(key) for key in ("RYFRAME_RESET_ADMIN_PASSWORD", "RYFRAME_RESET_USER_PASSWORD")}
+    secrets = {"RYFRAME_RESET_ADMIN_PASSWORD": os.environ.get("RYFRAME_RESET_ADMIN_PASSWORD")}
     if not all(secrets.values()):
-        raise ValueError("必须显式提供本侧两项初始化密码")
+        raise ValueError("必须显式提供本侧初始化管理员密码")
     return {"execution": execution, "maintenance": maintenance, "physical": physical, "configuration": configuration,
             "configuration_sha256": request["configuration_sha256"],
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),

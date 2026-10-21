@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Non-production reset ordinary seed users now use the shared initial password `123456`, while administrators still require an explicitly supplied complex password; removes separate ordinary-user password credentials and dependencies in fixtures, source digests, and current callers. Rebuild verification checks both accounts' password hashes and mandatory password-change flags, retaining ownership and unknown-write protection.
+
 - All self-maintained guides and complete change history now have paired Chinese and English versions. Checks validate language links, section references, commands, and code examples; documentation changes run a lightweight check while retaining complete provenance digests.
 
 - The OpenAPI derived-file manifest now reads the frontend's versioned JSON and rejects duplicate fields, duplicate paths, and unsafe paths; removed JavaScript manifest parsing and the corresponding executable-source test fixtures.

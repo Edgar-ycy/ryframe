@@ -70,7 +70,8 @@ class CloneSession:
                     raise ValueError("复制日志缺少已登记对象凭据的脱敏绑定")
                 values.add(value)
             values.update(defaults_connection(self.backend, database)["password"] for database in config["databases"])
-            values.update(environment[key] for key in ("RYFRAME_RESET_ADMIN_PASSWORD", "RYFRAME_RESET_USER_PASSWORD") if environment.get(key))
+            if environment.get("RYFRAME_RESET_ADMIN_PASSWORD"):
+                values.add(environment["RYFRAME_RESET_ADMIN_PASSWORD"])
         self.secret_redaction = {f"COPY_PASSWORD_{index}": value for index, value in enumerate(sorted(values))}
 
     def command(self, command, **kwargs):

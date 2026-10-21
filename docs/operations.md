@@ -17,7 +17,7 @@ Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后
 
 ## 非生产重建
 
-`ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。执行前必须停止 API、Worker 和 scheduler，并完成全部只读预检。
+`ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。执行前必须停止 API、Worker 和 scheduler，并完成全部只读预检。执行重建时必须通过 `RYFRAME_RESET_ADMIN_PASSWORD` 显式提供符合复杂度策略的管理员密码；普通种子用户 `user` 使用统一初始密码 `123456`，无需额外提供普通用户密码。重建验证同时核对 `admin`、`user` 的密码哈希及 `password_change_required=true`，任一不符均失败关闭；两个账号首次登录后都必须修改密码。
 
 ```powershell
 $env:APP_ENV = "test"

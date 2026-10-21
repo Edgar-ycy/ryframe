@@ -17,7 +17,7 @@ The current version only accepts new production databases. Existing real product
 
 ## Non-production Rebuilds
 
-`ryframe-reset` is only compiled with the explicit `bin-reset` feature, and production images do not copy this binary. Stop API, Worker, and scheduler and complete all read-only preflights before execution.
+`ryframe-reset` is only compiled with the explicit `bin-reset` feature, and production images do not copy this binary. Stop API, Worker, and scheduler and complete all read-only preflights before execution. Rebuild execution requires an administrator password satisfying the complexity policy to be explicitly supplied through `RYFRAME_RESET_ADMIN_PASSWORD`; the ordinary seed account `user` uses the shared initial password `123456` and requires no separately supplied user password. Rebuild verification checks `admin` and `user` for both their password hashes and `password_change_required=true`, failing closed on any mismatch; both accounts must change their passwords after the first login.
 
 ```powershell
 $env:APP_ENV = "test"

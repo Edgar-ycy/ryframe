@@ -18,6 +18,19 @@ from restore_build import file_digest
 
 
 class ReferenceFixtureEnvironmentTests(unittest.TestCase):
+    def test_reset_requires_only_an_explicit_complex_administrator_password(self):
+        self.assertEqual(
+            {name for name in environment.SECRET_FILES if name.startswith("reset-")},
+            {"reset-admin-password.txt"},
+        )
+        environment._validate_reset_password({"RYFRAME_RESET_ADMIN_PASSWORD": "Admin1!fixture"})
+        for value in (None, "", "123456", "Onlyletters"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    ValueError, "RYFRAME_RESET_ADMIN_PASSWORD") as raised:
+                environment._validate_reset_password({"RYFRAME_RESET_ADMIN_PASSWORD": value})
+            if value:
+                self.assertNotIn(value, str(raised.exception))
+
     def write(self, name: str, value: dict) -> Path:
         path = self.root / name
         path.write_text(json.dumps(value), encoding="utf-8")
@@ -364,7 +377,6 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             "rustfs-secret-key.txt": "secret",
             "redis-password.txt": "redis",
             "reset-admin-password.txt": "Admin1!fixture",
-            "reset-user-password.txt": "User1!fixture",
             "jwt-secret.txt": "jwt",
             "metrics-token.txt": "metrics",
         }
@@ -394,6 +406,10 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
         self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
+        self.assertEqual(
+            {key for key in values if key.startswith("RYFRAME_RESET_")},
+            {"RYFRAME_RESET_ADMIN_PASSWORD"},
+        )
         # 来源侧保留调度默认行为，复制目的地必须显式关闭调度，post-copy 才另行派生启用环境。
         self.assertNotIn("APP_JOBS_SCHEDULER_ENABLED", values)
         # 测试配置目录随环境生成：迁移 gate 等工具按 APP_CONFIG_DIR/app.test.toml 读取已登记目标。
@@ -434,8 +450,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(rotated["files"]), set(environment.SECRET_FILES))
         self.assertEqual(set(rotated_files), {"mysql-client.cnf", *names})
         self.assertNotEqual(rotated_values["RYFRAME_RESET_ADMIN_PASSWORD"], values["RYFRAME_RESET_ADMIN_PASSWORD"])
-        self.assertNotEqual(rotated_values["RYFRAME_RESET_USER_PASSWORD"], values["RYFRAME_RESET_USER_PASSWORD"])
-        environment._validate_reset_passwords(rotated_values)
+        environment._validate_reset_password(rotated_values)
 
         target_execution = self.root / "new-business-backend"
         (target_execution / ".local-tests/reference-fixture").mkdir(parents=True)
@@ -484,9 +499,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertFalse((drift_execution / ".local-tests/reference-fixture/secrets/bootstrap.json").exists())
         self.assertTrue((drift_execution / ".local-tests/reference-fixture/secrets/failed.json").is_file())
 
-        values["RYFRAME_RESET_USER_PASSWORD"] = "weak"
-        with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_USER_PASSWORD"):
-            environment._validate_reset_passwords(values)
+        values["RYFRAME_RESET_ADMIN_PASSWORD"] = "weak"
+        with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_ADMIN_PASSWORD"):
+            environment._validate_reset_password(values)
 
         base_mysql = self.root / "base/backend/.local-tests/reference-fixture/secrets/mysql-client.cnf"
         for item in self.review["scopes"]["base"]["databases"]:

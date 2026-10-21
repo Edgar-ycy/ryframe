@@ -295,6 +295,38 @@ class TargetTests(unittest.TestCase):
             with self.assertRaises(ValueError): self.initialize()
         self.assertFalse(self.f.databases)
 
+    def test_seed_digest_binds_only_explicit_administrator_password(self):
+        f = self.f
+        original = binding.generation(f.root, f.request, f.run)
+        self.assertEqual(original["seed_credentials_sha256"], plan_hash({
+            "RYFRAME_RESET_ADMIN_PASSWORD": os.environ["RYFRAME_RESET_ADMIN_PASSWORD"],
+        }))
+        with patch.dict(os.environ, {"RYFRAME_RESET_ADMIN_PASSWORD": "Changed!Admin123"}):
+            changed = binding.generation(f.root, f.request, f.run)
+        self.assertNotEqual(changed["seed_credentials_sha256"], original["seed_credentials_sha256"])
+        self.assertEqual(changed["configuration"], original["configuration"])
+        self.assertNotIn("Changed!Admin123", json.dumps(changed))
+        for password in (None, ""):
+            with self.subTest(password=password), patch.dict(os.environ):
+                if password is None:
+                    os.environ.pop("RYFRAME_RESET_ADMIN_PASSWORD")
+                else:
+                    os.environ["RYFRAME_RESET_ADMIN_PASSWORD"] = password
+                with self.assertRaisesRegex(ValueError, "初始化管理员密码"):
+                    binding.generation(f.root, f.request, f.run)
+        self.assertFalse(f.databases)
+        self.assertFalse(f.calls)
+
+    def test_changed_administrator_password_after_prepare_refuses_all_writes(self):
+        self.prepare()
+        self.f.calls.clear()
+        with patch.dict(os.environ, {"RYFRAME_RESET_ADMIN_PASSWORD": "Changed!Admin123"}):
+            with self.assertRaises(ValueError):
+                self.initialize()
+        self.assertFalse(self.f.databases)
+        self.assertFalse((self.f.output / "initialize.started.json").exists())
+        self.assertFalse(any(Path(command[0]).stem == "reset" for command in self.f.calls))
+
     def test_binary_change_after_prepare_refuses_writes(self):
         self.prepare()
         self.f.paths["mysql"].write_bytes(b"changed")

@@ -179,8 +179,7 @@ fn environment() -> BTreeMap<String, String> {
         ("APP_TENANT_PASSWORD", "fixture-secret"),
         ("APP_OBJECT_STORAGE_ACCESS_KEY", "fixture-access"),
         ("APP_OBJECT_STORAGE_SECRET_KEY", "fixture-secret"),
-        ("RYFRAME_RESET_ADMIN_PASSWORD", "fixture-admin"),
-        ("RYFRAME_RESET_USER_PASSWORD", "fixture-user"),
+        ("RYFRAME_RESET_ADMIN_PASSWORD", "Fixture!Admin123"),
     ]
     .into_iter()
     .map(|(key, value)| (key.into(), value.into()))
@@ -381,13 +380,21 @@ fn configuration_binds_secrets_physical_connections_and_file_overrides() {
     let mut fixture = Fixture::new();
     let original_env = fixture.environment.clone();
     let binding = fixture.validate().unwrap();
-    request_configuration::validate(
+    let original = request_configuration::validate(
         &fixture.backend,
         &fixture.request,
         &binding,
         &fixture.environment,
     )
     .unwrap();
+    let expected_credentials = digest::plan_hash(&json!({
+        "RYFRAME_RESET_ADMIN_PASSWORD": original_env["RYFRAME_RESET_ADMIN_PASSWORD"],
+    }))
+    .unwrap();
+    assert_eq!(
+        original["seed_credentials_sha256"],
+        json!(expected_credentials)
+    );
     for (key, value) in [
         ("APP_TENANT_PASSWORD", "wrong-secret"),
         ("APP_DATABASE_HOST_FILE", "unbound.txt"),
@@ -420,9 +427,10 @@ fn configuration_binds_secrets_physical_connections_and_file_overrides() {
     assert!(!changed.to_string().contains("changed-storage-secret"));
     fixture.environment = original_env;
     fixture.seal_configuration();
-    fixture
-        .environment
-        .insert("RYFRAME_RESET_USER_PASSWORD".into(), "changed-seed".into());
+    fixture.environment.insert(
+        "RYFRAME_RESET_ADMIN_PASSWORD".into(),
+        "Changed!Admin123".into(),
+    );
     let changed = request_configuration::validate(
         &fixture.backend,
         &fixture.request,
@@ -434,6 +442,7 @@ fn configuration_binds_secrets_physical_connections_and_file_overrides() {
         changed["seed_credentials_sha256"],
         before["seed_credentials_sha256"]
     );
+    assert!(!changed.to_string().contains("Changed!Admin123"));
 }
 
 #[test]
@@ -451,16 +460,27 @@ fn configuration_detects_file_drift_and_missing_seed_credentials() {
         .is_err()
     );
     fixture.seal_configuration();
-    fixture.environment.remove("RYFRAME_RESET_ADMIN_PASSWORD");
-    assert!(
-        request_configuration::validate(
-            &fixture.backend,
-            &fixture.request,
-            &binding,
-            &fixture.environment
-        )
-        .is_err()
-    );
+    for password in [None, Some("")] {
+        match password {
+            Some(value) => {
+                fixture
+                    .environment
+                    .insert("RYFRAME_RESET_ADMIN_PASSWORD".into(), value.into());
+            }
+            None => {
+                fixture.environment.remove("RYFRAME_RESET_ADMIN_PASSWORD");
+            }
+        }
+        assert!(
+            request_configuration::validate(
+                &fixture.backend,
+                &fixture.request,
+                &binding,
+                &fixture.environment
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]

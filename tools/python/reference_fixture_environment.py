@@ -28,8 +28,7 @@ from source_inventory import snapshot
 
 
 SECRET_FILES = ("mysql-client.cnf", "rustfs-access-key.txt", "rustfs-secret-key.txt", "redis-password.txt",
-                "reset-admin-password.txt", "reset-user-password.txt", "jwt-secret.txt", "metrics-token.txt")
-RESET_SECRET_FILES = {"reset-admin-password.txt", "reset-user-password.txt"}
+                "reset-admin-password.txt", "jwt-secret.txt", "metrics-token.txt")
 # 完整浏览器验收单 IP 的请求量高于产品默认限流（100 次/60s）；夹具只提高请求容量，
 # 窗口与 login 等 api_limits 保持基础配置，通过 app.test.toml 深度合并生效。
 FIXTURE_REQUEST_RATE_LIMIT_CAPACITY = 1000
@@ -380,7 +379,7 @@ def rotate_secrets(backend: Path, fixture_path: Path, output: Path) -> dict:
     try:
         for name in SECRET_FILES:
             target = output / name
-            if name in RESET_SECRET_FILES:
+            if name == "reset-admin-password.txt":
                 value = _reset_password().encode("utf-8") + b"\n"
             else:
                 value = (source / name).read_bytes()
@@ -388,13 +387,8 @@ def rotate_secrets(backend: Path, fixture_path: Path, output: Path) -> dict:
                 stream.write(value)
                 stream.flush()
                 os.fsync(stream.fileno())
-        if (output / "reset-admin-password.txt").read_bytes() == (output / "reset-user-password.txt").read_bytes():
-            raise ValueError("夹具 reset 密码不得相同")
-        values = {key: _secret(output, name)[0] for key, name in (
-            ("RYFRAME_RESET_ADMIN_PASSWORD", "reset-admin-password.txt"),
-            ("RYFRAME_RESET_USER_PASSWORD", "reset-user-password.txt"),
-        )}
-        _validate_reset_passwords(values)
+        values = {"RYFRAME_RESET_ADMIN_PASSWORD": _secret(output, "reset-admin-password.txt")[0]}
+        _validate_reset_password(values)
         result = {"format_version": 1, "kind": "reference-fixture-secret-set", "status": "generated",
                   "source": {name: bound(source / name) for name in SECRET_FILES},
                   "files": {name: bound(output / name) for name in SECRET_FILES}}
@@ -427,16 +421,16 @@ def _database_credentials(backend: Path, source: Path, destination: Path) -> dic
     return bound(destination)
 
 
-def _validate_reset_passwords(values: dict) -> None:
-    """在创建任何 fresh 资源前复现后端 reset 的密码复杂度门槛。"""
-    for key in ("RYFRAME_RESET_ADMIN_PASSWORD", "RYFRAME_RESET_USER_PASSWORD"):
-        value = values.get(key)
-        if (not isinstance(value, str) or not re.fullmatch(r"[!-~]{8,72}", value)
-                or not any(char.isascii() and char.isupper() for char in value)
-                or not any(char.isascii() and char.islower() for char in value)
-                or not any(char.isascii() and char.isdigit() for char in value)
-                or not any(char.isascii() and not char.isalnum() for char in value)):
-            raise ValueError(f"{key} 不满足 reset 种子密码复杂度策略")
+def _validate_reset_password(values: dict) -> None:
+    """在创建任何 fresh 资源前复现后端 reset 的管理员密码复杂度门槛。"""
+    key = "RYFRAME_RESET_ADMIN_PASSWORD"
+    value = values.get(key)
+    if (not isinstance(value, str) or not re.fullmatch(r"[!-~]{8,72}", value)
+            or not any(char.isascii() and char.isupper() for char in value)
+            or not any(char.isascii() and char.islower() for char in value)
+            or not any(char.isascii() and char.isdigit() for char in value)
+            or not any(char.isascii() and not char.isalnum() for char in value)):
+        raise ValueError(f"{key} 不满足 reset 管理员密码复杂度策略")
 
 
 def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed",
@@ -468,12 +462,11 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
                           ("APP_OBJECT_STORAGE_SECRET_KEY", "rustfs-secret-key.txt"),
                           ("APP_REDIS_PASSWORD", "redis-password.txt"),
                           ("RYFRAME_RESET_ADMIN_PASSWORD", "reset-admin-password.txt"),
-                          ("RYFRAME_RESET_USER_PASSWORD", "reset-user-password.txt"),
                           ("APP_AUTH_JWT_SECRET", "jwt-secret.txt"),
                           ("APP_MONITOR_METRICS_BEARER_TOKEN", "metrics-token.txt")):
         value, descriptor = _secret(secrets, filename)
         values[key], files[filename] = value, descriptor
-    _validate_reset_passwords(values)
+    _validate_reset_password(values)
     targets = []
     for key in ("shared", "dedicated-a", "dedicated-b"):
         item = database[key]

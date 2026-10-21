@@ -171,28 +171,47 @@ pub(super) async fn verify_seed_hashes(
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT username, password_hash FROM sys_user WHERE username IN ('admin', 'user') ORDER BY username",
+            "SELECT username, password_hash, CAST(password_change_required AS SIGNED) FROM sys_user WHERE username IN ('admin', 'user') ORDER BY username",
         ))
         .await
         .map_err(|_| ResetError::new("读取种子账号验证信息失败"))?;
     if rows.len() != 2 {
         return Err(ResetError::new("种子账号验证数量不匹配"));
     }
+    let mut usernames = BTreeSet::new();
     for row in rows {
         let username = String::try_get_by_index(&row, 0)
             .map_err(|_| ResetError::new("种子账号验证格式无效"))?;
         let actual = String::try_get_by_index(&row, 1)
             .map_err(|_| ResetError::new("种子密码验证格式无效"))?;
-        let password = match username.as_str() {
-            "admin" => &seeds.admin_password,
-            "user" => &seeds.user_password,
-            _ => return Err(ResetError::new("出现未知种子账号")),
-        };
-        if !ryframe_auth::password::verify(password, &actual)
-            .map_err(|_| ResetError::new("种子密码验证失败"))?
-        {
-            return Err(ResetError::new("环境种子密码未按预期持久化"));
+        let password_change_required = i64::try_get_by_index(&row, 2)
+            .map_err(|_| ResetError::new("种子账号改密标志格式无效"))?;
+        if !usernames.insert(username.clone()) {
+            return Err(ResetError::new("种子账号验证出现重复账号"));
         }
+        verify_seed_account(&username, &actual, password_change_required, seeds)?;
+    }
+    Ok(())
+}
+
+pub(super) fn verify_seed_account(
+    username: &str,
+    actual: &str,
+    password_change_required: i64,
+    seeds: &SeedCredentials,
+) -> ResetResult<()> {
+    let password = match username {
+        "admin" => seeds.admin_password.as_str(),
+        "user" => ryframe_auth::password::INITIAL_USER_PASSWORD,
+        _ => return Err(ResetError::new("出现未知种子账号")),
+    };
+    if password_change_required != 1 {
+        return Err(ResetError::new("种子账号未按预期要求首次改密"));
+    }
+    if !ryframe_auth::password::verify(password, actual)
+        .map_err(|_| ResetError::new("种子密码验证失败"))?
+    {
+        return Err(ResetError::new("环境种子密码未按预期持久化"));
     }
     Ok(())
 }

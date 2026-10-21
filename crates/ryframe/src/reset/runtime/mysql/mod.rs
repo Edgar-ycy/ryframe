@@ -13,6 +13,10 @@ use crate::reset::{
 mod identity;
 mod operations;
 
+#[cfg(test)]
+#[path = "../../../../tests/reset_contract/seed.rs"]
+mod tests;
+
 use identity::{
     collect_specs, database_physical_identity, load_seed_credentials, server_identity,
     validate_physical_database_identities,
@@ -27,7 +31,6 @@ pub use identity::{parse_lower_case_table_names, same_credentials};
 pub use operations::quote_identifier;
 
 const ADMIN_PASSWORD_ENV: &str = "RYFRAME_RESET_ADMIN_PASSWORD";
-const USER_PASSWORD_ENV: &str = "RYFRAME_RESET_USER_PASSWORD";
 const EMPTY_CONTROL_TABLES: &[&str] = &[
     "sys_background_job",
     "sys_export_job",
@@ -74,7 +77,6 @@ struct ServerLock {
 pub(super) struct SeedCredentials {
     admin_password: String,
     admin_hash: String,
-    user_password: String,
     user_hash: String,
 }
 

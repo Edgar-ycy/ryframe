@@ -14,7 +14,7 @@ use crate::reset::{
     },
 };
 
-use super::{ADMIN_PASSWORD_ENV, DatabaseHandle, DatabaseSpec, SeedCredentials, USER_PASSWORD_ENV};
+use super::{ADMIN_PASSWORD_ENV, DatabaseHandle, DatabaseSpec, SeedCredentials};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OwnershipState {
@@ -208,21 +208,34 @@ pub fn same_credentials(left: &DbConnection, right: &DbConnection) -> bool {
 }
 
 pub(super) fn load_seed_credentials() -> ResetResult<SeedCredentials> {
-    fn load(name: &str) -> ResetResult<(String, String)> {
-        let password = std::env::var(name)
-            .map_err(|_| ResetError::new("reset 种子密码环境变量缺失或编码无效"))?;
-        ryframe_auth::password::validate_complexity(&password)
-            .map_err(|_| ResetError::new("reset 种子密码不满足复杂度策略"))?;
-        let hash = ryframe_auth::password::hash(&password)
-            .map_err(|_| ResetError::new("reset 种子密码哈希失败"))?;
-        Ok((password, hash))
-    }
-    let (admin_password, admin_hash) = load(ADMIN_PASSWORD_ENV)?;
-    let (user_password, user_hash) = load(USER_PASSWORD_ENV)?;
+    seed_credentials(std::env::var(ADMIN_PASSWORD_ENV))
+}
+
+pub(super) fn seed_credentials(
+    admin_password: Result<String, std::env::VarError>,
+) -> ResetResult<SeedCredentials> {
+    use ryframe_auth::password;
+
+    let admin_password = admin_password.map_err(|error| {
+        ResetError::new(match error {
+            std::env::VarError::NotPresent => {
+                "缺少 RYFRAME_RESET_ADMIN_PASSWORD；请设置此环境变量为 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号"
+            }
+            std::env::VarError::NotUnicode(_) => {
+                "RYFRAME_RESET_ADMIN_PASSWORD 编码无效；请重新设置此环境变量为 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号"
+            }
+        })
+    })?;
+    password::validate_complexity(&admin_password).map_err(|_| {
+        ResetError::new("RYFRAME_RESET_ADMIN_PASSWORD 不满足复杂度策略；请设置此环境变量为 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号")
+    })?;
+    let admin_hash =
+        password::hash(&admin_password).map_err(|_| ResetError::new("reset 管理员密码哈希失败"))?;
+    let user_hash = password::hash(password::INITIAL_USER_PASSWORD)
+        .map_err(|_| ResetError::new("reset 普通用户初始密码哈希失败"))?;
     Ok(SeedCredentials {
         admin_password,
         admin_hash,
-        user_password,
         user_hash,
     })
 }

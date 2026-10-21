@@ -113,7 +113,7 @@ class Fixture:
             "APP_OBJECT_STORAGE_SECRET_KEY": "secret", "APP_REDIS_PASSWORD": "redis-secret", "APP_REDIS_HOST": "127.0.0.1",
             "APP_REDIS_PORT": "16390", "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false",
             "APP_RESET_CREDENTIAL_VERSION": "fixture-v1", "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": self.request["reset"]["sentinel_key"],
-            "RYFRAME_RESET_ADMIN_PASSWORD": "admin-secret", "RYFRAME_RESET_USER_PASSWORD": "user-secret",
+            "RYFRAME_RESET_ADMIN_PASSWORD": "Fixture!Admin123",
             **{"APP_RESET_LEGACY_" + key.upper(): "true" for key in binding.EXCLUSIVE}}
         self.patches = [patch.dict(os.environ, self.environment, clear=True),
                         patch.object(binding, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance)),

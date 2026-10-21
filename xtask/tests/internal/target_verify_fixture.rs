@@ -202,8 +202,7 @@ fn environment() -> BTreeMap<String, String> {
         ("APP_TENANT_PASSWORD", "fixture-secret"),
         ("APP_OBJECT_STORAGE_ACCESS_KEY", "fixture-access"),
         ("APP_OBJECT_STORAGE_SECRET_KEY", "fixture-secret"),
-        ("RYFRAME_RESET_ADMIN_PASSWORD", "fixture-admin"),
-        ("RYFRAME_RESET_USER_PASSWORD", "fixture-user"),
+        ("RYFRAME_RESET_ADMIN_PASSWORD", "Fixture!Admin123"),
     ]
     .into_iter()
     .map(|(key, value)| (key.into(), value.into()))
