@@ -30,6 +30,8 @@ pub(crate) enum BackendSnapshotProfile {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct VerifySelection {
     pub(crate) full_reason: Option<String>,
+    pub(crate) backend_documentation: bool,
+    pub(crate) frontend_documentation: bool,
     pub(crate) backend_packages: BTreeSet<String>,
     pub(crate) backend_snapshot_profiles: BTreeSet<BackendSnapshotProfile>,
     pub(crate) frontend_profiles: BTreeSet<FrontendProfile>,

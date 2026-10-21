@@ -14,7 +14,6 @@ use super::check::architecture::{
 
 const DOCUMENTS: &[&str] = &[
     "README.md",
-    "README.en.md",
     "CHANGELOG.md",
     "docs/api.md",
     "docs/architecture.md",
@@ -46,7 +45,19 @@ fn test_dir() -> TempDir {
 fn documentation_fixture() -> TempDir {
     let directory = test_dir();
     for document in DOCUMENTS {
-        write(directory.path(), document, "当前文档\n");
+        let english = document.replace(".md", ".en.md");
+        let chinese_name = Path::new(document).file_name().unwrap().to_string_lossy();
+        let english_name = Path::new(&english).file_name().unwrap().to_string_lossy();
+        write(
+            directory.path(),
+            document,
+            &format!("# 说明\n\n[English]({english_name})\n\n当前说明。\n"),
+        );
+        write(
+            directory.path(),
+            &english,
+            &format!("# Guide\n\n[简体中文]({chinese_name})\n\nCurrent guide.\n"),
+        );
     }
     directory
 }
@@ -55,6 +66,30 @@ fn documentation_errors(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     docs::validate_documentation(root, &mut errors);
     errors
+}
+
+#[test]
+fn checked_in_workspace_passes_bilingual_documentation() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    docs::run(root).unwrap();
+}
+
+#[test]
+fn bilingual_documentation_rejects_matching_unclosed_fences() {
+    let directory = documentation_fixture();
+    for relative in ["README.md", "README.en.md"] {
+        let path = directory.path().join(relative);
+        let source = fs::read_to_string(&path).unwrap();
+        fs::write(path, format!("{source}\n```powershell\ncargo serve\n")).unwrap();
+    }
+    let errors = documentation_errors(directory.path());
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("围栏未闭合"))
+            .count(),
+        2
+    );
 }
 
 fn system_errors(root: &Path) -> Vec<String> {
@@ -120,6 +155,84 @@ fn documentation_gate_enforces_per_document_line_limits() {
         errors
             .iter()
             .any(|error| error.contains("README.md") && error.contains("120 行上限"))
+    );
+}
+
+#[test]
+fn bilingual_documentation_rejects_missing_translation_and_command_drift() {
+    let directory = documentation_fixture();
+    fs::remove_file(directory.path().join("docs/data.en.md")).unwrap();
+    assert!(
+        documentation_errors(directory.path())
+            .iter()
+            .any(|error| error.contains("docs/data.en.md"))
+    );
+    let directory = documentation_fixture();
+    write(
+        directory.path(),
+        "docs/data.md",
+        "# 数据\n\n[English](data.en.md)\n\n`cargo migrate -- control up`\n",
+    );
+    write(
+        directory.path(),
+        "docs/data.en.md",
+        "# Data\n\n[简体中文](data.md)\n\n`cargo migrate -- control verify`\n",
+    );
+    assert!(
+        documentation_errors(directory.path())
+            .iter()
+            .any(|error| error.contains("技术标识不一致"))
+    );
+}
+
+#[test]
+fn bilingual_documentation_checks_fenced_commands_links_and_history() {
+    let directory = documentation_fixture();
+    write(
+        directory.path(),
+        "docs/api.md",
+        "# 接口\n\n[English](api.en.md)\n\n```powershell\n# 中文说明\ncargo serve\n```\n",
+    );
+    write(
+        directory.path(),
+        "docs/api.en.md",
+        "# API\n\n[简体中文](api.md)\n\n```powershell\n# English comment\ncargo serve\n```\n",
+    );
+    assert!(documentation_errors(directory.path()).is_empty());
+    write(
+        directory.path(),
+        "docs/api.en.md",
+        "# API\n\n[简体中文](api.md)\n\n```powershell\ncargo reset\n```\n",
+    );
+    assert!(
+        documentation_errors(directory.path())
+            .iter()
+            .any(|error| error.contains("代码示例不一致"))
+    );
+    write(
+        directory.path(),
+        "CHANGELOG.md",
+        "# 历史\n\n[English](CHANGELOG.en.md)\n\n## [v0.13.1] - 2026-10-08\n",
+    );
+    write(
+        directory.path(),
+        "CHANGELOG.en.md",
+        "# History\n\n[简体中文](CHANGELOG.md)\n\n## [v0.13.1] - 2026-10-09\n",
+    );
+    assert!(
+        documentation_errors(directory.path())
+            .iter()
+            .any(|error| error.contains("版本、日期"))
+    );
+    write(
+        directory.path(),
+        "docs/api.md",
+        "# 接口\n\n[English](api.en.md)\n\n[缺失](missing.md)\n",
+    );
+    assert!(
+        documentation_errors(directory.path())
+            .iter()
+            .any(|error| error.contains("本地引用不存在"))
     );
 }
 

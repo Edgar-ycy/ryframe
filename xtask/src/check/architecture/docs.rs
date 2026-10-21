@@ -4,9 +4,13 @@ use regex::Regex;
 
 use super::support::{display_relative, read_text};
 
+#[path = "docs/bilingual.rs"]
+mod bilingual;
+#[path = "docs/markdown.rs"]
+mod markdown;
+
 const DOCUMENT_LIMITS: &[(&str, usize)] = &[
     ("README.md", 120),
-    ("README.en.md", 120),
     ("docs/api.md", 180),
     ("docs/architecture.md", 200),
     ("docs/data.md", 200),
@@ -28,12 +32,22 @@ const EXCLUDED_DIRECTORIES: &[&str] = &[
 ];
 const SYSTEM_DOMAINS: &[&str] = &["content", "identity", "operations", "platform"];
 
+pub(crate) fn run(root: &Path) -> crate::Result<()> {
+    let mut errors = Vec::new();
+    validate_documentation(root, &mut errors);
+    if !errors.is_empty() {
+        return Err(format!("中英文文档检查失败：\n{}", errors.join("\n")).into());
+    }
+    println!("后端中英文文档检查通过");
+    Ok(())
+}
+
 pub(crate) fn validate_documentation(root: &Path, errors: &mut Vec<String>) {
     let actual = documentation_paths(root, errors);
     let expected = DOCUMENT_LIMITS
         .iter()
-        .map(|(path, _)| (*path).to_owned())
-        .chain(["CHANGELOG.md".to_owned()])
+        .flat_map(|(path, _)| [(*path).to_owned(), bilingual::english_path(path)])
+        .chain(["CHANGELOG.md".to_owned(), "CHANGELOG.en.md".to_owned()])
         .collect::<BTreeSet<_>>();
     if actual != expected {
         let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
@@ -46,13 +60,18 @@ pub(crate) fn validate_documentation(root: &Path, errors: &mut Vec<String>) {
         }
     }
     for (relative, limit) in DOCUMENT_LIMITS {
-        let path = root.join(relative);
-        if path.is_file() && line_count(&path) > *limit {
-            errors.push(format!(
-                "{relative} 共 {} 行，超过 {limit} 行上限",
-                line_count(&path)
-            ));
+        for relative in [(*relative).to_owned(), bilingual::english_path(relative)] {
+            let path = root.join(&relative);
+            if path.is_file() && line_count(&path) > *limit {
+                errors.push(format!(
+                    "{relative} 共 {} 行，超过 {limit} 行上限",
+                    line_count(&path)
+                ));
+            }
         }
+    }
+    for relative in actual.iter().filter(|path| !path.ends_with(".en.md")) {
+        bilingual::validate(root, relative, errors);
     }
 }
 

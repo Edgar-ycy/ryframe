@@ -179,24 +179,30 @@ class SourceInventoryTests(unittest.TestCase):
         self.assertNotIn("tools/python/source_inventory.py", classified["product"]["api"]["files"])
         self.assertNotIn("tools/python/source_inventory.py", classified["product"]["worker"]["files"])
 
-    def test_translated_readme_changes_remain_in_full_source_without_product_rebuilds(self):
-        before_inventory = sources.capture_inventory(self.root)
-        before_inventory["files"].append({"path": "README.en.md", "sha256": "1" * 64})
-        before_inventory["files"].sort(key=lambda item: item["path"])
-        after_inventory = copy.deepcopy(before_inventory)
-        translated = next(item for item in after_inventory["files"] if item["path"] == "README.en.md")
-        translated["sha256"] = "2" * 64
-        for repository in ("backend", "frontend"):
+    def test_translated_documents_change_full_source_without_product_rebuilds(self):
+        for repository, names in (
+            ("backend", ("README.en.md", "CHANGELOG.en.md", "docs/data.en.md")),
+            ("frontend", ("README.en.md", "CHANGELOG.en.md", "ARCHITECTURE.en.md")),
+        ):
             with self.subTest(repository=repository):
+                before_inventory = sources.capture_inventory(self.root)
+                before_inventory["files"].extend({"path": name, "sha256": "1" * 64} for name in names)
+                before_inventory["files"].sort(key=lambda item: item["path"])
+                after_inventory = copy.deepcopy(before_inventory)
+                for item in after_inventory["files"]:
+                    if item["path"] in names:
+                        item["sha256"] = "2" * 64
                 before = sources.build_source_domains(before_inventory, repository)
                 after = sources.build_source_domains(after_inventory, repository)
                 self.assertEqual(before["product"], after["product"])
                 self.assertEqual(before["tools"], after["tools"])
                 self.assertNotEqual(before["full"], after["full"])
-        self.assertEqual(sources.source_domain("README.en.md"), "support")
-        self.assertNotEqual(sources.fingerprints(before_inventory)["support"],
-                            sources.fingerprints(after_inventory)["support"])
-        for relative in ("README.en.md.rs", "other/README.en.md"):
+                if repository == "backend":
+                    for name in names:
+                        self.assertEqual(sources.source_domain(name), "support")
+                    self.assertNotEqual(sources.fingerprints(before_inventory)["support"],
+                                        sources.fingerprints(after_inventory)["support"])
+        for relative in ("README.en.md.rs", "other/README.en.md", "src/content.en.md"):
             self.assertEqual(sources.source_domain(relative), "product")
 
     def test_duplicate_unordered_or_malformed_inventory_is_rejected(self):

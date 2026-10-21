@@ -1,10 +1,10 @@
 # 数据
 
+[English](data.en.md)
+
 ## 全新环境初始化
 
-先创建隔离的空 MySQL database，再设置 `APP_ENV` 和数据库连接。配置按 `config/app.toml`、`config/app.<环境>.toml`、`APP_*` 依次覆盖，`APP_CONFIG_DIR` 可指向另一配置目录。密钥文件、JWT 和初始管理员密码的准备见 [README](../README.md#下载后首次运行)。
-
-默认单租户仍有控制库与 `shared-control` 两个独立账本，从后端根目录依次运行：
+先创建隔离的空 MySQL database，再设置 `APP_ENV` 和数据库连接。配置按 `config/app.toml`、`config/app.<环境>.toml`、`APP_*` 依次覆盖，`APP_CONFIG_DIR` 可指向另一配置目录。密钥文件、JWT 和初始管理员密码的准备见 [README](../README.md#下载后首次运行)。 默认单租户仍有控制库与 `shared-control` 两个独立账本，从后端根目录依次运行：
 
 ```powershell
 cargo migrate -- control up

@@ -1,5 +1,7 @@
 # API
 
+[English](api.en.md)
+
 登录、刷新及 `/auth/context` 使用同一 `SessionContext`，必须包含布尔型 `password_change_required`。该值为真时，超级管理员标志为假，角色、权限、菜单和能力集合为空；受限令牌只能读取会话上下文、修改自己的密码和退出，不能签发消息票据。成功改密清除标志、更新授权版本并撤销该用户的登录会话，客户端重新登录。
 
 授权诊断区分缓存 `current`、`behind`、`ahead`、`missing`、`disabled` 与 `unavailable`。镜像落后于新令牌时，从主库验证身份后原子重建；镜像版本更高时旧令牌仍被拒绝，不向后覆盖缓存。缓存关闭是正常配置状态，不作为缓存故障警告。

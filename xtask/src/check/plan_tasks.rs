@@ -2,7 +2,7 @@ use crate::{Result, cli::CheckScope};
 
 use super::{
     super::{
-        model::VerifySelection,
+        model::{FrontendProfile, VerifySelection},
         selection::needs_consumer_contract,
         snapshot::package_tests_generate_snapshots,
         task_plan::{TaskExecutor, TaskPlan},
@@ -60,6 +60,18 @@ fn smart_tasks(selection: &VerifySelection, scope: CheckScope) -> Vec<TaskExecut
             &selection.backend_packages,
         );
     let mut tasks = Vec::new();
+    if scope != CheckScope::Frontend
+        && selection.backend_documentation
+        && selection.backend_packages.is_empty()
+    {
+        tasks.push(TaskExecutor::BackendDocumentation);
+    }
+    if scope != CheckScope::Backend
+        && selection.frontend_documentation
+        && !selection.frontend_profiles.contains(&FrontendProfile::Code)
+    {
+        tasks.push(TaskExecutor::FrontendDocumentation);
+    }
     if scope != CheckScope::Backend
         && selection.backend_packages.is_empty()
         && !selection.frontend_profiles.is_empty()

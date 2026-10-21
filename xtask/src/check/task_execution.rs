@@ -64,6 +64,12 @@ pub(crate) fn execute_registered_task(
     state: &mut CheckExecutionState,
 ) -> Result<()> {
     match executor {
+        TaskExecutor::BackendDocumentation => super::super::architecture::docs::run(&context.root),
+        TaskExecutor::FrontendDocumentation => run_process(
+            &context.frontend_dir,
+            "node",
+            &["scripts/check-documentation.mjs"],
+        ),
         TaskExecutor::RemovedIdentity => run_removed_identity(
             &context.root,
             context

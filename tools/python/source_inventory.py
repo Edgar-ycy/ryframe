@@ -109,7 +109,7 @@ def source_domain(relative: str) -> str:
         return "test_tools"
     if path.parts[0] == ".github":
         return "test_tools"
-    if path.parts[0] == "docs" or relative in {"README.md", "README.en.md", "CHANGELOG.md", "LICENSE"}:
+    if path.parts[0] == "docs" or relative in {"README.md", "README.en.md", "CHANGELOG.md", "CHANGELOG.en.md", "LICENSE"}:
         return "support"
     return "product"
 
@@ -140,7 +140,7 @@ def _frontend_product(relative: str) -> bool:
             or relative in {"eslint.config.js", "playwright.config.ts", "playwright.real.config.ts",
                             "prettier.config.mjs", "stylelint.config.js", "vitest.config.ts",
                             ".editorconfig", ".gitattributes", ".gitignore", ".prettierignore",
-                            ".env.production.example", "ARCHITECTURE.md", "CHANGELOG.md", "LICENSE",
+                            ".env.production.example", "ARCHITECTURE.md", "ARCHITECTURE.en.md", "CHANGELOG.md", "CHANGELOG.en.md", "LICENSE",
                             "README.md", "README.en.md"}):
         return False
     # 新增且尚未分类的文件按产品输入处理，不能因工具重构漏掉实际构建依赖。
@@ -181,7 +181,7 @@ def _backend_product_roles(relative: str) -> tuple[str, ...]:
         return ("api",)
     if relative in {"Cargo.lock", "Cargo.toml", "rust-toolchain.toml"}:
         return both
-    if relative in {"CHANGELOG.md", "LICENSE", "README.md", "README.en.md", ".dockerignore", ".editorconfig",
+    if relative in {"CHANGELOG.md", "CHANGELOG.en.md", "LICENSE", "README.md", "README.en.md", ".dockerignore", ".editorconfig",
                     ".gitattributes", ".gitignore", "deny.toml", "rustfmt.toml"}:
         return ()
     # 未知路径保守绑定两个产品角色，避免错误复用旧二进制。

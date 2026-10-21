@@ -55,6 +55,8 @@ impl TaskWorkingDirectory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum TaskExecutor {
+    BackendDocumentation,
+    FrontendDocumentation,
     LanguageReport,
     LanguageWrite,
     LanguageThreshold,
@@ -154,7 +156,33 @@ mod policy;
 #[path = "task_registry/release.rs"]
 mod release;
 
-const CHECK_TASKS: [TaskDefinition; 23] = [
+const CHECK_TASKS: [TaskDefinition; 25] = [
+    task_definition!(
+        BackendDocumentation,
+        "policy.documentation.backend",
+        "check_backend_documentation",
+        "只读检查后端中英文配对、命令、历史与本地引用",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &[],
+        &[]
+    ),
+    task_definition!(
+        FrontendDocumentation,
+        "policy.documentation.frontend",
+        "check_frontend_documentation",
+        "只读检查前端中英文配对、命令、历史与本地引用",
+        Frontend,
+        Static,
+        Frontend,
+        Some(&["scripts/check-documentation.mjs"]),
+        &[],
+        &[],
+        &[]
+    ),
     task_definition!(
         RemovedIdentity,
         "policy.removed-identity",

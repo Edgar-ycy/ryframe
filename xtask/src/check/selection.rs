@@ -104,6 +104,7 @@ pub(crate) fn needs_consumer_contract(profiles: &BTreeSet<BackendSnapshotProfile
 
 fn classify_backend_path(path: &str, graph: &WorkspaceGraph, selection: &mut VerifySelection) {
     if is_documentation(path) {
+        selection.backend_documentation = true;
         selection.reasons.push(format!("后端文档：{path}"));
         return;
     }
@@ -147,6 +148,7 @@ fn classify_backend_path(path: &str, graph: &WorkspaceGraph, selection: &mut Ver
 
 fn classify_frontend_path(path: &str, selection: &mut VerifySelection) {
     if is_documentation(path) {
+        selection.frontend_documentation = true;
         selection.reasons.push(format!("前端文档：{path}"));
         return;
     }
@@ -177,18 +179,29 @@ fn is_documentation(path: &str) -> bool {
     matches!(
         path,
         "README.md"
+            | "README.en.md"
             | "ARCHITECTURE.md"
+            | "ARCHITECTURE.en.md"
             | "LICENSE"
             | "LICENSE.md"
             | "CHANGELOG.md"
+            | "CHANGELOG.en.md"
             | "CONTRIBUTING.md"
+            | "CONTRIBUTING.en.md"
             | "SECURITY.md"
+            | "SECURITY.en.md"
             | "CODE_OF_CONDUCT.md"
+            | "CODE_OF_CONDUCT.en.md"
             | "docs/api.md"
+            | "docs/api.en.md"
             | "docs/architecture.md"
+            | "docs/architecture.en.md"
             | "docs/data.md"
+            | "docs/data.en.md"
             | "docs/development.md"
+            | "docs/development.en.md"
             | "docs/operations.md"
+            | "docs/operations.en.md"
     )
 }
 

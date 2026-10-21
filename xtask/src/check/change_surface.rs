@@ -372,11 +372,17 @@ fn is_documentation(path: &str) -> bool {
         || matches!(
             path,
             "README.md"
+                | "README.en.md"
                 | "ARCHITECTURE.md"
+                | "ARCHITECTURE.en.md"
                 | "CHANGELOG.md"
+                | "CHANGELOG.en.md"
                 | "CONTRIBUTING.md"
+                | "CONTRIBUTING.en.md"
                 | "SECURITY.md"
+                | "SECURITY.en.md"
                 | "CODE_OF_CONDUCT.md"
+                | "CODE_OF_CONDUCT.en.md"
                 | "LICENSE"
                 | "LICENSE.md"
         )

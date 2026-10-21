@@ -195,7 +195,17 @@ fn smart_frontend_only_and_documentation_plans_do_not_invent_backend_work() {
         &["README.md".into()],
         &WorkspaceGraph::default(),
     );
-    assert!(tasks_for(CheckScope::All, &docs).unwrap().tasks.is_empty());
+    assert_eq!(
+        task_ids(&docs, CheckScope::All),
+        [
+            "policy.documentation.backend",
+            "policy.documentation.frontend",
+        ]
+    );
+    for task in tasks_for(CheckScope::All, &docs).unwrap().tasks {
+        assert!(task.definition().compilation_coverage.is_empty());
+        assert!(task.definition().allowed_writes.is_empty());
+    }
 }
 
 #[test]
