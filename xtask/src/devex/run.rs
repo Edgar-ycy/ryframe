@@ -217,6 +217,7 @@ pub(super) fn prepare_run_at(
         super::runtime::prepare(
             backend_root,
             runner_frontend_root,
+            options.suite,
             options.cache_state,
             &mut environment,
         )?;

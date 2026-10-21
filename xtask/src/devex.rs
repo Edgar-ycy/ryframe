@@ -27,6 +27,14 @@ mod preflight;
 mod report;
 #[path = "devex/runtime.rs"]
 mod runtime;
+#[path = "devex/runtime_configuration.rs"]
+pub(crate) mod runtime_configuration;
+#[path = "devex/runtime_input.rs"]
+pub(crate) mod runtime_input;
+#[path = "devex/runtime_pacing.rs"]
+pub(crate) mod runtime_pacing;
+#[path = "devex/runtime_selection.rs"]
+pub(crate) mod runtime_selection;
 #[path = "devex/support.rs"]
 mod support;
 

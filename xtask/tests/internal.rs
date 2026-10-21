@@ -239,6 +239,14 @@ mod resource_gate_tests;
 #[cfg(feature = "resource")]
 #[path = "internal/resource.rs"]
 mod resource_tests;
+#[path = "internal/runtime_configuration.rs"]
+mod runtime_configuration_tests;
+#[path = "internal/runtime_input.rs"]
+mod runtime_input_tests;
+#[path = "internal/runtime_pacing.rs"]
+mod runtime_pacing_tests;
+#[path = "internal/runtime_selection.rs"]
+mod runtime_selection_tests;
 #[path = "internal/runtime_source.rs"]
 mod runtime_source_tests;
 #[path = "internal/seed_source.rs"]

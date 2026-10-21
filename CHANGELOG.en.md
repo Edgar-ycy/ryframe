@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Rust now validates identity pools, tenant distribution, configuration, the operation catalog and actual rate-limit pacing read-only before starting the measurement driver. Duplicate identities, incorrect digests and unresolvable rate-limit rules fail with specific safe reasons.
+
 - Non-production reset ordinary seed users now use the shared initial password `123456`, while administrators still require an explicitly supplied complex password; removes separate ordinary-user password credentials and dependencies in fixtures, source digests, and current callers. Rebuild verification checks both accounts' password hashes and mandatory password-change flags, retaining ownership and unknown-write protection.
 
 - All self-maintained guides and complete change history now have paired Chinese and English versions. Checks validate language links, section references, commands, and code examples; documentation changes run a lightweight check while retaining complete provenance digests.
