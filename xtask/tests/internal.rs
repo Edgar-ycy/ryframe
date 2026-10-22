@@ -69,6 +69,8 @@ mod job_evidence_wait_tests;
 
 #[path = "../src/build.rs"]
 mod build;
+#[path = "../src/build_source.rs"]
+mod build_source;
 #[path = "../src/data.rs"]
 mod data;
 

@@ -18,8 +18,6 @@ use route_source::{collect_routes, collect_rust_files};
 use validation::{append_manual_routes, validate_routes};
 
 pub(super) fn run() -> Result<(), Box<dyn Error>> {
-    configure_build_commit()?;
-
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let workspace_root = manifest_dir
         .parent()
@@ -88,20 +86,5 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         PathBuf::from(env::var("OUT_DIR")?).join("permission_catalog.rs"),
         generated,
     )?;
-    Ok(())
-}
-
-fn configure_build_commit() -> Result<(), Box<dyn Error>> {
-    println!("cargo:rerun-if-env-changed=RYFRAME_BUILD_COMMIT");
-    let build_commit = env::var("RYFRAME_BUILD_COMMIT")
-        .unwrap_or_else(|_| "development".to_owned())
-        .trim()
-        .to_ascii_lowercase();
-    if build_commit != "development"
-        && (build_commit.len() != 40 || !build_commit.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    {
-        return Err("RYFRAME_BUILD_COMMIT 必须是完整的 40 位 Git 提交 SHA".into());
-    }
-    println!("cargo:rustc-env=RYFRAME_BUILD_COMMIT={build_commit}");
     Ok(())
 }

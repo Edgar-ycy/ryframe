@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from build_source import bound_source, build_process_environment
 from devex_clone import read_json
 from devex_clone_model import exact, linked, local_path
 from devex_provenance import worktree_fingerprint
@@ -89,31 +90,31 @@ def build(backend: Path, directory: Path, run=subprocess.run) -> dict:
         inventory = capture_inventory(backend, before["snapshot"])
         stage = "toolchain"
         versions = toolchain(backend, run)
-        for role, (_, name) in TOOLS.items():
-            stage = "build_" + role
-            args = command(role, target)
-            output, errors = directory / f"{role}.cargo.jsonl", directory / f"{role}.cargo.log"
-            environment = {**os.environ, "RYFRAME_BUILD_COMMIT": before["snapshot"]["head"]}
-            with output.open("xb") as stdout, errors.open("xb") as stderr:
-                run(args, cwd=backend, stdout=stdout, stderr=stderr, check=True,
-                    env=environment,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            executable = cargo_artifact(backend, name, output.read_text(encoding="utf-8"))
-            if not executable.is_relative_to(target.resolve()) or any(linked(p) for p in (executable, *executable.parents)):
-                raise ValueError("Cargo 维护工具产物不属于本次固定 target")
-            digest = file_digest(executable)
-            saved = directory / (name + executable.suffix)
-            with executable.open("rb") as source, saved.open("xb") as copy:
-                shutil.copyfileobj(source, copy)
-                copy.flush()
-                os.fsync(copy.fileno())
-            if file_digest(executable) != digest or file_digest(saved) != digest:
-                raise ValueError("复制维护工具时二进制发生变化")
-            if os.name != "nt":
-                saved.chmod(0o700)
-            artifacts[role] = {"executable": str(saved), "cargo_executable": str(executable), "command": args,
-                               "cargo_output": {"file": output.name, **file_digest(output)},
-                               "cargo_log": {"file": errors.name, **file_digest(errors)}, **digest}
+        with bound_source(backend, before["snapshot"]["head"]):
+            for role, (_, name) in TOOLS.items():
+                stage = "build_" + role
+                args = command(role, target)
+                output, errors = directory / f"{role}.cargo.jsonl", directory / f"{role}.cargo.log"
+                with output.open("xb") as stdout, errors.open("xb") as stderr:
+                    run(args, cwd=backend, stdout=stdout, stderr=stderr, check=True,
+                        env=build_process_environment(),
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                executable = cargo_artifact(backend, name, output.read_text(encoding="utf-8"))
+                if not executable.is_relative_to(target.resolve()) or any(linked(p) for p in (executable, *executable.parents)):
+                    raise ValueError("Cargo 维护工具产物不属于本次固定 target")
+                digest = file_digest(executable)
+                saved = directory / (name + executable.suffix)
+                with executable.open("rb") as source, saved.open("xb") as copy:
+                    shutil.copyfileobj(source, copy)
+                    copy.flush()
+                    os.fsync(copy.fileno())
+                if file_digest(executable) != digest or file_digest(saved) != digest:
+                    raise ValueError("复制维护工具时二进制发生变化")
+                if os.name != "nt":
+                    saved.chmod(0o700)
+                artifacts[role] = {"executable": str(saved), "cargo_executable": str(executable), "command": args,
+                                   "cargo_output": {"file": output.name, **file_digest(output)},
+                                   "cargo_log": {"file": errors.name, **file_digest(errors)}, **digest}
         stage = "verify_source_and_toolchain"
         if source_binding(backend) != before or toolchain(backend, run) != versions:
             raise ValueError("维护工具构建期间源码或工具链变化")

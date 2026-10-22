@@ -9,6 +9,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from build_source import bound_source, build_process_environment
 from artifact_digests import file_digest
 from full_stack_build import build_artifacts, cargo_artifact
 from source_inventory import (
@@ -32,7 +33,7 @@ BUILD_ENVIRONMENT_NAMES = {
     "CXXSTDLIB", "HOST", "INCLUDE", "LDFLAGS", "LIB", "LIBCLANG_PATH", "LIBPATH", "MAKE",
     "NASM", "NINJA", "OPENSSL", "PATH", "PERL", "PKG_CONFIG", "RANLIB", "RUSTC",
     "RUSTC_BOOTSTRAP", "RUSTC_LINKER", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
-    "RUSTDOCFLAGS", "RUSTFLAGS", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "RYFRAME_BUILD_COMMIT",
+    "RUSTDOCFLAGS", "RUSTFLAGS", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
     "SDKROOT", "SOURCE_DATE_EPOCH", "TARGET", "UCRTVERSION", "UNIVERSALCRTSDKDIR",
     "VCINSTALLDIR", "VCPKGRS_DYNAMIC", "VCPKGRS_TRIPLET", "VCTOOLSINSTALLDIR",
     "WINDOWSSDKDIR", "WINDOWSSDKVERSION",
@@ -211,20 +212,23 @@ def build(root: Path, run=subprocess.run, expected_inventory: dict | None = None
     if expected_inventory is not None and inventory != expected_inventory:
         raise ValueError("构建开始前源码与已核验来源不一致")
     sources = build_source_domains(inventory, "backend")
-    context = build_context(root, run)
-    built = build_artifacts(
-        root,
-        tuple(ROLES),
-        lambda command: run(
-            command,
-            cwd=root,
-            stdout=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            check=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        ).stdout,
-    )
+    environment = build_process_environment()
+    context = build_context(root, run, environment)
+    with bound_source(root, source["head"]):
+        built = build_artifacts(
+            root,
+            tuple(ROLES),
+            lambda command: run(
+                command,
+                cwd=root,
+                stdout=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                check=True,
+                env=environment,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            ).stdout,
+        )
     artifacts = {
         role: {
             "executable": str(item["executable"]),
@@ -233,7 +237,8 @@ def build(root: Path, run=subprocess.run, expected_inventory: dict | None = None
         }
         for role, item in built.items()
     }
-    if capture_inventory(root) != inventory or build_context(root, run) != context:
+    if capture_inventory(root) != inventory or build_context(
+            root, run, build_process_environment()) != context:
         raise ValueError("构建期间源码发生变化，不能登记混合来源产物")
     return {"format_version": 2, "kind": "restore-backend-build", "sources": sources,
             "build": context, "artifacts": artifacts}
@@ -271,7 +276,7 @@ def verify_build(root: Path, receipt: dict, sha: str, run=subprocess.run) -> Non
             or receipt.get("format_version") != 2 or receipt.get("kind") != "restore-backend-build"
             or snapshot.get("head") != sha or not snapshot.get("clean")
             or sources != build_source_domains(capture_inventory(root), "backend")
-            or receipt.get("build") != build_context(root, run)
+            or receipt.get("build") != build_context(root, run, build_process_environment())
             or set(receipt.get("artifacts", {})) != set(ROLES)):
         raise ValueError("正式恢复必须使用精确干净 SHA 的本次构建收据")
     validate_build_context(receipt.get("build"))

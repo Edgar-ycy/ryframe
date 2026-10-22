@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::{digest, json as native_json, source};
 use crate::{
     Result,
+    build_source::with_source_commit,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     process,
 };
@@ -31,7 +32,7 @@ pub(crate) trait Runner {
         arguments: &[String],
         stdout: &Path,
         stderr: &Path,
-        commit: &str,
+        _commit: &str,
     ) -> Result<()>;
 }
 
@@ -49,7 +50,7 @@ impl Runner for DefaultRunner {
         arguments: &[String],
         stdout: &Path,
         stderr: &Path,
-        commit: &str,
+        _commit: &str,
     ) -> Result<()> {
         let (executable, arguments) = arguments.split_first().ok_or("维护工具 Cargo 命令为空")?;
         if executable != "cargo" {
@@ -59,10 +60,7 @@ impl Runner for DefaultRunner {
             root,
             executable,
             arguments,
-            &[
-                ("RYFRAME_BUILD_COMMIT", commit),
-                ("CARGO_NET_OFFLINE", "true"),
-            ],
+            &[("CARGO_NET_OFFLINE", "true")],
             stdout,
             stderr,
         )
@@ -96,53 +94,56 @@ pub(crate) fn build_with(root: &Path, directory: &Path, runner: &dyn Runner) -> 
         source_binding = Some(source::binding_value(&inventory.source));
         stage = "toolchain";
         let versions = toolchain(root, runner)?;
-        let mut artifacts = BTreeMap::new();
-        for (role, _feature, name) in TOOLS {
-            stage = match role {
-                "reset" => "build_reset",
-                "migrate" => "build_migrate",
-                _ => "build_tenant_data",
-            };
-            let arguments = command(role, &target)?;
-            let output = directory.join(format!("{role}.cargo.jsonl"));
-            let log = directory.join(format!("{role}.cargo.log"));
-            stdout = Some(output.clone());
-            stderr = Some(log.clone());
-            runner.build(
-                root,
-                &arguments,
-                &output,
-                &log,
-                &inventory.source.snapshot.head,
-            )?;
-            let artifact = cargo_artifact(root, &target, name, &output)?;
-            let saved = freeze_artifact(&artifact, directory, name)?;
-            let output_digest = digest::file(&output)?;
-            let log_digest = digest::file(&log)?;
-            let saved_digest = digest::file(&saved)?;
-            artifacts.insert(
-                role.to_owned(),
-                json!({
-                    "executable": saved,
-                    "cargo_executable": artifact,
-                    "command": arguments,
-                    "cargo_output": {
-                        "file": output.file_name().unwrap().to_string_lossy(),
-                        "bytes": output_digest.bytes,
-                        "sha256": output_digest.sha256,
-                    },
-                    "cargo_log": {
-                        "file": log.file_name().unwrap().to_string_lossy(),
-                        "bytes": log_digest.bytes,
-                        "sha256": log_digest.sha256,
-                    },
-                    "bytes": saved_digest.bytes,
-                    "sha256": saved_digest.sha256,
-                }),
-            );
-            stdout = None;
-            stderr = None;
-        }
+        let artifacts = with_source_commit(root, &inventory.source.snapshot.head, || {
+            let mut artifacts = BTreeMap::new();
+            for (role, _feature, name) in TOOLS {
+                stage = match role {
+                    "reset" => "build_reset",
+                    "migrate" => "build_migrate",
+                    _ => "build_tenant_data",
+                };
+                let arguments = command(role, &target)?;
+                let output = directory.join(format!("{role}.cargo.jsonl"));
+                let log = directory.join(format!("{role}.cargo.log"));
+                stdout = Some(output.clone());
+                stderr = Some(log.clone());
+                runner.build(
+                    root,
+                    &arguments,
+                    &output,
+                    &log,
+                    &inventory.source.snapshot.head,
+                )?;
+                let artifact = cargo_artifact(root, &target, name, &output)?;
+                let saved = freeze_artifact(&artifact, directory, name)?;
+                let output_digest = digest::file(&output)?;
+                let log_digest = digest::file(&log)?;
+                let saved_digest = digest::file(&saved)?;
+                artifacts.insert(
+                    role.to_owned(),
+                    json!({
+                        "executable": saved,
+                        "cargo_executable": artifact,
+                        "command": arguments,
+                        "cargo_output": {
+                            "file": output.file_name().unwrap().to_string_lossy(),
+                            "bytes": output_digest.bytes,
+                            "sha256": output_digest.sha256,
+                        },
+                        "cargo_log": {
+                            "file": log.file_name().unwrap().to_string_lossy(),
+                            "bytes": log_digest.bytes,
+                            "sha256": log_digest.sha256,
+                        },
+                        "bytes": saved_digest.bytes,
+                        "sha256": saved_digest.sha256,
+                    }),
+                );
+                stdout = None;
+                stderr = None;
+            }
+            Ok(artifacts)
+        })?;
         stage = "verify_source_and_toolchain";
         let after = source::capture(root)?;
         if source::binding_value(&after.source) != source::binding_value(&inventory.source)

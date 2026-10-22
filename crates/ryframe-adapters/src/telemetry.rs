@@ -42,7 +42,6 @@ use crate::metrics::{
 
 pub use ryframe_config::TelemetryConfig;
 
-const BUILD_COMMIT: &str = env!("RYFRAME_BUILD_COMMIT");
 const TELEMETRY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 链路追踪守卫
@@ -295,7 +294,7 @@ fn telemetry_resource(config: &TelemetryConfig) -> Resource {
                 opentelemetry_semantic_conventions::resource::SERVICE_VERSION,
                 env!("CARGO_PKG_VERSION"),
             ),
-            KeyValue::new("vcs.ref.head.revision", BUILD_COMMIT),
+            KeyValue::new("vcs.ref.head.revision", ryframe_kernel::BUILD_COMMIT),
         ])
         .build()
 }

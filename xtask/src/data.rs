@@ -1,7 +1,8 @@
 use crate::{
     Result,
+    build_source::with_source_commit,
     cli::DataCommand,
-    process::{command_output, run_owned_with_env},
+    process::{command_output, run_owned},
     workspace::root_dir,
 };
 
@@ -46,10 +47,7 @@ pub(crate) fn run(command: &DataCommand) -> Result<()> {
     {
         return Err("data 维护程序的后端源码提交无效".into());
     }
-    run_owned_with_env(
-        &root,
-        "cargo",
-        &cargo_args,
-        &[("RYFRAME_BUILD_COMMIT", source_sha)],
-    )
+    with_source_commit(&root, &source_sha, || {
+        run_owned(&root, "cargo", &cargo_args)
+    })
 }

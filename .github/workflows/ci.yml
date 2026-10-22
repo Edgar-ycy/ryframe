@@ -655,7 +655,7 @@ jobs:
         run: >-
           docker build
           --file deploy/Dockerfile
-          --build-arg "RYFRAME_BUILD_COMMIT=$GITHUB_SHA"
+          --build-arg "SOURCE_COMMIT=$GITHUB_SHA"
           --tag "ryframe-ci:$GITHUB_SHA"
           .
 

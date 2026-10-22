@@ -348,7 +348,7 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
     let mut response = Json(ApiResponse::success(ApiVersionInfo {
         name: env!("CARGO_PKG_NAME").to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        source_commit: env!("RYFRAME_BUILD_COMMIT").to_owned(),
+        source_commit: ryframe_kernel::BUILD_COMMIT.to_owned(),
         api_prefix: API_PREFIX.to_owned(),
         multi_tenancy_enabled: state.settings.multi_tenancy.enabled,
         endpoints: ApiVersionEndpoints {

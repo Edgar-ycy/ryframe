@@ -5,6 +5,9 @@
 //! 此库只承载跨层共享的领域类型，不依赖 HTTP、数据库、缓存或具体功能实现。
 
 mod actor_context;
+mod build_source {
+    include!(concat!(env!("OUT_DIR"), "/build_source.rs"));
+}
 pub mod constants;
 mod data_scope;
 mod decimal;
@@ -20,6 +23,7 @@ mod snowflake_worker;
 mod tenant_id;
 
 pub use actor_context::ActorContext;
+pub use build_source::BUILD_COMMIT;
 pub use constants::*;
 pub use data_scope::{DATA_SCOPE_PROJECTION_OUTBOX_EVENT_TYPE, DataScope, DataScopeContext};
 pub use decimal::decimal_fits_precision;

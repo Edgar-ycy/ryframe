@@ -4,6 +4,7 @@
 //! 业务编排与进程管理互相耦合。
 
 mod build;
+mod build_source;
 mod check;
 mod ci;
 mod cli;

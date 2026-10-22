@@ -15,7 +15,9 @@ use std::{
 
 const MAX_EVIDENCE_BYTES: u64 = 16 * 1024 * 1024;
 const VERIFIER_TIMEOUT: Duration = Duration::from_secs(300);
-const COMPILED_SOURCE_SHA: Option<&str> = option_env!("RYFRAME_BUILD_COMMIT");
+fn compiled_source_sha() -> Option<&'static str> {
+    (ryframe_kernel::BUILD_COMMIT != "development").then_some(ryframe_kernel::BUILD_COMMIT)
+}
 
 pub struct EvidencePaths<'a> {
     pub proof: &'a Path,
@@ -83,7 +85,7 @@ pub async fn verify(
     let backend = backend_root()?;
     let runner_root = verified_root(paths.runner, "恢复测试 runner")?;
     let verifier = clean_git_source(&backend, "恢复证明协调后端")?;
-    if COMPILED_SOURCE_SHA != Some(verifier.sha.as_str()) {
+    if compiled_source_sha() != Some(verifier.sha.as_str()) {
         return Err(validation(
             "恢复证明维护程序必须由当前干净后端通过统一 data 入口构建",
         ));

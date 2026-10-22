@@ -76,10 +76,9 @@ class CloneToolsTests(unittest.TestCase):
         for item in receipt["artifacts"].values():
             self.assertEqual(Path(item["executable"]).parent, self.directory)
             Path(item["cargo_executable"]).write_bytes(b"later unrelated build")
-        self.assertEqual(
-            [environment["RYFRAME_BUILD_COMMIT"] for environment in self.build_environments],
-            [self.source["head"]] * 3,
-        )
+        self.assertTrue(all(not any(name.startswith("RYFRAME_") for name in environment)
+                            for environment in self.build_environments))
+        self.assertFalse((self.backend / ".local-tests/build/source-commit").exists())
         self.calls.clear()
         before = {p.name: p.read_bytes() for p in self.directory.iterdir()}
         self.assertEqual(self.verify(), receipt)

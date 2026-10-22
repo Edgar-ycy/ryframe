@@ -6,6 +6,13 @@
 
 Production images use a digest-pinned Distroless Debian 13 runtime layer containing only API, migrations, Worker and their runtime dependencies, without a shell, package manager, `curl`, generator, file maintenance or reset. API and Worker use their own `--healthcheck` command to probe local `/readyz`. The runtime image sets only the application environment variable `APP_ENV=prod` and, from its working directory `/opt/ryframe`, reads the mandatory plaintext `config/app.prod.toml` by default; `config/app.toml` may provide common defaults. Set database, JWT, Redis, object storage and monitoring credentials directly in their fields. Keep real files in a controlled ignored directory and mount them read-only into a separate configuration directory for each container instance, selected by CLI `--config-dir <directory>`. Keep `scope_id` stable and use a different root `snowflake_worker_id` for each instance. Use complete `image@sha256:<digest>` references in deployment configuration; where maintenance commands provide image digest options, use their CLI help rather than project environment variables. Four-role templates for API, Worker, control database migrations and tenant-data migrations, each with a private configuration directory, are integrated and have passed asset structure checks and CI tool tests. Real containers, images and the complete deployment flow remain unaccepted. When using the local storage backend, set its directory through `object_storage.local_base_dir` in the selected role configuration file, without an environment override.
 
+Image builds bind a 40-character lowercase commit SHA through Docker build argument `SOURCE_COMMIT`. After validating it, the Dockerfile writes it to managed file `.local-tests/build/source-commit` inside the build container, and Rust build scripts read only that file. It is not an application environment variable and is not copied into the runtime image. Formal maintenance and recovery builds inside the repository use Rust/Python coordinators to create the same managed file exclusively, verify its contents, and clean it after completion. Concurrent controllers, drift, or an unknown cleanup result fail and preserve evidence. An ordinary development build without the file reports its source as `development` and cannot produce formal recovery proof.
+
+```powershell
+$sourceCommit = git rev-parse HEAD
+docker build --build-arg "SOURCE_COMMIT=$sourceCommit" -f deploy/Dockerfile .
+```
+
 The following commands are examples for subsequent mount, pinned-image and startup verification, not evidence of runtime acceptance:
 
 ```powershell

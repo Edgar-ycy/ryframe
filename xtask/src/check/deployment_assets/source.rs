@@ -37,6 +37,7 @@ fn check_dockerfile(root: &Path, violations: &mut Vec<String>) -> Result<()> {
     let source = read(root, DOCKERFILE)?;
     check_rust_toolchain(root, &source, violations)?;
     let normalized = regex(r"\\\r?\n\s*").replace_all(&source, " ");
+    check_source_commit_binding(&source, &normalized, violations);
     check_runtime_environment(&normalized, violations);
     for (argument, expected) in EXPECTED_BASE_IMAGES {
         let pattern = format!(r"(?m)^ARG\s+{argument}=([^\s]+)\s*$");
@@ -94,6 +95,35 @@ fn check_dockerfile(root: &Path, violations: &mut Vec<String>) -> Result<()> {
         violations.push("生产镜像必须使用 API 内置健康检查".to_owned());
     }
     Ok(())
+}
+
+fn check_source_commit_binding(source: &str, normalized: &str, violations: &mut Vec<String>) {
+    let argument_count = source
+        .lines()
+        .filter(|line| line.trim() == "ARG SOURCE_COMMIT")
+        .count();
+    if argument_count != 3 {
+        violations.push(
+            "生产 Dockerfile 必须在全局、构建阶段和运行阶段各声明一次 ARG SOURCE_COMMIT".to_owned(),
+        );
+    }
+    for required in [
+        r#"grep -Eq '^[0-9a-f]{40}$'"#,
+        r#"> /workspace/.local-tests/build/source-commit"#,
+        r#"rm /workspace/.local-tests/build/source-commit"#,
+        r#"LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}""#,
+    ] {
+        if !normalized.contains(required) {
+            violations.push(format!(
+                "生产 Dockerfile 的源码提交绑定缺少必要步骤: {required}"
+            ));
+        }
+    }
+    for forbidden in ["RYFRAME_BUILD_COMMIT", "ENV SOURCE_COMMIT"] {
+        if source.contains(forbidden) {
+            violations.push(format!("生产 Dockerfile 不得继续使用 {forbidden}"));
+        }
+    }
 }
 
 fn check_runtime_environment(normalized: &str, violations: &mut Vec<String>) {
@@ -267,7 +297,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_runtime_environment, regex};
+    use super::{check_runtime_environment, check_source_commit_binding, regex};
 
     fn runtime_violations(source: &str) -> Vec<String> {
         let normalized = regex(r"\\\r?\n\s*").replace_all(source, " ");
@@ -330,6 +360,43 @@ mod tests {
             assert_eq!(violations.len(), 1);
             assert!(violations[0].contains("缺少 FROM"));
             assert!(violations[0].contains("运行阶段"));
+        }
+    }
+
+    #[test]
+    fn source_commit_binding_rejects_legacy_or_incomplete_delivery() {
+        let complete = concat!(
+            "ARG SOURCE_COMMIT\n",
+            "FROM builder AS builder\n",
+            "ARG SOURCE_COMMIT\n",
+            "RUN printf '%s\\n' \"${SOURCE_COMMIT}\" | grep -Eq '^[0-9a-f]{40}$' \\\n",
+            "    && printf '%s\\n' \"${SOURCE_COMMIT}\" > /workspace/.local-tests/build/source-commit \\\n",
+            "    && cargo build --locked \\\n",
+            "    && rm /workspace/.local-tests/build/source-commit\n",
+            "FROM runtime\n",
+            "ARG SOURCE_COMMIT\n",
+            "LABEL org.opencontainers.image.revision=\"${SOURCE_COMMIT}\"\n",
+        );
+        let normalized = regex(r"\\\r?\n\s*").replace_all(complete, " ");
+        let mut violations = Vec::new();
+        check_source_commit_binding(complete, &normalized, &mut violations);
+        assert!(violations.is_empty(), "{violations:#?}");
+
+        for invalid in [
+            complete.replacen("ARG SOURCE_COMMIT\n", "", 1),
+            complete.replace("^[0-9a-f]{40}$", "^[0-9a-f]+$"),
+            complete.replace("rm /workspace/.local-tests/build/source-commit", "true"),
+            complete.replace(
+                "LABEL org.opencontainers.image.revision=\"${SOURCE_COMMIT}\"",
+                "LABEL org.opencontainers.image.revision=development",
+            ),
+            format!("{complete}ENV SOURCE_COMMIT=unknown\n"),
+            format!("{complete}ARG RYFRAME_BUILD_COMMIT\n"),
+        ] {
+            let normalized = regex(r"\\\r?\n\s*").replace_all(&invalid, " ");
+            let mut violations = Vec::new();
+            check_source_commit_binding(&invalid, &normalized, &mut violations);
+            assert!(!violations.is_empty(), "非法源码提交绑定必须被拒绝");
         }
     }
 }

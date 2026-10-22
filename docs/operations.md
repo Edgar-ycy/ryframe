@@ -6,6 +6,13 @@
 
 生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在受控的忽略目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <directory>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<digest>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过：
 
+镜像构建使用 Docker 的 `SOURCE_COMMIT` 构建参数绑定 40 位小写提交 SHA。Dockerfile 校验后将它写入构建容器内的受管 `.local-tests/build/source-commit`，Rust 构建脚本只读取该文件；它不属于应用环境变量，也不会进入运行镜像。仓库内正式维护构建和恢复构建由 Rust/Python 协调器独占创建同一受管文件，完成后核对内容再清理；并发、漂移或未知清理结果会失败并保留现场。直接运行普通开发构建且没有该文件时，版本信息明确为 `development`，不能用于正式恢复证明。
+
+```powershell
+$sourceCommit = git rev-parse HEAD
+docker build --build-arg "SOURCE_COMMIT=$sourceCommit" -f deploy/Dockerfile .
+```
+
 ```powershell
 docker compose -f deploy/compose.prod.yml config
 docker compose -f deploy/compose.prod.yml up -d

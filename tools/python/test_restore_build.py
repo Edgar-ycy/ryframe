@@ -174,7 +174,7 @@ class RestoreBuildTests(unittest.TestCase):
         environment = {
             "RUSTUP_TOOLCHAIN": "stable-fixture",
             "RUSTC_BOOTSTRAP": "0",
-            "RYFRAME_BUILD_COMMIT": "a" * 40,
+            "RYFRAME_LEGACY_CONFIG": "ignored-old-entry",
             "SOURCE_DATE_EPOCH": "1",
             "PATH": "fixture-native-tools",
             "INCLUDE": "fixture-headers",
@@ -193,7 +193,8 @@ class RestoreBuildTests(unittest.TestCase):
         first = build.build_environment(environment)
         self.assertEqual(
             first["variables"],
-            sorted(name for name in environment if name != "APP_SECRET"),
+            sorted(name for name in environment
+                   if name not in {"APP_SECRET", "RYFRAME_LEGACY_CONFIG"}),
         )
         self.assertNotIn("must-not-be-recorded", json.dumps(first))
         changed = dict(environment, SOURCE_DATE_EPOCH="2")
