@@ -34,27 +34,37 @@ class ObjectReads:
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs))
-        operation = command[command.index("s3api") + 1]
-        bucket, key = command[command.index("--bucket") + 1], command[command.index("--key") + 1]
+        if "__s3-read" not in command:
+            raise AssertionError("只读采集没有使用原生 Rust S3 协议")
+        request = json.loads(kwargs["input"])
+        operation, bucket, key = request["operation"], request["bucket"], request["key"]
         if operation not in {"get-object", "head-object"}:
             raise AssertionError("只读采集发出了写请求")
         if key.endswith("/.ryframe-owner"):
             body = f"ryframe-owner:v1:{key.split('/')[0]}:object-storage:{bucket}".encode()
             if self.owner_failure == bucket:
                 body = b"different-owner"
-            Path(command[-1]).write_bytes(body)
-            return subprocess.CompletedProcess(command, 0, stdout=b"{}")
+            Path(request["destination"]).write_bytes(body)
+            value = {}
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps({"ok": True, "result": value}).encode(), stderr=b""
+            )
         if self.failure == operation:
-            raise subprocess.CalledProcessError(254, command, stderr=(
-                "aws: [ERROR]: An error occurred (AccessDenied) when calling the GetObject operation: "
-                "access-fixture secret-fixture").encode())
+            response = {"ok": False, "error": {"category": "NativeS3ReadRejected",
+                        "message": "AccessDenied access-fixture secret-fixture",
+                        "remote_write_may_have_occurred": False,
+                        "automatic_retry_permitted": False}}
+            return subprocess.CompletedProcess(
+                command, 1, stdout=json.dumps(response).encode(), stderr=b"private stderr"
+            )
         if operation == "get-object":
-            Path(command[-1]).write_bytes(self.body)
+            Path(request["destination"]).write_bytes(self.body)
             value = self.downloaded
         else:
             self.heads += 1
             value = self.head if self.heads == 1 else self.after
-        return subprocess.CompletedProcess(command, 0, stdout=self.raw or json.dumps(value).encode())
+        stdout = self.raw or json.dumps({"ok": True, "result": value}).encode()
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr=b"")
 
 
 class CaptureTests(unittest.TestCase):
@@ -163,7 +173,8 @@ class CaptureTests(unittest.TestCase):
         return failure
 
     def business_calls(self):
-        return [command for command, _ in self.store.calls if "/.ryframe-owner" not in command[command.index("--key") + 1]]
+        return [json.loads(options["input"]) for _, options in self.store.calls
+                if not json.loads(options["input"])["key"].endswith("/.ryframe-owner")]
 
     def test_exact_source_read_binds_all_owners_and_full_raw_body_without_claiming_clone(self):
         result = self.capture()
@@ -180,12 +191,13 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual((self.output / "object.bin").read_bytes(), self.store.body)
         self.assertEqual(len(self.store.calls), 13)
         for command, kwargs in self.store.calls:
-            self.assertIn(self.plan["source"]["s3"]["endpoint"], command)
-            self.assertTrue(command[command.index("--key") + 1].startswith("source/"))
-            self.assertEqual(kwargs["env"]["AWS_MAX_ATTEMPTS"], "1")
+            request = json.loads(kwargs["input"])
+            self.assertIn("__s3-read", command)
+            self.assertEqual(request["configuration"]["endpoint"], self.plan["source"]["s3"]["endpoint"])
+            self.assertTrue(request["key"].startswith("source/"))
+            self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
             self.assertNotIn("secret-fixture", command)
-            self.assertNotIn("--range", command)
-            self.assertFalse(any(value.startswith("--response-") for value in command))
+            self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
         self.assertEqual(json.loads((self.output / "capture.json").read_text(encoding="utf-8")), result)
 
     def test_rustfs_missing_get_language_is_saved_separately_from_head_metadata(self):
@@ -217,17 +229,18 @@ class CaptureTests(unittest.TestCase):
             value["VersionId"] = "version-one"
         self.capture()
         before, download, after = self.business_calls()
-        self.assertNotIn("--if-match", before)
-        self.assertEqual(download[download.index("--if-match") + 1], '"fixture-etag"')
-        self.assertEqual(download[download.index("--version-id") + 1], "version-one")
-        self.assertIn("--if-match", after)
-        self.assertNotIn("--version-id", after)
+        self.assertIsNone(before["if_match"])
+        self.assertEqual(download["if_match"], '"fixture-etag"')
+        self.assertEqual(download["version"], "version-one")
+        self.assertEqual(after["if_match"], '"fixture-etag"')
+        self.assertIsNone(after["version"])
 
     def test_exact_target_side_is_explicitly_read_only(self):
         result = self.capture(side="target", key="target/system/registered.bin")
         self.assertEqual(result["side"], "target")
         self.assertEqual(result["scope_id"], "target")
-        self.assertTrue(all(command[command.index("--key") + 1].startswith("target/") for command, _ in self.store.calls))
+        self.assertTrue(all(json.loads(options["input"])["key"].startswith("target/")
+                            for _, options in self.store.calls))
 
     def test_unknown_head_metadata_is_preserved_as_failure_and_never_downloaded(self):
         self.store.head["UnrecognizedObjectPolicy"] = "must-not-drop"
@@ -275,9 +288,9 @@ class CaptureTests(unittest.TestCase):
         self.store.failure = "get-object"
         self.failed()
         diagnostic = json.loads((self.output / "get.diagnostic.json").read_text(encoding="utf-8"))
-        self.assertEqual(diagnostic["returncode"], 254)
-        self.assertIn("AccessDenied", diagnostic["stderr"])
-        self.assertIn("[REDACTED]", diagnostic["stderr"])
+        self.assertEqual(diagnostic["returncode"], 1)
+        self.assertEqual(diagnostic["error_type"], "NativeS3InvocationError")
+        self.assertEqual(diagnostic["stderr"], "")
         self.assertNotIn("secret-fixture", diagnostic["stderr"])
         self.assertNotIn("access-fixture", diagnostic["stderr"])
         self.assertEqual(len(self.business_calls()), 2)
@@ -293,7 +306,8 @@ class CaptureTests(unittest.TestCase):
         body = directory / "object.bin"
         self.assertGreater(len(str(body)), 260)
         reader = CaptureReader(self.tools, "source", directory)
-        response = reader.read("get", "get-object", "uploads", "source/system/file", body=body)
+        response = reader.read("get", "get-object", "uploads", "source/system/file",
+                               body=body, max_bytes=1024)
         with open(capture_module.filesystem_path(body), "rb") as stream:
             self.assertEqual(stream.read(), self.store.body)
         with open(capture_module.filesystem_path(directory / "get.diagnostic.json"), encoding="utf-8") as stream:
@@ -302,7 +316,8 @@ class CaptureTests(unittest.TestCase):
         self.output = directory / "完整采集"
         result = self.capture()
         verified = verify_capture(self.tools, "source", "uploads", "source/system/registered.bin",
-                                  self.output, expected=self.expected, max_bytes=1024)
+                                  self.output, expected=self.expected, max_bytes=1024,
+                                  transport="rust-s3-sigv4")
         self.assertEqual(verified["capture"], result)
 
     def test_oversized_head_is_rejected_before_body_and_partial_or_excess_body_never_pass(self):
@@ -345,13 +360,13 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(original.read_text(encoding="utf-8"), "keep")
         self.assertEqual(self.store.calls, [])
 
-    def test_tool_tampering_and_reader_write_operations_never_reach_external_runner(self):
+    def test_native_read_needs_no_object_cli_and_rejects_write_operation(self):
         reader = CaptureReader(self.tools, "source", self.work)
         with self.assertRaises(ValueError):
             reader.read("forbidden", "put-object", "uploads", "source/system/file", body=self.original)
-        Path(self.plan["tools"]["aws"]["path"]).write_bytes(b"changed-tool")
-        self.failed()
-        self.assertEqual(self.store.calls, [])
+        self.assertNotIn("aws", self.plan["tools"])
+        self.capture()
+        self.assertEqual(len(self.store.calls), 13)
 
     def test_result_fsync_failure_never_returns_success_even_if_capture_json_remains(self):
         original = capture_module.write_json
@@ -371,13 +386,14 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(failure["error_type"], "OSError")
         with self.assertRaisesRegex(ValueError, "失败证据"):
             verify_capture(self.tools, "source", "uploads", "source/system/registered.bin", self.output,
-                           expected=self.expected, max_bytes=1024)
+                           expected=self.expected, max_bytes=1024, transport="rust-s3-sigv4")
 
     def test_owner_change_after_body_keeps_bytes_but_fails_capture(self):
         def read(command, **kwargs):
             response = self.store(command, **kwargs)
-            if (command[command.index("s3api") + 1] == "get-object"
-                    and not command[command.index("--key") + 1].endswith("/.ryframe-owner")):
+            request = json.loads(kwargs["input"])
+            if (request["operation"] == "get-object"
+                    and not request["key"].endswith("/.ryframe-owner")):
                 self.store.owner_failure = "uploads"
             return response
 
@@ -387,7 +403,7 @@ class CaptureTests(unittest.TestCase):
 
     def verify(self):
         return verify_capture(self.tools, "source", "uploads", "source/system/registered.bin", self.output,
-                              expected=self.expected, max_bytes=1024)
+                              expected=self.expected, max_bytes=1024, transport="rust-s3-sigv4")
 
     def test_verify_is_offline_read_only_and_preserves_header_difference(self):
         self.store.downloaded.pop("ContentLanguage")
@@ -421,7 +437,7 @@ class CaptureTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.verify()
 
-    def test_verify_checks_actual_object_owner_and_tool_bytes_not_self_reported_hashes(self):
+    def test_verify_checks_actual_object_owner_bytes_without_object_cli(self):
         for index, name in enumerate(("object.bin", "owner-before-uploads.bin", "owner-after-config-packages.bin")):
             with self.subTest(file=name):
                 self.output = self.work / f"bytes-{index}"
@@ -433,9 +449,8 @@ class CaptureTests(unittest.TestCase):
         self.output = self.work / "changed-tool"
         self.store.heads = 0
         self.capture()
-        Path(self.plan["tools"]["aws"]["path"]).write_bytes(b"changed-tool")
-        with self.assertRaises(ValueError):
-            self.verify()
+        self.assertNotIn("aws", self.plan["tools"])
+        self.assertEqual(self.verify()["status"], "capture_evidence_verified")
 
     def test_verify_requires_every_original_owner_response_and_complete_result(self):
         self.capture()

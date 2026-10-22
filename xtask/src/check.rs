@@ -6,6 +6,8 @@ pub(crate) mod architecture;
 mod cargo_command;
 #[path = "check/change_surface.rs"]
 mod change_surface;
+#[path = "check/consumer_context.rs"]
+pub(crate) mod consumer_context;
 #[path = "check/context.rs"]
 mod context;
 #[path = "check/cyclonedx.rs"]

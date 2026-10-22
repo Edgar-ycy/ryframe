@@ -2,7 +2,6 @@
 from pathlib import Path
 import hashlib
 import json
-import re
 
 from devex_clone import read_json
 from devex_clone_capture import unique_object
@@ -25,17 +24,11 @@ def validate_plan_receipt(path: Path, executable: str, plan: dict) -> dict:
         parsed = json.loads(document, object_pairs_hook=unique_object)
     except (json.JSONDecodeError, ValueError) as error:
         raise ValueError("reset plan 命令输出不是完整清单与摘要") from error
-    expected = json.loads(json.dumps(plan["manifest"]))
-    expected["credential_version"] = "[REDACTED]"
-    restored, replacements = re.subn(
-        r'("credential_version"\s*:\s*)"\[REDACTED\]"',
-        lambda match: match.group(1) + json.dumps(
-            plan["manifest"]["credential_version"], ensure_ascii=False), document)
     if (value["command"] != [executable, "plan"] or type(value["returncode"]) is not int
             or value["returncode"] != 0 or value["error_type"] is not None or value["stderr"] != ""
             or not digest_line.endswith("\n") or digest_line[:-1] != plan["plan_hash"]
-            or parsed != expected or replacements != 1
-            or hashlib.sha256(restored.encode()).hexdigest() != digest_line[:-1]):
+            or parsed != plan["manifest"]
+            or hashlib.sha256(document.encode()).hexdigest() != digest_line[:-1]):
         raise ValueError("reset plan 命令收据与固定清单不一致")
     return binding(path)
 

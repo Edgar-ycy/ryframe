@@ -47,6 +47,19 @@ impl AppConfig {
         if self.app.port == 0 {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
+        if self.app.locales_dir.as_os_str().is_empty()
+            || self
+                .app
+                .locales_dir
+                .as_os_str()
+                .as_encoded_bytes()
+                .iter()
+                .any(|byte| matches!(*byte, b'\0' | b'\r' | b'\n'))
+        {
+            return Err(AppError::Config(
+                "app.locales_dir 必须是非空且不含 NUL、CR 或 LF 的路径；请修正配置文件".into(),
+            ));
+        }
         Ok(())
     }
 

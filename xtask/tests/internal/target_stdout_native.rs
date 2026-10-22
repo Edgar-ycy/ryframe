@@ -38,6 +38,12 @@ impl Fixture {
             .join(format!("target-stdout-{}", uuid::Uuid::new_v4().simple()));
         let local = root.join(".local-tests");
         fs::create_dir_all(&local).unwrap();
+        fs::create_dir(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/app.test.toml"),
+            "[database.primary]\npassword=\"private-stdout\"\n",
+        )
+        .unwrap();
         let defaults = local.join("mysql.cnf");
         fs::write(&defaults, "[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=private-stdout\nssl-mode=DISABLED\n").unwrap();
         let mysql = local.join("mysql");
@@ -53,7 +59,7 @@ impl Fixture {
             initialized: json!({}),
             request_path: local.join("request.json"),
             request: json!({"target": {"scope_id": "stdout-fixture", "databases": [database]}, "tools": {"mysql": {"path": mysql, "sha256": digest::file(&mysql).unwrap().sha256}}}),
-            environment: BTreeMap::from([("APP_PASSWORD".into(), "private-stdout".into())]),
+            environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),
             observation_dir: local,
         };
         Self {
@@ -81,9 +87,12 @@ impl Fixture {
 
     fn system_spec(&self, stdout: StdoutTarget, code: &str) -> CommandSpec {
         CommandSpec {
-            program: std::env::var_os("RYFRAME_PYTHON")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("python")),
+            program: crate::process::resolved_executable(
+                Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap(),
+                "python",
+            )
+            .unwrap()
+            .into(),
             args: vec!["-B".into(), "-c".into(), code.into()],
             cwd: self.root.clone(),
             environment: std::env::vars().collect(),
@@ -142,6 +151,13 @@ impl Fake {
 }
 
 impl Transport for Fake {
+    fn s3(
+        &self,
+        _: crate::recovery::clone::native::s3::Request,
+    ) -> crate::Result<serde_json::Value> {
+        panic!("该测试不允许对象存储调用")
+    }
+
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
         self.calls.set(self.calls.get() + 1);
         let StdoutTarget::HeldFile { mut file, .. } = spec.stdout else {

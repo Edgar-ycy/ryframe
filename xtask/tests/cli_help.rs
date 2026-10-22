@@ -34,9 +34,19 @@ fn dev_help_lists_every_supported_development_option() {
     assert!(result.stderr.is_empty());
     let output = String::from_utf8(result.stdout).unwrap();
     assert!(
-        output.contains("cargo xtask dev [--measure-once]"),
+        output.contains("cargo xtask dev [--config-dir <目录>] [--workspace-root <后端根>] [--plan] [--measure-once [--case <场景>] [--output <文件>]]"),
         "{output}"
     );
+    for option in [
+        "--config-dir",
+        "--workspace-root",
+        "--plan",
+        "--measure-once",
+        "--case",
+        "--output",
+    ] {
+        assert!(output.contains(option), "{option}\n{output}");
+    }
     assert!(output.contains("只管理后端 API、Worker"), "{output}");
     assert!(output.contains("corepack pnpm dev"), "{output}");
     assert!(!output.contains("Vite"), "{output}");
@@ -83,6 +93,25 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(output.contains("--plan 只输出同一任务图，不启动 sudo、不创建目录"));
     assert!(output.contains("ci integration 使用 Rust xtask 生成临时回环 CA"));
     assert!(output.contains("不调用 Python"));
+    for field in [
+        ".local-tests/integration/ci.toml",
+        "format_version",
+        "run_id",
+        "artifact_root",
+        "redis_config_dir",
+        "openssl_program",
+        "test_jobs",
+        "timeout_secs",
+    ] {
+        assert!(output.contains(field), "{field}\n{output}");
+    }
+    for removed in [
+        "RYFRAME_TLS_ARTIFACT_DIR",
+        "RYFRAME_REDIS_HOST",
+        "RYFRAME_OPENSSL",
+    ] {
+        assert!(!output.contains(removed), "{removed}\n{output}");
+    }
 }
 
 #[test]

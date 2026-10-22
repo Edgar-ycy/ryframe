@@ -61,6 +61,7 @@ chrono = { workspace = true, optional = true, features = ["serde"] }
 tokio = { workspace = true, optional = true, features = ["time"] }
 
 [dev-dependencies]
+same-file.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [[bin]]

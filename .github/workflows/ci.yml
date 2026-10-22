@@ -251,17 +251,7 @@ jobs:
            needs.plan.outputs.consumer_contract == 'true') }}
     runs-on: ubuntu-24.04
     env:
-      RYFRAME_INTEGRATION_RUN_ID: resource-${{ github.run_id }}-${{ github.run_attempt }}
-      RYFRAME_MYSQL_INTEGRATION: "1"
-      RYFRAME_MYSQL_TLS_INTEGRATION: "1"
-      RYFRAME_MYSQL_HOST: 127.0.0.1
-      RYFRAME_MYSQL_PORT: "3306"
-      RYFRAME_MYSQL_USERNAME: root
-      RYFRAME_MYSQL_PASSWORD: ryframe-ci-password
-      RYFRAME_REDIS_INTEGRATION: "1"
-      RYFRAME_REDIS_HOST: 127.0.0.1
-      RYFRAME_REDIS_PORT: "6379"
-      RYFRAME_REDIS_DATABASE: "15"
+      APP_ENV: test
     services:
       mysql:
         image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
@@ -374,6 +364,31 @@ jobs:
         working-directory: backend
         run: cargo test --locked -p xtask --test internal resource_gate_replay -- --test-threads=1
 
+      - name: 准备隔离服务文件配置
+        if: ${{ needs.plan.outputs.resource_gate == 'true' }}
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in .local-tests/mysql/config .local-tests/service-tests/redis/config; do
+            test ! -e "$directory" && test ! -L "$directory"
+            mkdir -p "$directory"
+            cp config/app.toml "$directory/app.toml"
+            printf 'scope_id = "ci-${{ github.run_id }}-${{ github.run_attempt }}"\nsnowflake_worker_id = 1\n' > "$directory/app.test.toml"
+            cat tools/fixtures/integration/app.test.toml >> "$directory/app.test.toml"
+          done
+          mkdir -p .local-tests/integration
+          test ! -e .local-tests/integration/ci.toml && test ! -L .local-tests/integration/ci.toml
+          cat > .local-tests/integration/ci.toml <<'TOML'
+          format_version = 1
+          run_id = "resource-${{ github.run_id }}-${{ github.run_attempt }}"
+          artifact_root = "${{ runner.temp }}/ryframe-resource-tls"
+          redis_config_dir = ".local-tests/service-tests/redis/config"
+          openssl_program = "openssl"
+          test_jobs = 4
+          timeout_secs = 900
+          TOML
+
       - name: 执行资源影响闭包与消费者门禁
         if: ${{ needs.plan.outputs.resource_gate == 'true' }}
         working-directory: backend
@@ -403,17 +418,7 @@ jobs:
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.integration == 'true' }}
     runs-on: ubuntu-24.04
     env:
-      RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-      RYFRAME_MYSQL_INTEGRATION: "1"
-      RYFRAME_MYSQL_TLS_INTEGRATION: "1"
-      RYFRAME_MYSQL_HOST: 127.0.0.1
-      RYFRAME_MYSQL_PORT: "3306"
-      RYFRAME_MYSQL_USERNAME: root
-      RYFRAME_MYSQL_PASSWORD: ryframe-ci-password
-      RYFRAME_REDIS_INTEGRATION: "1"
-      RYFRAME_REDIS_HOST: 127.0.0.1
-      RYFRAME_REDIS_PORT: "6379"
-      RYFRAME_REDIS_DATABASE: "15"
+      APP_ENV: test
     services:
       mysql:
         image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
@@ -459,10 +464,32 @@ jobs:
             v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: 准备隔离服务文件配置
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in .local-tests/mysql/config .local-tests/service-tests/redis/config; do
+            test ! -e "$directory" && test ! -L "$directory"
+            mkdir -p "$directory"
+            cp config/app.toml "$directory/app.toml"
+            printf 'scope_id = "ci-${{ github.run_id }}-${{ github.run_attempt }}"\nsnowflake_worker_id = 1\n' > "$directory/app.test.toml"
+            cat tools/fixtures/integration/app.test.toml >> "$directory/app.test.toml"
+          done
+          mkdir -p .local-tests/integration
+          test ! -e .local-tests/integration/ci.toml && test ! -L .local-tests/integration/ci.toml
+          cat > .local-tests/integration/ci.toml <<'TOML'
+          format_version = 1
+          run_id = "integration-${{ github.run_id }}-${{ github.run_attempt }}"
+          artifact_root = "${{ runner.temp }}/ryframe-tls-integration"
+          redis_config_dir = ".local-tests/service-tests/redis/config"
+          openssl_program = "openssl"
+          test_jobs = 4
+          timeout_secs = 900
+          TOML
+
       - name: 验证 MySQL、Redis 与 AWS-LC TLS 真实出站协议
         working-directory: backend
-        env:
-          RYFRAME_TLS_ARTIFACT_DIR: ${{ runner.temp }}/ryframe-tls-integration
         run: cargo xtask check ci integration
 
       - name: 保存 AWS-LC TLS fixture 与测试日志

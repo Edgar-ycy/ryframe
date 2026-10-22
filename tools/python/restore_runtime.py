@@ -50,7 +50,8 @@ from restore_runtime_evidence import (
     validate_frontend_receipt as _validate_frontend_receipt,
     validate_runtime_receipt as _validate_runtime_receipt,
 )
-from source_inventory import build_source_domains, capture_inventory, frontend_environment_files
+from source_inventory import build_source_domains, capture_inventory
+from restore_frontend_configuration import verify_frontend_inputs
 
 ROLES = ("api", "worker", "frontend")
 
@@ -90,6 +91,7 @@ def _read_response(url: str, limit: int, headers: dict | None = None) -> tuple[o
 def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tuple[list[dict], list[ArtifactSnapshot]]:
     _canonical_endpoint(base_url, "", "前端端点")
     receipt = _validate_frontend_receipt(receipt)
+    inputs = verify_frontend_inputs(root, receipt["build"])
     files, snapshots = frontend_snapshots(root)
     if files != receipt["files"]:
         raise ValueError("前端生产构建与文件收据不一致")
@@ -102,6 +104,9 @@ def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tupl
         _headers, body = _read_response(url, item["bytes"], {"Accept-Encoding": "identity"})
         if len(body) != item["bytes"] or hashlib.sha256(body).hexdigest() != item["sha256"]:
             raise ValueError("恢复站点实际返回的资源与生产构建不一致")
+    inputs.assert_unchanged()
+    if frontend_snapshots(root)[0] != files:
+        raise ValueError("探针期间前端完整 dist 文件集合或内容发生漂移")
     return files, snapshots
 
 
@@ -113,12 +118,13 @@ def verify_frontend(root: Path, receipt: dict, sha: str, base_url: str) -> None:
         snapshot["head"] != sha
         or not snapshot["clean"]
         or receipt["sources"] != build_source_domains(before, "frontend")
-        or receipt["build"]["environment_files"] != frontend_environment_files(root)
     ):
         raise ValueError("恢复前端必须使用精确干净 SHA 的生产构建")
+    inputs = verify_frontend_inputs(root, receipt["build"], expected_head=sha)
     _files, snapshots = _verify_frontend_artifacts(root, receipt, base_url)
-    if capture_inventory(root) != before or receipt["build"]["environment_files"] != frontend_environment_files(root):
+    if capture_inventory(root) != before:
         raise ValueError("核验期间前端源码发生变化")
+    inputs.assert_unchanged()
     for snapshot in snapshots:
         snapshot.assert_unchanged()
 

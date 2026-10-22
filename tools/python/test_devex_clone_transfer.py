@@ -95,22 +95,11 @@ class OfflineTools:
         self.calls.append((command, kwargs))
         if any(part.startswith("--database=") for part in command):
             return self.mysql(command, kwargs)
-        operation = command[command.index("s3api") + 1]
-        bucket, key = command[command.index("--bucket") + 1], command[command.index("--key") + 1]
-        if operation == "put-object":
-            return self.put(command, bucket, key)
-        if operation not in {"head-object", "get-object"}:
-            raise AssertionError("出现非计划写入或清理命令")
-        if key.endswith("/.ryframe-owner"):
-            Path(command[-1]).write_bytes(f"ryframe-owner:v1:{key.split('/')[0]}:object-storage:{bucket}".encode())
-            return subprocess.CompletedProcess(command, 0, stdout=b"{}")
-        body, metadata = self.objects[bucket, key]
-        response = {**metadata, "ContentLength": len(body), "ETag": '"fixture"', "LastModified": "2026-09-04T00:00:00+00:00"}
-        if operation == "get-object":
-            Path(command[-1]).write_bytes(body)
-            if self.failure == "get-header-loss":
-                response.pop("ContentLanguage", None)
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(response).encode())
+        if "__s3-put-if-absent" in command:
+            return self.native_put(command, kwargs)
+        if "__s3-read" in command:
+            return self.native_read(command, kwargs)
+        raise AssertionError("出现未登记的命令；对象操作必须使用原生 Rust S3 协议")
 
     def mysql(self, command, kwargs):
         actual = next(part.split("=", 1)[1] for part in command if part.startswith("--database="))
@@ -132,20 +121,49 @@ class OfflineTools:
             raise subprocess.TimeoutExpired(command, 1800)
         return subprocess.CompletedProcess(command, 0, stdout=b"")
 
-    def put(self, command, bucket, key):
-        self.case.assertEqual(command[command.index("--if-none-match") + 1], "*")
+    def native_put(self, command, kwargs):
+        request = json.loads(kwargs["input"].decode("utf-8"))
+        bucket, key = request["bucket"], request["key"]
         self.case.assertTrue(key.startswith("clone-target/"))
         self.case.assertTrue(any(step["phase"] == "unknown" for step in self.case.ledger.snapshot()["steps"].values()))
+        base = {"automatic_retry_permitted": False}
         if self.failure in {"409", "412"}:
-            raise subprocess.CalledProcessError(255, command, stderr=f"An error occurred ({self.failure}) when calling the PutObject operation: fixture".encode())
-        path = Path(command[command.index("--body") + 1])
-        metadata = json.loads(Path(command[command.index("--cli-input-json") + 1].removeprefix("file://")).read_text())
-        self.objects[bucket, key] = path.read_bytes(), metadata
-        if self.after_put:
-            self.after_put()
-        if self.failure == "put-response-lost":
-            raise subprocess.TimeoutExpired(command, 1800)
-        return subprocess.CompletedProcess(command, 0, stdout=b'{"ETag":"fixture"}')
+            status = "already_exists" if self.failure == "412" else "needs_reconciliation"
+            outcome = {**base, "status": status, "http_status": int(self.failure),
+                       "remote_write_may_have_occurred": self.failure == "409"}
+        else:
+            path = Path(request["source"])
+            self.objects[bucket, key] = path.read_bytes(), request["metadata"]
+            if self.after_put:
+                self.after_put()
+            if self.failure == "put-response-lost":
+                raise subprocess.TimeoutExpired(command, 1810)
+            outcome = {**base, "status": "created_unverified", "http_status": 200,
+                       "remote_write_may_have_occurred": True,
+                       "response": {"ETag": '"fixture"'}}
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps({"ok": True, "result": outcome}).encode(), stderr=b""
+        )
+
+    def native_read(self, command, kwargs):
+        request = json.loads(kwargs["input"])
+        bucket, key, operation = request["bucket"], request["key"], request["operation"]
+        self.case.assertIn(operation, {"head-object", "get-object"})
+        if key.endswith("/.ryframe-owner"):
+            body = f"ryframe-owner:v1:{key.split('/')[0]}:object-storage:{bucket}".encode()
+            Path(request["destination"]).write_bytes(body)
+            response = {}
+        else:
+            body, metadata = self.objects[bucket, key]
+            response = {**metadata, "ContentLength": len(body), "ETag": '"fixture"',
+                        "LastModified": "2026-09-04T00:00:00+00:00"}
+            if operation == "get-object":
+                Path(request["destination"]).write_bytes(body)
+                if self.failure == "get-header-loss":
+                    response.pop("ContentLanguage", None)
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps({"ok": True, "result": response}).encode(), stderr=b""
+        )
 
 
 class TransferTests(unittest.TestCase):
@@ -165,10 +183,10 @@ class TransferTests(unittest.TestCase):
         executable.write_bytes(b"offline fixture tool")
         defaults = self.work / "fixture.cnf"
         defaults.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture\n")
-        tools_plan = {"tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]} for name in ("mysql", "aws")}}
+        tools_plan = {"tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]} for name in ("mysql",)}}
         for side in ("source", "target"):
             declared = self.fixture.value[side]
-            tools_plan[side] = {"scope_id": declared["scope_id"], "s3": {"endpoint": declared["object_endpoint"], "region": "us-east-1", "access_key_env": "FIXTURE_ACCESS", "secret_key_env": "FIXTURE_SECRET"},
+            tools_plan[side] = {"scope_id": declared["scope_id"], "s3": {"endpoint": declared["object_endpoint"], "region": "us-east-1", "access_key": "fixture-access", "secret_key": "fixture-secret"},
                                 "databases": [{**item, "defaults_file": str(defaults), "defaults_sha256": file_digest(defaults)["sha256"]} for item in declared["databases"]]}
         self.runner = OfflineTools(self)
         self.tools = ExternalTools(tools_plan, self.work, self.runner)
@@ -185,7 +203,8 @@ class TransferTests(unittest.TestCase):
         return TransferSteps(self.backend, self.plan_file, self.tools, self.ledger, self.guard if guard else None)
 
     def writes(self):
-        return [(args, kwargs) for args, kwargs in self.runner.calls if "put-object" in args or any(part.startswith("--database=") for part in args)]
+        return [(args, kwargs) for args, kwargs in self.runner.calls
+                if "__s3-put-if-absent" in args or any(part.startswith("--database=") for part in args)]
 
     def apply_all(self, engine):
         for item in self.plan["databases"]:
@@ -232,12 +251,20 @@ class TransferTests(unittest.TestCase):
         with self.open():
             engine = self.engine()
             engine.apply_object(item["bucket"], item["target_key"])
-        commands = [command for command, _ in self.runner.calls]
-        self.assertEqual([command[command.index("s3api") + 1] for command in commands],
+        calls = list(self.runner.calls)
+        def operation(command, options):
+            if "__s3-put-if-absent" in command:
+                return "put-object"
+            if "__s3-read" in command:
+                return json.loads(options["input"])["operation"]
+            raise AssertionError("对象复制发出了未登记的协议命令")
+        self.assertEqual([operation(command, options) for command, options in calls],
                          ["put-object", "get-object", "head-object", "get-object", "head-object", "get-object"])
-        owners = [command for command in commands if command[command.index("--key") + 1].endswith("/.ryframe-owner")]
+        owners = [json.loads(options["input"])
+                  for command, options in calls if "__s3-read" in command
+                  and json.loads(options["input"])["key"].endswith("/.ryframe-owner")]
         self.assertEqual(len(owners), 2)
-        self.assertEqual([command[command.index("--bucket") + 1] for command in owners], [item["bucket"]] * 2)
+        self.assertEqual([request["bucket"] for request in owners], [item["bucket"]] * 2)
 
     def test_object_proof_failure_at_prewrite_checkpoint_keeps_unknown_intent_without_put(self):
         item = self.plan["objects"][0]

@@ -86,10 +86,16 @@ fn deployment_commands_preserve_fixed_images_paths_and_exact_check_counts() {
     assert_eq!(compose[0].program, "docker");
     assert_eq!(compose[0].arguments[0], "compose");
     assert!(
-        compose[0]
+        !compose[0]
             .arguments
             .iter()
-            .any(|value| value.ends_with("/tools/fixtures/deployment/deploy.env"))
+            .any(|value| value == "--env-file" || value.ends_with(".env"))
+    );
+    assert_eq!(compose[0].arguments.len(), 7);
+    assert_eq!(compose[0].arguments[1], "--project-directory");
+    assert_eq!(
+        compose[0].arguments[2],
+        root.to_str().unwrap().replace('\\', "/")
     );
     assert!(
         compose[0]
@@ -214,6 +220,7 @@ fn deployment_change_detection_covers_every_indirect_static_and_image_input() {
         ".github/workflows/extended-ci.yml",
         "migrations/src/m20260101.rs",
         "openapi/openapi.json",
+        "deploy/templates/api/app.prod.toml",
     ]
     .into_iter()
     .enumerate()

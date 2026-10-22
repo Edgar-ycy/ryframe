@@ -21,6 +21,10 @@ use crate::{
 
 #[path = "ci/frontend_source.rs"]
 pub(crate) mod frontend_source;
+#[path = "ci/integration_configuration.rs"]
+pub(crate) mod integration_configuration;
+#[path = "ci/integration_inputs.rs"]
+mod integration_inputs;
 #[path = "ci/required.rs"]
 mod required;
 #[path = "ci/resource_gate.rs"]
@@ -312,12 +316,10 @@ fn verify_formal_contract_source_from_environment(frontend_dir: &Path) -> Result
 
 fn integration() -> Result<()> {
     let root = root_dir();
+    let configuration = integration_configuration::IntegrationConfiguration::load(&root)?;
+    integration_inputs::require_service_inputs(&root)?;
     let targets = ci_target_policy()?;
-    let jobs = ci_test_jobs_from(
-        env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
-        cfg!(windows),
-        std::thread::available_parallelism().map_or(1, usize::from),
-    )?;
+    let jobs = configuration.test_jobs;
     for (package, target, features) in [
         (
             "ryframe-db",
@@ -342,7 +344,7 @@ fn integration() -> Result<()> {
             &integration_test_args_for_target(package, target, features, &targets.backend, jobs),
         )?;
     }
-    tls::run_from_environment(&root, Path::new(&targets.backend), jobs).map(|_| ())
+    tls::run_from_configuration(&root, Path::new(&targets.backend), &configuration).map(|_| ())
 }
 
 pub(crate) fn integration_test_args_for_target(

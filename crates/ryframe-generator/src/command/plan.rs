@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use ryframe_config::ToolSettings;
 
@@ -16,6 +19,7 @@ pub enum GenerationOperation {
 #[derive(Clone, Debug)]
 pub struct GenerationBuilder {
     root: PathBuf,
+    configuration_directory: Option<PathBuf>,
     operation: GenerationOperation,
     package: Option<String>,
     models: Option<Vec<String>>,
@@ -31,6 +35,7 @@ pub struct GenerationBuilder {
 #[derive(Clone, Debug)]
 pub struct GenerationPlan {
     pub workspace_root: PathBuf,
+    pub config_directory: PathBuf,
     pub operation: GenerationOperation,
     pub package: String,
     pub models: Vec<String>,
@@ -47,6 +52,7 @@ impl GenerationBuilder {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             root: workspace_root.into(),
+            configuration_directory: None,
             operation: GenerationOperation::Configured,
             package: None,
             models: None,
@@ -61,6 +67,12 @@ impl GenerationBuilder {
 
     pub fn operation(mut self, operation: GenerationOperation) -> Self {
         self.operation = operation;
+        self
+    }
+
+    /// 显式配置目录优先于工具文件；相对路径以后端工作区为基准。
+    pub fn configuration_directory(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.configuration_directory = Some(directory.into());
         self
     }
 
@@ -109,8 +121,14 @@ impl GenerationBuilder {
     }
 
     pub fn plan(self) -> Result<GenerationPlan, String> {
-        let settings = ToolSettings::load(&self.root).map_err(|error| error.to_string())?;
+        let settings =
+            ToolSettings::load(&self.root).map_err(|error| error.message().to_owned())?;
         let defaults = &settings.generator;
+        let config_directory = resolve_configuration_directory(
+            &self.root,
+            self.configuration_directory
+                .or_else(|| defaults.config_dir.clone()),
+        )?;
         let tables = self.tables.unwrap_or_else(|| defaults.tables.clone());
         let explicit_models = self
             .models
@@ -145,6 +163,7 @@ impl GenerationBuilder {
         };
         let plan = GenerationPlan {
             workspace_root: self.root,
+            config_directory,
             operation,
             package,
             models,
@@ -258,16 +277,18 @@ impl GenerationPlan {
     pub fn describe(&self) -> String {
         if let GenerationOperation::NewBusiness(module) = &self.operation {
             return format!(
-                "生成计划：创建业务模块={module}，业务包={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+                "生成计划：创建业务模块={module}，业务包={}，配置目录={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
                 self.package,
+                self.config_directory.display(),
                 self.write,
                 self.tasks().join(" → "),
             );
         }
         format!(
-            "生成计划：操作={:?}，业务包={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+            "生成计划：操作={:?}，业务包={}，配置目录={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
             self.operation,
             self.package,
+            self.config_directory.display(),
             self.models,
             self.source,
             self.tables,
@@ -276,6 +297,26 @@ impl GenerationPlan {
             self.tasks().join(" → "),
         )
     }
+}
+
+fn resolve_configuration_directory(
+    root: &Path,
+    selected: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let directory = selected.unwrap_or_else(|| PathBuf::from("config"));
+    if directory.to_str().is_none_or(|value| {
+        value.trim().is_empty()
+            || value
+                .chars()
+                .any(|character| matches!(character, '\0' | '\r' | '\n'))
+    }) {
+        return Err("生成器 config_dir 必须是非空 UTF-8 路径且不得包含 NUL、CR 或 LF".into());
+    }
+    Ok(if directory.is_absolute() {
+        directory
+    } else {
+        root.join(directory)
+    })
 }
 
 fn validate_names(names: &[String], kind: &str) -> Result<(), String> {

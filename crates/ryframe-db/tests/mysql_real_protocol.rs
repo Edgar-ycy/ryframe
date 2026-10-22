@@ -9,13 +9,12 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, 
 #[path = "support/mysql.rs"]
 mod mysql;
 use mysql::{
-    database_config_with_tls, db_error, execute, integration_enabled, require_count, run_mysql_test,
+    MySqlTestConfiguration, db_error, execute, integration_enabled, require_count, run_mysql_test,
 };
 
 #[path = "mysql_real_protocol/linked_job_states.rs"]
 mod linked_job_states;
 
-const TLS_ENABLE_ENV: &str = "RYFRAME_MYSQL_TLS_INTEGRATION";
 #[cfg(feature = "migration")]
 fn bootstrap_hashes() -> ryframe_db::migration::BootstrapHashes {
     let hash = "$argon2id$v=19$m=65536,t=3,p=4$O8qRRhiIVYjCHpUuwGWTSA$OO+ik8t1+N5a4PSipMbB71W/pfc3roAbq6mdIAgV1bA";
@@ -39,12 +38,18 @@ mod schema_verification;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn required_tls_negotiates_a_real_mysql_cipher() {
-    if !integration_enabled(TLS_ENABLE_ENV) {
-        eprintln!("跳过 MySQL TLS 真实协议测试：设置 {TLS_ENABLE_ENV}=1 后才会连接外部服务");
+    if !integration_enabled() {
+        eprintln!(
+            "跳过 MySQL TLS 真实协议测试：缺少显式 .local-tests/mysql/config 配置目录（未验收）"
+        );
         return;
     }
 
-    let database = connection::connect(&database_config_with_tls("mysql", DbTlsMode::Required))
+    let configured = MySqlTestConfiguration::load().unwrap_or_else(|error| panic!("{error}"));
+    let config = configured
+        .connection("mysql", Some(DbTlsMode::Required))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let database = connection::connect(&config)
         .await
         .unwrap_or_else(|error| panic!("使用 required TLS 连接 MySQL 失败: {error}"));
     let row = database

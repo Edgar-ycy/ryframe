@@ -50,25 +50,30 @@ const MINIMUM_PYTHON_VERSION: ToolVersion = ToolVersion {
 };
 
 pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
-    check_backend()?;
+    run_backend()?;
     check_frontend(frontend_dir)?;
     println!("RyFrame 开发环境检查通过。");
     Ok(())
 }
 
 pub(crate) fn run_backend() -> Result<()> {
-    check_backend()?;
+    check_backend_at(&root_dir())?;
     println!("RyFrame 后端开发环境检查通过。");
     Ok(())
 }
 
-fn check_backend() -> Result<()> {
-    let root = root_dir();
+pub(crate) fn run_backend_at(root: &Path) -> Result<()> {
+    check_backend_at(root)?;
+    println!("RyFrame 后端开发环境检查通过。");
+    Ok(())
+}
+
+fn check_backend_at(root: &Path) -> Result<()> {
     for executable in ["cargo", "rustc", "python", "git"] {
-        run_process(&root, executable, &["--version"])?;
+        run_process(root, executable, &["--version"])?;
     }
 
-    let python_version = python_version(&root)?;
+    let python_version = python_version(root)?;
     if python_version < MINIMUM_PYTHON_VERSION {
         return Err(format!(
             "Python {python_version} 低于后端脚本要求的 {}；请安装 Python 3.11+",
@@ -77,10 +82,7 @@ fn check_backend() -> Result<()> {
         .into());
     }
 
-    for (name, path) in [
-        ("后端 Git 仓库", root.join(".git")),
-        ("后端配置", root.join("config/app.toml")),
-    ] {
+    for (name, path) in [("后端 Git 仓库", root.join(".git"))] {
         if !path.exists() {
             return Err(format!("缺少{name}：{}", path.display()).into());
         }

@@ -257,7 +257,57 @@ _GUARD_OWNER = re.compile(r"owner-target-([a-z0-9-]+)-[a-f0-9]{32}\.txt")
 _GUARD_LAYOUT = re.compile(r"storage-layout-[a-f0-9]{32}\.json")
 
 
-def _read_only_command(value):
+def _read_only_object(value, target):
+    exact(value, {"transport", "operation", "bucket", "returncode", "error_type",
+                  "response", "key", "destination", "remote_writes", "scope_id",
+                  "endpoint", "configuration_sha256", "prefix", "continuation"})
+    operation, bucket, response = value["operation"], value["bucket"], value["response"]
+    if not isinstance(target, dict):
+        raise ValueError("部门采用守卫对象收据缺少目标配置")
+    scope, configuration = target.get("scope_id"), target.get("s3")
+    if (not isinstance(scope, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{2,47}", scope)
+            or not isinstance(configuration, dict)):
+        raise ValueError("部门采用守卫对象收据缺少明确有效的目标配置")
+    if (value["transport"] != "rust-s3-sigv4" or not isinstance(bucket, str) or bucket not in BUCKETS
+            or type(value["returncode"]) is not int or value["returncode"] != 0
+            or value["error_type"] is not None or not isinstance(response, dict)
+            or type(value["remote_writes"]) is not int or value["remote_writes"] != 0
+            or not isinstance(operation, str)
+            or operation not in {"head-bucket", "get-bucket-versioning", "list-objects-v2", "get-object"}
+            or value["scope_id"] != scope or value["endpoint"] != configuration.get("endpoint")
+            or value["configuration_sha256"] != plan_hash(configuration)
+            or value["prefix"] != (scope + "/" if operation == "list-objects-v2" else None)
+            or value["continuation"] is not None):
+        raise ValueError("部门采用守卫原生对象收据不是成功的固定只读调用")
+    if operation == "get-object":
+        destination = value["destination"]
+        if (not isinstance(scope, str) or value["key"] != f"{scope}/.ryframe-owner"
+                or not isinstance(destination, str)
+                or not re.fullmatch(rf"owner-target-{re.escape(bucket)}-[a-f0-9]{{32}}\.txt", destination)):
+            raise ValueError("部门采用守卫对象 owner 的作用域或输出路径无效")
+        expected = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
+        if (type(response.get("ContentLength")) is not int or response["ContentLength"] != len(expected)
+                or not isinstance(response.get("Metadata"), dict)
+                or any(not isinstance(response.get(field), str) or not response[field]
+                       for field in ("ETag", "LastModified", "ContentType"))):
+            raise ValueError("部门采用守卫对象 owner 的响应元数据无效")
+    else:
+        if value["key"] is not None or value["destination"] is not None:
+            raise ValueError("部门采用守卫对象观察包含未知 key 或输出路径")
+        if operation == "list-objects-v2":
+            if (not isinstance(scope, str) or set(response) != {"IsTruncated", "Contents"}
+                    or response["IsTruncated"] is not False
+                    or response["Contents"] != [{"Key": f"{scope}/.ryframe-owner"}]):
+                raise ValueError("部门采用守卫对象列表不是当前作用域的唯一 owner")
+        elif response not in (({}, {"MFADelete": "Disabled"})
+                               if operation == "get-bucket-versioning" else ({},)):
+            raise ValueError("部门采用守卫对象端点或版本响应无效")
+    return value
+
+
+def _read_only_command(value, target=None):
+    if isinstance(value, dict) and "transport" in value:
+        return _read_only_object(value, target)
     exact(value, {"command", "returncode", "error_type", "stdout", "stderr"}
           | ({"stdout_file"} if "stdout_file" in value else set()))
     command = value["command"]
@@ -271,12 +321,6 @@ def _read_only_command(value):
             index = command.index("--execute")
             if index + 1 >= len(command) or not command[index + 1].lstrip().upper().startswith("SELECT "):
                 raise ValueError("部门采用守卫包含非 SELECT MySQL 命令")
-    elif executable == "aws.exe":
-        if "s3api" not in command:
-            raise ValueError("部门采用守卫对象命令缺少 s3api")
-        operation = command[command.index("s3api") + 1]
-        if operation not in {"head-bucket", "get-bucket-versioning", "list-objects-v2", "get-object"}:
-            raise ValueError("部门采用守卫包含对象写命令")
     elif executable == "powershell.exe":
         script = command[-1]
         if ("Get-CimInstance Win32_Process" not in script
@@ -305,7 +349,17 @@ def _guard_artifacts(context, output):
         mysql_retry_match = _GUARD_MYSQL_RETRY.fullmatch(path.name)
         owner_match = _GUARD_OWNER.fullmatch(path.name)
         if command_match:
-            value = _read_only_command(read_json(path))
+            value = read_json(path)
+            target = context.target_config if isinstance(value, dict) and "transport" in value else None
+            value = _read_only_command(value, target)
+            if value.get("transport") == "rust-s3-sigv4":
+                if value["operation"] == "get-object":
+                    destination = output / value["destination"]
+                    if destination in referenced:
+                        raise ValueError("部门采用守卫对象输出被多份收据重复声明")
+                    referenced.add(destination)
+                artifacts.append(binding(path))
+                continue
             if "stdout_file" in value:
                 stdout = bound_file(context.backend, value["stdout_file"])
                 if stdout.parent != output:

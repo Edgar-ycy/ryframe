@@ -1,70 +1,270 @@
-//! MySQL 真实协议测试共用的精确隔离 fixture；只有显式环境开关才连接外部服务。
+//! MySQL 真实协议测试共用的精确隔离 fixture；只有显式文件配置才连接外部服务。
 use futures_util::FutureExt;
-use ryframe_config::{DbConnection, DbTlsMode};
+use ryframe_config::{AppConfig, DbConnection, DbTlsMode, Environment, SqlLogLevel};
 use ryframe_db::connection;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, sqlx};
 use std::{
-    env,
+    fs,
     future::Future,
+    io,
+    path::{Path, PathBuf},
     process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
-const ENABLE_ENV: &str = "RYFRAME_MYSQL_INTEGRATION";
-
 static SCHEMA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+#[path = "mysql_fixture_ownership.rs"]
+mod ownership;
+use ownership::{
+    AdminSession, Evidence, Ownership, Plan, business_identity_matches, validate_schema,
+};
+
+pub(crate) struct MySqlTestConfiguration {
+    config: AppConfig,
+}
+
+impl MySqlTestConfiguration {
+    pub(crate) fn load() -> Result<Self, String> {
+        let config = load_configuration_at(&configuration_directory()?)?;
+        Ok(Self { config })
+    }
+
+    pub(crate) fn scope_id(&self) -> &str {
+        self.config.scope_id.as_str()
+    }
+
+    pub(crate) fn connection(
+        &self,
+        database: &str,
+        tls_mode: Option<DbTlsMode>,
+    ) -> Result<DbConnection, String> {
+        connection_config(&self.config.database.primary, database, tls_mode)
+    }
+}
+
 struct MySqlFixture {
-    admin: DatabaseConnection,
+    admin: AdminSession,
     database: DatabaseConnection,
-    schema: String,
+    ownership: Ownership,
+    evidence: Evidence,
 }
 
 impl MySqlFixture {
     async fn create(test_name: &str) -> Result<Self, String> {
-        let schema = unique_schema(test_name);
-        let admin = connection::connect(&database_config("mysql"))
+        let root = workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))?;
+        let config = MySqlTestConfiguration::load()?;
+        let schema = unique_schema(config.scope_id(), test_name);
+        validate_schema(&schema)?;
+        let admin_config = config.connection("mysql", None)?;
+        let schema_config = config.connection(&schema, None)?;
+        let pool = connection::connect(&admin_config)
             .await
-            .map_err(|error| format!("连接 MySQL 管理库失败: {error}"))?;
-        execute(
-            &admin,
-            &format!("CREATE DATABASE `{schema}` CHARACTER SET utf8mb4"),
+            .map_err(|_| "连接 MySQL 管理库失败，未创建 schema".to_owned())?;
+        let mut admin = AdminSession::acquire(pool).await?;
+        let prepared = Self::prepare(
+            &mut admin,
+            &config,
+            &schema,
+            test_name,
+            &schema_config,
+            &root,
         )
-        .await
-        .map_err(|error| format!("创建测试 schema {schema} 失败: {error}"))?;
-
-        let database = match connection::connect(&database_config(&schema)).await {
-            Ok(database) => database,
+        .await;
+        match prepared {
+            Ok((database, ownership, evidence)) => Ok(Self {
+                admin,
+                database,
+                ownership,
+                evidence,
+            }),
             Err(error) => {
-                let _ = execute(&admin, &format!("DROP DATABASE `{schema}`")).await;
-                return Err(format!("连接测试 schema {schema} 失败: {error}"));
+                if let Err(release) = admin.release().await {
+                    eprintln!("{release}");
+                }
+                Err(format!(
+                    "{error}；schema {schema} 现场及 {} 中本次已创建的证据保留，未执行 DROP，不得自动重放",
+                    root.join(".local-tests/mysql/fixtures").display()
+                ))
             }
-        };
+        }
+    }
 
-        Ok(Self {
-            admin,
-            database,
-            schema,
-        })
+    async fn prepare(
+        admin: &mut AdminSession,
+        config: &MySqlTestConfiguration,
+        schema: &str,
+        test_name: &str,
+        schema_config: &DbConnection,
+        root: &Path,
+    ) -> Result<(DatabaseConnection, Ownership, Evidence), String> {
+        let identity = admin.identity().await?;
+        admin.lock(schema).await?;
+        let plan = Plan {
+            schema: schema.to_owned(),
+            scope: config.scope_id().to_owned(),
+            test: test_name.to_owned(),
+            identity,
+        };
+        let mut evidence = Evidence::create(root, &plan)?;
+        let mut ownership = Ownership::new(plan)?;
+        let result =
+            Self::create_database(admin, &mut ownership, &mut evidence, schema_config).await;
+        match result {
+            Ok(database) => Ok((database, ownership, evidence)),
+            Err(error) => {
+                ownership.retain();
+                evidence.failure("failure-create-or-connect");
+                Err(error)
+            }
+        }
+    }
+
+    async fn create_database(
+        admin: &mut AdminSession,
+        ownership: &mut Ownership,
+        evidence: &mut Evidence,
+        schema_config: &DbConnection,
+    ) -> Result<DatabaseConnection, String> {
+        if admin.exists(&ownership.plan.schema).await? {
+            return Err("拒绝已存在 schema；库名前缀不能证明归属".into());
+        }
+        ownership.create_intent()?;
+        evidence.record("create-intent")?;
+        admin.ddl(&ownership.plan.schema, true).await?;
+        ownership.created()?;
+        evidence.record("created")?;
+        Self::connect_business(schema_config, &ownership.plan).await
+    }
+
+    async fn connect_business(
+        schema_config: &DbConnection,
+        plan: &Plan,
+    ) -> Result<DatabaseConnection, String> {
+        let mut options = connection::options(schema_config, SqlLogLevel::Off, 200);
+        let server_uuid = plan.identity.server_uuid.clone();
+        let schema = plan.schema.clone();
+        options.map_sqlx_mysql_pool_opts(move |pool_options| {
+            let server_uuid = server_uuid.clone();
+            let schema = schema.clone();
+            // 所有新建物理连接均须核对已锁定管理实例及本次 schema。
+            pool_options.after_connect(move |connection, _metadata| {
+                let server_uuid = server_uuid.clone();
+                let schema = schema.clone();
+                Box::pin(async move {
+                    let (observed_uuid, observed_schema) = sqlx::query_as::<
+                        _,
+                        (String, Option<String>),
+                    >(
+                        sqlx::AssertSqlSafe("SELECT @@server_uuid, DATABASE()"),
+                    )
+                    .fetch_one(connection)
+                    .await
+                    .map_err(|_| sqlx::Error::Protocol("fixture 业务连接物理归属未确认".into()))?;
+                    if !business_identity_matches(
+                        &server_uuid,
+                        &schema,
+                        &observed_uuid,
+                        observed_schema.as_deref(),
+                    ) {
+                        return Err(sqlx::Error::Protocol(
+                            "fixture 业务连接物理归属未确认".into(),
+                        ));
+                    }
+                    Ok(())
+                })
+            })
+        });
+        sea_orm::Database::connect(options)
+            .await
+            .map_err(|_| "连接新 schema 失败，保留已创建数据库".into())
     }
 
     async fn cleanup(self) -> Result<(), String> {
         let Self {
+            mut admin,
+            database,
+            mut ownership,
+            mut evidence,
+        } = self;
+        let result = async {
+            database
+                .close()
+                .await
+                .map_err(|_| "关闭业务连接池失败，禁止 DROP")?;
+            ownership.test_passed()?;
+            evidence.record("test-passed")?;
+            Self::drop_database(&mut admin, &mut ownership, &mut evidence).await
+        }
+        .await;
+        if result.is_err() {
+            ownership.retain();
+            evidence.failure("failure-cleanup-retained");
+            eprintln!(
+                "schema {} 的清理未完成；保留计划 {} 及同目录 journal，不宣称回滚，不重试 DROP",
+                ownership.plan.schema,
+                evidence.plan_path().display()
+            );
+        }
+        let release = admin.release().await;
+        if release.is_err() {
+            evidence.failure("failure-admin-release");
+        }
+        match (result, release) {
+            (Err(error), secondary) => {
+                if let Err(error) = secondary {
+                    eprintln!("{error}");
+                }
+                Err(error)
+            }
+            (Ok(()), result) => result,
+        }
+    }
+
+    async fn drop_database(
+        admin: &mut AdminSession,
+        ownership: &mut Ownership,
+        evidence: &mut Evidence,
+    ) -> Result<(), String> {
+        evidence.verify()?;
+        let observed = admin.observe(&ownership.plan.schema, true).await?;
+        evidence.observed("cleanup-observed", &observed)?;
+        ownership.drop_intent(&observed)?;
+        evidence.record("drop-intent")?;
+        // 意图已落盘后再核对一次；任何失败均保留现场，不能重放该 DROP。
+        evidence.verify()?;
+        let observed = admin.observe(&ownership.plan.schema, true).await?;
+        evidence.observed("cleanup-rechecked", &observed)?;
+        ownership.validate_cleanup(&observed)?;
+        evidence.verify()?;
+        admin.ddl(&ownership.plan.schema, false).await?;
+        let absent = !admin.exists(&ownership.plan.schema).await?;
+        ownership.dropped(absent)?;
+        evidence.record("dropped-confirmed")
+    }
+
+    async fn preserve(self, stage: &'static str) {
+        let Self {
             admin,
             database,
-            schema,
+            mut ownership,
+            mut evidence,
         } = self;
-        database
-            .close()
-            .await
-            .map_err(|error| format!("关闭测试 schema {schema} 连接失败: {error}"))?;
-        execute(&admin, &format!("DROP DATABASE `{schema}`"))
-            .await
-            .map_err(|error| format!("精确删除测试 schema {schema} 失败: {error}"))?;
-        admin
-            .close()
-            .await
-            .map_err(|error| format!("关闭 MySQL 管理连接失败: {error}"))
+        ownership.retain();
+        evidence.failure(stage);
+        eprintln!(
+            "测试失败：schema {}、计划 {} 及同目录 journal 保留；未执行 DROP，不宣称回滚",
+            ownership.plan.schema,
+            evidence.plan_path().display()
+        );
+        if database.close().await.is_err() {
+            evidence.failure("failure-business-close");
+            eprintln!("业务连接关闭未确认，数据库现场仍保留");
+        }
+        if let Err(error) = admin.release().await {
+            evidence.failure("failure-admin-release");
+            eprintln!("{error}");
+        }
     }
 }
 
@@ -73,25 +273,32 @@ where
     F: FnOnce(DatabaseConnection) -> Fut,
     Fut: Future<Output = Result<(), String>>,
 {
-    if !integration_enabled(ENABLE_ENV) {
-        eprintln!("跳过 MySQL 真实协议测试：设置 {ENABLE_ENV}=1 后才会连接外部服务");
+    if !integration_enabled() {
+        eprintln!("跳过 MySQL 真实协议测试（未验收）：缺少显式 .local-tests/mysql/config 配置目录");
         return;
     }
 
     let fixture = MySqlFixture::create(test_name)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let result = std::panic::AssertUnwindSafe(test(fixture.database.clone()))
+    let database = fixture.database.clone();
+    let result = std::panic::AssertUnwindSafe(async move { test(database).await })
         .catch_unwind()
         .await;
-    let cleanup = fixture.cleanup().await;
-    if let Err(error) = cleanup {
-        panic!("{error}");
-    }
     match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => panic!("{error}"),
-        Err(payload) => std::panic::resume_unwind(payload),
+        Ok(Ok(())) => {
+            if let Err(error) = fixture.cleanup().await {
+                panic!("{error}");
+            }
+        }
+        Ok(Err(error)) => {
+            fixture.preserve("failure-test-error").await;
+            panic!("{error}");
+        }
+        Err(payload) => {
+            fixture.preserve("failure-test-panic").await;
+            std::panic::resume_unwind(payload);
+        }
     }
 }
 
@@ -127,35 +334,24 @@ where
     }
 }
 
-pub(crate) fn database_config(database: &str) -> DbConnection {
-    // 真实协议测试必须走与产品默认配置一致的 AWS-LC TLS 链路。
-    // 使用 disabled 会让 caching_sha2_password 的结果依赖 MySQL 进程内认证缓存，
-    // 从而在冷服务或并行执行时随机退回到未启用的 RSA 认证后端。
-    database_config_with_tls(database, DbTlsMode::Required)
-}
-
-pub(crate) fn database_config_with_tls(database: &str, tls_mode: DbTlsMode) -> DbConnection {
-    DbConnection {
-        host: env_value("RYFRAME_MYSQL_HOST", "127.0.0.1"),
-        port: env_parse("RYFRAME_MYSQL_PORT", 3306),
-        database: database.to_owned(),
-        username: env_value("RYFRAME_MYSQL_USERNAME", "root"),
-        password: env_value("RYFRAME_MYSQL_PASSWORD", ""),
-        max_connections: 8,
-        min_connections: 0,
-        acquire_timeout_secs: 5,
-        idle_timeout_secs: 30,
-        max_lifetime_secs: 60,
-        connect_timeout_secs: 5,
-        tls_mode,
-        tls_ca: None,
-        tls_client_cert: None,
-        tls_client_key: None,
+fn connection_config(
+    primary: &DbConnection,
+    database: &str,
+    tls_mode: Option<DbTlsMode>,
+) -> Result<DbConnection, String> {
+    if primary.tls_mode == DbTlsMode::Disabled || tls_mode == Some(DbTlsMode::Disabled) {
+        return Err("MySQL 真实协议测试必须启用 TLS；请修复 database.primary.tls_mode".into());
     }
+    let mut config = primary.clone();
+    config.database = database.to_owned();
+    if let Some(tls_mode) = tls_mode {
+        config.tls_mode = tls_mode;
+    }
+    Ok(config)
 }
 
-fn unique_schema(test_name: &str) -> String {
-    let run = sanitized_fragment(&env_value("RYFRAME_INTEGRATION_RUN_ID", "local"), 16);
+fn unique_schema(scope: &str, test_name: &str) -> String {
+    let run = sanitized_fragment(scope, 16);
     let test = sanitized_fragment(test_name, 16);
     let sequence = SCHEMA_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     format!("ryframe_it_{run}_{test}_{}_{sequence}", process::id())
@@ -172,32 +368,84 @@ fn sanitized_fragment(value: &str, max_len: usize) -> String {
         .collect::<String>()
 }
 
-pub(crate) fn integration_enabled(name: &str) -> bool {
-    match env::var(name) {
-        Ok(value) if value == "1" => true,
-        Ok(value) => panic!("{name} 只接受精确值 1，当前值为 {value:?}"),
-        Err(env::VarError::NotPresent) => false,
-        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
-    }
+pub(crate) fn integration_enabled() -> bool {
+    configuration_directory()
+        .and_then(|directory| integration_enabled_at(&directory))
+        .unwrap_or_else(|error| panic!("{error}"))
 }
 
-fn env_value(name: &str, default: &str) -> String {
-    env::var(name).unwrap_or_else(|_| default.to_owned())
+fn configuration_directory() -> Result<PathBuf, String> {
+    workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))
+        .map(|root| root.join(".local-tests/mysql/config"))
 }
 
-fn env_parse<T>(name: &str, default: T) -> T
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    match env::var(name) {
-        Ok(value) => value
-            .parse()
-            .unwrap_or_else(|error| panic!("{name} 解析失败: {error}")),
-        Err(env::VarError::NotPresent) => default,
-        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
-    }
+fn workspace_root(start: &Path) -> Result<PathBuf, String> {
+    start
+        .ancestors()
+        .find(|path| path.join("architecture/crate-boundaries.toml").is_file())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "找不到后端 workspace 的 architecture/crate-boundaries.toml".into())
 }
+
+fn integration_enabled_at(directory: &Path) -> Result<bool, String> {
+    // 从根逐层检查，不能把悬空链接、重解析点或无权限路径当作未配置。
+    let mut missing = false;
+    for path in directory.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if ordinary(&metadata) && metadata.is_dir() => {}
+            Ok(_) => return Err("MySQL 配置目录及其各层必须是普通无链接目录".into()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => missing = true,
+            Err(_) => return Err("无法检查 MySQL 配置目录；请检查目录访问权限".into()),
+        }
+    }
+    Ok(!missing)
+}
+
+fn load_configuration_at(directory: &Path) -> Result<AppConfig, String> {
+    if !integration_enabled_at(directory)? {
+        return Err("缺少 MySQL 显式配置目录；本次未验收".into());
+    }
+    for name in ["app.toml", "app.test.toml"] {
+        let metadata = match fs::symlink_metadata(directory.join(name)) {
+            Ok(metadata) => metadata,
+            Err(error) if name == "app.toml" && error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "MySQL 配置缺少或无法读取 {name}（{}）；请提供普通无链接配置文件",
+                    error.kind()
+                ));
+            }
+        };
+        if !ordinary(&metadata) || !metadata.is_file() {
+            return Err(format!("MySQL 配置 {name} 必须是普通无链接文件"));
+        }
+    }
+    let config = AppConfig::load(directory, Environment::Test)
+        .map_err(|error| format!("MySQL 文件配置无效：{}", error.message()))?;
+    if config.database.primary.tls_mode == DbTlsMode::Disabled {
+        return Err("MySQL 真实协议测试必须启用 TLS；请修复 database.primary.tls_mode".into());
+    }
+    Ok(config)
+}
+
+fn ordinary(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Windows 所有重解析点都拒绝，包括 junction。
+        if metadata.file_attributes() & 0x400 != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+#[path = "mysql_configuration_tests.rs"]
+mod configuration_tests;
 
 pub(crate) fn db_error(error: DbErr) -> String {
     error.to_string()

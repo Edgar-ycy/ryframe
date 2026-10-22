@@ -8,7 +8,7 @@ use crate::reset::{
     ResetError, ResetResult,
     engine::{PhaseEvidence, ResetPhases, ResourceProgress},
     ledger::ResetLedger,
-    model::ResetManifest,
+    model::{ResetManifest, build_manifest},
 };
 
 use self::{
@@ -25,6 +25,12 @@ pub struct ExternalResetRuntime {
 
 impl ExternalResetRuntime {
     pub fn new(config: AppConfig, manifest: &ResetManifest) -> ResetResult<Self> {
+        let current = build_manifest(&config, &super::load_code_sha(&config.reset)?)?;
+        if &current != manifest {
+            return Err(ResetError::new(
+                "reset 运行时配置、凭据版本或来源与当前 manifest 不一致；请重新运行 plan",
+            ));
+        }
         let storage = StorageReset::new(&config, manifest)?;
         Ok(Self {
             config,

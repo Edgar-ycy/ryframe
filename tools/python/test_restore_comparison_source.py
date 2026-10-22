@@ -9,6 +9,9 @@ from workspace_directory import WorkspaceDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_comparison_source as comparison
 from source_inventory import build_source_domains, canonical_digest
+from source_inventory import capture_inventory
+from frontend_receipt_fixture import prepare_frontend, save_receipt
+from restore_frontend_build import frontend_files
 
 
 def inventory(head, product="1", tool="2", *, frontend=False):
@@ -204,25 +207,24 @@ class ComparisonSourceTests(unittest.TestCase):
             {key: item for key, item in result.items() if key != "identity_sha256"}))
 
     def test_frontend_build_rejects_environment_change_during_verification(self):
-        receipt = {
-            "sources": {"full": self.frontend},
-            "build": {"environment_files": []},
-            "files": [{"path": "index.html", "bytes": 1, "sha256": "a" * 64}],
-        }
-        unchanged = unittest.mock.Mock()
-        document = unittest.mock.Mock(
-            value=receipt, raw=b"{}", sha256="b" * 64, assert_unchanged=unchanged,
-        )
-        with patch.object(comparison, "_build_document", return_value=document), \
-                patch.object(comparison, "validate_frontend_receipt", return_value=receipt), \
-                patch.object(comparison, "frontend_environment_files", side_effect=[[], [
-                    {"path": ".env.production", "sha256": "c" * 64},
-                ]]), \
-                patch.object(comparison, "frontend_files", return_value=receipt["files"]), \
-                patch.object(comparison, "capture_inventory", return_value=self.frontend), \
-                self.assertRaisesRegex(ValueError, "环境文件"):
-            comparison._frontend_build(self.root, self.root / "receipt.json", self.frontend)
-        unchanged.assert_not_called()
+        backend = Path(__file__).resolve().parents[2]
+        directory = WorkspaceDirectory(backend / ".local-tests/python-unit")
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        prepare_frontend(root)
+        tool_file = root / ".local-tests/frontend-tools.json"
+        tool_file.write_text("{}", encoding="utf-8")
+        receipt = save_receipt(root)
+        inventory_before = capture_inventory(root)
+
+        def files_then_change(directory):
+            files = frontend_files(directory)
+            tool_file.write_text("{}\n", encoding="utf-8")
+            return files
+
+        with patch.object(comparison, "frontend_files", side_effect=files_then_change), \
+                self.assertRaisesRegex(ValueError, "漂移"):
+            comparison._frontend_build(root, receipt, inventory_before)
 
     def test_manifest_binds_both_arms_to_one_export_and_rejects_extra_fields(self):
         b1_backend = inventory("d" * 40)

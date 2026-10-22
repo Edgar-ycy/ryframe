@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{check::run_parallel_tasks, process};
+use super::{check::run_parallel_tasks, process, process_liveness};
 
 static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
 
@@ -114,7 +114,10 @@ fn completed_parent_reaps_descendants_before_returning_and_keeps_unrelated_tree(
                 .unwrap()
                 .parse()
                 .unwrap();
-            assert!(!process::process_is_running(pid), "返回后仍有后代 {role}");
+            assert!(
+                !process_liveness::process_is_running(pid),
+                "返回后仍有后代 {role}"
+            );
         }
         assert!(unrelated.try_wait().unwrap().is_none());
         process::stop_child(&mut unrelated).unwrap();
@@ -320,7 +323,7 @@ fn wait_for_file(path: &Path) {
 
 fn wait_for_exit(pid: u32) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while process::process_is_running(pid) {
+    while process_liveness::process_is_running(pid) {
         assert!(Instant::now() < deadline, "并行任务后代进程 {pid} 未被回收");
         thread::sleep(Duration::from_millis(10));
     }

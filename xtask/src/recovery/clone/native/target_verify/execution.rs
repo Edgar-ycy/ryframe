@@ -52,17 +52,27 @@ impl<'a> Frame<'a> {
             .as_ref()
             .ok_or("目标执行锁已经释放")?
             .check()?;
-        self.check_inputs(true)?;
+        self.check_inputs(true, true)?;
         input::validate_inputs(&self.context.backend, &stage(self.context))
     }
 
-    fn check_inputs(&self, locked: bool) -> Result<()> {
+    pub(super) fn checkpoint(&self) -> Result<()> {
+        self.generation
+            .as_ref()
+            .ok_or("目标执行锁已经释放")?
+            .checkpoint()?;
+        self.inputs.checkpoint()
+    }
+
+    fn check_inputs(&self, locked: bool, check_source: bool) -> Result<()> {
         self.inputs.check()?;
         if tree::snapshot(&self.context.backend, &self.context.target_dir, locked)?
             != self.authority["files"]
-            || source::current(&self.source_root)? != self.source
         {
-            return Err("目标完整文件树或执行源码在核验期间变化".into());
+            return Err("目标完整文件树在核验期间变化".into());
+        }
+        if check_source && source::current(&self.source_root)? != self.source {
+            return Err("执行源码在核验期间变化".into());
         }
         Ok(())
     }
@@ -75,7 +85,7 @@ impl<'a> Frame<'a> {
         let result = combine(result, self.check());
         let generation = self.generation.take().ok_or("目标执行锁已经释放")?;
         let result = generation.finish(result);
-        let result = combine(result, self.check_inputs(false));
+        let result = combine(result, self.check_inputs(false, true));
         match result {
             Ok(value) => {
                 let observed =
@@ -83,7 +93,7 @@ impl<'a> Frame<'a> {
                 if observed != self.authority {
                     return Err("目标锁释放后只读权威与初像不同".into());
                 }
-                self.check_inputs(false)?;
+                self.check_inputs(false, true)?;
                 Ok(value)
             }
             Err(error) => Err(error),
@@ -117,10 +127,15 @@ pub(super) struct CheckedTransport<'a, T> {
 }
 
 impl<T: Transport> Transport for CheckedTransport<'_, T> {
+    fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value> {
+        self.frame.checkpoint()?;
+        let result = self.inner.s3(request);
+        combine(result, self.frame.checkpoint())
+    }
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
-        self.frame.check()?;
+        self.frame.checkpoint()?;
         let result = self.inner.run(spec);
-        combine(result, self.frame.check())
+        combine(result, self.frame.checkpoint())
     }
 }
 
@@ -131,30 +146,39 @@ pub(super) struct CheckedObserver<'a, O> {
 
 impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
     fn process_identity(&self, pid: u32) -> Result<Option<Value>> {
-        self.frame.check()?;
-        combine(self.inner.process_identity(pid), self.frame.check())
+        self.frame.checkpoint()?;
+        combine(self.inner.process_identity(pid), self.frame.checkpoint())
     }
 
     fn arguments(&self, context: &TargetContext, identity: &Value) -> Result<Vec<String>> {
-        self.frame.check()?;
-        combine(self.inner.arguments(context, identity), self.frame.check())
+        self.frame.checkpoint()?;
+        combine(
+            self.inner.arguments(context, identity),
+            self.frame.checkpoint(),
+        )
     }
 
     fn listener(&self, context: &TargetContext, identity: &Value, url: &str) -> Result<()> {
-        self.frame.check()?;
+        self.frame.checkpoint()?;
         combine(
             self.inner.listener(context, identity, url),
-            self.frame.check(),
+            self.frame.checkpoint(),
         )
     }
 
     fn wsl(&self, context: &TargetContext, redis: &Value, args: &[String]) -> Result<String> {
-        self.frame.check()?;
-        combine(self.inner.wsl(context, redis, args), self.frame.check())
+        self.frame.checkpoint()?;
+        combine(
+            self.inner.wsl(context, redis, args),
+            self.frame.checkpoint(),
+        )
     }
 
     fn redis(&self, context: &TargetContext, redis: &Value, parts: &[&str]) -> Result<Value> {
-        self.frame.check()?;
-        combine(self.inner.redis(context, redis, parts), self.frame.check())
+        self.frame.checkpoint()?;
+        combine(
+            self.inner.redis(context, redis, parts),
+            self.frame.checkpoint(),
+        )
     }
 }

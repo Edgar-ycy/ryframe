@@ -54,5 +54,5 @@ pub(super) async fn require_credentials_for_new_users<C: ConnectionTrait + ?Size
 }
 
 fn missing_credentials() -> DbErr {
-    DbErr::Custom("首次初始化缺少管理员密码；设置 RYFRAME_INIT_ADMIN_PASSWORD 或 RYFRAME_INIT_ADMIN_PASSWORD_FILE，再执行 cargo migrate -- control up。尚未执行初始化 DDL".into())
+    DbErr::Custom("首次初始化缺少管理员密码；在所选配置文件的 [bootstrap] 中填写 admin_password，再执行 cargo migrate -- control up；自定义目录使用 --config-dir <目录>。尚未执行初始化 DDL".into())
 }

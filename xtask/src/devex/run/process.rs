@@ -1,7 +1,7 @@
 use super::super::{
     memory::{self, MemoryEvidence},
     metadata::corepack_executable,
-    model::{StepDefinition, SuiteDefinition, WorkingDirectory},
+    model::{StepDefinition, SuiteDefinition, WorkingDirectory, step_arguments},
     support::{display_step, success_status},
 };
 use crate::Result;
@@ -11,6 +11,11 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
+pub(super) struct StepInvocation<'a> {
+    pub(super) variant: &'a str,
+    pub(super) label: &'a str,
+}
+
 pub(super) fn execute_steps(
     backend_root: &Path,
     frontend_root: &Path,
@@ -18,8 +23,9 @@ pub(super) fn execute_steps(
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
-    label: &str,
+    invocation: StepInvocation<'_>,
 ) -> Result<(ExitStatus, MemoryEvidence)> {
+    let label = invocation.label;
     let roots = StepRoots {
         backend: backend_root,
         frontend: frontend_root,
@@ -30,7 +36,7 @@ pub(super) fn execute_steps(
     let mut memory = MemoryEvidence::new();
     for (index, step) in definition.steps.iter().enumerate() {
         println!("  → {label} step {:02}: {}", index + 1, display_step(step));
-        let command = step_command(step, roots, definition, environment, label);
+        let command = step_command(step, roots, definition, environment, &invocation)?;
         let (status, reading) = memory::execute(command)?;
         last_status = status;
         memory.steps.push(reading);
@@ -54,8 +60,9 @@ fn step_command(
     roots: StepRoots<'_>,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
-    label: &str,
-) -> Command {
+    invocation: &StepInvocation<'_>,
+) -> Result<Command> {
+    let label = invocation.label;
     let program = if step.program == "corepack" {
         corepack_executable()
     } else {
@@ -68,8 +75,7 @@ fn step_command(
     let backend = roots.backend.to_string_lossy();
     let driver_root = crate::workspace::root_dir();
     let driver = driver_root.to_string_lossy();
-    let args = step
-        .args
+    let args = step_arguments(step, invocation.variant)?
         .iter()
         .map(|arg| {
             arg.replace("{driver}", &driver)
@@ -106,5 +112,82 @@ fn step_command(
     if step.program == "cargo" {
         command.env("CARGO_TARGET_DIR", target.as_ref());
     }
-    command
+    Ok(command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_step_passes_validated_case_and_output_as_arguments() {
+        let definition = super::super::super::model::DevexSuite::CargoDevSave
+            .definition("worker-only")
+            .unwrap();
+        let roots = StepRoots {
+            backend: Path::new("D:/measured-source"),
+            frontend: Path::new("D:/frontend"),
+            runner_frontend: Path::new("D:/runner-frontend"),
+            target: Path::new("D:/sample-target"),
+        };
+        let invocation = StepInvocation {
+            variant: "worker-only",
+            label: "sample-001",
+        };
+        let command = step_command(
+            &definition.steps[0],
+            roots,
+            definition,
+            &BTreeMap::new(),
+            &invocation,
+        )
+        .unwrap();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_ne!(roots.backend, roots.target);
+        assert_eq!(command.get_current_dir(), Some(roots.backend));
+        assert_eq!(
+            args,
+            [
+                "xtask",
+                "dev",
+                "--measure-once",
+                "--workspace-root",
+                "D:/measured-source",
+                "--case",
+                "worker-only",
+                "--output",
+                "D:/sample-target/cargo-dev-save-result.json",
+            ]
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "CARGO_TARGET_DIR")
+                .and_then(|(_, value)| value),
+            Some(roots.target.as_os_str()),
+        );
+        assert!(
+            command
+                .get_envs()
+                .all(|(key, _)| key != "RYFRAME_DEVEX_SAVE_CASE"
+                    && key != "RYFRAME_DEVEX_SAVE_RESULT_PATH")
+        );
+        let invalid = StepInvocation {
+            variant: "unregistered",
+            label: "sample-001",
+        };
+        assert!(
+            step_command(
+                &definition.steps[0],
+                roots,
+                definition,
+                &BTreeMap::new(),
+                &invalid
+            )
+            .is_err()
+        );
+    }
 }

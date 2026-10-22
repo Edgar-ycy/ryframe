@@ -66,10 +66,6 @@ impl Fixture {
             request: Value::Null,
             environment: environment(),
         };
-        fixture.environment.insert(
-            "APP_CONFIG_DIR".into(),
-            fixture.local.join("config").display().to_string(),
-        );
         fixture.write_request();
         history::maintenance(&fixture);
         fixture.request["maintenance_build"] = bound(&fixture.local.join("maintenance/build.json"));
@@ -79,21 +75,21 @@ impl Fixture {
     }
 
     fn write_request(&mut self) {
-        for name in ["mysql", "aws", "rustfs", "wsl"] {
+        for name in ["mysql", "rustfs", "wsl"] {
             fs::write(self.local.join(name), format!("explicit-mock-{name}")).unwrap();
         }
         let defaults = self.local.join("mysql.cnf");
         fs::write(&defaults, "[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n").unwrap();
         let databases = request::KEYS.map(|(key, kind, mode)| json!({"key":key,"kind":kind,"mode":mode,"server_uuid":UUID,
             "database":database_name("seed",key),"defaults_file":defaults,"defaults_sha256":digest::file(&defaults).unwrap().sha256}));
-        let tools =
-            json!({"mysql": tool(&self.local.join("mysql")), "aws": tool(&self.local.join("aws"))});
+        let tools = json!({"mysql": tool(&self.local.join("mysql"))});
         self.request = json!({"format_version":1,"kind":"devex-clone-fresh-target","id":"target-verify-fixture","side":"seed",
             "review":null,"maintenance_build":null,"configuration_sha256":"0".repeat(64),"tools":tools,
             "target":{"scope_id":SCOPE,"databases":databases,"s3":{"endpoint":"http://127.0.0.1:29000","region":"test-region",
-                "access_key_env":"APP_OBJECT_STORAGE_ACCESS_KEY","secret_key_env":"APP_OBJECT_STORAGE_SECRET_KEY"}},
+                "access_key":"fixture-access","secret_key":"fixture-secret"}},
             "reset":{"legacy_ownership":{"mysql_exclusive":true,"redis_exclusive":true,"object_storage_exclusive":true},
                 "credential_version":"fixture-v1","sentinel_key":format!("ryframe:devex-fresh:{SCOPE}:sentinel"),"sentinel_value":"devex-fresh:target-verify-fixture"},"storage":null});
+        self.request["configuration_directory"] = json!(self.local.join("config"));
         let services = storage::files(self);
         let review = review(self, &services);
         write(&self.local.join("review.json"), &review);
@@ -104,9 +100,14 @@ impl Fixture {
 
     fn write_configuration(&self) {
         fs::create_dir(self.local.join("config")).unwrap();
+        fs::write(
+            self.local.join("config/app.test.toml"),
+            "# 明确选择测试配置\n",
+        )
+        .unwrap();
         let targets = request::KEYS.iter().filter(|(key,_,_)| *key!="shared-control").map(|(key,_,mode)| json!({"key":key,"kind":"mysql","mode":mode,
-            "host":"127.0.0.1","port":3306,"database":database_name("seed",key),"username":"fixture","password_env":"APP_TENANT_PASSWORD","tls_mode":"disabled"})).collect::<Vec<_>>();
-        let table = json!({"app":{"host":"127.0.0.1","port":28080},"database":{"primary":{"host":"127.0.0.1","port":3306,
+            "host":"127.0.0.1","port":3306,"database":database_name("seed",key),"username":"fixture","password":"fixture-secret","tls_mode":"disabled"})).collect::<Vec<_>>();
+        let table = json!({"scope_id":SCOPE,"bootstrap":{"admin_password":"Fixture!Admin123"},"jobs":{"mode":"external","health_host":"127.0.0.1","health_port":28081},"redis":{"host":"127.0.0.1","port":26379,"database":0,"tls":false,"password":"fixture-redis"},"app":{"host":"127.0.0.1","port":28080},"database":{"primary":{"host":"127.0.0.1","port":3306,
             "database":database_name("seed","shared-control"),"username":"fixture","password":"fixture-secret","tls_mode":"disabled"}},"tenant_data":{"targets":targets},
             "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","access_key":"fixture-access","secret_key":"fixture-secret","use_ssl":false},
             "reset":{"legacy_mysql_exclusive":true,"legacy_redis_exclusive":true,"legacy_object_storage_exclusive":true,"credential_version":"fixture-v1",
@@ -119,12 +120,16 @@ impl Fixture {
     }
 
     fn seal_configuration(&mut self) {
-        let (directory, files) =
-            request_configuration::configuration_files(&self.backend, &self.environment).unwrap();
+        let (directory, files) = request_configuration::configuration_files(
+            &self.backend,
+            &self.environment,
+            self.request.get("configuration_directory"),
+        )
+        .unwrap();
         let environment = self
             .environment
             .iter()
-            .filter(|(key, _)| key.starts_with("APP_"))
+            .filter(|(key, _)| key.as_str() == "APP_ENV")
             .collect::<BTreeMap<_, _>>();
         let files = files
             .iter()

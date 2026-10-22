@@ -4,6 +4,7 @@ fn main() -> Result<(), String> {
     // 可直接在 IDE 中运行；编辑本文件的包名、模型或表名。默认只显示计划。
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let plan = GenerationBuilder::new(root)
+        .configuration_directory("config") // 省略此调用时使用工具文件配置的目录。
         .package("order-business")
         .source("sources.legacy")
         .database("control")

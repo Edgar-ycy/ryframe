@@ -67,11 +67,15 @@ impl CommandOutput {
 
 pub(crate) trait Transport {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput>;
+    fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value>;
 }
 
 pub(crate) struct SystemTransport;
 
 impl Transport for SystemTransport {
+    fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value> {
+        super::super::s3::execute(request)
+    }
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
         fs::create_dir_all(&spec.work_dir).map_err(|error| {
             format!(

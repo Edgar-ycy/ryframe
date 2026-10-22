@@ -161,7 +161,7 @@ def _registered_source(backend: Path, descriptor: dict, *, live_storage: bool,
                        "api_url": handoff["api_url"]}
     if (seed_target["side"] != "seed" or request["source"] != expected_source
             or request["maintenance_build"] != seed_target["maintenance_build"]
-            or {role: request["tools"][role] for role in ("mysql", "aws")} != seed_target["tools"]
+            or {"mysql": request["tools"]["mysql"]} != seed_target["tools"]
             or storage["storage"]["api_url"] != request["source"]["s3"]["endpoint"]):
         raise ValueError("seed 源请求没有精确派生自原 seed 初始化")
     environment = read_json(bound_file(backend, registration["source_environment"]))
@@ -309,7 +309,6 @@ def _source_request(backend: Path, value: dict, post: dict, runtime: Path,
         "source": source,
         "tools": {"mysql": copy.deepcopy(target["tools"]["mysql"]),
                   "mysqldump": copy.deepcopy(original["tools"]["mysqldump"]),
-                  "aws": copy.deepcopy(target["tools"]["aws"]),
                   "node": copy.deepcopy(post["node"])},
         "backend_build": copy.deepcopy(handoff["backend_build"]),
         "maintenance_build": copy.deepcopy(target["maintenance_build"]),

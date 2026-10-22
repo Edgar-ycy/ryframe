@@ -5,7 +5,7 @@ use crate::{
     watch::{ChangeBatch, SourceRevision},
 };
 
-use super::runtime_secrets::RuntimeSecrets;
+use super::runtime_config::RuntimeConfig;
 use super::services::stop_all;
 
 pub(super) const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -267,7 +267,7 @@ pub(crate) struct Binaries {
     pub(crate) runtime_dir: PathBuf,
     pub(crate) config_dir: PathBuf,
     pub(crate) locales_dir: PathBuf,
-    pub(crate) runtime_secrets: Arc<RuntimeSecrets>,
+    pub(crate) runtime_config: Arc<RuntimeConfig>,
 }
 
 pub(super) struct Services {

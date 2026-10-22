@@ -14,7 +14,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
-use mysql::{database_config, db_error, execute, require_count, run_mysql_test};
+use mysql::{MySqlTestConfiguration, db_error, execute, require_count, run_mysql_test};
 
 const SCOPE: &str = "target-inventory-integration";
 
@@ -59,7 +59,10 @@ async fn exercise_inventory(
     resource_ownership::ensure_resource_ownership(&control, SCOPE, "control")
         .await
         .map_err(db_error)?;
-    let mut config = database_config(&database_name(&control).await?);
+    let configured = MySqlTestConfiguration::load().unwrap_or_else(|error| panic!("{error}"));
+    let mut config = configured
+        .connection(&database_name(&control).await?, None)
+        .unwrap_or_else(|error| panic!("{error}"));
     // combined 采集必须在持有只读事务时复用该连接，不能再从同一个池借连接。
     config.max_connections = 1;
     let single_connection = connection::connect(&config)
@@ -99,7 +102,10 @@ async fn mysql_target(
     database: &DatabaseConnection,
     mode: TenantDatabaseTargetMode,
 ) -> Result<TenantDatabaseTargetConfig, String> {
-    let config = database_config(&database_name(database).await?);
+    let configured = MySqlTestConfiguration::load().unwrap_or_else(|error| panic!("{error}"));
+    let config = configured
+        .connection(&database_name(database).await?, None)
+        .unwrap_or_else(|error| panic!("{error}"));
     Ok(TenantDatabaseTargetConfig {
         key: key.into(),
         mode,
@@ -109,8 +115,11 @@ async fn mysql_target(
         port: Some(config.port),
         database: Some(config.database),
         username: Some(config.username),
-        password_env: Some("RYFRAME_MYSQL_PASSWORD".into()),
+        password: Some(config.password),
         tls_mode: Some(config.tls_mode),
+        tls_ca: config.tls_ca,
+        tls_client_cert: config.tls_client_cert,
+        tls_client_key: config.tls_client_key,
         ..TenantDatabaseTargetConfig::shared_control()
     })
 }

@@ -69,7 +69,7 @@ class CacheProcessTests(unittest.TestCase):
                         "directory": {"path": str(data), "device": data.stat().st_dev, "inode": data.stat().st_ino},
                         "previous_identity": {"pid": 200, "started": "50", "executable": "/usr/bin/redis-check-rdb"},
                         "previous_boot_id": BOOT, "previous_run_id": "a" * 40, "port": 16390,
-                        "password_env": "APP_REDIS_PASSWORD", "timeout_seconds": 1,
+                        "password": "bound-private-value", "timeout_seconds": 1,
                         "python": {"path": "/usr/bin/python3", "executable": "/usr/bin/python3.12", "sha256": "b" * 64}}
         self.output = self.root / "process"
         self.output.mkdir()
@@ -118,6 +118,27 @@ class CacheProcessTests(unittest.TestCase):
         for key, value in (("previous_boot_id", BOOT), ("previous_run_id", "a" * 40)):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 process.validate({**initial, key: value})
+
+    def test_password_requires_direct_utf8_text_and_rejects_legacy_fields(self):
+        for password in (None, False, 123, "", " \t", "\0hidden-secret", "\ud800"):
+            with self.subTest(kind=type(password).__name__), self.assertRaises(ValueError) as error:
+                process.validate({**self.request, "password": password})
+            self.assertNotIn("hidden-secret", str(error.exception))
+        for legacy in ({**self.request, "password_env": "APP_REDIS_PASSWORD"},
+                       {key: value for key, value in self.request.items() if key != "password"}):
+            with self.assertRaises(ValueError):
+                process.validate(legacy)
+
+    def test_invalid_password_fails_before_network_or_process_creation(self):
+        invalid = {**self.request, "password": None}
+        with patch.object(process.socket, "create_connection") as connect, \
+                patch.object(process.subprocess, "Popen") as popen:
+            with self.assertRaises(ValueError):
+                process.redis_facts(invalid, {"APP_REDIS_PASSWORD": "ambient-secret"})
+            with self.assertRaises(ValueError):
+                process.start(invalid, {"APP_ENV": "test"}, self.output, lambda: None)
+        connect.assert_not_called()
+        popen.assert_not_called()
 
     def test_first_generation_does_not_observe_a_predecessor_before_launch(self):
         request = {**self.request, "previous_identity": None, "previous_boot_id": None, "previous_run_id": None}
@@ -182,6 +203,20 @@ class CacheProcessTests(unittest.TestCase):
         (self.output / "helpers/cache.py").write_bytes(b"changed")
         with self.assertRaises(ValueError):
             process.inspect_start(self.request, self.output)
+
+    def test_public_identity_and_observation_receipts_exclude_password(self):
+        runtime = self.recorded()
+        alive = {"identity": self.identity, "alive": True, "boot_id": BOOT, "terminated": False}
+        with patch.object(process, "windows_identity", return_value=True), \
+                patch.object(process, "linux_call", return_value=alive), \
+                patch.object(process, "redis_facts", return_value=self.facts()):
+            observed = process.observe(self.request, {"APP_ENV": "test"}, runtime, self.output)
+        self.assertNotIn(self.request["password"], json.dumps(observed))
+        # launch-request 是包含直接凭据的私有控制输入；公开收据仅保存其绑定摘要。
+        for path in self.output.glob("*.json"):
+            if path.name != "launch-request.json":
+                with self.subTest(receipt=path.name):
+                    self.assertNotIn(self.request["password"], path.read_text(encoding="utf-8"))
 
     def test_historical_inspection_survives_tool_upgrade_but_regular_calls_reject_it(self):
         runtime = self.recorded()
@@ -338,10 +373,13 @@ class CacheProcessTests(unittest.TestCase):
         connection.__exit__ = Mock(return_value=False)
         connection.makefile.return_value = io.BytesIO(raw)
         with patch.object(process.socket, "create_connection", return_value=connection):
-            self.assertEqual(process.redis_facts(self.request, {"APP_REDIS_PASSWORD": "private-value"}), self.facts())
+            with patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-value"}):
+                self.assertEqual(process.redis_facts(self.request, {"APP_ENV": "test"}), self.facts())
         commands = [call.args[0] for call in connection.sendall.call_args_list]
         self.assertEqual(len(commands), 10)
         self.assertIn(b"AUTH", commands[0])
+        self.assertIn(b"bound-private-value", commands[0])
+        self.assertNotIn(b"ambient-value", commands[0])
         self.assertIn(b"INFO", commands[1])
         self.assertTrue(all(b"CONFIG" in item and b"GET" in item for item in commands[2:]))
 
@@ -415,14 +453,40 @@ class CacheProcessTests(unittest.TestCase):
     def test_launch_constructor_exception_remains_unknown(self):
         with patch("devex_clone_source_proof.require_closed_port"), patch.object(process.subprocess, "Popen", side_effect=OSError("injected")):
             with self.assertRaises(OSError):
-                process.start(self.request, {}, self.output, lambda: None)
+                process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         with self.assertRaises(ValueError):
             process.inspect_start(self.request, self.output)
         self.assertFalse((self.output / "partial.json").exists())
 
+    def test_child_environment_contains_only_selector_and_host_runtime(self):
+        with patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-secret", "APP_ENV": "prod",
+                                     "AWS_SECRET_ACCESS_KEY": "ambient-aws", "RYFRAME_SECRET": "ambient-private"}), \
+                patch("devex_clone_source_proof.require_closed_port"), \
+                patch.object(process.subprocess, "Popen", side_effect=OSError("constructor unknown")) as popen:
+            with self.assertRaises(OSError):
+                process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
+        child_environment = popen.call_args.kwargs["env"]
+        self.assertEqual({key: value for key, value in child_environment.items() if key.upper().startswith("APP_")},
+                         {"APP_ENV": "test"})
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", child_environment)
+        self.assertNotIn("RYFRAME_SECRET", child_environment)
+        public = ["intent.json", "failure.json"]
+        for name in public:
+            text = (self.output / name).read_text(encoding="utf-8")
+            self.assertNotIn(self.request["password"], text)
+            self.assertNotIn("ambient-secret", text)
+        self.assertNotIn(self.request["password"], json.dumps(popen.call_args.args))
+
+    def test_legacy_child_environment_rejected_before_any_launch_intent(self):
+        with patch.object(process.subprocess, "Popen") as popen, self.assertRaises(ValueError):
+            process.start(self.request, {"APP_REDIS_PASSWORD": "ambient-secret"}, self.output, lambda: None)
+        popen.assert_not_called()
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_guard_before_popen_has_no_intent(self):
         with patch.object(process.subprocess, "Popen") as popen, self.assertRaises(RuntimeError):
-            process.start(self.request, {}, self.output, lambda: (_ for _ in ()).throw(RuntimeError("guard")))
+            process.start(self.request, {"APP_ENV": "test"}, self.output,
+                          lambda: (_ for _ in ()).throw(RuntimeError("guard")))
         popen.assert_not_called()
         self.assertIsNone(process.inspect_start(self.request, self.output))
 
@@ -440,7 +504,7 @@ class CacheProcessTests(unittest.TestCase):
         child.wait.return_value = 1
         with patch("devex_clone_source_proof.require_closed_port"), patch.object(process.subprocess, "Popen", return_value=child), \
                 patch("full_stack_process.process_identity", return_value=None), self.assertRaises(ValueError):
-            process.start(self.request, {}, self.output, lambda: None)
+            process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         result = process.inspect_start(self.request, self.output)
         self.assertEqual(result["state"], "not_started")
         self.assertFalse(process.read(self.output / "partial.json")["authorization_sent"])

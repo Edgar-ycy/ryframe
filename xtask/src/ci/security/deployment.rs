@@ -36,7 +36,7 @@ pub(crate) const DEPLOYMENT_PATHS: &[&str] = &[
     "locales",
     "migrations",
     "openapi",
-    "tools/fixtures/deployment/deploy.env",
+    "deploy/templates",
     "vendor",
     "xtask",
 ];
@@ -273,8 +273,6 @@ pub(crate) fn deployment_commands(
                 "compose".to_owned(),
                 "--project-directory".to_owned(),
                 root.clone(),
-                "--env-file".to_owned(),
-                format!("{root}/tools/fixtures/deployment/deploy.env"),
                 "--file".to_owned(),
                 format!("{root}/deploy/compose.prod.yml"),
                 "config".to_owned(),

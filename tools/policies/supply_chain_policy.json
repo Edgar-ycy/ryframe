@@ -9,6 +9,25 @@
   },
   "local_patch_licenses": [
     {
+      "patch": "opentelemetry_sdk",
+      "package": "opentelemetry_sdk",
+      "version": "0.33.0",
+      "path": "vendor/opentelemetry_sdk",
+      "license_expression": "Apache-2.0",
+      "license_files": [
+        {
+          "spdx": "Apache-2.0",
+          "file": "LICENSE-APACHE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "registry_source": {
+            "package": "opentelemetry-proto",
+            "version": "0.33.0",
+            "manifest_license": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
       "patch": "opentelemetry-otlp",
       "package": "opentelemetry-otlp",
       "version": "0.33.0",

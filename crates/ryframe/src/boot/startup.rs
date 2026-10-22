@@ -21,7 +21,7 @@ pub fn parse_api_run_mode(arguments: &[String]) -> Result<ApiRunMode, AppError> 
         [command] if command == "--probe" => Ok(ApiRunMode::Probe),
         [command] if command == "--healthcheck" => Ok(ApiRunMode::Healthcheck),
         _ => Err(AppError::Config(
-            "用法: ryframe [--probe|--healthcheck]".into(),
+            "用法: ryframe [--config-dir <目录>] [--probe|--healthcheck]".into(),
         )),
     }
 }
@@ -47,7 +47,7 @@ pub fn parse_worker_run_mode(arguments: &[String]) -> Result<WorkerRunMode, AppE
         [command] if command == "--probe" => Ok(WorkerRunMode::Probe),
         [command] if command == "--healthcheck" => Ok(WorkerRunMode::Healthcheck),
         _ => Err(AppError::Config(
-            "用法: ryframe-worker [--once|--probe|--healthcheck]".into(),
+            "用法: ryframe-worker [--config-dir <目录>] [--once|--probe|--healthcheck]".into(),
         )),
     }
 }

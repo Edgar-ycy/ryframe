@@ -10,8 +10,8 @@ mod workflow;
 use args::Action;
 pub(super) use args::{Options, parse};
 
-pub(super) async fn run(options: Options) -> Result<(), Box<dyn Error>> {
-    workflow::run(options).await
+pub(super) async fn run(directory: &Path, options: Options) -> Result<(), Box<dyn Error>> {
+    workflow::run(directory, options).await
 }
 
 async fn perform(

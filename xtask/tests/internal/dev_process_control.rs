@@ -7,8 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::dev_snapshot_tests::write_base_config;
+
 use super::dev::{
-    BuildContext, BuildPlan, BuildResult, DevSession, RuntimeSecrets, StepResult, build_candidate,
+    BuildContext, BuildPlan, BuildResult, DevSession, RuntimeConfig, StepResult, build_candidate,
     run_migration_validation,
 };
 use super::{
@@ -25,10 +27,26 @@ fn migration_validation_is_superseded_during_the_running_process() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("config")).unwrap();
     fs::create_dir_all(root.join("locales")).unwrap();
+    write_base_config(&root, "").unwrap();
     let config = root.join("config/app.dev.toml");
     fs::write(&config, "[app]\nport = 8080\n").unwrap();
     let started_marker = root.join(".slow-migrate-started");
     let migrate = write_slow_migration_stub(&root, &started_marker);
+    let session = DevSession::prepare_isolated(
+        &root,
+        &root.join("state"),
+        &super::cli::DevOptions::default(),
+    )
+    .unwrap();
+    let captured = RuntimeConfig::capture(&root.join("config")).unwrap();
+    let runtime = session
+        .snapshot_inputs(
+            super::watch::SourceRevision::from_value(0),
+            captured,
+            &root.join("locales"),
+            None,
+        )
+        .unwrap();
     let watcher = SourceWatcher::new(&root).unwrap();
     thread::sleep(Duration::from_millis(100));
     let plan = BuildPlan::from_changes(&ChangeBatch {
@@ -54,15 +72,19 @@ fn migration_validation_is_superseded_during_the_running_process() {
     let shutdown = AtomicBool::new(false);
     let mut lkg_check = None;
     let started = Instant::now();
-    let result = run_migration_validation(
+    let context = BuildContext::new(
         &group,
         &root,
-        &migrate,
-        &root.join("config"),
-        &root.join("locales"),
-        &RuntimeSecrets::default(),
+        &session,
         &shutdown,
         &watcher,
+        Path::new("cargo"),
+    );
+    let result = run_migration_validation(
+        &context,
+        &migrate,
+        &runtime.directory.join("migrate"),
+        &[],
         &plan,
         &mut lkg_check,
     )
@@ -89,15 +111,21 @@ fn compile_build_is_superseded_after_fake_cargo_starts() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("config")).unwrap();
     fs::create_dir_all(root.join("locales")).unwrap();
+    write_base_config(&root, "").unwrap();
+    fs::write(root.join("config/app.dev.toml"), "[app]\n").unwrap();
     let marker = root.join(".fake-cargo-started");
     let fake_cargo = write_blocking_cargo_stub(&root);
+    let session = DevSession::prepare_isolated(
+        &root,
+        &root.join("state"),
+        &super::cli::DevOptions::default(),
+    )
+    .unwrap();
     let watcher = SourceWatcher::new(&root).unwrap();
     let plan = BuildPlan::from_changes(&ChangeBatch {
         revision: watcher.current_revision(),
         paths: BTreeSet::from(["crates/ryframe-api/src/lib.rs".to_owned()]),
     });
-    let session =
-        DevSession::prepare_isolated(&root.join("state"), watcher.current_revision()).unwrap();
     let group = ChildGroup::new().unwrap();
     let shutdown = AtomicBool::new(false);
     let cargo_invocations = AtomicUsize::new(0);

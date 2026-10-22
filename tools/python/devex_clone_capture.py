@@ -13,8 +13,9 @@ import stat
 import subprocess
 
 from artifact_digests import filesystem_path
+from native_s3_client import NativeS3InvocationError, read as native_s3_read
 from restore_build import file_digest
-from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools, copy_object_metadata, redact_object_diagnostic
+from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools, copy_object_metadata
 from restore_reference_plan import BUCKETS, plan_hash
 
 OBSERVED_FIELDS = {"AcceptRanges", "ContentLength", "ETag", "LastModified", "VersionId", "StorageClass",
@@ -131,13 +132,16 @@ def read_bound_json(path: Path, descriptor: dict) -> dict:
     return value
 
 
-def request_data(tools: ExternalTools, side: str, bucket: str, key: str, expected: dict, max_bytes: int) -> dict:
+def request_data(tools: ExternalTools, side: str, bucket: str, key: str, expected: dict, max_bytes: int, transport: str) -> dict:
     config = tools.plan[side]
+    if transport != "rust-s3-sigv4":
+        raise ValueError("对象采集只允许使用原生 Rust S3 传输")
+    binding = {"transport": transport}
     return {"format_version": 1, "kind": "devex-clone-object-capture", "side": side,
             "scope_id": config["scope_id"], "endpoint": config["s3"]["endpoint"],
             "region": config["s3"]["region"], "bucket": bucket, "key": key,
             "expected": dict(expected), "max_bytes": max_bytes,
-            "aws_tool": tools.plan["tools"]["aws"], "clone_verified": False}
+            **binding, "clone_verified": False}
 
 
 def inspect_response(value: dict) -> dict:
@@ -201,39 +205,53 @@ class CaptureReader:
         self.tools = ExternalTools(copy.deepcopy(tools.plan), output, tools.run)
         self.side, self.output = side, output
 
-    def read(self, stage: str, operation: str, bucket: str, key: str, *, identity=None, body=None) -> dict:
+    def read(self, stage: str, operation: str, bucket: str, key: str, *, identity=None,
+             body=None, max_bytes=0) -> dict:
         if operation not in {"head-object", "get-object"} or (operation == "get-object") != (body is not None):
             raise ValueError("对象采集只能发出完整 HEAD 或 GET 只读请求")
-        config, env = self.tools.aws_context(self.side)
-        command = [*self.tools.command("aws"), "--endpoint-url", config["endpoint"], "--region", config["region"],
-                   "s3api", operation, "--bucket", bucket, "--key", key]
-        if identity is not None:
-            command.extend(["--if-match", identity["ETag"]])
-            if operation == "get-object" and identity["VersionId"] is not None:
-                command.extend(["--version-id", identity["VersionId"]])
-        if body is not None:
-            if Path(filesystem_path(body)).exists() or Path(filesystem_path(body)).is_symlink():
-                raise ValueError("采集不能覆盖任何已有字节文件")
-            command.append(filesystem_path(body))
+        config = self.tools.plan[self.side]
+        if body is not None and (Path(filesystem_path(body)).exists()
+                                 or Path(filesystem_path(body)).is_symlink()):
+            raise ValueError("采集不能覆盖任何已有字节文件")
+        request = {
+            "format_version": 1,
+            "kind": "ryframe-native-s3-read",
+            "scope_id": config["scope_id"],
+            "configuration": config["s3"],
+            "bucket": bucket,
+            "operation": operation,
+            "key": key,
+            "if_match": None if identity is None else identity["ETag"],
+            "version": (None if identity is None or operation != "get-object"
+                        else identity["VersionId"]),
+            "destination": None if body is None else str(Path(filesystem_path(body))),
+            "max_bytes": 0 if body is None else max_bytes,
+        }
         diagnostic = self.output / f"{stage}.diagnostic.json"
-        # 在请求前排他创建诊断位置，失败不丢失 CLI 的脱敏原因。
+        # 在请求前排他创建诊断位置；凭据只进入子进程标准输入且不写入诊断。
         with open(filesystem_path(diagnostic), "x", encoding="utf-8", newline="\n") as stream:
-            stderr, returncode, error_type = b"", None, None
+            returncode, error_type = None, None
+            native_failure = None
             try:
-                result = self.tools.execute(command, env=env)
-                stderr, returncode = result.stderr, result.returncode
-                response = json.loads(result.stdout, object_pairs_hook=unique_object)
-                if not isinstance(response, dict):
-                    raise ValueError("对象工具响应不是 JSON 对象")
+                response, invocation = native_s3_read(request, self.tools.run)
+                returncode = invocation["returncode"]
                 write_json(self.output / f"{stage}.json", response)
                 return response
-            except (subprocess.SubprocessError, OSError, ValueError) as error:
-                stderr = getattr(error, "stderr", stderr)
+            except (NativeS3InvocationError, OSError, ValueError) as error:
                 returncode, error_type = getattr(error, "returncode", returncode), type(error).__name__
+                if isinstance(error, NativeS3InvocationError):
+                    native_failure = {
+                        "outcome": error.outcome,
+                        "http_status": error.http_status,
+                        "remote_write_may_have_occurred": error.remote_write_may_have_occurred,
+                    }
                 raise
             finally:
-                json.dump({"operation": operation, "returncode": returncode, "error_type": error_type,
-                           "stderr": redact_object_diagnostic(stderr, env)}, stream, ensure_ascii=False, indent=2)
+                evidence = {"operation": operation, "returncode": returncode,
+                            "error_type": error_type, "stderr": ""}
+                if native_failure is not None:
+                    evidence["native_failure"] = native_failure
+                json.dump(evidence, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -244,7 +262,8 @@ class CaptureReader:
         for bucket in owner_scope(owner_buckets):
             body = self.output / f"{stage}-{bucket}.bin"
             key = f"{scope}/.ryframe-owner"
-            self.read(f"{stage}-{bucket}", "get-object", bucket, key, body=body)
+            self.read(f"{stage}-{bucket}", "get-object", bucket, key,
+                      body=body, max_bytes=4096)
             evidence.append(owner_evidence(self.output, stage, bucket, scope))
         return evidence
 
@@ -270,7 +289,10 @@ class CaptureStages:
                  *, owner_buckets: tuple[str, ...] = OWNER_BUCKETS):
         self.reader, self.bucket, self.key = reader, bucket, key
         self.owner_buckets = owner_scope(owner_buckets, bucket=bucket)
-        self.request = request_data(reader.tools, reader.side, bucket, key, expected, max_bytes)
+        self.request = request_data(
+            reader.tools, reader.side, bucket, key, expected, max_bytes,
+            "rust-s3-sigv4",
+        )
         self._before, self._owners, self._bindings, self._completed = None, None, {}, False
 
     def _bind(self, stages: list[str]) -> None:
@@ -319,7 +341,7 @@ class CaptureStages:
                          for suffix in ("bin", "json", "diagnostic.json")]
                 copy_evidence(output, self.reader.output, {name: file_digest(regular_file(output / name)) for name in names})
             return result
-        except (subprocess.SubprocessError, OSError, ValueError) as error:
+        except (NativeS3InvocationError, subprocess.SubprocessError, OSError, ValueError) as error:
             capture_failed(output, self.request, error)
 
     def _finish(self, reader: CaptureReader) -> dict:
@@ -328,7 +350,10 @@ class CaptureStages:
         if before["identity"]["ContentLength"] != expected["bytes"] or before["identity"]["ContentLength"] > max_bytes:
             raise ValueError("HEAD 大小与登记值或采集上限不符")
         body = reader.output / "object.bin"
-        get_raw = reader.read("get", "get-object", self.bucket, self.key, identity=before["identity"], body=body)
+        get_raw = reader.read(
+            "get", "get-object", self.bucket, self.key,
+            identity=before["identity"], body=body, max_bytes=max_bytes,
+        )
         downloaded = inspect_response(get_raw)
         actual = file_digest(regular_file(body))
         if downloaded["identity"] != before["identity"] or actual != expected or actual["bytes"] > max_bytes:
@@ -364,20 +389,21 @@ def capture_object(tools: ExternalTools, side: str, bucket: str, key: str, outpu
         stages.owners_before()
         stages.head_before()
         return stages.complete(output)
-    except (subprocess.SubprocessError, OSError, ValueError) as error:
+    except (NativeS3InvocationError, subprocess.SubprocessError, OSError, ValueError) as error:
         capture_failed(output, stages.request, error)
 
 
 def verify_capture(tools: ExternalTools, side: str, bucket: str, key: str, output: Path,
-                   *, expected: dict, max_bytes: int, owner_buckets: tuple[str, ...] = OWNER_BUCKETS) -> dict:
+                   *, expected: dict, max_bytes: int, transport: str, owner_buckets: tuple[str, ...] = OWNER_BUCKETS) -> dict:
     """只复核已有证据字节，不访问 S3，也不证明此刻 live 源仍相同或复制已成功。"""
     validate_request(tools, side, bucket, key, output, expected, max_bytes, existing=True)
     owner_scope(owner_buckets, bucket=bucket)
     failure = Path(filesystem_path(output / "failure.json"))
     if failure.exists() or failure.is_symlink():
         raise ValueError("采集目录有失败证据，不能使用残留成功文件")
-    tools.command("aws")
-    request = request_data(tools, side, bucket, key, expected, max_bytes)
+    if transport != "rust-s3-sigv4":
+        raise ValueError("对象采集证据必须来自原生 Rust S3 传输")
+    request = request_data(tools, side, bucket, key, expected, max_bytes, transport)
     if read_json(output / "intent.json") != request:
         raise ValueError("采集 intent 与当前明确请求、工具及目标绑定不一致")
     stages = {"head-before": "head-object", "get": "get-object", "head-after": "head-object"}

@@ -98,9 +98,11 @@ def successor_plan(backend, directory, value, successor, *, owned_lock_identity=
             or any(prior_result.get(key) != item for key, item in expected.items())):
         raise ValueError("seed 原缓存发布结果与实际创建代次不符")
     confirmation(backend, bound_file(backend, ready["owner"]).parent, {**request, "binding": descriptor}, runtime_binding)
+    public_process = {key: item for key, item in effective.items() if key != "password"}
     proof = {"request": descriptor, "successor": successor, "source_result": source["review_successor"]["source_result"],
-             "previous_result": previous[-1]["result"], "process": effective}
-    return proof, private, source
+             "previous_result": previous[-1]["result"], "process": public_process,
+             "credential_source": request["target_environment"]}
+    return proof, private, source, effective
 
 
 def generation_request(backend, directory, request, output, *, owned_lock_identity=None,
@@ -109,12 +111,14 @@ def generation_request(backend, directory, request, output, *, owned_lock_identi
     if not path.exists():
         return request["process"], None
     saved = read_json(path)
-    expected, _, _ = successor_plan(backend, directory, read_json(directory / "manifest.json"), saved["successor"],
-                                    owned_lock_identity=owned_lock_identity,
-                                    observe_current_tools=observe_current_tools)
+    expected, _, _, effective = successor_plan(
+        backend, directory, read_json(directory / "manifest.json"), saved["successor"],
+        owned_lock_identity=owned_lock_identity,
+        observe_current_tools=observe_current_tools,
+    )
     if saved != expected:
         raise ValueError("缓存工具后继收据与原请求、来源或当前工具不符")
-    return expected["process"], binding(path)
+    return effective, binding(path)
 
 
 def frozen_generation_request(backend, directory, request, descriptor, output, source_result, successor):
@@ -147,7 +151,7 @@ def preflight_successor(backend, directory, value, filename=None, *, mode="resta
         if not paths:
             return None
         selected = read_json(paths[-1])["successor"]
-    proof, _, source = successor_plan(backend, directory, value, selected)
+    proof, _, source, _ = successor_plan(backend, directory, value, selected)
     from devex_clone_seed_generation_prelaunch import closed
     from devex_clone_seed_rebind import history, quiet_producers
     from devex_clone_seed_segment import segmented_resume
@@ -209,7 +213,9 @@ def published_restart_guard(backend, directory, number):
         return
     output = directory / STAGE / f"a{number:04d}"
     saved = read_json(output / "tool-successor.json")
-    proof, _, source = successor_plan(backend, directory, read_json(directory / "manifest.json"), saved["successor"])
+    proof, _, source, _ = successor_plan(
+        backend, directory, read_json(directory / "manifest.json"), saved["successor"]
+    )
     if proof != saved:
         raise ValueError("当前缓存工具后继登记变化")
     state = load_state(directory)
@@ -433,7 +439,7 @@ def cache_status(backend: Path, directory: Path, *, allow_close_attempt: bool = 
 
 
 def restore_markers(backend, directory, request, descriptor, output, runtime, runtime_binding, mode, number, guard):
-    call = transport(request, environment(backend, request), guard)
+    call = transport(backend, request, environment(backend, request), guard)
     owner_request = {**request, "binding": descriptor}
     previous = owner_paths(backend, directory, request, descriptor, runtime_binding)
     if previous and (previous[-1] / "confirmed.json").exists():
@@ -483,9 +489,9 @@ def execute_cache(backend: Path, directory: Path, value: dict, mode: str, number
         output.mkdir()
         tools = None
         if successor is not None:
-            proof, private, _ = successor_plan(backend, directory, value, successor)
+            proof, private, _, process = successor_plan(backend, directory, value, successor)
             write_json(output / "tool-successor.json", proof)
-            process, tools = proof["process"], binding(output / "tool-successor.json")
+            tools = binding(output / "tool-successor.json")
         else:
             process = request["process"]
         if mode in {"stop", "recover"}:

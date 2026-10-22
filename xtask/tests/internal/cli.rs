@@ -20,7 +20,7 @@ fn parse_command(values: &[&str]) -> std::result::Result<Command, CliError> {
 
 #[test]
 fn exposes_exactly_five_top_level_command_families() {
-    assert!(matches!(parse_command(&["dev"]), Ok(Command::Dev { .. })));
+    assert!(matches!(parse_command(&["dev"]), Ok(Command::Dev(_))));
     assert!(matches!(parse_command(&["check"]), Ok(Command::Check(_))));
     assert_eq!(
         parse_command(&["build"]).unwrap(),
@@ -635,7 +635,10 @@ fn parses_required_ci_inputs_before_execution() {
 fn parses_build_and_development_options() {
     assert_eq!(
         parse_command(&["dev", "--measure-once"]).unwrap(),
-        Command::Dev { measure_once: true }
+        Command::Dev(super::cli::DevOptions {
+            measure_once: true,
+            ..Default::default()
+        })
     );
     assert_eq!(
         parse_command(&["build", "--real"]).unwrap(),

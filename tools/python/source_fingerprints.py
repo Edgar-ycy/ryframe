@@ -50,8 +50,12 @@ def build_source(receipt: dict) -> dict:
     expected = ({"format_version", "kind", "sources", "build", "artifacts"}
                 if repository == "backend"
                 else {"format_version", "kind", "sources", "build", "files"})
-    if receipt.get("format_version") != 2 or set(receipt) != expected:
-        raise ValueError("当前构建来源必须使用严格 v2 收据")
+    if receipt.get("format_version") != (2 if repository == "backend" else 3) or set(receipt) != expected:
+        raise ValueError("当前构建来源必须使用后端严格 v2、前端严格 v3 收据")
+    if repository == "frontend":
+        from restore_runtime_evidence import validate_frontend_receipt
+
+        validate_frontend_receipt(receipt)
     return validate_build_source_domains(receipt.get("sources"), repository)["full"]["source"]
 
 
@@ -336,7 +340,7 @@ def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
         expected_fields = ({"format_version", "kind", "sources", "build", "artifacts"}
                            if repository == "backend"
                            else {"format_version", "kind", "sources", "build", "files"})
-        if receipt.get("format_version") != 2 or set(receipt) != expected_fields:
+        if receipt.get("format_version") != (2 if repository == "backend" else 3) or set(receipt) != expected_fields:
             raise ValueError("当前构建收据字段无效")
         sources = validate_build_source_domains(receipt.get("sources"), repository)
         scope = _BRIDGES.get()
@@ -353,10 +357,20 @@ def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
                 sources["product"] != build_source_domains(current_inventory, repository)["product"]):
             raise ValueError("产品构建输入已经变化，必须重新编译")
         if kind == "restore-frontend-build":
-            from source_inventory import frontend_environment_files
+            from restore_runtime_evidence import validate_frontend_receipt
+            from restore_frontend_configuration import verify_frontend_inputs
+            from restore_frontend_build import frontend_snapshots
 
-            if receipt.get("build", {}).get("environment_files") != frontend_environment_files(root):
-                raise ValueError("前端有效构建环境文件已经变化，必须重新编译")
+            validate_frontend_receipt(receipt)
+            inputs = verify_frontend_inputs(root, receipt["build"])
+            files, snapshots = frontend_snapshots(root)
+            if files != receipt["files"]:
+                raise ValueError("前端完整 dist 产物已经变化，必须重新构建")
+            for snapshot in snapshots:
+                snapshot.assert_unchanged()
+            inputs.assert_unchanged()
+            if frontend_snapshots(root)[0] != files:
+                raise ValueError("核验期间前端完整 dist 文件集合或内容发生漂移")
             return copy.deepcopy(sources["full"]["source"])
         from restore_build import build_context
 

@@ -6,24 +6,22 @@ payload 仍须由 TransferSteps 单独校验。HEAD 复核不下载业务对象�
 from __future__ import annotations
 
 import copy
-import json
-import os
 from pathlib import Path
-import subprocess
 from typing import Mapping
 import uuid
 
 from artifact_digests import filesystem_path
-from devex_clone_capture import CaptureReader, inspect_response, read_json, regular_file, unique_object, verify_capture, write_json
+from devex_clone_capture import CaptureReader, inspect_response, read_json, regular_file, verify_capture, write_json
 from devex_clone_export import logical_inventory, schema_models, validate_dump_state, validate_inventory
 from devex_clone_inventory import configuration
 from devex_clone_inventory_complete import inventory_proofs
 from devex_clone_model import bound_file, digest, exact, linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_rows import schema_catalog
-from devex_clone_source_proof import bound_file as request_file, execution_backend, validate_request
+from devex_clone_source_proof import bound_file as request_file, execution_backend, public_request, validate_request
+from native_s3_client import NativeS3InvocationError, inspect as native_s3_inspect
 from restore_build import file_digest
-from restore_reference_io import ExternalTools, redact_object_diagnostic
+from restore_reference_io import ExternalTools
 from restore_reference_plan import BUCKETS, plan_hash
 from restore_source_binding import source_binding
 from source_fingerprints import build_source
@@ -158,8 +156,12 @@ def verify_captures(root: Path, value: dict, request: dict, inventory: dict) -> 
             if receipt.name != "capture.json" or body != receipt.parent / "object.bin":
                 raise ValueError("对象字节与采集收据不是同一明确目录")
             expected = {field: baseline[name][item["key"]][field] for field in ("bytes", "sha256")}
+            intent = read_json(receipt.parent / "intent.json")
+            if intent.get("transport") != "rust-s3-sigv4" or "aws_tool" in intent:
+                raise ValueError("对象采集 intent 必须唯一绑定原生 Rust S3 传输")
             capture = verify_capture(tools, "source", name, item["key"], receipt.parent,
-                                     expected=expected, max_bytes=request["max_object_bytes"])["capture"]
+                                     expected=expected, max_bytes=request["max_object_bytes"],
+                                     transport="rust-s3-sigv4")["capture"]
             if capture["metadata"] != item["metadata"] or capture["get_header_consistent"] is not item["get_header_consistent"]:
                 raise ValueError("对象完整存储元数据或 GET 差异标记与源证据不同")
             captures[name][item["key"]] = capture
@@ -176,7 +178,7 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     request_path = request_file(backend, value["request"])
     request = read_json(request_path)
     validate_request(backend, request)
-    if request != evidence["request"] or request["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
+    if public_request(request) != evidence["request"] or public_request(request)["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
         raise ValueError("源导出与外部原请求不同")
     execution = execution_backend(backend, request)
     models = schema_models(execution)
@@ -233,7 +235,7 @@ def verify_export_bindings(backend: Path, verified: dict, *, selection="all") ->
     exact(verified, {"export", "binding", "request", "generation", "inventory", "captures", "proof_files"})
     if value != verified["export"]:
         raise ValueError("调用方源导出对象被修改")
-    if (verified["request"] != read_json(root / "request.json")
+    if (public_request(verified["request"]) != read_json(root / "request.json")
             or verified["generation"] != read_json(root / "generation-before.json")
             or verified["inventory"] != read_json(root / "inventory-before.json") or set(verified["captures"]) != BUCKETS):
         raise ValueError("调用方源证据快照被修改")
@@ -276,12 +278,6 @@ class SourceObjectObservationError(RuntimeError):
 class _SourceTools(ExternalTools):
     def __init__(self, session):
         super().__init__(session.plan, session.output, session.run)
-        self.environment = session.aws_environment
-
-    def aws_context(self, side: str) -> tuple[dict, dict]:
-        if side != "source":
-            raise ValueError("源观察不能请求目标环境")
-        return self.plan["source"]["s3"], dict(self.environment)
 
 
 class _SourceReader(CaptureReader):
@@ -296,35 +292,26 @@ class _Observation:
         self.execution = execution_backend(backend, verified["request"])
         self.original_environment, self.environment = environment, dict(environment)
         self.plan = copy.deepcopy(tools.plan)
-        source, request = verified["export"]["source"], verified["request"]
-        if (self.plan.get("source") != source or self.plan["tools"]["aws"] != request["tools"]["aws"]
-                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in self.environment.items())):
-            raise ValueError("源对象工具、scope 或显式环境不同")
-        s3 = source["s3"]
-        access, secret = (self.environment.get(s3[field]) for field in ("access_key_env", "secret_key_env"))
-        if not access or not secret:
-            raise ValueError("源对象缺少明确认证环境")
-        self.aws_environment = {k: v for k, v in self.environment.items()
-                                if not k.upper().startswith("AWS_") and k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}
-        self.aws_environment.update(AWS_ACCESS_KEY_ID=access, AWS_SECRET_ACCESS_KEY=secret, AWS_DEFAULT_REGION=s3["region"],
-            AWS_EC2_METADATA_DISABLED="true", AWS_CONFIG_FILE=os.devnull, AWS_SHARED_CREDENTIALS_FILE=os.devnull,
-            AWS_PAGER="", AWS_MAX_ATTEMPTS="1")
+        request = verified["request"]
+        source = request["source"]
+        if (self.plan.get("source") != source or set(self.environment) != {"APP_ENV"}
+                or self.environment.get("APP_ENV") != "test"):
+            raise ValueError("源对象配置、scope 或显式环境不同")
         self.initial = self.binding()
         self.reader = _SourceReader(self)
 
     def binding(self):
         if self.original.plan != self.plan or dict(self.original_environment) != self.environment:
             raise ValueError("源计划或显式环境在请求期间变化")
-        self.original.command("aws")
         source = self.plan["source"]
-        return {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.aws_environment),
+        return {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.environment),
+                "transport": "rust-s3-sigv4", "configuration_sha256": plan_hash(source["s3"]),
                 "physical": source_binding(self.execution, {"source": source}, self.environment, evidence_root=self.backend),
                 "configuration": configuration(self.execution, self.environment, source, evidence_root=self.backend)}
 
     def run(self, command, **kwargs):
-        if self.binding() != self.initial or kwargs.get("env") != self.aws_environment:
+        if self.binding() != self.initial:
             raise ValueError("源只读请求前的绑定变化")
-        kwargs["env"] = dict(self.aws_environment)
         try:
             return self.original.run(command, **kwargs)
         finally:
@@ -335,30 +322,26 @@ class _Observation:
         scope = self.plan["source"]["scope_id"] + "/"
         found, cursors, cursor = set(), set(), None
         for index in range(10000):
-            config, env = self.reader.tools.aws_context("source")
-            command = [*self.reader.tools.command("aws"), "--endpoint-url", config["endpoint"], "--region", config["region"],
-                       "--no-paginate", "s3api", "list-objects-v2", "--bucket", bucket, "--prefix", scope, "--max-keys", "1000"]
-            if cursor:
-                command += ["--continuation-token", cursor]
             filename = self.output / f"list-{phase}-{bucket}-{index}.json"
             diagnostic = filename.with_suffix(".diagnostic.json")
-            code, stderr, error_type = None, b"", None
-            with open(filesystem_path(diagnostic), "x", encoding="utf-8", newline="\n") as stream:
-                try:
-                    response = self.reader.tools.execute(command, env=env)
-                    code, stderr = response.returncode, response.stderr
-                    page = json.loads(response.stdout, object_pairs_hook=unique_object)
-                    write_json(filename, page)
-                except (subprocess.SubprocessError, OSError, ValueError) as error:
-                    code, stderr, error_type = getattr(error, "returncode", code), getattr(error, "stderr", stderr), type(error).__name__
-                    raise
-                finally:
-                    json.dump({"returncode": code, "error_type": error_type, "stderr": redact_object_diagnostic(stderr, env)}, stream)
-                    stream.write("\n")
-                    stream.flush()
-                    os.fsync(stream.fileno())
+            code, error_type = None, None
+            try:
+                page, invocation = native_s3_inspect({
+                    "format_version": 1, "kind": "ryframe-native-s3-inspect",
+                    "scope_id": self.plan["source"]["scope_id"],
+                    "configuration": self.plan["source"]["s3"], "bucket": bucket,
+                    "operation": "list-objects-v2", "prefix": scope, "continuation": cursor,
+                }, self.reader.tools.run)
+                code, error_type = invocation["returncode"], invocation["error_type"]
+                write_json(filename, page)
+            except NativeS3InvocationError as error:
+                code, error_type = error.returncode, error.error_type
+                raise
+            finally:
+                write_json(diagnostic, {"operation": "list-objects-v2", "returncode": code,
+                           "error_type": error_type, "stderr": ""})
             if (not isinstance(page, dict) or type(page.get("IsTruncated")) is not bool or not isinstance(page.get("Contents", []), list)
-                    or page.get("Name", bucket) != bucket or page.get("Prefix", scope) != scope or page.get("CommonPrefixes")):
+                    or set(page) - {"IsTruncated", "Contents", "NextContinuationToken"}):
                 raise ValueError("源对象完整分页范围或完成状态不明确")
             for item in page.get("Contents", []):
                 key = item.get("Key")

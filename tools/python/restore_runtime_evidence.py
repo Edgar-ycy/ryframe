@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from process_sockets import endpoint
 from restore_build import validate_build_context
 from source_inventory import validate_build_source_domains
+from restore_frontend_context import validate_frontend_build_context
 from artifact_digests import filesystem_path
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
@@ -127,13 +128,13 @@ def strict_object_pairs(pairs: list[tuple[str, object]]) -> dict:
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError(f"恢复核验 JSON 包含重复字段：{key}")
+            raise ValueError("恢复核验 JSON 包含重复字段；请删除重复字段")
         result[key] = value
     return result
 
 
-def reject_json_constant(value: str) -> None:
-    raise ValueError(f"恢复核验 JSON 包含非标准数值：{value}")
+def reject_json_constant(_value: str) -> None:
+    raise ValueError("恢复核验 JSON 包含非标准数值；请使用严格 JSON")
 
 
 def decode_object(raw: bytes, label: str) -> dict:
@@ -143,10 +144,12 @@ def decode_object(raw: bytes, label: str) -> dict:
             object_pairs_hook=strict_object_pairs,
             parse_constant=reject_json_constant,
         )
-    except UnicodeDecodeError as error:
-        raise ValueError(f"{label}不是 UTF-8") from error
+    except UnicodeDecodeError:
+        raise ValueError(f"{label}不是 UTF-8；请修正文件编码") from None
     except json.JSONDecodeError as error:
-        raise ValueError(f"{label}不是严格 JSON") from error
+        raise ValueError(f"{label}不是严格 JSON：line {error.lineno} column {error.colno}；请修正语法") from None
+    except (ValueError, RecursionError):
+        raise ValueError(f"{label}含重复字段、非标准数值或过深嵌套；请修正严格 JSON") from None
     if not isinstance(value, dict):
         raise ValueError(f"{label}必须是 JSON 对象")
     return value
@@ -340,49 +343,21 @@ def read_authority(stream=None) -> dict:
     return validate_authority(decode_object(raw, "stdin 权威恢复上下文"))
 
 
-def validate_frontend_build_context(value: object) -> dict:
-    value = exact_fields(
-        value,
-        {"command", "mode", "target", "toolchain", "environment", "environment_files"},
-        "前端构建上下文",
-    )
-    toolchain = exact_fields(value["toolchain"], {"node", "pnpm", "vite"}, "前端构建工具链")
-    pnpm = exact_fields(toolchain["pnpm"], {"pinned", "observed"}, "前端 pnpm 工具链")
-    environment = exact_fields(value["environment"], {"variables", "sha256"}, "前端构建环境摘要")
-    if (value["command"] != ["vite", "build"] or value["mode"] != "production"
-            or value["target"] != "vite-default"
-            or any(not isinstance(toolchain[item], str) or not toolchain[item]
-                   for item in ("node", "vite"))
-            or not isinstance(pnpm["pinned"], str) or not pnpm["pinned"]
-            or pnpm["observed"] != pnpm["pinned"]
-            or not isinstance(environment["variables"], list)
-            or environment["variables"] != sorted(set(environment["variables"]))
-            or any(not isinstance(item, str) or not item.startswith("VITE_")
-                   for item in environment["variables"])
-            or not isinstance(environment["sha256"], str) or not HEX_64.fullmatch(environment["sha256"])
-            or not isinstance(value["environment_files"], list)):
-        raise ValueError("前端构建上下文无效")
-    allowed = {".env", ".env.local", ".env.production", ".env.production.local"}
-    previous = ""
-    for item in value["environment_files"]:
-        item = exact_fields(item, {"path", "sha256"}, "前端构建环境文件")
-        if (item["path"] not in allowed or item["path"] <= previous
-                or not isinstance(item["sha256"], str) or not HEX_64.fullmatch(item["sha256"])):
-            raise ValueError("前端构建环境文件摘要无效")
-        previous = item["path"]
-    return value
-
-
 def validate_frontend_receipt(receipt: object) -> dict:
     value = exact_fields(
         receipt,
         {"format_version", "kind", "sources", "build", "files"},
         "前端构建收据",
     )
-    if value["format_version"] != 2 or value["kind"] != "restore-frontend-build" or not isinstance(value["files"], list):
-        raise ValueError("前端必须使用生产构建收据")
+    if (
+        type(value["format_version"]) not in (int, float)
+        or value["format_version"] != 3
+        or value["kind"] != "restore-frontend-build"
+        or not isinstance(value["files"], list)
+    ):
+        raise ValueError("前端必须使用 v3 生产构建收据，旧 v2 不能用于当前恢复")
     validate_build_source_domains(value["sources"], "frontend")
-    # 前端工具链结构与后端不同，由跨仓 schema 校验器在运行时核对。
+    # 前端构建上下文绑定公开 TOML、工具来源及受管身份。
     validate_frontend_build_context(value["build"])
     previous = ""
     for item in value["files"]:
@@ -395,8 +370,9 @@ def validate_frontend_receipt(receipt: object) -> dict:
             or "\\" in item["path"]
             or relative.as_posix() != item["path"]
             or item["path"] <= previous
-            or type(item["bytes"]) is not int
-            or item["bytes"] < 0
+            or type(item["bytes"]) not in (int, float)
+            or not 0 <= item["bytes"] <= 9007199254740991
+            or item["bytes"] != int(item["bytes"])
             or not isinstance(item["sha256"], str)
             or not HEX_64.fullmatch(item["sha256"])
         ):
@@ -540,4 +516,6 @@ def validate_runtime_receipt(receipt: object) -> dict:
         process_identity_record(item["identity"], f"{role} 进程身份")
     validate_backend_receipt(value["backend"])
     validate_frontend_receipt(value["frontend"])
+    if value["frontend"]["build"]["identity"]["frontend_commit"] != source["frontend_sha"]:
+        raise ValueError("恢复前端构建身份必须绑定权威前端精确 SHA")
     return value

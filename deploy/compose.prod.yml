@@ -1,102 +1,10 @@
 name: ryframe
 
-x-ryframe-environment: &ryframe-environment
-  APP_ENV: prod
-  APP_SCOPE_ID: ${APP_SCOPE_ID:?必须设置稳定且唯一的 APP_SCOPE_ID}
-  APP_MULTI_TENANCY_ENABLED: ${APP_MULTI_TENANCY_ENABLED:-true}
-  APP_JOBS_MODE: external
-  APP_JOBS_POLL_INTERVAL_MS: ${APP_JOBS_POLL_INTERVAL_MS:-500}
-  APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS: ${APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS:-5000}
-  APP_JOBS_LEASE_SECONDS: ${APP_JOBS_LEASE_SECONDS:-60}
-  APP_JOBS_HEARTBEAT_SECONDS: ${APP_JOBS_HEARTBEAT_SECONDS:-15}
-  APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS: ${APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS:-15}
-  APP_JOBS_DEFAULT_MAX_ATTEMPTS: ${APP_JOBS_DEFAULT_MAX_ATTEMPTS:-8}
-  APP_JOBS_EXPORT_MAX_ROWS: ${APP_JOBS_EXPORT_MAX_ROWS:-500000}
-  APP_JOBS_EXPORT_RETENTION_HOURS: ${APP_JOBS_EXPORT_RETENTION_HOURS:-24}
-  APP_JOBS_CONCURRENCY: ${APP_JOBS_CONCURRENCY:-4}
-  APP_JOBS_WORKER_ID: ${APP_JOBS_WORKER_ID:-ryframe-worker}
-  APP_JOBS_HEALTH_HOST: ${APP_JOBS_HEALTH_HOST:-0.0.0.0}
-  APP_JOBS_HEALTH_PORT: ${APP_JOBS_HEALTH_PORT:-9091}
-  APP_JOBS_SCHEDULER_ENABLED: ${APP_JOBS_SCHEDULER_ENABLED:-true}
-  APP_JOBS_SCHEDULER_POLL_INTERVAL_MS: ${APP_JOBS_SCHEDULER_POLL_INTERVAL_MS:-1000}
-  APP_JOBS_SCHEDULER_BATCH_SIZE: ${APP_JOBS_SCHEDULER_BATCH_SIZE:-100}
-  APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT: ${APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT:-100}
-  APP_DATA_RETENTION_CLEANUP_BATCH_SIZE: ${APP_DATA_RETENTION_CLEANUP_BATCH_SIZE:-500}
-  APP_DATA_RETENTION_MAX_ROWS_PER_RESOURCE_PER_RUN: ${APP_DATA_RETENTION_MAX_ROWS_PER_RESOURCE_PER_RUN:-50000}
-  APP_DATA_RETENTION_BACKGROUND_JOB_SUCCEEDED_DAYS: ${APP_DATA_RETENTION_BACKGROUND_JOB_SUCCEEDED_DAYS:-30}
-  APP_DATA_RETENTION_OUTBOX_PUBLISHED_DAYS: ${APP_DATA_RETENTION_OUTBOX_PUBLISHED_DAYS:-30}
-  APP_DATA_RETENTION_SCHEDULE_EXECUTION_DAYS: ${APP_DATA_RETENTION_SCHEDULE_EXECUTION_DAYS:-180}
-  APP_DATA_RETENTION_EXPORT_JOB_HISTORY_DAYS: ${APP_DATA_RETENTION_EXPORT_JOB_HISTORY_DAYS:-180}
-  APP_DATA_RETENTION_OPERATION_LOG_DAYS: ${APP_DATA_RETENTION_OPERATION_LOG_DAYS:-180}
-  APP_DATA_RETENTION_LOGIN_LOG_DAYS: ${APP_DATA_RETENTION_LOGIN_LOG_DAYS:-180}
-  APP_DATA_RETENTION_USER_IMPORT_HISTORY_DAYS: ${APP_DATA_RETENTION_USER_IMPORT_HISTORY_DAYS:-180}
-  APP_DATA_RETENTION_USER_IMPORT_ARTIFACT_HOURS: ${APP_DATA_RETENTION_USER_IMPORT_ARTIFACT_HOURS:-168}
-  APP_DATA_RETENTION_RETENTION_RUN_DAYS: ${APP_DATA_RETENTION_RETENTION_RUN_DAYS:-730}
-  APP_USER_IMPORT_MAX_FILE_BYTES: ${APP_USER_IMPORT_MAX_FILE_BYTES:-10485760}
-  APP_USER_IMPORT_MAX_ROWS: ${APP_USER_IMPORT_MAX_ROWS:-20000}
-  APP_USER_IMPORT_BATCH_SIZE: ${APP_USER_IMPORT_BATCH_SIZE:-100}
-  APP_USER_IMPORT_MAX_ACTIVE_PER_TENANT: ${APP_USER_IMPORT_MAX_ACTIVE_PER_TENANT:-1}
-  APP_USER_IMPORT_HASH_PARALLELISM: ${APP_USER_IMPORT_HASH_PARALLELISM:-2}
-  APP_TENANT_CONFIG_TRANSFER_MAX_PACKAGE_BYTES: ${APP_TENANT_CONFIG_TRANSFER_MAX_PACKAGE_BYTES:-5242880}
-  APP_TENANT_CONFIG_TRANSFER_MAX_UNCOMPRESSED_BYTES: ${APP_TENANT_CONFIG_TRANSFER_MAX_UNCOMPRESSED_BYTES:-20971520}
-  APP_TENANT_CONFIG_TRANSFER_MAX_ITEMS: ${APP_TENANT_CONFIG_TRANSFER_MAX_ITEMS:-10000}
-  APP_TENANT_CONFIG_TRANSFER_ARTIFACT_HOURS: ${APP_TENANT_CONFIG_TRANSFER_ARTIFACT_HOURS:-168}
-  APP_TENANT_CONFIG_TRANSFER_ROLLBACK_HOURS: ${APP_TENANT_CONFIG_TRANSFER_ROLLBACK_HOURS:-168}
-  APP_TENANT_CONFIG_TRANSFER_LEASE_SECONDS: ${APP_TENANT_CONFIG_TRANSFER_LEASE_SECONDS:-300}
-  APP_TENANT_CONFIG_TRANSFER_MAX_RUNTIME_SECONDS: ${APP_TENANT_CONFIG_TRANSFER_MAX_RUNTIME_SECONDS:-1800}
-  APP_DATABASE_HOST: ${APP_DATABASE_HOST:?必须设置 APP_DATABASE_HOST}
-  APP_DATABASE_PORT: ${APP_DATABASE_PORT:-3306}
-  APP_DATABASE_NAME: ${APP_DATABASE_NAME:?必须设置 APP_DATABASE_NAME}
-  APP_DATABASE_USERNAME: ${APP_DATABASE_USERNAME:?必须设置 APP_DATABASE_USERNAME}
-  APP_DATABASE_PASSWORD_FILE: /run/secrets/database-password
-  APP_DATABASE_REPLICAS_FILE: /run/secrets/database-replicas
-  APP_DATABASE_SOURCES_FILE: /run/secrets/database-sources
-  APP_DATABASE_TLS_MODE: verify_identity
-  APP_DATABASE_TLS_CA: /run/secrets/mysql-ca.pem
-  APP_DATABASE_TLS_CLIENT_CERT: /run/secrets/mysql-client-cert.pem
-  APP_DATABASE_TLS_CLIENT_KEY: /run/secrets/mysql-client-key.pem
-  APP_DATABASE_SQL_LOG_LEVEL: ${APP_DATABASE_SQL_LOG_LEVEL:-off}
-  APP_DATABASE_SQL_SLOW_THRESHOLD_MS: ${APP_DATABASE_SQL_SLOW_THRESHOLD_MS:-200}
-  APP_REDIS_MODE: required
-  APP_REDIS_HOST: ${APP_REDIS_HOST:?必须设置 APP_REDIS_HOST}
-  APP_REDIS_PORT: ${APP_REDIS_PORT:-6380}
-  APP_REDIS_PASSWORD_FILE: /run/secrets/redis-password
-  APP_REDIS_TLS: "true"
-  APP_REDIS_TLS_CA: /run/secrets/redis-ca.pem
-  APP_REDIS_TLS_CLIENT_CERT: /run/secrets/redis-client-cert.pem
-  APP_REDIS_TLS_CLIENT_KEY: /run/secrets/redis-client-key.pem
-  APP_OBJECT_STORAGE_BACKEND: s3
-  APP_OBJECT_STORAGE_ENDPOINT: ${APP_OBJECT_STORAGE_ENDPOINT:?必须设置 APP_OBJECT_STORAGE_ENDPOINT}
-  APP_OBJECT_STORAGE_ACCESS_KEY_FILE: /run/secrets/object-storage-access-key
-  APP_OBJECT_STORAGE_SECRET_KEY_FILE: /run/secrets/object-storage-secret-key
-  APP_OBJECT_STORAGE_REGION: ${APP_OBJECT_STORAGE_REGION:-us-east-1}
-  APP_OBJECT_STORAGE_REQUEST_TIMEOUT_SECS: ${APP_OBJECT_STORAGE_REQUEST_TIMEOUT_SECS:-30}
-  APP_OBJECT_STORAGE_USE_SSL: "true"
-  APP_AUTH_JWT_SECRET_FILE: /run/secrets/auth-jwt-secret
-  APP_MONITOR_METRICS_BEARER_TOKEN_FILE: /run/secrets/metrics-bearer-token
-  APP_PROXY_TRUSTED_CIDRS: ${APP_PROXY_TRUSTED_CIDRS:?必须设置受信任代理 CIDR}
-  APP_LOGGER_LEVEL: ${APP_LOGGER_LEVEL:-info}
-  APP_LOGGER_FORMAT: ${APP_LOGGER_FORMAT:-json}
-  APP_LOGGER_OUTPUT: ${APP_LOGGER_OUTPUT:-stdout}
-  APP_LOGGER_RETENTION_DAYS: ${APP_LOGGER_RETENTION_DAYS:-7}
-  APP_MESSAGING_ENABLED: ${APP_MESSAGING_ENABLED:-true}
-  APP_MESSAGING_TICKET_TTL_SECONDS: ${APP_MESSAGING_TICKET_TTL_SECONDS:-60}
-  APP_MESSAGING_RETENTION_DAYS: ${APP_MESSAGING_RETENTION_DAYS:-90}
-  APP_MESSAGING_MAX_CONNECTIONS_PER_USER: ${APP_MESSAGING_MAX_CONNECTIONS_PER_USER:-5}
-  APP_MESSAGING_OUTBOUND_BUFFER: ${APP_MESSAGING_OUTBOUND_BUFFER:-256}
-  APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE: ${APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE:-100000}
-  APP_MESSAGING_REPLAY_INTERVAL_SECONDS: ${APP_MESSAGING_REPLAY_INTERVAL_SECONDS:-15}
-  APP_MESSAGING_REPLAY_JITTER_SECONDS: ${APP_MESSAGING_REPLAY_JITTER_SECONDS:-5}
-  APP_MESSAGING_REPLAY_BATCH_SIZE: ${APP_MESSAGING_REPLAY_BATCH_SIZE:-100}
-  APP_TELEMETRY_ENABLED: ${APP_TELEMETRY_ENABLED:-false}
-  APP_TELEMETRY_ENDPOINT: ${APP_TELEMETRY_ENDPOINT:-http://otel-collector.internal.example:4318/v1/traces}
-  APP_TELEMETRY_SERVICE_NAME: ${APP_TELEMETRY_SERVICE_NAME:-ryframe}
-  APP_TELEMETRY_SAMPLE_RATIO: ${APP_TELEMETRY_SAMPLE_RATIO:-0.1}
-  APP_TELEMETRY_EXPORT_TIMEOUT_SECS: ${APP_TELEMETRY_EXPORT_TIMEOUT_SECS:-5}
-  APP_TELEMETRY_MAX_QUEUE_SIZE: ${APP_TELEMETRY_MAX_QUEUE_SIZE:-2048}
+# 公开无效镜像摘要示例；部署前在本文件替换为已验证的真实镜像摘要。
+x-ryframe-image: &ryframe-image registry.example.invalid/ryframe@sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 x-ryframe-service: &ryframe-service
-  image: ${RYFRAME_IMAGE:?必须设置不可变的 RYFRAME_IMAGE 镜像摘要}
+  image: *ryframe-image
   restart: unless-stopped
   read_only: true
   cap_drop:
@@ -107,22 +15,8 @@ x-ryframe-service: &ryframe-service
   stop_grace_period: 15s
   tmpfs:
     - /tmp:mode=1777,noexec,nosuid,size=64m
-  environment: *ryframe-environment
-  secrets:
-    - mysql-ca.pem
-    - mysql-client-cert.pem
-    - mysql-client-key.pem
-    - redis-ca.pem
-    - redis-client-cert.pem
-    - redis-client-key.pem
-    - redis-password
-    - database-password
-    - database-replicas
-    - database-sources
-    - object-storage-access-key
-    - object-storage-secret-key
-    - auth-jwt-secret
-    - metrics-bearer-token
+  environment:
+    APP_ENV: prod
   networks:
     - backend
 
@@ -131,96 +25,104 @@ services:
     <<: *ryframe-service
     restart: "no"
     entrypoint: ["/usr/local/bin/ryframe-migrate"]
-    command: ["control", "up"]
-    environment:
-      <<: *ryframe-environment
-      # 独立迁移二进制显式执行 DDL；生产配置本身仍只能使用 verify。
-      APP_DATABASE_MIGRATION_MODE: verify
+    command: ["--config-dir", "/opt/ryframe/config", "control", "up"]
+    volumes:
+      - type: bind
+        source: ./deploy/config/control
+        target: /opt/ryframe/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/tls
+        target: /opt/ryframe/tls
+        read_only: true
+        bind:
+          create_host_path: false
 
   migrate-tenant-data:
     <<: *ryframe-service
     restart: "no"
     entrypoint: ["/usr/local/bin/ryframe-migrate"]
-    command: ["tenant-data", "up", "--all"]
+    command: ["--config-dir", "/opt/ryframe/config", "tenant-data", "up", "--all"]
     depends_on:
       migrate-control:
         condition: service_completed_successfully
-    environment:
-      <<: *ryframe-environment
-      # shared-control 与控制库共用 Schema，但两类迁移账本必须分别完成。
-      APP_DATABASE_MIGRATION_MODE: verify
+    volumes:
+      - type: bind
+        source: ./deploy/config/tenant-data
+        target: /opt/ryframe/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/tls
+        target: /opt/ryframe/tls
+        read_only: true
+        bind:
+          create_host_path: false
 
   api:
     <<: *ryframe-service
+    command: ["--config-dir", "/opt/ryframe/config"]
     depends_on:
       migrate-tenant-data:
         condition: service_completed_successfully
       worker:
         condition: service_healthy
-    environment:
-      <<: *ryframe-environment
-      APP_DATABASE_MIGRATION_MODE: verify
-      SNOWFLAKE_WORKER_ID: ${RYFRAME_API_SNOWFLAKE_WORKER_ID:?必须设置唯一 API Snowflake 节点号}
     ports:
-      - "127.0.0.1:${RYFRAME_API_PORT:-8080}:8080"
+      - "127.0.0.1:8080:8080"
     networks:
       - edge
       - backend
     healthcheck:
-      test: ["CMD", "/usr/local/bin/ryframe", "--healthcheck"]
+      test: ["CMD", "/usr/local/bin/ryframe", "--config-dir", "/opt/ryframe/config", "--healthcheck"]
       interval: 15s
       timeout: 3s
       retries: 5
       start_period: 20s
+    volumes:
+      - type: bind
+        source: ./deploy/config/api
+        target: /opt/ryframe/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/tls
+        target: /opt/ryframe/tls
+        read_only: true
+        bind:
+          create_host_path: false
 
   worker:
     <<: *ryframe-service
+    entrypoint: ["/usr/local/bin/ryframe-worker"]
+    command: ["--config-dir", "/opt/ryframe/config"]
     depends_on:
       migrate-tenant-data:
         condition: service_completed_successfully
-    entrypoint: ["/usr/local/bin/ryframe-worker"]
-    environment:
-      <<: *ryframe-environment
-      APP_DATABASE_MIGRATION_MODE: verify
-      SNOWFLAKE_WORKER_ID: ${RYFRAME_WORKER_SNOWFLAKE_WORKER_ID:?必须设置唯一 Worker Snowflake 节点号}
     healthcheck:
-      test: ["CMD", "/usr/local/bin/ryframe-worker", "--healthcheck"]
+      test: ["CMD", "/usr/local/bin/ryframe-worker", "--config-dir", "/opt/ryframe/config", "--healthcheck"]
       interval: 15s
       timeout: 3s
       retries: 5
       start_period: 20s
+    volumes:
+      - type: bind
+        source: ./deploy/config/worker
+        target: /opt/ryframe/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/tls
+        target: /opt/ryframe/tls
+        read_only: true
+        bind:
+          create_host_path: false
 
 networks:
   edge:
   backend:
     internal: true
-
-secrets:
-  mysql-ca.pem:
-    file: ${RYFRAME_MYSQL_CA_FILE:?必须设置 MySQL CA 证书文件}
-  mysql-client-cert.pem:
-    file: ${RYFRAME_MYSQL_CLIENT_CERT_FILE:?必须设置 MySQL 客户端证书文件}
-  mysql-client-key.pem:
-    file: ${RYFRAME_MYSQL_CLIENT_KEY_FILE:?必须设置 MySQL 客户端私钥文件}
-  redis-ca.pem:
-    file: ${RYFRAME_REDIS_CA_FILE:?必须设置 Redis CA 证书文件}
-  redis-client-cert.pem:
-    file: ${RYFRAME_REDIS_CLIENT_CERT_FILE:?必须设置 Redis 客户端证书文件}
-  redis-client-key.pem:
-    file: ${RYFRAME_REDIS_CLIENT_KEY_FILE:?必须设置 Redis 客户端私钥文件}
-  redis-password:
-    file: ${RYFRAME_REDIS_PASSWORD_FILE:?必须设置 Redis 密码 secret 文件}
-  database-password:
-    file: ${RYFRAME_DATABASE_PASSWORD_FILE:?必须设置数据库密码 secret 文件}
-  database-replicas:
-    file: ${RYFRAME_DATABASE_REPLICAS_FILE:?必须设置数据库副本 JSON 文件}
-  database-sources:
-    file: ${RYFRAME_DATABASE_SOURCES_FILE:?必须设置业务数据源 JSON 文件}
-  object-storage-access-key:
-    file: ${RYFRAME_OBJECT_STORAGE_ACCESS_KEY_FILE:?必须设置对象存储访问密钥文件}
-  object-storage-secret-key:
-    file: ${RYFRAME_OBJECT_STORAGE_SECRET_KEY_FILE:?必须设置对象存储私密密钥文件}
-  auth-jwt-secret:
-    file: ${RYFRAME_AUTH_JWT_SECRET_FILE:?必须设置 JWT secret 文件}
-  metrics-bearer-token:
-    file: ${RYFRAME_METRICS_BEARER_TOKEN_FILE:?必须设置指标 Bearer Token 文件}

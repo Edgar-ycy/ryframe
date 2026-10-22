@@ -1,8 +1,4 @@
-use std::{
-    env, process,
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
+use std::time::Duration;
 
 use ryframe_adapters::{
     RedisClient,
@@ -11,27 +7,34 @@ use ryframe_adapters::{
         idempotency_meta_key, idempotency_response_key,
     },
 };
-use ryframe_config::{AppConfig, Environment, RedisConfig, RedisMode};
+use ryframe_config::{RedisConfig, RedisMode};
+
+#[path = "support/configuration.rs"]
+mod configuration;
+use configuration::{Configuration, ScopedClient};
 
 #[path = "redis_real_protocol/transactions.rs"]
 mod transactions;
 
-const ENABLE_ENV: &str = "RYFRAME_REDIS_INTEGRATION";
-const TLS_ENABLE_ENV: &str = "RYFRAME_REDIS_TLS_INTEGRATION";
-static SCOPE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const GENERAL: &str = "redis";
+const TLS: &str = "redis-tls";
 
 #[tokio::test]
 async fn tls_connection_round_trip_uses_real_redis() {
-    if !integration_enabled(TLS_ENABLE_ENV) {
-        eprintln!("跳过 Redis TLS 真实协议测试：设置 {TLS_ENABLE_ENV}=1 后才会连接外部服务");
+    if !integration_enabled(TLS) {
+        skip_message();
         return;
     }
 
-    let config = redis_config("tls");
-    assert!(config.tls, "Redis TLS 集成测试必须设置 RYFRAME_REDIS_TLS=1");
+    let (config, snapshot) = role_config(TLS, "tls");
+    assert!(config.tls, "Redis TLS 集成配置必须设置 redis.tls=true");
     let client = RedisClient::connect(&config)
         .await
         .unwrap_or_else(|error| panic!("使用 TLS 连接 Redis 真实服务失败: {error}"));
+    let client = ScopedClient {
+        client,
+        configuration: snapshot,
+    };
     let key = "protocol:tls";
     let result = async {
         client.set(key, "ready").await.map_err(redis_error)?;
@@ -48,7 +51,7 @@ async fn tls_connection_round_trip_uses_real_redis() {
 
 #[tokio::test]
 async fn redis_client_applies_and_expires_ttl() {
-    if !integration_enabled(ENABLE_ENV) {
+    if !integration_enabled(GENERAL) {
         skip_message();
         return;
     }
@@ -74,7 +77,7 @@ async fn redis_client_applies_and_expires_ttl() {
 
 #[tokio::test]
 async fn idempotency_reservation_is_atomic_and_replayable() {
-    if !integration_enabled(ENABLE_ENV) {
+    if !integration_enabled(GENERAL) {
         skip_message();
         return;
     }
@@ -140,7 +143,7 @@ async fn idempotency_reservation_is_atomic_and_replayable() {
 
 #[tokio::test]
 async fn redis_clients_cannot_cross_scope_namespaces() {
-    if !integration_enabled(ENABLE_ENV) {
+    if !integration_enabled(GENERAL) {
         skip_message();
         return;
     }
@@ -180,7 +183,7 @@ async fn redis_clients_cannot_cross_scope_namespaces() {
 
 #[tokio::test]
 async fn unavailable_redis_returns_explicit_connection_error() {
-    if !integration_enabled(ENABLE_ENV) {
+    if !integration_enabled(GENERAL) {
         skip_message();
         return;
     }
@@ -193,7 +196,7 @@ async fn unavailable_redis_returns_explicit_connection_error() {
         .port();
     drop(listener);
 
-    let mut config = redis_config("unavailable");
+    let (mut config, _snapshot) = redis_config("unavailable");
     config.host = "127.0.0.1".to_owned();
     config.port = port;
     config.timeout_secs = 1;
@@ -202,41 +205,34 @@ async fn unavailable_redis_returns_explicit_connection_error() {
     }
 }
 
-async fn connect_client(test_name: &str) -> RedisClient {
-    let config = redis_config(test_name);
-    RedisClient::connect(&config)
+async fn connect_client(test_name: &str) -> ScopedClient<RedisClient> {
+    let (config, snapshot) = redis_config(test_name);
+    let client = RedisClient::connect(&config)
         .await
-        .unwrap_or_else(|error| panic!("连接 Redis 真实服务失败: {error}"))
+        .unwrap_or_else(|error| panic!("连接 Redis 真实服务失败: {error}"));
+    ScopedClient {
+        client,
+        configuration: snapshot,
+    }
 }
 
-fn redis_config(test_name: &str) -> RedisConfig {
-    let scope = unique_scope(test_name);
-    let config_source = include_str!("../../../config/app.toml").replacen(
-        "scope_id = \"dev-local\"",
-        &format!("scope_id = \"{scope}\""),
-        1,
-    );
-    let config_dir = tempfile::tempdir()
-        .unwrap_or_else(|error| panic!("创建 Redis 集成测试配置目录失败: {error}"));
-    std::fs::write(config_dir.path().join("app.toml"), config_source)
-        .unwrap_or_else(|error| panic!("写入 Redis 集成测试配置失败: {error}"));
-    let mut app = AppConfig::load(config_dir.path(), Environment::Test)
-        .unwrap_or_else(|error| panic!("加载 Redis 集成测试配置失败: {error}"));
-    let mut redis = app
+fn redis_config(test_name: &str) -> (RedisConfig, Configuration) {
+    role_config(GENERAL, test_name)
+}
+
+fn role_config(role: &str, test_name: &str) -> (RedisConfig, Configuration) {
+    let snapshot = Configuration::load(role, test_name);
+    let config = snapshot
+        .app
         .redis
-        .take()
-        .unwrap_or_else(|| panic!("基础配置缺少 Redis 配置"));
-    redis.mode = RedisMode::Required;
-    redis.host = env_value("RYFRAME_REDIS_HOST", "127.0.0.1");
-    redis.port = env_parse("RYFRAME_REDIS_PORT", 6379);
-    redis.password = env_value("RYFRAME_REDIS_PASSWORD", "");
-    redis.database = env_parse("RYFRAME_REDIS_DATABASE", 0);
-    redis.timeout_secs = 3;
-    redis.tls = env_switch("RYFRAME_REDIS_TLS");
-    redis.tls_ca = env_optional("RYFRAME_REDIS_TLS_CA");
-    redis.tls_client_cert = env_optional("RYFRAME_REDIS_TLS_CLIENT_CERT");
-    redis.tls_client_key = env_optional("RYFRAME_REDIS_TLS_CLIENT_KEY");
-    redis
+        .clone()
+        .expect("显式配置缺少 redis 字段；请配置 Required Redis");
+    assert_eq!(
+        config.mode,
+        RedisMode::Required,
+        "真实 Redis 测试要求 redis.mode=required"
+    );
+    (config, snapshot)
 }
 
 async fn finish_with_cleanup(result: Result<(), String>, cleanup: &[(&RedisClient, Vec<String>)]) {
@@ -259,70 +255,12 @@ async fn finish_with_cleanup(result: Result<(), String>, cleanup: &[(&RedisClien
     }
 }
 
-fn unique_scope(test_name: &str) -> String {
-    let run = sanitized_fragment(&env_value("RYFRAME_INTEGRATION_RUN_ID", "local"), 12);
-    let test = sanitized_fragment(test_name, 12);
-    let sequence = SCOPE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    format!("it-{run}-{test}-{}-{sequence}", process::id())
-}
-
-fn sanitized_fragment(value: &str, max_len: usize) -> String {
-    value
-        .chars()
-        .filter_map(|character| {
-            let character = character.to_ascii_lowercase();
-            character.is_ascii_alphanumeric().then_some(character)
-        })
-        .take(max_len)
-        .collect::<String>()
-}
-
-fn integration_enabled(name: &str) -> bool {
-    match env::var(name) {
-        Ok(value) if value == "1" => true,
-        Ok(value) => panic!("{name} 只接受精确值 1，当前值为 {value:?}"),
-        Err(env::VarError::NotPresent) => false,
-        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
-    }
+fn integration_enabled(role: &str) -> bool {
+    configuration::enabled(role)
 }
 
 fn skip_message() {
-    eprintln!("跳过 Redis 真实协议测试：设置 {ENABLE_ENV}=1 后才会连接外部服务");
-}
-
-fn env_value(name: &str, default: &str) -> String {
-    env::var(name).unwrap_or_else(|_| default.to_owned())
-}
-
-fn env_optional(name: &str) -> Option<String> {
-    match env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Some(value),
-        Ok(_) | Err(env::VarError::NotPresent) => None,
-        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
-    }
-}
-
-fn env_switch(name: &str) -> bool {
-    match env::var(name) {
-        Ok(value) if value == "1" => true,
-        Ok(value) => panic!("{name} 只接受精确值 1，当前值为 {value:?}"),
-        Err(env::VarError::NotPresent) => false,
-        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
-    }
-}
-
-fn env_parse<T>(name: &str, default: T) -> T
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    match env::var(name) {
-        Ok(value) => value
-            .parse()
-            .unwrap_or_else(|error| panic!("{name} 解析失败: {error}")),
-        Err(env::VarError::NotPresent) => default,
-        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
-    }
+    eprintln!("Redis 显式角色配置目录不存在：跳过且真实协议未验收");
 }
 
 fn redis_error(error: redis::RedisError) -> String {

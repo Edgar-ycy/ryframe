@@ -66,10 +66,13 @@ def _node() -> dict:
     return {"path": str(path), "sha256": file_digest(path)["sha256"]}
 
 
-def _side(scope: dict) -> dict:
+def _side(scope: dict, credentials: dict) -> dict:
     required = {"scope_id", "runtime_dir", "api_url", "frontend_url", "objects", "databases"}
     if not required.issubset(scope) or set(item.get("key") for item in scope["databases"]) != set(KEYS):
         raise ValueError("夹具审阅侧缺少完整运行与数据库描述")
+    if any(not isinstance(credentials.get(key), str) or not credentials[key]
+           for key in ("access_key", "secret_key")):
+        raise ValueError("夹具参考数据缺少直接配置的 S3 凭据")
     databases = []
     for key in sorted(KEYS):
         item = next(value for value in scope["databases"] if value["key"] == key)
@@ -93,8 +96,8 @@ def _side(scope: dict) -> dict:
         "s3": {
             "endpoint": scope["objects"]["endpoint"],
             "region": scope["objects"]["region"],
-            "access_key_env": "APP_OBJECT_STORAGE_ACCESS_KEY",
-            "secret_key_env": "APP_OBJECT_STORAGE_SECRET_KEY",
+            "access_key": credentials["access_key"],
+            "secret_key": credentials["secret_key"],
         },
         "databases": databases,
     }
@@ -164,9 +167,9 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     if _bound(review_file) != {key: review_binding.get(key) for key in ("path", "bytes", "sha256")}:
         raise ValueError("夹具审阅计划摘要已变化")
     validate_review(review)
-    source = _side(review["scopes"]["seed"])
+    source = _side(review["scopes"]["seed"], private)
     target_scope = review["scopes"][side]
-    target = _side(target_scope)
+    target = _side(target_scope, private)
     target["worker_ready_url"] = target_scope["worker_ready_url"]
     source["runtime_dir"] = str(runtime)
     if source["scope_id"] != verified["scope_id"]:
@@ -185,7 +188,7 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
         "target": target,
         "tools": {
             name: {key: tools[name][key] for key in ("path", "sha256")}
-            for name in ("mysql", "mysqldump", "aws")
+            for name in ("mysql", "mysqldump")
         } | {"node": _node()},
         "dataset": _dataset(review),
         "fixture_bindings": {

@@ -41,9 +41,7 @@ COPY --from=builder --chown=10001:10001 /workspace/runtime-data/ /var/lib/ryfram
 COPY --chown=10001:10001 config ./config
 COPY --chown=10001:10001 locales ./locales
 
-ENV APP_ENV=prod \
-    APP_CONFIG_DIR=/opt/ryframe/config \
-    APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
+ENV APP_ENV=prod
 EXPOSE 8080
 USER 10001:10001
 

@@ -13,7 +13,7 @@ use super::super::super::{
     lifecycle::manifest,
     source,
 };
-use super::request_review;
+use super::{request_physical, request_review};
 use crate::{
     Result,
     local_test_path::{
@@ -84,6 +84,10 @@ pub(crate) fn validate_with(
     if value.get("execution_backend").is_some() {
         fields.push("execution_backend");
     }
+    if let Some(directory) = value.get("configuration_directory") {
+        request_physical::strict_text(directory)?;
+        fields.push("configuration_directory");
+    }
     let root = exact(value, &fields, "目标请求")?;
     if root["format_version"].as_u64() != Some(1)
         || root["kind"].as_str() != Some("devex-clone-fresh-target")
@@ -120,7 +124,7 @@ fn target(backend: &Path, value: &Value, selected: &Value) -> Result<()> {
     }
     let s3 = exact(
         &target["s3"],
-        &["endpoint", "region", "access_key_env", "secret_key_env"],
+        &["endpoint", "region", "access_key", "secret_key"],
         "目标对象配置",
     )?;
     for field in ["endpoint", "region"] {
@@ -128,8 +132,8 @@ fn target(backend: &Path, value: &Value, selected: &Value) -> Result<()> {
             return Err("对象存储不是计划中的目标端点".into());
         }
     }
-    for field in ["access_key_env", "secret_key_env"] {
-        text(&s3[field], "对象凭据变量")?;
+    for field in ["access_key", "secret_key"] {
+        request_physical::strict_text(&s3[field])?;
     }
     let actual = json_io::array(&target["databases"], "目标数据库")?;
     let mut seen = BTreeSet::new();
@@ -197,7 +201,7 @@ pub(crate) fn external_file(value: &Value) -> Result<PathBuf> {
 }
 
 fn tools(value: &Value, review: &Value) -> Result<()> {
-    let tools = exact(value, &["mysql", "aws"], "目标工具")?;
+    let tools = exact(value, &["mysql"], "目标工具")?;
     for (role, tool) in tools {
         external_file(tool)?;
         for key in ["path", "sha256"] {

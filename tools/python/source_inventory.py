@@ -12,7 +12,6 @@ import subprocess
 
 from artifact_digests import file_digest
 
-FRONTEND_ENVIRONMENT_PATHS = (".env", ".env.local", ".env.production", ".env.production.local")
 WINDOWS_REPARSE_POINT = 0x400
 
 
@@ -131,7 +130,7 @@ def _frontend_product(relative: str) -> bool:
     if path.parts[0] in {"src", "public", "openapi"}:
         return True
     if relative in {
-        ".env", ".node-version", "index.html", "package.json", "pnpm-lock.yaml",
+        ".node-version", "index.html", "package.json", "pnpm-lock.yaml",
         "pnpm-workspace.yaml", "vite.config.ts", "tsconfig.json", "tsconfig.app.json",
         "tsconfig.base.json", "tsconfig.test.json",
     }:
@@ -140,7 +139,7 @@ def _frontend_product(relative: str) -> bool:
             or relative in {"eslint.config.js", "playwright.config.ts", "playwright.real.config.ts",
                             "prettier.config.mjs", "stylelint.config.js", "vitest.config.ts",
                             ".editorconfig", ".gitattributes", ".gitignore", ".prettierignore",
-                            ".env.production.example", "ARCHITECTURE.md", "ARCHITECTURE.en.md", "CHANGELOG.md", "CHANGELOG.en.md", "LICENSE",
+                            "config/tools.json", "ARCHITECTURE.md", "ARCHITECTURE.en.md", "CHANGELOG.md", "CHANGELOG.en.md", "LICENSE",
                             "README.md", "README.en.md"}):
         return False
     # 新增且尚未分类的文件按产品输入处理，不能因工具重构漏掉实际构建依赖。
@@ -197,7 +196,7 @@ def _tool_source(relative: str, repository: str) -> bool:
                 or relative in {"deny.toml", "rustfmt.toml"})
     return (path.parts[0] in {"scripts", "tests", ".github"}
             or relative in {"eslint.config.js", "playwright.config.ts", "playwright.real.config.ts",
-                            "prettier.config.mjs", "stylelint.config.js", "vitest.config.ts"})
+                            "prettier.config.mjs", "stylelint.config.js", "vitest.config.ts", "config/tools.json"})
 
 
 def _source_group(files: list[dict], paths: list[str]) -> dict:
@@ -279,18 +278,6 @@ def validate_build_source_domains(value: object, repository: str) -> dict:
     if value != expected:
         raise ValueError("构建来源分域与完整来源清单不一致")
     return value
-
-
-def frontend_environment_files(root: Path) -> list[dict]:
-    """绑定 Vite production 模式会读取的四个环境文件；只记录文件摘要。"""
-    result = []
-    for relative in FRONTEND_ENVIRONMENT_PATHS:
-        found = source_file(root, relative, allow_missing=True)
-        if found is None:
-            continue
-        path = found[0]
-        result.append({"path": relative, "sha256": file_digest(path)["sha256"]})
-    return result
 
 
 def file_inventory(root: Path) -> dict:

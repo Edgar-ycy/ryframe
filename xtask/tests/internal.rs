@@ -18,12 +18,18 @@ mod devex;
 mod diff;
 #[path = "../src/doctor.rs"]
 mod doctor;
+#[path = "../src/http_session.rs"]
+mod http_session;
 #[path = "../src/local_test_path.rs"]
 mod local_test_path;
+#[path = "../src/login_budget.rs"]
+mod login_budget;
 #[path = "../src/migration.rs"]
 mod migration;
 #[path = "../src/process.rs"]
 mod process;
+#[path = "support/process_liveness.rs"]
+mod process_liveness;
 #[path = "../src/rate_limit.rs"]
 mod rate_limit;
 #[path = "../src/recovery.rs"]
@@ -32,6 +38,8 @@ mod recovery;
 mod release;
 #[path = "../src/resource.rs"]
 mod resource;
+#[path = "../src/session_pacing.rs"]
+mod session_pacing;
 #[path = "../src/source_edit.rs"]
 mod source_edit;
 #[path = "../src/watch.rs"]
@@ -40,6 +48,13 @@ mod watch;
 mod workspace;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+#[path = "internal/copy_session.rs"]
+mod copy_session_tests;
+#[path = "internal/login_budget.rs"]
+mod login_budget_tests;
+#[path = "internal/session_pacing.rs"]
+mod session_pacing_tests;
 
 #[path = "internal/job_evidence_model.rs"]
 mod job_evidence_model_tests;
@@ -261,6 +276,8 @@ mod target_configuration_fixture;
 mod target_database_native;
 #[path = "internal/target_guard_native.rs"]
 mod target_guard_native_tests;
+#[path = "internal/target_physical_file.rs"]
+mod target_physical_file;
 #[path = "internal/target_proof_native.rs"]
 mod target_proof_native_tests;
 #[path = "internal/target_publication_native.rs"]

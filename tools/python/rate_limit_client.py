@@ -42,29 +42,34 @@ _HOST_PROCESS_ENVIRONMENT = {
 _CARGO_EXECUTABLE = os.environ.get("CARGO") or shutil.which("cargo") or "cargo"
 
 
-def load_app_table(backend: Path, environment: Mapping[str, str]) -> dict:
-    return _table_request("load-table", backend, environment)
+def load_app_table(
+    backend: Path, environment: Mapping[str, str], *, config_dir: Path | str | None = None
+) -> dict:
+    return _table_request("load-table", backend, environment, config_dir=config_dir)
 
 
-def rate_limit_settings(backend: Path, environment: Mapping[str, str]) -> dict:
-    return _table_request("settings", backend, environment)
+def rate_limit_settings(
+    backend: Path, environment: Mapping[str, str], *, config_dir: Path | str | None = None
+) -> dict:
+    return _table_request("settings", backend, environment, config_dir=config_dir)
 
 
-def rate_limit_authority(backend: Path, environment: Mapping[str, str]) -> dict:
-    return _table_request("authority", backend, environment)
+def rate_limit_authority(
+    backend: Path, environment: Mapping[str, str], *, config_dir: Path | str | None = None
+) -> dict:
+    return _table_request("authority", backend, environment, config_dir=config_dir)
 
 
 def login_budget_environment(
-    backend: Path, environment: Mapping[str, str], state_path: Path
+    backend: Path,
+    environment: Mapping[str, str],
+    state_path: Path,
+    *,
+    config_dir: Path | str | None = None,
 ) -> dict[str, str]:
-    result = _invoke(
-        "login-budget",
-        {
-            "backend": str(Path(backend).resolve()),
-            "environment": _request_environment(environment),
-            "state_path": str(state_path),
-        },
-    )
+    request = _file_request(backend, environment, config_dir=config_dir)
+    request["state_path"] = str(state_path)
+    result = _invoke("login-budget", request)
     if (
         not isinstance(result, dict)
         or set(result) != LOGIN_BUDGET_FIELDS
@@ -75,27 +80,44 @@ def login_budget_environment(
 
 
 def _table_request(
-    operation: str, backend: Path, environment: Mapping[str, str]
+    operation: str,
+    backend: Path,
+    environment: Mapping[str, str],
+    *,
+    config_dir: Path | str | None = None,
 ) -> dict:
     result = _invoke(
         operation,
-        {
-            "backend": str(Path(backend).resolve()),
-            "environment": _request_environment(environment),
-        },
+        _file_request(backend, environment, config_dir=config_dir),
     )
     if not isinstance(result, dict):
         raise RuntimeError("限流配置入口返回了无效的配置表")
     return result
 
 
-def _request_environment(environment: Mapping[str, str]) -> dict[str, str]:
-    if not isinstance(environment, Mapping) or any(
-        not isinstance(key, str) or not isinstance(value, str)
-        for key, value in environment.items()
-    ):
-        raise ValueError("限流配置环境必须是文本映射")
-    return dict(environment)
+def _file_request(
+    backend: Path,
+    environment: Mapping[str, str],
+    *,
+    config_dir: Path | str | None = None,
+) -> dict[str, str]:
+    if not isinstance(environment, Mapping):
+        raise ValueError("APP_ENV 必须通过映射明确选择 dev 或 test")
+    app_env = environment.get("APP_ENV")
+    if not isinstance(app_env, str) or app_env not in ("dev", "test"):
+        raise ValueError("APP_ENV 必须明确设置为 dev 或 test")
+    request = {"backend": str(Path(backend).resolve()), "app_env": app_env}
+    if config_dir is not None:
+        try:
+            directory = os.fspath(config_dir)
+        except (TypeError, ValueError, OSError):
+            raise ValueError("config_dir 必须是非空且不含控制字符的文本路径") from None
+        if not isinstance(directory, str) or not directory or any(
+            ord(char) < 32 or 0x7F <= ord(char) <= 0x9F for char in directory
+        ):
+            raise ValueError("config_dir 必须是非空且不含控制字符的文本路径")
+        request["config_dir"] = directory
+    return request
 
 
 def _invoke(operation: str, request: dict) -> dict:

@@ -27,10 +27,10 @@ class BinaryBindingTests(unittest.TestCase):
         self.binary = lambda role: {"path": str(self.local / (role + ".exe")), "sha256": "a" * 64}
         self.api = self.build("api", "restore-backend-build", ("api", "worker"))
         self.maintenance = self.build("maintenance", "devex-clone-tool-build", ("reset", "migrate", "tenant-data"))
-        self.source = {"tools": {role: self.binary(role) for role in ("aws", "mysql", "mysqldump", "node")},
+        self.source = {"tools": {role: self.binary(role) for role in ("mysql", "mysqldump", "node")},
                        "backend_build": self.api, "maintenance_build": self.maintenance,
                        "business_payload": {"path": str(self.local / "payload.sql"), "sha256": "b" * 64}}
-        self.target = {"tools": {role: self.binary(role) for role in ("aws", "mysql")},
+        self.target = {"tools": {role: self.binary(role) for role in ("mysql",)},
                        "maintenance_build": self.maintenance,
                        "storage": {"rustfs": {"identity": {"executable": self.binary("rustfs")["path"]},
                                                "sha256": "a" * 64}, "redis": {"wsl": self.binary("wsl")}}}
@@ -53,15 +53,15 @@ class BinaryBindingTests(unittest.TestCase):
                 patch("devex_clone_target_binding.request_binding") as target:
             yield source, history, target
 
-    def test_registered_roles_deduplicate_to_eleven_binaries_and_exclude_payload(self):
+    def test_registered_roles_exclude_object_cli_and_payload(self):
         with self.verified_requests() as (source, history, target):
             values = run.copy_binary_bindings(self.backend, self.value)
         source.assert_called_once_with(self.backend, self.source)
         history.assert_called_once_with(self.backend, Path(self.value["initialized"]["path"]))
         target.assert_called_once_with(self.backend, self.target)
-        self.assertEqual(len(values), 16)
+        self.assertEqual(len(values), 14)
         self.assertEqual({Path(item["path"]).stem for item in values}, {
-            "aws", "mysql", "mysqldump", "node", "api", "worker", "reset", "migrate", "tenant-data", "rustfs", "wsl"})
+            "mysql", "mysqldump", "node", "api", "worker", "reset", "migrate", "tenant-data", "rustfs", "wsl"})
         self.assertTrue(all(set(item) == {"path", "sha256"} for item in values))
 
     def test_wrong_build_kind_missing_role_and_changed_binding_are_rejected(self):

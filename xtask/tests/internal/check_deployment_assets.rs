@@ -4,6 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "check_deployment_compose.rs"]
+mod compose;
+
 use super::{
     check::{TaskExecutor, deployment_assets},
     process::failure_exit_code,
@@ -224,14 +227,13 @@ impl ArchiveFixture {
     }
 }
 
-fn deployment_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+pub(super) fn deployment_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     for relative in [
         "Cargo.toml",
         "rust-toolchain.toml",
         "deploy",
         ".github/workflows",
-        "tools/fixtures/deployment/deploy.env",
         "crates/ryframe-api/src",
     ] {
         collect_files(root, &root.join(relative), &mut result);
@@ -240,6 +242,9 @@ fn deployment_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 fn collect_files(root: &Path, path: &Path, result: &mut BTreeMap<PathBuf, Vec<u8>>) {
+    if path == root.join("deploy/config") || path == root.join("deploy/tls") {
+        return;
+    }
     if path.is_file() {
         result.insert(
             path.strip_prefix(root).unwrap().to_path_buf(),

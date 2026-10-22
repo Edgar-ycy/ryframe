@@ -13,6 +13,7 @@ from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from devex_clone_storage_request import directory_identity
 from devex_clone_target_binding import external_file, pending_request_binding, request_binding
+from rate_limit_client import load_app_table
 
 FIELDS = {"format_version", "kind", "side", "manifest", "initialized", "target_environment",
           "previous", "process_receipt", "process", "markers"}
@@ -20,15 +21,24 @@ REDIS_FIELDS = {"port", "wsl", "distribution", "pid", "started", "executable", "
 
 
 def environment(backend, request):
+    from devex_clone_cache_process import validate, validate_password
+
     private = read_json(bound_file(backend, request["target_environment"]))
     exact(private, {"environment"})
     value = private["environment"]
-    if not isinstance(value, dict) or any(type(key) is not str or type(item) is not str for key, item in value.items()):
-        raise ValueError("缓存恢复须使用固定目标完整文本环境")
-    expected = {"APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(request["previous"]["port"]),
-                "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false"}
-    if any(value.get(key) != item for key, item in expected.items()) or not value.get("APP_REDIS_PASSWORD"):
-        raise ValueError("缓存恢复环境不是原本机认证端点")
+    if not isinstance(value, dict) or set(value) != {"APP_ENV"} or value["APP_ENV"] != "test":
+        raise ValueError("缓存恢复私有环境只能包含 APP_ENV=test；连接与密码必须来自已绑定配置文件")
+    validate(request["process"], files=False)
+    redis = load_app_table(backend, value).get("redis")
+    if not isinstance(redis, dict):
+        raise ValueError("缓存恢复所选配置文件的 redis 必须是配置表")
+    expected = {"host": "127.0.0.1", "port": request["previous"]["port"], "database": 0, "tls": False}
+    for key, item in expected.items():
+        if type(redis.get(key)) is not type(item) or redis.get(key) != item:
+            raise ValueError(f"缓存恢复所选配置文件的 redis.{key} 与原本机认证端点不同")
+    validate_password(redis.get("password"))
+    if request["process"].get("password") != redis["password"]:
+        raise ValueError("缓存进程 password 与所选配置文件的 redis.password 不同")
     return copy.deepcopy(value)
 
 
@@ -60,13 +70,13 @@ def process_binding(backend, request, review, private, *, effective=None, observ
     expected = {key: previous[key] for key in ("wsl", "distribution", "executable", "sha256", "configuration", "port")}
     expected.update(scope_id=receipt["scope_id"], launcher=review["tools"]["redis_server"]["path"],
                     previous_identity=old_identity, previous_boot_id=old_linux["boot_id"],
-                    previous_run_id=previous["run_id"], password_env="APP_REDIS_PASSWORD")
+                    previous_run_id=previous["run_id"])
     if any(process.get(key) != item for key, item in expected.items()):
         raise ValueError("缓存进程请求改变原服务、配置、工具或创建身份")
     options = [shlex.split(line) for line in config.read_text(encoding="utf-8").splitlines() if line.strip()]
     passwords = [item[1:] for item in options if item[0] == "requirepass"]
-    if passwords != [[private["APP_REDIS_PASSWORD"]]]:
-        raise ValueError("原 Redis 配置认证与固定目标环境不同")
+    if passwords != [[process["password"]]]:
+        raise ValueError("原 Redis 配置认证与绑定的 password 不同")
 
 
 def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None,

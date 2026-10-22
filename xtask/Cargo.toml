@@ -16,10 +16,14 @@ resource = ["dep:ryframe-generator"]
 ryframe-config = { path = "../crates/ryframe-config", features = ["tools"] }
 chrono = { workspace = true }
 hex = { workspace = true }
+hmac = { workspace = true }
+futures-util = { workspace = true }
 notify = "8.2"
 percent-encoding = { workspace = true }
 url = { workspace = true }
-quick-xml = { workspace = true }
+same-file = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
+quick-xml = { workspace = true, features = ["serialize"] }
 ryframe-generator = { path = "../crates/ryframe-generator", default-features = false, optional = true }
 regex = { workspace = true }
 rustls = { workspace = true }
@@ -27,7 +31,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt", "signal"] }
+tokio = { workspace = true, features = ["rt", "signal", "net", "time", "sync", "fs", "io-util"] }
 toml = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 zip = { workspace = true }

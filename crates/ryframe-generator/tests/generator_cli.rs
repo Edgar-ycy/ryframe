@@ -35,6 +35,14 @@ fn plans_do_not_spawn_cargo_or_read_database_configuration() {
         vec!["import", "--tables", "biz_order,biz_order_item", "--plan"],
         vec!["resource", "--models", "Order,OrderItem", "--plan"],
         vec!["run", "--plan"],
+        vec![
+            "--config-dir",
+            "不存在 配置",
+            "import",
+            "--tables",
+            "table1,table2",
+            "--plan",
+        ],
     ] {
         let output = run(root.path(), &args);
         assert!(
@@ -60,6 +68,17 @@ fn ambiguous_arguments_fail_before_any_task() {
         vec!["new-business", "order", "--write", "--write"],
         vec!["import", "--table", "--write"],
         vec!["import", "--table", "a", "--tables", "b"],
+        vec![
+            "--config-dir",
+            "first",
+            "resource",
+            "--config-dir",
+            "second",
+        ],
+        vec!["resource", "--config-dir"],
+        vec!["resource", "--config-dir="],
+        vec!["resource", "--config-dir", ""],
+        vec!["resource", "--", "--config-dir", "ignored"],
     ] {
         assert_eq!(run(root.path(), &args).status.code(), Some(2));
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
@@ -80,11 +99,24 @@ fn import_from_business_subdirectory_uses_workspace_config_and_honors_explicit_o
     fs::write(business.join("Cargo.toml"), "[package]\nname='orders-business'\nversion='0.1.0'\nedition='2024'\n[package.metadata.ryframe]\nkind='business'\nmodule='orders'\n").unwrap();
     fs::write(business.join("src/lib.rs"), "").unwrap();
     fs::create_dir(root.path().join("config")).unwrap();
-    fs::write(root.path().join("config/app.toml"), "root_config_marker").unwrap();
-    let explicit = root.path().join("explicit-config");
+    let explicit = root.path().join("显式 配置");
     fs::create_dir(&explicit).unwrap();
-    fs::write(explicit.join("app.toml"), "override_config_marker").unwrap();
-    for configured in [None, Some(explicit.as_os_str())] {
+    for directory in [root.path().join("config"), explicit.clone()] {
+        let mut base: toml::Table =
+            toml::from_str(include_str!("../../../config/app.toml")).unwrap();
+        base.insert("snowflake_worker_id".into(), toml::Value::Integer(1));
+        fs::write(directory.join("app.toml"), toml::to_string(&base).unwrap()).unwrap();
+        fs::write(
+            directory.join("app.dev.toml"),
+            "[app]\nport = 'private-invalid-port'\n",
+        )
+        .unwrap();
+    }
+    for configured in [
+        None,
+        Some(explicit.clone()),
+        Some(std::path::PathBuf::from("显式 配置")),
+    ] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ryframe-generate"));
         command
             .args([
@@ -99,20 +131,24 @@ fn import_from_business_subdirectory_uses_workspace_config_and_honors_explicit_o
                 "table1",
             ])
             .current_dir(business.join("src"))
-            .env("APP_ENV", "dev")
-            .env_remove("APP_CONFIG_DIR");
-        if let Some(path) = configured {
-            command.env("APP_CONFIG_DIR", path);
+            .env("APP_ENV", "dev");
+        if let Some(path) = &configured {
+            command.arg("--config-dir").arg(path);
         }
         let output = command.output().unwrap();
         assert_eq!(output.status.code(), Some(2));
         let error = String::from_utf8_lossy(&output.stderr);
         let expected = if configured.is_some() {
-            "override_config_marker"
+            explicit.clone()
         } else {
-            "root_config_marker"
+            root.path().join("config")
         };
-        assert!(error.contains(expected), "{error}");
+        assert!(
+            error.contains(&expected.join("app.dev.toml").display().to_string()),
+            "{error}"
+        );
+        assert!(error.contains("app.port"), "{error}");
+        assert!(!error.contains("private-invalid-port"), "{error}");
         assert!(!root.path().join("target").exists());
         assert!(!root.path().join(".local-tests").exists());
         assert!(!root.path().join("Cargo.lock").exists());

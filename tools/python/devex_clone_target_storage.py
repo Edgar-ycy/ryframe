@@ -97,7 +97,9 @@ def rustfs_layout(resources, rustfs: dict, *, runtime: dict | None = None) -> di
     exact(launch["credential_files"], {"access_key", "secret_key"})
     for field, binding in launch["credential_files"].items():
         credential = bound_file(backend, binding)
-        actual = os.environ.get(resources.request["target"]["s3"][field + "_env"])
+        actual = resources.request["target"]["s3"].get(field)
+        if not isinstance(actual, str) or not actual:
+            raise ValueError("目标对象存储配置缺少明文凭据")
         if credential.read_text(encoding="utf-8").strip() != actual:
             raise ValueError("RustFS 启动凭据文件与本次认证不同")
     environment = {"RUSTFS_CONSOLE_ENABLE": "true", **{"RUSTFS_" + field.upper() + "_FILE": value["path"]

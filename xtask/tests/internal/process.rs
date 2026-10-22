@@ -1,3 +1,5 @@
+use super::process_liveness::process_is_running;
+
 use std::{
     fs,
     io::Read,
@@ -9,8 +11,8 @@ use std::{
 
 use super::process::{
     ChildGroup, command_output, command_output_with_env, configure_pnpm_environment,
-    failure_exit_code, process_is_running, python_arguments, python_environment,
-    resolved_executable, run, stop_child, with_process_log,
+    failure_exit_code, python_arguments, python_environment, resolved_executable, run, stop_child,
+    with_process_log,
 };
 
 #[test]

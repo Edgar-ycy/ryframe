@@ -38,7 +38,7 @@ fn failed_start_publication_reaps_every_tree_and_preserves_concurrent_receipt() 
             "进程树",
         )
         .unwrap();
-        assert!(!crate::process::process_is_running(
+        assert!(!crate::process_liveness::process_is_running(
             tree.value["process"]["pid"].as_u64().unwrap() as u32
         ));
     }

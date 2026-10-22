@@ -1,5 +1,6 @@
 # 开发环境配置
 # 仅覆盖与默认值不同的项
+snowflake_worker_id = 1
 
 [app]
 name = "ryframe"

@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     Result,
-    process::{command_output, run_owned, run_pnpm_with_env},
+    process::{command_output, run_owned, run_pnpm},
 };
 
 use super::model::{BackendSnapshotProfile, ConsumerContractPlan};
@@ -231,6 +231,8 @@ pub(super) fn run_consumer_contract(
     backend_snapshots: &BackendSnapshots,
     full: bool,
 ) -> Result<()> {
+    let frontend_dir =
+        super::consumer_context::selected_frontend_directory(backend_root, frontend_dir)?;
     let openapi = backend_snapshots
         .openapi
         .as_deref()
@@ -245,26 +247,21 @@ pub(super) fn run_consumer_contract(
     } else {
         None
     };
-    let plan = load_consumer_contract_plan(frontend_dir, candidate_commit.as_deref())?;
+    let plan = load_consumer_contract_plan(&frontend_dir, candidate_commit.as_deref())?;
     let arguments = consumer_contract_arguments(&plan, openapi);
-    let context = serde_json::to_string(&arguments)?;
-    let source_domain_checker = backend_root.join("tools/python/source_domain_contract.py");
-    let source_domain_checker = source_domain_checker
-        .to_str()
-        .ok_or("来源分域检查器路径不是有效 UTF-8")?;
-    let python = std::env::var("RYFRAME_PYTHON")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "python".to_owned());
-    run_pnpm_with_env(
-        frontend_dir,
-        consumer_contract_command(full),
-        &[
-            ("RYFRAME_CONSUMER_CONTRACT", context.as_str()),
-            ("RYFRAME_BACKEND_SOURCE_DOMAIN_CHECK", source_domain_checker),
-            ("RYFRAME_PYTHON", python.as_str()),
-        ],
-    )
+    let context = super::consumer_context::prepare(backend_root, &frontend_dir, arguments)?;
+    let mut command = consumer_contract_command(full)
+        .iter()
+        .map(|argument| (*argument).to_owned())
+        .collect::<Vec<_>>();
+    command.extend([
+        "--consumer-context".to_owned(),
+        context.path_text()?.to_owned(),
+    ]);
+    let command = command.iter().map(String::as_str).collect::<Vec<_>>();
+    context.verify()?;
+    let result = run_pnpm(&frontend_dir, &command);
+    context.finish(result)
 }
 
 pub(crate) fn consumer_contract_command(full: bool) -> &'static [&'static str] {

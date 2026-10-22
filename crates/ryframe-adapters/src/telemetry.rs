@@ -21,12 +21,14 @@ use std::{
 };
 
 use opentelemetry::{KeyValue, global, trace::TracerProvider};
-use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
+use opentelemetry_otlp::{Protocol, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
-    Resource, runtime,
+    Resource,
+    resource::TelemetryResourceDetector,
+    runtime,
     trace::{
         BatchConfigBuilder, RandomIdGenerator, Sampler, SdkTracer, SdkTracerProvider, SpanData,
-        SpanExporter, span_processor_with_async_runtime::BatchSpanProcessor,
+        SpanExporter, SpanLimits, span_processor_with_async_runtime::BatchSpanProcessor,
     },
 };
 use tracing::{info, warn};
@@ -146,9 +148,11 @@ pub fn init_tracer_provider_with_http_client(
     global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
     let mut exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_http()
+        .with_http_without_environment()
         .with_endpoint(&config.endpoint)
-        .with_timeout(Duration::from_secs(config.export_timeout_secs));
+        .with_timeout(Duration::from_secs(config.export_timeout_secs))
+        .with_protocol(Protocol::HttpBinary)
+        .with_headers(config.headers.clone().into_iter().collect());
     if let Some(http_client) = http_client {
         exporter = exporter.with_http_client(http_client);
     }
@@ -194,19 +198,35 @@ fn build_telemetry_guard<E>(
 where
     E: SpanExporter + Send + 'static,
 {
-    let batch_config = BatchConfigBuilder::default()
+    let batch_config = BatchConfigBuilder::without_environment()
         .with_max_queue_size(config.max_queue_size)
-        .with_max_export_batch_size(config.max_queue_size.min(512))
+        .with_max_export_batch_size(
+            config
+                .max_export_batch_size
+                .unwrap_or_else(|| config.max_queue_size.min(512)),
+        )
+        .with_scheduled_delay(Duration::from_millis(config.scheduled_delay_millis))
+        .with_max_export_timeout(Duration::from_secs(config.batch_export_timeout_secs))
+        .with_max_concurrent_exports(config.max_concurrent_exports)
         .build();
-    let span_processor =
-        BatchSpanProcessor::builder(FailureCountingSpanExporter::new(exporter), runtime::Tokio)
-            .with_batch_config(batch_config)
-            .build();
-    let tracer_provider = SdkTracerProvider::builder()
+    let span_processor = BatchSpanProcessor::builder_with_config(
+        FailureCountingSpanExporter::new(exporter),
+        runtime::Tokio,
+        batch_config,
+    )
+    .build();
+    let tracer_provider = SdkTracerProvider::builder_without_environment()
         .with_span_processor(span_processor)
         .with_sampler(Sampler::TraceIdRatioBased(config.sample_ratio))
         .with_id_generator(RandomIdGenerator::default())
-        .with_resource(telemetry_resource(config.service_name.clone()))
+        .with_span_limits(SpanLimits {
+            max_attributes_per_span: config.span_limits.max_attributes_per_span,
+            max_events_per_span: config.span_limits.max_events_per_span,
+            max_links_per_span: config.span_limits.max_links_per_span,
+            max_attributes_per_event: config.span_limits.max_attributes_per_event,
+            max_attributes_per_link: config.span_limits.max_attributes_per_link,
+        })
+        .with_resource(telemetry_resource(config))
         .build();
 
     let tracer = tracer_provider.tracer(config.service_name.clone());
@@ -257,12 +277,19 @@ where
     }
 }
 
-fn telemetry_resource(service_name: String) -> Resource {
-    Resource::builder()
+fn telemetry_resource(config: &TelemetryConfig) -> Resource {
+    Resource::builder_empty()
+        .with_detector(Box::new(TelemetryResourceDetector))
+        .with_attributes(
+            config
+                .resource_attributes
+                .iter()
+                .map(|(key, value)| KeyValue::new(key.clone(), value.clone())),
+        )
         .with_attributes(vec![
             KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                service_name,
+                config.service_name.clone(),
             ),
             KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_VERSION,
@@ -272,3 +299,7 @@ fn telemetry_resource(service_name: String) -> Resource {
         ])
         .build()
 }
+
+#[cfg(test)]
+#[path = "../tests/internal/telemetry_file_only.rs"]
+mod file_only_tests;

@@ -94,7 +94,7 @@ pub(super) fn context(backend: &Path, root: &Path, output: &Path) -> TargetConte
         initialized_binding: json!({}),
         initialized: json!({}),
         request_path: root.join("request.json"),
-        request: json!({"target":{"s3":{"access_key_env":"FIXTURE_ACCESS", "secret_key_env":"FIXTURE_SECRET"}}}),
+        request: json!({"target":{"s3":{"access_key":"access", "secret_key":"secret"}}}),
         environment: BTreeMap::from([
             ("FIXTURE_ACCESS".into(), "access".into()),
             ("FIXTURE_SECRET".into(), "secret".into()),
@@ -302,6 +302,13 @@ struct FakeTransport {
 }
 
 impl Transport for FakeTransport {
+    fn s3(
+        &self,
+        _: crate::recovery::clone::native::s3::Request,
+    ) -> crate::Result<serde_json::Value> {
+        panic!("该测试不允许对象存储调用")
+    }
+
     fn run(&self, spec: CommandSpec) -> crate::Result<CommandOutput> {
         self.calls.borrow_mut().push(spec.label.clone());
         assert!(spec.stdin.is_none());

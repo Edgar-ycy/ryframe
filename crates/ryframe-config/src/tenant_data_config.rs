@@ -165,7 +165,7 @@ pub struct TenantDatabaseTargetConfig {
     #[serde(default)]
     pub username: Option<String>,
     #[serde(default)]
-    pub password_env: Option<String>,
+    pub password: Option<String>,
     #[serde(default)]
     pub tls_mode: Option<DbTlsMode>,
     #[serde(default)]
@@ -203,7 +203,7 @@ impl TenantDatabaseTargetConfig {
             port: None,
             database: None,
             username: None,
-            password_env: None,
+            password: None,
             tls_mode: None,
             tls_ca: None,
             tls_client_cert: None,
@@ -250,7 +250,7 @@ impl TenantDatabaseTargetConfig {
             || self.port.is_some()
             || self.database.is_some()
             || self.username.is_some()
-            || self.password_env.is_some()
+            || self.password.is_some()
             || self.max_connections.is_some()
             || self.tls_mode.is_some()
             || self.tls_ca.is_some()
@@ -274,7 +274,6 @@ impl TenantDatabaseTargetConfig {
             ("host", self.host.as_deref()),
             ("database", self.database.as_deref()),
             ("username", self.username.as_deref()),
-            ("password_env", self.password_env.as_deref()),
         ];
         if let Some((field, _)) = required
             .into_iter()
@@ -287,10 +286,9 @@ impl TenantDatabaseTargetConfig {
         if self.port.is_some_and(|port| port == 0) {
             return Err(format!("tenant_data.targets[{index}].port 必须大于 0"));
         }
-        let password_env = self.password_env.as_deref().unwrap_or_default();
-        if !is_valid_environment_name(password_env) {
+        if self.password.is_none() {
             return Err(format!(
-                "tenant_data.targets[{index}].password_env 必须是有效环境变量名"
+                "tenant_data.targets[{index}].password 是 mysql 目标必填项（允许空字符串）"
             ));
         }
         let client_cert = non_empty(self.tls_client_cert.as_deref());
@@ -338,16 +336,6 @@ pub fn is_valid_target_key(key: &str) -> bool {
         && bytes
             .iter()
             .all(|byte| is_alphanumeric(*byte) || matches!(byte, b'-' | b'_'))
-}
-
-fn is_valid_environment_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes
-        .first()
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {

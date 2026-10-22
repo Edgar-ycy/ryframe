@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -32,14 +33,15 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
             path.write_text(name, encoding="utf-8")
             self.credentials[name] = services.bound(path)
         self.private = {
-            "APP_OBJECT_STORAGE_ACCESS_KEY": "access",
-            "APP_OBJECT_STORAGE_SECRET_KEY": "secret",
+            "access_key": "fixture-access",
+            "secret_key": "fixture-secret",
         }
         self.review = {
             "future_root": str(self.future),
             "scopes": {
                 "seed": {
                     "backend_dir": str(self.execution),
+                    "scope_id": "fixture-seed-r24",
                     "objects": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1"},
                 }
             },
@@ -51,7 +53,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
                     "scope_id": "services-fixture-seed-r24",
                 }
             },
-            "tools": {"rustfs": services.bound(self.tool), "aws": services.bound(self.tool)},
+            "tools": {"rustfs": services.bound(self.tool)},
         }
         self.review_file = self.write(self.root / "review.json", self.review)
         self.bootstrap = {
@@ -82,6 +84,28 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
             "manifest": services.bound(manifest),
             "request": services.bound(request),
         }
+
+    def test_bucket_configuration_uses_only_direct_file_values(self):
+        ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
+                   "AWS_SESSION_TOKEN": "ambient-token", "AWS_PROFILE": "ambient-profile",
+                   "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
+        with patch.dict(os.environ, ambient):
+            configuration = services._bucket_configuration(self.review, self.private)
+            self.assertEqual(configuration, {
+                "endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
+                "access_key": "fixture-access", "secret_key": "fixture-secret",
+            })
+            for key in ("access_key", "secret_key"):
+                for invalid in (None, "", 123):
+                    with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "直接配置"):
+                        services._bucket_configuration(self.review, {**self.private, key: invalid})
+                missing = {name: value for name, value in self.private.items() if name != key}
+                with self.assertRaisesRegex(ValueError, "直接配置"):
+                    services._bucket_configuration(self.review, missing)
+            with self.assertRaisesRegex(ValueError, "直接配置"):
+                services._bucket_configuration(self.review, {
+                    "access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY",
+                })
 
     def test_ready_guard_rejects_every_frozen_input_and_tool_drift(self):
         sources = self.guard_sources()
@@ -142,7 +166,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         self.assertTrue(callable(seen[0]))
 
-    def test_bucket_creation_rechecks_aws_before_the_readback(self):
+    def test_bucket_creation_rechecks_bound_file_configuration_before_readback(self):
         run = self.future / "service-run"
         run.mkdir(parents=True)
         manifest = self.write(run / "manifest.json", {"manifest": True})
@@ -153,21 +177,27 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
         self.assertTrue(manifest.is_file())
         calls = []
 
-        def invoke(arguments, **_kwargs):
-            calls.append(arguments)
-            if "create-bucket" in arguments:
-                self.tool.write_bytes(b"changed")
-            return type("Completed", (), {"returncode": 0})()
+        def create(request):
+            calls.append(request)
+            self.assertEqual(request["configuration"]["secret_key"], self.private["secret_key"])
+            self.environment_file.write_text('{"environment":{"changed":true}}', encoding="utf-8")
+            return ({"status": "created_unverified", "http_status": 200,
+                     "remote_write_may_have_occurred": True,
+                     "automatic_retry_permitted": False},
+                    {"returncode": 0, "error_type": None})
 
         with (
             patch.object(services, "environment", return_value=(self.bootstrap_file, self.bootstrap, self.private)),
-            patch.object(services.subprocess, "run", side_effect=invoke),
-            self.assertRaisesRegex(ValueError, "AWS 工具"),
+            patch.object(services, "validate_current_review_tools"),
+            patch.object(services, "native_create_bucket", side_effect=create),
+            patch.object(services, "native_s3_inspect") as inspect,
+            self.assertRaisesRegex(ValueError, "服务账本清单"),
         ):
             services.buckets(self.backend, self.review_file, self.bootstrap_file, write=True)
 
         self.assertEqual(len(calls), 1)
-        self.assertIn("create-bucket", calls[0])
+        self.assertEqual(calls[0]["kind"], "ryframe-native-s3-create-bucket")
+        inspect.assert_not_called()
 
 
 if __name__ == "__main__":

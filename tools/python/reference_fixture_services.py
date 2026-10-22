@@ -6,10 +6,8 @@ sys.dont_write_bytecode = True
 
 import argparse
 import json
-import os
 from pathlib import Path
 import shlex
-import subprocess
 from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
@@ -24,6 +22,7 @@ from restore_reference_plan import BUCKETS, plan_hash
 from reference_fixture_environment import validate_current_review_tools, validate_preflight_successor
 from reference_fixture_service_context import service_run
 from reference_fixture_control_protocol import run_private
+from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect
 
 
 def bound(path: Path) -> dict:
@@ -78,11 +77,13 @@ def _initial_services(state: dict) -> None:
         raise ValueError("对象桶初始化只允许接续同一账本中的完成 RustFS 与 Redis 首代")
 
 
-def _bucket_environment(private: dict) -> dict:
-    access, secret = private.get("APP_OBJECT_STORAGE_ACCESS_KEY"), private.get("APP_OBJECT_STORAGE_SECRET_KEY")
+def _bucket_configuration(review: dict, private: dict) -> dict:
+    access, secret = private.get("access_key"), private.get("secret_key")
     if not isinstance(access, str) or not access or not isinstance(secret, str) or not secret:
-        raise ValueError("对象桶初始化缺少私有 S3 凭据")
-    return {**configured(private), "AWS_ACCESS_KEY_ID": access, "AWS_SECRET_ACCESS_KEY": secret}
+        raise ValueError("对象桶初始化缺少直接配置的 S3 凭据")
+    objects = review["scopes"]["seed"]["objects"]
+    return {"endpoint": objects["endpoint"], "region": objects["region"],
+            "access_key": access, "secret_key": secret}
 
 
 def _ready_guard(backend: Path, review_file: Path, review: dict, bootstrap_file: Path, bootstrap: dict,
@@ -111,50 +112,66 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
         raise ValueError("初始化夹具对象桶必须显式指定 --write")
     review_file, review = document(backend, review_path)
     bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
-    execution = Path(bootstrap["execution_backend"])
     run = service_run(review)
     manifest = run / "manifest.json"
     output = run / "buckets"
     if output.exists() or not manifest.is_file():
         raise ValueError("对象桶初始化必须复用首代服务账本且不能覆盖已有证据")
     _initial_services(load_state(run))
-    tool = review["tools"]["aws"]
-    if file_digest(Path(tool["path"]))["sha256"] != tool["sha256"]:
-        raise ValueError("对象桶初始化前 AWS 工具已变化")
-    endpoint, region = review["scopes"]["seed"]["objects"]["endpoint"], review["scopes"]["seed"]["objects"]["region"]
-    environment_values = _bucket_environment(private)
+    configuration = _bucket_configuration(review, private)
+    scope_id = review["scopes"]["seed"]["scope_id"]
     output.mkdir()
+    environment_file = bootstrap_file.parent / "environment.json"
     sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest),
-               "aws": {"path": tool["path"], "sha256": tool["sha256"]}}
+               "environment": bound(environment_file),
+               "configuration_sha256": plan_hash(configuration)}
 
     def guard() -> None:
         current_review, current = document(backend, review_file)
         current_bootstrap, current_value = document(backend, bootstrap_file)
         if current_review != review_file or current != review or current_bootstrap != bootstrap_file or current_value != bootstrap:
             raise ValueError("对象桶初始化期间审阅或私有环境收据发生变化")
-        if bound(manifest) != sources["manifest"]:
+        if (bound(manifest) != sources["manifest"]
+                or bound(environment_file) != sources["environment"]
+                or read_json(environment_file) != {"environment": private}
+                or plan_hash(_bucket_configuration(review, private)) != sources["configuration_sha256"]):
             raise ValueError("对象桶初始化期间服务账本清单发生变化")
-        if file_digest(Path(tool["path"]))["sha256"] != sources["aws"]["sha256"]:
-            raise ValueError("对象桶初始化期间 AWS 工具发生变化")
+        validate_current_review_tools(review)
 
     with run_lock(run):
         _initial_services(load_state(run))
         number = begin(run, "fixture-buckets", "prepare", sources)
         try:
-            base = [tool["path"], "--endpoint-url", endpoint, "--region", region, "--no-paginate", "s3api"]
+            receipts = []
             for bucket in sorted(BUCKETS):
                 guard()
-                subprocess.run([*base, "create-bucket", "--bucket", bucket], cwd=execution, env=environment_values,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, check=True, timeout=30,
-                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                request = {"format_version": 1, "kind": "ryframe-native-s3-create-bucket",
+                           "scope_id": scope_id, "configuration": configuration, "bucket": bucket}
+                outcome, invocation = native_create_bucket(request)
+                create_receipt = {"transport": "rust-s3-sigv4", "operation": "create-bucket",
+                                  "bucket": bucket, "outcome": outcome, **invocation}
+                write_json(output / f"create-{bucket}.json", create_receipt)
+                if outcome.get("status") != "created_unverified":
+                    raise ValueError("对象桶创建未得到可继续核验的新建结果；禁止接管或自动重试")
                 guard()
-                subprocess.run([*base, "head-bucket", "--bucket", bucket], cwd=execution, env=environment_values,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=30,
-                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                observed, read_invocation = native_s3_inspect({
+                    "format_version": 1, "kind": "ryframe-native-s3-inspect",
+                    "scope_id": scope_id, "configuration": configuration, "bucket": bucket,
+                    "operation": "head-bucket", "prefix": None, "continuation": None,
+                })
+                head_receipt = {"transport": "rust-s3-sigv4", "operation": "head-bucket",
+                                "bucket": bucket, "response": observed, **read_invocation,
+                                "remote_writes": 0}
+                write_json(output / f"head-{bucket}.json", head_receipt)
+                if observed != {}:
+                    raise ValueError("对象桶 HEAD 核验返回未识别字段")
+                receipts.append({"bucket": bucket,
+                                 "create": bound(output / f"create-{bucket}.json"),
+                                 "head": bound(output / f"head-{bucket}.json")})
                 guard()
-            guard()
-            result = {"status": "fixture_buckets_ready", "buckets": sorted(BUCKETS), "remote_writes": len(BUCKETS)}
+            result = {"status": "fixture_buckets_ready", "buckets": sorted(BUCKETS),
+                      "receipts": receipts, "transport": "rust-s3-sigv4",
+                      "remote_writes": len(BUCKETS)}
             finish(run, number, result=result)
         except BaseException as error:
             finish(run, number, error=error)

@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::super::{digest, json as json_io};
 use super::{
     input::Context,
-    object::{AwsCall, aws},
+    object::{ObjectCall, object_read},
     transport::{StdoutTarget, Transport},
 };
 use crate::Result;
@@ -25,20 +25,20 @@ pub(super) fn owner_proofs<T: Transport>(
     for bucket in buckets {
         let file = format!("{phase}-{bucket}.bin");
         let body = directory.join(&file);
-        let raw = aws(
+        let raw = object_read(
             context,
             transport,
-            AwsCall {
+            ObjectCall {
                 operation: "get-object",
                 bucket,
                 key: &format!("{scope}/.ryframe-owner"),
                 stdout: StdoutTarget::File(body.clone()),
                 extra: None,
                 label: &format!("{phase}-{bucket}"),
+                max_bytes: 4096,
             },
         )?;
-        let raw = raw.success("对象 ownership 读取")?;
-        let response: Value = serde_json::from_slice(&raw.stdout)?;
+        let response = raw;
         write_stage_proof(
             directory,
             &format!("{phase}-{bucket}"),

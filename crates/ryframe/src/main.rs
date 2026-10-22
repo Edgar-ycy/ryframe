@@ -3,7 +3,7 @@ use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 use ryframe::{app, boot};
 use ryframe_adapters::i18n::LocalizerLoader;
 use ryframe_application::{CallbackJobMetricsObserver, JobQueue, OutboxWorker};
-use ryframe_config::{AppConfig, Environment, JobWorkerMode};
+use ryframe_config::{AppConfig, ConfigurationArgs, Environment, JobWorkerMode};
 use ryframe_kernel::AppError;
 use tokio::sync::{oneshot, watch};
 
@@ -52,15 +52,16 @@ struct ApiRuntime {
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let run_mode = boot::startup::parse_api_run_mode(&arguments)?;
+    ryframe::crypto::install_crypto_provider()?;
+    let arguments = ConfigurationArgs::parse(std::env::args().skip(1).collect())?;
+    let run_mode = boot::startup::parse_api_run_mode(&arguments.arguments)?;
+    let config = AppConfig::load(&arguments.directory, Environment::from_env()?)?;
     if run_mode == boot::startup::ApiRunMode::Healthcheck {
-        return ryframe::healthcheck::probe_from_env("APP_APP_PORT", 8080);
+        return ryframe::healthcheck::probe_local_readiness(config.app.port);
     }
     let _business_modules = ryframe::business::registered_business_modules()?;
-    ryframe::crypto::install_crypto_provider()?;
     install_process_hooks()?;
-    let startup = load_startup(run_mode)?;
+    let startup = load_startup(run_mode, config)?;
     let (_logger_guard, _telemetry_guard) = boot::logging::init(&startup.config)?;
     tracing::info!(environment = %startup.config.environment, "configuration loaded");
     if startup.starts_background_tasks() {
@@ -103,9 +104,10 @@ fn install_process_hooks() -> Result<(), AppError> {
     Ok(())
 }
 
-fn load_startup(run_mode: boot::startup::ApiRunMode) -> Result<ApiStartup, AppError> {
-    let environment = Environment::from_env()?;
-    let config = AppConfig::load_from_env(environment)?;
+fn load_startup(
+    run_mode: boot::startup::ApiRunMode,
+    config: AppConfig,
+) -> Result<ApiStartup, AppError> {
     if run_mode == boot::startup::ApiRunMode::Probe && config.environment.is_production() {
         return Err(AppError::Config(
             "API 探活模式只允许本地开发和隔离检查使用".into(),
@@ -115,8 +117,11 @@ fn load_startup(run_mode: boot::startup::ApiRunMode) -> Result<ApiStartup, AppEr
     ryframe_api::validate_runtime_features(config.api_docs.enabled)?;
     initialize_id_generators(config.snowflake_worker_id)?;
     let localizer = Arc::new(
-        LocalizerLoader::load_from_environment(config.environment.is_production())
-            .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,
+        LocalizerLoader::load_configured(
+            &config.app.locales_dir,
+            config.environment.is_production(),
+        )
+        .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,
     );
     Ok(ApiStartup {
         run_mode,

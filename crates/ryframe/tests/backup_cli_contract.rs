@@ -1,5 +1,7 @@
 #[path = "../src/bin/ryframe_tenant_data/args.rs"]
 mod args;
+#[path = "boot_contract/configuration_fixture.rs"]
+mod configuration_fixture;
 #[path = "../src/bin/ryframe_tenant_data/output.rs"]
 mod output;
 #[path = "../src/bin/ryframe_tenant_data/proof_file.rs"]
@@ -11,7 +13,95 @@ use serde_json::json;
 use std::{fs, thread, time::Duration};
 
 fn arguments(value: &str) -> Result<Command, String> {
-    parse(value.split_whitespace().map(String::from))
+    let arguments = ryframe_config::ConfigurationArgs::parse(
+        value.split_whitespace().map(String::from).collect(),
+    )
+    .map_err(|error| error.to_string())?;
+    parse(arguments.arguments)
+}
+
+fn configuration_directory() -> tempfile::TempDir {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
+    fs::create_dir_all(&root).unwrap();
+    tempfile::Builder::new()
+        .prefix("file-tenant-data-")
+        .tempdir_in(root)
+        .unwrap()
+}
+
+#[test]
+fn registry_and_restore_configuration_directories_are_independent() {
+    use ryframe_config::{AppConfig, ConfigurationArgs, Environment};
+
+    let parsed = ConfigurationArgs::parse(
+        [
+            "--config-dir",
+            "registry",
+            "restore-begin",
+            "--plan",
+            "plan.json",
+            "--output",
+            "running.json",
+            "--restore-config-dir",
+            "restored",
+        ]
+        .map(String::from)
+        .into(),
+    )
+    .unwrap();
+    assert_eq!(parsed.directory, std::path::PathBuf::from("registry"));
+    let command = parse(parsed.arguments).unwrap();
+    assert_eq!(
+        command.restore_config().unwrap(),
+        &std::path::PathBuf::from("restored")
+    );
+    let temporary = configuration_directory();
+    let registry = temporary.path().join("registry");
+    let restored = temporary.path().join("restored");
+    configuration_fixture::write_configuration(&registry, 8080, 9091, None);
+    configuration_fixture::write_configuration(&restored, 8081, 9092, None);
+    let source = AppConfig::load(&registry, Environment::Test).unwrap();
+    let target = AppConfig::load(&restored, source.environment).unwrap();
+    assert_eq!(source.app.port, 8080);
+    assert_eq!(target.app.port, 8081);
+}
+
+#[test]
+fn duplicate_registry_directory_does_not_consume_restore_directory_or_publish_output() {
+    for command in [
+        "--config-dir one --config-dir two backup-status",
+        "backup-status --config-dir",
+        "restore-begin --plan plan.json --output out.json --restore-config-dir target --config-dir one --config-dir two",
+    ] {
+        assert!(arguments(command).is_err(), "{command}");
+    }
+}
+
+#[test]
+fn offline_help_and_business_catalog_do_not_read_environment_or_configuration() {
+    let temporary = configuration_directory();
+    let missing = temporary.path().join("absent");
+    for args in [
+        vec!["--help"],
+        vec!["business-catalog", "--output", "catalog.json"],
+    ] {
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_ryframe-tenant-data"))
+            .current_dir(temporary.path())
+            .arg("--config-dir")
+            .arg(&missing)
+            .args(args)
+            .env("APP_ENV", "must-not-read-for-offline")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!missing.exists());
+    }
+    assert!(temporary.path().join("catalog.json").is_file());
+    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 1);
 }
 
 #[test]

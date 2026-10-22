@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use chrono::Utc;
@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::reset::{ResetError, ResetResult, model::ResetManifest};
 
-const LEDGER_VERSION: u32 = 4;
-const STATE_DIR_ENV: &str = "RYFRAME_RESET_STATE_DIR";
+const LEDGER_VERSION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -282,6 +281,11 @@ impl ResetLedger {
     }
 
     fn validate_identity(&self, manifest: &ResetManifest, plan_hash: &str) -> ResetResult<()> {
+        if self.ledger_version != LEDGER_VERSION {
+            return Err(ResetError::new(
+                "本地 reset phase ledger 格式不兼容；保留旧证据，禁止自动转换或重放",
+            ));
+        }
         let allowed_resources = crate::reset::model::resource_keys(manifest);
         if self.ledger_version != LEDGER_VERSION
             || self.plan_hash != plan_hash
@@ -324,34 +328,20 @@ impl LedgerStore {
     pub fn ledger_path(&self) -> &Path {
         &self.ledger_path
     }
-    pub fn from_environment(manifest: &ResetManifest, plan_hash: &str) -> ResetResult<Self> {
-        let base = match std::env::var(STATE_DIR_ENV) {
-            Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
-            Ok(_) => return Err(ResetError::new("RYFRAME_RESET_STATE_DIR 不能是空路径")),
-            Err(std::env::VarError::NotPresent) => {
-                return Err(ResetError::new(
-                    "execute 必须显式提供绝对 RYFRAME_RESET_STATE_DIR",
-                ));
-            }
-            Err(std::env::VarError::NotUnicode(_)) => {
-                return Err(ResetError::new(
-                    "RYFRAME_RESET_STATE_DIR 必须使用有效 Unicode 编码",
-                ));
-            }
-        };
-        if !base.is_absolute()
-            || base
-                .components()
-                .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
-        {
-            return Err(ResetError::new(
-                "RYFRAME_RESET_STATE_DIR 必须是无点号跳转的绝对路径",
-            ));
-        }
-        Self::new(&base, manifest, plan_hash)
+    pub fn from_config(
+        config: &ryframe_config::ResetConfig,
+        manifest: &ResetManifest,
+        plan_hash: &str,
+    ) -> ResetResult<Self> {
+        let base = config.state_directory.as_deref().ok_or_else(|| {
+            ResetError::new("execute 必须在所选配置文件显式提供绝对 reset.state_directory")
+        })?;
+        Self::new(base, manifest, plan_hash)
     }
 
     pub fn new(base: &Path, manifest: &ResetManifest, plan_hash: &str) -> ResetResult<Self> {
+        crate::reset::model::validate_manifest_version(manifest)?;
+        crate::reset::state_paths::directory(base)?;
         if plan_hash.len() != 64 || !plan_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(ResetError::new("phase ledger 收到非法 plan hash"));
         }
@@ -370,7 +360,10 @@ impl LedgerStore {
         manifest: &ResetManifest,
         plan_hash: &str,
     ) -> ResetResult<ResetLedger> {
+        crate::reset::model::validate_manifest_version(manifest)?;
         let backup = backup_path(&self.ledger_path)?;
+        crate::reset::state_paths::file(&self.ledger_path)?;
+        crate::reset::state_paths::file(&backup)?;
         let source = if self.ledger_path.exists() {
             Some((&self.ledger_path, false))
         } else if backup.exists() {
@@ -411,7 +404,10 @@ fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> ResetResult<()
     let parent = path
         .parent()
         .ok_or_else(|| ResetError::new("reset 状态文件缺少父目录"))?;
+    crate::reset::state_paths::directory(parent)?;
+    crate::reset::state_paths::file(path)?;
     fs::create_dir_all(parent).map_err(|_| ResetError::new("无法创建 reset 状态目录"))?;
+    crate::reset::state_paths::directory(parent)?;
     let bytes =
         serde_json::to_vec_pretty(value).map_err(|_| ResetError::new("无法编码 reset 状态文件"))?;
     let file_name = path
@@ -420,9 +416,8 @@ fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> ResetResult<()
         .ok_or_else(|| ResetError::new("reset 状态文件名无效"))?;
     let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
     let mut file = OpenOptions::new()
-        .create(true)
+        .create_new(true)
         .write(true)
-        .truncate(true)
         .open(&temporary)
         .map_err(|_| ResetError::new("无法创建 reset 临时状态文件"))?;
     file.write_all(&bytes)
@@ -430,6 +425,7 @@ fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> ResetResult<()
         .map_err(|_| ResetError::new("无法持久化 reset 临时状态文件"))?;
     drop(file);
     let backup = backup_path(path)?;
+    crate::reset::state_paths::file(&backup)?;
     if path.exists() {
         if backup.exists() {
             fs::remove_file(&backup).map_err(|_| ResetError::new("无法更新 reset 备用状态文件"))?;

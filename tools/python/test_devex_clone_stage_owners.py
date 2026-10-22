@@ -30,31 +30,39 @@ class StageOwnersTests(unittest.TestCase):
         return resume.continue_copy(self.backend, self.output, self.case.environments['source'],
             self.case.environments['target'], mode=mode, run=runner or self.case.case.runner)
 
-    def owner_commands(self, directory):
-        return [command for command, _ in self.case.case.runner.calls
-                if 's3api' in command and command[command.index('s3api') + 1] == 'get-object'
-                and Path(command[-1]).parent == directory]
+    def owner_requests(self, directory):
+        requests = []
+        for command, options in self.case.case.runner.calls:
+            if '__s3-read' not in command:
+                continue
+            request = json.loads(options['input'])
+            if (request['operation'] == 'get-object'
+                    and Path(request['destination']).parent == directory):
+                requests.append(request)
+        return requests
 
     def check_success_evidence(self, directory):
-        commands = self.owner_commands(directory)
-        self.assertEqual(len(commands), 5)
-        self.assertEqual([command[command.index('--bucket') + 1] for command in commands], sorted(BUCKETS))
-        self.assertTrue(all(command[command.index('--key') + 1] == 'clone-target/.ryframe-owner' for command in commands))
+        requests = self.owner_requests(directory)
+        self.assertEqual(len(requests), 5)
+        self.assertEqual([request['bucket'] for request in requests], sorted(BUCKETS))
+        self.assertTrue(all(request['key'] == 'clone-target/.ryframe-owner' for request in requests))
+        self.assertTrue(all(request['scope_id'] == 'clone-target' for request in requests))
+        self.assertTrue(all(request['configuration'] == self.case.target_request['target']['s3']
+                            for request in requests))
         value = json.loads((directory / 'verified.json').read_text(encoding='utf-8'))
         self.assertEqual(value['status'], 'target_owners_verified')
         self.assertEqual(value['scope_id'], 'clone-target')
         self.assertEqual(len(value['owners']), 5)
         for item in value['owners']:
             self.assertEqual(file_digest(directory / item['file']), {key: item[key] for key in ('bytes', 'sha256')})
-        diagnostics = [json.loads(path.read_text(encoding='utf-8')) for path in self.output.glob('command-*.json')]
-        self.assertEqual(sum(record['command'] in commands for record in diagnostics), 5)
 
     def bad_owner(self, command, **kwargs):
         result = self.case.case.runner(command, **kwargs)
-        if ('s3api' in command and command[command.index('s3api') + 1] == 'get-object'
-                and command[command.index('--bucket') + 1] == 'imports'
-                and Path(command[-1]).parent.name.startswith('target-owners-')):
-            Path(command[-1]).write_bytes(b'other-isolated-owner')
+        if '__s3-read' in command:
+            request = json.loads(kwargs['input'])
+            if (request['operation'] == 'get-object' and request['bucket'] == 'imports'
+                    and Path(request['destination']).parent.name.startswith('target-owners-')):
+                Path(request['destination']).write_bytes(b'other-isolated-owner')
         return result
 
     def test_first_copy_checks_all_buckets_once_after_prepare_and_before_any_intent(self):
@@ -133,8 +141,10 @@ class StageOwnersTests(unittest.TestCase):
         original = dict(os.environ)
         def drift(command, **kwargs):
             response = self.case.case.runner(command, **kwargs)
-            if 's3api' in command and Path(command[-1]).parent.name.startswith('target-owners-'):
-                os.environ['CLONE_SIDE'] = 'changed-during-owner-read'
+            if '__s3-read' in command:
+                request = json.loads(kwargs['input'])
+                if Path(request['destination']).parent.name.startswith('target-owners-'):
+                    os.environ['CLONE_SIDE'] = 'changed-during-owner-read'
             return response
         with patch.object(factory, 'TransferSteps') as steps, self.assertRaisesRegex(ValueError, '环境'):
             self.execute(drift)

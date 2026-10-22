@@ -1,32 +1,31 @@
+use super::{
+    build::{BuildContext, build_candidate, cleanup_binaries},
+    config::spawn_shutdown_listener,
+    inputs,
+    model::{
+        Binaries, BuildPlan, BuildResult, ChangeOutcome, LOOP_INTERVAL, ProbeResult,
+        RunningProcesses, ServiceLaunchMode, Services, WATCH_DEBOUNCE,
+    },
+    services::{
+        ensure_initial_ports_available, ensure_running, ensure_services_ready, probe_candidate,
+        promote_services, restore_last_known_good, start_services, stop_all, uncertain,
+    },
+    snapshot::{DevSession, recovery_seed},
+    tool_self_changed_error,
+};
+use crate::{
+    Result,
+    cli::DevOptions,
+    doctor,
+    process::ChildGroup,
+    watch::{ChangeBatch, SourceWatcher, WatchEvent},
+};
 use std::{
     path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-};
-
-use crate::{
-    Result, doctor,
-    process::ChildGroup,
-    watch::{ChangeBatch, SourceWatcher, WatchEvent},
-    workspace::root_dir,
-};
-
-use super::{
-    build::{BuildContext, build_candidate, cleanup_binaries},
-    config::{DevPorts, WorkerIds, spawn_shutdown_listener},
-    model::{
-        Binaries, BuildPlan, BuildResult, ChangeOutcome, LOOP_INTERVAL, ProbeResult,
-        RunningProcesses, ServiceLaunchMode, Services, WATCH_DEBOUNCE,
-    },
-    runtime_config_matches_snapshot,
-    services::{
-        ensure_initial_ports_available, ensure_running, ensure_services_ready, probe_candidate,
-        promote_services, restore_last_known_good, start_services, stop_all,
-    },
-    snapshot::DevSession,
-    tool_self_changed_error,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +35,6 @@ pub(crate) enum CandidateProbeDisposition {
     Superseded,
     Shutdown,
 }
-
 pub(crate) fn candidate_probe_disposition(
     result: &Result<ProbeResult>,
 ) -> CandidateProbeDisposition {
@@ -48,403 +46,351 @@ pub(crate) fn candidate_probe_disposition(
     }
 }
 
-pub(crate) fn run() -> Result<()> {
-    doctor::run_backend()?;
-    let root = root_dir();
-    let ports = DevPorts::from_environment()?;
-    ensure_initial_ports_available(ports)?;
-    let worker_ids = WorkerIds::from_environment()?;
-    let group = ChildGroup::new()?;
-    let watcher = SourceWatcher::new(&root)?;
-    let (session, recovered) = DevSession::prepare(&root, watcher.current_revision())?;
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let _shutdown_listener = spawn_shutdown_listener(Arc::clone(&shutdown));
-
-    run_backend(
-        &group, &root, &session, &watcher, &shutdown, ports, worker_ids, recovered,
-    )
+pub(super) struct Cycle<'a> {
+    pub(super) group: &'a ChildGroup,
+    pub(super) root: &'a Path,
+    pub(super) session: &'a DevSession,
+    pub(super) shutdown: &'a AtomicBool,
+    pub(super) mode: ServiceLaunchMode,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_backend(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    watcher: &SourceWatcher,
-    shutdown: &AtomicBool,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
-    recovered: Option<Binaries>,
-) -> Result<()> {
-    let backend = start_backend(
-        group, root, session, shutdown, watcher, ports, worker_ids, recovered,
-    )?;
-    let Some((services, recovered)) = backend else {
-        return Ok(());
+pub(crate) fn run(options: &DevOptions) -> Result<()> {
+    let root = inputs::workspace(options)?;
+    doctor::run_backend_at(&root)?;
+    let (session, recovered) = DevSession::prepare(&root, options)?;
+    let (source, _) = inputs::selected(&root, options.config_dir.as_deref())?;
+    let roots = if let Some(saved) = &recovered {
+        inputs::watch_roots(&root, &saved.runtime_config, source)
+    } else {
+        session.capture()?.1
+    };
+    let mut watcher =
+        SourceWatcher::new_with_inputs(&root, roots, recovery_seed(recovered.as_ref())?)?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let _listener = spawn_shutdown_listener(Arc::clone(&shutdown));
+    let group = ChildGroup::new()?;
+    let cycle = Cycle {
+        group: &group,
+        root: &root,
+        session: &session,
+        shutdown: &shutdown,
+        mode: ServiceLaunchMode::Development,
+    };
+    let services = if let Some(saved) = recovered {
+        // 恢复失败直接报告，保留旧二进制；未知停止状态不得转而启动第二个 Worker。
+        start_services(&group, &root, saved)?
+    } else {
+        let Some(initial) = build_initial_candidate(&cycle, &mut watcher)? else {
+            return Ok(());
+        };
+        let ports = inputs::load_ports(&initial.runtime_dir, ServiceLaunchMode::Development)?;
+        ensure_initial_ports_available(ports)?;
+        start_services(&group, &root, initial)?
     };
     let mut running = RunningProcesses { services };
-    if recovered {
-        println!("已恢复最近完整的 last-known-good；正在后台构建当前源码候选。");
-        if matches!(
-            refresh_recovered(
-                group,
-                root,
-                session,
-                watcher,
-                shutdown,
-                &mut running,
-                ports,
-                worker_ids,
-            )?,
-            ChangeOutcome::Shutdown
-        ) {
-            stop_all(&mut running.services)?;
-            return Ok(());
-        }
+    if running.services.binaries.source_revision < watcher.current_revision()
+        && refresh_recovered(&cycle, &mut watcher, &mut running.services)?
+            == ChangeOutcome::Shutdown
+    {
+        return stop_all(&mut running.services);
     }
+    let ports = inputs::load_ports(&running.services.binaries.runtime_dir, cycle.mode)?;
     println!(
         "开发服务已就绪：API http://127.0.0.1:{}/readyz，Worker http://127.0.0.1:{}/readyz。",
         ports.api, ports.worker
     );
-    supervise(
-        group,
-        root,
-        session,
-        watcher,
-        shutdown,
-        &mut running,
-        ports,
-        worker_ids,
-    )
+    supervise(&cycle, &mut watcher, &mut running)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn start_backend(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    shutdown: &AtomicBool,
-    watcher: &SourceWatcher,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
-    recovered: Option<Binaries>,
-) -> Result<Option<(Services, bool)>> {
-    if let Some(binaries) = recovered {
-        match start_services(group, root, binaries, ports, worker_ids) {
-            Ok(services) => return Ok(Some((services, true))),
-            Err(error) => {
-                println!("恢复的 last-known-good 无法启动，改为构建当前源码：{error}");
-            }
-        }
-    }
-    println!("正在构建初始 API、Worker 与迁移工具。按 Ctrl+C 可统一停止后端进程。");
-    let initial = match build_initial_candidate(group, root, session, shutdown, watcher)? {
-        Some(candidate) => candidate,
-        None => return Ok(None),
-    };
-    start_services(group, root, initial, ports, worker_ids).map(|services| Some((services, false)))
+fn rebind(cycle: &Cycle<'_>, watcher: &mut SourceWatcher) -> Result<()> {
+    let (_, roots, _) = cycle.session.capture()?;
+    watcher.update_inputs(roots)
 }
 
 pub(super) fn build_initial_candidate(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    shutdown: &AtomicBool,
-    watcher: &SourceWatcher,
+    cycle: &Cycle<'_>,
+    watcher: &mut SourceWatcher,
 ) -> Result<Option<Binaries>> {
-    let context = BuildContext::new(group, root, session, shutdown, watcher, Path::new("cargo"));
     loop {
-        let plan = BuildPlan::initial(watcher.current_revision());
+        rebind(cycle, watcher)?;
+        let Some(batch) = settle_change(
+            watcher,
+            cycle.shutdown,
+            ChangeBatch {
+                revision: watcher.current_revision(),
+                paths: Default::default(),
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        if BuildPlan::from_changes(&batch).tool_self_changed {
+            return Err(tool_self_changed_error());
+        }
+        let plan = BuildPlan::initial(batch.revision);
+        let context = BuildContext::new(
+            cycle.group,
+            cycle.root,
+            cycle.session,
+            cycle.shutdown,
+            watcher,
+            Path::new("cargo"),
+        );
         match build_candidate(&context, &plan, None, None)? {
-            BuildResult::Ready(candidate) => return Ok(Some(*candidate)),
-            BuildResult::Superseded => {
-                println!("初始候选已过期，立即按最新源码重新构建。");
+            BuildResult::Ready(candidate) => {
+                if watcher.final_revision_fence(candidate.source_revision) {
+                    return Ok(Some(*candidate));
+                }
+                cleanup_binaries(&candidate)?;
             }
+            BuildResult::Superseded => continue,
+            BuildResult::Cancelled => return Ok(None),
             BuildResult::Failed | BuildResult::VerifiedNoRestart => {
                 return Err("初始后端构建失败，尚无 last-known-good 可继续运行".into());
             }
-            BuildResult::Cancelled => return Ok(None),
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn supervise(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    watcher: &SourceWatcher,
-    shutdown: &AtomicBool,
+    cycle: &Cycle<'_>,
+    watcher: &mut SourceWatcher,
     running: &mut RunningProcesses,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
 ) -> Result<()> {
     loop {
-        if shutdown.load(Ordering::Acquire) {
-            println!("收到中断信号，正在停止 API 与 Worker。");
-            stop_all(&mut running.services)?;
-            return Ok(());
+        if cycle.shutdown.load(Ordering::Acquire) {
+            return stop_all(&mut running.services);
         }
         ensure_running("API", &mut running.services.api)?;
         ensure_running("Worker", &mut running.services.worker)?;
-        let Some(batch) = receive_change(watcher)? else {
-            continue;
-        };
-        if matches!(
-            process_change(
-                group,
-                root,
-                session,
-                watcher,
-                shutdown,
-                &mut running.services,
-                ports,
-                worker_ids,
-                ServiceLaunchMode::Development,
-                None,
-                batch,
-            )?,
-            ChangeOutcome::Shutdown
-        ) {
-            stop_all(&mut running.services)?;
-            return Ok(());
+        if let Some(batch) = receive_change(watcher)?
+            && process_change(cycle, watcher, &mut running.services, None, batch)?
+                == ChangeOutcome::Shutdown
+        {
+            return stop_all(&mut running.services);
         }
     }
 }
 
 pub(super) fn receive_change(watcher: &SourceWatcher) -> Result<Option<ChangeBatch>> {
-    let Some(event) = watcher.recv_timeout(LOOP_INTERVAL)? else {
-        return Ok(None);
-    };
-    match event {
-        WatchEvent::Failed(error) => Err(error.into()),
-        WatchEvent::BackendChanged { revision, paths } => watcher
+    match watcher.recv_timeout(LOOP_INTERVAL)? {
+        None => Ok(None),
+        Some(WatchEvent::Failed(error)) => Err(error.into()),
+        Some(WatchEvent::BackendChanged { revision, paths }) => watcher
             .drain_changes(revision, paths, WATCH_DEBOUNCE)
             .map(Some),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn refresh_recovered(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    watcher: &SourceWatcher,
-    shutdown: &AtomicBool,
-    running: &mut RunningProcesses,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
+pub(super) fn process_change(
+    cycle: &Cycle<'_>,
+    watcher: &mut SourceWatcher,
+    services: &mut Services,
+    counter: Option<&AtomicUsize>,
+    mut batch: ChangeBatch,
 ) -> Result<ChangeOutcome> {
-    let plan = BuildPlan::initial(watcher.current_revision());
-    let Some(result) = build_while_lkg(
-        group,
-        root,
-        session,
-        watcher,
-        shutdown,
-        &mut running.services,
-        ports,
-        worker_ids,
-        &plan,
-        ServiceLaunchMode::Development,
-        None,
-    )?
-    else {
-        return Ok(ChangeOutcome::Failed);
-    };
-    handle_candidate_result(
-        group,
-        root,
-        watcher,
-        shutdown,
-        &mut running.services,
-        ports,
-        worker_ids,
-        ServiceLaunchMode::Development,
-        result,
-    )
+    loop {
+        let Some(settled) = settle_change(watcher, cycle.shutdown, batch)? else {
+            return Ok(ChangeOutcome::Shutdown);
+        };
+        batch = settled;
+        let plan = BuildPlan::from_changes(&batch);
+        if plan.tool_self_changed {
+            return Err(tool_self_changed_error());
+        }
+        if batch.revision <= services.binaries.source_revision || plan.is_noop() {
+            return Ok(ChangeOutcome::Ignored);
+        }
+        let (captured, roots, _) = match cycle.session.capture() {
+            Ok(captured) => captured,
+            Err(error) => {
+                println!("配置候选无效，保留 LKG：{error}");
+                return Ok(ChangeOutcome::Failed);
+            }
+        };
+        watcher.update_inputs(roots)?;
+        let Some(settled) = settle_change(watcher, cycle.shutdown, batch)? else {
+            return Ok(ChangeOutcome::Shutdown);
+        };
+        batch = settled;
+        if batch.revision != plan.source_revision {
+            continue;
+        }
+        if plan.is_runtime_config_only()
+            && captured.semantically_matches(&services.binaries.runtime_config)?
+        {
+            ensure_services_ready(services, cycle.mode)?;
+            return Ok(ChangeOutcome::VerifiedNoRestart);
+        }
+        let outcome = run_plan(cycle, watcher, services, &plan, counter)?;
+        // pending raw 即使最终被过滤也可能保守取消候选；保留整批路径重新规划。
+        if outcome != ChangeOutcome::Superseded {
+            return Ok(outcome);
+        }
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_while_lkg(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
+fn settle_change(
     watcher: &SourceWatcher,
     shutdown: &AtomicBool,
+    mut batch: ChangeBatch,
+) -> Result<Option<ChangeBatch>> {
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        batch = watcher.drain_changes(batch.revision, batch.paths, LOOP_INTERVAL)?;
+        if watcher.final_revision_fence(batch.revision) {
+            return Ok(Some(batch));
+        }
+    }
+}
+
+fn refresh_recovered(
+    cycle: &Cycle<'_>,
+    watcher: &mut SourceWatcher,
     services: &mut Services,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
+) -> Result<ChangeOutcome> {
+    loop {
+        if let Err(error) = rebind(cycle, watcher) {
+            println!("当前输入无效，保留已恢复 LKG：{error}");
+            return Ok(ChangeOutcome::Failed);
+        }
+        let Some(batch) = settle_change(
+            watcher,
+            cycle.shutdown,
+            ChangeBatch {
+                revision: watcher.current_revision(),
+                paths: Default::default(),
+            },
+        )?
+        else {
+            return Ok(ChangeOutcome::Shutdown);
+        };
+        if BuildPlan::from_changes(&batch).tool_self_changed {
+            return Err(tool_self_changed_error());
+        }
+        let outcome = run_plan(
+            cycle,
+            watcher,
+            services,
+            &BuildPlan::initial(batch.revision),
+            None,
+        )?;
+        if outcome != ChangeOutcome::Superseded {
+            return Ok(outcome);
+        }
+    }
+}
+
+fn run_plan(
+    cycle: &Cycle<'_>,
+    watcher: &mut SourceWatcher,
+    services: &mut Services,
     plan: &BuildPlan,
-    mode: ServiceLaunchMode,
-    cargo_invocations: Option<&AtomicUsize>,
-) -> Result<Option<BuildResult>> {
+    counter: Option<&AtomicUsize>,
+) -> Result<ChangeOutcome> {
     let previous = services.binaries.clone();
-    let context = BuildContext::new(group, root, session, shutdown, watcher, Path::new("cargo"));
-    let context = if let Some(counter) = cargo_invocations {
-        context.with_cargo_counter(counter)
-    } else {
-        context
-    };
+    let mut context = BuildContext::new(
+        cycle.group,
+        cycle.root,
+        cycle.session,
+        cycle.shutdown,
+        watcher,
+        Path::new("cargo"),
+    );
+    if let Some(counter) = counter {
+        context = context.with_cargo_counter(counter);
+    }
     let result = {
-        let mut lkg_check = || {
+        let mut lkg = || {
             ensure_running("last-known-good API", &mut services.api)?;
             ensure_running("last-known-good Worker", &mut services.worker)
         };
-        build_candidate(&context, plan, Some(&previous), Some(&mut lkg_check))
+        build_candidate(&context, plan, Some(&previous), Some(&mut lkg))
     };
-    match result {
-        Ok(result) => Ok(Some(result)),
+    let result = match result {
+        Ok(result) => result,
         Err(error)
             if error
                 .to_string()
                 .starts_with("last-known-good 在候选阶段失效") =>
         {
-            println!("{error}；正在恢复 last-known-good 配对。");
-            restore_last_known_good(group, root, services, ports, worker_ids, mode)?;
-            Ok(None)
+            restore_last_known_good(cycle.group, cycle.root, services, cycle.mode)?;
+            return Ok(ChangeOutcome::Failed);
         }
-        Err(error) => Err(error),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn process_change(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    watcher: &SourceWatcher,
-    shutdown: &AtomicBool,
-    services: &mut Services,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
-    mode: ServiceLaunchMode,
-    cargo_invocations: Option<&AtomicUsize>,
-    batch: ChangeBatch,
-) -> Result<ChangeOutcome> {
-    let plan = BuildPlan::from_changes(&batch);
-    let changed_paths = batch.paths.iter().cloned().collect::<Vec<_>>().join(", ");
-    println!(
-        "检测到后端变更 r{} [{changed_paths}]，后台准备新候选；当前服务继续运行。",
-        batch.revision.value()
-    );
-    if plan.tool_self_changed {
-        return Err(tool_self_changed_error());
-    }
-    if batch.revision <= services.binaries.source_revision {
-        println!("该变更已包含在当前 last-known-good 中，跳过重复构建。");
-        return Ok(ChangeOutcome::Ignored);
-    }
-    if plan.is_noop() {
-        println!("这些文件不影响当前 dev 运行时，已忽略。");
-        return Ok(ChangeOutcome::Ignored);
-    }
-    if plan.is_runtime_config_only()
-        && runtime_config_matches_snapshot(
-            &root.join("config"),
-            &services.binaries.config_dir,
-            services.binaries.runtime_secrets.as_ref(),
-        )?
-    {
-        ensure_services_ready(services, ports)?;
-        println!("配置写入与 LKG 运行快照语义相同，已跳过重启并保持服务就绪。");
-        return Ok(ChangeOutcome::VerifiedNoRestart);
-    }
-    let Some(result) = build_while_lkg(
-        group,
-        root,
-        session,
-        watcher,
-        shutdown,
-        services,
-        ports,
-        worker_ids,
-        &plan,
-        mode,
-        cargo_invocations,
-    )?
-    else {
-        return Ok(ChangeOutcome::Failed);
+        Err(error) => {
+            println!("候选准备失败，保留 LKG：{error}");
+            return Ok(ChangeOutcome::Failed);
+        }
     };
-    handle_candidate_result(
-        group, root, watcher, shutdown, services, ports, worker_ids, mode, result,
-    )
+    handle_candidate_result(cycle, watcher, services, result)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_candidate_result(
-    group: &ChildGroup,
-    root: &Path,
+    cycle: &Cycle<'_>,
     watcher: &SourceWatcher,
-    shutdown: &AtomicBool,
     services: &mut Services,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
-    mode: ServiceLaunchMode,
     result: BuildResult,
 ) -> Result<ChangeOutcome> {
     let candidate = match result {
-        BuildResult::Failed => {
-            println!("候选构建或迁移校验失败，继续使用 last-known-good。");
-            return Ok(ChangeOutcome::Failed);
-        }
+        BuildResult::Ready(candidate) => *candidate,
+        BuildResult::Failed => return Ok(ChangeOutcome::Failed),
         BuildResult::Cancelled => return Ok(ChangeOutcome::Shutdown),
+        BuildResult::Superseded => return Ok(ChangeOutcome::Superseded),
         BuildResult::VerifiedNoRestart => {
-            if let Err(error) = ensure_services_ready(services, ports) {
-                println!("变更校验完成，但 last-known-good 不再就绪，正在恢复配对：{error}");
-                restore_last_known_good(group, root, services, ports, worker_ids, mode)?;
+            if ensure_services_ready(services, cycle.mode).is_err() {
+                restore_last_known_good(cycle.group, cycle.root, services, cycle.mode)?;
                 return Ok(ChangeOutcome::Failed);
             }
-            println!("变更已校验，不需要重启 API/Worker。");
             return Ok(ChangeOutcome::VerifiedNoRestart);
         }
-        BuildResult::Superseded => {
-            println!("候选已被更新的源码代次取代，立即规划下一轮。");
-            return Ok(ChangeOutcome::Superseded);
-        }
-        BuildResult::Ready(candidate) => *candidate,
     };
-    let probe_result = probe_candidate(
-        group, root, &candidate, services, worker_ids, shutdown, watcher,
+    let probe = probe_candidate(
+        cycle.group,
+        cycle.root,
+        &candidate,
+        services,
+        cycle.shutdown,
+        watcher,
     );
-    match candidate_probe_disposition(&probe_result) {
+    match candidate_probe_disposition(&probe) {
         CandidateProbeDisposition::Promote => {}
-        CandidateProbeDisposition::Superseded => {
-            println!("候选 probe 被更新源码取代，继续使用 last-known-good。");
-            let _ = cleanup_binaries(&candidate);
-            return Ok(ChangeOutcome::Superseded);
-        }
-        CandidateProbeDisposition::Shutdown => {
-            let _ = cleanup_binaries(&candidate);
-            return Ok(ChangeOutcome::Shutdown);
-        }
         CandidateProbeDisposition::KeepLastKnownGood => {
-            let error = probe_result
-                .as_ref()
-                .expect_err("失败 disposition 必须保留 probe 错误");
-            println!("候选 API/Worker 未通过隔离健康检查，继续使用 last-known-good：{error}");
-            let _ = cleanup_binaries(&candidate);
+            let error = probe.expect_err("失败 disposition 保留原始错误");
+            if uncertain(error.as_ref()) {
+                return Err(error);
+            }
+            cleanup_binaries(&candidate)?;
             if ensure_running("last-known-good API", &mut services.api).is_err()
                 || ensure_running("last-known-good Worker", &mut services.worker).is_err()
             {
-                restore_last_known_good(group, root, services, ports, worker_ids, mode)?;
+                restore_last_known_good(cycle.group, cycle.root, services, cycle.mode)?;
             }
             return Ok(ChangeOutcome::Failed);
         }
+        disposition => {
+            cleanup_binaries(&candidate)?;
+            return Ok(if disposition == CandidateProbeDisposition::Shutdown {
+                ChangeOutcome::Shutdown
+            } else {
+                ChangeOutcome::Superseded
+            });
+        }
     }
-    if shutdown.load(Ordering::Acquire) {
-        let _ = cleanup_binaries(&candidate);
+    if cycle.shutdown.load(Ordering::Acquire) {
+        cleanup_binaries(&candidate)?;
         return Ok(ChangeOutcome::Shutdown);
     }
     if !watcher.final_revision_fence(candidate.source_revision) {
-        println!("候选在正式切换前被更新源码取代，继续使用 last-known-good。");
-        let _ = cleanup_binaries(&candidate);
+        cleanup_binaries(&candidate)?;
         return Ok(ChangeOutcome::Superseded);
     }
-    if promote_services(group, root, services, candidate, ports, worker_ids, mode)? {
-        println!("新候选健康检查通过，API 与 Worker 已切换。");
-        Ok(ChangeOutcome::Promoted)
-    } else {
-        Ok(ChangeOutcome::Failed)
-    }
+    Ok(
+        if promote_services(cycle.group, cycle.root, services, candidate, cycle.mode)? {
+            ChangeOutcome::Promoted
+        } else {
+            ChangeOutcome::Failed
+        },
+    )
 }

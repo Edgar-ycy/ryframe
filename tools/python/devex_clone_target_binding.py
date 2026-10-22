@@ -4,14 +4,13 @@ from __future__ import annotations
 import copy
 from collections import Counter
 import hashlib
-import json
 import os
 from pathlib import Path
 import re
 
 from artifact_digests import filesystem_path
 from devex_clone import read_json
-from devex_clone_capture import read_bound_json, unique_object
+from devex_clone_capture import read_bound_json
 from devex_clone_model import digest, exact, linked, local_path, name
 from devex_clone_inventory import configuration as inventory_configuration
 from devex_clone_run_state import binding
@@ -27,7 +26,7 @@ from source_inventory import snapshot
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
 EXCLUSIVE = {"mysql_exclusive", "redis_exclusive", "object_storage_exclusive"}
-REVIEW_FILE_TOOLS = ("mysql", "mysqldump", "aws", "rustfs")
+REVIEW_FILE_TOOLS = ("mysql", "mysqldump", "rustfs")
 REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "redis_python")
 REVIEW_TOOLS = (*REVIEW_FILE_TOOLS, *REVIEW_SUPERVISOR_TOOLS)
 _UUID = r"[a-f0-9]{32}"
@@ -193,36 +192,57 @@ def _successful_receipt(target: Path, relative: str) -> dict:
     return value
 
 
+def _successful_object_receipt(target: Path, relative: str, operation: str,
+                               request: dict) -> dict:
+    value = read_json(target / relative)
+    exact(value, {"transport", "operation", "bucket", "returncode", "error_type",
+                  "response", "key", "destination", "remote_writes", "scope_id",
+                  "endpoint", "configuration_sha256", "prefix", "continuation"})
+    scope = request["target"]["scope_id"]
+    configuration = request["target"]["s3"]
+    if (value["transport"] != "rust-s3-sigv4" or value["operation"] != operation
+            or value["bucket"] not in BUCKETS or value["returncode"] != 0
+            or value["error_type"] is not None or not isinstance(value["response"], dict)
+            or value["scope_id"] != scope or value["endpoint"] != configuration["endpoint"]
+            or value["configuration_sha256"] != plan_hash(configuration)
+            or value["prefix"] != (scope + "/" if operation == "list-objects-v2" else None)
+            or value["continuation"] is not None
+            or value["remote_writes"] != 0):
+        raise ValueError("fresh 初始化原生对象只读观察收据无效")
+    return value
+
+
 def _stage_paths(values: set[str], stage: str) -> list[str]:
     pattern = re.compile(re.escape(stage) + rf"-{_UUID}\.command\.json")
     return sorted(path for path in values if pattern.fullmatch(path))
 
 
 def _static_observations(target: Path, remaining: set[str], prepared: dict,
-                         stage: str, repetitions: int, *, initialized_scope: str | None) -> None:
-    baseline = [_successful_receipt(target, path) for path in _stage_paths(set(prepared), stage)]
+                         stage: str, repetitions: int, *, request: dict,
+                         initialized_scope: str | None) -> None:
+    operation = {"bucket-readiness": "head-bucket", "bucket-versioning": "get-bucket-versioning",
+                 "scoped-list": "list-objects-v2"}[stage]
+    baseline = [_successful_object_receipt(target, path, operation, request)
+                for path in _stage_paths(set(prepared), stage)]
     current_paths = _stage_paths(remaining, stage)
-    current = [_successful_receipt(target, path) for path in current_paths]
-    signature = lambda item: (tuple(item["command"]), item["stdout"])
+    current = [_successful_object_receipt(target, path, operation, request)
+               for path in current_paths]
+    signature = lambda item: (item["operation"], item["bucket"], plan_hash(item["response"]))
     expected = Counter(signature(item) for item in baseline)
     actual = Counter(signature(item) for item in current)
     wanted = Counter({key: count * repetitions for key, count in expected.items()})
     initialized_lists = stage == "scoped-list" and initialized_scope is not None
     valid = len(baseline) == 5 and len(expected) == 5
     if valid and initialized_lists:
-        commands = {tuple(item["command"]): item["stdout"] for item in baseline}
-        grouped = {command: [item["stdout"] for item in current
-                             if tuple(item["command"]) == command]
-                   for command in commands}
+        responses = {item["bucket"]: item["response"] for item in baseline}
+        grouped = {bucket: [item["response"] for item in current if item["bucket"] == bucket]
+                   for bucket in responses}
         owner = initialized_scope + "/.ryframe-owner"
-        for command, outputs in grouped.items():
-            final = [value for value in outputs if value != commands[command]]
-            try:
-                page = json.loads(final[0], object_pairs_hook=unique_object) if len(final) == 1 else None
-            except (TypeError, ValueError):
-                page = None
+        for bucket, outputs in grouped.items():
+            final = [value for value in outputs if value != responses[bucket]]
+            page = final[0] if len(final) == 1 else None
             valid = (valid and len(outputs) == repetitions
-                     and outputs.count(commands[command]) == repetitions - 1
+                     and outputs.count(responses[bucket]) == repetitions - 1
                      and isinstance(page, dict) and page.get("IsTruncated") is False
                      and isinstance(page.get("Contents"), list) and len(page["Contents"]) == 1
                      and isinstance(page["Contents"][0], dict)
@@ -241,15 +261,10 @@ def _owner_observations(target: Path, remaining: set[str], prepared: dict,
                         request: dict, initialized_objects: dict) -> None:
     """绑定逐桶 owner 读取命令、落盘字节与 initialized 结果。"""
     baseline_paths = _stage_paths(set(prepared), "bucket-readiness")
-    baseline = [_successful_receipt(target, path) for path in baseline_paths]
-    prefixes = []
-    for receipt in baseline:
-        command = receipt["command"]
-        if "s3api" not in command:
-            raise ValueError("fresh 初始化对象工具前缀缺失")
-        prefixes.append(command[:command.index("s3api")])
-    if len(prefixes) != len(BUCKETS) or any(value != prefixes[0] for value in prefixes):
-        raise ValueError("fresh 初始化对象工具前缀不唯一")
+    baseline = [_successful_object_receipt(target, path, "head-bucket", request)
+                for path in baseline_paths]
+    if len(baseline) != len(BUCKETS) or {item["bucket"] for item in baseline} != set(BUCKETS):
+        raise ValueError("fresh 初始化对象基线未覆盖五桶")
     receipts = _stage_paths(remaining, "owner-read")
     if len(receipts) != len(BUCKETS) or not isinstance(initialized_objects, dict) \
             or set(initialized_objects) != set(BUCKETS):
@@ -258,22 +273,19 @@ def _owner_observations(target: Path, remaining: set[str], prepared: dict,
     seen = set()
     consumed = set(receipts)
     for receipt_path in receipts:
-        receipt = _successful_receipt(target, receipt_path)
-        command = receipt["command"]
-        if "--bucket" not in command:
-            raise ValueError("fresh 初始化对象 owner 命令缺少桶")
-        bucket = command[command.index("--bucket") + 1]
+        receipt = _successful_object_receipt(target, receipt_path, "get-object", request)
+        bucket = receipt["bucket"]
         pattern = re.compile(r"owner-" + re.escape(bucket) + rf"-{_UUID}\.bin")
-        body_name = Path(command[-1]).name
+        body_name = receipt["destination"]
+        if not isinstance(body_name, str):
+            raise ValueError("fresh 初始化对象 owner 收据缺少输出文件")
         body = target / body_name
         owner_key = scope + "/.ryframe-owner"
-        expected_command = [*prefixes[0], "s3api", "get-object", "--bucket", bucket,
-                            "--key", owner_key, str(body)]
         expected_bytes = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
         expected_owner = {"bytes": len(expected_bytes),
                           "sha256": hashlib.sha256(expected_bytes).hexdigest()}
         if (bucket not in BUCKETS or bucket in seen or not pattern.fullmatch(body_name)
-                or command != expected_command or body.read_bytes() != expected_bytes
+                or receipt["key"] != owner_key or body.read_bytes() != expected_bytes
                 or initialized_objects[bucket] != {"keys": [owner_key], "owner": expected_owner}):
             raise ValueError("fresh 初始化对象 owner 命令、字节或结果无效")
         seen.add(bucket)
@@ -366,6 +378,7 @@ def validate_initialization_delta(target: Path, current: list[dict], prepared: l
         _static_observations(
             target, remaining, prepared_map, stage,
             3 + int(objects_initialized),
+            request=request,
             initialized_scope=request["target"]["scope_id"] if objects_initialized else None,
         )
     if objects_initialized:
@@ -465,7 +478,11 @@ def _request_binding(backend: Path, request: dict, validate) -> tuple[dict, dict
     exact(target, {"scope_id", "s3", "databases"})
     if name(target["scope_id"]) != selected["scope_id"]:
         raise ValueError("目标 scope 与单侧审阅计划不符")
-    exact(target["s3"], {"endpoint", "region", "access_key_env", "secret_key_env"})
+    exact(target["s3"], {"endpoint", "region", "access_key", "secret_key"})
+    if any(not isinstance(target["s3"][field], str) or not target["s3"][field]
+           or any(ord(char) < 32 for char in target["s3"][field])
+           for field in ("access_key", "secret_key")):
+        raise ValueError("目标对象凭据必须在绑定文件中直接提供且不能为空")
     if any(target["s3"][key] != selected["objects"][key] for key in ("endpoint", "region")):
         raise ValueError("对象存储不是计划中的目标端点")
     actual = target["databases"]
@@ -487,7 +504,7 @@ def _request_binding(backend: Path, request: dict, validate) -> tuple[dict, dict
             raise ValueError("数据库物理身份或凭据路径不是精确审阅目标")
         if file_digest(local_path(backend, db["defaults_file"]))["sha256"] != digest(db["defaults_sha256"]):
             raise ValueError("目标 MySQL 凭据文件变化")
-    exact(request["tools"], {"mysql", "aws"})
+    exact(request["tools"], {"mysql"})
     for role, tool in request["tools"].items():
         external_file(tool)
         if any(tool[key] != review["tools"][role][key] for key in ("path", "sha256")):
@@ -569,40 +586,43 @@ def reset_config(backend: Path, request: dict, selected: dict) -> None:
     exact(declared["legacy_ownership"], EXCLUSIVE)
     if any(value is not True for value in declared["legacy_ownership"].values()):
         raise ValueError("仅本次新空资源显式声明 exclusive 引导；不能隐式注入配置")
-    table = load_app_table(backend, os.environ).get("reset", {})
+    table = load_app_table(backend, {"APP_ENV": os.environ.get("APP_ENV")}).get("reset", {})
+    if not isinstance(table, dict):
+        raise ValueError("所选配置文件的 reset 必须是配置表")
     for key in EXCLUSIVE:
         field = "legacy_" + key
-        variable = "APP_RESET_" + field.upper()
-        if variable + "_FILE" in os.environ:
-            raise ValueError("reset 文件覆盖未被明确绑定")
-        actual = os.environ.get(variable, table.get(field))
-        if actual is not True and actual != "true":
-            raise ValueError("实际 reset exclusive 配置与请求不同")
+        actual = table.get(field)
+        if actual is not True:
+            raise ValueError(f"所选配置文件的 reset.{field} 必须为 true，与请求保持一致")
     for field, value in (("credential_version", declared["credential_version"]),
                          ("redis_outside_sentinel_key", declared["sentinel_key"])):
-        variable = "APP_RESET_" + field.upper()
-        if variable + "_FILE" in os.environ or os.environ.get(variable, table.get(field)) != value:
-            raise ValueError("实际 reset 版本或 sentinel 与显式请求不同")
+        if table.get(field) != value:
+            raise ValueError(f"所选配置文件的 reset.{field} 与显式请求不同")
     scope = request["target"]["scope_id"]
     if (not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", declared["credential_version"])
             or declared["sentinel_key"] != f"ryframe:devex-fresh:{scope}:sentinel"
             or declared["sentinel_value"] != f"devex-fresh:{request['id']}"
             or declared["sentinel_key"].startswith(selected["redis"]["namespace"])):
         raise ValueError("sentinel 必须是仅归本 scope 的精确外部哨兵")
-    redis_configuration(request, selected)
+    redis_configuration(backend, request, selected)
 
 
-def redis_configuration(request: dict, selected: dict) -> None:
+def redis_configuration(backend: Path, request: dict, selected: dict, *, environment=None) -> None:
     """核对精确 Redis 连接与 namespace；复用于只读来源代次，不执行 reset。"""
     scope = request["target"]["scope_id"]
     redis = selected["redis"]
     if redis["namespace"] != f"ryframe:{{{scope}}}:" or redis["ownership_key"] != redis["namespace"] + ".ryframe-owner":
         raise ValueError("Redis 计划 namespace 无效")
     # 该入口限定已登记的本机非 TLS Redis；不复制配置或创建 Redis 服务。
-    expected = {"APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(request["storage"]["redis"]["port"]),
-                "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false"}
-    if any(os.environ.get(key) != value for key, value in expected.items()):
-        raise ValueError("实际 Redis 地址或 TLS 未显式匹配本侧配置")
+    environment = os.environ if environment is None else environment
+    redis = load_app_table(backend, {"APP_ENV": environment.get("APP_ENV")}).get("redis", {})
+    if not isinstance(redis, dict):
+        raise ValueError("所选配置文件的 redis 必须是配置表")
+    expected = {"host": "127.0.0.1", "port": request["storage"]["redis"]["port"],
+                "database": 0, "tls": False}
+    for key, value in expected.items():
+        if type(redis.get(key)) is not type(value) or redis.get(key) != value:
+            raise ValueError(f"所选配置文件的 redis.{key} 未显式匹配本侧配置")
 
 
 def never_started(backend: Path, selected: dict) -> None:
@@ -618,28 +638,34 @@ def never_started(backend: Path, selected: dict) -> None:
 
 
 def generation(backend: Path, request: dict, run) -> dict:
+    environment = {"APP_ENV": os.environ.get("APP_ENV")}
     review, selected = request_binding(backend, request)
     execution_root, execution = execution_backend(backend, request)
     never_started(backend, selected)
     if configuration_digest(execution_root) != digest(request["configuration_sha256"]):
         raise ValueError("新目标 APP 配置或秘密发生变化")
     maintenance = verify_tools(execution_root, bound_file(backend, request["maintenance_build"]), run)
-    physical = source_binding(execution_root, {"source": request["target"]})
+    physical = source_binding(execution_root, {"source": request["target"]}, environment)
     planned = {db["key"]: db for db in selected["databases"]}
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
             raise ValueError("目标 MySQL host/port 不是审阅计划中的地址")
-    configuration = inventory_configuration(execution_root, os.environ, request["target"])
+    configuration = inventory_configuration(execution_root, environment, request["target"])
     reset_config(execution_root, request, selected)
     verify_api_address(backend, selected["api_url"])
-    if os.environ.get("APP_JOBS_MODE") != "external" or worker_ready_url() != selected["worker_ready_url"]:
-        raise ValueError("目标 Worker 必须显式匹配关闭端口与 external 模式")
+    table = load_app_table(execution_root, environment)
+    if not isinstance(table.get("jobs"), dict) or table["jobs"].get("mode") != "external":
+        raise ValueError("所选配置文件的 jobs.mode 必须为 external")
+    if worker_ready_url(execution_root) != selected["worker_ready_url"]:
+        raise ValueError("所选配置文件的 jobs.health_host/health_port 与目标 Worker 地址不同")
     for field in ("api_url", "worker_ready_url", "frontend_url"):
         require_closed_port(selected[field])
-    # 种子密码不属于 APP_*，同样只保存摘要，防止同代次 reset 凭据变更。
-    secrets = {"RYFRAME_RESET_ADMIN_PASSWORD": os.environ.get("RYFRAME_RESET_ADMIN_PASSWORD")}
-    if not all(secrets.values()):
-        raise ValueError("必须显式提供本侧初始化管理员密码")
+    # 只保存文件中种子密码的摘要，防止同代次 reset 凭据变更。
+    bootstrap = table.get("bootstrap", {})
+    password = bootstrap.get("admin_password") if isinstance(bootstrap, dict) else None
+    if not isinstance(password, str) or not password.strip():
+        raise ValueError("所选配置文件的 bootstrap.admin_password 必须显式提供初始化管理员密码")
+    secrets = {"bootstrap.admin_password": password}
     return {"execution": execution, "maintenance": maintenance, "physical": physical, "configuration": configuration,
             "configuration_sha256": request["configuration_sha256"],
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),

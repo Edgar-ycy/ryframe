@@ -45,7 +45,6 @@ const ENVIRONMENT_WHITELIST: &[&str] = &[
     "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER",
     "RUSTFLAGS",
-    "RYFRAME_DEVEX_SAVE_CASE",
     "RYFRAME_DEVEX_TARGET_ROOT",
     "RYFRAME_FAST_CHECK_CACHE_ROOT",
     "RYFRAME_CI_BASE_SHA",
@@ -87,7 +86,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     let comparable_environment = comparable_environment(context.effective_environment, &normalizer);
     let environment_hash = environment_hash(&comparable_environment);
     let environment = visible_environment(&comparable_environment);
-    let commands = command_metadata(context.definition.steps);
+    let commands = command_metadata(context.definition.steps, &context.options.variant)?;
     let target = rust_host(&toolchain.rustc).unwrap_or_else(|| env::consts::ARCH.to_owned());
     let jobs = effective_jobs(context.options.suite, context.effective_environment);
     let compile_surface_fingerprint = compile_surface_fingerprint(
@@ -230,22 +229,26 @@ fn environment_hash(environment: &BTreeMap<String, String>) -> String {
     sha256(&serde_json::to_vec(environment).expect("环境映射必须可序列化"))
 }
 
-fn command_metadata(steps: &[StepDefinition]) -> Vec<CommandMetadata> {
+fn command_metadata(steps: &[StepDefinition], variant: &str) -> Result<Vec<CommandMetadata>> {
     steps
         .iter()
-        .map(|step| CommandMetadata {
-            working_directory: match step.working_directory {
-                WorkingDirectory::Backend => "$BACKEND",
-                WorkingDirectory::Frontend => "$FRONTEND",
-                WorkingDirectory::RunnerFrontend => "$RUNNER_FRONTEND",
-            }
-            .to_owned(),
-            program: step.program.to_owned(),
-            args: step
-                .args
-                .iter()
-                .map(|arg| arg.replace("{target}", "$TARGET"))
-                .collect(),
+        .map(|step| {
+            Ok(CommandMetadata {
+                working_directory: match step.working_directory {
+                    WorkingDirectory::Backend => "$BACKEND",
+                    WorkingDirectory::Frontend => "$FRONTEND",
+                    WorkingDirectory::RunnerFrontend => "$RUNNER_FRONTEND",
+                }
+                .to_owned(),
+                program: step.program.to_owned(),
+                args: super::model::step_arguments(step, variant)?
+                    .iter()
+                    .map(|arg| {
+                        arg.replace("{backend}", "$BACKEND")
+                            .replace("{target}", "$TARGET")
+                    })
+                    .collect(),
+            })
         })
         .collect()
 }
@@ -562,4 +565,30 @@ fn format_digest(digest: impl AsRef<[u8]>) -> String {
         write!(value, "{byte:02x}").expect("写入 String 不会失败");
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_metadata_distinguishes_source_workspace_and_sample_target() {
+        let definition = DevexSuite::CargoDevSave.definition("worker-only").unwrap();
+        let commands = command_metadata(definition.steps, "worker-only").unwrap();
+        assert_eq!(commands[0].working_directory, "$BACKEND");
+        assert_eq!(
+            commands[0].args,
+            [
+                "xtask",
+                "dev",
+                "--measure-once",
+                "--workspace-root",
+                "$BACKEND",
+                "--case",
+                "worker-only",
+                "--output",
+                "$TARGET/cargo-dev-save-result.json",
+            ]
+        );
+    }
 }

@@ -8,7 +8,11 @@ async fn aliases_of_one_physical_database_fail_before_any_migration() {
         let identity = ryframe_db::connection::physical_identity(&database)
             .await
             .map_err(mysql::db_error)?;
-        let primary = mysql::database_config(&identity.database);
+        let configured =
+            mysql::MySqlTestConfiguration::load().unwrap_or_else(|error| panic!("{error}"));
+        let primary = configured
+            .connection(&identity.database, None)
+            .unwrap_or_else(|error| panic!("{error}"));
         let first = target("first", &primary);
         let mut second = target("second", &primary);
         if primary.host == "127.0.0.1" {
@@ -106,13 +110,23 @@ async fn distinct_database_names_on_one_server_remain_independent_targets() {
 }
 
 fn target(key: &str, connection: &ryframe_config::DbConnection) -> TenantDatabaseTargetConfig {
-    serde_json::from_value(serde_json::json!({
-        "key": key, "kind": "mysql", "mode": "shared",
-        "host": connection.host, "port": connection.port, "database": connection.database,
-        "username": connection.username, "password_env": "RYFRAME_MYSQL_PASSWORD",
-        "tls_mode": "required", "max_connections": 2,
-    }))
-    .unwrap()
+    TenantDatabaseTargetConfig {
+        key: key.into(),
+        display_name: None,
+        kind: ryframe_config::TenantDatabaseTargetKind::Mysql,
+        mode: ryframe_config::TenantDatabaseTargetMode::Shared,
+        host: Some(connection.host.clone()),
+        port: Some(connection.port),
+        database: Some(connection.database.clone()),
+        username: Some(connection.username.clone()),
+        password: Some(connection.password.clone()),
+        tls_mode: Some(connection.tls_mode),
+        tls_ca: connection.tls_ca.clone(),
+        tls_client_cert: connection.tls_client_cert.clone(),
+        tls_client_key: connection.tls_client_key.clone(),
+        max_connections: Some(2),
+        ..TenantDatabaseTargetConfig::shared_control()
+    }
 }
 
 fn message(error: impl std::fmt::Display) -> String {

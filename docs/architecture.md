@@ -24,14 +24,14 @@ ryframe-application（业务用例、事务、状态机、端口）
 ryframe（API、Worker、迁移与依赖装配）
 ```
 
-HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。
+HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。组合根通过 `APP_ENV=dev|test|prod` 选择必须存在的 `config/app.<环境>.toml`，与公共 `config/app.toml` 合并；密码、JWT、监控、Redis 和存储凭据使用明文字段，初始管理员密码来自 `[bootstrap] admin_password`。根字段 `snowflake_worker_id` 在同一部署的各实例间必须不同。应用 `--config-dir <目录>` 默认 `config`，相对当前工作目录解析；生成器的 CLI、Builder `.configuration_directory(path)` 及可选 `[generator] config_dir` 相对后端 Workspace 根目录解析。生成器优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件不接受环境变量覆盖。本地化通过 TOML 的 `app.locales_dir` 指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；生产加载资源失败时严格拒绝启动，开发环境允许内嵌回退。配置保存后热切换、失败时回滚旧代次是已确定的 dev 行为要求，当前文件配置链路尚未实现，不能作为现有能力依赖。部署四角色模板与私有配置目录已集成并通过资产结构及 CI 工具测试；真实容器、镜像和整链仍未验收，局部检查不代表整体门禁。
 
 ## 模块定位
 
 | 模块 | 开发时用于 |
 |---|---|
 | `ryframe-kernel` | 通用 ID、Snowflake、分页、错误和值对象 |
-| `ryframe-config` | 配置结构、环境覆盖、校验及工具共用版本阶段判定 |
+| `ryframe-config` | 配置结构、明文 TOML 文件合并、校验及工具共用版本阶段判定 |
 | `ryframe-auth` | 密码、JWT 与 RBAC 决策 |
 | `ryframe-application` | 业务用例、事务、状态机和出站端口 |
 | `ryframe-db` | 控制库查询、写入与迁移 |
@@ -57,6 +57,10 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 `ryframe-adapters` 默认不启用高成本能力；API 显式组合 `image-processing`、`monitoring`、`otel`、`redis-api` 与 `spreadsheet`，Worker 使用 `monitoring`、`otel`、`redis-client` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
 
 Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。Security Audit 解析真实 Cargo feature tree：API（含 Swagger UI）与 Worker 要求 JWT、HTTP、Rustls 和 SQLx 链路启用 AWS-LC，并拒绝实际 `ring` package/provider；Worker 额外禁止依赖 `ryframe-api`。迁移进程只保留数据库所需的 AWS-LC TLS 链路，禁止 API、Adapter、Web、Redis、图片处理、遥测和 HTTP client 依赖。生成器默认运行图禁止数据库与网络 runtime，unique package closure 上限为 90；schema import 依赖仅由对应 feature 引入。`aws-lc-rs` 自身的 `ring-io`、`ring-sig-verify` 兼容 feature 不属于 ring provider。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。生成器与 xtask 的稳定版阶段判断共用 `ryframe-config` 的 tools 能力，只读取 Workspace 清单、Git tag 和历史提交；迁移历史冻结工具不调用 Python 或数据库。
+
+遥测仅使用文件配置：请求头、资源属性、span 限制及批处理参数均由合并后的配置生效，`OTEL_*` 环境变量不生效。字段与默认值以 [默认配置](../config/app.toml) 和 `TelemetryConfig`、`TelemetrySpanLimits` 类型为准。资源中的 SDK 元数据、服务名称、版本及构建提交身份由框架确定，不能通过自定义资源属性覆盖。文件直接保存显式配置值；`Debug` 完整隐藏端点、请求头和资源属性值，校验错误不回显凭据。采样、AWS-LC TLS、导出失败指标及优雅关闭行为继续保留；真实 OTLP HTTPS 验收仍须单独执行，不能由配置检查替代。
+
+本地 `opentelemetry_sdk` 与 `opentelemetry-otlp` 补丁提供显式不读取环境变量的构建入口，使遥测配置不受 SDK 或导出器的环境默认值覆盖，同时保留第三方原有默认入口；两者保持 `0.33.0`。SDK crate 发布包未附许可证原件，本地 SDK 与 OTLP 的 Apache-2.0 许可证均采用经同一上游提交核对的 `opentelemetry-proto 0.33.0` 许可证来源，文件摘要与来源登记见 [供应链策略](../tools/policies/supply_chain_policy.json)。
 
 `ryframe-application::system` 按业务分为四个入口：
 
@@ -105,3 +109,19 @@ RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-
 外部运维工具负责生成一致的数据库与对象备份。application 的备份用例拥有登记、恢复状态机和事务；控制库 Repository 保存清单及演练记录，租户库实现目标与数据校验，adapters 实现文件摘要、对象摘要和就绪探测。维护 CLI 负责读取显式配置、装配端口并打印结构化结果。API 后台采集器只读取汇总状态，向 Prometheus 输出固定维度指标。
 
 恢复依次经历开始、数据验证、业务与运行验证；失败为终态。目标必须具有独立 scope 和 ownership，数据校验比较明确登记的物理数据库、schema、租户关系、表摘要与对象摘要。业务证明绑定演练记录和精确前后端源码，只有数据校验、完整浏览器场景、API/Worker 就绪以及恢复时间目标都满足时才登记成功。具体操作见[运维指南](operations.md#备份失败或过期)。
+
+## 非生产重建
+
+`ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。先用 `git rev-parse HEAD` 查看完整提交，再将 40 位 Git SHA 填入所选明文配置的 `reset.source_sha`；`plan` 必须提供该字段及非秘密轮换声明 `reset.credential_version`，后者为 1～64 位 ASCII 字母、数字、点、下划线或连字符，任一 reset 相关密码或私钥轮换时必须同步变更。`reset.services_stopped` 默认 `false`，`plan` 不要求它为 `true`，也不要求 `reset.state_directory`。只有 `execute` 必须先停止 API、Worker 和 scheduler，声明 `reset.services_stopped=true`，显式提供绝对目录 `reset.state_directory` 并完成全部只读预检。管理员密码统一在 `[bootstrap] admin_password` 中明文显式提供并满足复杂度策略；普通种子用户 `user` 使用统一初始密码 `123456`，无需额外提供普通用户密码。重建验证同时核对 `admin`、`user` 的密码哈希及 `password_change_required=true`，任一不符均失败关闭；两个账号首次登录后都必须修改密码。
+
+```powershell
+git rev-parse HEAD
+$env:APP_ENV = "test"
+cargo reset --help
+cargo reset -- plan --config-dir .local-tests/reset-config
+cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <精确短语>
+```
+
+`reset plan` 会真实读取、校验应用配置，生成绑定来源与资源范围的清单及哈希，不执行破坏性重建，也不能替代 `execute` 的 ownership 预检；它不属于不读应用配置的离线 `control export-sql --plan` 或 `adopt --plan`。reset 内部物理别名去重只避免重复处理同一物理数据库，不放宽独立租户目标的共库限制；仍须遵守[数据指南](data.md#租户路由)中的 schema 隔离约束。执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。`cargo reset` 是使用者直接入口；框架维护工具 `cargo xtask data reset` 消费同一任务图并要求显式 `--write`。排障时不要混用两种入口的状态目录，也不要通过删除 ledger 启动新的重建。
+
+报告的 `status` 区分 `completed`（本次完成）、`reused`（复用同一 ledger 的原完成）和 `failed`。`completed_at` 记录锁释放后持久化的原完成时间，重复执行不更新该值，也不重新运行预检或破坏性阶段；`reported_at` 仅表示报告生成时间。锁释放失败、中断或缺少完成证据时，重复执行仍失败，必须人工核对服务停止状态、MySQL 环境锁及清单内精确资源，保留原始失败记录。在 `reset.state_directory` 中选择一个新的绝对状态目录表示一次新的维护操作，目录路径不得包含点号跳转、链接或重解析点；必须重新生成并核验 plan、ownership 和资源范围，不得通过删除或覆盖旧 ledger 触发重置。当前开发版本使用 manifest v5、ledger v5 和 report v2；清单使用非秘密配置引用 `password_config_key`、`access_key_config_key`、`secret_key_config_key`，并保留 `credential_version` 的轮换绑定。旧格式明确拒绝，不自动转换或重放，旧本地证据继续保留。

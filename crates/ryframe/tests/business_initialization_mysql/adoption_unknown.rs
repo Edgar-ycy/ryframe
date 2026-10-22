@@ -13,7 +13,10 @@ async fn lost_commit_response_requires_authoritative_inspection_and_no_replay() 
         let initial = migration(false);
         let plan = preview_business_adoption(&database, BusinessMigrationScope::Control, initial.module(), &[&initial]).await.map_err(message)?;
         let rows = business_rows(&database).await?;
-        let mut config = mysql::database_config(&plan.manifest.target.database);
+        let configured = mysql::MySqlTestConfiguration::load()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let mut config = configured.connection(&plan.manifest.target.database, None)
+            .unwrap_or_else(|error| panic!("{error}"));
         let mut gate = response_gate::ResponseGate::start(config.host.clone(), config.port).await.map_err(message)?;
         config.host = gate.address.ip().to_string();
         config.port = gate.address.port();

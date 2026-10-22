@@ -16,16 +16,16 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
-const FIELDS: [(&str, &str); 9] = [
-    ("host", "HOST"),
-    ("port", "PORT"),
-    ("database", "NAME"),
-    ("username", "USERNAME"),
-    ("password", "PASSWORD"),
-    ("tls_mode", "TLS_MODE"),
-    ("tls_ca", "TLS_CA"),
-    ("tls_client_cert", "TLS_CLIENT_CERT"),
-    ("tls_client_key", "TLS_CLIENT_KEY"),
+const FIELDS: [&str; 9] = [
+    "host",
+    "port",
+    "database",
+    "username",
+    "password",
+    "tls_mode",
+    "tls_ca",
+    "tls_client_cert",
+    "tls_client_key",
 ];
 
 pub(crate) fn binding(
@@ -36,12 +36,12 @@ pub(crate) fn binding(
     selected: &Value,
 ) -> Result<Value> {
     if env.get("APP_ENV").map(String::as_str) != Some("test")
-        || env.get("APP_SCOPE_ID").map(String::as_str) != target["scope_id"].as_str()
+        || strict_text(&table["scope_id"])? != strict_text(&target["scope_id"])?
     {
         return Err("目标环境与计划 scope 必须明确一致".into());
     }
-    let databases = databases(backend, target, table, env, selected)?;
-    let s3 = storage(target, table, env)?;
+    let databases = databases(backend, target, table, selected)?;
+    let s3 = storage(target, table)?;
     let mut result = json!({"format_version": 1, "scope_id": target["scope_id"], "databases": databases, "s3": s3});
     let hash = digest::plan_hash(&result)?;
     result
@@ -55,23 +55,17 @@ fn databases(
     backend: &Path,
     target: &Value,
     table: &Value,
-    env: &BTreeMap<String, String>,
     selected: &Value,
 ) -> Result<Vec<Value>> {
     for field in ["replicas", "sources"] {
-        if !collection(
-            &table["database"],
-            field,
-            &format!("APP_DATABASE_{}", field.to_uppercase()),
-            env,
-        )?
-        .is_empty()
+        if let Some(values) = table["database"].get(field)
+            && !json_io::array(values, "目标连接数组")?.is_empty()
         {
             return Err("目标不允许未登记的副本或命名数据源".into());
         }
     }
-    let primary = overrides(&table["database"]["primary"], env, &FIELDS, "APP_DATABASE_")?;
-    let targets = runtime_targets(table, env)?;
+    let primary = json_io::object(&table["database"]["primary"], "运行连接配置")?;
+    let targets = runtime_targets(table)?;
     let declared = json_io::array(&target["databases"], "目标数据库")?;
     let keys = declared
         .iter()
@@ -86,7 +80,7 @@ fn databases(
     declared.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
     for db in declared {
         let key = text(&db["key"], "数据库 key")?;
-        let actual = database_connection(backend, db, &targets[key], &primary, env)?;
+        let actual = database_connection(backend, db, &targets[key], primary)?;
         let planned = selected["databases"]
             .as_array()
             .and_then(|items| items.iter().find(|item| item["key"].as_str() == Some(key)))
@@ -167,21 +161,8 @@ pub(crate) fn defaults_connection(backend: &Path, db: &Value) -> Result<Value> {
     )
 }
 
-fn storage(target: &Value, table: &Value, env: &BTreeMap<String, String>) -> Result<Value> {
-    let fields = [
-        ("backend", "BACKEND"),
-        ("endpoint", "ENDPOINT"),
-        ("region", "REGION"),
-        ("access_key", "ACCESS_KEY"),
-        ("secret_key", "SECRET_KEY"),
-        ("use_ssl", "USE_SSL"),
-    ];
-    let actual = overrides(
-        &table["object_storage"],
-        env,
-        &fields,
-        "APP_OBJECT_STORAGE_",
-    )?;
+fn storage(target: &Value, table: &Value) -> Result<Value> {
+    let actual = json_io::object(&table["object_storage"], "对象存储配置")?;
     if !matches!(
         actual.get("backend").and_then(Value::as_str),
         Some("rustfs" | "minio" | "s3")
@@ -196,71 +177,19 @@ fn storage(target: &Value, table: &Value, env: &BTreeMap<String, String>) -> Res
         return Err("对象端点、区域或协议与计划不同".into());
     }
     for field in ["access_key", "secret_key"] {
-        let variable = strict_text(&target["s3"][format!("{field}_env")])?;
+        let legacy = format!("{field}_env");
+        if actual.contains_key(&legacy) || target["s3"].get(&legacy).is_some() {
+            return Err("对象认证只接受明确的 access_key 与 secret_key 字段".into());
+        }
         if strict_text(actual.get(field).ok_or("对象认证缺失")?)?
-            != env
-                .get(variable)
-                .filter(|value| !value.is_empty())
-                .ok_or("对象凭据变量缺失")?
+            != strict_text(&target["s3"][field])?
         {
-            return Err("对象认证与计划变量不同".into());
+            return Err("对象认证与计划不同".into());
         }
     }
     Ok(
         json!({"backend": actual["backend"], "endpoint": endpoint, "region": strict_text(&actual["region"])?}),
     )
-}
-
-fn overrides(
-    table: &Value,
-    env: &BTreeMap<String, String>,
-    fields: &[(&str, &str)],
-    prefix: &str,
-) -> Result<Map<String, Value>> {
-    let mut result = json_io::object(table, "运行连接配置")?.clone();
-    let port_value = Regex::new(r"^\+?[0-9]+$")?;
-    for (field, suffix) in fields {
-        let variable = format!("{prefix}{suffix}");
-        if env.contains_key(&format!("{variable}_FILE")) {
-            return Err("文件间接覆盖未被运行收据绑定".into());
-        }
-        if let Some(value) = env.get(&variable) {
-            let value = match *field {
-                "port" => {
-                    if !port_value.is_match(value) {
-                        return Err("数据库端口覆盖无效".into());
-                    }
-                    json!(value.parse::<u16>().map_err(|_| "数据库端口覆盖无效")?)
-                }
-                "use_ssl" => match value.as_str() {
-                    "true" => json!(true),
-                    "false" => json!(false),
-                    _ => return Err("对象 SSL 覆盖无效".into()),
-                },
-                _ => json!(value),
-            };
-            result.insert((*field).into(), value);
-        }
-    }
-    Ok(result)
-}
-
-fn collection(
-    table: &Value,
-    field: &str,
-    variable: &str,
-    env: &BTreeMap<String, String>,
-) -> Result<Vec<Value>> {
-    if env.contains_key(&format!("{variable}_FILE")) {
-        return Err("目标文件覆盖未绑定".into());
-    }
-    let value = match env.get(variable) {
-        Some(value) => {
-            json_io::parse_fragment(value, "目标连接数组").map_err(|_| "目标连接数组无效")?
-        }
-        None => table.get(field).cloned().unwrap_or_else(|| json!([])),
-    };
-    Ok(json_io::array(&value, "目标连接数组")?.to_vec())
 }
 
 pub(crate) fn strict_text(value: &Value) -> Result<&str> {
@@ -296,19 +225,15 @@ pub(crate) fn endpoint(value: &Value) -> Result<String> {
     Ok(value.trim_end_matches('/').to_owned())
 }
 
-fn runtime_targets(
-    table: &Value,
-    env: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, Value>> {
+fn runtime_targets(table: &Value) -> Result<BTreeMap<String, Value>> {
     let mut targets = BTreeMap::new();
-    for value in collection(
-        &table["tenant_data"],
-        "targets",
-        "APP_TENANT_DATA_TARGETS",
-        env,
-    )? {
+    let values = table["tenant_data"]
+        .get("targets")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    for value in json_io::array(&values, "目标连接数组")? {
         let key = strict_text(&value["key"])?;
-        if targets.insert(key.to_owned(), value).is_some() {
+        if targets.insert(key.to_owned(), value.clone()).is_some() {
             return Err("目标租户连接 key 重复".into());
         }
     }
@@ -318,10 +243,11 @@ fn runtime_targets(
     let control = &targets["shared-control"];
     if control["kind"].as_str() != Some("control")
         || control["mode"].as_str() != Some("shared")
+        || control.get("password_env").is_some()
         || FIELDS
             .iter()
-            .map(|(key, _)| *key)
-            .chain(["password_env", "max_connections"])
+            .copied()
+            .chain(["max_connections"])
             .any(|key| !control[key].is_null())
     {
         return Err("控制目标必须复用明确的 primary 连接".into());
@@ -334,7 +260,6 @@ fn database_connection(
     db: &Value,
     configuration: &Value,
     primary: &Map<String, Value>,
-    env: &BTreeMap<String, String>,
 ) -> Result<Map<String, Value>> {
     let key = text(&db["key"], "数据库 key")?;
     let control = key == "shared-control";
@@ -343,20 +268,13 @@ fn database_connection(
     {
         return Err("数据库逻辑类型或共享模式不同".into());
     }
-    let mut connection = if control {
+    let connection = if control {
         primary.clone()
     } else {
         json_io::object(configuration, "租户连接")?.clone()
     };
-    if !control {
-        let name = strict_text(&configuration["password_env"])?;
-        if !Regex::new(r"^APP_[A-Z0-9_]+$")?.is_match(name) || name.ends_with("_FILE") {
-            return Err("租户密码必须使用已绑定 APP 环境变量".into());
-        }
-        connection.insert(
-            "password".into(),
-            json!(env.get(name).ok_or("目标租户密码缺失")?),
-        );
+    if connection.contains_key("password_env") {
+        return Err("数据库认证只接受明确的 password 明文字段".into());
     }
     let expected = defaults_connection(backend, db)?;
     for field in ["tls_ca", "tls_client_cert", "tls_client_key"] {

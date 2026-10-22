@@ -24,7 +24,7 @@ const KEYS: &[(&str, &str, &str)] = &[
     ("dedicated-b", "tenant", "dedicated"),
 ];
 const SIDES: &[&str] = &["seed", "base", "candidate"];
-const FILE_TOOLS: &[&str] = &["mysql", "mysqldump", "aws", "rustfs"];
+const FILE_TOOLS: &[&str] = &["mysql", "mysqldump", "rustfs"];
 
 pub(super) fn run(command: &FixtureReviewCommand, backend: &Path) -> Result<()> {
     let FixtureReviewCommand::Renew(options) = command else {

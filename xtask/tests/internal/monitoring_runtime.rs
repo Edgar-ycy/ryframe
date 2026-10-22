@@ -1,3 +1,5 @@
+use super::process_liveness::process_is_running;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -555,11 +557,6 @@ fn minimal_windows_environment() -> BTreeMap<String, String> {
     environment
 }
 
-#[cfg(windows)]
-fn process_is_running(pid: u32) -> bool {
-    super::process::process_is_running(pid)
-}
-
 fn wait_tree(runtime: &Path) -> Value {
     let path = runtime.join("webhook-tree.json");
     let fallback = runtime.join("prometheus-tree.json");
@@ -867,7 +864,10 @@ fn start_publishes_last_and_close_stops_all_roles_in_reverse_order() {
     assert_eq!(close["status"], "closed");
     assert_eq!(close["completions"].as_object().unwrap().len(), ROLES.len());
     for (role, pid) in observations {
-        assert!(!super::process::process_is_running(pid), "{role} 仍在运行");
+        assert!(
+            !super::process_liveness::process_is_running(pid),
+            "{role} 仍在运行"
+        );
         let operation = start["processes"][role]["operation_id"].as_str().unwrap();
         assert!(
             binding
@@ -961,7 +961,10 @@ fn observation_failure_reaps_all_registered_trees_and_records_failure() {
         let pid = start["processes"][role]["identity"]["pid"]
             .as_u64()
             .unwrap() as u32;
-        assert!(!super::process::process_is_running(pid), "{role} 仍在运行");
+        assert!(
+            !super::process_liveness::process_is_running(pid),
+            "{role} 仍在运行"
+        );
     }
     assert!(config::verify_ports_closed(&binding.value).is_ok());
 }

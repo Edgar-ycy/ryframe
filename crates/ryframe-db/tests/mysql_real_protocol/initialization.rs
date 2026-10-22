@@ -50,7 +50,7 @@ async fn sql_import_and_migrations_produce_equivalent_control_databases() {
 async fn missing_bootstrap_password_does_not_create_tables() {
     run_mysql_test("init-no-secret", |database| async move {
         let error = migration::up(&database, None).await.expect_err("首次初始化必须显式提供密码");
-        assert!(error.to_string().contains("RYFRAME_INIT_ADMIN_PASSWORD"));
+        assert!(error.to_string().contains("[bootstrap]") && error.to_string().contains("admin_password"));
         require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema = DATABASE()", 0).await
     }).await;
 }

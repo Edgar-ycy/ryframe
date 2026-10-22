@@ -49,7 +49,7 @@ def _plan(plan: dict, backend: Path) -> None:
                                "post_batch_rows", "tenant_targets", "records", "object_count",
                                "object_bytes", "admin", "owner_password_env"})
         exact(plan["dataset"]["admin"], {"tenant_id", "username", "password_env"})
-    exact(plan["tools"], {"mysql", "mysqldump", "aws", "node"})
+    exact(plan["tools"], {"mysql", "mysqldump", "node"})
     for tool in plan["tools"].values():
         exact(tool, {"path", "sha256"})
         reject_link_or_reparse(Path(tool["path"]))
@@ -59,7 +59,7 @@ def _plan(plan: dict, backend: Path) -> None:
         if name == "target":
             fields |= {"worker_ready_url", "frontend_url"}
         exact(side, fields)
-        exact(side["s3"], {"endpoint", "region", "access_key_env", "secret_key_env"})
+        exact(side["s3"], {"endpoint", "region", "access_key", "secret_key"})
         local_path(backend, side["runtime_dir"])
         for database in side["databases"]:
             exact(database, {"key", "kind", "mode", "database", "server_uuid", "defaults_file", "defaults_sha256"})

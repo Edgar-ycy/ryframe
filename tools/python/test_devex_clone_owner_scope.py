@@ -39,11 +39,13 @@ class OwnerScopeTests(unittest.TestCase):
 
     def verify(self, **keywords):
         return verify_capture(self.tools, self.side, 'uploads', self.side + '/system/registered.bin', self.output,
-                              expected=self.expected, max_bytes=1024, **keywords)
+                              expected=self.expected, max_bytes=1024, **keywords,
+                              transport="rust-s3-sigv4")
 
     def commands(self):
-        return [(command[command.index('s3api') + 1], command[command.index('--bucket') + 1],
-                 command[command.index('--key') + 1]) for command, _ in self.store.calls]
+        return [(request['operation'], request['bucket'], request['key'])
+                for _, options in self.store.calls
+                for request in (json.loads(options['input']),)]
 
     def test_explicit_own_bucket_reads_exactly_two_owners_two_heads_and_one_get(self):
         captured = self.capture(owner_buckets=ONE)
@@ -92,8 +94,9 @@ class OwnerScopeTests(unittest.TestCase):
     def test_own_bucket_change_after_get_preserves_bytes_and_fails(self):
         def read(command, **kwargs):
             response = self.store(command, **kwargs)
-            if (command[command.index('s3api') + 1] == 'get-object'
-                    and not command[command.index('--key') + 1].endswith('/.ryframe-owner')):
+            request = json.loads(kwargs['input'])
+            if (request['operation'] == 'get-object'
+                    and not request['key'].endswith('/.ryframe-owner')):
                 self.store.owner_failure = 'uploads'
             return response
         self.tools.run = read

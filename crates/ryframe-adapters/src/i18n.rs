@@ -1,6 +1,6 @@
-//! 本地化资源的文件、环境与内嵌加载适配器。
+//! 本地化资源的文件与内嵌加载适配器。
 
-use std::{collections::BTreeMap, env, fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use ryframe_kernel::{Locale, LocalizationError, Localizer};
 
@@ -87,12 +87,14 @@ impl LocalizerLoader {
         Ok(Localizer::from_resources(resources)?)
     }
 
-    /// 从 `APP_LOCALES_DIR` 或默认 `locales` 目录加载资源。
+    /// 从明确配置的目录加载资源；相对路径以当前进程工作目录解析。
     ///
     /// 严格模式下缺失资源会直接失败；非严格模式可回退到内嵌资源，保证本地启动体验。
-    pub fn load_from_environment(strict_resource_loading: bool) -> Result<Localizer, I18nError> {
-        let locale_dir = env::var("APP_LOCALES_DIR").unwrap_or_else(|_| "locales".to_owned());
-        match Self::load(&locale_dir) {
+    pub fn load_configured(
+        locale_dir: impl AsRef<Path>,
+        strict_resource_loading: bool,
+    ) -> Result<Localizer, I18nError> {
+        match Self::load(locale_dir) {
             Ok(localizer) => Ok(localizer),
             Err(error) if !strict_resource_loading => Self::embedded().or(Err(error)),
             Err(error) => Err(error),

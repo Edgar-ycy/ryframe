@@ -30,7 +30,7 @@ use super::{
 mod environment;
 #[path = "run/process.rs"]
 mod process;
-use process::execute_steps;
+use process::{StepInvocation, execute_steps};
 #[path = "run/resource_gate.rs"]
 mod resource_gate;
 #[path = "run/save.rs"]
@@ -466,7 +466,7 @@ pub(super) fn execute_sample_with_contract(
             target,
             definition,
             environment,
-            label,
+            StepInvocation { variant, label },
         )
     };
     let (status, memory) = if let Some(source) = source.as_deref() {

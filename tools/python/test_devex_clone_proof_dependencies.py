@@ -1,5 +1,6 @@
 """原始证据按步骤选择的离线回归；完整阶段仍核验全部登记对象。"""
 import copy
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -98,10 +99,12 @@ class ProofDependencyTests(unittest.TestCase):
     def observation(self, change):
         calls = []
 
-        def run(command, **_kwargs):
-            calls.append(command)
-            value = self.f.aws(command)
-            if "head-object" in command:
+        def run(command, **kwargs):
+            self.assertEqual(command[-1], "__s3-read")
+            request = json.loads(kwargs["input"])
+            calls.append(request)
+            value = self.f.native_read(command, kwargs)
+            if request["operation"] == "head-object":
                 change()
             return value
 
@@ -109,8 +112,8 @@ class ProofDependencyTests(unittest.TestCase):
                               self.f.local, run)
         result = verify.observe_source_object(self.f.backend, tools, self.loaded, *self.a,
                                                self.f.local / "one-object-observation", environment=self.f.environment)
-        self.assertEqual(sum("head-object" in command for command in calls), 1)
-        self.assertFalse(any("list-objects-v2" in command for command in calls))
+        self.assertEqual(sum(request["operation"] == "head-object" for request in calls), 1)
+        self.assertFalse(any(request["operation"] == "list-objects-v2" for request in calls))
         return result
 
     def test_current_proof_change_during_head_is_rejected_after_response(self):

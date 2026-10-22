@@ -17,3 +17,5 @@ vendor/**/.cargo-ok
 # Code coverage profiler data (large files)
 *.profraw
 example
+/deploy/config/
+/deploy/tls/

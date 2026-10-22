@@ -67,7 +67,7 @@ class BackupBindingTests(unittest.TestCase):
         changes = [lambda value: value["inventory"].update(source_sha="b" * 40),
                    lambda value: value["inventory"]["databases"][0]["tables"][0].update(rows=2),
                    lambda value: value["request"]["source"].update(scope_id="other"),
-                   lambda value: value["request"]["tools"]["aws"].update(sha256="d" * 64),
+                   lambda value: value["request"]["tools"]["mysqldump"].update(sha256="d" * 64),
                    lambda value: value["request"]["backend_build"].update(sha256="d" * 64),
                    lambda value: value["generation"]["source"].update(head="c" * 40),
                    lambda value: value["generation"]["processes"]["api"].update(pid=21),

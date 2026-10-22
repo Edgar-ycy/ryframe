@@ -69,6 +69,14 @@ impl SpanExporterBuilder<NoExporterBuilderSet> {
         }
     }
 
+    /// 使用不读取环境配置的 HTTP 传输，必须显式设置 endpoint、timeout 和 protocol。
+    #[cfg(any(feature = "http-proto", feature = "http-json"))]
+    pub fn with_http_without_environment(self) -> SpanExporterBuilder<HttpExporterBuilderSet> {
+        SpanExporterBuilder {
+            client: HttpExporterBuilderSet(HttpExporterBuilder::without_environment()),
+        }
+    }
+
     /// Build the [SpanExporter] with the default transport selected by environment
     /// variable or feature flags.
     ///

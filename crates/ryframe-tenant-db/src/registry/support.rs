@@ -42,7 +42,12 @@ pub(super) fn target_definition(
             port: target.port.unwrap_or(3306),
             database: target.database.clone().unwrap_or_default(),
             username: target.username.clone().unwrap_or_default(),
-            password_env: target.password_env.clone().unwrap_or_default(),
+            password: target.password.clone().ok_or_else(|| {
+                TenantDataError::InvalidConfiguration(format!(
+                    "mysql 目标 {} 缺少 password 配置（允许空字符串）",
+                    target.key
+                ))
+            })?,
             tls_mode: target.tls_mode.unwrap_or_default(),
             tls_ca: target.tls_ca.clone(),
             tls_client_cert: target.tls_client_cert.clone(),

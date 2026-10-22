@@ -8,10 +8,17 @@ mod import_execution;
 
 pub use plan::{GenerationBuilder, GenerationOperation, GenerationPlan};
 
-const USAGE: &str = "用法：\n  cargo generate -- new-business <模块名或业务包名> [--plan|--write]\n  cargo generate -- resource [--package <crate>] [--models <Model1,Model2>] [--plan|--write] [--sync-frontend|--no-sync-frontend]\n  cargo generate --features schema-import -- import [--connection <name>] [--database <control|tenant>] [--package <crate>] [--tables <table1,table2>] [--plan|--write] [--sync-frontend|--no-sync-frontend]\n  cargo generate -- run [--plan|--write] [--sync-frontend|--no-sync-frontend]\n\n默认预览，仅 --write 更新源码；默认值读取 config/tools.toml 与 .local-tests/tools.toml。run 根据 generator.tables 选择导入或模型生成；导入需要 schema-import feature。";
+const USAGE: &str = "用法：\n  cargo generate -- new-business <模块名或业务包名> [--plan|--write]\n  cargo generate -- resource [--package <crate>] [--models <Model1,Model2>] [--plan|--write] [--sync-frontend|--no-sync-frontend]\n  cargo generate --features schema-import -- import [--connection <name>] [--database <control|tenant>] [--package <crate>] [--tables <table1,table2>] [--plan|--write] [--sync-frontend|--no-sync-frontend]\n  cargo generate -- run [--plan|--write] [--sync-frontend|--no-sync-frontend]\n\n默认预览，仅 --write 更新源码；默认值读取 config/tools.toml 与 .local-tests/tools.toml；可用 --config-dir <目录> 显式选择应用配置目录，相对路径以后端工作区为基准。run 根据 generator.tables 选择导入或模型生成；导入需要 schema-import feature。";
 
 /// 执行命令行与 Rust Builder 共用的生成流程。
 pub fn run_from_args(args: Vec<String>) -> Result<(), String> {
+    let explicit_directory = args
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .any(|argument| argument == "--config-dir");
+    let configuration = ryframe_config::ConfigurationArgs::parse(args)
+        .map_err(|error| error.message().to_owned())?;
+    let args = configuration.arguments;
     let Some(command) = args.first().map(String::as_str) else {
         println!("{USAGE}");
         return Ok(());
@@ -33,9 +40,11 @@ pub fn run_from_args(args: Vec<String>) -> Result<(), String> {
         _ => return Err(format!("未知生成操作：{command}\n{USAGE}")),
     };
     let arguments = options::Arguments::parse_for(&operation, rest)?;
-    let plan = arguments
-        .builder(options::workspace_root()?, operation)?
-        .plan()?;
+    let mut builder = arguments.builder(options::workspace_root()?, operation)?;
+    if explicit_directory {
+        builder = builder.configuration_directory(configuration.directory);
+    }
+    let plan = builder.plan()?;
     if arguments.flag("--plan") {
         println!("{}", plan.describe());
         return Ok(());

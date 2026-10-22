@@ -14,8 +14,8 @@ use crate::reset::{
     engine::{PhaseEvidence, ResourceProgress},
     ledger::ResetLedger,
     model::{
-        OBJECT_STORAGE_ACCESS_KEY_ENV, OBJECT_STORAGE_SECRET_KEY_ENV, ObjectPrefix,
-        REDIS_PASSWORD_ENV, ResetManifest, normalize_host, object_resource_key,
+        OBJECT_STORAGE_ACCESS_KEY_CONFIG_KEY, OBJECT_STORAGE_SECRET_KEY_CONFIG_KEY, ObjectPrefix,
+        REDIS_PASSWORD_CONFIG_KEY, ResetManifest, normalize_host, object_resource_key,
         public_material_sha256, redis_resource_key, secret_reference_sha256,
     },
 };
@@ -42,27 +42,23 @@ fn validate_object_storage_identity(
         ));
     }
     if config.object_storage.backend == StorageBackend::Local {
-        if resource.access_key_env.is_some() || resource.secret_key_env.is_some() {
+        if resource.access_key_config_key.is_some() || resource.secret_key_config_key.is_some() {
             return Err(ResetError::new("本地对象存储清单不能引用远端凭据"));
         }
         return Ok(());
     }
     if resource.endpoint != config.object_storage.endpoint.trim()
-        || resource.access_key_env.as_deref() != Some(OBJECT_STORAGE_ACCESS_KEY_ENV)
-        || resource.secret_key_env.as_deref() != Some(OBJECT_STORAGE_SECRET_KEY_ENV)
+        || resource.access_key_config_key.as_deref() != Some(OBJECT_STORAGE_ACCESS_KEY_CONFIG_KEY)
+        || resource.secret_key_config_key.as_deref() != Some(OBJECT_STORAGE_SECRET_KEY_CONFIG_KEY)
     {
         return Err(ResetError::new("对象存储端点或凭据引用与不可变清单不一致"));
     }
-    require_secret_matches(
-        OBJECT_STORAGE_ACCESS_KEY_ENV,
-        &config.object_storage.access_key,
-        "对象存储 access key",
-    )?;
-    require_secret_matches(
-        OBJECT_STORAGE_SECRET_KEY_ENV,
-        &config.object_storage.secret_key,
-        "对象存储 secret key",
-    )
+    if config.object_storage.access_key.is_empty() || config.object_storage.secret_key.is_empty() {
+        return Err(ResetError::new(
+            "所选配置文件 object_storage.access_key 和 object_storage.secret_key 必须非空",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_redis_identity(config: &RedisConfig, manifest: &ResetManifest) -> ResetResult<()> {
@@ -85,24 +81,11 @@ fn validate_redis_identity(config: &RedisConfig, manifest: &ResetManifest) -> Re
             "Redis 非秘密连接参数与不可变清单不一致，请重新运行 plan",
         ));
     }
-    match resource.password_env.as_deref() {
-        Some(REDIS_PASSWORD_ENV) => {
-            require_secret_matches(REDIS_PASSWORD_ENV, &config.password, "Redis 密码")
-        }
+    match resource.password_config_key.as_deref() {
+        Some(REDIS_PASSWORD_CONFIG_KEY) if !config.password.is_empty() => Ok(()),
         None if config.password.is_empty() => Ok(()),
         _ => Err(ResetError::new("Redis 密码引用与不可变清单不一致")),
     }
-}
-
-fn require_secret_matches(name: &str, configured: &str, label: &str) -> ResetResult<()> {
-    let value = std::env::var(name)
-        .map_err(|_| ResetError::new(format!("{label}环境变量缺失或编码无效")))?;
-    if value.is_empty() || value != configured {
-        return Err(ResetError::new(format!(
-            "{label}必须来自不可变清单声明的环境变量"
-        )));
-    }
-    Ok(())
 }
 
 pub struct StorageReset {

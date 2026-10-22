@@ -24,22 +24,11 @@ use recovery::parse_recovery;
 use release::parse_release;
 
 pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
-    let frontend_option = take_unique_option(&mut args, "--frontend-dir")?;
-    let frontend_was_explicit = frontend_option.is_some();
-    let explicit_frontend_is_relative = frontend_option
-        .as_ref()
-        .is_some_and(|value| !std::path::Path::new(value).is_absolute());
-    let frontend_dir = match frontend_option {
-        Some(value) => {
-            let path = PathBuf::from(value);
-            if path.is_absolute() {
-                path
-            } else {
-                crate::workspace::root_dir().join(path)
-            }
-        }
-        None => default_frontend_dir().map_err(|error| CliError::new(error.to_string()))?,
-    };
+    if let Some(cli) = dev_entry(&args) {
+        return cli;
+    }
+    let (frontend_dir, frontend_was_explicit, explicit_frontend_is_relative) =
+        frontend_options(&mut args)?;
     let Some(command_name) = args.first().cloned() else {
         return Ok(Cli {
             frontend_dir,
@@ -113,6 +102,51 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
     })
 }
 
+fn dev_entry(args: &[String]) -> Option<Result<Cli, CliError>> {
+    if !args.first().is_some_and(|value| value == "dev") {
+        return None;
+    }
+    Some((|| {
+        let command = if args
+            .iter()
+            .skip(1)
+            .any(|arg| arg == "--help" || arg == "-h")
+        {
+            Command::Help(Some("dev".into()))
+        } else {
+            parse_dev(&args[1..])?
+        };
+        Ok(Cli {
+            frontend_dir: PathBuf::new(),
+            command,
+        })
+    })())
+}
+
+fn frontend_options(args: &mut Vec<String>) -> Result<(PathBuf, bool, bool), CliError> {
+    let frontend_option = take_unique_option(args, "--frontend-dir")?;
+    let frontend_was_explicit = frontend_option.is_some();
+    let explicit_frontend_is_relative = frontend_option
+        .as_ref()
+        .is_some_and(|value| !std::path::Path::new(value).is_absolute());
+    let frontend_dir = match frontend_option {
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                crate::workspace::root_dir().join(path)
+            }
+        }
+        None => default_frontend_dir().map_err(|error| CliError::new(error.to_string()))?,
+    };
+    Ok((
+        frontend_dir,
+        frontend_was_explicit,
+        explicit_frontend_is_relative,
+    ))
+}
+
 fn require_command_family(name: &str) -> Result<(), CliError> {
     match name {
         "dev" | "check" | "build" | "generate" | "data" => Ok(()),
@@ -121,16 +155,42 @@ fn require_command_family(name: &str) -> Result<(), CliError> {
 }
 
 fn parse_dev(args: &[String]) -> Result<Command, CliError> {
-    let measure_once = match args {
-        [] => false,
-        [flag] if flag == "--measure-once" => true,
-        _ => {
-            return Err(CliError::new(
-                "用法：cargo xtask dev [--measure-once]；一次性场景由 RYFRAME_DEVEX_SAVE_CASE 选择",
-            ));
+    let mut values = args.to_vec();
+    let config_dir = take_unique_option(&mut values, "--config-dir")?.map(PathBuf::from);
+    let workspace_root = take_unique_option(&mut values, "--workspace-root")?.map(PathBuf::from);
+    let output = take_unique_option(&mut values, "--output")?.map(PathBuf::from);
+    let case = take_unique_option(&mut values, "--case")?
+        .map(|value| {
+            crate::dev::SaveCase::parse(&value)
+                .ok_or_else(|| CliError::new("--case 必须是已登记的八种保存场景"))
+        })
+        .transpose()?;
+    let measure_once = values.iter().any(|arg| arg == "--measure-once");
+    let plan = values.iter().any(|arg| arg == "--plan");
+    for flag in ["--measure-once", "--plan"] {
+        if values.iter().filter(|value| value.as_str() == flag).count() > 1 {
+            return Err(CliError::new("dev 标志不能重复"));
         }
-    };
-    Ok(Command::Dev { measure_once })
+    }
+    values.retain(|value| value != "--measure-once" && value != "--plan");
+    if !values.is_empty() {
+        return Err(CliError::new(
+            "dev 存在未知参数；请运行 cargo xtask dev --help",
+        ));
+    }
+    if !measure_once && (case.is_some() || output.is_some()) {
+        return Err(CliError::new(
+            "--case 和 --output 仅允许与 --measure-once 一起使用",
+        ));
+    }
+    Ok(Command::Dev(DevOptions {
+        config_dir,
+        workspace_root,
+        measure_once,
+        case,
+        output,
+        plan,
+    }))
 }
 
 fn parse_check(args: &[String]) -> Result<CheckCommand, CliError> {

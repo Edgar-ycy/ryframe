@@ -19,6 +19,10 @@ mod acquire;
 mod lease;
 mod support;
 
+#[cfg(test)]
+#[path = "../tests/registry/password.rs"]
+mod password_tests;
+
 use lease::OpenPool;
 pub use lease::TenantDatabasePoolLease;
 use support::{TargetHealthRecord, reserved_connections, target_definition};
@@ -105,7 +109,7 @@ struct MysqlTargetDefinition {
     port: u16,
     database: String,
     username: String,
-    password_env: String,
+    password: String,
     tls_mode: ryframe_config::DbTlsMode,
     tls_ca: Option<String>,
     tls_client_cert: Option<String>,
@@ -280,7 +284,7 @@ impl TenantDatabaseTargetRegistry {
         keys
     }
 
-    /// 返回不含地址、数据库名、用户名、密码环境变量名或 TLS 路径的安全元数据。
+    /// 返回不含地址、数据库名、用户名、密码或 TLS 路径的安全元数据。
     pub async fn metadata(&self) -> Vec<TenantDatabaseTargetMetadata> {
         let state = self.inner.state.lock().await;
         let mut targets = self

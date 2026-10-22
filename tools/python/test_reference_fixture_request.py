@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -54,7 +55,6 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
             "tools": {
                 "mysql": tool,
                 "mysqldump": tool,
-                "aws": tool,
                 "rustfs": tool,
                 "redis_server": {
                     "distribution": "Ubuntu",
@@ -153,6 +153,8 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "environment": {
                     "APP_SCOPE_ID": selected["scope_id"],
                     "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
+                    "access_key": f"fixture-access-{side}",
+                    "secret_key": f"fixture-secret-{side}",
                 }
             },
         )
@@ -216,7 +218,12 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         for side, value in requests.items():
             with self.subTest(side=side):
                 self.assertEqual(value["side"], side)
+                self.assertEqual(set(value["tools"]), {"mysql"})
                 self.assertEqual(value["target"]["scope_id"], f"fixture-{side}")
+                self.assertEqual(value["target"]["s3"], {
+                    "endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
+                    "access_key": f"fixture-access-{side}", "secret_key": f"fixture-secret-{side}",
+                })
                 self.assertEqual(
                     value["execution_backend"]["path"], str(self.execution)
                 )
@@ -233,6 +240,37 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                         )
                     },
                 )
+
+    def test_request_credentials_do_not_fall_back_to_ambient_values(self):
+        ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
+                   "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
+        with patch.dict(os.environ, ambient):
+            value = request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
+            self.assertEqual(value["target"]["s3"]["access_key"], "fixture-access-base")
+            self.assertEqual(value["target"]["s3"]["secret_key"], "fixture-secret-base")
+
+    def test_request_rejects_missing_direct_credentials_even_with_ambient_values(self):
+        ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
+                   "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
+        with patch.dict(os.environ, ambient):
+            path = self.environments["base"].parent / "environment.json"
+            original = json.loads(path.read_text(encoding="utf-8"))
+            for key in ("access_key", "secret_key"):
+                for invalid in (None, "", 123):
+                    changed = {"environment": {**original["environment"], key: invalid}}
+                    self.write(path, changed)
+                    with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "直接配置"):
+                        request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
+                missing = {name: value for name, value in original["environment"].items() if name != key}
+                self.write(path, {"environment": missing})
+                with self.assertRaisesRegex(ValueError, "直接配置"):
+                    request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
+            legacy = {name: value for name, value in original["environment"].items()
+                      if name not in ("access_key", "secret_key")}
+            legacy.update({"access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY"})
+            self.write(path, {"environment": legacy})
+            with self.assertRaisesRegex(ValueError, "直接配置"):
+                request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
 
     def test_live_service_check_rejects_stopped_or_drifted_runtime_evidence(self):
         process = self.write(self.root / "observed/process.json", {"process": True})

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-import re
 import subprocess
 
 from devex_clone_capture import (CaptureReader, CaptureStages, inspect_response, read_json, regular_file, request_data,
@@ -14,6 +13,7 @@ from devex_clone_transfer import ObjectObservation
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
 from restore_reference_plan import plan_hash
+from native_s3_client import NativeS3NotFound
 
 
 class ObjectObservationError(RuntimeError):
@@ -23,38 +23,38 @@ class ObjectObservationError(RuntimeError):
 
 
 def missing_head(diagnostic: dict) -> bool:
-    """只接受 AWS CLI 服务响应失败，不能用超时、403、GET 或泛化错误推断缺失。"""
-    if (set(diagnostic) != {"operation", "returncode", "error_type", "stderr"}
-            or diagnostic["operation"] != "head-object" or type(diagnostic["returncode"]) is not int
-            or diagnostic["returncode"] != 254 or diagnostic["error_type"] != "CalledProcessError"
-            or not isinstance(diagnostic["stderr"], str)):
-        return False
-    pattern = (r"(?:aws: \[ERROR\]: )?An error occurred \((?:404|NotFound)\) when calling the HeadObject operation"
-               r"(?: \(reached max retries: 0\))?: Not Found")
-    return re.fullmatch(pattern, diagnostic["stderr"].strip("\r\n")) is not None
+    """只接受原生 HEAD 协议保存的结构化 404，不能从文本或其他失败推断缺失。"""
+    return diagnostic == {
+        "operation": "head-object",
+        "returncode": 0,
+        "error_type": "NativeS3NotFound",
+        "stderr": "",
+        "native_failure": {
+            "outcome": "not_found",
+            "http_status": 404,
+            "remote_write_may_have_occurred": False,
+        },
+    }
 
 
 def current_binding(tools: ExternalTools) -> dict:
-    tools.command("aws")
-    _, environment = tools.aws_context("target")
-    return {"plan_sha256": plan_hash(tools.plan), "environment_sha256": plan_hash(environment)}
+    configuration = tools.plan["target"]["s3"]
+    return {"plan_sha256": plan_hash(tools.plan),
+            "configuration_sha256": plan_hash(configuration),
+            "transport": "rust-s3-sigv4"}
 
 
 def fixed_tools(tools: ExternalTools, output: Path) -> tuple[dict, ExternalTools]:
     initial = current_binding(tools)
-    _, environment = tools.aws_context("target")
-    if plan_hash(environment) != initial["environment_sha256"]:
-        raise ValueError("对象观察初始认证环境发生变化")
 
     def fixed_read(command, **kwargs):
-        if current_binding(tools) != initial or kwargs.get("env") != environment:
-            raise ValueError("对象请求前的计划或认证环境发生变化")
-        kwargs["env"] = dict(environment)
+        if current_binding(tools) != initial:
+            raise ValueError("对象请求前的计划或原生 S3 配置发生变化")
         try:
             return tools.run(command, **kwargs)
         finally:
             if current_binding(tools) != initial:
-                raise ValueError("对象请求期间的计划或认证环境发生变化")
+                raise ValueError("对象请求期间的计划或原生 S3 配置发生变化")
 
     return initial, ExternalTools(copy.deepcopy(tools.plan), output, fixed_read)
 
@@ -85,7 +85,7 @@ def probe_head(reader: CaptureReader, phase: str, bucket: str, key: str) -> bool
     try:
         reader.read(phase, "head-object", bucket, key)
         return True
-    except subprocess.CalledProcessError:
+    except NativeS3NotFound:
         if not missing_head(read_json(reader.output / f"{phase}.diagnostic.json")):
             raise
         return False
@@ -107,7 +107,7 @@ def observe_target_object(backend: Path, tools: ExternalTools, bucket: str, key:
     stage = "binding"
     try:
         initial, frozen = fixed_tools(tools, output)
-        request = request_data(frozen, "target", bucket, key, expected, max_bytes)
+        request = request_data(frozen, "target", bucket, key, expected, max_bytes, "rust-s3-sigv4")
         write_json(output / "intent.json", {**request, "kind": "devex-clone-live-object", "binding": initial})
         resource = {"kind": "object", "scope_id": request["scope_id"], "endpoint": request["endpoint"],
                     "bucket": bucket, "key": key}
@@ -119,7 +119,7 @@ def observe_target_object(backend: Path, tools: ExternalTools, bucket: str, key:
         try:
             capture.head_before()
             exists = True
-        except subprocess.CalledProcessError:
+        except NativeS3NotFound:
             if not missing_head(read_json(output / "head-before.diagnostic.json")):
                 raise
             exists = False
@@ -128,7 +128,8 @@ def observe_target_object(backend: Path, tools: ExternalTools, bucket: str, key:
             stage = "capture"
             directory = output / "capture"
             captured = capture.complete(directory)
-            verify_capture(frozen, "target", bucket, key, directory, expected=expected, max_bytes=max_bytes, owner_buckets=(bucket,))
+            verify_capture(frozen, "target", bucket, key, directory, expected=expected,
+                           max_bytes=max_bytes, owner_buckets=(bucket,), transport="rust-s3-sigv4")
             owner_after = captured["ownership_after"]
         else:
             stage = "owners_after"
@@ -186,7 +187,8 @@ def verify_target_heads(backend: Path, tools: ExternalTools, items: list[dict], 
                 raise ValueError("收尾缺少本目标真实完整下载的观察")
             expected = {field: item["artifact"][field] for field in ("bytes", "sha256")}
             capture = verify_capture(tools, "target", bucket, key, observed.capture_directory,
-                                     expected=expected, max_bytes=expected["bytes"], owner_buckets=(bucket,))["capture"]
+                                     expected=expected, max_bytes=expected["bytes"], owner_buckets=(bucket,),
+                                     transport="rust-s3-sigv4")["capture"]
             if capture["metadata"] != item["metadata"] or capture["get_header_differences"]:
                 raise ValueError("完整对象采集与计划存储或 GET 元数据不同")
             raw = reader.read(f"head-{index}", "head-object", bucket, key, identity=capture["identity"])

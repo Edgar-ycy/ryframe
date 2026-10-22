@@ -226,9 +226,7 @@ fn tool_inputs(context: &TargetContext) -> Result<Vec<PathBuf>> {
             "目标 MySQL 凭据路径",
         )?));
     }
-    for role in ["mysql", "aws"] {
-        paths.push(context.tool(role)?);
-    }
+    paths.push(context.tool("mysql")?);
     Ok(paths)
 }
 

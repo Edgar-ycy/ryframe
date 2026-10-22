@@ -38,7 +38,9 @@ use ryframe_application::{
         operations::EXPORT_BUCKET,
     },
 };
-use ryframe_config::{AppConfig, Environment, JobWorkerMode, RedisMode, StorageBackend};
+use ryframe_config::{
+    AppConfig, ConfigurationArgs, Environment, JobWorkerMode, RedisMode, StorageBackend,
+};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use tokio::sync::watch;
@@ -66,14 +68,15 @@ struct WorkerRuntime {
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let run_mode = process_startup::parse_worker_run_mode(&arguments)?;
-    if run_mode == process_startup::WorkerRunMode::Healthcheck {
-        return ryframe::healthcheck::probe_from_env("APP_JOBS_HEALTH_PORT", 9091);
-    }
     ryframe::crypto::install_crypto_provider()?;
+    let arguments = ConfigurationArgs::parse(std::env::args().skip(1).collect())?;
+    let run_mode = process_startup::parse_worker_run_mode(&arguments.arguments)?;
+    let config = AppConfig::load(&arguments.directory, Environment::from_env()?)?;
+    if run_mode == process_startup::WorkerRunMode::Healthcheck {
+        return ryframe::healthcheck::probe_local_readiness(config.jobs.health_port);
+    }
     let _business_modules = ryframe::business::registered_business_modules()?;
-    let startup = load_startup(run_mode)?;
+    let startup = load_startup(run_mode, config)?;
     let (_logger_guard, telemetry_guard) = process_logging::init(&startup.config)?;
     if startup.run_mode.allows_initialization_writes() {
         ryframe_adapters::metrics::spawn_process_metrics_updater();
@@ -89,13 +92,14 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-fn load_startup(run_mode: process_startup::WorkerRunMode) -> Result<WorkerStartup, AppError> {
+fn load_startup(
+    run_mode: process_startup::WorkerRunMode,
+    config: AppConfig,
+) -> Result<WorkerStartup, AppError> {
     ryframe_application::set_audit_failure_hook(ryframe_adapters::metrics::record_audit_failure);
     ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_adapters::metrics::record_authorization_cache_lookup,
     );
-    let environment = Environment::from_env()?;
-    let config = AppConfig::load_from_env(environment)?;
     if run_mode == process_startup::WorkerRunMode::Probe && config.environment.is_production() {
         return Err(AppError::Config(
             "Worker 探活模式只允许本地开发和隔离检查使用".into(),

@@ -31,7 +31,7 @@ class RequestTests(unittest.TestCase):
                    "api": request["api_url"], "console": request["console_url"]}}}
         review_file = self.json("target-review.json", review)
         target = {"review": {**review_file, "canonical_sha256": plan_hash(review)},
-                  "target": {"s3": {"endpoint": request["api_url"], "access_key_env": "KEY", "secret_key_env": "SECRET"}},
+                  "target": {"s3": {"endpoint": request["api_url"], "access_key": "access_key-private", "secret_key": "secret_key-private"}},
                   "storage": {"rustfs": {"identity": self.old, "sha256": request["executable"]["sha256"],
                                          "process_receipt": process, "launch_receipt": launch}}}
         target_file = self.json("target.json", target)

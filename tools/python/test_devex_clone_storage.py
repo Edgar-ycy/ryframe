@@ -36,7 +36,7 @@ class StorageTests(unittest.TestCase):
         self.credentials = {key: self.file(key + ".txt", (key + "-private").encode()) for key in ("access_key", "secret_key")}
         self.private = {"KEY": "access_key-private", "SECRET": "secret_key-private", "RUSTFS_UNDECLARED": "forbidden"}
         environment = self.json("private.json", {"environment": self.private})
-        source = self.json("source.json", {"source": {"s3": {"endpoint": "http://127.0.0.1:18290", "access_key_env": "KEY", "secret_key_env": "SECRET"}}})
+        source = self.json("source.json", {"source": {"s3": {"endpoint": "http://127.0.0.1:18290", "access_key": "access_key-private", "secret_key": "secret_key-private"}}})
         self.value = {"id": "same-run", "source_request": source, "initialized": self.json("initialized.json", {"fixture": True}),
                       "source_environment": environment, "target_environment": environment}
         write_json(self.directory / "manifest.json", self.value)

@@ -214,6 +214,29 @@ enum ControlledReady {
     Interrupted(CycleControl),
 }
 
+pub(super) fn wait_probe_api_until_controlled(
+    deadline: Instant,
+    port: u16,
+    mut ensure_running: impl FnMut() -> Result<()>,
+    mut control: impl FnMut() -> CycleControl,
+) -> Result<CycleControl> {
+    loop {
+        if let Some(interrupted) = interrupted(&mut control) {
+            return Ok(interrupted);
+        }
+        ensure_running()?;
+        ensure_before_deadline(deadline, "候选 API", "尚未启动的候选 Worker")?;
+        match controlled_http_readyz(port, deadline, &mut control)? {
+            ControlledReady::Interrupted(interrupted) => return Ok(interrupted),
+            ControlledReady::Ready(true) => {
+                ensure_running()?;
+                return Ok(CycleControl::Continue);
+            }
+            ControlledReady::Ready(false) => thread::sleep(io_slice(deadline)),
+        }
+    }
+}
+
 fn controlled_http_readyz<C>(
     port: u16,
     deadline: Instant,

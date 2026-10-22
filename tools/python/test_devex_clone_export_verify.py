@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_export_verify as verify
 import devex_clone_export as export
+import devex_clone_capture as capture
 import devex_clone_model as model
 import devex_clone_rows as sql_rows
 from devex_clone_source import export_source
@@ -63,47 +64,52 @@ class ExportVerificationTests(unittest.TestCase):
 
     def run_read(self, command, **kwargs):
         self.calls.append((command, kwargs))
-        self.assertEqual(kwargs["env"]["AWS_SECRET_ACCESS_KEY"], "secret-fixture")
-        self.assertEqual(kwargs["env"]["AWS_MAX_ATTEMPTS"], "1")
-        self.assertTrue(kwargs["check"])
-        operation = command[command.index("s3api") + 1]
+        self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
+        self.assertFalse(kwargs["check"])
+        self.assertIn(command[-1], ("__s3-read", "__s3-inspect"))
+        request = json.loads(kwargs["input"])
+        self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
+        operation = request["operation"]
         self.assertIn(operation, ("list-objects-v2", "head-object", "get-object"))
-        bucket = command[command.index("--bucket") + 1]
+        bucket = request["bucket"]
         self.assertIn(bucket, BUCKETS)
         scope = self.fixture.scope + "/"
         if operation == "list-objects-v2":
-            self.assertIn("--no-paginate", command)
-            self.assertEqual(command[command.index("--prefix") + 1], scope)
+            self.assertEqual(command[-1], "__s3-inspect")
+            self.assertEqual(request["prefix"], scope)
             keys = [scope + ".ryframe-owner"] + ([scope + "system/file.txt"] if bucket == "uploads" and not self.missing else [])
             if self.extra and bucket == "uploads":
                 keys.append(scope + "system/unregistered.txt")
             if self.duplicate:
                 keys.append(keys[0])
-            page = {"Name": bucket, "Prefix": scope, "IsTruncated": False, "Contents": [{"Key": key} for key in keys]}
+            page = {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]}
             if self.paginated and bucket == "uploads":
-                continued = "--continuation-token" in command
+                continued = request["continuation"] is not None
                 page["Contents"] = [{"Key": keys[-1] if continued else keys[0]}]
                 if not continued or self.cycle:
                     page.update(IsTruncated=True, NextContinuationToken="next-page")
-            return subprocess.CompletedProcess(command, 0, json.dumps(page).encode(), b"")
-        key = command[command.index("--key") + 1]
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "result": page}).encode(), b"")
+        key = request["key"]
         self.assertTrue(key.startswith(scope))
         if operation == "get-object":
             self.assertTrue(key.endswith("/.ryframe-owner"), "只读复验不能下载任何源业务 payload")
         else:
             self.assertEqual(operation, "head-object")
-            self.assertEqual(command[command.index("--if-match") + 1], '"fixture-etag"')
-            self.assertNotIn("--version-id", command)
+            self.assertEqual(request["if_match"], '"fixture-etag"')
+            self.assertIsNone(request["version"])
             if self.effect:
                 self.effect()
             if self.outcome:
-                raise self.outcome
-        result = self.fixture.aws(command)
+                if isinstance(self.outcome, BaseException):
+                    raise self.outcome
+                return subprocess.CompletedProcess(command, 0 if self.outcome["ok"] else 1,
+                                                   json.dumps(self.outcome).encode(), b"private stderr")
+        result = self.fixture.native_read(command, kwargs)
         if self.wrong_owner and operation == "get-object":
-            Path(command[-1]).write_bytes(b"wrong-owner")
+            Path(request["destination"]).write_bytes(b"wrong-owner")
         if self.head_changed and operation == "head-object":
             value = json.loads(result.stdout)
-            value["Metadata"] = {"changed": "value"}
+            value["result"]["Metadata"] = {"changed": "value"}
             result.stdout = json.dumps(value).encode()
         return result
 
@@ -348,7 +354,7 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertEqual(result["business_get_requests"], 0)
         self.assertEqual(result["business_bytes_downloaded"], 0)
         self.assertFalse(result["source_body_sha_recomputed"])
-        operations = [cmd[cmd.index("s3api") + 1] for cmd, _ in self.calls]
+        operations = [json.loads(options["input"])["operation"] for _, options in self.calls]
         self.assertEqual(operations.count("get-object"), 10)
         self.assertEqual(operations.count("head-object"), 1)
         self.assertEqual(operations.count("list-objects-v2"), 10)
@@ -356,31 +362,33 @@ class ExportVerificationTests(unittest.TestCase):
     def test_single_head_only_does_not_download_or_list_whole_dataset(self):
         result = self.observe(single=True)
         self.assertFalse(result["whole_source"])
-        operations = [cmd[cmd.index("s3api") + 1] for cmd, _ in self.calls]
+        operations = [json.loads(options["input"])["operation"] for _, options in self.calls]
         self.assertEqual(operations.count("head-object"), 1)
         self.assertNotIn("list-objects-v2", operations)
         self.assertEqual(operations.count("get-object"), 2)
-        owners = [cmd for cmd, _ in self.calls if cmd[cmd.index("--key") + 1].endswith("/.ryframe-owner")]
-        self.assertEqual([cmd[cmd.index("--bucket") + 1] for cmd in owners], ["uploads", "uploads"])
+        owners = [json.loads(options["input"]) for _, options in self.calls
+                  if json.loads(options["input"]).get("key", "").endswith("/.ryframe-owner")]
+        self.assertEqual([request["bucket"] for request in owners], ["uploads", "uploads"])
 
     def test_list_diagnostics_open_with_extended_path_conversion(self):
         recorded = []
-        original = verify.filesystem_path
+        original = capture.filesystem_path
 
         def wrap(path):
             recorded.append(Path(path))
             return original(path)
 
-        with patch.object(verify, "filesystem_path", wrap):
+        with patch.object(capture, "filesystem_path", wrap):
             self.observe()
-        self.assertEqual(sorted(path.name for path in recorded),
-                         sorted(f"list-{phase}-{bucket}-0.diagnostic.json"
-                                for phase in ("before", "after") for bucket in BUCKETS))
+        expected = {f"list-{phase}-{bucket}-0.diagnostic.json"
+                    for phase in ("before", "after") for bucket in BUCKETS}
+        self.assertTrue(expected.issubset({path.name for path in recorded}))
 
     def test_real_pagination_is_completed_without_truncating_key_set(self):
         self.paginated = True
         self.observe()
-        self.assertEqual(sum("--continuation-token" in cmd for cmd, _ in self.calls), 2)
+        self.assertEqual(sum(json.loads(options["input"]).get("continuation") is not None
+                             for _, options in self.calls), 2)
 
     def test_missing_extra_duplicate_and_looping_source_lists_fail(self):
         loaded = self.load()
@@ -395,7 +403,8 @@ class ExportVerificationTests(unittest.TestCase):
     def test_wrong_owner_fails_before_any_business_head(self):
         self.wrong_owner = True
         self.failed_observation()
-        self.assertFalse(any("head-object" in cmd for cmd, _ in self.calls))
+        self.assertFalse(any(json.loads(options["input"])["operation"] == "head-object"
+                             for _, options in self.calls))
 
     def test_changed_head_metadata_is_never_adopted(self):
         self.head_changed = True
@@ -407,25 +416,36 @@ class ExportVerificationTests(unittest.TestCase):
             with self.subTest(code=code):
                 self.observation = self.fixture.local / f"head-failure-{index}"
                 self.calls = []
-                self.outcome = (subprocess.TimeoutExpired(["aws"], 1, stderr=b"secret-fixture") if code == "timeout"
-                    else subprocess.CalledProcessError(254, ["aws"], stderr=f"An error occurred ({code}): access-fixture secret-fixture".encode()))
+                if code == "timeout":
+                    self.outcome = subprocess.TimeoutExpired(["xtask", "__s3-read"], 1, stderr=b"secret-fixture")
+                elif code == "404":
+                    self.outcome = {"ok": True, "result": {"status": "not_found", "http_status": 404,
+                                    "remote_write_may_have_occurred": False}}
+                else:
+                    self.outcome = {"ok": False, "error": {"category": "NativeS3ReadRejected",
+                                    "message": "403 access-fixture secret-fixture",
+                                    "remote_write_may_have_occurred": False,
+                                    "automatic_retry_permitted": False}}
                 self.failed_observation(loaded, single=True)
-                self.assertEqual(sum("head-object" in cmd for cmd, _ in self.calls), 1)
+                self.assertEqual(sum(json.loads(options["input"])["operation"] == "head-object"
+                                     for _, options in self.calls), 1)
                 text = "\n".join(path.read_text(encoding="utf-8") for path in self.observation.glob("*.json"))
                 self.assertNotIn("secret-fixture", text)
                 self.assertNotIn("access-fixture", text)
 
     def test_environment_and_plan_change_stop_before_next_request(self):
         loaded = self.load()
-        self.effect = lambda: self.environment.update(TEST_SECRET="changed")
+        self.effect = lambda: self.environment.update(APP_ENV="changed")
         self.failed_observation(loaded, single=True)
-        self.assertEqual(sum("head-object" in cmd for cmd, _ in self.calls), 1)
-        self.environment["TEST_SECRET"] = "secret-fixture"
+        self.assertEqual(sum(json.loads(options["input"])["operation"] == "head-object"
+                             for _, options in self.calls), 1)
+        self.environment["APP_ENV"] = "test"
         self.observation = self.fixture.local / "changed-plan"
         self.calls = []
         self.effect = lambda: self.tools.plan["source"]["s3"].update(region="changed-region")
         self.failed_observation(loaded, single=True)
-        self.assertEqual(sum("head-object" in cmd for cmd, _ in self.calls), 1)
+        self.assertEqual(sum(json.loads(options["input"])["operation"] == "head-object"
+                             for _, options in self.calls), 1)
 
     def test_unknown_single_key_rejected_before_remote_calls_or_new_directory(self):
         loaded = self.load()

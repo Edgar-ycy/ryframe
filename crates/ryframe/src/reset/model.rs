@@ -7,21 +7,20 @@ use ryframe_application::system::{
     content::{AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET},
     operations::EXPORT_BUCKET,
 };
-use ryframe_config::{
-    AppConfig, DbConnection, DbTlsMode, StorageBackend, TenantDatabaseTargetKind,
-};
+use ryframe_config::{AppConfig, DbConnection, DbTlsMode, StorageBackend, is_valid_target_key};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::reset::{ResetError, ResetResult};
 
-pub const MANIFEST_VERSION: u32 = 4;
-pub const PRIMARY_DATABASE_PASSWORD_ENV: &str = "APP_DATABASE_PASSWORD";
-pub const REDIS_PASSWORD_ENV: &str = "APP_REDIS_PASSWORD";
-pub const OBJECT_STORAGE_ACCESS_KEY_ENV: &str = "APP_OBJECT_STORAGE_ACCESS_KEY";
-pub const OBJECT_STORAGE_SECRET_KEY_ENV: &str = "APP_OBJECT_STORAGE_SECRET_KEY";
+pub const MANIFEST_VERSION: u32 = 5;
+pub const PRIMARY_DATABASE_PASSWORD_CONFIG_KEY: &str = "database.primary.password";
+pub const REDIS_PASSWORD_CONFIG_KEY: &str = "redis.password";
+pub const OBJECT_STORAGE_ACCESS_KEY_CONFIG_KEY: &str = "object_storage.access_key";
+pub const OBJECT_STORAGE_SECRET_KEY_CONFIG_KEY: &str = "object_storage.secret_key";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResetManifest {
     pub manifest_version: u32,
     pub environment: String,
@@ -44,6 +43,7 @@ pub struct LegacyOwnershipPolicy {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedisResource {
     pub host: String,
     pub port: u16,
@@ -52,7 +52,7 @@ pub struct RedisResource {
     pub ownership_marker_key: String,
     pub ownership_marker: String,
     pub outside_sentinel_key_sha256: String,
-    pub password_env: Option<String>,
+    pub password_config_key: Option<String>,
     pub tls: bool,
     pub tls_ca_sha256: Option<String>,
     pub tls_client_cert_sha256: Option<String>,
@@ -60,13 +60,14 @@ pub struct RedisResource {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ObjectStorageResource {
     pub backend: String,
     pub endpoint: String,
     pub use_ssl: bool,
     pub region: String,
-    pub access_key_env: Option<String>,
-    pub secret_key_env: Option<String>,
+    pub access_key_config_key: Option<String>,
+    pub secret_key_config_key: Option<String>,
     pub prefixes: Vec<ObjectPrefix>,
 }
 
@@ -91,9 +92,10 @@ pub struct PhysicalDatabase {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConnectionIdentity {
     pub username: String,
-    pub password_env: String,
+    pub password_config_key: String,
     pub tls_mode: String,
     pub tls_ca_sha256: Option<String>,
     pub tls_client_cert_sha256: Option<String>,
@@ -112,11 +114,90 @@ struct ConfigFingerprint<'a> {
 }
 
 pub fn build_manifest(config: &AppConfig, code_sha: &str) -> ResetResult<ResetManifest> {
+    if code_sha.len() != 40 || !code_sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ResetError::new(
+            "reset.source_sha 必须为 40 位 Git commit SHA",
+        ));
+    }
     let scope_id = config.scope_id.as_str();
     let credential_version = config.reset.credential_version.as_deref().ok_or_else(|| {
         ResetError::new("reset plan 必须配置非秘密 reset.credential_version；凭据轮换时必须变更")
     })?;
-    let redis = match config.redis.as_ref() {
+    let redis = build_redis_resource(config)?;
+
+    let object_storage = build_object_storage(config)?;
+
+    let legacy_ownership = LegacyOwnershipPolicy {
+        mysql_exclusive: config.reset.legacy_mysql_exclusive,
+        redis_exclusive: config.reset.legacy_redis_exclusive,
+        object_storage_exclusive: config.reset.legacy_object_storage_exclusive,
+    };
+    let databases = collect_databases(config)?;
+    let environment = config.environment.as_str();
+    let config_sha = sha256_hex(&canonical_json(&ConfigFingerprint {
+        environment,
+        scope_id,
+        credential_version,
+        legacy_ownership: &legacy_ownership,
+        redis: &redis,
+        object_storage: &object_storage,
+        databases: &databases,
+    })?);
+
+    Ok(ResetManifest {
+        manifest_version: MANIFEST_VERSION,
+        environment: environment.to_owned(),
+        scope_id: scope_id.to_owned(),
+        code_sha: code_sha.to_ascii_lowercase(),
+        config_sha,
+        credential_version: credential_version.to_owned(),
+        confirmation_phrase: format!("RESET-RYFRAME-{environment}-{scope_id}"),
+        legacy_ownership,
+        redis,
+        object_storage,
+        databases,
+    })
+}
+
+fn build_object_storage(config: &AppConfig) -> ResetResult<ObjectStorageResource> {
+    let scope_id = config.scope_id.as_str();
+    let endpoint = match config.object_storage.backend {
+        StorageBackend::Local => {
+            canonical_local_storage_root(&config.object_storage.local_base_dir)?
+        }
+        StorageBackend::Rustfs | StorageBackend::Minio | StorageBackend::S3 => {
+            config.object_storage.endpoint.trim().to_owned()
+        }
+    };
+    Ok(ObjectStorageResource {
+        backend: config.object_storage.backend.as_str().to_owned(),
+        endpoint,
+        use_ssl: config.object_storage.use_ssl,
+        region: config.object_storage.region.trim().to_owned(),
+        access_key_config_key: (config.object_storage.backend != StorageBackend::Local)
+            .then(|| OBJECT_STORAGE_ACCESS_KEY_CONFIG_KEY.into()),
+        secret_key_config_key: (config.object_storage.backend != StorageBackend::Local)
+            .then(|| OBJECT_STORAGE_SECRET_KEY_CONFIG_KEY.into()),
+        prefixes: [
+            UPLOAD_BUCKET,
+            AVATAR_BUCKET,
+            EXPORT_BUCKET,
+            IMPORT_BUCKET,
+            CONFIG_PACKAGE_BUCKET,
+        ]
+        .into_iter()
+        .map(|bucket| ObjectPrefix {
+            bucket: bucket.to_owned(),
+            prefix: config.scope_id.object_prefix(),
+            ownership_marker_key: format!("{scope_id}/.ryframe-owner"),
+            ownership_marker: format!("ryframe-owner:v1:{scope_id}:object-storage:{bucket}"),
+        })
+        .collect(),
+    })
+}
+
+fn build_redis_resource(config: &AppConfig) -> ResetResult<Option<RedisResource>> {
+    Ok(match config.redis.as_ref() {
         Some(redis) => {
             let sentinel = config
                 .reset
@@ -140,7 +221,8 @@ pub fn build_manifest(config: &AppConfig, code_sha: &str) -> ResetResult<ResetMa
                 ownership_marker_key: format!("{}.ryframe-owner", redis.namespace()),
                 ownership_marker: config.scope_id.ownership_marker("redis"),
                 outside_sentinel_key_sha256: sha256_hex(sentinel.as_bytes()),
-                password_env: (!redis.password.is_empty()).then(|| REDIS_PASSWORD_ENV.into()),
+                password_config_key: (!redis.password.is_empty())
+                    .then(|| REDIS_PASSWORD_CONFIG_KEY.into()),
                 tls: redis.tls,
                 tls_ca_sha256: public_material_sha256(redis.tls_ca.as_deref())?,
                 tls_client_cert_sha256: public_material_sha256(redis.tls_client_cert.as_deref())?,
@@ -150,71 +232,6 @@ pub fn build_manifest(config: &AppConfig, code_sha: &str) -> ResetResult<ResetMa
             })
         }
         None => None,
-    };
-
-    let endpoint = match config.object_storage.backend {
-        StorageBackend::Local => {
-            canonical_local_storage_root(&config.object_storage.local_base_dir)?
-        }
-        StorageBackend::Rustfs | StorageBackend::Minio | StorageBackend::S3 => {
-            config.object_storage.endpoint.trim().to_owned()
-        }
-    };
-    let object_storage = ObjectStorageResource {
-        backend: config.object_storage.backend.as_str().to_owned(),
-        endpoint,
-        use_ssl: config.object_storage.use_ssl,
-        region: config.object_storage.region.trim().to_owned(),
-        access_key_env: (config.object_storage.backend != StorageBackend::Local)
-            .then(|| OBJECT_STORAGE_ACCESS_KEY_ENV.into()),
-        secret_key_env: (config.object_storage.backend != StorageBackend::Local)
-            .then(|| OBJECT_STORAGE_SECRET_KEY_ENV.into()),
-        prefixes: [
-            UPLOAD_BUCKET,
-            AVATAR_BUCKET,
-            EXPORT_BUCKET,
-            IMPORT_BUCKET,
-            CONFIG_PACKAGE_BUCKET,
-        ]
-        .into_iter()
-        .map(|bucket| ObjectPrefix {
-            bucket: bucket.to_owned(),
-            prefix: config.scope_id.object_prefix(),
-            ownership_marker_key: format!("{scope_id}/.ryframe-owner"),
-            ownership_marker: format!("ryframe-owner:v1:{scope_id}:object-storage:{bucket}"),
-        })
-        .collect(),
-    };
-
-    let legacy_ownership = LegacyOwnershipPolicy {
-        mysql_exclusive: config.reset.legacy_mysql_exclusive,
-        redis_exclusive: config.reset.legacy_redis_exclusive,
-        object_storage_exclusive: config.reset.legacy_object_storage_exclusive,
-    };
-    let databases = collect_databases(config)?;
-    let environment = config.environment.as_str();
-    let config_sha = sha256_hex(&canonical_json(&ConfigFingerprint {
-        environment,
-        scope_id,
-        credential_version,
-        legacy_ownership: &legacy_ownership,
-        redis: &redis,
-        object_storage: &object_storage,
-        databases: &databases,
-    })?);
-
-    Ok(ResetManifest {
-        manifest_version: MANIFEST_VERSION,
-        environment: environment.to_owned(),
-        scope_id: scope_id.to_owned(),
-        code_sha: code_sha.to_owned(),
-        config_sha,
-        credential_version: credential_version.to_owned(),
-        confirmation_phrase: format!("RESET-RYFRAME-{environment}-{scope_id}"),
-        legacy_ownership,
-        redis,
-        object_storage,
-        databases,
     })
 }
 
@@ -259,58 +276,19 @@ fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
 }
 
 fn collect_databases(config: &AppConfig) -> ResetResult<Vec<PhysicalDatabase>> {
-    let mut databases = BTreeMap::<(String, u16, String), PhysicalDatabase>::new();
-    insert_database(
-        &mut databases,
-        &config.database.primary.host,
-        config.database.primary.port,
-        &config.database.primary.database,
-        database_connection_identity(&config.database.primary, PRIMARY_DATABASE_PASSWORD_ENV)?,
-        "shared-control",
-        true,
-        true,
-        config.scope_id.as_str(),
-    )?;
-    for target in &config.tenant_data.targets {
-        if target.kind == TenantDatabaseTargetKind::Mysql {
-            let password_env = target
-                .password_env
-                .as_deref()
-                .ok_or_else(|| ResetError::new("MySQL 目标缺少 password_env"))?;
-            let connection = DbConnection {
-                host: target
-                    .host
-                    .clone()
-                    .ok_or_else(|| ResetError::new("MySQL 目标缺少 host"))?,
-                port: target.port.unwrap_or(3306),
-                database: target
-                    .database
-                    .clone()
-                    .ok_or_else(|| ResetError::new("MySQL 目标缺少 database"))?,
-                username: target
-                    .username
-                    .clone()
-                    .ok_or_else(|| ResetError::new("MySQL 目标缺少 username"))?,
-                password: String::new(),
-                max_connections: target.max_connections.unwrap_or(2).min(4),
-                min_connections: 0,
-                acquire_timeout_secs: 10,
-                idle_timeout_secs: 60,
-                max_lifetime_secs: 300,
-                connect_timeout_secs: 10,
-                tls_mode: target.tls_mode.unwrap_or_default(),
-                tls_ca: target.tls_ca.clone(),
-                tls_client_cert: target.tls_client_cert.clone(),
-                tls_client_key: target.tls_client_key.clone(),
-            };
+    let mut databases = BTreeMap::new();
+    for configured in super::connections::configured_databases(config)? {
+        let connection = &configured.connection;
+        let identity = database_connection_identity(connection, &configured.password_config_key)?;
+        for target_key in configured.target_keys {
             insert_database(
                 &mut databases,
                 &connection.host,
                 connection.port,
                 &connection.database,
-                database_connection_identity(&connection, password_env)?,
-                &target.key,
-                false,
+                identity.clone(),
+                &target_key,
+                configured.control_baseline && target_key == "shared-control",
                 true,
                 config.scope_id.as_str(),
             )?;
@@ -375,25 +353,41 @@ pub fn insert_database(
 
 pub fn database_connection_identity(
     connection: &DbConnection,
-    password_env: &str,
+    password_config_key: &str,
 ) -> ResetResult<DatabaseConnectionIdentity> {
     if connection.username.trim().is_empty()
         || connection.username != connection.username.trim()
-        || password_env.trim().is_empty()
-        || password_env != password_env.trim()
+        || !valid_password_reference(password_config_key)
     {
         return Err(ResetError::new(
-            "数据库 username 与 password_env 必须明确且不含边界空白",
+            "数据库 username 必须明确且不含边界空白，password_config_key 必须引用当前配置字段",
         ));
     }
     Ok(DatabaseConnectionIdentity {
         username: connection.username.clone(),
-        password_env: password_env.to_owned(),
+        password_config_key: password_config_key.to_owned(),
         tls_mode: tls_mode_name(connection.tls_mode).into(),
         tls_ca_sha256: public_material_sha256(connection.tls_ca.as_deref())?,
         tls_client_cert_sha256: public_material_sha256(connection.tls_client_cert.as_deref())?,
         tls_client_key_ref_sha256: secret_reference_sha256(connection.tls_client_key.as_deref())?,
     })
+}
+
+fn valid_password_reference(reference: &str) -> bool {
+    reference == PRIMARY_DATABASE_PASSWORD_CONFIG_KEY
+        || reference
+            .strip_prefix("tenant_data.targets.")
+            .and_then(|value| value.strip_suffix(".password"))
+            .is_some_and(is_valid_target_key)
+}
+
+pub fn validate_manifest_version(manifest: &ResetManifest) -> ResetResult<()> {
+    if manifest.manifest_version != MANIFEST_VERSION {
+        return Err(ResetError::new(
+            "reset manifest 格式不兼容；旧证据必须保留，请重新生成当前版本 plan，禁止自动转换或重放",
+        ));
+    }
+    Ok(())
 }
 
 fn tls_mode_name(mode: DbTlsMode) -> &'static str {
@@ -472,6 +466,7 @@ pub fn validate_database_identity(host: &str, port: u16, database: &str) -> Rese
 }
 
 pub fn validate_database_set(manifest: &ResetManifest) -> ResetResult<()> {
+    validate_manifest_version(manifest)?;
     let mut identities = BTreeSet::new();
     let mut control_count = 0;
     for database in &manifest.databases {

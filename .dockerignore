@@ -11,3 +11,5 @@ target
 uploads
 **/*.log
 **/node_modules
+/deploy/config/
+/deploy/tls/

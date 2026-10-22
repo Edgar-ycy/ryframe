@@ -8,21 +8,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_frontend_server
 from restore_frontend_build import FRONTEND_RECEIPT, frontend_files
-from source_inventory import build_source_domains, canonical_digest
 from workspace_directory import WorkspaceDirectory
+from frontend_receipt_fixture import prepare_frontend, frontend_receipt
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def inventory():
-    return {
-        "source": {
-            "snapshot": {"head": "1" * 40, "patch_sha256": "2" * 64, "files": [], "clean": True},
-            "worktree_fingerprint": "sha256:" + "3" * 64,
-        },
-        "files": [],
-        "guard": {"head": "1" * 40, "index_sha256": "4" * 64, "modes_sha256": "5" * 64},
-    }
 
 
 class RestoreFrontendServerTests(unittest.TestCase):
@@ -36,30 +25,14 @@ class RestoreFrontendServerTests(unittest.TestCase):
         (dist / "index.html").write_bytes(b"<main>RyFrame</main>")
         (dist / "assets/app.js").write_bytes(b"\x00RyFrame fixture\xff")
         (dist / ".vite/manifest.json").write_bytes(b"{}")
-        receipt = {
-            "format_version": 2,
-            "kind": "restore-frontend-build",
-            "sources": build_source_domains(inventory(), "frontend"),
-            "build": {
-                "command": ["vite", "build"],
-                "mode": "production",
-                "target": "vite-default",
-                "toolchain": {
-                    "node": "v24.0.0",
-                    "pnpm": {"pinned": "11.0.0", "observed": "11.0.0"},
-                    "vite": "7.0.0",
-                },
-                "environment": {"variables": [], "sha256": canonical_digest([])},
-                "environment_files": [],
-            },
-            "files": frontend_files(self.frontend),
-        }
+        prepare_frontend(self.frontend)
+        receipt = frontend_receipt(self.frontend)
         self.receipt = dist / FRONTEND_RECEIPT
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
 
     def test_site_loads_only_the_receipt_whitelist_and_detects_changes(self):
         content = restore_frontend_server.load_site(self.frontend, self.receipt)
-        self.assertEqual(set(content), {".vite/manifest.json", "assets/app.js", "index.html"})
+        self.assertEqual(set(content), {".vite/manifest.json", "assets/app.js", "index.html", "build-identity.json"})
         (self.frontend / "dist/assets/app.js").write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "不一致"):
             restore_frontend_server.load_site(self.frontend, self.receipt)

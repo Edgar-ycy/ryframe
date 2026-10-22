@@ -94,7 +94,7 @@ fn write_support_files(backend: &Path, local: &Path) -> (PathBuf, PathBuf) {
         "[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n",
     )
     .unwrap();
-    for name in ["mysql", "mysqldump", "aws", "node"] {
+    for name in ["mysql", "mysqldump", "node"] {
         fs::write(local.join(name), name.as_bytes()).unwrap();
     }
     for name in ["backend-build.json", "maintenance.json", "producers.json"] {
@@ -124,8 +124,8 @@ fn write_request(local: &Path, runtime: &Path, defaults: &Path, request: &Path) 
                 "s3": {
                     "endpoint": "http://127.0.0.1:29200",
                     "region": "us-east-1",
-                    "access_key_env": "TEST_ACCESS",
-                    "secret_key_env": "TEST_SECRET",
+                    "access_key": "access",
+                    "secret_key": "secret",
                 },
                 "databases": [{
                     "key": "shared-control",
@@ -140,7 +140,6 @@ fn write_request(local: &Path, runtime: &Path, defaults: &Path, request: &Path) 
             "tools": {
                 "mysql": tool(local, "mysql"),
                 "mysqldump": tool(local, "mysqldump"),
-                "aws": tool(local, "aws"),
                 "node": tool(local, "node"),
             },
             "backend_build": binding(&local.join("backend-build.json")),
@@ -216,18 +215,18 @@ fn export_preflight_rejects_linked_tool_paths() {
     let fixture = Fixture::new();
     let request_path = fixture.local.join("source-request.json");
     let mut request: Value = serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
-    let linked = fixture.local.join("linked-aws");
+    let linked = fixture.local.join("linked-mysqldump");
     #[cfg(unix)]
-    let result = symlink(fixture.local.join("aws"), &linked);
+    let result = symlink(fixture.local.join("mysqldump"), &linked);
     #[cfg(windows)]
-    let result = symlink_file(fixture.local.join("aws"), &linked);
+    let result = symlink_file(fixture.local.join("mysqldump"), &linked);
     if let Err(error) = result {
         if error.kind() == std::io::ErrorKind::PermissionDenied {
             return;
         }
         panic!("无法建立链接夹具：{error}");
     }
-    request["tools"]["aws"] = binding(&linked);
+    request["tools"]["mysqldump"] = binding(&linked);
     write_json(&request_path, &request);
     let manifest = fixture.local.join("manifest.json");
     let mut value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
@@ -255,52 +254,37 @@ fn export_preflight_rejects_linked_tool_paths() {
     assert!(error.contains("链接") || error.contains("工具"));
 }
 
-struct FakeAws {
+struct FakeS3 {
     wrong_body: bool,
 }
 
-impl Transport for FakeAws {
-    fn run(&self, spec: CommandSpec) -> Result<CommandOutput, Box<dyn std::error::Error>> {
-        let status = Command::new(if cfg!(windows) { "cmd" } else { "sh" })
-            .args(if cfg!(windows) {
-                ["/C", "exit 0"]
-            } else {
-                ["-c", "true"]
-            })
-            .status()?;
-        let operation = spec
-            .args
-            .iter()
-            .position(|value| value == "s3api")
-            .and_then(|index| spec.args.get(index + 1))
-            .ok_or("fixture aws operation missing")?
-            .clone();
-        if operation == "get-object" {
-            let path = spec
-                .args
-                .last()
-                .ok_or("fixture get-object destination missing")?;
-            let owner = spec
-                .args
-                .iter()
-                .any(|value| value.ends_with("/.ryframe-owner"));
-            let body = if owner {
+impl Transport for FakeS3 {
+    fn run(&self, _: CommandSpec) -> Result<CommandOutput, Box<dyn std::error::Error>> {
+        panic!("对象采集不得启动外部命令")
+    }
+    fn s3(
+        &self,
+        request: crate::recovery::clone::native::s3::Request,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        use crate::recovery::clone::native::s3::Operation;
+        let head = matches!(request.operation, Operation::Head { .. });
+        if let Operation::Get {
+            destination, key, ..
+        } = request.operation
+        {
+            let body = if key.ends_with("/.ryframe-owner") {
                 format!(
                     "ryframe-owner:v1:fixture-source:object-storage:{}",
-                    spec.args
-                        .iter()
-                        .position(|value| value == "--bucket")
-                        .and_then(|index| spec.args.get(index + 1))
-                        .ok_or("fixture bucket missing")?
+                    request.bucket
                 )
             } else if self.wrong_body {
                 "wrong".into()
             } else {
                 "data".into()
             };
-            fs::write(path, body)?;
+            fs::write(destination, body)?;
         }
-        let response = if operation == "head-object" {
+        let response = if head {
             json!({
                 "ContentType": "text/plain",
                 "Metadata": {},
@@ -321,11 +305,7 @@ impl Transport for FakeAws {
                 "LastModified": "2026-09-04T00:00:00+00:00",
             })
         };
-        Ok(CommandOutput {
-            status,
-            stdout: serde_json::to_vec(&response)?,
-            stderr: Vec::new(),
-        })
+        Ok(response)
     }
 }
 
@@ -361,7 +341,7 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
         ]
     });
     let (objects, index) =
-        object::capture(&context, &FakeAws { wrong_body: false }, &inventory, 1024).unwrap();
+        object::capture(&context, &FakeS3 { wrong_body: false }, &inventory, 1024).unwrap();
     assert_eq!(
         objects
             .iter()
@@ -411,7 +391,7 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
     assert!(
         object::capture(
             &failed_context,
-            &FakeAws { wrong_body: true },
+            &FakeS3 { wrong_body: true },
             &inventory,
             1024
         )
@@ -445,7 +425,7 @@ for key in sorted(set(calculated) | set(stored)):
         print("DIFF", key, repr(calculated.get(key)), repr(stored.get(key)))
 result = verify_capture(
     tools, "source", "uploads", request["source"]["scope_id"] + "/file.txt",
-    capture, expected={"bytes": 4, "sha256": "%s"}, max_bytes=1024,
+    capture, expected={"bytes": 4, "sha256": "%s"}, max_bytes=1024, transport="rust-s3-sigv4",
 )
 print(result["status"])
 "#;
@@ -529,4 +509,48 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     }
     result.sort_by(|left, right| left.0.cmp(&right.0));
     result
+}
+
+#[test]
+fn public_source_request_excludes_credentials_and_matches_python_projection() {
+    use crate::recovery::clone::native::export::input::public_request;
+    use std::io::Write;
+    use std::process::Stdio;
+    let request = json!({"id":"fixture","source":{"scope_id":"source-scope",
+        "s3":{"endpoint":"http://127.0.0.1:29200","region":"us-east-1",
+        "access_key":"private-fixture-access","secret_key":"private-fixture-secret"}},
+        "tools":{"mysql":{"path":"fixture"}}});
+    let original = request.clone();
+    let public = public_request(&request);
+    let encoded = serde_json::to_string(&public).unwrap();
+    assert!(!encoded.contains("private-fixture"));
+    assert!(!encoded.contains("access_key"));
+    assert!(!encoded.contains("secret_key"));
+    assert_eq!(
+        public["source"]["s3"],
+        json!({"endpoint":"http://127.0.0.1:29200","region":"us-east-1"})
+    );
+    assert_eq!(public["tools"], request["tools"]);
+    assert_eq!(request, original);
+    let coordinator = workspace::root_dir();
+    let executable = crate::process::resolved_executable(&coordinator, "python").unwrap();
+    let mut child = Command::new(executable).args(["-B", "-c",
+        "import json,sys;sys.path.insert(0,sys.argv[1]);from devex_clone_source_proof import public_request; print(json.dumps(public_request(json.load(sys.stdin))))"])
+        .arg(coordinator.join("tools/python")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(serde_json::to_string(&request).unwrap().as_bytes())
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        public
+    );
 }

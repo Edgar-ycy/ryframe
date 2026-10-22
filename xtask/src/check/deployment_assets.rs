@@ -4,6 +4,8 @@ use std::{path::Path, sync::OnceLock};
 
 use crate::{Result, process::PreservedFailure};
 
+#[path = "deployment_assets/compose.rs"]
+mod compose;
 #[path = "deployment_assets/image.rs"]
 mod image;
 #[path = "deployment_assets/rules.rs"]
@@ -25,15 +27,11 @@ fn regex(pattern: &'static str) -> &'static regex::Regex {
                 r"\bgenerator_handler\b",
                 r#"/api/v1/tools/gen(?:/|["'])"#,
                 r"\bryframe_generator\b",
-                r"\$\{([A-Z][A-Z0-9_]*):\?[^}]+}",
-                r"(?:PASSWORD|SECRET|TOKEN|PRIVATE_KEY)$",
-                r"(?m)^\s*APP_ENV:\s*prod\s*$",
                 r"(?m)^[ \t]*- alert:[ \t]*([^\s]+)[ \t]*$",
                 r#"(?m)^[ \t]*runbook_url:[ \t]*["']([^"']+)["'][ \t]*$"#,
                 r"(?m)^[ \t]*runbook:[ \t]*",
                 r"^\s*-?\s*uses:\s*([^\s#]+)",
                 r"^1\.\d+\.\d+$",
-                r"^[A-Z][A-Z0-9_]*$",
                 r"^[^\s@]+@[0-9a-f]{40}$",
                 r"^docker://[^\s@]+@sha256:[0-9a-f]{64}$",
                 r"^[^\s@]+@sha256:[0-9a-f]{64}$",

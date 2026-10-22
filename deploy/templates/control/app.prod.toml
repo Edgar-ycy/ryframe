@@ -1,0 +1,78 @@
+# 公开无效示例；部署前替换全部 .example.invalid 主机和示例凭据。
+# 示例字符串仅满足格式和强度校验，不是真实生产密钥。
+snowflake_worker_id = 3
+scope_id = "production-example"
+
+[bootstrap]
+# 公开无效初始化示例；实际部署必须替换，首次初始化完成后可删除此字段。
+admin_password = "INVALID-EXAMPLE-Admin-Replace!123456789"
+
+[app]
+name = "ryframe"
+host = "0.0.0.0"
+port = 8080
+locales_dir = "/opt/ryframe/locales"
+
+[database]
+migration_mode = "verify"
+sql_log_level = "off"
+
+[database.primary]
+host = "mysql.example.invalid"
+port = 3306
+database = "ryframe"
+username = "ryframe"
+password = "INVALID-EXAMPLE-Database-Replace!123"
+max_connections = 10
+min_connections = 1
+tls_mode = "verify_identity"
+tls_ca = "/opt/ryframe/tls/mysql-ca.pem"
+tls_client_cert = "/opt/ryframe/tls/mysql-client-cert.pem"
+tls_client_key = "/opt/ryframe/tls/mysql-client-key.pem"
+
+[auth]
+jwt_secret = "INVALID-EXAMPLE-JWT-Replace-Before-Deployment!123456789"
+access_token_expire = "1h"
+refresh_token_expire = "168h"
+
+[redis]
+mode = "required"
+host = "redis.example.invalid"
+port = 6380
+password = "INVALID-EXAMPLE-Redis-Replace!123"
+tls = true
+tls_ca = "/opt/ryframe/tls/redis-ca.pem"
+tls_client_cert = "/opt/ryframe/tls/redis-client-cert.pem"
+tls_client_key = "/opt/ryframe/tls/redis-client-key.pem"
+
+[logger]
+level = "info"
+format = "json"
+output = "stdout"
+retention_days = 7
+
+[cors]
+allow_origins = ["https://admin.example.invalid"]
+
+[proxy]
+trusted_cidrs = ["127.0.0.1/32", "::1/128"]
+
+[object_storage]
+backend = "s3"
+endpoint = "https://storage.example.invalid"
+access_key = "INVALID-EXAMPLE-Access-Replace!123"
+secret_key = "INVALID-EXAMPLE-Storage-Replace!123456789"
+region = "us-east-1"
+use_ssl = true
+
+[monitor]
+metrics_bearer_token = "INVALID-EXAMPLE-Metrics-Replace-Before-Deployment!123456789"
+
+[api_docs]
+enabled = false
+
+[jobs]
+mode = "external"
+health_host = "0.0.0.0"
+health_port = 9091
+worker_id = "ryframe-control"

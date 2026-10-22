@@ -4,24 +4,36 @@ use std::{
     process::{Command, Output},
 };
 
+#[path = "../src/bin/ryframe_migrate/bootstrap.rs"]
+mod bootstrap;
+#[path = "boot_contract/configuration_fixture.rs"]
+mod configuration_fixture;
+
 fn run(output: &Path, mode: &str, password: Option<&str>) -> Output {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap();
+    let configuration = directory();
+    let config = configuration.path().join("config");
+    configuration_fixture::write_configuration(&config, 8080, 9091, password);
     let mut command = Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"));
     command
         .current_dir(root)
+        .arg("--config-dir")
+        .arg(&config)
         .args(["control", "export-sql", "--output"])
         .arg(output)
         .arg(mode)
-        .env("APP_ENV", "not-a-runtime-environment")
-        .env_remove("RYFRAME_INIT_ADMIN_PASSWORD_FILE")
-        .env_remove("RYFRAME_INIT_ADMIN_PASSWORD");
-    if let Some(password) = password {
-        command.env("RYFRAME_INIT_ADMIN_PASSWORD", password);
-    }
+        .env(
+            "APP_ENV",
+            if mode == "--plan" {
+                "not-a-runtime-environment"
+            } else {
+                "test"
+            },
+        );
     command.output().unwrap()
 }
 
@@ -100,10 +112,8 @@ fn adoption(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"))
         .current_dir(root)
         .args(args)
+        .args(["--config-dir", "must-not-read-for-plan"])
         .env("APP_ENV", "must-not-read-for-plan")
-        .env("APP_CONFIG_DIR", "must-not-read-for-plan")
-        .env_remove("RYFRAME_INIT_ADMIN_PASSWORD")
-        .env_remove("RYFRAME_INIT_ADMIN_PASSWORD_FILE")
         .output()
         .unwrap()
 }
@@ -218,4 +228,113 @@ fn malformed_adoption_plan_fails_before_loading_runtime_configuration() {
     assert!(error.contains("格式错误"), "{error}");
     assert!(!error.contains("must-not-read-for-plan"));
     assert_eq!(fs::read_to_string(path).unwrap(), "{invalid");
+}
+
+#[test]
+fn configuration_arguments_fail_before_plan_or_runtime_access() {
+    for args in [
+        vec![
+            "control",
+            "adopt",
+            "--module",
+            "order",
+            "--plan",
+            "--config-dir",
+            "other",
+        ],
+        vec![
+            "control",
+            "adopt",
+            "--module",
+            "order",
+            "--plan",
+            "--config-dir",
+        ],
+        vec![
+            "control",
+            "adopt",
+            "--module",
+            "order",
+            "--plan",
+            "--config-dir=",
+        ],
+    ] {
+        let result = adoption(&args);
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("--config-dir"), "{error}");
+        assert!(!error.contains("APP_ENV"), "{error}");
+    }
+}
+
+#[test]
+fn invalid_configured_password_never_appears_in_export_diagnostics_or_output() {
+    let directory = directory();
+    let output = directory.path().join("init.sql");
+    let password = "private-but-invalid-password";
+    let result = run(&output, "--write", Some(password));
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("config.bootstrap.admin_password"), "{error}");
+    assert!(!error.contains(password));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains(password));
+    assert!(!output.exists());
+}
+
+#[test]
+fn ordinary_migration_modes_use_the_explicit_directory_before_any_connection() {
+    let directory = directory();
+    let missing = directory.path().join("selected-but-absent");
+    for scope in ["control", "tenant-data"] {
+        for operation in ["up", "verify", "status"] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"));
+            command
+                .args([scope, operation, "--config-dir"])
+                .arg(&missing)
+                .env("APP_ENV", "test");
+            if scope == "tenant-data" {
+                command.args(["--target", "shared-control"]);
+            }
+            let output = command.output().unwrap();
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains("selected-but-absent"), "{error}");
+            assert!(!error.contains("用法"), "{error}");
+            assert!(!missing.exists());
+        }
+    }
+}
+
+#[test]
+fn bootstrap_allows_existing_database_without_password_and_keeps_initial_user_hash() {
+    use ryframe_config::{AppConfig, Environment};
+
+    let directory = directory();
+    for password in [None, Some(""), Some("  ")] {
+        configuration_fixture::write_configuration(directory.path(), 8080, 9091, password);
+        let config = AppConfig::load(directory.path(), Environment::Test).unwrap();
+        assert!(bootstrap::load_hashes(&config).unwrap().is_none());
+    }
+    configuration_fixture::write_configuration(
+        directory.path(),
+        8080,
+        9091,
+        Some("InitialAdmin123!"),
+    );
+    let config = AppConfig::load(directory.path(), Environment::Test).unwrap();
+    let hashes = bootstrap::load_hashes(&config).unwrap().unwrap();
+    let sql = ryframe_db::migration::mysql_initialization_sql(&hashes);
+    let hashes = sql
+        .split('\'')
+        .filter(|value| value.starts_with("$argon2id$"))
+        .collect::<Vec<_>>();
+    assert!(
+        hashes
+            .iter()
+            .any(|hash| ryframe_auth::password::verify("InitialAdmin123!", hash).unwrap())
+    );
+    assert!(hashes.iter().any(|hash| {
+        ryframe_auth::password::verify(ryframe_auth::password::INITIAL_USER_PASSWORD, hash).unwrap()
+    }));
+    assert!(!sql.contains("InitialAdmin123!"));
 }

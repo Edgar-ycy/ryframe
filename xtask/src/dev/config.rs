@@ -1,5 +1,4 @@
 use std::{
-    env,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -21,27 +20,15 @@ impl DevPorts {
         Ok(Self { api, worker })
     }
 
-    pub(super) fn from_environment() -> Result<Self> {
+    pub(super) fn from_config(config: &ryframe_config::AppConfig) -> Result<Self> {
         let ports = Self {
-            api: environment_port("APP_APP_PORT", 8080)?,
-            worker: environment_port("APP_JOBS_HEALTH_PORT", 9091)?,
+            api: config.app.port,
+            worker: config.jobs.health_port,
         };
-        if ports.api == ports.worker {
-            return Err("APP_APP_PORT 与 APP_JOBS_HEALTH_PORT 不能使用同一端口".into());
+        if ports.api == 0 || ports.worker == 0 || ports.api == ports.worker {
+            return Err("app.port 与 jobs.health_port 必须是互异的非零端口；请修正配置文件".into());
         }
         Ok(ports)
-    }
-}
-
-fn environment_port(name: &str, default: u16) -> Result<u16> {
-    match env::var(name) {
-        Ok(value) => value
-            .parse::<u16>()
-            .ok()
-            .filter(|port| *port > 0)
-            .ok_or_else(|| format!("{name} 必须是 1~65535 的端口").into()),
-        Err(env::VarError::NotPresent) => Ok(default),
-        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} 不是有效 UTF-8").into()),
     }
 }
 
@@ -54,33 +41,25 @@ pub(super) struct WorkerIds {
 }
 
 impl WorkerIds {
-    pub(super) fn isolated(seed: u16) -> Self {
-        let base = seed % 1020;
-        Self {
-            api: base,
-            worker: base + 1,
-            probe_api: base + 2,
-            probe_worker: base + 3,
-        }
-    }
-
-    pub(super) fn from_environment() -> Result<Self> {
-        let base = match env::var("SNOWFLAKE_WORKER_ID") {
-            Ok(value) => value
-                .parse::<u16>()
-                .ok()
-                .filter(|value| *value <= 1023)
-                .ok_or("SNOWFLAKE_WORKER_ID 必须是 0~1023 的整数")?,
-            Err(env::VarError::NotPresent) => 1,
-            Err(env::VarError::NotUnicode(_)) => {
-                return Err("SNOWFLAKE_WORKER_ID 不是有效 UTF-8".into());
-            }
-        };
+    pub(super) fn from_config(
+        config: &ryframe_config::AppConfig,
+        previous: Option<&super::model::Binaries>,
+    ) -> Result<Self> {
+        let api = u16::try_from(config.snowflake_worker_id)
+            .ok()
+            .filter(|id| *id <= 1023)
+            .ok_or("snowflake_worker_id 必须为 0..=1023；请修正配置文件")?;
+        let worker = (api + 1) % 1024;
+        let mut reserved = super::inputs::reserved_ids(previous)?;
+        reserved.extend([api, worker]);
+        let mut available = (0..=1023).filter(|id| !reserved.contains(id));
+        let probe_api = available.next().ok_or("没有可用的 probe API 实例编号")?;
+        let probe_worker = available.next().ok_or("没有可用的 probe Worker 实例编号")?;
         Ok(Self {
-            api: base,
-            worker: (base + 1) % 1024,
-            probe_api: (base + 2) % 1024,
-            probe_worker: (base + 3) % 1024,
+            api,
+            worker,
+            probe_api,
+            probe_worker,
         })
     }
 }

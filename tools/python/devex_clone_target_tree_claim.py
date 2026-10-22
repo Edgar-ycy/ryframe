@@ -2,7 +2,6 @@
 from collections import Counter
 from pathlib import Path
 import hashlib
-import json
 import re
 
 from devex_clone import read_json
@@ -12,9 +11,12 @@ from devex_clone_run_state import binding
 from devex_clone_target_binding import target_files, validate_initialization_delta
 from devex_clone_target_prepared_files import validate_prepared_tree
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS
+from restore_reference_plan import BUCKETS, plan_hash
 
 COMMAND_FIELDS = {"command", "returncode", "error_type", "stdout", "stderr"}
+OBJECT_FIELDS = {"transport", "operation", "bucket", "returncode", "error_type",
+                 "response", "key", "destination", "remote_writes", "scope_id",
+                 "endpoint", "configuration_sha256", "prefix", "continuation"}
 _UUID = r"[a-f0-9]{32}"
 
 
@@ -208,6 +210,28 @@ def _receipt(output: Path, name: str) -> dict:
     return value
 
 
+def _object_receipt(output: Path, name: str, operation: str, request: dict) -> dict:
+    value = read_json(output / name)
+    exact(value, OBJECT_FIELDS)
+    scope = request["target"]["scope_id"]
+    configuration = request["target"]["s3"]
+    if (value["transport"] != "rust-s3-sigv4" or value["operation"] != operation
+            or operation not in {"head-bucket", "get-bucket-versioning", "list-objects-v2", "get-object"}
+            or not isinstance(value["bucket"], str) or value["bucket"] not in BUCKETS
+            or type(value["returncode"]) is not int
+            or value["returncode"] != 0 or value["error_type"] is not None
+            or not isinstance(value["response"], dict)
+            or value["scope_id"] != scope or value["endpoint"] != configuration["endpoint"]
+            or value["configuration_sha256"] != plan_hash(configuration)
+            or value["prefix"] != (scope + "/" if operation == "list-objects-v2" else None)
+            or value["continuation"] is not None
+            or type(value["remote_writes"]) is not int or value["remote_writes"] != 0):
+        raise ValueError("迁移续作原生对象只读收据无效")
+    if operation != "get-object" and (value["key"] is not None or value["destination"] is not None):
+        raise ValueError("迁移续作对象观察包含未知 key 或输出路径")
+    return value
+
+
 def _stage(additions: dict[str, dict], stage: str, count: int) -> list[str]:
     pattern = re.compile(re.escape(stage) + rf"-{_UUID}\.command\.json")
     found = sorted(path for path in additions if pattern.fullmatch(path))
@@ -310,25 +334,32 @@ def claim_runtime(output: Path, before: list[dict], prepared: list[dict], *,
 def _static_receipts(output: Path, additions: dict[str, dict], prepared: list[dict],
                      request: dict) -> set[str]:
     names = set()
-    for stage in ("bucket-readiness", "bucket-versioning", "scoped-list"):
+    operations = {"bucket-readiness": "head-bucket", "bucket-versioning": "get-bucket-versioning",
+                  "scoped-list": "list-objects-v2"}
+    for stage, operation in operations.items():
         paths = _stage(additions, stage, 5)
-        baseline = _baseline_stage(output, prepared, stage)
-        observed = [_receipt(output, path) for path in paths]
-        expected_commands = Counter(tuple(value["command"]) for value in baseline)
-        if (len(baseline) != 5
-                or Counter(tuple(value["command"]) for value in observed) != expected_commands):
+        pattern = re.compile(re.escape(stage) + rf"-{_UUID}\.command\.json")
+        baseline = [_object_receipt(output, item["path"], operation, request) for item in prepared
+                    if pattern.fullmatch(item["path"])]
+        observed = [_object_receipt(output, path, operation, request) for path in paths]
+        buckets = Counter({bucket: 1 for bucket in BUCKETS})
+        if (Counter(value["bucket"] for value in baseline) != buckets
+                or Counter(value["bucket"] for value in observed) != buckets):
             raise ValueError("迁移续作对象观察不是逐桶唯一完整轮次")
         if stage != "scoped-list":
-            if Counter((tuple(value["command"]), value["stdout"]) for value in observed) \
-                    != Counter((tuple(value["command"]), value["stdout"]) for value in baseline):
+            allowed = ({}, {"MFADelete": "Disabled"}) if stage == "bucket-versioning" else ({},)
+            if (any(value["response"] not in allowed for value in baseline + observed)
+                    or {value["bucket"]: value["response"] for value in observed}
+                    != {value["bucket"]: value["response"] for value in baseline}):
                 raise ValueError("迁移续作对象端点或版本观察变化")
         else:
             owner = request["target"]["scope_id"] + "/.ryframe-owner"
-            for value in observed:
-                page = json.loads(value["stdout"] or "{}")
-                keys = [item.get("Key") for item in page.get("Contents", [])]
-                if page.get("IsTruncated") is not False or keys != [owner]:
-                    raise ValueError("迁移续作对象前缀不是唯一 owner")
+            for receipts, contents in ((baseline, []), (observed, [{"Key": owner}])):
+                for value in receipts:
+                    page = value["response"]
+                    if (set(page) != {"IsTruncated", "Contents"}
+                            or page["IsTruncated"] is not False or page["Contents"] != contents):
+                        raise ValueError("迁移续作对象前缀不是唯一 owner")
         names.update(paths)
     return names
 
@@ -341,17 +372,20 @@ def _owner_files(output: Path, additions: dict[str, dict], request: dict) -> set
         raise ValueError("迁移续作对象 owner 文件数量无效")
     scope, seen = request["target"]["scope_id"], set()
     for path in receipt_paths:
-        receipt = _receipt(output, path)
-        command = receipt["command"]
-        if "s3api" not in command or "get-object" not in command or "--bucket" not in command:
-            raise ValueError("迁移续作对象 owner 命令无效")
-        bucket = command[command.index("--bucket") + 1]
-        body = Path(command[-1])
-        relative = body.relative_to(output).as_posix()
-        if (bucket in seen or relative not in body_paths or "--key" not in command
-                or command[command.index("--key") + 1] != f"{scope}/.ryframe-owner"):
+        receipt = _object_receipt(output, path, "get-object", request)
+        bucket, relative = receipt["bucket"], receipt["destination"]
+        if (bucket in seen or not isinstance(relative, str) or relative not in body_paths
+                or not re.fullmatch(rf"owner-{re.escape(bucket)}-{_UUID}\.bin", relative)
+                or receipt["key"] != f"{scope}/.ryframe-owner"):
             raise ValueError("迁移续作对象 owner 命令与目标文件不一致")
+        body = output / relative
         expected = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
+        metadata = receipt["response"]
+        if (type(metadata.get("ContentLength")) is not int or metadata["ContentLength"] != len(expected)
+                or any(not isinstance(metadata.get(field), str) or not metadata[field]
+                       for field in ("ETag", "LastModified", "ContentType"))
+                or not isinstance(metadata.get("Metadata"), dict)):
+            raise ValueError("迁移续作对象 owner 响应元数据无效")
         if file_digest(body) != {"bytes": len(expected),
                                  "sha256": hashlib.sha256(expected).hexdigest()}:
             raise ValueError("迁移续作对象 owner 字节无效")

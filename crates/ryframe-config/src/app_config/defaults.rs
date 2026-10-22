@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{AppSettings, Environment};
 
 impl Default for AppSettings {
@@ -6,8 +8,13 @@ impl Default for AppSettings {
             name: "ryframe".into(),
             host: "0.0.0.0".into(),
             port: 8080,
+            locales_dir: default_locales_dir(),
         }
     }
+}
+
+pub(super) fn default_locales_dir() -> PathBuf {
+    PathBuf::from("locales")
 }
 
 pub(super) fn apply_job_mode_default(table: &mut toml::Table, environment: Environment) {

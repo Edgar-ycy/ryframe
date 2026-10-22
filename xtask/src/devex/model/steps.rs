@@ -108,7 +108,17 @@ pub(super) const RUST_CHECK_MIGRATE: &[StepDefinition] = &[StepDefinition {
 pub(super) const CARGO_DEV_SAVE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
-    args: &["xtask", "dev", "--measure-once"],
+    args: &[
+        "xtask",
+        "dev",
+        "--measure-once",
+        "--workspace-root",
+        "{backend}",
+        "--case",
+        "{variant}",
+        "--output",
+        "{target}/cargo-dev-save-result.json",
+    ],
 }];
 pub(super) const RESOURCE_GENERATOR_ALL: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,

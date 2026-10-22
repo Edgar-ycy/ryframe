@@ -12,6 +12,7 @@ from urllib.parse import unquote_to_bytes, urlsplit
 
 from restore_frontend_build import FRONTEND_RECEIPT, frontend_snapshots
 from restore_runtime_evidence import directory, read_json_document, validate_frontend_receipt
+from restore_frontend_configuration import verify_frontend_inputs
 
 
 def _decode_path(target: str) -> str:
@@ -44,6 +45,7 @@ def load_site(frontend: Path, receipt_path: Path) -> dict[str, bytes]:
         raise ValueError("前端站点只接受来源目录内的标准构建收据")
     document = read_json_document(expected_receipt)
     receipt = validate_frontend_receipt(document.value)
+    inputs = verify_frontend_inputs(root, receipt["build"])
     files, snapshots = frontend_snapshots(root)
     if receipt["files"] != files or "index.html" not in {item["path"] for item in files}:
         raise ValueError("前端站点文件与构建收据不一致或缺少入口")
@@ -55,6 +57,9 @@ def load_site(frontend: Path, receipt_path: Path) -> dict[str, bytes]:
         snapshot.assert_unchanged()
         content[item["path"]] = data
     document.assert_unchanged()
+    inputs.assert_unchanged()
+    if frontend_snapshots(root)[0] != files:
+        raise ValueError("加载期间前端完整 dist 文件集合或内容发生漂移")
     return content
 
 

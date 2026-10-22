@@ -1,5 +1,4 @@
 use std::{
-    env,
     ffi::OsString,
     fs::{self, File},
     io::{Read, Write},
@@ -17,10 +16,11 @@ use rustls::{
 };
 use tempfile::tempdir;
 
+use crate::ci::integration_configuration::test_fixture as configuration_fixture;
 use crate::ci::tls::{
     FixtureServers, ProcessOutcome, TESTS, check_redis, collect_test_failures,
     generate_certificates_with_program, redis_endpoint, reserve_output_dir, run_redirected,
-    test_command, test_environment,
+    test_command,
 };
 
 struct TestFixture {
@@ -126,14 +126,111 @@ fn redis_probe_rejects_unexpected_protocol_and_remote_hosts() {
         host: "127.0.0.1".to_owned(),
         port: address.port(),
     };
-    let error = check_redis(&endpoint).expect_err("错误 Redis 响应必须失败");
+    let error =
+        check_redis(&endpoint, "", Duration::from_secs(2)).expect_err("错误 Redis 响应必须失败");
     assert!(error.to_string().contains("未返回预期"));
     server.join().expect("等待错误协议上游退出");
 
     let error = redis_endpoint("redis.shared.example", "6379").expect_err("远程 Redis 必须拒绝");
     assert!(error.to_string().contains("只允许连接回环 Redis"));
     let error = redis_endpoint("127.0.0.1", "70000").expect_err("越界端口必须拒绝");
-    assert!(error.to_string().contains("RYFRAME_REDIS_PORT"));
+    assert!(error.to_string().contains("redis.port"));
+}
+
+#[test]
+fn redis_probe_authenticates_and_reads_fragmented_ok_and_pong_on_one_connection() {
+    const PASSWORD: &str = "认证-password with spaces\r\n-secret";
+    let (endpoint, server) = authenticated_upstream(PASSWORD, true);
+    let result = check_redis(&endpoint, PASSWORD, Duration::from_secs(2));
+    server.join().expect("等待分片认证上游退出");
+    assert_eq!(
+        result.expect("完整AUTH和PING都应通过").port(),
+        endpoint.port
+    );
+}
+
+#[test]
+fn redis_probe_rejects_auth_and_redacts_server_echoed_password() {
+    const PASSWORD: &str = "auth-rejection-secret-sentinel";
+    let (endpoint, server) = authenticated_upstream(PASSWORD, false);
+    let result = check_redis(&endpoint, PASSWORD, Duration::from_secs(2));
+    server.join().expect("等待拒绝认证上游退出");
+    let message = result
+        .expect_err("认证拒绝不得继续PING或预检成功")
+        .to_string();
+    assert!(message.contains("AUTH") && message.contains(&endpoint.port.to_string()));
+    assert!(message.contains("IOkind=") && message.contains("请核对"));
+    assert!(!message.contains(PASSWORD) && !message.contains("WRONGPASS"));
+}
+
+fn authenticated_upstream(
+    password: &'static str,
+    accepts: bool,
+) -> (crate::ci::tls::RedisEndpoint, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("绑定独占认证上游");
+    let address = listener.local_addr().expect("读取独占认证端口");
+    listener.set_nonblocking(true).expect("设置有界accept");
+    let task = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("接受认证探测失败：IOkind={:?}", error.kind()),
+            }
+        };
+        socket.set_nonblocking(false).expect("设置认证上游阻塞读写");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("设置上游读取超时");
+        socket
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .expect("设置上游写入超时");
+        let expected = format!("*2\r\n$4\r\nAUTH\r\n${}\r\n{password}\r\n", password.len());
+        read_probe_request(&mut socket, expected.as_bytes());
+        if accepts {
+            write_probe_fragments(&mut socket, &[b"+O", b"K\r", b"\n"]);
+            read_probe_request(&mut socket, b"*1\r\n$4\r\nPING\r\n");
+            write_probe_fragments(&mut socket, &[b"+PO", b"NG\r", b"\n"]);
+        } else {
+            let response = format!("-WRONGPASS echoed={password}\r\n");
+            socket
+                .write_all(response.as_bytes())
+                .expect("发送含秘密的拒绝响应");
+            socket.flush().expect("刷新拒绝响应");
+            let mut extra = [0_u8; 1];
+            assert!(
+                matches!(socket.read(&mut extra), Ok(0)),
+                "AUTH失败后必须关闭连接，不发送PING"
+            );
+        }
+    });
+    (
+        crate::ci::tls::RedisEndpoint {
+            host: "127.0.0.1".into(),
+            port: address.port(),
+        },
+        task,
+    )
+}
+
+fn read_probe_request(socket: &mut TcpStream, expected: &[u8]) {
+    let mut received = vec![0_u8; expected.len()];
+    socket.read_exact(&mut received).expect("读取完整探测请求");
+    assert!(received == expected, "请求RESP字节不匹配；内容已隐藏");
+}
+
+fn write_probe_fragments(socket: &mut TcpStream, fragments: &[&[u8]]) {
+    for fragment in fragments {
+        socket.write_all(fragment).expect("写入分片响应");
+        socket.flush().expect("刷新分片响应");
+        thread::sleep(Duration::from_millis(15));
+    }
 }
 
 #[test]
@@ -148,7 +245,7 @@ fn missing_openssl_reports_an_actionable_error() {
     .err()
     .expect("缺失 OpenSSL 必须失败");
     let message = error.to_string();
-    assert!(message.contains("RYFRAME_OPENSSL"));
+    assert!(message.contains("openssl_program"));
     assert!(message.contains("Git for Windows"));
 }
 
@@ -191,43 +288,34 @@ fn gate_contract_uses_exact_tests_and_preserves_all_failures() {
 }
 
 #[test]
-fn fixture_environment_uses_dynamic_ports_and_explicit_test_ca() {
-    let environment = test_environment(
-        Path::new("fixture-ca.pem"),
-        41001,
-        41002,
-        Some("15".to_owned()),
-    );
-    let value = |name: &str| {
-        environment
-            .values
-            .iter()
-            .find_map(|(key, value)| (key == name).then_some(value.as_str()))
-            .expect("缺少 fixture 环境变量")
+fn fixture_configuration_uses_dynamic_ports_and_explicit_test_ca() {
+    use crate::ci::{
+        integration_configuration::capture::Captured, tls::configuration::selected_for_role,
     };
-    assert_eq!(value("RYFRAME_REDIS_HOST"), "127.0.0.1");
-    assert_eq!(value("RYFRAME_REDIS_PORT"), "41001");
-    assert_eq!(value("RYFRAME_REDIS_DATABASE"), "15");
-    assert_eq!(value("SSL_CERT_FILE"), "fixture-ca.pem");
+    let directory = configuration_fixture::fixture();
+    let source = configuration_fixture::source(directory.path(), true);
+    let captured = Captured::load(&source, false).unwrap();
+    let ca = directory.path().join("fixture-ca.pem");
+    fs::write(&ca, "offline-ca").unwrap();
+    let redis = selected_for_role(&captured, "redis-tls", &ca, 41001, 41002).unwrap();
+    assert_eq!(redis["redis"]["host"].as_str(), Some("127.0.0.1"));
+    assert_eq!(redis["redis"]["port"].as_integer(), Some(41001));
+    assert_eq!(redis["redis"]["tls_ca"].as_str(), ca.to_str());
+    assert_eq!(redis["redis"]["tls"].as_bool(), Some(true));
+    let configured = captured.app.redis.as_ref().unwrap();
+    assert!(configured.password == configuration_fixture::SECRET);
+    assert_eq!(configured.database, 15);
+    let s3 = selected_for_role(&captured, "s3-https", &ca, 41001, 41002).unwrap();
     assert_eq!(
-        value("RYFRAME_S3_HTTPS_ENDPOINT"),
-        "https://127.0.0.1:41002"
+        s3["object_storage"]["endpoint"].as_str(),
+        Some("https://127.0.0.1:41002")
     );
+    let otlp = selected_for_role(&captured, "otlp-https", &ca, 41001, 41002).unwrap();
     assert_eq!(
-        value("RYFRAME_OTLP_HTTPS_ENDPOINT"),
-        "https://127.0.0.1:41002/v1/traces"
+        otlp["telemetry"]["endpoint"].as_str(),
+        Some("https://127.0.0.1:41002/v1/traces")
     );
-    assert!(
-        environment
-            .removed
-            .contains(&"RYFRAME_REDIS_TLS_CLIENT_CERT")
-    );
-    assert!(
-        environment
-            .removed
-            .contains(&"RYFRAME_REDIS_TLS_CLIENT_KEY")
-    );
-    assert!(environment.removed.contains(&"SSL_CERT_DIR"));
+    captured.verify().unwrap();
 }
 
 #[test]
@@ -244,9 +332,8 @@ fn artifact_directory_is_never_overwritten() {
 }
 
 fn openssl_program() -> OsString {
-    env::var_os("RYFRAME_OPENSSL")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| OsString::from("openssl"))
+    // 测试显式选择程序；PATH仅承担操作系统可执行文件查找职责。
+    OsString::from("openssl")
 }
 
 fn pong_upstream() -> (SocketAddr, thread::JoinHandle<()>) {

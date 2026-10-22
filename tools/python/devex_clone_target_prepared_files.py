@@ -1,5 +1,4 @@
 """fresh prepare 快照的精确只读产物集合与观察语义。"""
-import json
 from pathlib import Path
 import re
 
@@ -13,6 +12,9 @@ from restore_reference_plan import BUCKETS, plan_hash
 
 _UUID = r"[a-f0-9]{32}"
 _COMMAND_FIELDS = {"command", "returncode", "error_type", "stdout", "stderr"}
+_NATIVE_S3_FIELDS = {"transport", "operation", "bucket", "returncode", "error_type",
+                     "response", "key", "destination", "remote_writes", "scope_id",
+                     "endpoint", "configuration_sha256", "prefix", "continuation"}
 _PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
                    "generation", "absence", "fresh_target_initialized", "controlled_generation_only",
                    "external_writers_discovered", "create_intents"}
@@ -48,6 +50,24 @@ def _receipt(target: Path, name: str) -> dict:
             or value["stderr"] != ""):
         raise ValueError("fresh prepare 只读观察命令收据无效")
     value["stdout"] = value["stdout"].replace("\r\n", "\n")
+    return value
+
+
+def _native_s3_receipt(target: Path, name: str, operation: str, request: dict) -> dict:
+    value = read_json(target / name)
+    exact(value, _NATIVE_S3_FIELDS)
+    scope = request["target"]["scope_id"]
+    configuration = request["target"]["s3"]
+    if (value["transport"] != "rust-s3-sigv4" or value["operation"] != operation
+            or value["bucket"] not in BUCKETS or value["returncode"] != 0
+            or value["error_type"] is not None or not isinstance(value["response"], dict)
+            or value["key"] is not None or value["destination"] is not None
+            or value["scope_id"] != scope or value["endpoint"] != configuration["endpoint"]
+            or value["configuration_sha256"] != plan_hash(configuration)
+            or value["prefix"] != (scope + "/" if operation == "list-objects-v2" else None)
+            or value["continuation"] is not None
+            or value["remote_writes"] != 0):
+        raise ValueError("fresh prepare 原生对象只读观察收据无效")
     return value
 
 
@@ -96,26 +116,20 @@ def _validate_redis_observations(receipts: list[dict], expected_pid: int) -> Non
 
 def _objects(target: Path, names: set[str], request: dict) -> set[str]:
     consumed = set()
-    scope = request["target"]["scope_id"] + "/"
     operations = {"bucket-readiness": "head-bucket",
                   "bucket-versioning": "get-bucket-versioning",
                   "scoped-list": "list-objects-v2"}
     for stage, operation in operations.items():
         paths = _stage(names, stage, len(BUCKETS))
-        receipts = [_receipt(target, name) for name in paths]
+        receipts = [_native_s3_receipt(target, name, operation, request) for name in paths]
         buckets = set()
         for receipt in receipts:
-            command = receipt["command"]
-            if ("s3api" not in command or "--bucket" not in command
-                    or command[command.index("s3api") + 1] != operation):
-                raise ValueError("fresh prepare 对象观察命令无效")
-            buckets.add(command[command.index("--bucket") + 1])
-            body = json.loads(receipt["stdout"] or "{}")
+            buckets.add(receipt["bucket"])
+            body = receipt["response"]
             if stage == "bucket-versioning" and body.get("Status") is not None:
                 raise ValueError("fresh prepare 对象桶启用了版本")
             if stage == "scoped-list" and (body.get("IsTruncated") is not False
-                    or body.get("Contents", []) != []
-                    or command[command.index("--prefix") + 1] != scope):
+                    or body.get("Contents", []) != []):
                 raise ValueError("fresh prepare 对象前缀并非明确空范围")
         if buckets != set(BUCKETS):
             raise ValueError("fresh prepare 对象观察未完整覆盖五桶")

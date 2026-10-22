@@ -9,6 +9,10 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::mysql;
 
+#[path = "cli/configuration.rs"]
+mod configuration;
+use configuration::{CapturedConfiguration, PreparedConfiguration};
+
 #[path = "cli/frontend.rs"]
 mod frontend;
 #[path = "../../src/command/staging/snapshot.rs"]
@@ -17,6 +21,7 @@ mod snapshot;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_imports_two_tables_from_business_subdirectory_without_database_writes() {
     mysql::run_mysql_test("cliimport", |database| async move {
+        let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
         mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "CREATE TABLE unsupported_table (id BIGINT NOT NULL PRIMARY KEY, payload BIT(8) NOT NULL) ENGINE=InnoDB").await?;
@@ -31,14 +36,16 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         let root = directory.path().join("backend");
         original.copy_to(&root)?;
         GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
+        let configuration = captured.prepare(&root, &schema)?;
+        verify_physical_binding(&database, &configuration).await?;
         let before = snapshot::SourceSnapshot::capture(&root)?;
-        let output = import(&root, &schema, "table1,unsupported_table", true)?;
+        let output = import(&root, &configuration, "table1,unsupported_table", true)?;
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("BIT(8)") || String::from_utf8_lossy(&output.stderr).contains("bit(8)"));
         before.verify()?;
-        require_success(import(&root, &schema, "table1,table2", false)?)?;
+        require_success(import(&root, &configuration, "table1,table2", false)?)?;
         before.verify()?;
-        require_success(import(&root, &schema, "table1,table2", true)?)?;
+        require_success(import(&root, &configuration, "table1,table2", true)?)?;
         let business = root.join("crates/cli-import-business");
         for resource in ["table1", "table2"] {
             assert!(business.join(format!("src/resources/{resource}.rs")).is_file());
@@ -50,33 +57,48 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         let installed = snapshot::SourceSnapshot::capture(&root)?;
         let delta = before.changes(&root)?;
         assert!(delta.iter().any(|change| change.relative == Path::new("crates/cli-import-business/src/resources/table1.rs") && change.before.is_none() && change.after.is_some()));
-        require_success(import(&root, &schema, "table1,table2", true)?)?;
+        require_success(import(&root, &configuration, "table1,table2", true)?)?;
         installed.verify()?;
         if let Some(frontend) = frontend::Candidate::from_environment()? {
             frontend.configure(&root)?;
-            let mut command = import_command(&root, &schema, "table1,table2");
+            let mut command = import_command(&root, &configuration, "table1,table2")?;
             command.args(["--sync-frontend", "--write"]);
-            require_success(command.output().map_err(message)?)?;
+            let output = command.output().map_err(message)?;
+            configuration.verify()?;
+            require_success(output)?;
             frontend.verify(&root)?;
             assert!(installed.changes(&root)?.iter().all(|change| change.relative == Path::new("openapi/openapi.json")));
         }
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM table1 WHERE name='existing' AND CAST(price AS CHAR)='90071992547409.123456'", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE()", 3).await?;
+        configuration.verify()?;
         original.verify()?;
         Ok(())
     }).await;
 }
 
-fn import(root: &Path, schema: &str, tables: &str, write: bool) -> Result<Output, String> {
-    let mut command = import_command(root, schema, tables);
+fn import(
+    root: &Path,
+    configuration: &PreparedConfiguration,
+    tables: &str,
+    write: bool,
+) -> Result<Output, String> {
+    let mut command = import_command(root, configuration, tables)?;
     command.arg("--no-sync-frontend");
     if write {
         command.arg("--write");
     }
-    command.output().map_err(message)
+    let output = command.output().map_err(message)?;
+    configuration.verify()?;
+    Ok(output)
 }
 
-fn import_command(root: &Path, schema: &str, tables: &str) -> Command {
+fn import_command(
+    root: &Path,
+    configuration: &PreparedConfiguration,
+    tables: &str,
+) -> Result<Command, String> {
+    let directory = configuration.directory()?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_ryframe-generate"));
     command
         .args([
@@ -90,27 +112,55 @@ fn import_command(root: &Path, schema: &str, tables: &str) -> Command {
             "--tables",
             tables,
         ])
+        .arg("--config-dir")
+        .arg(directory)
         .current_dir(root.join("crates/cli-import-business/src"))
-        .env_remove("APP_CONFIG_DIR")
-        .env("APP_ENV", "dev")
-        .env("APP_DATABASE_NAME", schema)
-        .env("APP_DATABASE_TLS_MODE", "required");
+        .env("APP_ENV", "test");
     command.env(
         "CARGO_TARGET_DIR",
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/mysql-schema-cli"),
     );
-    for (suffix, default) in [
-        ("HOST", "127.0.0.1"),
-        ("PORT", "3306"),
-        ("USERNAME", "root"),
-        ("PASSWORD", ""),
-    ] {
-        command.env(
-            format!("APP_DATABASE_{suffix}"),
-            std::env::var(format!("RYFRAME_MYSQL_{suffix}")).unwrap_or_else(|_| default.into()),
-        );
+    Ok(command)
+}
+
+fn shared_configuration_directory() -> Result<std::path::PathBuf, String> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|root| root.join("architecture/crate-boundaries.toml").is_file())
+        .map(|root| root.join(".local-tests/mysql/config"))
+        .ok_or_else(|| "无法定位共享 MySQL 配置的后端根目录".into())
+}
+
+async fn verify_physical_binding(
+    database: &sea_orm::DatabaseConnection,
+    configuration: &PreparedConfiguration,
+) -> Result<(), String> {
+    let expected = ryframe_db::connection::physical_identity(database)
+        .await
+        .map_err(|_| "无法核对外层 MySQL fixture 物理身份".to_owned())?;
+    let configuration_directory = configuration.directory()?;
+    let app = ryframe_config::AppConfig::load(
+        configuration_directory,
+        ryframe_config::Environment::Test,
+    )
+    .map_err(|error| format!("阶段=校验捕获的私有配置；路径={}；原因={}；处理=按文件与字段提示修正共享配置并核对fixture绑定；已创建目标保留，不自动重放", configuration_directory.display(), error.message()))?;
+    let candidate = ryframe_db::connection::connect(&app.database.primary)
+        .await
+        .map_err(|_| "捕获的 MySQL 配置无法连接 fixture schema；未执行导入".to_owned())?;
+    let observed = ryframe_db::connection::physical_identity(&candidate)
+        .await
+        .map_err(|_| "无法核对捕获配置的 MySQL 物理身份".to_owned());
+    let closed = candidate
+        .close()
+        .await
+        .map_err(|_| "关闭 MySQL 物理身份核验连接失败".to_owned());
+    let observed = observed?;
+    closed?;
+    configuration.verify()?;
+    if observed != expected {
+        return Err("捕获配置与外层 MySQL fixture 的物理实例或 schema 不一致；未执行导入".into());
     }
-    command
+    Ok(())
 }
 
 fn require_success(output: Output) -> Result<(), String> {

@@ -1,6 +1,6 @@
 //! 外部备份登记、完整数据清单与隔离恢复演练维护入口。
 
-use ryframe_config::{AppConfig, Environment};
+use ryframe_config::{AppConfig, ConfigurationArgs, Environment};
 use ryframe_kernel::AppError;
 
 #[path = "ryframe_tenant_data/args.rs"]
@@ -19,7 +19,8 @@ mod proof_file;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ryframe::crypto::install_crypto_provider()?;
-    let mut command = args::parse(std::env::args().skip(1)).map_err(AppError::Validation)?;
+    let arguments = ConfigurationArgs::parse(std::env::args().skip(1).collect())?;
+    let mut command = args::parse(arguments.arguments).map_err(AppError::Validation)?;
     if command == args::Command::Help {
         println!("{}", args::USAGE);
         return Ok(());
@@ -31,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let environment = Environment::from_env()?;
-    let config = AppConfig::load_from_env(environment)?;
+    let config = AppConfig::load(&arguments.directory, environment)?;
     ryframe_kernel::snowflake::initialize(config.snowflake_worker_id)?;
     ryframe_db::install_id_generator(|| {
         ryframe_kernel::snowflake::try_next_snowflake_id().map_err(AppError::from)

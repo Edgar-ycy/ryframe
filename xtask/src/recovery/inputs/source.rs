@@ -55,7 +55,7 @@ pub(crate) fn validate(backend: &Path, request: &Value) -> Result<()> {
     integer(request.get("max_object_bytes").unwrap(), "对象大小上限")?;
     let tools = exact(
         request.get("tools").unwrap(),
-        &["mysql", "mysqldump", "aws", "node"],
+        &["mysql", "mysqldump", "node"],
         "源导出工具",
     )?;
     for tool in tools.values() {
@@ -111,7 +111,7 @@ fn validate_source(backend: &Path, value: &Value) -> Result<()> {
     endpoint(source.get("api_url").unwrap(), "源 API 地址", None)?;
     let s3 = exact(
         source.get("s3").unwrap(),
-        &["endpoint", "region", "access_key_env", "secret_key_env"],
+        &["endpoint", "region", "access_key", "secret_key"],
         "源对象存储",
     )?;
     endpoint(s3.get("endpoint").unwrap(), "源对象存储端点", None)?;
@@ -119,10 +119,10 @@ fn validate_source(backend: &Path, value: &Value) -> Result<()> {
     {
         return Err("源对象 region 无效".into());
     }
-    let environment_name = Regex::new(r"^[A-Z][A-Z0-9_]+$")?;
-    for field in ["access_key_env", "secret_key_env"] {
-        if !environment_name.is_match(text(s3.get(field).unwrap(), "源凭据环境变量")?) {
-            return Err("源对象认证必须绑定显式环境变量名".into());
+    for field in ["access_key", "secret_key"] {
+        let credential = text(s3.get(field).unwrap(), "源对象凭据")?;
+        if credential.is_empty() || credential.chars().any(char::is_control) {
+            return Err("源对象凭据必须在绑定文件中直接提供且不能为空".into());
         }
     }
     let databases = array(source.get("databases").unwrap(), "源数据库")?;

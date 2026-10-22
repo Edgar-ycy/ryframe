@@ -33,14 +33,16 @@ mod command;
 mod config;
 #[path = "dev/health.rs"]
 mod health;
+#[path = "dev/inputs.rs"]
+mod inputs;
 #[path = "dev/measure.rs"]
 mod measure;
 #[path = "dev/model.rs"]
 mod model;
 #[path = "dev/orchestrator.rs"]
 mod orchestrator;
-#[path = "dev/runtime_secrets.rs"]
-mod runtime_secrets;
+#[path = "dev/runtime_config.rs"]
+mod runtime_config;
 #[path = "dev/services.rs"]
 mod services;
 #[path = "dev/snapshot.rs"]
@@ -74,10 +76,22 @@ pub(crate) use model::{
     MigrationValidation, ProbeResult, classify_change,
 };
 #[allow(unused_imports)]
-pub(crate) use runtime_secrets::{
-    RuntimeSecrets, runtime_config_matches_snapshot, snapshot_config_tree,
-};
+pub(crate) use runtime_config::{RuntimeConfig, RuntimeProfile};
 #[allow(unused_imports)]
 pub(crate) use services::switch_services_with_rollback;
 #[allow(unused_imports)]
-pub(crate) use snapshot::DevSession;
+pub(crate) use snapshot::{DevSession, recovery_seed};
+
+pub(crate) fn execute(options: &crate::cli::DevOptions) -> crate::Result<()> {
+    if options.plan {
+        println!(
+            "dev 计划：显式工作区与文件配置，完整私有代次，API 就绪后启动 Worker；计划不读取配置、不构建、不写入。"
+        );
+        return Ok(());
+    }
+    if options.measure_once {
+        measure::run(options)
+    } else {
+        orchestrator::run(options)
+    }
+}

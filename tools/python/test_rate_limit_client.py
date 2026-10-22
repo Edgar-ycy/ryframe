@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 import subprocess
 import sys
@@ -20,7 +21,19 @@ class RateLimitClientTests(unittest.TestCase):
         coordinator.start()
         self.addCleanup(coordinator.stop)
 
-    def call(self, response, *, code=0, operation="load-table"):
+    def invoke(self, operation, environment, *, config_dir=None):
+        if operation == "login-budget":
+            return rate_limit_client.login_budget_environment(
+                ROOT, environment, ROOT / ".local-tests/budget.json", config_dir=config_dir
+            )
+        function = {
+            "load-table": rate_limit_client.load_app_table,
+            "settings": rate_limit_client.rate_limit_settings,
+            "authority": rate_limit_client.rate_limit_authority,
+        }[operation]
+        return function(ROOT, environment, config_dir=config_dir)
+
+    def call(self, response, *, code=0, operation="load-table", config_dir=None):
         completed = subprocess.CompletedProcess(
             args=[], returncode=code, stdout=json.dumps(response).encode("utf-8"), stderr=b""
         )
@@ -37,26 +50,16 @@ class RateLimitClientTests(unittest.TestCase):
                 rate_limit_client.subprocess, "run", return_value=completed
             ) as run,
         ):
-            if operation == "load-table":
-                value = rate_limit_client.load_app_table(
-                    ROOT, {"APP_ENV": "test", "APP_CONFIG_DIR": "fixture"}
-                )
-            elif operation == "settings":
-                value = rate_limit_client.rate_limit_settings(ROOT, {"APP_ENV": "test"})
-            elif operation == "authority":
-                value = rate_limit_client.rate_limit_authority(
-                    ROOT, {"APP_ENV": "test"}
-                )
-            else:
-                value = rate_limit_client.login_budget_environment(
-                    ROOT,
-                    {"APP_ENV": "test"},
-                    ROOT / ".local-tests/budget.json",
-                )
+            value = self.invoke(
+                operation, {"APP_ENV": "test", "APP_CONFIG_DIR": "ignored"},
+                config_dir=config_dir,
+            )
         return value, run.call_args
 
     def test_success_uses_the_cargo_hidden_entry_without_a_shell(self):
-        value, call = self.call({"ok": True, "result": {"app": {"host": "127.0.0.1"}}})
+        value, call = self.call(
+            {"ok": True, "result": {"app": {"host": "127.0.0.1"}}}, config_dir="fixture"
+        )
         self.assertEqual(value, {"app": {"host": "127.0.0.1"}})
         argv = call.args[0]
         self.assertEqual(
@@ -91,7 +94,8 @@ class RateLimitClientTests(unittest.TestCase):
             request,
             {
                 "backend": str(ROOT),
-                "environment": {"APP_ENV": "test", "APP_CONFIG_DIR": "fixture"},
+                "app_env": "test",
+                "config_dir": "fixture",
             },
         )
 
@@ -115,7 +119,7 @@ class RateLimitClientTests(unittest.TestCase):
                 & set(run.call_args.kwargs["env"])
             )
 
-    def test_login_budget_keeps_environment_nested_and_returns_exact_fields(self):
+    def test_login_budget_uses_file_request_and_returns_exact_fields(self):
         response = {
             "ok": True,
             "result": {
@@ -129,14 +133,14 @@ class RateLimitClientTests(unittest.TestCase):
         value, call = self.call(response, operation="login-budget")
         self.assertEqual(set(value), set(response["result"]))
         body = json.loads(call.kwargs["input"].decode("utf-8"))
-        self.assertEqual(body["environment"], {"APP_ENV": "test"})
+        self.assertEqual(body["app_env"], "test")
         self.assertEqual(body["state_path"], str(ROOT / ".local-tests/budget.json"))
-        self.assertEqual(set(body), {"backend", "environment", "state_path"})
+        self.assertEqual(set(body), {"backend", "app_env", "state_path"})
 
     def test_error_codes_map_to_stable_python_exceptions_without_private_values(self):
         missing = {
             "ok": False,
-            "error": {"code": "config_file_missing", "message": "配置目录中缺少 app.toml"},
+            "error": {"code": "config_file_missing", "message": "配置目录中缺少 app.test.toml"},
         }
         with self.assertRaises(FileNotFoundError):
             self.call(missing, code=1)
@@ -154,40 +158,168 @@ class RateLimitClientTests(unittest.TestCase):
 
     def test_invalid_or_inconsistent_protocol_fails_closed(self):
         for response, code in [
+            ([], 0),
+            ({"ok": 1, "result": {}}, 0),
             ({"ok": True, "result": {}, "extra": True}, 0),
             ({"ok": True, "result": {}}, 1),
+            ({"ok": True, "result": []}, 0),
             ({"ok": False, "error": {"code": "x"}}, 1),
+            ({"ok": False, "error": {"code": 1, "message": "safe"}}, 1),
+            ({"ok": False, "error": {"code": "x", "message": 1}}, 1),
+            ({"ok": False, "error": {"code": "x", "message": "safe", "extra": 1}}, 1),
             ({"ok": False, "result": {}}, 1),
         ]:
             with self.subTest(response=response, code=code), self.assertRaises(
                 (RuntimeError, ValueError)
             ):
                 self.call(response, code=code)
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=b"not-json", stderr=b""
-        )
-        with mock.patch.object(
-            rate_limit_client.subprocess, "run", return_value=completed
+        for output in (
+            b"not-json", b"\xffprivate-value",
+            b"x" * (rate_limit_client.MAX_OUTPUT_BYTES + 1),
         ):
-            with self.assertRaises(RuntimeError):
+            completed = subprocess.CompletedProcess([], 0, output)
+            with (
+                self.subTest(output_bytes=len(output)),
+                mock.patch.object(rate_limit_client.subprocess, "run", return_value=completed),
+                self.assertRaises(RuntimeError) as raised,
+            ):
                 rate_limit_client.load_app_table(ROOT, {"APP_ENV": "test"})
-        completed = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=b"x" * (rate_limit_client.MAX_OUTPUT_BYTES + 1),
-            stderr=b"",
-        )
-        with mock.patch.object(
-            rate_limit_client.subprocess, "run", return_value=completed
-        ):
-            with self.assertRaises(RuntimeError):
-                rate_limit_client.load_app_table(ROOT, {"APP_ENV": "test"})
+            self.assertNotIn("private-value", str(raised.exception))
 
     def test_non_text_environment_is_rejected_before_spawning(self):
         with mock.patch.object(rate_limit_client.subprocess, "run") as run:
             with self.assertRaises(ValueError):
                 rate_limit_client.load_app_table(ROOT, {"APP_ENV": 1})
         run.assert_not_called()
+
+    def test_legacy_configuration_values_never_change_the_file_request(self):
+        variants = [
+            {"APP_ENV": "test"},
+            {"APP_ENV": "test", "APP_CONFIG_DIR": "private-value\x00"},
+            {"APP_ENV": "test", "APP_CONFIG_DIR": object()},
+            {"APP_ENV": "test", "APP_RATE_LIMIT_CAPACITY": {"private-value": []}},
+            {"APP_ENV": "test", "APP_DATABASE_PASSWORD": 1, "APP_RATE_LIMIT_FILE": False},
+            {"APP_ENV": "test", "APP_UNKNOWN": b"private-value", 42: object()},
+        ]
+        result = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        completed = subprocess.CompletedProcess(
+            [], 0, json.dumps({"ok": True, "result": result}).encode("utf-8")
+        )
+        for operation in sorted(rate_limit_client.OPERATIONS):
+            for config_dir in (None, "选定 配置"):
+                expected = {"backend": str(ROOT), "app_env": "test"}
+                if config_dir is not None:
+                    expected["config_dir"] = config_dir
+                if operation == "login-budget":
+                    expected["state_path"] = str(ROOT / ".local-tests/budget.json")
+                payloads = []
+                for environment in variants:
+                    with (
+                        self.subTest(operation=operation, config_dir=config_dir),
+                        mock.patch.dict(os.environ, {
+                            "APP_ENV": "prod", "APP_CONFIG_DIR": "host-private-value",
+                            "APP_RATE_LIMIT_CAPACITY": "host-private-value",
+                        }, clear=True),
+                        mock.patch.object(
+                            rate_limit_client.subprocess, "run", return_value=completed
+                        ) as run,
+                    ):
+                        self.assertEqual(
+                            self.invoke(operation, environment, config_dir=config_dir), result
+                        )
+                    call = run.call_args
+                    payloads.append(call.kwargs["input"])
+                    self.assertEqual(json.loads(payloads[-1].decode("utf-8")), expected)
+                    self.assertFalse(any(key.upper().startswith("APP_") for key in call.kwargs["env"]))
+                    self.assertNotIn(b"private-value", payloads[-1])
+                self.assertTrue(all(payload == payloads[0] for payload in payloads))
+
+    def test_environment_mapping_is_only_queried_for_app_env(self):
+        class AppEnvOnly(Mapping):
+            def __getitem__(self, key):
+                if key != "APP_ENV":
+                    raise AssertionError("不得读取其他配置项")
+                return "dev"
+
+            def __iter__(self):
+                raise AssertionError("不得扫描配置映射")
+
+            def __len__(self):
+                raise AssertionError("不得扫描配置映射")
+
+        result = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        for operation in sorted(rate_limit_client.OPERATIONS):
+            with (
+                self.subTest(operation=operation),
+                mock.patch.object(rate_limit_client, "_invoke", return_value=result) as invoke,
+            ):
+                self.invoke(operation, AppEnvOnly())
+            request = invoke.call_args.args[1]
+            self.assertEqual(request["app_env"], "dev")
+            self.assertNotIn("environment", request)
+            self.assertNotIn("config_dir", request)
+
+    def test_app_env_requires_exact_dev_or_test_before_spawning(self):
+        invalid = (None, "", "prod", "DEV", "TEST", " dev", "test ", "test\n",
+                   "private-value", 1, False, b"test", [], {})
+        for operation in sorted(rate_limit_client.OPERATIONS):
+            environments = [{}, *({"APP_ENV": value} for value in invalid), None, []]
+            for environment in environments:
+                with (
+                    self.subTest(operation=operation, environment=environment),
+                    mock.patch.object(rate_limit_client.subprocess, "run") as run,
+                    self.assertRaisesRegex(ValueError, "APP_ENV") as raised,
+                ):
+                    self.invoke(operation, environment)
+                run.assert_not_called()
+                self.assertNotIn("private-value", str(raised.exception))
+
+    def test_config_dir_preserves_relative_absolute_and_pathlike_text(self):
+        class Directory(os.PathLike):
+            def __fspath__(self):
+                return "自定义 配置"
+
+        values = ("./配置 目录/../选定", Path("配置 目录"), ROOT / "绝对 配置", Directory())
+        result = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        for operation in sorted(rate_limit_client.OPERATIONS):
+            for directory in values:
+                with (
+                    self.subTest(operation=operation, directory=os.fspath(directory)),
+                    mock.patch.object(rate_limit_client, "_invoke", return_value=result) as invoke,
+                ):
+                    self.invoke(operation, {"APP_ENV": "dev"}, config_dir=directory)
+                request = invoke.call_args.args[1]
+                self.assertEqual(request["config_dir"], os.fspath(directory))
+                self.assertEqual(request["backend"], str(ROOT.resolve()))
+
+    def test_invalid_config_dir_has_safe_field_diagnostics_before_spawning(self):
+        class InvalidDirectory(os.PathLike):
+            def __fspath__(self):
+                raise ValueError("private-value")
+
+        invalid = ("", "private-value\x00", "private-value\n", "private-value\t",
+                   "private-value\x7f", "private-value\x85", b"private-value", 1,
+                   False, [], {"private-value": "directory"}, object(), InvalidDirectory())
+        for operation in sorted(rate_limit_client.OPERATIONS):
+            for directory in invalid:
+                with (
+                    self.subTest(operation=operation, kind=type(directory).__name__),
+                    mock.patch.object(rate_limit_client.subprocess, "run") as run,
+                    self.assertRaisesRegex(ValueError, "config_dir") as raised,
+                ):
+                    self.invoke(operation, {"APP_ENV": "test"}, config_dir=directory)
+                run.assert_not_called()
+                self.assertEqual(
+                    str(raised.exception), "config_dir 必须是非空且不含控制字符的文本路径"
+                )
+                self.assertNotIn("private-value", str(raised.exception))
+
+    def test_login_budget_rejects_missing_extra_or_non_text_result_fields(self):
+        valid = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        for result in ([], {}, {**valid, "extra": "private-value"},
+                       {**valid, "RYFRAME_E2E_LOGIN_BUDGET_STATE": 1}):
+            with self.subTest(result=result), self.assertRaisesRegex(RuntimeError, "登录预算环境"):
+                self.call({"ok": True, "result": result}, operation="login-budget")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ mod operations;
 mod tests;
 
 use identity::{
-    collect_specs, database_physical_identity, load_seed_credentials, server_identity,
+    collect_specs, database_physical_identity, seed_credentials, server_identity,
     validate_physical_database_identities,
 };
 use operations::{
@@ -27,10 +27,10 @@ use operations::{
     verify_seed_hashes, verify_server_writable,
 };
 
-pub use identity::{parse_lower_case_table_names, same_credentials};
+pub use crate::reset::connections::same_credentials;
+pub use identity::parse_lower_case_table_names;
 pub use operations::quote_identifier;
 
-const ADMIN_PASSWORD_ENV: &str = "RYFRAME_RESET_ADMIN_PASSWORD";
 const EMPTY_CONTROL_TABLES: &[&str] = &[
     "sys_background_job",
     "sys_export_job",
@@ -110,7 +110,9 @@ impl MysqlReset {
         if !self.databases.is_empty() || !self.locks.is_empty() {
             return Err(ResetError::new("MySQL reset runtime 被重复预检"));
         }
-        self.seeds = Some(load_seed_credentials()?);
+        self.seeds = Some(seed_credentials(
+            config.bootstrap.admin_password.as_deref(),
+        )?);
         let specs = collect_specs(config, manifest)?;
         for spec in specs {
             let mut server_config = spec.connection.clone();

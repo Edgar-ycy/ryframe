@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    env,
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -16,8 +15,8 @@ use crate::{
 
 use super::{
     model::{ArtifactAction, Binaries, BuildPlan, BuildResult, MigrationValidation},
-    runtime_secrets::RuntimeSecrets,
     snapshot::DevSession,
+    snapshot::{RuntimeSnapshot, cleanup_runtime},
     tool_self_changed_error,
 };
 
@@ -93,41 +92,55 @@ pub(crate) fn build_candidate(
     if plan.tool_self_changed {
         return Err(tool_self_changed_error());
     }
-    let artifacts = match prepare_artifacts(context, plan, &mut lkg_check)? {
-        StepResult::Complete(artifacts) => artifacts,
-        terminal => return Ok(terminal_build_result(terminal)),
-    };
     if let Some(interruption) = build_interruption(context.shutdown, context.watcher, plan) {
         return Ok(interruption);
     }
-    let mut candidate = if plan.restart_pair {
+    let (captured, roots, targets) = context.session.capture()?;
+    let runtime = context.session.snapshot_inputs(
+        plan.source_revision,
+        captured,
+        &roots.locales_dir,
+        previous,
+    )?;
+    let artifacts = match prepare_artifacts(context, plan, &mut lkg_check)? {
+        StepResult::Complete(artifacts) => artifacts,
+        terminal => {
+            cleanup_runtime(&runtime)?;
+            return Ok(terminal_build_result(terminal));
+        }
+    };
+    if let Some(interruption) = build_interruption(context.shutdown, context.watcher, plan) {
+        cleanup_runtime(&runtime)?;
+        return Ok(interruption);
+    }
+    let migration = validate_candidate_migration(
+        context,
+        plan,
+        &artifacts,
+        &runtime,
+        &targets,
+        &mut lkg_check,
+    )?;
+    if !matches!(migration, StepResult::Complete(())) {
+        cleanup_runtime(&runtime)?;
+        return Ok(terminal_build_result(migration));
+    }
+    if context.watcher.is_superseded(plan.source_revision) {
+        cleanup_runtime(&runtime)?;
+        return Ok(BuildResult::Superseded);
+    }
+    let candidate = if plan.restart_pair {
         Some(stage_candidate(
-            context.root,
             context.session,
             plan,
             previous,
             &artifacts,
+            runtime,
         )?)
     } else {
+        cleanup_runtime(&runtime)?;
         None
     };
-    match validate_candidate_migration(
-        context.group,
-        context.root,
-        context.shutdown,
-        context.watcher,
-        plan,
-        &artifacts,
-        &mut candidate,
-        &mut lkg_check,
-    )? {
-        StepResult::Complete(()) => {}
-        terminal => return Ok(terminal_build_result(terminal)),
-    }
-    if context.watcher.is_superseded(plan.source_revision) {
-        cleanup_candidate(candidate.take());
-        return Ok(BuildResult::Superseded);
-    }
     println!(
         "候选计划完成（r{}，{:.1}s）。",
         plan.source_revision.value(),
@@ -160,53 +173,28 @@ fn prepare_artifacts(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_candidate_migration(
-    group: &ChildGroup,
-    root: &Path,
-    shutdown: &AtomicBool,
-    watcher: &SourceWatcher,
+    context: &BuildContext<'_>,
     plan: &BuildPlan,
     artifacts: &BTreeMap<String, PathBuf>,
-    candidate: &mut Option<Binaries>,
+    runtime: &RuntimeSnapshot,
+    targets: &[String],
     lkg_check: &mut Option<&mut dyn FnMut() -> Result<()>>,
 ) -> Result<StepResult<()>> {
     if !plan.migrate {
         return Ok(StepResult::Complete(()));
     }
-    let Some(migrate) = artifacts.get("ryframe-migrate") else {
-        cleanup_candidate(candidate.take());
-        return Err("迁移验证计划缺少 ryframe-migrate 构建产物".into());
-    };
-    let config_dir = candidate
-        .as_ref()
-        .map_or_else(|| root.join("config"), |bundle| bundle.config_dir.clone());
-    let locales_dir = candidate
-        .as_ref()
-        .map_or_else(|| root.join("locales"), |bundle| bundle.locales_dir.clone());
-    let captured_secrets;
-    let runtime_secrets = if let Some(bundle) = candidate.as_ref() {
-        bundle.runtime_secrets.as_ref()
-    } else {
-        captured_secrets = RuntimeSecrets::capture(&root.join("config"))?;
-        &captured_secrets
-    };
-    let result = run_migration_validation(
-        group,
-        root,
+    let migrate = artifacts
+        .get("ryframe-migrate")
+        .ok_or("迁移验证计划缺少 ryframe-migrate 构建产物")?;
+    run_migration_validation(
+        context,
         migrate,
-        &config_dir,
-        &locales_dir,
-        runtime_secrets,
-        shutdown,
-        watcher,
+        &runtime.directory.join("migrate"),
+        targets,
         plan,
         lkg_check,
-    )?;
-    if !matches!(&result, StepResult::Complete(())) {
-        cleanup_candidate(candidate.take());
-    }
-    Ok(result)
+    )
 }
 
 fn build_interruption(
@@ -229,12 +217,6 @@ fn terminal_build_result<T>(result: StepResult<T>) -> BuildResult {
         StepResult::Superseded => BuildResult::Superseded,
         StepResult::Cancelled => BuildResult::Cancelled,
         StepResult::Complete(_) => unreachable!("完成结果必须由调用方提取载荷"),
-    }
-}
-
-fn cleanup_candidate(candidate: Option<Binaries>) {
-    if let Some(bundle) = candidate {
-        let _ = cleanup_binaries(&bundle);
     }
 }
 
@@ -274,38 +256,37 @@ pub(super) fn record_cargo_invocation(counter: Option<&AtomicUsize>) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_migration_validation(
-    group: &ChildGroup,
-    root: &Path,
+    context: &BuildContext<'_>,
     migrate: &Path,
     config_dir: &Path,
-    locales_dir: &Path,
-    runtime_secrets: &RuntimeSecrets,
-    shutdown: &AtomicBool,
-    watcher: &SourceWatcher,
+    targets: &[String],
     plan: &BuildPlan,
     lkg_check: &mut Option<&mut dyn FnMut() -> Result<()>>,
 ) -> Result<StepResult<()>> {
-    let argument_sets = migration_arguments(plan.migration)?;
-    for arguments in argument_sets {
-        if let Some(interruption) = build_step_interruption(shutdown, watcher, plan) {
+    for arguments in migration_arguments(plan.migration, targets)? {
+        if let Some(interruption) = build_step_interruption(context.shutdown, context.watcher, plan)
+        {
             return Ok(interruption);
         }
         let mut verify = Command::new(migrate);
         verify
             .args(arguments)
+            .arg("--config-dir")
+            .arg(config_dir)
             .env("APP_ENV", "dev")
-            .env("APP_DATABASE_MIGRATION_MODE", "verify")
-            .env("APP_CONFIG_DIR", config_dir)
-            .env("APP_LOCALES_DIR", locales_dir)
-            .current_dir(root)
+            .current_dir(context.root)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-        runtime_secrets.apply(&mut verify);
-        let mut child = group.spawn(verify)?;
-        match wait_command(&mut child, shutdown, watcher, plan, lkg_check)? {
+        let mut child = context.group.spawn(verify)?;
+        match wait_command(
+            &mut child,
+            context.shutdown,
+            context.watcher,
+            plan,
+            lkg_check,
+        )? {
             WaitResult::Complete(status) if status.success() => {}
             WaitResult::Complete(_) => return Ok(StepResult::Failed),
             WaitResult::Superseded => return Ok(StepResult::Superseded),
@@ -315,47 +296,36 @@ pub(crate) fn run_migration_validation(
     Ok(StepResult::Complete(()))
 }
 
-fn migration_arguments(validation: MigrationValidation) -> Result<Vec<Vec<String>>> {
+fn migration_arguments(
+    validation: MigrationValidation,
+    targets: &[String],
+) -> Result<Vec<Vec<String>>> {
     match validation {
         MigrationValidation::None => Ok(Vec::new()),
         MigrationValidation::StandaloneControl => {
             Ok(vec![vec!["control".to_owned(), "verify".to_owned()]])
         }
-        MigrationValidation::StandaloneTenant => tenant_migration_arguments(),
+        MigrationValidation::StandaloneTenant => tenant_migration_arguments(targets),
         MigrationValidation::StandaloneControlAndTenant => {
             let mut arguments = vec![vec!["control".to_owned(), "verify".to_owned()]];
-            arguments.extend(tenant_migration_arguments()?);
+            arguments.extend(tenant_migration_arguments(targets)?);
             Ok(arguments)
         }
     }
 }
 
-fn tenant_migration_arguments() -> Result<Vec<Vec<String>>> {
-    let targets = env::var("RYFRAME_DEV_VERIFY_TENANT_TARGETS")
-        .ok()
-        .into_iter()
-        .flat_map(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
+fn tenant_migration_arguments(targets: &[String]) -> Result<Vec<Vec<String>>> {
     if targets.is_empty() {
-        return Err(
-            "租户迁移发生变化，但未设置 RYFRAME_DEV_VERIFY_TENANT_TARGETS；拒绝跳过安全验证".into(),
-        );
+        return Err("租户迁移发生变化，但 development.verify_tenant_targets 未配置；请在工具文件登记目标，拒绝跳过验证".into());
     }
     Ok(targets
-        .into_iter()
+        .iter()
         .map(|target| {
             vec![
-                "tenant-data".to_owned(),
-                "verify".to_owned(),
-                "--target".to_owned(),
-                target,
+                "tenant-data".into(),
+                "verify".into(),
+                "--target".into(),
+                target.clone(),
             ]
         })
         .collect())
@@ -405,21 +375,15 @@ fn build_step_interruption<T>(
 }
 
 fn stage_candidate(
-    root: &Path,
     session: &DevSession,
     plan: &BuildPlan,
     previous: Option<&Binaries>,
     artifacts: &BTreeMap<String, PathBuf>,
+    runtime: RuntimeSnapshot,
 ) -> Result<Binaries> {
     let api_source = artifact_or_lkg("ryframe", plan.api, artifacts, previous)?;
     let worker_source = artifact_or_lkg("ryframe-worker", plan.worker, artifacts, previous)?;
-    session.install_generation(
-        plan.source_revision,
-        api_source,
-        worker_source,
-        &root.join("config"),
-        &root.join("locales"),
-    )
+    session.install_generation(plan.source_revision, api_source, worker_source, runtime)
 }
 
 fn artifact_or_lkg<'a>(

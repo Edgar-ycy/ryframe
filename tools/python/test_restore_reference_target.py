@@ -207,7 +207,7 @@ class TargetPlanTests(unittest.TestCase):
     def test_reference_plan_extra_fields_and_nested_unknowns_fail_closed(self):
         original = copy.deepcopy(self.plan)
         for change in (lambda value: value.update(extra=True), lambda value: value["target"].update(extra=True),
-                       lambda value: value["tools"]["aws"].update(extra=True),
+                       lambda value: value["tools"]["mysql"].update(extra=True),
                        lambda value: value["target"]["s3"].update(extra=True),
                        lambda value: value["target"]["databases"][0].update(extra=True)):
             self.plan = copy.deepcopy(original)

@@ -1,5 +1,7 @@
 mod app_config;
 mod auth_config;
+mod bootstrap_config;
+mod configuration_args;
 mod cors_config;
 mod data_retention_config;
 mod db_config;
@@ -27,10 +29,12 @@ mod user_import_config;
 #[cfg(feature = "tools")]
 pub use release_stage::{ReleaseStage, release_stage, stable_version, workspace_version};
 #[cfg(feature = "tools")]
-pub use tool_config::{GeneratorSettings, ToolSettings, WorkspaceSettings};
+pub use tool_config::{GeneratorSettings, ToolSettings, VerificationSettings, WorkspaceSettings};
 
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;
+pub use bootstrap_config::BootstrapConfig;
+pub use configuration_args::ConfigurationArgs;
 pub use cors_config::CorsConfig;
 pub use data_retention_config::DataRetentionConfig;
 pub use db_config::{
@@ -50,7 +54,7 @@ pub use redis_config::{RedisConfig, RedisMode};
 pub use reset_config::ResetConfig;
 pub use resource_scope::ResourceScopeId;
 pub use runtime_config::{ProxyConfig, UploadLimitsConfig};
-pub use telemetry_config::TelemetryConfig;
+pub use telemetry_config::{TelemetryConfig, TelemetrySpanLimits};
 pub use tenant_config_transfer_config::TenantConfigTransferConfig;
 pub use tenant_data_config::{
     SHARED_CONTROL_TARGET_KEY, TenantDataConfig, TenantDatabaseTargetConfig,

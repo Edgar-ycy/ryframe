@@ -48,8 +48,10 @@ class FactoryTests(unittest.TestCase):
                              evidence={"generation-after": value["evidence"]["source_stopped"]})
         self.export_binding = self.bind(self.local / "source-export.json", {"fixture": "verified by isolated source adapter"})
         maintenance = self.bind(self.local / "maintenance.json", {"fixture": "maintenance"})
-        self.source_request = {"maintenance_build": maintenance, "tools": self.case.tools.plan["tools"]}
-        self.target_request = {"maintenance_build": maintenance, "tools": self.case.tools.plan["tools"], "target": self.case.tools.plan["target"]}
+        self.source_request = {"maintenance_build": maintenance,
+                               "tools": {name: copy.deepcopy(self.case.tools.plan["tools"]["mysql"])
+                                         for name in ("mysql", "mysqldump", "node")}}
+        self.target_request = {"maintenance_build": maintenance, "tools": {"mysql": self.case.tools.plan["tools"]["mysql"]}, "target": self.case.tools.plan["target"]}
         self.initial = {"redis": {"fixture": "owner only"}, "generation": {"selected": {"runtime_dir": str(self.local / "never-started"), "api_url": "http://127.0.0.1:18400"}},
                         "inventory": {"observations": {basis.initialized.resource["database"]: json.loads(json.dumps(asdict(basis.initialized)))
                                                         for basis in self.case.guard.basis.values()}}}
@@ -238,9 +240,9 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(self.case.writes(), [])
         self.assertTrue((self.output / "failure.json").exists())
 
-    def test_different_s3_tool_rejected_before_any_write(self):
+    def test_different_mysql_tool_rejected_before_any_write(self):
         self.target_request["tools"] = copy.deepcopy(self.target_request["tools"])
-        self.target_request["tools"]["aws"]["sha256"] = "f" * 64
+        self.target_request["tools"]["mysql"]["sha256"] = "f" * 64
         with self.assertRaises(ValueError):
             self.execute()
         self.assertEqual(self.case.writes(), [])

@@ -1,5 +1,10 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
+use ryframe_config::{AppConfig, Environment};
 use serde::Serialize;
 use toml::{Table, Value};
 
@@ -14,192 +19,171 @@ const MAX_RULE_CAPACITY: i64 = u32::MAX as i64;
 const MAX_WINDOW_SECS: i64 = 86_400;
 const MAX_LOGIN_CAPACITY: u32 = 10_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RateLimitError {
     code: &'static str,
-    message: &'static str,
+    message: Cow<'static, str>,
 }
 
 impl RateLimitError {
-    pub(crate) const fn code(self) -> &'static str {
+    pub(crate) const fn code(&self) -> &'static str {
         self.code
     }
 
-    pub(crate) const fn message(self) -> &'static str {
-        self.message
+    pub(crate) fn message(&self) -> &str {
+        self.message.as_ref()
+    }
+
+    fn at_field(mut self, field: &str) -> Self {
+        self.message = Cow::Owned(format!("{field}：{}；请修正该 TOML 字段", self.message));
+        self
+    }
+
+    fn at_source(mut self, directory: &Path, app_env: &str) -> Self {
+        self.message = Cow::Owned(format!(
+            "配置文件 {} 与 {}：{}",
+            directory.join("app.toml").display(),
+            directory.join(format!("app.{app_env}.toml")).display(),
+            self.message
+        ));
+        self
     }
 }
 
 const ENVIRONMENT_INVALID: RateLimitError = RateLimitError {
     code: "config_environment_invalid",
-    message: "必须显式设置 APP_ENV=dev 或 APP_ENV=test",
+    message: Cow::Borrowed("app_env 必须显式设置为 dev 或 test；请修正请求字段"),
 };
 const DIRECTORY_INVALID: RateLimitError = RateLimitError {
     code: "config_directory_invalid",
-    message: "APP_CONFIG_DIR 不能为空",
+    message: Cow::Borrowed("backend/config_dir 必须非空且不含控制字符；请修正请求路径"),
 };
-const FILE_MISSING: RateLimitError = RateLimitError {
-    code: "config_file_missing",
-    message: "配置目录中缺少 app.toml；请检查 APP_CONFIG_DIR",
-};
-const FILE_UNREADABLE: RateLimitError = RateLimitError {
-    code: "config_file_unreadable",
-    message: "无法读取 APP 配置；请检查文件类型与读取权限",
-};
-const TOML_INVALID: RateLimitError = RateLimitError {
-    code: "config_toml_invalid",
-    message: "APP 配置不是有效 TOML；请检查 app.toml 与环境覆盖文件",
+const DOCUMENT_INVALID: RateLimitError = RateLimitError {
+    code: "config_document_invalid",
+    message: Cow::Borrowed("应用配置文档读取或预检查失败；请修正所选配置文件"),
 };
 const TABLE_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_table_invalid",
-    message: "rate_limit 与 rate_limit.api_limits 必须是配置表",
+    message: Cow::Borrowed("rate_limit 与 rate_limit.api_limits 必须是配置表"),
 };
 const BOOLEAN_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_boolean_invalid",
-    message: "rate_limit 布尔字段必须使用 TOML 布尔值或 true/false 环境值",
+    message: Cow::Borrowed("rate_limit 布尔字段必须使用 TOML 布尔值"),
 };
 const INTEGER_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_integer_invalid",
-    message: "rate_limit 数值字段必须是在允许范围内的正整数",
+    message: Cow::Borrowed("rate_limit 数值字段必须是在允许范围内的正整数"),
 };
 const LIMIT_DISABLED: RateLimitError = RateLimitError {
     code: "rate_limit_disabled",
-    message: "真实浏览器验收必须保留服务端限流（rate_limit.enabled=true）",
+    message: Cow::Borrowed("真实浏览器验收必须保留服务端限流（rate_limit.enabled=true）"),
 };
 const RULE_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_rule_invalid",
-    message: "rate_limit.api_limits 的规则名和正整数上限无效",
+    message: Cow::Borrowed("rate_limit.api_limits 的规则名和正整数上限无效"),
 };
 const LOGIN_LIMIT_INVALID: RateLimitError = RateLimitError {
     code: "login_limit_invalid",
-    message: "登录接口限流容量必须是 1 到 10000 的整数",
+    message: Cow::Borrowed("登录接口限流容量必须是 1 到 10000 的整数"),
 };
 const LOGIN_BUDGET_PATH_INVALID: RateLimitError = RateLimitError {
     code: "login_budget_path_invalid",
-    message: "登录预算账本必须使用无换行、无 NUL 的绝对文件路径",
+    message: Cow::Borrowed("登录预算账本必须使用无换行、无 NUL 的绝对文件路径"),
 };
 pub(crate) const RESULT_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_result_invalid",
-    message: "无法把限流配置转换为本地 JSON 结果",
+    message: Cow::Borrowed("无法把限流配置转换为本地 JSON 结果"),
 };
 
 pub(crate) fn load_app_table(
     backend: &Path,
-    environment: &BTreeMap<String, String>,
+    config_dir: Option<&Path>,
+    app_env: &str,
 ) -> Result<Table, RateLimitError> {
-    let app_env = environment.get("APP_ENV").ok_or(ENVIRONMENT_INVALID)?;
-    if !matches!(app_env.as_str(), "dev" | "test") {
-        return Err(ENVIRONMENT_INVALID);
-    }
-    let directory = environment
-        .get("APP_CONFIG_DIR")
-        .map(String::as_str)
-        .unwrap_or("config");
-    if directory.trim().is_empty() {
-        return Err(DIRECTORY_INVALID);
-    }
-    let config = Path::new(directory);
-    let config = if config.is_absolute() {
-        config.to_path_buf()
-    } else {
-        backend.join(config)
+    let environment = match app_env {
+        "dev" => Environment::Dev,
+        "test" => Environment::Test,
+        _ => return Err(ENVIRONMENT_INVALID),
     };
-    let mut table = read_table(&config.join("app.toml"))?;
-    let override_path = config.join(format!("app.{app_env}.toml"));
-    match fs::read_to_string(&override_path) {
-        Ok(source) => {
-            let override_table = parse_table(&source)?;
-            merge(&mut table, &override_table);
+    let directory = configuration_directory(backend, config_dir)?;
+    AppConfig::read_document(&directory, environment).map_err(|error| RateLimitError {
+        message: Cow::Owned(error.to_string()),
+        ..DOCUMENT_INVALID
+    })
+}
+
+fn configuration_directory(
+    backend: &Path,
+    config_dir: Option<&Path>,
+) -> Result<PathBuf, RateLimitError> {
+    let directory = config_dir.unwrap_or_else(|| Path::new("config"));
+    for path in [backend, directory] {
+        let value = path.to_str().ok_or(DIRECTORY_INVALID)?;
+        if value.is_empty() || value.chars().any(char::is_control) {
+            return Err(DIRECTORY_INVALID);
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return Err(FILE_UNREADABLE),
     }
-    Ok(table)
+    Ok(if directory.is_absolute() {
+        directory.to_path_buf()
+    } else {
+        backend.join(directory)
+    })
 }
 
 pub(crate) fn settings(
     backend: &Path,
-    environment: &BTreeMap<String, String>,
+    config_dir: Option<&Path>,
+    app_env: &str,
 ) -> Result<Table, RateLimitError> {
-    let table = load_app_table(backend, environment)?;
+    let table = load_app_table(backend, config_dir, app_env)?;
+    let directory = configuration_directory(backend, config_dir)?;
+    table_settings(&table).map_err(|error| error.at_source(&directory, app_env))
+}
+
+fn table_settings(table: &Table) -> Result<Table, RateLimitError> {
     let mut rate_limit = match table.get("rate_limit") {
-        Some(value) => value.as_table().cloned().ok_or(TABLE_INVALID)?,
+        Some(value) => value
+            .as_table()
+            .cloned()
+            .ok_or_else(|| TABLE_INVALID.at_field("rate_limit"))?,
         None => Table::new(),
     };
-    let enabled = boolean(
-        &mut rate_limit,
-        "enabled",
-        true,
-        "APP_RATE_LIMIT_ENABLED",
-        environment,
-    )?;
-    boolean(
-        &mut rate_limit,
-        "enable_user_rate_limit",
-        false,
-        "APP_RATE_LIMIT_ENABLE_USER_RATE_LIMIT",
-        environment,
-    )?;
+    let enabled = boolean(&mut rate_limit, "enabled", true)?;
+    boolean(&mut rate_limit, "enable_user_rate_limit", false)?;
     if !enabled {
-        return Err(LIMIT_DISABLED);
+        return Err(LIMIT_DISABLED.at_field("rate_limit.enabled"));
     }
     validate_api_limits(&mut rate_limit)?;
-    for (key, default, maximum, variable) in [
-        (
-            "capacity",
-            DEFAULT_CAPACITY,
-            MAX_RULE_CAPACITY,
-            "APP_RATE_LIMIT_CAPACITY",
-        ),
-        (
-            "window_secs",
-            DEFAULT_WINDOW_SECS,
-            MAX_WINDOW_SECS,
-            "APP_RATE_LIMIT_WINDOW_SECS",
-        ),
-        (
-            "user_capacity",
-            DEFAULT_USER_CAPACITY,
-            MAX_RULE_CAPACITY,
-            "APP_RATE_LIMIT_USER_CAPACITY",
-        ),
-        (
-            "user_window_secs",
-            DEFAULT_WINDOW_SECS,
-            MAX_WINDOW_SECS,
-            "APP_RATE_LIMIT_USER_WINDOW_SECS",
-        ),
+    for (key, default, maximum) in [
+        ("capacity", DEFAULT_CAPACITY, MAX_RULE_CAPACITY),
+        ("window_secs", DEFAULT_WINDOW_SECS, MAX_WINDOW_SECS),
+        ("user_capacity", DEFAULT_USER_CAPACITY, MAX_RULE_CAPACITY),
+        ("user_window_secs", DEFAULT_WINDOW_SECS, MAX_WINDOW_SECS),
         (
             "api_window_secs",
             DEFAULT_API_WINDOW_SECS as i64,
             MAX_WINDOW_SECS,
-            "APP_RATE_LIMIT_API_WINDOW_SECS",
         ),
     ] {
-        integer(
-            &mut rate_limit,
-            key,
-            default,
-            maximum,
-            variable,
-            environment,
-        )?;
+        integer(&mut rate_limit, key, default, maximum)?;
     }
     Ok(rate_limit)
 }
-
 pub(crate) fn login_rate_limit(
     backend: &Path,
-    environment: &BTreeMap<String, String>,
+    config_dir: Option<&Path>,
+    app_env: &str,
 ) -> Result<LoginRateLimit, RateLimitError> {
-    let settings = settings(backend, environment)?;
+    let settings = settings(backend, config_dir, app_env)?;
     let capacity = api_limits(&settings)
         .get(LOGIN_RULE)
         .and_then(Value::as_integer)
         .and_then(|value| u32::try_from(value).ok())
         .unwrap_or(DEFAULT_LOGIN_CAPACITY);
     if !(1..=MAX_LOGIN_CAPACITY).contains(&capacity) {
-        return Err(LOGIN_LIMIT_INVALID);
+        return Err(LOGIN_LIMIT_INVALID
+            .at_field("rate_limit.api_limits 的登录规则")
+            .at_source(&configuration_directory(backend, config_dir)?, app_env));
     }
     let window_secs = setting_integer(&settings, "api_window_secs")? as u64;
     Ok(LoginRateLimit {
@@ -210,9 +194,10 @@ pub(crate) fn login_rate_limit(
 
 pub(crate) fn authority(
     backend: &Path,
-    environment: &BTreeMap<String, String>,
+    config_dir: Option<&Path>,
+    app_env: &str,
 ) -> Result<Authority, RateLimitError> {
-    let settings = settings(backend, environment)?;
+    let settings = settings(backend, config_dir, app_env)?;
     let rules = api_limits(&settings)
         .iter()
         .map(|(name, value)| {
@@ -249,7 +234,8 @@ pub(crate) fn authority(
 
 pub(crate) fn login_budget_environment(
     backend: &Path,
-    environment: &BTreeMap<String, String>,
+    config_dir: Option<&Path>,
+    app_env: &str,
     state_path: &str,
 ) -> Result<BTreeMap<String, String>, RateLimitError> {
     let path = Path::new(state_path);
@@ -260,7 +246,7 @@ pub(crate) fn login_budget_environment(
     {
         return Err(LOGIN_BUDGET_PATH_INVALID);
     }
-    let limits = login_rate_limit(backend, environment)?;
+    let limits = login_rate_limit(backend, config_dir, app_env)?;
     Ok(BTreeMap::from([
         (
             "RYFRAME_E2E_LOGIN_BUDGET_STATE".to_owned(),
@@ -311,52 +297,13 @@ struct ApiAuthority {
     window_ms: u64,
 }
 
-fn read_table(path: &Path) -> Result<Table, RateLimitError> {
-    let source = fs::read_to_string(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            FILE_MISSING
-        } else {
-            FILE_UNREADABLE
-        }
-    })?;
-    parse_table(&source)
-}
-
-fn parse_table(source: &str) -> Result<Table, RateLimitError> {
-    toml::from_str(source).map_err(|_| TOML_INVALID)
-}
-
-fn merge(base: &mut Table, override_table: &Table) {
-    for (key, value) in override_table {
-        if let (Some(Value::Table(base)), Value::Table(override_table)) = (base.get_mut(key), value)
-        {
-            merge(base, override_table);
-            continue;
-        }
-        base.insert(key.clone(), value.clone());
-    }
-}
-
-fn boolean(
-    table: &mut Table,
-    key: &str,
-    default: bool,
-    variable: &str,
-    environment: &BTreeMap<String, String>,
-) -> Result<bool, RateLimitError> {
-    let value = match environment.get(variable) {
-        Some(raw) => match raw.as_str() {
-            "true" => true,
-            "false" => false,
-            _ => return Err(BOOLEAN_INVALID),
-        },
-        None => table
-            .get(key)
-            .cloned()
-            .unwrap_or(Value::Boolean(default))
-            .as_bool()
-            .ok_or(BOOLEAN_INVALID)?,
-    };
+fn boolean(table: &mut Table, key: &str, default: bool) -> Result<bool, RateLimitError> {
+    let value = table
+        .get(key)
+        .cloned()
+        .unwrap_or(Value::Boolean(default))
+        .as_bool()
+        .ok_or_else(|| BOOLEAN_INVALID.at_field(&format!("rate_limit.{key}")))?;
     table.insert(key.to_owned(), Value::Boolean(value));
     Ok(value)
 }
@@ -366,28 +313,26 @@ fn integer(
     key: &str,
     default: i64,
     maximum: i64,
-    variable: &str,
-    environment: &BTreeMap<String, String>,
 ) -> Result<i64, RateLimitError> {
-    let value = match environment.get(variable) {
-        Some(raw) => parse_environment_integer(raw, maximum)?,
-        None => validate_integer(
-            table.get(key).cloned().unwrap_or(Value::Integer(default)),
-            maximum,
-        )?,
-    };
+    let value = validate_integer(
+        table.get(key).cloned().unwrap_or(Value::Integer(default)),
+        maximum,
+    )
+    .map_err(|error| error.at_field(&format!("rate_limit.{key}")))?;
     table.insert(key.to_owned(), Value::Integer(value));
     Ok(value)
 }
-
 fn validate_api_limits(rate_limit: &mut Table) -> Result<(), RateLimitError> {
     let mut limits = match rate_limit.get("api_limits") {
-        Some(value) => value.as_table().cloned().ok_or(TABLE_INVALID)?,
+        Some(value) => value
+            .as_table()
+            .cloned()
+            .ok_or_else(|| TABLE_INVALID.at_field("rate_limit.api_limits"))?,
         None => Table::new(),
     };
     for (rule, value) in &limits {
         if rule.trim().is_empty() || validate_integer(value.clone(), MAX_RULE_CAPACITY).is_err() {
-            return Err(RULE_INVALID);
+            return Err(RULE_INVALID.at_field("rate_limit.api_limits"));
         }
     }
     rate_limit.insert(
@@ -423,16 +368,4 @@ fn validate_integer(value: Value, maximum: i64) -> Result<i64, RateLimitError> {
         Value::Integer(value) if (1..=maximum).contains(&value) => Ok(value),
         _ => Err(INTEGER_INVALID),
     }
-}
-
-fn parse_environment_integer(raw: &str, maximum: i64) -> Result<i64, RateLimitError> {
-    let digits = raw.strip_prefix('+').unwrap_or(raw);
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(INTEGER_INVALID);
-    }
-    let value = digits.parse::<i64>().map_err(|_| INTEGER_INVALID)?;
-    if !(1..=maximum).contains(&value) {
-        return Err(INTEGER_INVALID);
-    }
-    Ok(value)
 }

@@ -162,7 +162,7 @@ class RestoreExecutionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             reference.execute(self.args, self.plan, self.backend, tools, self.work)
         tools.restore_database.assert_not_called()
-        tools.aws.assert_not_called()
+        tools.create_object_if_absent.assert_not_called()
         self.assertEqual(reference.read_json(self.work / "restore-base.json")["status"], "failed")
 
     def test_unknown_write_is_recorded_and_never_replayed(self):
@@ -183,7 +183,7 @@ class RestoreExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "完整前像漂移"):
             reference.execute(self.args, self.plan, self.backend, tools, self.work)
         tools.restore_database.assert_not_called()
-        tools.aws.assert_not_called()
+        tools.create_object_if_absent.assert_not_called()
         receipt = reference.read_json(self.work / "restore-base.json")
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(set(receipt["resource_images"]), {"before"})
@@ -197,7 +197,7 @@ class RestoreExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "三端口"):
             reference.execute(self.args, self.plan, self.backend, tools, self.work)
         tools.restore_database.assert_not_called()
-        tools.aws.assert_not_called()
+        tools.create_object_if_absent.assert_not_called()
 
     def test_registration_drift_or_resource_image_output_collision_prevents_preflight(self):
         original = self.registration_path.read_bytes()
@@ -210,7 +210,7 @@ class RestoreExecutionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             reference.execute(self.args, self.plan, self.backend, tools, self.work)
         tools.restore_database.assert_not_called()
-        tools.aws.assert_not_called()
+        tools.create_object_if_absent.assert_not_called()
         self.assertFalse((self.work / "restore-base.json").exists())
 
     def test_each_write_has_a_checkpoint_inside_the_runtime_lock(self):
@@ -220,7 +220,7 @@ class RestoreExecutionTests(unittest.TestCase):
             self.events.append("write")
         tools = Mock()
         tools.restore_database.side_effect = write
-        tools.aws.side_effect = write
+        tools.create_object_if_absent.side_effect = write
         reference.execute(self.args, self.plan, self.backend, tools, self.work)
         self.assertEqual(self.events.count("write"), 5)
 
@@ -231,7 +231,7 @@ class RestoreExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "当前产物字节"):
             reference.execute(self.args, self.plan, self.backend, tools, self.work)
         self.assertEqual(tools.restore_database.call_count, 1)
-        tools.aws.assert_not_called()
+        tools.create_object_if_absent.assert_not_called()
 
 
 if __name__ == "__main__":

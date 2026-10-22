@@ -1,33 +1,23 @@
 use ryframe_auth::password;
+use ryframe_config::AppConfig;
 use ryframe_db::migration::BootstrapHashes;
-use std::{env, error::Error, fs};
+use std::error::Error;
 
-/// 初始管理员密码只在显式初始化时读取，不写入配置或日志。
-pub(super) fn load_hashes() -> Result<Option<BootstrapHashes>, Box<dyn Error>> {
-    let direct = env::var("RYFRAME_INIT_ADMIN_PASSWORD").ok();
-    let file = env::var_os("RYFRAME_INIT_ADMIN_PASSWORD_FILE");
-    let value = match (direct, file) {
-        (Some(_), Some(_)) => {
-            return Err("RYFRAME_INIT_ADMIN_PASSWORD 与 _FILE 只能配置一个".into());
-        }
-        (Some(value), None) => Some(value),
-        (None, Some(path)) => Some(
-            fs::read_to_string(path)
-                .map_err(
-                    |_| "无法读取 RYFRAME_INIT_ADMIN_PASSWORD_FILE；检查路径、UTF-8 编码与读取权限",
-                )?
-                .trim_end_matches(['\r', '\n'])
-                .to_owned(),
-        ),
-        (None, None) => None,
+/// 仅显式初始化使用选定配置内的管理员密码，不回显密码或计算结果。
+pub(super) fn load_hashes(config: &AppConfig) -> Result<Option<BootstrapHashes>, Box<dyn Error>> {
+    let Some(value) = config
+        .bootstrap
+        .admin_password
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
     };
-    value
-        .map(|value| {
-            password::validate_complexity(&value)?;
-            Ok(BootstrapHashes::new(
-                password::hash(&value)?,
-                password::hash(password::INITIAL_USER_PASSWORD)?,
-            )?)
-        })
-        .transpose()
+    password::validate_complexity(value)
+        .map_err(|_| "config.bootstrap.admin_password 不满足密码复杂度要求")?;
+    let admin = password::hash(value)
+        .map_err(|_| "无法计算 config.bootstrap.admin_password 的初始化哈希")?;
+    let user =
+        password::hash(password::INITIAL_USER_PASSWORD).map_err(|_| "无法计算初始用户密码哈希")?;
+    Ok(Some(BootstrapHashes::new(admin, user)?))
 }

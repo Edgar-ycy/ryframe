@@ -191,14 +191,14 @@ pub(crate) fn validate_launch(
     let mut environment = json!({"RUSTFS_CONSOLE_ENABLE": "true"});
     for (field, binding) in credentials {
         let credential = common::bound_file(&context.backend, binding, "RustFS 凭据文件")?;
-        let variable = context
+        let expected_credential = context
             .request
-            .pointer(&format!("/target/s3/{field}_env"))
+            .pointer(&format!("/target/s3/{field}"))
             .and_then(Value::as_str)
-            .ok_or("RustFS 凭据缺少显式环境变量名")?;
+            .ok_or("RustFS 凭据缺少已绑定文件中的明确值")?;
         let actual =
             fs::read_to_string(&credential).map_err(|_| "无法读取 RustFS 凭据文件 UTF-8 文本")?;
-        if context.environment.get(variable).map(String::as_str) != Some(actual.trim()) {
+        if expected_credential != actual.trim() {
             return Err("RustFS 启动凭据文件与本次认证不同".into());
         }
         environment[format!("RUSTFS_{}_FILE", field.to_uppercase())] = binding["path"].clone();

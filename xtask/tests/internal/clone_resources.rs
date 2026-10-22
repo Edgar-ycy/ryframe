@@ -86,7 +86,7 @@ fn storage_request_and_original_generation_are_exactly_bound() {
         &request,
     )
     .unwrap();
-    assert_eq!(validated.private["KEY"], "access-private");
+    assert_eq!(validated.private["PATH"], "fixture-bin");
     assert_eq!(storage_model::arguments(&request).unwrap()[1], "server");
 
     let mut changed = request.clone();
@@ -289,16 +289,15 @@ fn storage_parts(fixture: &Fixture) -> StorageParts {
     let data = fixture.path("data");
     fs::create_dir_all(&data).unwrap();
     let executable = fixture.file("rustfs.exe", b"fixture-rustfs");
-    let access = fixture.file("access.txt", b"access-private");
-    let secret = fixture.file("secret.txt", b"secret-private");
+    let access = fixture.file("access.txt", b"fixture-access");
+    let secret = fixture.file("secret.txt", b"fixture-secret");
     let credentials = json!({
         "access_key": common::binding(&access).unwrap(),
         "secret_key": common::binding(&secret).unwrap(),
     });
     let private = json!({
         "environment": {
-            "KEY": "access-private",
-            "SECRET": "secret-private",
+            "PATH": "fixture-bin",
             "RUSTFS_UNDECLARED": "forbidden",
         }
     });
@@ -309,8 +308,8 @@ fn storage_parts(fixture: &Fixture) -> StorageParts {
         "source": {
             "s3": {
                 "endpoint": api,
-                "access_key_env": "KEY",
-                "secret_key_env": "SECRET",
+                "access_key": "fixture-access",
+                "secret_key": "fixture-secret",
             }
         }
     });

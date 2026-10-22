@@ -61,10 +61,11 @@ impl Fixture {
         let databases = KEYS.iter().map(|key| json!({"key": key, "kind": if *key == "shared-control" { "combined" } else { "tenant" },
             "mode": if key.starts_with("dedicated-") { "dedicated" } else { "shared" }, "server_uuid": UUID,
             "database": format!("physical_{}", key.replace('-', "_")), "defaults_file": defaults, "defaults_sha256": digest::file(&defaults).unwrap().sha256})).collect::<Vec<_>>();
-        let target = json!({"scope_id": SCOPE, "databases": databases, "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1", "access_key_env": "FIXTURE_ACCESS", "secret_key_env": "FIXTURE_SECRET"}});
+        let target = json!({"scope_id": SCOPE, "databases": databases, "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1", "access_key": "access-fixture", "secret_key": "secret-fixture"}});
         let config = root.join("config");
         fs::create_dir(&config).unwrap();
         fs::write(config.join("app.toml"), config_text(&databases)).unwrap();
+        fs::write(config.join("app.test.toml"), "# 明确选择测试环境\n").unwrap();
         let mut selected = target.clone();
         selected["runtime_dir"] = json!(root.join("runtime"));
         selected["api_url"] = json!("http://127.0.0.1:18210");
@@ -84,14 +85,10 @@ impl Fixture {
         let build = root.join("build.json");
         json_io::write_new(&build, &maintenance).unwrap();
         let request = json!({"target": target, "side": "seed", "review": review_binding, "maintenance_build": bound(&build),
-            "execution_backend": {"path": execution}, "tools": {"mysql": {"path": tool, "sha256": digest::file(&tool).unwrap().sha256}}});
+            "execution_backend": {"path": execution}, "configuration_directory": config,
+            "tools": {"mysql": {"path": tool, "sha256": digest::file(&tool).unwrap().sha256}}});
         let environment = BTreeMap::from([
             ("APP_ENV".into(), "test".into()),
-            ("APP_SCOPE_ID".into(), SCOPE.into()),
-            ("APP_CONFIG_DIR".into(), config.display().to_string()),
-            ("APP_SOURCE_PASSWORD".into(), "fixture-secret".into()),
-            ("FIXTURE_ACCESS".into(), "access-fixture".into()),
-            ("FIXTURE_SECRET".into(), "secret-fixture".into()),
             ("MYSQL_PWD".into(), "must-remove".into()),
         ]);
         let observation_dir = root.join("observations");
@@ -147,12 +144,14 @@ impl Fixture {
 
 fn config_text(databases: &[Value]) -> String {
     let mut text = format!(
-        "[database.primary]\nhost=\"127.0.0.1\"\nport=3306\ndatabase={}\nusername=\"fixture\"\npassword=\"fixture-secret\"\ntls_mode=\"disabled\"\n[object_storage]\nbackend=\"rustfs\"\nendpoint=\"http://127.0.0.1:29200\"\nregion=\"us-east-1\"\naccess_key=\"access-fixture\"\nsecret_key=\"secret-fixture\"\nuse_ssl=false\n",
+        "scope_id={}\n[database.primary]\nhost=\"127.0.0.1\"\nport=3306\ndatabase={}\nusername=\"fixture\"\npassword=\"fixture-secret\"\ntls_mode=\"disabled\"\n[object_storage]\nbackend=\"rustfs\"\nendpoint=\"http://127.0.0.1:29200\"\nregion=\"us-east-1\"\naccess_key=\"access-fixture\"\nsecret_key=\"secret-fixture\"\nuse_ssl=false\n",
+        json!(SCOPE),
         databases[0]["database"]
     );
     for db in &databases[1..] {
-        text.push_str(&format!("[[tenant_data.targets]]\nkey={}\nkind=\"mysql\"\nmode={}\nhost=\"127.0.0.1\"\nport=3306\ndatabase={}\nusername=\"fixture\"\npassword_env=\"APP_SOURCE_PASSWORD\"\ntls_mode=\"disabled\"\n", db["key"], db["mode"], db["database"]));
+        text.push_str(&format!("[[tenant_data.targets]]\nkey={}\nkind=\"mysql\"\nmode={}\nhost=\"127.0.0.1\"\nport=3306\ndatabase={}\nusername=\"fixture\"\npassword=\"fixture-secret\"\ntls_mode=\"disabled\"\n", db["key"], db["mode"], db["database"]));
     }
+    text.push_str("\n[auth]\njwt_secret=\"jwt-fixture-private\"\n[bootstrap]\nadmin_password=\"Strong!Admin123\"\n[redis]\npassword=\"redis-fixture-private\"\n");
     text
 }
 
@@ -203,17 +202,28 @@ impl<'a> Fake<'a> {
             fs::write(spec.work_dir.join("before-target-shared.json"), "{}")?;
         }
         if self.effect == "binding" && count == 1 {
-            let config =
-                PathBuf::from(&self.fixture.context.environment["APP_CONFIG_DIR"]).join("app.toml");
+            let config = PathBuf::from(
+                self.fixture.context.request["configuration_directory"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .join("app.toml");
             let mut content = fs::read_to_string(&config)?;
             content.push_str("\n# 采集期间配置变化\n");
             fs::write(config, content)?;
         }
-        Ok(b"fixture-secret secret-fixture".to_vec())
+        Ok(b"fixture-secret secret-fixture access-fixture jwt-fixture-private Strong!Admin123 redis-fixture-private".to_vec())
     }
 }
 
 impl Transport for Fake<'_> {
+    fn s3(
+        &self,
+        _: crate::recovery::clone::native::s3::Request,
+    ) -> crate::Result<serde_json::Value> {
+        panic!("该测试不允许对象存储调用")
+    }
+
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
         assert_eq!(spec.cwd, self.fixture.context.execution_backend().unwrap());
         assert!(!spec.environment.contains_key("MYSQL_PWD"));
@@ -372,8 +382,16 @@ fn two_rounds_eight_raw_outputs_and_physical_images() {
             .starts_with("command-")
         {
             let value = fs::read_to_string(path).unwrap();
-            assert!(!value.contains("fixture-secret"));
-            assert!(!value.contains("secret-fixture"));
+            for secret in [
+                "fixture-secret",
+                "secret-fixture",
+                "access-fixture",
+                "jwt-fixture-private",
+                "Strong!Admin123",
+                "redis-fixture-private",
+            ] {
+                assert!(!value.contains(secret), "命令收据必须脱敏所有文件凭据");
+            }
         }
     }
 }
@@ -668,8 +686,8 @@ selected=review['scopes'][request['side']]
 side={**v['target'],**{key:selected[key] for key in ('runtime_dir','api_url')}}
 maintenance=Path(request['maintenance_build']['path'])
 expected={'side':'target','tools_plan_sha256':plan_hash({'target':side,'tools':request['tools']}),
-          'configuration':configuration(Path(sys.argv[2]),v['environment'],side,evidence_root=Path(sys.argv[1])),
-          'physical':source_binding(Path(sys.argv[2]),{'source':side},v['environment'],evidence_root=Path(sys.argv[1])),
+          'configuration':configuration(Path(sys.argv[2]),v['environment'],side,evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),
+          'physical':source_binding(Path(sys.argv[2]),{'source':side},v['environment'],evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),
           'maintenance':file_digest(maintenance),'source':json.loads(maintenance.read_text(encoding='utf-8'))['source']}
 assert result['binding']==expected
 print(json.dumps(result['receipt']))

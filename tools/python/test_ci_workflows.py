@@ -8,6 +8,49 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiWorkflowTests(unittest.TestCase):
+    def test_real_service_jobs_prepare_explicit_file_configuration(self) -> None:
+        import tomllib
+        import yaml
+
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        profile = tomllib.loads(
+            'scope_id = "ci-123-1"\nsnowflake_worker_id = 1\n'
+            + (ROOT / "tools/fixtures/integration/app.test.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(profile["database"]["primary"]["tls_mode"], "required")
+        self.assertEqual(profile["redis"]["database"], 15)
+        self.assertEqual(profile["redis"]["mode"], "required")
+        for name in ("resource-gate", "integration"):
+            job = workflow["jobs"][name]
+            self.assertEqual(job["env"], {"APP_ENV": "test"})
+            steps = job["steps"]
+            producer = next(
+                step for step in steps if step["name"] == "准备隔离服务文件配置"
+            )
+            script = producer["run"]
+            self.assertIn("test ! -e", script)
+            self.assertIn("test ! -L", script)
+            self.assertIn(".local-tests/mysql/config", script)
+            self.assertIn(".local-tests/service-tests/redis/config", script)
+            text = script.split("<<'TOML'\n", 1)[1].split("\nTOML", 1)[0]
+            text = text.replace("${{ github.run_id }}", "123").replace(
+                "${{ github.run_attempt }}", "1"
+            ).replace("${{ runner.temp }}", "/tmp/isolated-ci")
+            settings = tomllib.loads(text)
+            self.assertEqual(settings["format_version"], 1)
+            self.assertEqual(settings["test_jobs"], 4)
+            self.assertEqual(settings["redis_config_dir"], ".local-tests/service-tests/redis/config")
+            execution = next(
+                step for step in steps
+                if "cargo xtask check ci " + name in step.get("run", "")
+            )
+            self.assertLess(steps.index(producer), steps.index(execution))
+            self.assertNotIn("RYFRAME_TLS_ARTIFACT_DIR", execution.get("env", {}))
+
     def test_tag_push_never_uses_the_old_tag_object_as_a_commit_baseline(self) -> None:
         import yaml
 
@@ -55,9 +98,12 @@ class CiWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         block = workflow.split("\n  resource-gate:\n", 1)[1].split("\n  #", 1)[0]
         self.assertIn("needs.plan.outputs.resource_gate == 'true'", block)
-        self.assertIn('RYFRAME_MYSQL_INTEGRATION: "1"', block)
-        self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', block)
-        self.assertIn('RYFRAME_REDIS_INTEGRATION: "1"', block)
+        self.assertIn(".local-tests/mysql/config", block)
+        self.assertIn(".local-tests/service-tests/redis/config", block)
+        self.assertIn("tools/fixtures/integration/app.test.toml", block)
+        self.assertNotIn("RYFRAME_MYSQL_INTEGRATION", block)
+        self.assertNotIn("RYFRAME_MYSQL_TLS_INTEGRATION", block)
+        self.assertNotIn("RYFRAME_REDIS_INTEGRATION", block)
         self.assertIn("mysql:8.0.46@sha256:", block)
         self.assertIn("redis:7.4.9@sha256:", block)
         self.assertIn("fetch-depth: 0", block)
@@ -295,7 +341,8 @@ class CiWorkflowTests(unittest.TestCase):
             "\n  windows-smoke:\n", 1
         )[0]
         self.assertIn("cargo xtask check ci integration", integration)
-        self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)
+        self.assertIn("准备隔离服务文件配置", integration)
+        self.assertNotIn("RYFRAME_MYSQL_TLS_INTEGRATION", integration)
         self.assertNotIn("actions/setup-python", integration)
         self.assertNotIn("scripts/requirements-ci.txt", integration)
         self.assertNotIn("cargo test --locked -p ryframe-db", integration)

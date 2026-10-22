@@ -27,7 +27,7 @@ class GenerationImageTests(unittest.TestCase):
         self.addCleanup(self.f.doCleanups)
         self.backend, self.output = self.f.backend, self.f.local / "i"
         self.tools = {name: {"path": str(self.f.external), "sha256": self.f.tools.plan["tools"]["mysql"]["sha256"]}
-                      for name in ("mysql", "aws")}
+                      for name in ("mysql",)}
         runtime = Path(self.f.selected["runtime_dir"])
         runtime.mkdir()
         write_json(runtime / "runtime.json", {"backend_root": str(self.backend)})
@@ -49,9 +49,14 @@ class GenerationImageTests(unittest.TestCase):
         return binding(path)
 
     def run_external(self, command, **kwargs):
-        if "s3api" in command:
+        if "__s3-read" in command:
             self.f.calls.append(command)
-            return SourceFixture.aws(self.f, command)
+            request = json.loads(kwargs["input"])
+            self.assertEqual(request["configuration"], self.f.selected["s3"])
+            self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
+            value = SourceFixture.object_response(self.f, request["operation"], request["bucket"],
+                                                  request["key"], request["destination"])
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "result": value}).encode(), b"")
         if "backup-inventory" not in command:
             return self.f.run_external(command, **kwargs)
         self.f.calls.append(command)

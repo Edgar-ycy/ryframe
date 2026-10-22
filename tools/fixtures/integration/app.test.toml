@@ -1,0 +1,25 @@
+# 仅供隔离 CI 服务使用的公开测试值；控制器先写入本轮 scope_id 和实例编号。
+# 此文件不包含真实部署凭据，不作为开发或生产配置使用。
+
+[database.primary]
+host = "127.0.0.1"
+port = 3306
+database = "mysql"
+username = "root"
+password = "ryframe-ci-password"
+tls_mode = "required"
+
+[redis]
+mode = "required"
+host = "127.0.0.1"
+port = 6379
+password = ""
+database = 15
+timeout_secs = 3
+tls = false
+
+[auth]
+jwt_secret = "ryframe-ci-isolated-file-configuration-secret-not-for-deployment"
+
+[bootstrap]
+admin_password = "RyFrame-CI-Admin-2026!"

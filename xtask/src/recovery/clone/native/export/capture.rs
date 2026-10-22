@@ -91,7 +91,10 @@ fn capture(context: &Context, transport: &SystemTransport) -> Result<Value> {
 
 fn capture_before(context: &Context, transport: &SystemTransport) -> Result<CaptureFrame> {
     let output = context.output();
-    json_io::write_new(&output.join("request.json"), &context.request)?;
+    json_io::write_new(
+        &output.join("request.json"),
+        &super::input::public_request(&context.request),
+    )?;
     let before = proof::generation(context)?;
     json_io::write_new(&output.join("generation-before.json"), &before)?;
     let models = database::models(context)?;
@@ -252,7 +255,7 @@ fn build_export(
         },
         "source_snapshot": frame.before["source"],
         "worktree_fingerprint": context.request["worktree_fingerprint"],
-        "source": context.request["source"],
+        "source": super::input::public_request(&context.request)["source"],
         "artifact_root": output,
         "databases": frame.dumps,
         "objects": frame.objects,

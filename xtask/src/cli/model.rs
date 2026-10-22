@@ -53,7 +53,7 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
-    Dev { measure_once: bool },
+    Dev(DevOptions),
     Check(CheckCommand),
     Build(BuildOptions),
     Generate(GenerateCommand),
@@ -523,3 +523,13 @@ impl fmt::Display for CliError {
 }
 
 impl std::error::Error for CliError {}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DevOptions {
+    pub(crate) config_dir: Option<PathBuf>,
+    pub(crate) workspace_root: Option<PathBuf>,
+    pub(crate) measure_once: bool,
+    pub(crate) case: Option<crate::dev::SaveCase>,
+    pub(crate) output: Option<PathBuf>,
+    pub(crate) plan: bool,
+}

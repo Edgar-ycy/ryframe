@@ -186,15 +186,6 @@ impl TenantDatabaseTargetRegistry {
         let mysql = target.mysql.as_ref().ok_or_else(|| {
             TenantDataError::InvalidConfiguration(format!("mysql 目标 {} 缺少连接定义", target.key))
         })?;
-        let password = std::env::var(&mysql.password_env).map_err(|_| {
-            tracing::warn!(
-                target = %target.key,
-                "租户数据目标密码凭据不可用"
-            );
-            TenantDataError::TargetUnavailable {
-                target_key: target.key.to_string(),
-            }
-        })?;
         let pool_max_connections = target
             .pool_max_connections
             .unwrap_or(self.inner.default_pool_max_connections);
@@ -203,7 +194,7 @@ impl TenantDatabaseTargetRegistry {
             port: mysql.port,
             database: mysql.database.clone(),
             username: mysql.username.clone(),
-            password,
+            password: mysql.password.clone(),
             max_connections: pool_max_connections,
             min_connections: 0,
             acquire_timeout_secs: 10,

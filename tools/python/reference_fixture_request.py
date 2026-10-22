@@ -227,6 +227,9 @@ def build(
     ):
         raise ValueError("fresh-target 私有环境未绑定当前 scope")
     credential_version = values.get("APP_RESET_CREDENTIAL_VERSION")
+    if any(not isinstance(values.get(key), str) or not values[key]
+           for key in ("access_key", "secret_key")):
+        raise ValueError("fresh-target 缺少直接配置的 S3 凭据")
     scope = selected["scope_id"]
     request = {
         "format_version": 1,
@@ -242,8 +245,8 @@ def build(
             "s3": {
                 "endpoint": selected["objects"]["endpoint"],
                 "region": selected["objects"]["region"],
-                "access_key_env": "APP_OBJECT_STORAGE_ACCESS_KEY",
-                "secret_key_env": "APP_OBJECT_STORAGE_SECRET_KEY",
+                "access_key": values["access_key"],
+                "secret_key": values["secret_key"],
             },
             "databases": databases,
         },
@@ -251,7 +254,7 @@ def build(
         "configuration_sha256": bootstrap["configuration_sha256"],
         "tools": {
             name: {key: review["tools"][name][key] for key in ("path", "sha256")}
-            for name in ("mysql", "aws")
+            for name in ("mysql",)
         },
         "storage": {"rustfs": rustfs, "redis": service["redis"]},
         "reset": {

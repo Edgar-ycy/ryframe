@@ -16,10 +16,8 @@ class BindingError(ValueError):
     """错误只包含固定诊断，不包含配置值或秘密。"""
 
 
-DATABASE_FIELDS = {"host": "HOST", "port": "PORT", "database": "NAME", "username": "USERNAME",
-                   "password": "PASSWORD", "tls_mode": "TLS_MODE", "tls_ca": "TLS_CA",
-                   "tls_client_cert": "TLS_CLIENT_CERT", "tls_client_key": "TLS_CLIENT_KEY"}
-STORAGE_FIELDS = ("backend", "endpoint", "region", "access_key", "secret_key", "use_ssl")
+DATABASE_FIELDS = ("host", "port", "database", "username", "password", "tls_mode", "tls_ca",
+                   "tls_client_cert", "tls_client_key")
 TLS_FILES = ("tls_ca", "tls_client_cert", "tls_client_key")
 
 
@@ -36,31 +34,6 @@ def text(value: object) -> str:
 def port(value: object) -> int:
     demand(type(value) is int and 1 <= value <= 65535, "来源端口必须明确且有效")
     return value
-
-
-def override(table: dict, variables: Mapping[str, str], fields: dict, prefix: str) -> dict:
-    result = dict(table)
-    for field, suffix in fields.items():
-        name = prefix + suffix
-        demand(name + "_FILE" not in variables, "来源文件间接覆盖未被运行收据绑定")
-        if name not in variables:
-            continue
-        value = variables[name]
-        if field == "port":
-            demand(re.fullmatch(r"\+?[0-9]+", value) is not None, "来源端口覆盖无效")
-            value = int(value)
-        elif field == "use_ssl":
-            demand(value in ("true", "false"), "来源对象 TLS 开关覆盖无效")
-            value = value == "true"
-        result[field] = value
-    return result
-
-
-def collection(table: dict, field: str, variable: str, variables: Mapping[str, str]) -> list:
-    demand(variable + "_FILE" not in variables, "来源目标文件内容未被运行收据绑定")
-    result = json.loads(variables[variable]) if variable in variables else table.get(field, [])
-    demand(isinstance(result, list), "来源目标必须是明确数组")
-    return result
 
 
 def defaults_connection(backend: Path, declared: dict) -> dict:
@@ -105,8 +78,9 @@ def mysql_client(path: Path, expected_sha256: str | None = None) -> dict:
     return entries
 
 
-def runtime_targets(table: dict, variables: Mapping[str, str]) -> dict:
-    values = collection(table.get("tenant_data", {}), "targets", "APP_TENANT_DATA_TARGETS", variables)
+def runtime_targets(table: dict) -> dict:
+    values = table.get("tenant_data", {}).get("targets", [])
+    demand(isinstance(values, list), "来源目标必须是明确数组")
     targets = {}
     for value in values:
         demand(isinstance(value, dict), "来源租户目标无效")
@@ -118,18 +92,21 @@ def runtime_targets(table: dict, variables: Mapping[str, str]) -> dict:
         targets["shared-control"] = {"key": "shared-control", "kind": "control", "mode": "shared"}
     control = targets["shared-control"]
     demand(control.get("kind") == "control" and control.get("mode") == "shared"
-           and all(control.get(field) is None for field in (*DATABASE_FIELDS, "password_env", "max_connections")),
+           and "password_env" not in control
+           and all(control.get(field) is None for field in (*DATABASE_FIELDS, "max_connections")),
            "来源控制目标必须复用明确的 primary 连接")
     return targets
 
 
-def database_bindings(backend: Path, source: dict, table: dict, variables: Mapping[str, str]) -> list:
+def database_bindings(backend: Path, source: dict, table: dict) -> list:
     database = table["database"]
     for field in ("replicas", "sources"):
-        demand(not collection(database, field, "APP_DATABASE_" + field.upper(), variables),
+        values = database.get(field, [])
+        demand(isinstance(values, list), "来源目标必须是明确数组")
+        demand(not values,
                "来源参考计划不支持未登记的副本或命名数据源")
-    primary = override(database["primary"], variables, DATABASE_FIELDS, "APP_DATABASE_")
-    targets = runtime_targets(table, variables)
+    primary = database["primary"]
+    targets = runtime_targets(table)
     declared = source["databases"]
     demand(len(declared) == len(targets) and {item["key"] for item in declared} == set(targets),
            "来源配置与计划必须完整且精确覆盖相同数据库目标")
@@ -142,11 +119,7 @@ def database_bindings(backend: Path, source: dict, table: dict, variables: Mappi
                and item["mode"] == target.get("mode") and item["mode"] in ("shared", "dedicated"),
                "来源数据库逻辑类型或共享模式不同")
         connection = dict(primary if control else target)
-        if not control:
-            name = text(connection.get("password_env"))
-            demand(re.fullmatch(r"APP_[A-Z0-9_]+", name) is not None and not name.endswith("_FILE"),
-                   "来源租户密码必须使用运行收据绑定的 APP 环境变量")
-            connection["password"] = text(variables.get(name))
+        demand("password_env" not in connection, "来源数据库认证只接受 password 明文字段")
         demand(all(connection.get(field) in (None, "") for field in TLS_FILES), "来源 TLS 文件内容未被运行收据绑定")
         expected = defaults_connection(backend, item)
         actual = {field: (port(connection.get(field)) if field == "port" else text(connection.get(field)))
@@ -170,8 +143,8 @@ def storage_endpoint(value: object) -> str:
     return raw.rstrip("/")
 
 
-def storage_binding(source: dict, table: dict, variables: Mapping[str, str]) -> dict:
-    actual = override(table["object_storage"], variables, {field: field.upper() for field in STORAGE_FIELDS}, "APP_OBJECT_STORAGE_")
+def storage_binding(source: dict, table: dict) -> dict:
+    actual = table["object_storage"]
     demand(actual.get("backend") in ("rustfs", "minio", "s3"), "来源必须使用参考计划的 S3 兼容后端")
     endpoint = storage_endpoint(actual.get("endpoint"))
     expected = source["s3"]
@@ -180,21 +153,27 @@ def storage_binding(source: dict, table: dict, variables: Mapping[str, str]) -> 
     demand(endpoint == storage_endpoint(expected["endpoint"]) and text(actual.get("region")) == text(expected["region"]),
            "来源对象端点或区域与计划不同")
     for field in ("access_key", "secret_key"):
-        demand(text(actual.get(field)) == text(variables.get(expected[field + "_env"])), "来源对象认证与计划不同")
+        demand(field + "_env" not in expected, "来源对象认证只接受明确的 access_key 与 secret_key 字段")
+        demand(text(actual.get(field)) == text(expected.get(field)), "来源对象认证与计划不同")
     return {"backend": actual["backend"], "endpoint": endpoint, "region": actual["region"]}
 
 
-def source_binding(backend: Path, plan: dict, variables: Mapping[str, str] | None = None, *, evidence_root: Path | None = None) -> dict:
+def source_binding(
+    backend: Path, plan: dict, variables: Mapping[str, str] | None = None,
+    *, evidence_root: Path | None = None, config_dir: Path | str | None = None,
+) -> dict:
     """返回可公开的物理描述；调用方另核验 runtime 摘要、进程及实际 ownership。"""
     variables = os.environ if variables is None else variables
     try:
         source = plan["source"]
-        demand(variables.get("APP_ENV") == "test" and variables.get("APP_SCOPE_ID") == source["scope_id"],
-               "来源环境与计划 scope 必须明确一致")
-        table = load_app_table(backend, variables)
+        app_env = variables.get("APP_ENV")
+        demand(isinstance(app_env, str) and app_env == "test", "来源环境必须明确为 test")
+        table = load_app_table(backend, {"APP_ENV": app_env}, config_dir=config_dir)
+        demand(text(table.get("scope_id")) == text(source.get("scope_id")),
+               "来源配置文件与计划 scope 必须明确一致")
         result = {"format_version": 1, "scope_id": source["scope_id"],
-                  "databases": database_bindings(evidence_root or backend, source, table, variables),
-                  "s3": storage_binding(source, table, variables)}
+                  "databases": database_bindings(evidence_root or backend, source, table),
+                  "s3": storage_binding(source, table)}
         digest = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return {**result, "sha256": digest}
     except BindingError:

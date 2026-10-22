@@ -87,9 +87,10 @@ def validate_plan(plan: dict, backend: Path) -> None:
             raise ValueError("运行进程收据必须显式保存在当前 .local-tests")
         if not re.fullmatch(r"[a-z0-9-]+", side["s3"]["region"]):
             raise ValueError("S3 region 无效")
-        for key in ("access_key_env", "secret_key_env"):
-            if not re.fullmatch(r"[A-Z][A-Z0-9_]+", side["s3"][key]):
-                raise ValueError("凭据必须通过命名环境变量提供")
+        for key in ("access_key", "secret_key"):
+            value = side["s3"].get(key)
+            if not isinstance(value, str) or not value or any(ord(char) < 32 for char in value):
+                raise ValueError("对象存储凭据必须在绑定文件中直接提供且不能为空")
         keys, databases = set(), set()
         for db in side["databases"]:
             key = identifier(db["key"])
@@ -116,7 +117,7 @@ def validate_plan(plan: dict, backend: Path) -> None:
     target_modes = {db["key"]: (db["kind"], db["mode"]) for db in plan["target"]["databases"]}
     if any(target_modes[db["key"]] != (db["kind"], db["mode"]) for db in plan["source"]["databases"]):
         raise ValueError("源与恢复目标的逻辑类型和共享模式必须相同")
-    for name in ("mysql", "mysqldump", "aws", "node"):
+    for name in ("mysql", "mysqldump", "node"):
         tool = plan["tools"][name]
         path = Path(tool["path"])
         if not path.is_absolute() or file_digest(path)["sha256"] != tool["sha256"]:

@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    env, fs,
+    fs,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
@@ -16,24 +16,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Result,
+    cli::DevOptions,
     process::{ChildGroup, ManagedChild, child_command, stop_child},
     source_edit::SourceEdit,
     watch::{ChangeBatch, SourceWatcher},
-    workspace::{remove_isolated_directory, root_dir},
+    workspace::remove_isolated_directory,
 };
 
 use super::{
     build::{DEV_API_FEATURES, cleanup_binaries},
-    config::{DevPorts, WorkerIds, spawn_shutdown_listener},
+    config::spawn_shutdown_listener,
     health::combine_failures,
+    inputs,
     model::{BuildPlan, ChangeOutcome, ServiceLaunchMode},
-    orchestrator::{build_initial_candidate, process_change, receive_change},
-    services::{ensure_initial_ports_available, start_services_in_mode, stop_services},
+    orchestrator::{Cycle, build_initial_candidate, process_change, receive_change},
+    services::{start_services_in_mode, stop_services},
     snapshot::DevSession,
 };
 
-const CASE_ENV: &str = "RYFRAME_DEVEX_SAVE_CASE";
-const RESULT_ENV: &str = "RYFRAME_DEVEX_SAVE_RESULT_PATH";
 const WATCH_EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 const CANCELLATION_DESCENDANT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const RESULT_FILE_NAME: &str = "cargo-dev-save-result.json";
@@ -52,16 +52,6 @@ pub(crate) enum SaveCase {
 }
 
 impl SaveCase {
-    fn from_environment() -> Result<Self> {
-        let value = env::var(CASE_ENV).unwrap_or_else(|_| "shared-runtime".to_owned());
-        Self::parse(&value).ok_or_else(|| {
-            format!(
-                "{CASE_ENV} 只允许 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest 或 cancellation"
-            )
-            .into()
-        })
-    }
-
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "config-only" => Some(Self::ConfigOnly),
@@ -160,13 +150,13 @@ pub(crate) enum SaveMeasurementContract {
     LegacyApiWorkerBaseline,
 }
 
-pub(crate) fn run() -> Result<()> {
-    let root = root_dir();
-    let case = SaveCase::from_environment()?;
-    let result_path = measurement_result_path();
+pub(crate) fn run(options: &DevOptions) -> Result<()> {
+    let root = inputs::workspace(options)?;
+    let case = options.case.unwrap_or(SaveCase::SharedRuntime);
+    let result_path = options.output.clone();
     let state_root = measurement_state_root(&root, result_path.as_deref());
     remove_stale_result(result_path.as_deref())?;
-    let measurement = measure(&root, &state_root, case)?;
+    let measurement = measure(&root, &state_root, case, options)?;
     if let Some(path) = result_path.as_deref() {
         write_measurement(path, &measurement)?;
     }
@@ -174,55 +164,61 @@ pub(crate) fn run() -> Result<()> {
     Ok(())
 }
 
-fn measure(root: &Path, state_root: &Path, case: SaveCase) -> Result<SaveMeasurement> {
+fn measure(
+    root: &Path,
+    state_root: &Path,
+    case: SaveCase,
+    options: &DevOptions,
+) -> Result<SaveMeasurement> {
     if case == SaveCase::Cancellation {
-        return measure_cancellation(root, state_root);
+        return measure_cancellation(root, state_root, options);
     }
     let group = ChildGroup::new()?;
-    let watcher = SourceWatcher::new(root)?;
-    let session = DevSession::prepare_isolated(state_root, watcher.current_revision())?;
+    let session = DevSession::prepare_isolated(root, state_root, options)?;
+    let mut watcher = SourceWatcher::new_with_inputs(
+        root,
+        session.capture()?.1,
+        crate::watch::SourceRevision::from_value(0),
+    )?;
     let shutdown = Arc::new(AtomicBool::new(false));
     let _shutdown_listener = spawn_shutdown_listener(Arc::clone(&shutdown));
     println!("保存反馈测量前置检查：构建并以只读 probe 模式启动独立 LKG。");
-    let initial = build_initial_candidate(&group, root, &session, shutdown.as_ref(), &watcher)?
-        .ok_or("保存反馈测量前置检查被取消")?;
-    let ports = DevPorts::isolated()?;
-    ensure_initial_ports_available(ports)?;
-    let worker_ids = WorkerIds::isolated(ports.api);
-    let mut services = start_services_in_mode(
-        &group,
+    let cycle = Cycle {
+        group: &group,
         root,
-        initial,
-        ports,
-        worker_ids,
-        ServiceLaunchMode::Probe,
-    )
-    .map_err(|error| format!("保存反馈测量前置检查失败（配置、依赖或外部服务）：{error}"))?;
-    let result = measure_cycle(
-        &group,
-        root,
-        &session,
-        &watcher,
-        shutdown.as_ref(),
-        &mut services,
-        ports,
-        worker_ids,
-        case,
-    );
+        session: &session,
+        shutdown: &shutdown,
+        mode: ServiceLaunchMode::Probe,
+    };
+    let initial =
+        build_initial_candidate(&cycle, &mut watcher)?.ok_or("保存反馈测量前置检查被取消")?;
+    let mut services = start_services_in_mode(&group, root, initial, ServiceLaunchMode::Probe)
+        .map_err(|error| format!("保存反馈测量前置检查失败：{error}"))?;
+    let result = measure_cycle(&cycle, &mut watcher, &mut services, case);
     let binaries = services.binaries.clone();
+    let stopped = stop_services(&mut services);
+    if stopped.is_err() {
+        return combine_failures(result, [("停止保存反馈测量服务，保留现场", stopped)]);
+    }
     combine_failures(
         result,
-        [
-            ("停止保存反馈测量服务", stop_services(&mut services)),
-            ("清理保存反馈测量 LKG", cleanup_binaries(&binaries)),
-        ],
+        [("清理保存反馈测量 LKG", cleanup_binaries(&binaries))],
     )
 }
 
-fn measure_cancellation(root: &Path, state_root: &Path) -> Result<SaveMeasurement> {
+fn measure_cancellation(
+    root: &Path,
+    state_root: &Path,
+    options: &DevOptions,
+) -> Result<SaveMeasurement> {
     fs::create_dir_all(state_root)?;
     let group = ChildGroup::new()?;
-    let watcher = SourceWatcher::new(root)?;
+    let session = DevSession::prepare_isolated(root, state_root, options)?;
+    let watcher = SourceWatcher::new_with_inputs(
+        root,
+        session.capture()?.1,
+        crate::watch::SourceRevision::from_value(0),
+    )?;
     let source_revision = watcher.current_revision();
     let target = state_root.join(format!(
         "cancellation-{}-{}",
@@ -317,25 +313,24 @@ fn wait_for_compile_descendant(child: &mut ManagedChild, target: &Path) -> Resul
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn measure_cycle(
-    group: &ChildGroup,
-    root: &Path,
-    session: &DevSession,
-    watcher: &SourceWatcher,
-    shutdown: &AtomicBool,
+    cycle: &Cycle<'_>,
+    watcher: &mut SourceWatcher,
     services: &mut super::model::Services,
-    ports: DevPorts,
-    worker_ids: WorkerIds,
     case: SaveCase,
 ) -> Result<SaveMeasurement> {
     let source = case.source();
-    let path = root.join(source.relative);
+    let (_, roots, _) = cycle.session.capture()?;
+    let path = match case {
+        SaveCase::ConfigOnly => roots.config_dir.join("app.dev.toml"),
+        SaveCase::Locales => roots.locales_dir.join("zh-CN.toml"),
+        _ => cycle.root.join(source.relative),
+    };
     let label = format!("{}-{}", std::process::id(), Utc::now().timestamp_millis());
     let (mut edit, started) = SourceEdit::apply(&path, &label, source.comment_prefix)?;
     let started_at = DateTime::<Utc>::from(started.wall_clock);
     let outcome = (|| {
-        let batch = wait_for_save_event(watcher, shutdown, source.relative)?;
+        let batch = wait_for_save_event(watcher, cycle.shutdown, source.relative)?;
         let plan = BuildPlan::from_changes(&batch);
         let expected_cargo_invocations = plan.cargo_invocations();
         if expected_cargo_invocations != case.expected_cargo_invocations() {
@@ -346,19 +341,7 @@ fn measure_cycle(
             .into());
         }
         let cargo_counter = AtomicUsize::new(0);
-        let outcome = process_change(
-            group,
-            root,
-            session,
-            watcher,
-            shutdown,
-            services,
-            ports,
-            worker_ids,
-            ServiceLaunchMode::Probe,
-            Some(&cargo_counter),
-            batch,
-        )?;
+        let outcome = process_change(cycle, watcher, services, Some(&cargo_counter), batch)?;
         let ready_kind = ready_kind(case, outcome)?;
         let cargo_invocations = cargo_counter.load(Ordering::Relaxed);
         if cargo_invocations != expected_cargo_invocations {
@@ -438,10 +421,6 @@ fn finish_source_edit<T>(outcome: Result<T>, edit: &mut SourceEdit) -> Result<T>
         )
         .into()),
     }
-}
-
-fn measurement_result_path() -> Option<PathBuf> {
-    env::var_os(RESULT_ENV).map(PathBuf::from)
 }
 
 fn measurement_state_root(root: &Path, _result_path: Option<&Path>) -> PathBuf {

@@ -229,7 +229,8 @@ class TransferSteps:
         directory = local_path(self.backend, str(observed.capture_directory))
         request = read_json(directory / "intent.json")
         verified = verify_capture(self.tools, "target", item["bucket"], item["target_key"], directory,
-                                  expected=request["expected"], max_bytes=request["max_bytes"], owner_buckets=(item["bucket"],))["capture"]
+                                  expected=request["expected"], max_bytes=request["max_bytes"],
+                                  owner_buckets=(item["bucket"],), transport="rust-s3-sigv4")["capture"]
         metadata = verified["metadata"]
         if verified["get_header_differences"]:
             metadata = {"stored": metadata, "get_header_differences": verified["get_header_differences"]}

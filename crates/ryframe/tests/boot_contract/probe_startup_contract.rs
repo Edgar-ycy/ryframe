@@ -37,6 +37,36 @@ fn probe_modes_are_explicit_and_keep_normal_modes() {
     assert!(parse_worker_run_mode(&arguments(&["--probe", "extra"])).is_err());
 }
 
+#[test]
+fn configuration_directory_is_stripped_before_each_process_mode_parser() {
+    use ryframe_config::ConfigurationArgs;
+
+    for mode in [None, Some("--probe"), Some("--healthcheck")] {
+        let mut input = arguments(&["--config-dir", "隔离 配置"]);
+        input.extend(mode.map(str::to_owned));
+        let parsed = ConfigurationArgs::parse(input).unwrap();
+        assert_eq!(parsed.directory, std::path::PathBuf::from("隔离 配置"));
+        assert!(parse_api_run_mode(&parsed.arguments).is_ok());
+        assert!(parse_worker_run_mode(&parsed.arguments).is_ok());
+    }
+    let parsed =
+        ConfigurationArgs::parse(arguments(&["--once", "--config-dir", "worker-config"])).unwrap();
+    assert_eq!(
+        parse_worker_run_mode(&parsed.arguments).unwrap(),
+        WorkerRunMode::Once
+    );
+    assert!(parse_api_run_mode(&parsed.arguments).is_err());
+    for input in [
+        arguments(&["--probe", "--config-dir"]),
+        arguments(&["--config-dir", "one", "--config-dir", "two"]),
+        arguments(&["--config-dir", "one", "--probe", "extra"]),
+    ] {
+        let accepted = ConfigurationArgs::parse(input)
+            .is_ok_and(|parsed| parse_api_run_mode(&parsed.arguments).is_ok());
+        assert!(!accepted);
+    }
+}
+
 #[tokio::test]
 async fn probe_never_calls_ensure_or_its_cleanup_path() {
     let ensure_calls = AtomicUsize::new(0);

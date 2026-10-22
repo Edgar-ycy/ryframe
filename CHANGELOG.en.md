@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Native source-object capture and target-object revalidation now use a Rust S3 read port with file-bound credentials and SigV4 signatures, without launching AWS CLI or passing AWS credentials to subprocesses. Public request and export evidence excludes credential values while retaining the private request digest and public-projection verification. Conditional ETags/versions, complete pagination, metadata and ownership checks, streaming exclusive files, and interruption evidence are preserved; redirects, partial responses, and unknown object policies are rejected. Offline capture verification requires callers to specify the transport provenance explicitly; Python capture and copy entry points that have not yet migrated continue to verify their actual tool provenance independently.
+
+- Native recovery-target static configuration validation now reads plaintext TOML, retaining only `APP_ENV=test` for environment selection. Requests may explicitly bind a configuration directory inside the execution backend; `app.test.toml` is required and common `app.toml` is optional. Physical connections, Redis, Worker, initial administrator passwords, and configuration drift remain strictly checked; former credential variable names are no longer configuration sources for this static entry point.
+
 - Python checks install the fixed native-tool descriptor through explicit arguments, removing the rate-limit tool's environment binding. The binding can be installed only once and cannot be replaced; binary identity and digests remain verified for each invocation. The check entry preserves all unittest arguments, UTF-8 mode, and failing test exit statuses.
 
 - Database connections now share an options factory so controlled callers can append validation for new physical connections while preserving existing pool, TLS, SQL logging, and trace-recording policies.

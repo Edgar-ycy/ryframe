@@ -40,12 +40,12 @@ impl Fixture {
         let local = backend.join(".local-tests");
         fs::create_dir_all(&local).unwrap();
         fs::create_dir(backend.join("config")).unwrap();
-        for tool in ["mysql", "aws"] {
+        for tool in ["mysql", "rustfs"] {
             fs::write(local.join(tool), tool).unwrap();
         }
         let defaults = local.join("mysql.cnf");
         fs::write(&defaults, "[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n").unwrap();
-        let tools = json!({"mysql": tool(&local.join("mysql")), "aws": tool(&local.join("aws"))});
+        let tools = json!({"mysql": tool(&local.join("mysql"))});
         let review = review(&local, &tools);
         write(&local.join("review.json"), &review);
         write(
@@ -53,7 +53,7 @@ impl Fixture {
             &json!({"kind": "devex-clone-tool-build", "artifacts": {}}),
         );
         let databases = request::KEYS.into_iter().map(|(key, kind, mode)| json!({"key": key, "kind": kind, "mode": mode, "database": database_name("seed", key), "server_uuid": UUID, "defaults_file": defaults, "defaults_sha256": digest::file(&defaults).unwrap().sha256})).collect::<Vec<_>>();
-        let mut request = json!({"format_version": 1, "kind": "devex-clone-fresh-target", "id": "fresh-request", "review": null, "side": "seed", "target": {"scope_id": "seed-scope", "s3": {"endpoint": "http://127.0.0.1:29000", "region": "test-region", "access_key_env": "APP_OBJECT_STORAGE_ACCESS_KEY", "secret_key_env": "APP_OBJECT_STORAGE_SECRET_KEY"}, "databases": databases}, "maintenance_build": bound(&local.join("build.json")), "configuration_sha256": "a".repeat(64), "tools": tools, "storage": {"rustfs": {}, "redis": {"port": 26379}}, "reset": {"legacy_ownership": {"mysql_exclusive": true, "redis_exclusive": true, "object_storage_exclusive": true}, "credential_version": "fixture-v1", "sentinel_key": "ryframe:devex-fresh:seed-scope:sentinel", "sentinel_value": "devex-fresh:fresh-request"}});
+        let mut request = json!({"format_version": 1, "kind": "devex-clone-fresh-target", "id": "fresh-request", "review": null, "side": "seed", "target": {"scope_id": "seed-scope", "s3": {"endpoint": "http://127.0.0.1:29000", "region": "test-region", "access_key": "fixture-access", "secret_key": "fixture-secret"}, "databases": databases}, "maintenance_build": bound(&local.join("build.json")), "configuration_sha256": "a".repeat(64), "tools": tools, "storage": {"rustfs": {}, "redis": {"port": 26379}}, "reset": {"legacy_ownership": {"mysql_exclusive": true, "redis_exclusive": true, "object_storage_exclusive": true}, "credential_version": "fixture-v1", "sentinel_key": "ryframe:devex-fresh:seed-scope:sentinel", "sentinel_value": "devex-fresh:fresh-request"}});
         request["review"] = review_binding(&local.join("review.json"), &review);
         let mut fixture = Self {
             backend,
@@ -62,19 +62,47 @@ impl Fixture {
             review,
             environment: environment(),
         };
+        fs::write(
+            fixture.backend.join("config/app.test.toml"),
+            "# 明确选择测试配置\n",
+        )
+        .unwrap();
         fixture.write_configuration();
         fixture.seal_configuration();
         fixture
     }
 
     fn write_configuration(&self) {
-        let targets = request::KEYS.into_iter().filter(|(key, _, _)| *key != "shared-control").map(|(key, _, mode)| json!({"key": key, "kind": "mysql", "mode": mode, "host": "127.0.0.1", "port": 3306, "database": database_name("seed", key), "username": "fixture", "password_env": "APP_TENANT_PASSWORD", "tls_mode": "disabled"})).collect::<Vec<_>>();
-        let table = json!({"app": {"host": "127.0.0.1", "port": 28080}, "database": {"primary": {"host": "127.0.0.1", "port": 3306, "database": database_name("seed", "shared-control"), "username": "fixture", "password": "fixture-secret", "tls_mode": "disabled"}}, "tenant_data": {"targets": targets}, "object_storage": {"backend": "rustfs", "endpoint": "http://127.0.0.1:29000", "region": "test-region", "access_key": "fixture-access", "secret_key": "fixture-secret", "use_ssl": false}, "reset": {"legacy_mysql_exclusive": true, "legacy_redis_exclusive": true, "legacy_object_storage_exclusive": true, "credential_version": "fixture-v1", "redis_outside_sentinel_key": "ryframe:devex-fresh:seed-scope:sentinel"}});
+        let targets = request::KEYS.into_iter().filter(|(key, _, _)| *key != "shared-control").map(|(key, _, mode)| json!({"key": key, "kind": "mysql", "mode": mode, "host": "127.0.0.1", "port": 3306, "database": database_name("seed", key), "username": "fixture", "password": "fixture-secret", "tls_mode": "disabled"})).collect::<Vec<_>>();
+        let table = json!({"scope_id":"seed-scope", "bootstrap":{"admin_password":"Fixture!Admin123"}, "jobs":{"mode":"external","health_host":"127.0.0.1","health_port":28081}, "redis":{"host":"127.0.0.1","port":26379,"database":0,"tls":false}, "app": {"host": "127.0.0.1", "port": 28080}, "database": {"primary": {"host": "127.0.0.1", "port": 3306, "database": database_name("seed", "shared-control"), "username": "fixture", "password": "fixture-secret", "tls_mode": "disabled"}}, "tenant_data": {"targets": targets}, "object_storage": {"backend": "rustfs", "endpoint": "http://127.0.0.1:29000", "region": "test-region", "access_key": "fixture-access", "secret_key": "fixture-secret", "use_ssl": false}, "reset": {"legacy_mysql_exclusive": true, "legacy_redis_exclusive": true, "legacy_object_storage_exclusive": true, "credential_version": "fixture-v1", "redis_outside_sentinel_key": "ryframe:devex-fresh:seed-scope:sentinel"}});
         fs::write(
             self.backend.join("config/app.toml"),
             configuration_fixture::toml_text(&table),
         )
         .unwrap();
+    }
+
+    fn set_configuration(&mut self, pointer: &str, value: Option<Value>) {
+        let mut table = serde_json::to_value(
+            crate::rate_limit::load_app_table(&self.backend, None, "test").unwrap(),
+        )
+        .unwrap();
+        let (parent, key) = pointer.rsplit_once('/').unwrap();
+        let parent = table.pointer_mut(parent).unwrap().as_object_mut().unwrap();
+        match value {
+            Some(value) => {
+                parent.insert(key.into(), value);
+            }
+            None => {
+                parent.remove(key);
+            }
+        }
+        fs::write(
+            self.backend.join("config/app.toml"),
+            configuration_fixture::toml_text(&table),
+        )
+        .unwrap();
+        self.seal_configuration();
     }
 
     fn seal_review(&mut self) {
@@ -83,12 +111,16 @@ impl Fixture {
     }
 
     fn seal_configuration(&mut self) {
-        let (directory, files) =
-            request_configuration::configuration_files(&self.backend, &self.environment).unwrap();
+        let (directory, files) = request_configuration::configuration_files(
+            &self.backend,
+            &self.environment,
+            self.request.get("configuration_directory"),
+        )
+        .unwrap();
         let env = self
             .environment
             .iter()
-            .filter(|(key, _)| key.starts_with("APP_"))
+            .filter(|(key, _)| key.as_str() == "APP_ENV")
             .collect::<BTreeMap<_, _>>();
         let hashes = files
             .iter()
@@ -166,24 +198,7 @@ impl Drop for Fixture {
 }
 
 fn environment() -> BTreeMap<String, String> {
-    [
-        ("APP_ENV", "test"),
-        ("APP_SCOPE_ID", "seed-scope"),
-        ("APP_JOBS_MODE", "external"),
-        ("APP_JOBS_HEALTH_HOST", "127.0.0.1"),
-        ("APP_JOBS_HEALTH_PORT", "28081"),
-        ("APP_REDIS_HOST", "127.0.0.1"),
-        ("APP_REDIS_PORT", "26379"),
-        ("APP_REDIS_DATABASE", "0"),
-        ("APP_REDIS_TLS", "false"),
-        ("APP_TENANT_PASSWORD", "fixture-secret"),
-        ("APP_OBJECT_STORAGE_ACCESS_KEY", "fixture-access"),
-        ("APP_OBJECT_STORAGE_SECRET_KEY", "fixture-secret"),
-        ("RYFRAME_RESET_ADMIN_PASSWORD", "Fixture!Admin123"),
-    ]
-    .into_iter()
-    .map(|(key, value)| (key.into(), value.into()))
-    .collect()
+    BTreeMap::from([("APP_ENV".into(), "test".into())])
 }
 
 fn review(local: &Path, tools: &Value) -> Value {
@@ -196,7 +211,7 @@ fn review(local: &Path, tools: &Value) -> Value {
     }
     let mut tools = tools.clone();
     tools["mysqldump"] = tools["mysql"].clone();
-    tools["rustfs"] = tools["aws"].clone();
+    tools["rustfs"] = tool(&local.join("rustfs"));
     tools["redis_server"] = json!({"distribution": "fixture", "resolved_path": "/usr/bin/redis-server", "sha256": "a".repeat(64)});
     json!({"kind": "review-only-perf-resource-plan-with-readonly-preflight", "ready_for_execution": true, "scopes": scopes, "tools": tools, "services": {"rustfs": {"api": "http://127.0.0.1:29000", "console": "http://127.0.0.1:29001", "data_dir": local.join("objects")}, "redis": {"directory": local.join("redis")}}, "reference": {"source": {"databases": [{"server_uuid": UUID, "database": "protected_source"}]}, "protected_target": {"databases": [{"server_uuid": UUID, "database": "protected_target"}]}}})
 }
@@ -228,6 +243,26 @@ fn review_binding(path: &Path, value: &Value) -> Value {
     let mut result = bound(path);
     result["canonical_sha256"] = json!(digest::plan_hash(value).unwrap());
     result
+}
+
+#[test]
+fn request_requires_only_mysql_and_rejects_retired_aws_role() {
+    let mut fixture = Fixture::new();
+    fixture.validate().unwrap();
+    assert_eq!(fixture.request["tools"].as_object().unwrap().len(), 1);
+    assert!(fixture.review["tools"].get("aws").is_none());
+
+    fixture.request["tools"]["aws"] = fixture.request["tools"]["mysql"].clone();
+    assert!(fixture.validate().is_err());
+    fixture.request["tools"]
+        .as_object_mut()
+        .unwrap()
+        .remove("aws");
+    fixture.request["tools"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mysql");
+    assert!(fixture.validate().is_err());
 }
 
 #[test]
@@ -376,68 +411,57 @@ fn request_fixture_requires_ready_receipt_exact_root_and_observed_snapshot() {
 }
 
 #[test]
-fn configuration_binds_secrets_physical_connections_and_file_overrides() {
+fn configuration_binds_file_credentials_and_ignores_retired_environment_overrides() {
     let mut fixture = Fixture::new();
-    let original_env = fixture.environment.clone();
-    let binding = fixture.validate().unwrap();
-    let original = request_configuration::validate(
-        &fixture.backend,
-        &fixture.request,
-        &binding,
-        &fixture.environment,
-    )
-    .unwrap();
-    let expected_credentials = digest::plan_hash(&json!({
-        "RYFRAME_RESET_ADMIN_PASSWORD": original_env["RYFRAME_RESET_ADMIN_PASSWORD"],
-    }))
-    .unwrap();
+    let before = fixture.generation();
     assert_eq!(
-        original["seed_credentials_sha256"],
-        json!(expected_credentials)
+        before["seed_credentials_sha256"],
+        json!(digest::plan_hash(&json!({"bootstrap.admin_password":"Fixture!Admin123"})).unwrap())
     );
-    for (key, value) in [
-        ("APP_TENANT_PASSWORD", "wrong-secret"),
-        ("APP_DATABASE_HOST_FILE", "unbound.txt"),
-        ("APP_RESET_LEGACY_MYSQL_EXCLUSIVE", "false"),
-        ("APP_REDIS_PORT", "26380"),
+    for key in [
+        "APP_TENANT_PASSWORD",
+        "APP_DATABASE_HOST_FILE",
+        "APP_RESET_LEGACY_MYSQL_EXCLUSIVE",
+        "APP_REDIS_PORT",
+        "APP_OBJECT_STORAGE_SECRET_KEY",
+        "RYFRAME_RESET_ADMIN_PASSWORD",
+        "APP_CONFIG_DIR",
     ] {
-        fixture.environment.insert(key.into(), value.into());
-        fixture.seal_configuration();
+        fixture
+            .environment
+            .insert(key.into(), "retired-private-value".into());
+    }
+    assert_eq!(fixture.generation(), before);
+    for (pointer, value) in [
+        ("/tenant_data/targets/0/password", json!("wrong-secret")),
+        ("/reset/legacy_mysql_exclusive", json!(false)),
+        ("/redis/port", json!(26380)),
+        ("/jobs/mode", json!("embedded")),
+    ] {
+        fixture.write_configuration();
+        fixture.set_configuration(pointer, Some(value));
         let error = request_configuration::validate(
             &fixture.backend,
             &fixture.request,
-            &binding,
+            &fixture.validate().unwrap(),
             &fixture.environment,
         )
         .unwrap_err()
         .to_string();
         assert!(!error.contains("wrong-secret"));
-        fixture.environment = original_env.clone();
     }
-    fixture.seal_configuration();
-    let before = fixture.generation();
-    fixture.environment.insert(
-        "APP_OBJECT_STORAGE_SECRET_KEY".into(),
-        "changed-storage-secret".into(),
+    fixture.write_configuration();
+    fixture.set_configuration(
+        "/object_storage/secret_key",
+        Some(json!("changed-storage-secret")),
     );
-    fixture.seal_configuration();
+    fixture.request["target"]["s3"]["secret_key"] = json!("changed-storage-secret");
     let changed = fixture.generation();
     assert_ne!(changed["configuration"], before["configuration"]);
     assert_ne!(changed["request_sha256"], before["request_sha256"]);
     assert!(!changed.to_string().contains("changed-storage-secret"));
-    fixture.environment = original_env;
-    fixture.seal_configuration();
-    fixture.environment.insert(
-        "RYFRAME_RESET_ADMIN_PASSWORD".into(),
-        "Changed!Admin123".into(),
-    );
-    let changed = request_configuration::validate(
-        &fixture.backend,
-        &fixture.request,
-        &binding,
-        &fixture.environment,
-    )
-    .unwrap();
+    fixture.set_configuration("/bootstrap/admin_password", Some(json!("Changed!Admin123")));
+    let changed = fixture.generation();
     assert_ne!(
         changed["seed_credentials_sha256"],
         before["seed_credentials_sha256"]
@@ -446,7 +470,7 @@ fn configuration_binds_secrets_physical_connections_and_file_overrides() {
 }
 
 #[test]
-fn configuration_detects_file_drift_and_missing_seed_credentials() {
+fn configuration_detects_file_drift_and_missing_file_seed_credentials() {
     let mut fixture = Fixture::new();
     let binding = fixture.validate().unwrap();
     fs::write(fixture.backend.join("config/extra.toml"), "x = 1\n").unwrap();
@@ -459,18 +483,13 @@ fn configuration_detects_file_drift_and_missing_seed_credentials() {
         )
         .is_err()
     );
-    fixture.seal_configuration();
-    for password in [None, Some("")] {
-        match password {
-            Some(value) => {
-                fixture
-                    .environment
-                    .insert("RYFRAME_RESET_ADMIN_PASSWORD".into(), value.into());
-            }
-            None => {
-                fixture.environment.remove("RYFRAME_RESET_ADMIN_PASSWORD");
-            }
-        }
+    fixture.environment.insert(
+        "RYFRAME_RESET_ADMIN_PASSWORD".into(),
+        "Ignored!Admin123".into(),
+    );
+    for password in [None, Some(json!(""))] {
+        fixture.write_configuration();
+        fixture.set_configuration("/bootstrap/admin_password", password);
         assert!(
             request_configuration::validate(
                 &fixture.backend,
@@ -481,6 +500,57 @@ fn configuration_detects_file_drift_and_missing_seed_credentials() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn selected_test_file_is_required_and_common_defaults_are_optional() {
+    let mut fixture = Fixture::new();
+    let selected = fixture.backend.join("config/app.test.toml");
+    fs::remove_file(&selected).unwrap();
+    assert!(
+        request_configuration::configuration_files(&fixture.backend, &fixture.environment, None)
+            .is_err()
+    );
+    fs::rename(fixture.backend.join("config/app.toml"), &selected).unwrap();
+    fixture.seal_configuration();
+    fixture.generation();
+}
+
+#[test]
+fn explicit_configuration_directory_is_bound_and_must_remain_in_execution_backend() {
+    let mut fixture = Fixture::new();
+    let directory = fixture.local.join("配置 custom");
+    fs::rename(fixture.backend.join("config"), &directory).unwrap();
+    fixture.request["configuration_directory"] = json!(directory);
+    fixture.seal_configuration();
+    let generation = fixture.generation();
+    assert_eq!(generation["configuration"]["directory"], json!(directory));
+    for value in [
+        Value::Null,
+        json!(""),
+        json!(fixture.backend.parent().unwrap()),
+    ] {
+        fixture.request["configuration_directory"] = value;
+        assert!(
+            request_configuration::configuration_files(
+                &fixture.backend,
+                &fixture.environment,
+                fixture.request.get("configuration_directory")
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn retired_object_credential_names_are_not_accepted_in_target_request() {
+    let mut fixture = Fixture::new();
+    fixture.request["target"]["s3"]
+        .as_object_mut()
+        .unwrap()
+        .remove("access_key");
+    fixture.request["target"]["s3"]["access_key_env"] = json!("APP_OBJECT_STORAGE_ACCESS_KEY");
+    assert!(fixture.validate().is_err());
 }
 
 #[test]

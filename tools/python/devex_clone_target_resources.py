@@ -9,16 +9,19 @@ import socket
 import subprocess
 import uuid
 
-from devex_clone_capture import read_json, unique_object, write_json
+from devex_clone_capture import read_json, write_json
 from devex_clone_model import digest, exact
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import external_file
 from devex_clone_target_storage import redis_layout, rustfs_layout
 from full_stack_process import process_identity
+from native_s3_client import (NativeS3InvocationError, inspect as native_s3_inspect,
+                              read as native_s3_read)
 from process_sockets import verify_listener
+from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
-from restore_reference_plan import BUCKETS, identifier
+from restore_reference_plan import BUCKETS, identifier, plan_hash
 from restore_source_binding import defaults_connection
 
 
@@ -66,7 +69,7 @@ class Resources:
         for db in request["target"]["databases"]:
             self.redaction["DB_PASSWORD_" + db["key"]] = defaults_connection(backend, db)["password"]
         for field in ("access_key", "secret_key"):
-            self.redaction[field.upper()] = self.environment.get(request["target"]["s3"][field + "_env"], "")
+            self.redaction[field.upper()] = request["target"]["s3"][field]
         self.tools = ExternalTools({"target": request["target"], "tools": request["tools"]}, output, run,
                                    before_execute=self.checkpoint)
 
@@ -137,26 +140,66 @@ class Resources:
         self._mysql(db, f"DROP DATABASE `{identifier(db['database'])}`;")
         self.database_state(db, exists=False)
 
-    def _aws(self, stage: str, operation: str, bucket: str, *extra: str) -> dict:
+    def _s3(self, stage: str, request: dict, invoke) -> dict:
+        if dict(os.environ) != self.environment:
+            raise ValueError("初始化进程环境在对象观察期间变化")
+        self.checkpoint()
+        path = self.output / f"{stage}-{uuid.uuid4().hex}.command.json"
+        code, error_type, response = None, None, None
+        try:
+            result, invocation = invoke(request, self.runner)
+            code, error_type = invocation["returncode"], invocation["error_type"]
+            self.checkpoint()
+            response = result
+            return result
+        except NativeS3InvocationError as error:
+            code, error_type = error.returncode, error.error_type
+            raise
+        finally:
+            destination = request.get("destination")
+            write_json(path, {"transport": "rust-s3-sigv4", "operation": request["operation"],
+                             "scope_id": request["scope_id"],
+                             "endpoint": request["configuration"]["endpoint"],
+                             "configuration_sha256": plan_hash(request["configuration"]),
+                             "bucket": request["bucket"], "returncode": code,
+                             "error_type": error_type, "response": response,
+                             "key": request.get("key"),
+                             "prefix": request.get("prefix"),
+                             "continuation": request.get("continuation"),
+                             "destination": None if destination is None else Path(destination).name,
+                             "remote_writes": 0})
+
+    def _s3_inspect(self, stage: str, operation: str, bucket: str, *, prefix=None,
+                    continuation=None) -> dict:
         if bucket not in BUCKETS:
             raise ValueError("只允许五个明确对象桶")
-        config, env = self.tools.aws_context("target")
-        args = [*self.tools.command("aws"), "--endpoint-url", config["endpoint"], "--region", config["region"],
-                "--no-paginate", "s3api", operation, "--bucket", bucket, *extra]
-        result = self.command(stage, args, env=env)
-        return json.loads(result.stdout or b"{}", object_pairs_hook=unique_object)
+        target = self.request["target"]
+        return self._s3(stage, {
+            "format_version": 1, "kind": "ryframe-native-s3-inspect",
+            "scope_id": target["scope_id"], "configuration": target["s3"],
+            "bucket": bucket, "operation": operation, "prefix": prefix,
+            "continuation": continuation,
+        }, native_s3_inspect)
+
+    def _s3_owner(self, bucket: str, key: str, destination: Path) -> dict:
+        target = self.request["target"]
+        return self._s3("owner-read", {
+            "format_version": 1, "kind": "ryframe-native-s3-read",
+            "scope_id": target["scope_id"], "configuration": target["s3"],
+            "bucket": bucket, "operation": "get-object", "key": key,
+            "if_match": None, "version": None, "destination": str(destination),
+            "max_bytes": 4096,
+        }, native_s3_read)
 
     def object_keys(self, bucket: str) -> set[str]:
         scope = self.request["target"]["scope_id"] + "/"
-        self._aws("bucket-readiness", "head-bucket", bucket)
-        if self._aws("bucket-versioning", "get-bucket-versioning", bucket).get("Status") is not None:
+        self._s3_inspect("bucket-readiness", "head-bucket", bucket)
+        if self._s3_inspect("bucket-versioning", "get-bucket-versioning", bucket).get("Status") is not None:
             raise ValueError("fresh 初始化限定未启用版本的桶，不能隐藏旧对象版本")
         found, tokens, token = set(), set(), None
         for _ in range(10000):
-            extra = ["--prefix", scope, "--max-keys", "1000"]
-            if token:
-                extra += ["--continuation-token", token]
-            page = self._aws("scoped-list", "list-objects-v2", bucket, *extra)
+            page = self._s3_inspect("scoped-list", "list-objects-v2", bucket,
+                                    prefix=scope, continuation=token)
             if page.get("IsTruncated") not in (True, False):
                 raise ValueError("对象分页缺少明确完成状态")
             for item in page.get("Contents", []):
@@ -182,7 +225,7 @@ class Resources:
                 raise ValueError("目标 scoped 前缀不是本代次预期的空范围或唯一 owner")
             if initialized:
                 body = self.output / f"owner-{bucket}-{uuid.uuid4().hex}.bin"
-                self._aws("owner-read", "get-object", bucket, "--key", scope + "/.ryframe-owner", str(body))
+                self._s3_owner(bucket, scope + "/.ryframe-owner", body)
                 expected_owner = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
                 if not body.is_file() or body.read_bytes() != expected_owner:
                     raise ValueError("目标对象 owner 字节不符")
@@ -231,9 +274,16 @@ class Resources:
                     self.checkpoint()
                     connection.sendall(f"*{len(encoded)}\r\n".encode() + b"".join(f"${len(v)}\r\n".encode() + v + b"\r\n" for v in encoded))
                     return self._response(stream)
-                password = self.environment.get("APP_REDIS_PASSWORD")
+                password = getattr(self, "redis_password", None)
+                if password is None:
+                    table = load_app_table(
+                        self.execution_backend,
+                        {"APP_ENV": self.environment.get("APP_ENV")},
+                    )
+                    redis = table.get("redis", {})
+                    password = redis.get("password") if isinstance(redis, dict) else None
                 if not password or send(["AUTH", password]) != "OK" or send(["SELECT", "0"]) != "OK":
-                    raise ValueError("Redis 必须使用本侧显式认证和 database 0")
+                    raise ValueError("Redis 必须使用所选配置文件中的密码和 database 0")
                 return send(parts)
 
     def redis_state(self, *, initialized: bool, sentinel: bool) -> dict:

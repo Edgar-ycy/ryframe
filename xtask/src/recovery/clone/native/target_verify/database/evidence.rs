@@ -455,8 +455,58 @@ fn secrets(context: &TargetContext) -> Result<Vec<String>> {
             result.push(password.into());
         }
     }
+    for field in ["access_key", "secret_key"] {
+        if let Some(value) = context.target()["s3"][field]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
+            result.push(value.into());
+        }
+    }
+    let configuration = super::binding::configuration(context)?;
+    let directory = Path::new(text(&configuration["directory"], "库存配置目录")?);
+    let table =
+        crate::rate_limit::load_app_table(&context.execution_backend()?, Some(directory), "test")
+            .map_err(|_| "库存凭据配置无法安全读取")?;
+    file_secrets(&serde_json::to_value(table)?, false, &mut result);
+    if super::binding::configuration(context)? != configuration {
+        return Err("采集脱敏字段期间配置已变化".into());
+    }
     result.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    result.dedup();
     Ok(result)
+}
+
+fn file_secrets(value: &Value, sensitive: bool, result: &mut Vec<String>) {
+    match value {
+        Value::String(value) if sensitive && !value.is_empty() => result.push(value.clone()),
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                let sensitive = sensitive
+                    || matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "password"
+                            | "secret"
+                            | "secret_key"
+                            | "access_key"
+                            | "admin_password"
+                            | "jwt_secret"
+                            | "client_secret"
+                            | "api_token"
+                            | "token"
+                            | "headers"
+                            | "authorization"
+                    );
+                file_secrets(value, sensitive, result);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                file_secrets(value, sensitive, result);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn redact(bytes: &[u8], secrets: &[String]) -> String {

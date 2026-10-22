@@ -1,6 +1,8 @@
 //! 浏览器与 DevEx 夹具共享的限流配置读取协议。
 
-use std::{env, ffi::OsString, io::Read};
+use std::{env, ffi::OsString, io::Read, path::PathBuf};
+
+use serde::Deserialize;
 
 #[path = "rate_limit/config.rs"]
 mod config;
@@ -15,6 +17,16 @@ pub(crate) use config::{
 
 const MARKER: &str = "__rate-limit";
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
+/// 文件配置请求只携带明确目录和环境选择，不接收字段环境覆盖。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileContext {
+    pub(crate) backend: PathBuf,
+    pub(crate) app_env: String,
+    #[serde(default)]
+    pub(crate) config_dir: Option<PathBuf>,
+}
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let mut arguments = env::args_os().skip(1);

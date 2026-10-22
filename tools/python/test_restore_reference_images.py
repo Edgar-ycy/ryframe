@@ -110,7 +110,7 @@ class RestoreImagesTests(unittest.TestCase):
         self.assertTrue(value["matches_expected"])
         self.assertEqual(value["target_plan"], reference.document_binding(self.inputs.target))
         self.subject.tools.restore_database.assert_not_called()
-        self.subject.tools.aws.assert_not_called()
+        self.subject.tools.create_object_if_absent.assert_not_called()
 
     def test_any_business_preserved_schema_or_owner_change_rejects_complete_before(self):
         changes = [lambda value: value["databases"]["target_0"]["tables"]["sys_post"].update(rows=1),
@@ -129,7 +129,7 @@ class RestoreImagesTests(unittest.TestCase):
                 self.subject.capture(f"before-{index}", after=False)
             self.assertFalse(reference.read_json(Path(self.subject.bindings[f"before-{index}"]["path"]))["matches_expected"])
         self.subject.tools.restore_database.assert_not_called()
-        self.subject.tools.aws.assert_not_called()
+        self.subject.tools.create_object_if_absent.assert_not_called()
 
     def test_after_image_checks_full_business_and_preserved_tables(self):
         self.current = copy.deepcopy(self.after)

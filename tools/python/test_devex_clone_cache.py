@@ -1,6 +1,7 @@
 """缓存恢复的请求、原子标记及外层发布；全部使用文件和协议替身。"""
 from contextlib import ExitStack
 import copy
+import os
 from io import BytesIO
 from pathlib import Path
 import unittest
@@ -14,6 +15,7 @@ import devex_clone_cache_request as model
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding, begin, bind_controller_attempt, finish, initialize_state, run_lock
 from full_stack_process import write_receipt
+from rate_limit_client import load_app_table
 
 
 class CacheFixture(unittest.TestCase):
@@ -30,8 +32,12 @@ class CacheFixture(unittest.TestCase):
         self.previous = {"port": 16390, "wsl": {key: wsl[key] for key in ("path", "sha256")},
             "distribution": "Ubuntu-24.04", "pid": 610000, "started": "100", "executable": "/usr/bin/redis-check-rdb",
             "sha256": "b" * 64, "configuration": config, "run_id": "a" * 40}
-        self.private = {"APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": "16390", "APP_REDIS_DATABASE": "0",
-                        "APP_REDIS_TLS": "false", "APP_REDIS_PASSWORD": "fixture-secret"}
+        self.private = {"APP_ENV": "test"}
+        self.config = self.root / "config"
+        self.config.mkdir()
+        self.application = self.config / "app.test.toml"
+        self.application.write_text('[redis]\nhost="127.0.0.1"\nport=16390\ndatabase=0\ntls=false\n'
+                                    'password="fixture-secret"\n', encoding="utf-8")
         environment = self.json("environment.json", {"environment": self.private})
         self.marker = {"namespace": "ryframe:{scope-seed}:", "ownership_key": "ryframe:{scope-seed}:.ryframe-owner",
             "ownership_value": "ryframe-owner:v1:scope-seed:redis", "sentinel_key": "ryframe:devex-fresh:scope-seed:sentinel",
@@ -52,7 +58,7 @@ class CacheFixture(unittest.TestCase):
                                    "url": "redis://127.0.0.1:16390/0"}}
         process_request = {key: self.previous[key] for key in ("wsl", "distribution", "executable", "sha256", "configuration", "port")}
         process_request.update(scope_id="cache-service", launcher="/usr/bin/redis-server", previous_identity=identity,
-            previous_boot_id=boot, previous_run_id=self.previous["run_id"], password_env="APP_REDIS_PASSWORD", timeout_seconds=5,
+            previous_boot_id=boot, previous_run_id=self.previous["run_id"], password="fixture-secret", timeout_seconds=5,
             python={"path": "/usr/bin/python3", "executable": "/usr/bin/python3.12", "sha256": "c" * 64},
             directory={"path": str(self.data), "device": self.data.stat().st_dev, "inode": self.data.stat().st_ino})
         self.request = {"format_version": 1, "kind": "devex-clone-cache-restart", "side": "target",
@@ -118,6 +124,8 @@ class CacheFixture(unittest.TestCase):
 
     def patches(self):
         stack = ExitStack()
+        stack.enter_context(patch.object(model, "load_app_table", side_effect=lambda backend, environment:
+                            load_app_table(backend, environment, config_dir=self.config)))
         stack.enter_context(patch.object(model, "initialization_history", return_value=(self.initial, self.original)))
         stack.enter_context(patch.object(model, "request_binding", return_value=(self.review, self.selected)))
         stack.enter_context(patch.object(cache, "producers_stopped"))
@@ -159,7 +167,7 @@ class CacheTests(CacheFixture):
         commands = []
         for connection in connections:
             sent = [markers.Resources._response(BytesIO(call.args[0])) for call in connection.sendall.call_args_list]
-            self.assertEqual(sent[:2], [["AUTH", self.private["APP_REDIS_PASSWORD"]], ["SELECT", "0"]])
+            self.assertEqual(sent[:2], [["AUTH", self.request["process"]["password"]], ["SELECT", "0"]])
             self.assertEqual(len(sent), 3)
             commands.append(sent[2])
         self.assertEqual([command[0] for command in commands], ["SCAN", "GET", "GET", "MSETNX", "SCAN", "GET", "GET"])
@@ -310,7 +318,9 @@ class TransportTests(unittest.TestCase):
             connection.__enter__.return_value = connection
             connection.makefile.return_value.__enter__.return_value = BytesIO(b"+OK\r\n+OK\r\n:1\r\n")
             checkpoint = MagicMock(side_effect=[None] * (rejected - 1) + [ValueError("guard changed")])
-            call = markers.transport({"previous": {"port": 16390}}, {"APP_REDIS_PASSWORD": "fixture-secret"}, checkpoint)
+            backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
+            call = markers.transport(backend, {"previous": {"port": 16390}},
+                                     {"APP_ENV": "test"}, checkpoint, password="fixture-secret")
             with self.subTest(rejected=rejected), \
                     patch("devex_clone_target_resources.socket.create_connection", return_value=connection) as connect, \
                     self.assertRaisesRegex(ValueError, "guard changed"):
@@ -348,10 +358,45 @@ class RequestTests(CacheFixture):
                 request["process"][field] = value
                 with self.subTest(field=field), self.assertRaises(ValueError):
                     model.validate_request(self.backend, self.directory, self.value, request)
-            self.private["APP_REDIS_PASSWORD"] = "different"
-            write_receipt(Path(self.value["target_environment"]["path"]), {"environment": self.private})
+            self.application.write_text(self.application.read_text(encoding="utf-8").replace(
+                'password="fixture-secret"', 'password="different"'), encoding="utf-8")
             with self.assertRaises(ValueError):
                 model.validate_request(self.backend, self.directory, self.value, self.request)
+
+    def test_request_reads_bound_file_password_without_ambient_overrides(self):
+        with self.patches(), patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-ignored", "APP_ENV": "prod"}):
+            self.assertEqual(model.validate_request(self.backend, self.directory, self.value, self.request), self.private)
+
+    def test_private_environment_rejects_legacy_password_and_extra_fields(self):
+        for number, environment in enumerate(({"APP_ENV": "test", "APP_REDIS_PASSWORD": "fixture-secret"},
+                            {"APP_ENV": "test", "password_env": "APP_REDIS_PASSWORD"},
+                            {"APP_ENV": "dev"}, {"APP_ENV": True}, {})):
+            descriptor = self.json(f"invalid-environment-{number}.json", {"environment": environment})
+            with self.subTest(keys=tuple(environment)), self.assertRaises(ValueError) as error:
+                model.environment(self.backend, {**self.request, "target_environment": descriptor})
+            self.assertNotIn("fixture-secret", str(error.exception))
+
+    def test_file_configuration_rejects_wrong_endpoint_types_or_password(self):
+        for redis in ({"port": True}, {"database": False}, {"tls": 0}, {"password": ""},
+                      {"password": True}, {"password": None}, {"password": "\0private-value"}):
+            configuration = {"host": "127.0.0.1", "port": 16390, "database": 0, "tls": False,
+                             "password": "fixture-secret", **redis}
+            with self.subTest(fields=tuple(redis)), patch.object(model, "load_app_table", return_value={"redis": configuration}), \
+                    self.assertRaises(ValueError) as error:
+                model.environment(self.backend, self.request)
+            self.assertNotIn("private-value", str(error.exception))
+
+    def test_process_password_must_match_application_and_redis_configuration(self):
+        with self.patches():
+            wrong = copy.deepcopy(self.request)
+            wrong["process"]["password"] = "another-secret"
+            with self.assertRaises(ValueError) as error:
+                model.validate_request(self.backend, self.directory, self.value, wrong)
+            self.assertNotIn("another-secret", str(error.exception))
+            self.application.write_text(self.application.read_text(encoding="utf-8").replace(
+                'password="fixture-secret"', 'password="another-secret"'), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "绑定的 password"):
+                model.validate_request(self.backend, self.directory, self.value, wrong)
 
     def test_namespace_capture_rejects_outside_keys_and_cursor_loops(self):
         for response in (["0", ["foreign"]], ["3", []], ["0", "not-array"]):

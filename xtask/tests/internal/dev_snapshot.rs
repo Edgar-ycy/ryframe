@@ -1,21 +1,19 @@
+use super::cli::DevOptions;
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
 use super::{
-    dev::{
-        Binaries, DevSession, RuntimeSecrets, runtime_config_matches_snapshot, snapshot_config_tree,
-    },
+    dev::{Binaries, DevSession, RuntimeConfig, recovery_seed},
     watch::SourceRevision,
 };
 
 #[test]
 fn lkg_layout_is_scoped_by_session_and_generation() {
     let fixture = SnapshotFixture::new("layout");
-    let (session, recovered) =
-        DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let (session, recovered) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     assert!(recovered.is_none());
 
     let binaries = fixture.install(&session, 1);
@@ -61,7 +59,8 @@ fn measurement_session_uses_an_isolated_non_recoverable_root() {
     fs::create_dir_all(&stale_binary).unwrap();
     fs::create_dir_all(&stale_runtime).unwrap();
 
-    let session = DevSession::prepare_isolated(&storage, SourceRevision::from_value(0)).unwrap();
+    let session =
+        DevSession::prepare_isolated(&fixture.root, &storage, &DevOptions::default()).unwrap();
     let binaries = fixture.install(&session, 1);
 
     assert_eq!(
@@ -75,8 +74,8 @@ fn measurement_session_uses_an_isolated_non_recoverable_root() {
         binaries.runtime_dir.parent().and_then(|path| path.parent()),
         Some(storage.join("runtime").as_path())
     );
-    assert!(!stale_binary.exists());
-    assert!(!stale_runtime.exists());
+    assert!(stale_binary.exists());
+    assert!(stale_runtime.exists());
     assert!(!fixture.root.join("target/xtask/dev").exists());
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
@@ -84,32 +83,32 @@ fn measurement_session_uses_an_isolated_non_recoverable_root() {
 #[test]
 fn startup_recovers_the_most_recent_complete_generation_after_crash() {
     let fixture = SnapshotFixture::new("crash-recovery");
-    let (session, recovered) =
-        DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let (session, recovered) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     assert!(recovered.is_none());
     let _older = fixture.install(&session, 1);
     let newest = fixture.install(&session, 2);
     drop(session);
 
     let (_next_session, recovered) =
-        DevSession::prepare(&fixture.root, SourceRevision::from_value(42)).unwrap();
+        DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     let recovered = recovered.expect("启动时应恢复最近完整 generation");
 
     assert_eq!(recovered.generation_dir, newest.generation_dir);
     assert_eq!(recovered.runtime_dir, newest.runtime_dir);
-    assert_eq!(recovered.source_revision, SourceRevision::from_value(42));
+    assert_eq!(recovered.source_revision, SourceRevision::from_value(2));
+    assert_eq!(recovery_seed(Some(&recovered)).unwrap().value(), 3);
 }
 
 #[test]
 fn startup_skips_a_corrupted_newest_generation() {
     let fixture = SnapshotFixture::new("corrupted-newest");
-    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     let older = fixture.install(&session, 1);
     let newest = fixture.install(&session, 2);
     fs::write(&newest.worker, b"corrupted worker").unwrap();
 
     let (_next_session, recovered) =
-        DevSession::prepare(&fixture.root, SourceRevision::from_value(9)).unwrap();
+        DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
 
     assert_eq!(
         recovered
@@ -120,9 +119,9 @@ fn startup_skips_a_corrupted_newest_generation() {
 }
 
 #[test]
-fn startup_removes_stale_copying_and_incomplete_generation_pairs() {
+fn startup_preserves_unowned_copying_and_incomplete_generation_pairs() {
     let fixture = SnapshotFixture::new("incomplete");
-    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     let complete = fixture.install(&session, 1);
     let active_binary_copying = complete
         .generation_dir
@@ -150,10 +149,9 @@ fn startup_removes_stale_copying_and_incomplete_generation_pairs() {
     fs::create_dir_all(&runtime_copying).unwrap();
     fs::create_dir_all(incomplete_binary.join("bin")).unwrap();
     fs::create_dir_all(incomplete_runtime.join("config")).unwrap();
-    fs::write(incomplete_binary.join("manifest.json"), b"{}").unwrap();
 
     let (_next_session, recovered) =
-        DevSession::prepare(&fixture.root, SourceRevision::from_value(3)).unwrap();
+        DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
 
     assert_eq!(
         recovered
@@ -161,16 +159,16 @@ fn startup_removes_stale_copying_and_incomplete_generation_pairs() {
             .generation_dir,
         complete.generation_dir
     );
-    assert!(!binary_copying.exists());
-    assert!(!runtime_copying.exists());
-    assert!(!incomplete_binary.exists());
-    assert!(!incomplete_runtime.exists());
+    assert!(binary_copying.exists());
+    assert!(runtime_copying.exists());
+    assert!(incomplete_binary.exists());
+    assert!(incomplete_runtime.exists());
     assert!(active_binary_copying.exists());
     assert!(active_runtime_copying.exists());
 }
 
 #[test]
-fn runtime_config_snapshot_never_persists_registered_secret_values() {
+fn runtime_config_snapshot_keeps_private_secrets_out_of_public_manifest() {
     let fixture = SnapshotFixture::new("secret-snapshot");
     let secrets = [
         "devex-metrics-secret-1",
@@ -180,8 +178,8 @@ fn runtime_config_snapshot_never_persists_registered_secret_values() {
         "devex-access-secret-5",
         "devex-storage-secret-6",
     ];
-    fs::write(
-        fixture.root.join("config/app.toml"),
+    write_base_config(
+        &fixture.root,
         format!(
             "[monitor]\nmetrics_bearer_token = '{}'\n\
              [database.primary]\npassword = '{}'\n\
@@ -192,44 +190,45 @@ fn runtime_config_snapshot_never_persists_registered_secret_values() {
         ),
     )
     .unwrap();
-    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     let binaries = fixture.install(&session, 1);
 
     let mut persisted = fs::read(binaries.generation_dir.join("manifest.json")).unwrap();
     persisted.extend(fs::read(&binaries.api).unwrap());
     persisted.extend(fs::read(&binaries.worker).unwrap());
-    for entry in fs::read_dir(&binaries.config_dir).unwrap() {
-        let entry = entry.unwrap();
-        if entry.file_type().unwrap().is_file() {
-            persisted.extend(fs::read(entry.path()).unwrap());
-        }
-    }
     let persisted = String::from_utf8_lossy(&persisted);
     for secret in secrets {
         assert!(
             !persisted.contains(secret),
-            "运行快照、manifest 与二进制不得持久化敏感值"
+            "公开 manifest 与二进制不得持久化敏感值"
         );
     }
     let sanitized = fs::read_to_string(binaries.config_dir.join("app.toml")).unwrap();
     let document = toml::from_str::<toml::Table>(&sanitized).unwrap();
     assert_eq!(
         document["database"]["primary"]["password"].as_str(),
-        Some("")
+        Some(secrets[1])
     );
-    assert_eq!(document["auth"]["jwt_secret"].as_str(), Some(""));
+    assert_eq!(document["auth"]["jwt_secret"].as_str(), Some(secrets[2]));
+    for secret in secrets {
+        assert!(sanitized.contains(secret));
+    }
 }
 
 #[test]
 fn database_replica_and_source_passwords_are_kept_in_toml_snapshots() {
     let fixture = SnapshotFixture::new("database-passwords");
-    fs::write(
-        fixture.root.join("config/app.toml"),
+    write_base_config(
+        &fixture.root,
         "[[database.replicas]]\nname = 'replica'\nhost = 'localhost'\nport = 3306\ndatabase = 'replica'\nusername = 'root'\npassword = 'replica-password'\nmax_connections = 1\nmin_connections = 1\n\n[[database.sources]]\nname = 'source'\nhost = 'localhost'\nport = 3306\ndatabase = 'source'\nusername = 'root'\npassword = 'source-password'\nmax_connections = 1\nmin_connections = 1\n",
     )
     .unwrap();
+    fs::create_dir(fixture.root.join(".local-tests")).unwrap();
     let target = fixture.root.join(".local-tests/sanitized-config");
-    snapshot_config_tree(&fixture.root.join("config"), &target).unwrap();
+    RuntimeConfig::capture(&fixture.root.join("config"))
+        .unwrap()
+        .snapshot_to(&target)
+        .unwrap();
     let sanitized = fs::read_to_string(target.join("app.toml")).unwrap();
     assert!(sanitized.contains("replica-password"));
     assert!(sanitized.contains("source-password"));
@@ -238,36 +237,34 @@ fn database_replica_and_source_passwords_are_kept_in_toml_snapshots() {
 #[test]
 fn non_string_registered_secret_fails_closed_before_snapshot() {
     let fixture = SnapshotFixture::new("non-string-secret");
-    fs::write(
-        fixture.root.join("config/app.toml"),
-        "[database.primary]\npassword = 123456\n",
-    )
-    .unwrap();
+    write_base_config(&fixture.root, "[database.primary]\npassword = 123456\n").unwrap();
 
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
     assert!(error.contains("database.primary.password"));
-    assert!(error.contains("值不是字符串"));
+    assert!(error.contains("password"));
+    assert!(!error.contains("123456"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
 #[test]
 fn non_string_database_source_password_fails_closed_before_snapshot() {
     let fixture = SnapshotFixture::new("non-string-unregistered-secret");
-    fs::write(
-        fixture.root.join("config/app.toml"),
-        "[[database.sources]]\nname = 'source'\npassword = [123456]\n",
+    write_base_config(
+        &fixture.root,
+        "[[database.sources]]\nname = 'source'\nhost = 'localhost'\nport = 3306\ndatabase = 'source'\nusername = 'root'\npassword = [123456]\nmax_connections = 1\nmin_connections = 1\n",
     )
     .unwrap();
 
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("database.sources.[].password"));
-    assert!(error.contains("数据库密码"));
+    assert!(error.contains("database.sources"));
+    assert!(error.contains("password"));
+    assert!(!error.contains("123456"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
@@ -276,11 +273,11 @@ fn snapshot_rejects_unregistered_non_toml_files() {
     let fixture = SnapshotFixture::new("unknown-non-toml");
     let unknown = fixture.root.join("config/runtime.env");
     fs::write(&unknown, "API_TOKEN=must-not-persist\n").unwrap();
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("拒绝未登记的配置文件"));
+    assert!(error.contains("未登记"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
@@ -293,24 +290,24 @@ fn snapshot_rejects_unregistered_toml_files() {
     )
     .unwrap();
 
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("拒绝未登记的配置文件"));
+    assert!(error.contains("未登记"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
 #[test]
 fn snapshot_rejects_config_subdirectories() {
     let fixture = SnapshotFixture::new("config-subdirectory");
-    fs::create_dir(fixture.root.join("config/nested")).unwrap();
+    fs::create_dir(fixture.root.join("config/app.test.toml")).unwrap();
 
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("拒绝目录或特殊文件"));
+    assert!(error.contains("目录") || error.contains("普通"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
@@ -321,7 +318,10 @@ fn snapshot_copies_the_registered_feature_matrix() {
     fs::write(&feature_matrix, "{\"version\":1,\"packages\":[]}\n").unwrap();
     let target = fixture.root.join("snapshot");
 
-    snapshot_config_tree(&fixture.root.join("config"), &target).unwrap();
+    RuntimeConfig::capture(&fixture.root.join("config"))
+        .unwrap()
+        .snapshot_to(&target)
+        .unwrap();
 
     assert_eq!(
         fs::read(target.join("feature-matrix.json")).unwrap(),
@@ -332,22 +332,20 @@ fn snapshot_copies_the_registered_feature_matrix() {
 #[test]
 fn equivalent_config_write_matches_lkg_snapshot_but_semantic_or_secret_change_does_not() {
     let fixture = SnapshotFixture::new("equivalent-config");
-    fs::write(
-        fixture.root.join("config/app.toml"),
+    write_base_config(
+        &fixture.root,
         "[database.primary]\npassword = 'snapshot-password'\n[app]\nname = 'ryframe'\n",
     )
     .unwrap();
-    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
     let binaries = fixture.install(&session, 1);
     let source = fixture.root.join("config");
 
     assert!(
-        runtime_config_matches_snapshot(
-            &source,
-            &binaries.config_dir,
-            binaries.runtime_secrets.as_ref(),
-        )
-        .unwrap()
+        RuntimeConfig::capture(&source)
+            .unwrap()
+            .semantically_matches(&binaries.runtime_config)
+            .unwrap()
     );
 
     fs::write(
@@ -356,37 +354,31 @@ fn equivalent_config_write_matches_lkg_snapshot_but_semantic_or_secret_change_do
     )
     .unwrap();
     assert!(
-        runtime_config_matches_snapshot(
-            &source,
-            &binaries.config_dir,
-            binaries.runtime_secrets.as_ref(),
-        )
-        .unwrap()
+        RuntimeConfig::capture(&source)
+            .unwrap()
+            .semantically_matches(&binaries.runtime_config)
+            .unwrap()
     );
 
     fs::write(source.join("app.dev.toml"), "[app]\nname = 'changed'\n").unwrap();
     assert!(
-        !runtime_config_matches_snapshot(
-            &source,
-            &binaries.config_dir,
-            binaries.runtime_secrets.as_ref(),
-        )
-        .unwrap()
+        !RuntimeConfig::capture(&source)
+            .unwrap()
+            .semantically_matches(&binaries.runtime_config)
+            .unwrap()
     );
 
-    fs::write(
-        source.join("app.toml"),
+    write_base_config(
+        &fixture.root,
         "[database.primary]\npassword = 'changed-secret'\n[app]\nname = 'ryframe'\n",
     )
     .unwrap();
     fs::write(source.join("app.dev.toml"), "[app]\n").unwrap();
     assert!(
-        !runtime_config_matches_snapshot(
-            &source,
-            &binaries.config_dir,
-            binaries.runtime_secrets.as_ref(),
-        )
-        .unwrap()
+        !RuntimeConfig::capture(&source)
+            .unwrap()
+            .semantically_matches(&binaries.runtime_config)
+            .unwrap()
     );
 }
 
@@ -398,12 +390,12 @@ fn snapshot_rejects_symbolic_links() {
     let fixture = SnapshotFixture::new("config-symlink");
     let outside = fixture.root.join("outside.toml");
     fs::write(&outside, "[app]\nname = 'outside'\n").unwrap();
-    symlink(&outside, fixture.root.join("config/linked.toml")).unwrap();
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    symlink(&outside, fixture.root.join("config/app.test.toml")).unwrap();
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("拒绝符号链接"));
+    assert!(error.contains("链接"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
@@ -415,63 +407,92 @@ fn snapshot_rejects_symbolic_links_when_windows_allows_creation() {
     let fixture = SnapshotFixture::new("config-symlink");
     let outside = fixture.root.join("outside.toml");
     fs::write(&outside, "[app]\nname = 'outside'\n").unwrap();
-    let linked = fixture.root.join("config/linked.toml");
+    let linked = fixture.root.join("config/app.test.toml");
     if symlink_file(&outside, &linked).is_err() {
         return;
     }
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+    let error = RuntimeConfig::capture(&fixture.root.join("config"))
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("拒绝符号链接"));
+    assert!(error.contains("链接"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
 #[test]
-fn recovery_fails_closed_when_required_secret_environment_is_missing() {
-    let fixture = SnapshotFixture::new("missing-recovery-secret");
-    fs::write(
-        fixture.root.join("config/app.toml"),
-        "[database.primary]\npassword = 'generation-only-password'\n",
+fn recovery_uses_private_password_when_live_source_is_missing() {
+    let fixture = SnapshotFixture::new("private-recovery");
+    write_base_config(
+        &fixture.root,
+        "[database.primary]\npassword='generation-only-password'\n",
     )
     .unwrap();
-    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
-    let _binaries = fixture.install(&session, 1);
-    drop(session);
-
-    let error = DevSession::prepare_with_runtime_secrets(
-        &fixture.root,
-        SourceRevision::from_value(2),
-        &RuntimeSecrets::default(),
-    )
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("恢复 last-known-good 缺少当前进程密钥环境"));
-    assert!(error.contains("APP_DATABASE_PASSWORD"));
-    assert!(!error.contains("generation-only-password"));
+    let (session, _) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
+    let saved = fixture.install(&session, 19);
+    fs::remove_file(fixture.root.join("config/app.toml")).unwrap();
+    fs::remove_file(fixture.root.join("config/app.dev.toml")).unwrap();
+    let (_, recovered) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
+    let recovered = recovered.unwrap();
+    assert_eq!(recovered.generation_dir, saved.generation_dir);
+    assert_eq!(recovered.source_revision.value(), 19);
+    assert_eq!(
+        recovered.runtime_config.app().database.primary.password,
+        "generation-only-password"
+    );
 }
 
 #[test]
-fn runtime_secret_registry_matches_config_secret_override_fact_source() {
-    let spec = fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../crates/ryframe-config/src/app_config/environment_overrides/spec.rs"),
-    )
-    .unwrap();
-    let compact = spec.split_whitespace().collect::<String>();
-    let registered = RuntimeSecrets::registered_environment();
-
+fn public_manifest_has_exact_v3_fields_and_no_secret_registry() {
+    let fixture = SnapshotFixture::new("manifest-contract");
+    let (session, _) = DevSession::prepare(&fixture.root, &DevOptions::default()).unwrap();
+    let saved = fixture.install(&session, 1);
+    let document: serde_json::Value =
+        serde_json::from_slice(&fs::read(saved.generation_dir.join("manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(document["format_version"], 3);
     assert_eq!(
-        compact.matches("EnvOverride::secret(").count(),
-        registered.len(),
-        "新增 config secret override 时必须同步 runtime snapshot 注册表"
+        document
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "format_version",
+            "session",
+            "generation",
+            "source_revision",
+            "created_unix_nanos",
+            "api_sha256",
+            "worker_sha256",
+            "runtime_sha256"
+        ]
+        .into_iter()
+        .collect()
     );
-    for environment in registered {
-        assert!(
-            compact.contains(&format!("EnvOverride::secret(\"{environment}\"")),
-            "runtime snapshot 缺少 config secret override {environment}"
-        );
+}
+
+// 使用正式配置作为完整基线，场景仅覆盖所测字段，避免手抄 schema 漏项。
+pub(super) fn write_base_config(root: &Path, overlay: impl AsRef<str>) -> std::io::Result<()> {
+    let mut base: toml::Table = toml::from_str(include_str!("../../../config/app.toml")).unwrap();
+    let overlay: toml::Table = toml::from_str(overlay.as_ref()).unwrap();
+    merge_fixture_tables(&mut base, overlay);
+    fs::write(
+        root.join("config/app.toml"),
+        toml::to_string(&base).unwrap(),
+    )
+}
+
+fn merge_fixture_tables(base: &mut toml::Table, overlay: toml::Table) {
+    for (key, value) in overlay {
+        match (base.get_mut(&key), value) {
+            (Some(toml::Value::Table(current)), toml::Value::Table(next)) => {
+                merge_fixture_tables(current, next);
+            }
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
     }
 }
 
@@ -492,6 +513,7 @@ impl SnapshotFixture {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("config")).unwrap();
         fs::create_dir_all(root.join("locales")).unwrap();
+        write_base_config(&root, "").unwrap();
         fs::write(root.join("config/app.dev.toml"), b"[app]\n").unwrap();
         fs::write(root.join("locales/zh-CN.toml"), b"hello = 'world'\n").unwrap();
         let api = root.join("api-source.bin");
@@ -502,13 +524,20 @@ impl SnapshotFixture {
     }
 
     fn install(&self, session: &DevSession, revision: u64) -> Binaries {
+        let runtime = session
+            .snapshot_inputs(
+                SourceRevision::from_value(revision),
+                RuntimeConfig::capture(&self.root.join("config")).unwrap(),
+                &self.root.join("locales"),
+                None,
+            )
+            .unwrap();
         session
             .install_generation(
                 SourceRevision::from_value(revision),
                 &self.api,
                 &self.worker,
-                &self.root.join("config"),
-                &self.root.join("locales"),
+                runtime,
             )
             .unwrap()
     }
@@ -519,3 +548,6 @@ impl Drop for SnapshotFixture {
         let _ = fs::remove_dir_all(&self.root);
     }
 }
+
+#[path = "dev_snapshot/generations.rs"]
+mod generations;

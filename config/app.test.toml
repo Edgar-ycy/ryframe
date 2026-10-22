@@ -1,0 +1,22 @@
+# 隔离测试环境配置；执行前按测试资源登记修改连接和 scope_id。
+scope_id = "test-local"
+snowflake_worker_id = 3
+
+[database.primary]
+host = "127.0.0.1"
+database = "ryframe_test"
+password = ""
+tls_mode = "disabled"
+
+[object_storage]
+backend = "local"
+local_base_dir = ".local-tests/test-uploads"
+
+[redis]
+mode = "optional"
+host = "127.0.0.1"
+password = ""
+database = 15
+
+[cors]
+allow_origins = ["http://127.0.0.1:5173"]

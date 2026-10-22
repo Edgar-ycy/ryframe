@@ -32,15 +32,13 @@ class CurrentObjects(ObjectReads):
     def __init__(self):
         super().__init__()
         self.outcomes = ["404", "404"]
-        self.code = 254
-        self.operation = "HeadObject"
-        self.retry_suffix = ""
-        self.description = "Not Found"
         self.on_head = None
 
     def __call__(self, command, **kwargs):
-        operation = command[command.index("s3api") + 1]
-        key = command[command.index("--key") + 1]
+        if command[-1] != "__s3-read":
+            raise AssertionError("对象观察只接受原生 Rust S3 只读协议")
+        request = json.loads(kwargs["input"])
+        operation, key = request["operation"], request["key"]
         if operation == "head-object" and not key.endswith("/.ryframe-owner"):
             if self.on_head:
                 self.on_head()
@@ -48,11 +46,20 @@ class CurrentObjects(ObjectReads):
             if isinstance(outcome, BaseException):
                 self.calls.append((command, kwargs))
                 raise outcome
+            if outcome == "404":
+                self.calls.append((command, kwargs))
+                value = {"status": "not_found", "http_status": 404,
+                         "remote_write_may_have_occurred": False}
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=json.dumps({"ok": True, "result": value}).encode(), stderr=b"")
             if outcome is not None:
                 self.calls.append((command, kwargs))
-                raise subprocess.CalledProcessError(self.code, command, stderr=(
-                    f"\r\naws: [ERROR]: An error occurred ({outcome}) when calling the {self.operation} operation"
-                    f"{self.retry_suffix}: {self.description}\r\n").encode())
+                response = {"ok": False, "error": {
+                    "category": "NativeS3ReadRejected", "message": str(outcome),
+                    "remote_write_may_have_occurred": False,
+                    "automatic_retry_permitted": False}}
+                return subprocess.CompletedProcess(
+                    command, 1, stdout=json.dumps(response).encode(), stderr=b"private stderr")
         return super().__call__(command, **kwargs)
 
 
@@ -90,8 +97,8 @@ class LiveObjectTests(unittest.TestCase):
         return failure
 
     def business(self):
-        return [command for command, _ in self.store.calls
-                if not command[command.index("--key") + 1].endswith("/.ryframe-owner")]
+        return [json.loads(options["input"]) for _, options in self.store.calls
+                if not json.loads(options["input"])["key"].endswith("/.ryframe-owner")]
 
     def test_two_explicit_404_and_current_bucket_owner_reads_prove_only_current_absence(self):
         result = self.observe()
@@ -102,7 +109,7 @@ class LiveObjectTests(unittest.TestCase):
         self.assertEqual([item["bucket"] for item in receipt["ownership_before"]], ["uploads"])
         self.assertEqual([item["bucket"] for item in receipt["ownership_after"]], ["uploads"])
         self.assertEqual(len(self.store.calls), 4)
-        self.assertEqual([c[c.index("s3api") + 1] for c in self.business()], ["head-object", "head-object"])
+        self.assertEqual([c["operation"] for c in self.business()], ["head-object", "head-object"])
         self.assertFalse(receipt["clone_verified"])
         self.assertFalse(receipt["restore_qualified"])
         self.assertNotIn("secret-fixture", (self.output / "head-before.diagnostic.json").read_text(encoding="utf-8"))
@@ -113,14 +120,13 @@ class LiveObjectTests(unittest.TestCase):
         self.assertIsNone(result.absence_evidence_sha256)
         self.assertEqual(result.capture_directory, self.output / "capture")
         self.assertEqual((result.capture_directory / "object.bin").read_bytes(), self.store.body)
-        operations = [c[c.index("s3api") + 1] for c in self.business()]
+        operations = [c["operation"] for c in self.business()]
         self.assertEqual(operations, ["head-object", "get-object", "head-object"])
         self.assertEqual(len(self.store.calls), 5)
-        downloaded = next(c for c in self.business() if "get-object" in c)
-        self.assertEqual(downloaded[downloaded.index("--if-match") + 1], self.store.head["ETag"])
+        downloaded = next(c for c in self.business() if c["operation"] == "get-object")
+        self.assertEqual(downloaded["if_match"], self.store.head["ETag"])
 
-    def test_actual_aws_zero_retry_404_proves_only_current_absence(self):
-        self.store.retry_suffix = " (reached max retries: 0)"
+    def test_closed_native_404_proves_only_current_absence(self):
         self.observe()
         receipt = self.read()
         self.assertEqual(receipt["status"], "object_absent")
@@ -141,24 +147,23 @@ class LiveObjectTests(unittest.TestCase):
 
     def test_403_is_not_absence_and_has_no_retry(self):
         self.store.outcomes = ["403"]
-        self.store.description = "access-fixture secret-fixture"
         self.failed()
         self.assertEqual(len(self.business()), 1)
         diagnostic = (self.output / "head-before.diagnostic.json").read_text(encoding="utf-8")
         self.assertNotIn("secret-fixture", diagnostic)
         self.assertNotIn("access-fixture", diagnostic)
-        self.assertIn("[REDACTED]", diagnostic)
+        self.assertIn("request_rejected", diagnostic)
 
-    def test_wrong_operation_cannot_supply_absence(self):
-        self.store.operation = "GetObject"
+    def test_rejection_text_claiming_404_cannot_supply_absence(self):
+        self.store.outcomes = ["404 NotFound HeadObject"]
         self.failed()
 
-    def test_cli_failure_without_service_response_is_not_absence(self):
-        self.store.code = 255
+    def test_native_tool_failure_without_protocol_response_is_not_absence(self):
+        self.store.outcomes = [subprocess.CalledProcessError(1, ["xtask"])]
         self.failed()
 
     def test_timeout_is_not_absence_or_retried(self):
-        self.store.outcomes = [subprocess.TimeoutExpired(["aws"], 3)]
+        self.store.outcomes = [subprocess.TimeoutExpired(["xtask", "__s3-read"], 3)]
         self.failed()
         self.assertEqual(len(self.business()), 1)
 
@@ -183,12 +188,12 @@ class LiveObjectTests(unittest.TestCase):
         self.assertEqual(len(self.business()), 1)
 
     def test_authentication_change_during_live_read_is_rejected(self):
-        import os
-        self.store.on_head = lambda: os.environ.update(TEST_SECRET="different-fixture")
+        self.store.on_head = lambda: self.plan["target"]["s3"].update(
+            secret_key="different-fixture")
         self.assertEqual(self.failed()["stage"], "head_before")
         self.assertEqual(len(self.business()), 1)
 
-    def test_temporary_environment_change_cannot_mix_requests_then_restore_binding(self):
+    def test_ambient_credential_environment_change_does_not_change_file_bound_requests(self):
         import os
         changed = []
 
@@ -197,10 +202,12 @@ class LiveObjectTests(unittest.TestCase):
             os.environ["TEST_SECRET"] = "different-fixture" if len(changed) == 1 else "secret-fixture"
 
         self.store.on_head = change_and_restore
-        self.failed()
-        self.assertEqual(len(changed), 1)
-        self.assertEqual(len(self.business()), 1)
-        self.assertTrue(all(kwargs["env"]["AWS_SECRET_ACCESS_KEY"] == "secret-fixture"
+        self.observe()
+        self.assertEqual(len(changed), 2)
+        self.assertEqual(len(self.business()), 2)
+        self.assertTrue(all(request["configuration"]["secret_key"] == "secret-fixture"
+                            for request in self.business()))
+        self.assertTrue(all("AWS_SECRET_ACCESS_KEY" not in kwargs["env"]
                             for _, kwargs in self.store.calls))
 
     def test_successful_head_with_binding_change_is_rejected_before_download(self):
@@ -293,39 +300,37 @@ class LiveObjectTests(unittest.TestCase):
 
 
 class MissingHeadTests(unittest.TestCase):
-    def test_only_unambiguous_head_404_service_errors_are_accepted(self):
-        valid = {"operation": "head-object", "returncode": 254, "error_type": "CalledProcessError",
-                 "stderr": "An error occurred (404) when calling the HeadObject operation: Not Found"}
+    def test_only_closed_native_head_404_is_accepted(self):
+        valid = {
+            "operation": "head-object", "returncode": 0,
+            "error_type": "NativeS3NotFound", "stderr": "",
+            "native_failure": {
+                "outcome": "not_found", "http_status": 404,
+                "remote_write_may_have_occurred": False,
+            },
+        }
         self.assertTrue(missing_head(valid))
-        self.assertTrue(missing_head({**valid, "stderr": valid["stderr"].replace("(404)", "(NotFound)")}))
-        for code in ("NoSuchBucket", "AccessDenied", "403", "500", "Timeout"):
-            self.assertFalse(missing_head({**valid, "stderr": valid["stderr"].replace("(404)", f"({code})")}))
-        for value in ({**valid, "returncode": 0}, {**valid, "returncode": True},
-                      {**valid, "error_type": "TimeoutExpired"}, {**valid, "operation": "get-object"},
-                      {**valid, "stderr": valid["stderr"] + "\n" + valid["stderr"]}):
+        for value in (
+                {**valid, "returncode": 1}, {**valid, "returncode": True},
+                {**valid, "error_type": "NativeS3InvocationError"},
+                {**valid, "operation": "get-object"}, {**valid, "stderr": "404"},
+                {**valid, "native_failure": {**valid["native_failure"], "http_status": 403}},
+                {**valid, "native_failure": {**valid["native_failure"],
+                                               "remote_write_may_have_occurred": True}},
+                {**valid, "extra": "value"},
+        ):
             with self.subTest(value=value):
                 self.assertFalse(missing_head(value))
 
-    def test_actual_aws_zero_retry_format_is_exact_and_unambiguous(self):
-        diagnostic = {"operation": "head-object", "returncode": 254, "error_type": "CalledProcessError",
-                      "stderr": "\r\naws: [ERROR]: An error occurred (404) when calling the HeadObject operation "
-                                "(reached max retries: 0): Not Found\r\n"}
-        self.assertTrue(missing_head(diagnostic))
-        self.assertTrue(missing_head({**diagnostic, "stderr": diagnostic["stderr"].replace("(404)", "(NotFound)")}))
-        for old, new in (("(404)", "(403)"), ("HeadObject", "GetObject"),
-                         ("max retries: 0", "max retries: 1"), ("max retries: 0", "max retries: 00"),
-                         ("max retries: 0", "max retries: unknown"), ("Not Found", "Timeout"),
-                         ("Not Found", "Unknown failure"), ("Not Found", "Not Found; access denied")):
-            with self.subTest(new=new):
-                self.assertFalse(missing_head({**diagnostic, "stderr": diagnostic["stderr"].replace(old, new)}))
-        for value in (diagnostic["stderr"] * 2, diagnostic["stderr"] + "timeout\n",
-                      "Unknown diagnostic\n" + diagnostic["stderr"], diagnostic["stderr"].replace(": Not Found", ":\nNot Found")):
-            with self.subTest(stderr=value):
-                self.assertFalse(missing_head({**diagnostic, "stderr": value}))
-        for field, value in (("returncode", 255), ("returncode", 0), ("returncode", True),
-                             ("error_type", "TimeoutExpired"), ("operation", "get-object")):
-            with self.subTest(field=field, value=value):
-                self.assertFalse(missing_head({**diagnostic, field: value}))
+    def test_legacy_aws_text_can_never_prove_absence(self):
+        for code in ("404", "NotFound", "403"):
+            diagnostic = {
+                "operation": "head-object", "returncode": 254,
+                "error_type": "CalledProcessError",
+                "stderr": f"An error occurred ({code}) when calling the HeadObject operation: Not Found",
+            }
+            with self.subTest(code=code):
+                self.assertFalse(missing_head(diagnostic))
 
 
 if __name__ == "__main__":

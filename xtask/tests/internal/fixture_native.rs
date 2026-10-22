@@ -340,7 +340,6 @@ impl Fixture {
             "tools": {
                 "mysql": {"path": "C:/tools/mysql.exe", "sha256": "a".repeat(64)},
                 "mysqldump": {"path": "C:/tools/mysqldump.exe", "sha256": "b".repeat(64)},
-                "aws": {"path": "C:/tools/aws.exe", "sha256": "c".repeat(64)},
                 "rustfs": {"path": "C:/tools/rustfs.exe", "sha256": "d".repeat(64)},
                 "redis_server": {
                     "distribution": "Ubuntu",

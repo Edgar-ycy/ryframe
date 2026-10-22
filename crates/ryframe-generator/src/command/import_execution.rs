@@ -8,13 +8,9 @@ use crate::import::{TableInfo, inspect_existing_table};
 pub(super) async fn execute(plan: &GenerationPlan) -> Result<(), String> {
     crate::business::locate_business_package(&plan.workspace_root, &plan.package)
         .map_err(|error| error.to_string())?;
-    let environment = Environment::from_env().map_err(|error| error.to_string())?;
-    let config = if std::env::var_os("APP_CONFIG_DIR").is_some() {
-        AppConfig::load_from_env(environment)
-    } else {
-        AppConfig::load(plan.workspace_root.join("config"), environment)
-    }
-    .map_err(|error| error.to_string())?;
+    let environment = Environment::from_env().map_err(|error| error.message().to_owned())?;
+    let config = AppConfig::load(&plan.config_directory, environment)
+        .map_err(|error| error.message().to_owned())?;
     let tables = inspect(&config, plan).await?;
     println!(
         "读取 {} 张表；只读来源={}，模型目标={}。",
@@ -71,7 +67,7 @@ async fn inspect(config: &AppConfig, plan: &GenerationPlan) -> Result<Vec<TableI
         config.database.sql_slow_threshold_ms,
     )
     .map_err(|error| error.to_string())?;
-    let lease = registry.acquire(key).await.map_err(|error| format!("无法取得结构来源 tenant_data.targets.{key}：{error}；检查 target 与密码环境引用；未写入源码"))?;
+    let lease = registry.acquire(key).await.map_err(|error| format!("无法取得结构来源 tenant_data.targets.{key}：{error}；检查 target 与配置文件中的 password 字段；未写入源码"))?;
     inspect_tables(lease.connection(), &plan.tables).await
 }
 

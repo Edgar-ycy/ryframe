@@ -3,7 +3,7 @@
 //! 生产环境只有显式 scope 的 `ryframe-migrate ... up` 可以执行 DDL。API 和 Worker
 //! 进程继续使用 `database.migration_mode = "verify"`，不会在启动时遍历独立目标。
 
-use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetKind};
+use ryframe_config::{AppConfig, ConfigurationArgs, Environment, TenantDatabaseTargetKind};
 use ryframe_sdk::{BusinessMigrationScope, RyFrameBusinessModule};
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 use sea_orm::DatabaseConnection;
@@ -52,15 +52,18 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ryframe::crypto::install_crypto_provider()?;
-    let command = parse_command(std::env::args().skip(1).collect())?;
+    let arguments = ConfigurationArgs::parse(std::env::args().skip(1).collect())?;
+    let command = parse_command(arguments.arguments)?;
 
     let (scope, operation) = match command {
         Command::Migrate { scope, operation } => (scope, operation),
-        Command::ExportSql { output, write } => return sql_export::run(&output, write),
-        Command::Adopt(options) => return adoption::run(options).await,
+        Command::ExportSql { output, write } => {
+            return sql_export::run(&arguments.directory, &output, write);
+        }
+        Command::Adopt(options) => return adoption::run(&arguments.directory, options).await,
     };
     let environment = Environment::from_env()?;
-    let config = AppConfig::load_from_env(environment)?;
+    let config = AppConfig::load(&arguments.directory, environment)?;
     let business_modules = ryframe::business::registered_business_modules()?;
     match scope {
         MigrationScope::Control => run_control(operation, &config, &business_modules).await?,
@@ -108,7 +111,7 @@ async fn run_control(
     business_modules: &[RyFrameBusinessModule],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let hashes = if matches!(operation, Operation::Up) {
-        bootstrap::load_hashes()?
+        bootstrap::load_hashes(config)?
     } else {
         None
     };

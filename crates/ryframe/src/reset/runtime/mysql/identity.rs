@@ -3,18 +3,15 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use ryframe_config::{AppConfig, DbConnection, DbTlsMode, TenantDatabaseTargetKind};
+use ryframe_config::AppConfig;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TryGetable};
 
 use crate::reset::{
     ResetError, ResetResult,
-    model::{
-        PRIMARY_DATABASE_PASSWORD_ENV, ResetManifest, database_connection_identity, normalize_host,
-        sha256_hex,
-    },
+    model::{ResetManifest, database_connection_identity, normalize_host, sha256_hex},
 };
 
-use super::{ADMIN_PASSWORD_ENV, DatabaseHandle, DatabaseSpec, SeedCredentials};
+use super::{DatabaseHandle, DatabaseSpec, SeedCredentials};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OwnershipState {
@@ -95,146 +92,56 @@ pub(super) fn collect_specs(
     config: &AppConfig,
     manifest: &ResetManifest,
 ) -> ResetResult<Vec<DatabaseSpec>> {
-    let mut specs = BTreeMap::<(String, u16, String), DatabaseSpec>::new();
-    let primary_password = std::env::var(PRIMARY_DATABASE_PASSWORD_ENV)
-        .map_err(|_| ResetError::new("控制库密码环境变量缺失或编码无效"))?;
-    if primary_password != config.database.primary.password {
-        return Err(ResetError::new(
-            "控制库密码必须来自当前 APP_DATABASE_PASSWORD 环境变量",
-        ));
-    }
-    let mut primary = config.database.primary.clone();
-    primary.password = primary_password;
-    insert_spec(&mut specs, primary, PRIMARY_DATABASE_PASSWORD_ENV, manifest)?;
-    for target in &config.tenant_data.targets {
-        if target.kind != TenantDatabaseTargetKind::Mysql {
-            continue;
+    let mut specs = Vec::new();
+    for configured in crate::reset::connections::configured_databases(config)? {
+        let connection = configured.connection;
+        let resource = manifest
+            .databases
+            .iter()
+            .find(|database| {
+                database.host == normalize_host(&connection.host)
+                    && database.port == connection.port
+                    && database.database == connection.database.trim()
+            })
+            .ok_or_else(|| ResetError::new("MySQL 连接不属于不可变数据库清单"))?;
+        if database_connection_identity(&connection, &configured.password_config_key)?
+            != resource.connection
+            || resource.target_keys != configured.target_keys
+            || resource.control_baseline != configured.control_baseline
+            || !resource.tenant_baseline
+        {
+            return Err(ResetError::new(
+                "MySQL 配置引用、连接身份或别名集合与不可变清单不一致，请重新运行 plan",
+            ));
         }
-        let password_env = target
-            .password_env
-            .as_deref()
-            .ok_or_else(|| ResetError::new("MySQL 目标缺少 password_env"))?;
-        let password = std::env::var(password_env)
-            .map_err(|_| ResetError::new("MySQL 目标密码环境变量缺失或编码无效"))?;
-        if password.is_empty() {
-            return Err(ResetError::new("MySQL 目标密码环境变量不能为空"));
-        }
-        let connection = DbConnection {
-            host: target
-                .host
-                .clone()
-                .ok_or_else(|| ResetError::new("MySQL 目标缺少 host"))?,
-            port: target.port.unwrap_or(3306),
-            database: target
-                .database
-                .clone()
-                .ok_or_else(|| ResetError::new("MySQL 目标缺少 database"))?,
-            username: target
-                .username
-                .clone()
-                .ok_or_else(|| ResetError::new("MySQL 目标缺少 username"))?,
-            password,
-            max_connections: target.max_connections.unwrap_or(2).min(4),
-            min_connections: 0,
-            acquire_timeout_secs: 10,
-            idle_timeout_secs: 60,
-            max_lifetime_secs: 300,
-            connect_timeout_secs: 10,
-            tls_mode: target.tls_mode.unwrap_or(DbTlsMode::Required),
-            tls_ca: target.tls_ca.clone(),
-            tls_client_cert: target.tls_client_cert.clone(),
-            tls_client_key: target.tls_client_key.clone(),
-        };
-        insert_spec(&mut specs, connection, password_env, manifest)?;
+        specs.push(DatabaseSpec {
+            resource: resource.clone(),
+            connection,
+        });
     }
     if specs.len() != manifest.databases.len() {
         return Err(ResetError::new(
             "MySQL 运行时连接集合与不可变数据库清单不一致",
         ));
     }
-    Ok(specs.into_values().collect())
+    Ok(specs)
 }
 
-fn insert_spec(
-    specs: &mut BTreeMap<(String, u16, String), DatabaseSpec>,
-    connection: DbConnection,
-    password_env: &str,
-    manifest: &ResetManifest,
-) -> ResetResult<()> {
-    let identity = (
-        normalize_host(&connection.host),
-        connection.port,
-        connection.database.trim().to_owned(),
-    );
-    let resource = manifest
-        .databases
-        .iter()
-        .find(|database| {
-            database.host == identity.0
-                && database.port == identity.1
-                && database.database == identity.2
-        })
-        .ok_or_else(|| ResetError::new("MySQL 连接不属于不可变数据库清单"))?;
-    if database_connection_identity(&connection, password_env)? != resource.connection {
-        return Err(ResetError::new(
-            "MySQL 非秘密连接参数与不可变清单不一致，请重新运行 plan",
-        ));
-    }
-    if let Some(existing) = specs.get(&identity) {
-        if !same_credentials(&existing.connection, &connection) {
-            return Err(ResetError::new(
-                "同一物理数据库配置了冲突的 MySQL 凭据或 TLS 参数",
-            ));
-        }
-        return Ok(());
-    }
-    specs.insert(
-        identity,
-        DatabaseSpec {
-            resource: resource.clone(),
-            connection,
-        },
-    );
-    Ok(())
-}
-
-pub fn same_credentials(left: &DbConnection, right: &DbConnection) -> bool {
-    left.username == right.username
-        && left.password == right.password
-        && left.tls_mode == right.tls_mode
-        && left.tls_ca == right.tls_ca
-        && left.tls_client_cert == right.tls_client_cert
-        && left.tls_client_key == right.tls_client_key
-}
-
-pub(super) fn load_seed_credentials() -> ResetResult<SeedCredentials> {
-    seed_credentials(std::env::var(ADMIN_PASSWORD_ENV))
-}
-
-pub(super) fn seed_credentials(
-    admin_password: Result<String, std::env::VarError>,
-) -> ResetResult<SeedCredentials> {
+pub(super) fn seed_credentials(admin_password: Option<&str>) -> ResetResult<SeedCredentials> {
     use ryframe_auth::password;
 
-    let admin_password = admin_password.map_err(|error| {
-        ResetError::new(match error {
-            std::env::VarError::NotPresent => {
-                "缺少 RYFRAME_RESET_ADMIN_PASSWORD；请设置此环境变量为 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号"
-            }
-            std::env::VarError::NotUnicode(_) => {
-                "RYFRAME_RESET_ADMIN_PASSWORD 编码无效；请重新设置此环境变量为 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号"
-            }
-        })
-    })?;
-    password::validate_complexity(&admin_password).map_err(|_| {
-        ResetError::new("RYFRAME_RESET_ADMIN_PASSWORD 不满足复杂度策略；请设置此环境变量为 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号")
-    })?;
+    let admin_password = admin_password.ok_or_else(|| ResetError::new(
+        "所选配置文件缺少 bootstrap.admin_password；请填写 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号"
+    ))?;
+    password::validate_complexity(admin_password).map_err(|_| ResetError::new(
+        "所选配置文件 bootstrap.admin_password 不满足复杂度策略；请填写 8~72 个可见 ASCII 字符，包含大小写字母、数字和符号"
+    ))?;
     let admin_hash =
-        password::hash(&admin_password).map_err(|_| ResetError::new("reset 管理员密码哈希失败"))?;
+        password::hash(admin_password).map_err(|_| ResetError::new("reset 管理员密码哈希失败"))?;
     let user_hash = password::hash(password::INITIAL_USER_PASSWORD)
         .map_err(|_| ResetError::new("reset 普通用户初始密码哈希失败"))?;
     Ok(SeedCredentials {
-        admin_password,
+        admin_password: admin_password.to_owned(),
         admin_hash,
         user_hash,
     })

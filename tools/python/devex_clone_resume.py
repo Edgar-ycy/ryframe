@@ -43,9 +43,9 @@ def hydrate(session: factory.CloneSession, saved: dict) -> None:
     initial, session.target_request, _ = session._target_generation()
     selected = initial["generation"]["selected"]
     target = {**session.target_request["target"], "runtime_dir": selected["runtime_dir"], "api_url": selected["api_url"]}
-    tools = {role: session.source_request["tools"][role] for role in ("mysql", "aws")}
+    tools = {"mysql": session.source_request["tools"]["mysql"]}
     if tools != session.target_request["tools"]:
-        raise ValueError("续跑两侧 MySQL 与 S3 工具不同")
+        raise ValueError("续跑两侧 MySQL 工具不同")
     session.tools = ExternalTools({"source": session.exported["source"], "target": target, "tools": tools},
                                   session.output, session.run)
     session.source_initial = session._source_inventory()

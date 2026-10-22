@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 /// 非生产全环境重建的额外所有权证明。
@@ -7,6 +9,15 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResetConfig {
+    /// reset 清单绑定的完整 Git 提交来源，不从构建或进程环境回退读取。
+    #[serde(default)]
+    pub source_sha: Option<String>,
+    /// 执行前由操作者明确确认 API、Worker 和 scheduler 已停止。
+    #[serde(default)]
+    pub services_stopped: bool,
+    /// execute 必须显式指定的绝对本地状态目录；plan 不要求配置。
+    #[serde(default)]
+    pub state_directory: Option<PathBuf>,
     #[serde(default)]
     pub legacy_mysql_exclusive: bool,
     #[serde(default)]
@@ -25,6 +36,13 @@ pub struct ResetConfig {
 
 impl ResetConfig {
     pub fn validate(&self, production: bool) -> Result<(), String> {
+        if let Some(source) = self.source_sha.as_deref()
+            && (source.len() != 40 || !source.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(
+                "reset.source_sha 必须为 40 位 Git commit 十六进制 SHA；请修正所选配置文件".into(),
+            );
+        }
         if production
             && (self.legacy_mysql_exclusive
                 || self.legacy_redis_exclusive

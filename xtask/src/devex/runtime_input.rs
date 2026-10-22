@@ -38,7 +38,16 @@ pub(crate) fn validate(
     let count = concurrency(suite, environment)?;
     super::runtime_selection::validate_suite(config, suite, count)
         .map_err(|reason| format!("{IDENTITY}：{reason}"))?;
-    let authority = crate::rate_limit::authority(root, environment)
+    let config_dir = match config["bindings"].get("app_config_dir") {
+        None => None,
+        Some(value) => {
+            Some(Path::new(value.as_str().ok_or(
+                "bindings.app_config_dir 必须是文本路径；请修正运行测量配置文件",
+            )?))
+        }
+    };
+    let app_env = environment.get("APP_ENV").map(String::as_str).unwrap_or("");
+    let authority = crate::rate_limit::authority(root, config_dir, app_env)
         .map_err(|reason| format!("{AUTHORITY}：{}：{}", reason.code(), reason.message()))?;
     let authority = serde_json::to_value(authority).map_err(|_| AUTHORITY)?;
     let document = read_openapi(root)?;

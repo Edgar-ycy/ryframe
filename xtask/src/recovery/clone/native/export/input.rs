@@ -31,6 +31,16 @@ const REQUEST_FIELDS: &[&str] = &[
     "max_object_bytes",
 ];
 
+/// 公开证据仅保留连接身份；原请求仍通过私有文件的字节数和摘要绑定。
+pub(crate) fn public_request(request: &Value) -> Value {
+    let mut proof = request.clone();
+    proof["source"]["s3"] = serde_json::json!({
+        "endpoint": request["source"]["s3"]["endpoint"],
+        "region": request["source"]["s3"]["region"],
+    });
+    proof
+}
+
 pub(crate) struct Context {
     pub(crate) backend: PathBuf,
     pub(crate) run_dir: PathBuf,
@@ -176,7 +186,7 @@ fn validate_request(backend: &Path, request: &Value) -> Result<()> {
     }
     let tools = exact(
         value.get("tools").unwrap(),
-        &["mysql", "mysqldump", "aws", "node"],
+        &["mysql", "mysqldump", "node"],
         "源导出外部工具",
     )?;
     for item in tools.values() {
@@ -251,7 +261,7 @@ fn validate_source(backend: &Path, value: &Value) -> Result<()> {
     endpoint(text(source.get("api_url").unwrap(), "API 地址")?)?;
     let s3 = exact(
         source.get("s3").unwrap(),
-        &["endpoint", "region", "access_key_env", "secret_key_env"],
+        &["endpoint", "region", "access_key", "secret_key"],
         "源对象配置",
     )?;
     endpoint(text(s3.get("endpoint").unwrap(), "对象端点")?)?;
@@ -259,12 +269,7 @@ fn validate_source(backend: &Path, value: &Value) -> Result<()> {
     if !Regex::new(r"^[a-z0-9-]+$")?.is_match(region) {
         return Err("源对象 region 无效".into());
     }
-    let environment_name = Regex::new(r"^[A-Z][A-Z0-9_]+$")?;
-    for key in ["access_key_env", "secret_key_env"] {
-        if !environment_name.is_match(text(s3.get(key).unwrap(), key)?) {
-            return Err("源对象认证必须绑定显式环境变量名".into());
-        }
-    }
+    super::super::s3::Configuration::read(&source["s3"])?;
     let databases = source
         .get("databases")
         .and_then(Value::as_array)

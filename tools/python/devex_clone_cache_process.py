@@ -19,7 +19,16 @@ import uuid
 
 
 FIELDS = {"scope_id", "wsl", "distribution", "launcher", "executable", "sha256", "configuration", "directory",
-          "previous_identity", "previous_boot_id", "previous_run_id", "port", "password_env", "timeout_seconds", "python"}
+          "previous_identity", "previous_boot_id", "previous_run_id", "port", "password", "timeout_seconds", "python"}
+
+
+def validate_password(value):
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        raise ValueError("Redis password 必须是配置文件中明确的非空文本，不含 NUL")
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        raise ValueError("Redis password 必须是有效 UTF-8 文本") from None
 
 
 def canonical(value):
@@ -78,14 +87,14 @@ def linux_path(value):
 
 
 def validate(request, *, files=True):
-    if set(request) != FIELDS:
+    if not isinstance(request, dict) or set(request) != FIELDS:
         raise ValueError("Redis 进程请求字段不同")
+    validate_password(request["password"])
     if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{2,47}", request["scope_id"])
             or not re.fullmatch(r"[A-Za-z0-9._-]+", request["distribution"])
             or request["launcher"] != "/usr/bin/redis-server" or not re.fullmatch(r"/usr/(?:local/)?bin/[a-z0-9-]+", request["executable"])
             or type(request["port"]) is not int or not 1024 <= request["port"] <= 65535
             or type(request["timeout_seconds"]) is not int or not 1 <= request["timeout_seconds"] <= 180
-            or not re.fullmatch(r"[A-Z][A-Z0-9_]+", request["password_env"])
             or not re.fullmatch(r"[a-f0-9]{64}", request["sha256"])
             or request["previous_identity"] is None and (request["previous_boot_id"] is not None or request["previous_run_id"] is not None)
             or request["previous_identity"] is not None and (not re.fullmatch(r"[a-f0-9]{40}", request["previous_run_id"])
@@ -147,9 +156,8 @@ def response(stream, depth=0):
 
 
 def redis_facts(request, environment):
-    password = environment.get(request["password_env"])
-    if not isinstance(password, str) or not password:
-        raise ValueError("Redis 核验必须有原环境中的明确认证")
+    password = request["password"]
+    validate_password(password)
     with socket.create_connection(("127.0.0.1", request["port"]), timeout=3) as connection, connection.makefile("rb") as stream:
         def send(parts):
             values = [item.encode() for item in parts]
@@ -660,6 +668,13 @@ def start(request, environment, output, guard):
     from full_stack_process import process_identity
     from devex_clone_target_storage import actual_windows_argv
     output = Path(output)
+    if (not isinstance(environment, dict) or any(key != "APP_ENV" for key in environment)
+            or "APP_ENV" in environment and environment["APP_ENV"] != "test"):
+        raise ValueError("Redis 子进程应用环境只允许 APP_ENV；密码只能来自绑定请求")
+    host_names = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "USERPROFILE", "HOME",
+                  "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP"}
+    child_environment = {key: value for key, value in os.environ.items() if key.upper() in host_names}
+    child_environment.update(environment)
     prepare(request, output)
     guard()
     require_closed_port(f"http://127.0.0.1:{request['port']}")
@@ -669,7 +684,7 @@ def start(request, environment, output, guard):
     try:
         with (output / "wsl.stdout.log").open("xb") as stdout, (output / "wsl.stderr.log").open("xb") as stderr:
             child = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, cwd=output,
-                                     env=environment,
+                                     env=child_environment,
                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         actual = process_identity(child.pid)
         if actual is None or actual["executable"].lower() != request["wsl"]["path"].lower():

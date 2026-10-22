@@ -25,7 +25,6 @@ from source_inventory import (
     build_source_domains,
     canonical_digest,
     capture_inventory,
-    frontend_environment_files,
     validate_inventory,
 )
 
@@ -164,16 +163,18 @@ def _backend_build(root: Path, path: Path, inventory: dict) -> tuple[dict, dict]
 def _frontend_build(root: Path, path: Path, inventory: dict) -> tuple[dict, dict]:
     document = _build_document(path, root, "前端")
     receipt = validate_frontend_receipt(document.value)
-    environment_files = frontend_environment_files(root)
+    from restore_frontend_configuration import verify_frontend_inputs
+
+    inputs = verify_frontend_inputs(root, receipt["build"],
+                                    expected_head=inventory["source"]["snapshot"]["head"])
     files = frontend_files(root)
     if (receipt["sources"]["full"] != inventory
-            or receipt["build"]["environment_files"] != environment_files
             or receipt["files"] != files):
-        raise ValueError("前端构建收据与精确源码、环境文件或完整 dist 不同")
+        raise ValueError("前端构建收据与精确源码、文件配置或完整 dist 不同")
     if (capture_inventory(root) != inventory
-            or frontend_environment_files(root) != environment_files
             or frontend_files(root) != files):
-        raise ValueError("核验前端构建收据期间源码、环境文件或完整 dist 发生变化")
+        raise ValueError("核验前端构建收据期间源码或完整 dist 发生变化")
+    inputs.assert_unchanged()
     document.assert_unchanged()
     return receipt, {"path": str(document.path), "bytes": len(document.raw), "sha256": document.sha256}
 

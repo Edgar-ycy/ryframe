@@ -46,7 +46,7 @@ fn validate_export(context: &Context, value: &Value, path: &Path) -> Result<()> 
             .ok_or("源导出缺少证据根目录")?,
     );
     let root = validate_shape(context, value, path, &artifact_root)?;
-    validate_evidence(root, &artifact_root)?;
+    validate_evidence(context, root, &artifact_root)?;
     let models = database::models(context)?;
     validate_export_databases(context, root, &artifact_root, &models)?;
     validate_export_objects(root, &artifact_root)?;
@@ -94,7 +94,7 @@ fn validate_shape<'a>(
         || root.get("scope_id") != context.source().get("scope_id")
         || root.get("id") != context.request.get("id")
         || root.get("worktree_fingerprint") != context.request.get("worktree_fingerprint")
-        || root.get("source") != Some(context.source())
+        || root.get("source") != super::input::public_request(&context.request).get("source")
         || root.get("remote_writes").and_then(Value::as_u64) != Some(0)
         || root.get("clone_verified").and_then(Value::as_bool) != Some(false)
         || root.get("restore_qualified").and_then(Value::as_bool) != Some(false)
@@ -118,7 +118,11 @@ fn validate_shape<'a>(
     Ok(root)
 }
 
-fn validate_evidence(root: &serde_json::Map<String, Value>, artifact_root: &Path) -> Result<()> {
+fn validate_evidence(
+    context: &Context,
+    root: &serde_json::Map<String, Value>,
+    artifact_root: &Path,
+) -> Result<()> {
     let evidence = root
         .get("evidence")
         .and_then(Value::as_object)
@@ -146,6 +150,11 @@ fn validate_evidence(root: &serde_json::Map<String, Value>, artifact_root: &Path
         {
             return Err("源原始证据已变化".into());
         }
+    }
+    if json_io::read(&artifact_root.join("request.json"))?
+        != super::input::public_request(&context.request)
+    {
+        return Err("源请求公开投影与已绑定的私有原请求不一致".into());
     }
     let before_inventory = json_io::read(&artifact_root.join("inventory-before.json"))?;
     if digest::plan_hash(&inventory::logical(&before_inventory)?)?

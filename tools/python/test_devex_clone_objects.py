@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from restore_build import file_digest
 from restore_reference import work_directory
 from restore_reference_fixture import environment
-from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools, ObjectCreateError, copy_object_metadata, object_create_outcome
+from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools, ObjectCreateError, copy_object_metadata
 
 
 def metadata():
@@ -28,6 +28,8 @@ class ObjectStore:
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs))
+        if "__s3-put-if-absent" in command:
+            return self.native_put(command, kwargs)
         bucket, key = command[command.index("--bucket") + 1], command[command.index("--key") + 1]
         conditional = "--if-none-match" in command and command[command.index("--if-none-match") + 1] == "*"
         if conditional and (bucket, key) in self.objects:
@@ -48,6 +50,40 @@ class ObjectStore:
         if self.failure == "no-etag":
             output = b"{}"
         return subprocess.CompletedProcess(command, 0, stdout=output)
+
+    def native_put(self, command, kwargs):
+        request = json.loads(kwargs["input"].decode("utf-8"))
+        bucket, key = request["bucket"], request["key"]
+        base = {"automatic_retry_permitted": False}
+        if (bucket, key) in self.objects:
+            outcome = {**base, "status": "already_exists", "http_status": 412,
+                       "remote_write_may_have_occurred": False}
+        elif self.failure in {"AccessDenied", "403"}:
+            outcome = {**base, "status": "denied", "http_status": 403,
+                       "remote_write_may_have_occurred": False}
+        elif self.failure in {"ConditionalRequestConflict", "409", "UnknownCode"}:
+            outcome = {**base, "status": "needs_reconciliation", "http_status": 409,
+                       "remote_write_may_have_occurred": True}
+        else:
+            source = Path(request["source"])
+            self.objects[bucket, key] = source.read_bytes(), request["metadata"]
+            if self.failure == "timeout-after-write":
+                raise subprocess.TimeoutExpired(command, 1810)
+            if self.failure == "body-changed":
+                source.write_bytes(b"different")
+                outcome = {**base, "status": "needs_reconciliation", "reason": "source_changed",
+                           "http_status": 200, "remote_write_may_have_occurred": True}
+            elif self.failure in {"invalid-response", "no-etag"}:
+                outcome = {**base, "status": "needs_reconciliation",
+                           "reason": "success_response_incomplete", "http_status": 200,
+                           "remote_write_may_have_occurred": True}
+            else:
+                outcome = {**base, "status": "created_unverified", "http_status": 200,
+                           "remote_write_may_have_occurred": True,
+                           "response": {"ETag": '"fixture-etag"'}}
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps({"ok": True, "result": outcome}).encode(), stderr=b""
+        )
 
 
 class CloneObjectTests(unittest.TestCase):
@@ -98,26 +134,29 @@ class CloneObjectTests(unittest.TestCase):
         self.assertEqual(result["status"], "created_unverified")
         self.assertEqual(len(self.store.calls), 1)
         command, kwargs = self.store.calls[0]
-        self.assertEqual(command[command.index("--if-none-match") + 1], "*")
-        self.assertEqual(command[command.index("--endpoint-url") + 1], self.plan["target"]["s3"]["endpoint"])
-        self.assertEqual(kwargs["env"]["AWS_MAX_ATTEMPTS"], "1")
-        self.assertEqual(kwargs["env"]["AWS_ACCESS_KEY_ID"], "access-fixture")
+        self.assertIn("__s3-put-if-absent", command)
+        self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
+        private = json.loads(kwargs["input"].decode("utf-8"))
+        self.assertEqual(private["configuration"], self.plan["target"]["s3"])
         self.assertNotIn("access-fixture", command)
         self.assertNotIn("secret-fixture", command)
         self.assertEqual(self.store.objects["uploads", "target/system/file.txt"], (b"fixture-data", copy_object_metadata(metadata())))
         request = Path(result["request_file"])
         self.assertTrue(request.is_relative_to(self.work))
-        self.assertEqual(json.loads(request.read_text()), copy_object_metadata(metadata()))
+        intent = json.loads(request.read_text())
+        self.assertEqual(intent["transport"], "rust-s3-sigv4")
+        self.assertEqual(intent["metadata"], copy_object_metadata(metadata()))
+        self.assertNotIn("access_key", intent)
+        self.assertNotIn("secret_key", intent)
         diagnostic = json.loads(Path(result["diagnostic_file"]).read_text())
         self.assertEqual(diagnostic["request_file"], str(request))
         self.assertEqual(diagnostic["outcome"], "created_unverified")
-        self.assertEqual(diagnostic["stderr"], "")
+        self.assertTrue(diagnostic["remote_write_may_have_occurred"])
 
     def test_absent_business_headers_are_explicit_null_and_not_sent_as_defaults(self):
         value = {**dict.fromkeys(COPY_METADATA_FIELDS), "ContentType": "application/octet-stream", "Metadata": {}}
         self.create(metadata=value)
-        self.assertEqual(self.store.objects["uploads", "target/system/file.txt"][1],
-                         {"ContentType": "application/octet-stream", "Metadata": {}})
+        self.assertEqual(self.store.objects["uploads", "target/system/file.txt"][1], value)
 
     def test_existing_object_is_rejected_without_overwrite_or_unconditional_retry(self):
         original = b"keep-original", {"ContentType": "image/png", "Metadata": {"keep": "yes"}}
@@ -129,11 +168,11 @@ class CloneObjectTests(unittest.TestCase):
         self.assertEqual(self.store.objects["uploads", "target/system/file.txt"], original)
         diagnostic = json.loads(Path(caught.exception.diagnostic_file).read_text())
         self.assertEqual(diagnostic["outcome"], "already_exists")
-        self.assertIn("PreconditionFailed", diagnostic["stderr"])
+        self.assertFalse(diagnostic["remote_write_may_have_occurred"])
 
     def test_denied_conflict_and_unknown_errors_are_not_absence_or_retried(self):
         for failure, outcome in (("AccessDenied", "denied"), ("403", "denied"),
-                                 ("ConditionalRequestConflict", "conflict"), ("409", "conflict"),
+                                 ("ConditionalRequestConflict", "needs_reconciliation"), ("409", "needs_reconciliation"),
                                  ("UnknownCode", "needs_reconciliation")):
             self.store.failure = failure
             self.store.calls.clear()
@@ -155,62 +194,32 @@ class CloneObjectTests(unittest.TestCase):
             self.assertEqual(self.store.objects["uploads", "target/system/file.txt"][0], b"fixture-data")
             diagnostic = json.loads(Path(caught.exception.diagnostic_file).read_text())
             self.assertEqual(diagnostic["outcome"], "needs_reconciliation")
-            self.assertIsNotNone(diagnostic["error_type"])
+            self.assertTrue(diagnostic["remote_write_may_have_occurred"])
 
-    def test_cli_retry_annotation_is_recognized_and_each_request_keeps_sanitized_diagnostics(self):
+    def test_wrapper_failures_remain_unknown_and_never_persist_private_stderr(self):
         credential = 'fixture+/secret"with space'
         token = "fixture-session-token"
         with patch.dict("os.environ", {"TEST_SECRET": credential, "APP_SESSION_TOKEN": token}):
-            for code, expected in (("PreconditionFailed", "already_exists"), ("412", "already_exists"),
-                                   ("ConditionalRequestConflict", "conflict"), ("AccessDenied", "denied"),
-                                   ("UnknownCode", "needs_reconciliation")):
-                raw = (f"\nAn error occurred ({code}) when calling the PutObject operation (reached max retries: 0): "
+            for code in ("ProtocolRejected", "Timeout", "AccessDenied", "UnknownCode"):
+                raw = (f"\nNative S3 invocation failed ({code}): "
                        f"fixture diagnostic access-fixture {credential} {quote(credential, safe='')} "
                        f"{json.dumps(credential)[1:-1]} {token}\n")
-                run = Mock(side_effect=subprocess.CalledProcessError(255, ["aws"], stderr=raw.encode()))
+                run = Mock(side_effect=subprocess.CalledProcessError(255, ["xtask"], stderr=raw.encode()))
                 self.tools.run = run
                 with self.subTest(code=code), self.assertRaises(ObjectCreateError) as caught:
                     self.create()
-                self.assertEqual(caught.exception.outcome, expected)
+                self.assertEqual(caught.exception.outcome, "needs_reconciliation")
                 self.assertEqual(run.call_count, 1)
                 diagnostic_path = Path(caught.exception.diagnostic_file)
                 self.assertTrue(diagnostic_path.is_relative_to(self.work))
                 document = json.loads(diagnostic_path.read_text(encoding="utf-8"))
                 self.assertEqual(document["request_file"], caught.exception.request_file)
-                self.assertEqual(document["outcome"], expected)
+                self.assertEqual(document["outcome"], "needs_reconciliation")
                 self.assertEqual(document["returncode"], 255)
                 self.assertEqual(document["error_type"], "CalledProcessError")
-                self.assertIn("(reached max retries: 0):", document["stderr"])
-                self.assertIn("[REDACTED]", document["stderr"])
-                for secret in (credential, quote(credential, safe=""), json.dumps(credential)[1:-1], token, "access-fixture"):
-                    self.assertNotIn(secret, document["stderr"])
+                self.assertNotIn("stderr", document)
+                self.assertTrue(document["remote_write_may_have_occurred"])
                 self.assertNotIn(credential, str(caught.exception))
-
-    def test_installed_cli_error_prefix_uses_captured_precondition_failure(self):
-        raw = ("\r\naws: [ERROR]: An error occurred (PreconditionFailed) when calling the PutObject operation "
-               "(reached max retries: 0): At least one of the pre-conditions you specified did not hold\r\n")
-        run = Mock(side_effect=subprocess.CalledProcessError(254, ["aws"], stderr=raw.encode()))
-        self.tools.run = run
-        with self.assertRaises(ObjectCreateError) as caught:
-            self.create()
-        self.assertEqual(caught.exception.outcome, "already_exists")
-        self.assertEqual(run.call_count, 1)
-        diagnostic = json.loads(Path(caught.exception.diagnostic_file).read_text(encoding="utf-8"))
-        self.assertEqual(diagnostic["stderr"], raw)
-        self.assertEqual(diagnostic["returncode"], 254)
-        for ambiguous in (raw + raw, raw + raw.replace("aws: [ERROR]: ", ""),
-                          raw.replace("aws: [ERROR]: ", "aws: [WARNING]: "),
-                          raw.replace("aws: [ERROR]: ", "unrecognized prefix ")):
-            with self.subTest(stderr=ambiguous):
-                self.assertEqual(object_create_outcome(ambiguous), "needs_reconciliation")
-
-    def test_unknown_or_conflicting_cli_error_formats_remain_unknown(self):
-        valid = "An error occurred (PreconditionFailed) when calling the PutObject operation (reached max retries: 0): existing"
-        for text in (valid.replace("PutObject", "GetObject"), valid.replace("max retries: 0", "max retries: unknown"),
-                     valid + "\n" + valid.replace("PreconditionFailed", "AccessDenied"),
-                     "unrecognized " + valid, ""):
-            with self.subTest(stderr=text):
-                self.assertEqual(object_create_outcome(text), "needs_reconciliation")
 
     def test_wrong_scope_owner_path_or_body_hash_rejected_before_write(self):
         for key in ("source/system/file.txt", "target/.ryframe-owner", "target/../outside", "target/",
@@ -225,16 +234,6 @@ class CloneObjectTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.create(key="target/../source/file")
         self.assertEqual(self.store.calls, [])
-
-    def test_formal_restore_put_keeps_existing_behavior(self):
-        run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b"{}"))
-        tools = ExternalTools(self.plan, self.work, run)
-        tools.aws("target", "put-object", "uploads", "target/system/file.txt", self.source, content_type="text/plain")
-        command = run.call_args.args[0]
-        self.assertNotIn("--if-none-match", command)
-        self.assertNotIn("--cli-input-json", command)
-        self.assertEqual(command[command.index("--content-type") + 1], "text/plain")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -96,22 +96,34 @@ class ReferenceIoTests(unittest.TestCase):
                 tools.validate_defaults(defaults)
             defaults.write_text(original)
 
-    def test_aws_cannot_scan_escape_or_overwrite_and_never_puts_keys_in_argv(self):
-        run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b"{}"))
+    def test_native_object_read_cannot_escape_or_overwrite_and_keeps_credentials_private(self):
+        calls = []
+        def run(command, **kwargs):
+            request = json.loads(kwargs["input"])
+            calls.append((command, kwargs, request))
+            Path(request["destination"]).write_bytes(b"body")
+            response = {"ok": True, "result": {"ContentType": "text/plain", "Metadata": {},
+                        "ETag": '"fixture"', "ContentLength": 4,
+                        "LastModified": "2026-09-04T00:00:00+00:00"}}
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(response).encode(), stderr=b"")
         tools = ExternalTools(self.plan, self.work, run)
-        with patch.dict("os.environ", {"TEST_ACCESS": "access-fixture", "TEST_SECRET": "secret-fixture", "AWS_PROFILE": "wrong"}):
-            tools.aws("source", "get-object", "uploads", "source/file", self.work / "download")
-            command = run.call_args.args[0]
+        with patch.dict("os.environ", {"AWS_PROFILE": "wrong"}):
+            tools.read_object("source", "uploads", "source/file", self.work / "download", max_bytes=4)
+            command, options, request = calls[0]
+            self.assertIn("__s3-read", command)
             self.assertNotIn("access-fixture", command)
             self.assertNotIn("secret-fixture", command)
-            self.assertNotIn("AWS_PROFILE", run.call_args.kwargs["env"])
-            for operation, key in (("list-objects", "source/file"), ("get-object", "other/file")):
+            self.assertNotIn("AWS_PROFILE", options["env"])
+            self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
+            for bucket, key, maximum in (("unknown", "source/file", 4),
+                                         ("uploads", "other/file", 4),
+                                         ("uploads", "source/file", 0)):
                 with self.assertRaises(ValueError):
-                    tools.aws("source", operation, "uploads", key, self.work / "new")
+                    tools.read_object("source", bucket, key, self.work / "new", max_bytes=maximum)
             existing = self.work / "exists"
             existing.write_bytes(b"keep")
             with self.assertRaisesRegex(ValueError, "不能覆盖"):
-                tools.aws("source", "get-object", "uploads", "source/file", existing)
+                tools.read_object("source", "uploads", "source/file", existing, max_bytes=4)
             self.assertEqual(existing.read_bytes(), b"keep")
 
     def test_object_index_rejects_renamed_keys_cross_resource_files_and_tampering(self):

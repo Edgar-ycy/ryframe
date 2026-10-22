@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_live_object as live
 from devex_clone_capture import inspect_response
 from devex_clone_transfer import ObjectObservation
+from native_s3_client import NativeS3InvocationError
 from restore_reference import work_directory
 from restore_reference_fixture import environment
 from restore_reference_io import ExternalTools
@@ -34,7 +35,7 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
         self.items, self.observations = [], {}
         self.lock = threading.Lock()
         self.active = self.peak = 0
-        self.started, self.finished, self.environments, self.verified = [], [], [], []
+        self.started, self.finished, self.environments, self.verified, self.requests = [], [], [], [], []
         self.on_head = None
         expected = {"bytes": len(self.owner.body), "sha256": hashlib.sha256(self.owner.body).hexdigest()}
         for index in range(9):
@@ -47,27 +48,30 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
                                "metadata": identity["metadata"]})
             self.observations["uploads", key] = ObjectObservation(resource, directory, None)
         self.tools = ExternalTools(self.plan, self.work, self.read)
-        self.environment = patch.dict("os.environ", {"TEST_ACCESS": "access-fixture", "TEST_SECRET": "secret-fixture"})
+        self.environment = patch.dict("os.environ", {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret"})
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
     def read(self, command, **kwargs):
-        key = command[command.index("--key") + 1]
+        self.assertEqual(command[-1], "__s3-read")
+        request = json.loads(kwargs["input"])
+        key = request["key"]
         if key.endswith("/.ryframe-owner"):
             return self.owner(command, **kwargs)
-        self.assertEqual(command[command.index("s3api") + 1], "head-object")
-        self.assertEqual(command[command.index("--if-match") + 1], self.head["ETag"])
-        self.assertNotIn("--version-id", command)
+        self.assertEqual(request["operation"], "head-object")
+        self.assertEqual(request["if_match"], self.head["ETag"])
+        self.assertIsNone(request["version"])
         index = int(key.rsplit("/", 1)[1].removesuffix(".bin"))
         with self.lock:
             self.active += 1
             self.peak = max(self.peak, self.active)
             self.started.append(index)
             self.environments.append(dict(kwargs["env"]))
+            self.requests.append(request)
         try:
             if self.on_head:
                 self.on_head(index)
-            return subprocess.CompletedProcess(command, 0, json.dumps(self.head).encode(), b"")
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "result": self.head}).encode(), b"")
         finally:
             with self.lock:
                 self.active -= 1
@@ -126,7 +130,7 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
             barrier.wait(timeout=10)
             if index == 0:
                 failure.set()
-                raise subprocess.CalledProcessError(254, ["aws"], stderr=b"AccessDenied")
+                raise subprocess.CalledProcessError(1, ["xtask", "__s3-read"], stderr=b"AccessDenied")
             if not release.wait(timeout=10):
                 raise AssertionError("测试未释放在途HEAD")
 
@@ -143,14 +147,14 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
                 thread.join(timeout=10)
                 barrier.abort()
         self.assertFalse(thread.is_alive())
-        self.assertIsInstance(outcome[0], subprocess.CalledProcessError)
+        self.assertIsInstance(outcome[0], NativeS3InvocationError)
         self.assertCountEqual(self.started, range(4))
         self.assertCountEqual(self.finished, range(4))
         self.assertEqual(self.active, 0)
         self.assertFalse((self.output / "verified.json").exists())
         self.assertTrue((self.output / "failure.json").is_file())
 
-    def test_frozen_environment_drift_rejects_after_join_without_mixing_command_credentials(self):
+    def test_frozen_configuration_drift_rejects_after_join_without_mixing_credentials(self):
         barrier = threading.Barrier(5)
         release = threading.Event()
 
@@ -164,7 +168,7 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
             thread, done, outcome = self.controller()
             try:
                 barrier.wait(timeout=10)
-                os.environ["TEST_SECRET"] = "changed-fixture"
+                self.plan["target"]["s3"]["secret_key"] = "changed-fixture"
                 self.assertFalse(done.is_set())
             finally:
                 release.set()
@@ -174,7 +178,10 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
         self.assertIsInstance(outcome[0], ValueError)
         self.assertCountEqual(self.started, range(4))
         self.assertCountEqual(self.finished, range(4))
-        self.assertTrue(all(value["AWS_SECRET_ACCESS_KEY"] == "secret-fixture" for value in self.environments))
+        self.assertTrue(all(not any(name.startswith("AWS_") for name in value)
+                            for value in self.environments))
+        self.assertTrue(all(request["configuration"]["secret_key"] == "secret-fixture"
+                            for request in self.requests))
         self.assertEqual(self.active, 0)
         self.assertFalse((self.output / "verified.json").exists())
         self.assertTrue((self.output / "failure.json").is_file())

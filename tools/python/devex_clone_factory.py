@@ -64,10 +64,10 @@ class CloneSession:
         values = set()
         for side, config in (("source", self.exported["source"]), ("target", self.target_request["target"])):
             environment = self.environment.values[side]
-            for field in ("access_key_env", "secret_key_env"):
-                value = environment.get(config["s3"][field])
-                if not value:
-                    raise ValueError("复制日志缺少已登记对象凭据的脱敏绑定")
+            for field in ("access_key", "secret_key"):
+                value = config["s3"].get(field)
+                if not isinstance(value, str) or not value:
+                    raise ValueError("复制日志缺少配置文件中的对象凭据")
                 values.add(value)
             values.update(defaults_connection(self.backend, database)["password"] for database in config["databases"])
             if environment.get("RYFRAME_RESET_ADMIN_PASSWORD"):
@@ -193,9 +193,9 @@ class CloneSession:
             raise ValueError("实际新目标复验不属于外部绑定的初始化代次")
         target = initial["generation"]["selected"]
         target_config = {**self.target_request["target"], "runtime_dir": target["runtime_dir"], "api_url": target["api_url"]}
-        tools = {role: self.source_request["tools"][role] for role in ("mysql", "aws")}
+        tools = {"mysql": self.source_request["tools"]["mysql"]}
         if tools != self.target_request["tools"]:
-            raise ValueError("两侧复制必须绑定同一 MySQL 与 S3 工具")
+            raise ValueError("两侧复制必须绑定同一 MySQL 工具")
         self.tools = ExternalTools({"source": self.exported["source"], "target": target_config, "tools": tools}, self.output, self.run)
         self.source_initial = self._source_inventory()
         by_name = initial["inventory"]["observations"]

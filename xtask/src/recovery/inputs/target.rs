@@ -146,7 +146,7 @@ fn validate_review_tools(
     tools: &serde_json::Map<String, Value>,
     services: &serde_json::Map<String, Value>,
 ) -> Result<()> {
-    for role in ["mysql", "mysqldump", "aws", "rustfs"] {
+    for role in ["mysql", "mysqldump", "rustfs"] {
         let tool = object(tools.get(role).ok_or("审阅工具缺失")?, "审阅工具")?;
         super::document::digest(
             tool.get("sha256").ok_or("审阅工具缺少摘要")?,
@@ -318,7 +318,7 @@ fn validate_target(backend: &Path, value: &Value, selected: &Value) -> Result<()
     }
     let s3 = exact(
         target.get("s3").unwrap(),
-        &["endpoint", "region", "access_key_env", "secret_key_env"],
+        &["endpoint", "region", "access_key", "secret_key"],
         "新目标对象存储",
     )?;
     let planned_objects = object(
@@ -331,6 +331,12 @@ fn validate_target(backend: &Path, value: &Value, selected: &Value) -> Result<()
         return Err("对象存储不是计划中的目标端点".into());
     }
     endpoint(s3.get("endpoint").unwrap(), "对象存储端点", None)?;
+    for field in ["access_key", "secret_key"] {
+        let credential = text(s3.get(field).unwrap(), "目标对象凭据")?;
+        if credential.is_empty() || credential.chars().any(char::is_control) {
+            return Err("目标对象凭据必须在绑定文件中直接提供且不能为空".into());
+        }
+    }
     let actual = array(target.get("databases").unwrap(), "新目标数据库")?;
     let keys = actual
         .iter()
@@ -393,7 +399,7 @@ fn validate_target(backend: &Path, value: &Value, selected: &Value) -> Result<()
 }
 
 fn validate_tools(value: &Value, review: &Value) -> Result<()> {
-    let tools = exact(value, &["mysql", "aws"], "目标工具")?;
+    let tools = exact(value, &["mysql"], "目标工具")?;
     let reviewed = object(review.get("tools").ok_or("审阅计划缺少工具")?, "审阅工具")?;
     for (role, tool) in tools {
         let tool = exact(tool, &["path", "sha256"], "目标工具")?;

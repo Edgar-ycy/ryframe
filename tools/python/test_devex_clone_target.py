@@ -28,6 +28,69 @@ from devex_clone_inventory import InventoryCaptureError
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from workspace_directory import WorkspaceDirectory
+from full_stack_runtime import environment_scope, worker_ready_url
+
+
+class FileConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = WorkspaceDirectory(
+            Path(__file__).resolve().parents[2] / ".local-tests/python-unit", prefix="fresh-config-",
+        )
+        self.addCleanup(temporary.cleanup)
+        self.f = Fixture(Path(temporary.name), self)
+
+    def override(self, text):
+        (self.f.configuration / "app.test.toml").write_text(text, encoding="utf-8")
+
+    def test_worker_and_scope_use_selected_file(self):
+        self.assertEqual(self.f.environment, {"APP_ENV": "test"})
+        self.assertEqual(environment_scope(self.f.root), self.f.scope)
+        self.assertEqual(worker_ready_url(self.f.root), "http://127.0.0.1:19210/readyz")
+        self.override('[jobs]\nhealth_port=19211\n')
+        self.assertEqual(worker_ready_url(self.f.root), "http://127.0.0.1:19211/readyz")
+
+    def test_worker_errors_identify_invalid_field(self):
+        for field, value in (("health_host", '"0.0.0.0"'), ("health_port", '"19210"'),
+                             ("health_port", "true"), ("health_port", "65536")):
+            with self.subTest(field=field, value=value):
+                self.override(f'[jobs]\n{field}={value}\n')
+                with self.assertRaisesRegex(ValueError, "jobs." + field):
+                    worker_ready_url(self.f.root)
+
+    def test_jobs_mode_error_uses_file_value(self):
+        self.override('[jobs]\nmode="embedded"\n')
+        with self.assertRaisesRegex(ValueError, "jobs.mode"):
+            environment_scope(self.f.root)
+
+    def test_digest_binds_only_common_and_selected_configuration(self):
+        original = binding.configuration_digest(self.f.root)
+        (self.f.configuration / "app.prod.toml").write_text('scope_id="other-scope"\n', encoding="utf-8")
+        self.assertEqual(binding.configuration_digest(self.f.root), original)
+        self.override('[jobs]\nhealth_port=19211\n')
+        self.assertNotEqual(binding.configuration_digest(self.f.root), original)
+        (self.f.configuration / "app.test.toml").unlink()
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            binding.configuration_digest(self.f.root)
+
+    def test_redis_errors_identify_file_field(self):
+        selected = self.f.review["scopes"]["seed"]
+        for field, value in (("host", '"other-host"'), ("port", '"16390"'),
+                             ("database", "true"), ("tls", "true")):
+            with self.subTest(field=field):
+                self.override(f'[redis]\n{field}={value}\n')
+                with self.assertRaisesRegex(ValueError, "redis." + field):
+                    binding.redis_configuration(self.f.root, self.f.request, selected,
+                                                environment={"APP_ENV": "test"})
+
+    def test_reset_errors_identify_file_field(self):
+        selected = self.f.review["scopes"]["seed"]
+        for field, value in (("legacy_mysql_exclusive", '"true"'),
+                             ("credential_version", '"different"'),
+                             ("redis_outside_sentinel_key", '"other-key"')):
+            with self.subTest(field=field):
+                self.override(f'[reset]\n{field}={value}\n')
+                with self.assertRaisesRegex(ValueError, "reset." + field):
+                    binding.reset_config(self.f.root, self.f.request, selected)
 
 
 class StorageTransitionTests(unittest.TestCase):
@@ -176,6 +239,18 @@ class TargetTests(unittest.TestCase):
         verified = target.verify_target(f.root, f.output, f.local / "verify", f.run)
         self.assertEqual(verified["remote_writes"], 0)
         self.assertEqual(f.plan_count, 2)
+        self.assertEqual(set(f.request["tools"]), {"mysql"})
+        self.assertNotIn("aws", f.review["tools"])
+        receipts = [read_json(path) for path in f.output.glob("*.command.json")]
+        native = [value for value in receipts if value.get("transport") == "rust-s3-sigv4"]
+        self.assertTrue(native)
+        configuration = f.request["target"]["s3"]
+        for value in native:
+            self.assertEqual(value["scope_id"], f.scope)
+            self.assertEqual(value["endpoint"], configuration["endpoint"])
+            self.assertEqual(value["configuration_sha256"], plan_hash(configuration))
+            self.assertEqual(value["prefix"], f.scope + "/" if value["operation"] == "list-objects-v2" else None)
+            self.assertIsNone(value["continuation"])
 
     def test_scope_or_missing_target_rejected_before_resource_call(self):
         for field in ("scope", "database"):
@@ -202,7 +277,7 @@ class TargetTests(unittest.TestCase):
 
         self.assertEqual(
             {Path(item["path"]).name for item in actual},
-            {"mysql.exe", "aws.exe", "reset.exe", "migrate.exe", "tenant-data.exe", "rustfs.exe", "wsl.exe"},
+            {"mysql.exe", "reset.exe", "migrate.exe", "tenant-data.exe", "rustfs.exe", "wsl.exe"},
         )
         self.assertTrue(all(set(item) == {"path", "sha256"} for item in actual))
 
@@ -291,38 +366,45 @@ class TargetTests(unittest.TestCase):
 
     def test_prepare_then_config_change_refuses_all_writes(self):
         self.prepare()
-        with patch.dict(os.environ, {"APP_REDIS_PASSWORD": "changed"}):
-            with self.assertRaises(ValueError): self.initialize()
+        path = self.f.configuration / "app.test.toml"
+        path.write_text('[redis]\npassword="changed"\n', encoding="utf-8")
+        with self.assertRaises(ValueError): self.initialize()
         self.assertFalse(self.f.databases)
 
     def test_seed_digest_binds_only_explicit_administrator_password(self):
         f = self.f
         original = binding.generation(f.root, f.request, f.run)
         self.assertEqual(original["seed_credentials_sha256"], plan_hash({
-            "RYFRAME_RESET_ADMIN_PASSWORD": os.environ["RYFRAME_RESET_ADMIN_PASSWORD"],
+            "bootstrap.admin_password": "Fixture!Admin123",
         }))
-        with patch.dict(os.environ, {"RYFRAME_RESET_ADMIN_PASSWORD": "Changed!Admin123"}):
-            changed = binding.generation(f.root, f.request, f.run)
+        path = f.configuration / "app.test.toml"
+        path.write_text('[bootstrap]\nadmin_password="Changed!Admin123"\n', encoding="utf-8")
+        f.request["configuration_sha256"] = binding.configuration_digest(f.root)
+        changed = binding.generation(f.root, f.request, f.run)
         self.assertNotEqual(changed["seed_credentials_sha256"], original["seed_credentials_sha256"])
-        self.assertEqual(changed["configuration"], original["configuration"])
+        self.assertNotEqual(changed["configuration_sha256"], original["configuration_sha256"])
         self.assertNotIn("Changed!Admin123", json.dumps(changed))
-        for password in (None, ""):
-            with self.subTest(password=password), patch.dict(os.environ):
-                if password is None:
-                    os.environ.pop("RYFRAME_RESET_ADMIN_PASSWORD")
-                else:
-                    os.environ["RYFRAME_RESET_ADMIN_PASSWORD"] = password
-                with self.assertRaisesRegex(ValueError, "初始化管理员密码"):
+        for password in (None, "", "   "):
+            with self.subTest(password=password):
+                path.write_text("# 未覆盖管理员密码\n", encoding="utf-8")
+                base = f.configuration / "app.toml"
+                text = base.read_text(encoding="utf-8")
+                replacement = "" if password is None else "admin_password=" + json.dumps(password) + "\n"
+                base.write_text(text.replace('admin_password="Fixture!Admin123"\n', replacement), encoding="utf-8")
+                f.request["configuration_sha256"] = binding.configuration_digest(f.root)
+                with self.assertRaisesRegex(ValueError, "bootstrap.admin_password"):
                     binding.generation(f.root, f.request, f.run)
+                base.write_text(text, encoding="utf-8")
         self.assertFalse(f.databases)
         self.assertFalse(f.calls)
 
     def test_changed_administrator_password_after_prepare_refuses_all_writes(self):
         self.prepare()
         self.f.calls.clear()
-        with patch.dict(os.environ, {"RYFRAME_RESET_ADMIN_PASSWORD": "Changed!Admin123"}):
-            with self.assertRaises(ValueError):
-                self.initialize()
+        path = self.f.configuration / "app.test.toml"
+        path.write_text('[bootstrap]\nadmin_password="Changed!Admin123"\n', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.initialize()
         self.assertFalse(self.f.databases)
         self.assertFalse((self.f.output / "initialize.started.json").exists())
         self.assertFalse(any(Path(command[0]).stem == "reset" for command in self.f.calls))
@@ -482,8 +564,11 @@ class TargetTests(unittest.TestCase):
             _published_initialization(f.root, {"initialized": descriptor})
 
     def test_explicit_exclusive_must_match_actual_configuration(self):
-        with patch.dict(os.environ, {"APP_RESET_LEGACY_MYSQL_EXCLUSIVE": "false"}):
-            with self.assertRaises(ValueError): self.prepare()
+        path = self.f.configuration / "app.test.toml"
+        path.write_text('[reset]\nlegacy_mysql_exclusive=false\n', encoding="utf-8")
+        self.f.request["configuration_sha256"] = binding.configuration_digest(self.f.root)
+        self.f.save_request()
+        with self.assertRaisesRegex(ValueError, "reset.legacy_mysql_exclusive"): self.prepare()
         self.assertFalse(self.f.databases)
 
     def test_existing_sentinel_never_overwritten(self):
@@ -721,20 +806,25 @@ class TargetTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.prepare()
         self.assertFalse(self.f.databases)
 
-    def test_s3_denied_is_not_absence_and_arbitrary_credential_names_are_redacted(self):
+    def test_s3_denied_is_not_absence_and_native_protocol_does_not_expose_credentials(self):
         f = self.f
-        f.request["target"]["s3"].update(access_key_env="AUTH_ACCESS", secret_key_env="AUTH_PRIVATE")
+        f.request["target"]["s3"].update(access_key="access", secret_key="secret")
         f.save_request()
         def denied(command, **kwargs):
-            if Path(command[0]).stem == "aws":
-                raise subprocess.CalledProcessError(1, command, stderr=b"403 access secret")
+            if "__s3-inspect" in command:
+                response = {"ok": False, "error": {"category": "NativeS3InspectRejected",
+                            "message": "HTTP 403", "remote_write_may_have_occurred": False,
+                            "automatic_retry_permitted": False}}
+                return subprocess.CompletedProcess(command, 1, json.dumps(response).encode(),
+                                                   b"403 access secret")
             return f.run(command, **kwargs)
-        with patch.dict(os.environ, {"AUTH_ACCESS": "access", "AUTH_PRIVATE": "secret"}):
-            with self.assertRaises(subprocess.CalledProcessError): target.prepare_target(f.root, f.path, f.output, denied)
+        with self.assertRaisesRegex(RuntimeError, "原生对象操作未确认"):
+            target.prepare_target(f.root, f.path, f.output, denied)
         self.assertFalse(f.databases)
         text = "".join(p.read_text(encoding="utf-8") for p in f.output.glob("*.command.json"))
         self.assertNotIn("403 access secret", text)
-        self.assertIn("403 [REDACTED] [REDACTED]", text)
+        self.assertNotIn("access", text)
+        self.assertNotIn("secret", text)
 
     def test_pending_release_refuses_fresh_even_if_cli_exits_zero(self):
         f = self.f

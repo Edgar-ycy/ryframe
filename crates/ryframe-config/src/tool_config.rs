@@ -5,12 +5,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// 开发工具配置独立于 APP_* 和服务运行配置，不包含连接密码。
+/// 开发工具配置从 TOML 文件读取，与服务运行配置分离。
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ToolSettings {
     pub workspace: WorkspaceSettings,
     pub generator: GeneratorSettings,
+    pub development: DevelopmentSettings,
     pub verification: VerificationSettings,
 }
 
@@ -25,6 +26,13 @@ pub struct VerificationSettings {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct DevelopmentSettings {
+    pub config_dir: Option<PathBuf>,
+    pub verify_tenant_targets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct WorkspaceSettings {
     pub frontend_dir: Option<PathBuf>,
 }
@@ -32,6 +40,8 @@ pub struct WorkspaceSettings {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GeneratorSettings {
+    /// 应用配置目录；相对路径以后端工作区为基准，显式 CLI 或 Builder 参数优先。
+    pub config_dir: Option<PathBuf>,
     pub package: Option<String>,
     pub source: Option<String>,
     pub storage: Option<String>,
@@ -101,11 +111,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn development_local_file_overrides_public_path_and_replaces_targets() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("config")).unwrap();
+        fs::create_dir(root.path().join(".local-tests")).unwrap();
+        fs::write(root.path().join("config/tools.toml"),"[development]\nconfig_dir='public-config'\nverify_tenant_targets=['shared-control','tenant-a']\n").unwrap();
+        fs::write(
+            root.path().join(".local-tests/tools.toml"),
+            "[development]\nconfig_dir='本机 配置'\nverify_tenant_targets=['tenant-b']\n",
+        )
+        .unwrap();
+        let settings = ToolSettings::load(root.path()).unwrap();
+        assert_eq!(
+            settings.development.config_dir,
+            Some(PathBuf::from("本机 配置"))
+        );
+        assert_eq!(settings.development.verify_tenant_targets, ["tenant-b"]);
+    }
+
+    #[test]
+    fn development_defaults_and_unknown_fields_remain_strict() {
+        let settings: ToolSettings = toml::from_str("").unwrap();
+        assert!(settings.development.config_dir.is_none());
+        assert!(settings.development.verify_tenant_targets.is_empty());
+        assert!(toml::from_str::<ToolSettings>("[development]\nconfig_directory='x'").is_err());
+        assert!(
+            toml::from_str::<ToolSettings>("[development]\nverify_tenant_targets='tenant-a'")
+                .is_err()
+        );
+    }
+
+    #[test]
     fn local_values_override_selected_fields_and_replace_arrays() {
-        let mut base: toml::Value = toml::from_str("[workspace]\nfrontend_dir='../web'\n[generator]\npackage='order-business'\ntables=['old']\nsync_frontend=true").unwrap();
+        let mut base: toml::Value = toml::from_str("[workspace]\nfrontend_dir='../web'\n[generator]\nconfig_dir='public-config'\npackage='order-business'\ntables=['old']\nsync_frontend=true").unwrap();
         merge(
             &mut base,
-            toml::from_str("[generator]\ntables=['a','b']\nsync_frontend=false").unwrap(),
+            toml::from_str(
+                "[generator]\nconfig_dir='本机 配置'\ntables=['a','b']\nsync_frontend=false",
+            )
+            .unwrap(),
         );
         let settings: ToolSettings = base.try_into().unwrap();
         assert_eq!(
@@ -114,6 +158,10 @@ mod tests {
         );
         assert_eq!(settings.generator.tables, ["a", "b"]);
         assert!(!settings.generator.sync_frontend);
+        assert_eq!(
+            settings.generator.config_dir,
+            Some(PathBuf::from("本机 配置"))
+        );
         assert_eq!(
             settings.frontend_dir(Path::new("backend")),
             PathBuf::from("backend/../web")
@@ -126,6 +174,9 @@ mod tests {
             toml::from_str::<ToolSettings>("[workspace]\nfrontend_directory='../web'").is_err()
         );
         assert!(toml::from_str::<ToolSettings>("[generator]\nsync_frontend='yes'").is_err());
+        assert!(
+            toml::from_str::<ToolSettings>("[generator]\nconfig_directory='wrong-key'").is_err()
+        );
     }
 
     #[test]

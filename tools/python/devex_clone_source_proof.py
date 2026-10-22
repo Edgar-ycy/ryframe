@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import copy
 import errno
 import json
 import os
@@ -27,6 +28,14 @@ REQUEST_FIELDS = {"format_version", "kind", "id", "source", "tools", "backend_bu
                   "worktree_fingerprint", "runtime", "processes", "producers_registry", "max_object_bytes"}
 
 
+def public_request(request: dict) -> dict:
+    """公开请求投影只保存对象连接身份，凭据保留在已绑定的私有原文件。"""
+    proof = copy.deepcopy(request)
+    s3 = request["source"]["s3"]
+    proof["source"]["s3"] = {field: s3[field] for field in ("endpoint", "region")}
+    return proof
+
+
 def bound_file(backend: Path, value: dict) -> Path:
     exact(value, {"path", "bytes", "sha256"})
     digest(value["sha256"])
@@ -41,13 +50,13 @@ def validate_source(backend: Path, source: dict) -> None:
     name(source["scope_id"])
     local_path(backend, source["runtime_dir"])
     endpoint(source["api_url"])
-    exact(source["s3"], {"endpoint", "region", "access_key_env", "secret_key_env"})
+    exact(source["s3"], {"endpoint", "region", "access_key", "secret_key"})
     endpoint(source["s3"]["endpoint"])
     if not re.fullmatch(r"[a-z0-9-]+", source["s3"]["region"]):
         raise ValueError("源对象 region 无效")
-    for field in ("access_key_env", "secret_key_env"):
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]+", source["s3"][field]):
-            raise ValueError("源对象认证必须绑定显式环境变量名")
+    for field in ("access_key", "secret_key"):
+        if not isinstance(source["s3"][field], str) or not source["s3"][field]:
+            raise ValueError("源对象认证必须使用明确的配置文件字段")
     keys, physical = set(), set()
     if not isinstance(source["databases"], list) or not source["databases"]:
         raise ValueError("源数据库目标不能为空")
@@ -80,7 +89,7 @@ def validate_request(backend: Path, request: dict) -> None:
             or not re.fullmatch(r"sha256:[a-f0-9]{64}", request["worktree_fingerprint"])
             or type(request["max_object_bytes"]) is not int or request["max_object_bytes"] < 0):
         raise ValueError("源导出须绑定完整工作区指纹和对象大小上限")
-    exact(request["tools"], {"mysql", "mysqldump", "aws", "node"})
+    exact(request["tools"], {"mysql", "mysqldump", "node"})
     for tool in request["tools"].values():
         exact(tool, {"path", "sha256"})
         path = Path(tool["path"])
@@ -113,13 +122,10 @@ def require_closed_port(url: str) -> None:
 
 
 def verify_api_address_environment(backend: Path, url: str, environment) -> None:
+    if set(environment) != {"APP_ENV"}:
+        raise ValueError("源 API 配置只接受 APP_ENV 选择的明文配置文件")
     app = load_app_table(backend, environment)["app"]
-    if any(key in environment for key in ("APP_APP_HOST_FILE", "APP_APP_PORT_FILE")):
-        raise ValueError("源 API 地址文件覆盖未被运行收据绑定")
-    host = environment.get("APP_APP_HOST", app.get("host"))
-    port = environment.get("APP_APP_PORT", app.get("port"))
-    if isinstance(port, str) and re.fullmatch(r"[0-9]+", port):
-        port = int(port)
+    host, port = app.get("host"), app.get("port")
     parsed = urlsplit(url)
     allowed = {"127.0.0.1": {"127.0.0.1", "0.0.0.0"}, "::1": {"::1", "::"}}
     if (parsed.hostname not in allowed or host not in allowed[parsed.hostname] or type(port) is not int
@@ -281,8 +287,10 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
     runtime = verify_runtime(execution, directory)
     if runtime != read_json(bound_file(backend, request["runtime"])) or runtime["scope_id"] != source["scope_id"]:
         raise ValueError("源运行配置或 runtime 代次已变化")
-    physical = source_binding(execution, {"source": source}, evidence_root=backend)
-    if os.environ.get("APP_JOBS_MODE") != "external":
+    app_env = os.environ.get("APP_ENV")
+    file_environment = {"APP_ENV": app_env} if isinstance(app_env, str) else {}
+    physical = source_binding(execution, {"source": source}, file_environment, evidence_root=backend)
+    if load_app_table(execution, file_environment)["jobs"]["mode"] != "external":
         raise ValueError("源必须明确使用 external Worker，scheduler/consumer 由 Worker 承载")
     processes = {}
     for role in ("api", "worker"):
@@ -293,7 +301,7 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
             raise ValueError("源登记进程实际二进制与本侧构建不一致")
         processes[role] = identity
     producers = producer_identities(request, read_json(bound_file(backend, request["producers_registry"])), processes, run=run)
-    verify_api_address(execution, source["api_url"])
+    verify_api_address_environment(execution, source["api_url"], file_environment)
     require_closed_port(source["api_url"])
     require_closed_port(runtime["worker_ready_url"])
     return {"source": snapshot, "worktree_fingerprint": request["worktree_fingerprint"], "runtime": runtime,

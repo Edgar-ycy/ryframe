@@ -38,8 +38,9 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.review.write_text(json.dumps(self._review()), encoding="utf-8")
         self.bootstrap.write_text(json.dumps({"plan": {"review": dataset._bound(self.review)}}), encoding="utf-8")
         (self.runtime / "source-pair.json").write_text(json.dumps({"sources": {"backend": {"head": "a" * 40}}}), encoding="utf-8")
+        self.private = {"APP_ENV": "test", "access_key": "fixture-access", "secret_key": "fixture-secret"}
         self.patches = [
-            patch.object(dataset, "_bootstrap", return_value=(self.bootstrap, self.execution, {"APP_ENV": "test"})),
+            patch.object(dataset, "_bootstrap", return_value=(self.bootstrap, self.execution, self.private)),
             patch.object(dataset, "_output", side_effect=lambda _execution, value, **_kwargs: Path(value)),
             patch.object(dataset, "verify_runtime", return_value={"scope_id": "fixture-seed-r1", "runtime": dataset._bound(self.runtime / "source-pair.json")}),
             patch.object(dataset, "_runtime_environment", return_value={"APP_ENV": "test"}),
@@ -67,7 +68,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
 
     def _review(self):
         tools = {name: {"path": str(self.tool), "sha256": dataset.file_digest(self.tool)["sha256"]}
-                 for name in ("mysql", "mysqldump", "aws")}
+                 for name in ("mysql", "mysqldump")}
         return {"scopes": {side: self._scope(side) for side in ("seed", "base", "candidate")},
                 "tools": tools,
                 "dataset": {"tenant_targets": ["shared"] * 9 + ["dedicated-a"],
@@ -84,7 +85,26 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertEqual(value["dataset"]["records"], 100_000)
         self.assertEqual(value["dataset"]["object_count"] * value["dataset"]["object_bytes"], 1024**3)
         self.assertEqual(value["dataset"]["tenant_targets"], self._review()["dataset"]["tenant_targets"])
-        self.assertEqual(set(value["tools"]), {"mysql", "mysqldump", "aws", "node"})
+        self.assertEqual(set(value["tools"]), {"mysql", "mysqldump", "node"})
+
+    def test_side_uses_direct_credentials_and_rejects_missing_values(self):
+        ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
+                   "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
+        with patch.dict(os.environ, ambient):
+            side = dataset._side(self._scope("seed"), self.private)
+            self.assertEqual(side["s3"], {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1",
+                                          "access_key": "fixture-access", "secret_key": "fixture-secret"})
+            for key in ("access_key", "secret_key"):
+                for invalid in (None, "", 123):
+                    with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "直接配置"):
+                        dataset._side(self._scope("seed"), {**self.private, key: invalid})
+                missing = {name: value for name, value in self.private.items() if name != key}
+                with self.assertRaisesRegex(ValueError, "直接配置"):
+                    dataset._side(self._scope("seed"), missing)
+            with self.assertRaisesRegex(ValueError, "直接配置"):
+                dataset._side(self._scope("seed"), {
+                    "access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY",
+                })
 
     def test_dataset_preserves_all_reviewed_inputs_without_aliasing(self):
         review = self._review()
@@ -216,16 +236,18 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_prepare_failure_records_redacted_diagnostic_once(self):
-        error = subprocess.CalledProcessError(1, ["node"], output="password=secret", stderr="secret")
+        error = subprocess.CalledProcessError(1, ["node"], output="access=fixture-access", stderr="fixture-secret")
         path = dataset._write_prepare_failure(
             self.runtime,
             self.runtime / "dataset-plan.json",
             error,
-            {"APP_DATABASE_PASSWORD": "secret"},
+            self.private,
             self.runtime / "dataset-plan.node-reports",
         )
         value = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(value["status"], "failed_unknown_writes")
-        self.assertNotIn("secret", value["stdout"] + value["stderr"])
+        for key in ("access_key", "secret_key"):
+            self.assertNotIn(self.private[key], value["stdout"] + value["stderr"])
+        self.assertIn("[REDACTED]", value["stdout"] + value["stderr"])
         with self.assertRaisesRegex(ValueError, "禁止覆盖"):
             dataset._write_prepare_failure(self.runtime, self.runtime / "dataset-plan.json", error, {}, self.runtime / "other")

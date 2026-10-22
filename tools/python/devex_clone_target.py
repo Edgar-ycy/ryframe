@@ -32,6 +32,7 @@ import devex_clone_target_reset_evidence as reset_evidence
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import plan_hash
+from rate_limit_client import load_app_table
 
 PREPARE_STAGES = {"request", "prepare_binding", "prepare_absence"}
 PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
@@ -429,8 +430,12 @@ def prepare_target(backend: Path, request_file: Path, output: Path, run=subproce
 
 
 def reset_plan(resources: Resources, maintenance: dict, request: dict, original: dict, stage: str) -> tuple[dict, str]:
-    env = {**resources.environment, "RYFRAME_CODE_SHA": maintenance["source"]["snapshot"]["head"]}
-    raw = resources.command(stage, [cli_executable(maintenance, "reset"), "plan"], env=env).stdout
+    reset_execution_configuration(resources, maintenance)
+    raw = resources.command(
+        stage,
+        [cli_executable(maintenance, "reset"), "plan"],
+        env=resources.environment,
+    ).stdout
     text = raw.decode("utf-8").replace("\r\n", "\n")
     match = re.fullmatch(r"(\{[\s\S]*\})\nplan_hash=([a-f0-9]{64})\n?", text)
     if not match or hashlib.sha256(match[1].encode()).hexdigest() != match[2]:
@@ -439,6 +444,28 @@ def reset_plan(resources: Resources, maintenance: dict, request: dict, original:
     validate_reset_manifest(manifest, request, original)
     write_json(resources.output / f"{stage}.json", {"manifest": manifest, "plan_hash": match[2]})
     return manifest, match[2]
+
+
+def reset_execution_configuration(resources: Resources, maintenance: dict) -> Path:
+    table = load_app_table(
+        resources.execution_backend,
+        {"APP_ENV": resources.environment.get("APP_ENV")},
+    )
+    reset = table.get("reset", {})
+    if not isinstance(reset, dict):
+        raise ValueError("所选配置文件的 reset 必须是配置表")
+    expected_source = maintenance["source"]["snapshot"]["head"].lower()
+    if reset.get("source_sha") != expected_source:
+        raise ValueError("所选配置文件的 reset.source_sha 与维护构建提交不一致")
+    if reset.get("services_stopped") is not True:
+        raise ValueError("所选配置文件的 reset.services_stopped 必须为 true")
+    value = reset.get("state_directory")
+    if not isinstance(value, str) or not value:
+        raise ValueError("所选配置文件缺少 reset.state_directory")
+    state = Path(value)
+    if not state.is_absolute() or state.resolve() != (resources.output / "reset-state").resolve():
+        raise ValueError("reset.state_directory 必须精确指向本次初始化的 reset-state 目录")
+    return state
 
 
 def initialize_databases(backend: Path, request: dict, original: dict, resources: Resources, run) -> dict:
@@ -463,10 +490,8 @@ def initialize_databases(backend: Path, request: dict, original: dict, resources
     if first != reset_plan(resources, maintenance, request, original, "reset-plan-confirm"):
         raise ValueError("reset plan 即时复核变化")
     manifest, sha = first
-    state = resources.output / "reset-state"
+    state = reset_execution_configuration(resources, maintenance)
     state.mkdir()
-    env = {**resources.environment, "RYFRAME_CODE_SHA": maintenance["source"]["snapshot"]["head"],
-           "RYFRAME_RESET_STATE_DIR": str(state), "RYFRAME_RESET_SERVICES_STOPPED": "YES"}
     unchanged(backend, request, original, resources, run)
     for db in request["target"]["databases"]:
         resources.database_state(db, exists=True, empty=True)
@@ -474,7 +499,8 @@ def initialize_databases(backend: Path, request: dict, original: dict, resources
     resources.redis_state(initialized=False, sentinel=True)
     intent(resources.output, "reset", {"plan_hash": sha})
     resources.command("reset-execute", [cli_executable(maintenance, "reset"), "execute", "--plan-hash", sha,
-                      "--confirm-reset", manifest["confirmation_phrase"]], env=env, timeout=1800)
+                      "--confirm-reset", manifest["confirmation_phrase"]],
+                      env=resources.environment, timeout=1800)
     completed = reset_evidence.reset_completed(resources.output, manifest, sha)
     confirmed(resources.output, "reset", completed)
     from devex_clone_target_resume_evidence import migration_operations

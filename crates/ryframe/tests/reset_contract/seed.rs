@@ -1,5 +1,3 @@
-use std::{env::VarError, ffi::OsString};
-
 use ryframe_auth::password;
 
 use super::{identity::seed_credentials, operations::verify_seed_account};
@@ -8,7 +6,7 @@ const ADMIN_PASSWORD: &str = "Reset!Admin123";
 
 #[test]
 fn ordinary_seed_uses_initial_password_and_both_accounts_require_password_change() {
-    let seeds = seed_credentials(Ok(ADMIN_PASSWORD.into())).expect("管理员密码符合复杂度要求");
+    let seeds = seed_credentials(Some(ADMIN_PASSWORD)).expect("管理员密码符合复杂度要求");
     assert!(password::verify(password::INITIAL_USER_PASSWORD, &seeds.user_hash).unwrap());
     assert!(password::verify(ADMIN_PASSWORD, &seeds.admin_hash).unwrap());
     assert!(!password::verify(ADMIN_PASSWORD, &seeds.user_hash).unwrap());
@@ -25,14 +23,11 @@ fn ordinary_seed_uses_initial_password_and_both_accounts_require_password_change
 #[test]
 fn administrator_credentials_fail_closed_without_exposing_passwords() {
     for (value, reason) in [
-        (Err(VarError::NotPresent), "缺少"),
-        (
-            Err(VarError::NotUnicode(OsString::from("不可解码凭据"))),
-            "编码无效",
-        ),
-        (Ok(String::new()), "复杂度"),
-        (Ok(password::INITIAL_USER_PASSWORD.into()), "复杂度"),
-        (Ok("Onlyletters".into()), "复杂度"),
+        (None, "缺少"),
+        (Some("不可解码凭据"), "复杂度"),
+        (Some(""), "复杂度"),
+        (Some(password::INITIAL_USER_PASSWORD), "复杂度"),
+        (Some("Onlyletters"), "复杂度"),
     ] {
         let error = match seed_credentials(value) {
             Ok(_) => panic!("无效管理员凭据不得通过预检"),
@@ -43,8 +38,8 @@ fn administrator_credentials_fail_closed_without_exposing_passwords() {
         assert!(!error.contains("不可解码凭据"));
         for detail in [
             reason,
-            "RYFRAME_RESET_ADMIN_PASSWORD",
-            "设置此环境变量",
+            "bootstrap.admin_password",
+            "所选配置文件",
             "8~72",
             "可见 ASCII",
             "大小写字母",
@@ -58,7 +53,7 @@ fn administrator_credentials_fail_closed_without_exposing_passwords() {
 
 #[test]
 fn persisted_password_mismatches_and_invalid_hashes_fail_closed() {
-    let seeds = seed_credentials(Ok(ADMIN_PASSWORD.into())).expect("管理员密码符合复杂度要求");
+    let seeds = seed_credentials(Some(ADMIN_PASSWORD)).expect("管理员密码符合复杂度要求");
     assert!(verify_seed_account("admin", &seeds.user_hash, 1, &seeds).is_err());
     assert!(verify_seed_account("user", &seeds.admin_hash, 1, &seeds).is_err());
     for username in ["admin", "user", "unknown"] {

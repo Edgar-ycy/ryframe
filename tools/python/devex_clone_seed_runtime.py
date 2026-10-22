@@ -7,7 +7,7 @@ from devex_clone_capture import read_json, write_json
 from process_environment import Environments
 from devex_clone_post import registration as post_registration, target_lock, require_schedule_stage
 from devex_clone_post_actions import verify_confirmations
-from devex_clone_post_context import Context, absent
+from devex_clone_post_context import Context, absent, execution_root
 from devex_clone_post_model import exact_directory
 from devex_clone_post_process import Producer, require_quiet, recover_session, cleanup_failure, inspect_producer
 from devex_clone_run_state import binding, load_state
@@ -48,7 +48,7 @@ def resources_guard(context):
         if source_binding(context.backend, {"source": context.target_config}) != context.initial["generation"]["physical"]:
             raise ValueError("seed 物理目标不属于原初始化资源")
         verify_api_address(context.backend, context.selected["api_url"])
-        if worker_ready_url() != context.selected["worker_ready_url"]:
+        if worker_ready_url(execution_root(context.backend, context.target)) != context.selected["worker_ready_url"]:
             raise ValueError("seed Worker 地址变化")
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
@@ -107,7 +107,7 @@ def current_mutation_guard(context, request, prerequisite, confirmations):
         if source_binding(context.backend, {"source": context.target_config}) != context.initial["generation"]["physical"]:
             raise ValueError("seed 写入目标不属于原初始化资源")
         verify_api_address(context.backend, context.selected["api_url"])
-        if worker_ready_url() != context.selected["worker_ready_url"]:
+        if worker_ready_url(execution_root(context.backend, context.target)) != context.selected["worker_ready_url"]:
             raise ValueError("seed Worker 地址变化")
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")

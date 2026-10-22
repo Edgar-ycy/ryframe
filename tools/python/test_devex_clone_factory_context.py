@@ -90,7 +90,8 @@ class TargetHistoryTests(unittest.TestCase):
         self.assertEqual(result, self.initialized)
         self.assertEqual(request, self.f.request)
         self.assertEqual(resources.request, request)
-        self.assertFalse(any(Path(command[0]).stem in {"mysql", "aws", "reset", "migrate", "tenant-data"}
+        self.assertFalse(any(Path(command[0]).stem in {"mysql", "reset", "migrate", "tenant-data"}
+                             or any(argument.startswith("__s3-") for argument in command)
                              for command in self.f.calls[calls:]))
 
     def test_external_initialized_binding_cannot_be_replaced(self):

@@ -34,8 +34,8 @@ class SourceFixture:
         client = self.local / "client.cnf"
         client.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n")
         source = {"scope_id": self.scope, "runtime_dir": str(self.runtime_dir), "api_url": "http://127.0.0.1:18210",
-                  "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1", "access_key_env": "TEST_ACCESS",
-                         "secret_key_env": "TEST_SECRET"}, "databases": []}
+                  "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
+                         "access_key": "access-fixture", "secret_key": "secret-fixture"}, "databases": []}
         for row in self.case.value["source"]["databases"]:
             source["databases"].append({**{key: row[key] for key in ("key", "kind", "mode", "server_uuid", "database")},
                                         "defaults_file": str(client), "defaults_sha256": file_digest(client)["sha256"]})
@@ -74,7 +74,7 @@ class SourceFixture:
             self.maintenance["artifacts"][role] = {"executable": str(path), **file_digest(path)}
         self.request = {"format_version": 1, "kind": "devex-clone-source-export", "id": "fixture-source-export",
                         "source": source, "tools": {name: {"path": str(tool), "sha256": file_digest(tool)["sha256"]}
-                                                     for name in ("mysql", "mysqldump", "aws", "node")},
+                                                     for name in ("mysql", "mysqldump", "node")},
                         "backend_build": self.bind(self.local / "backend-build.json", self.build),
                         "maintenance_build": self.bind(self.local / "maintenance-build.json", self.maintenance),
                         "worktree_fingerprint": self.fingerprint, "runtime": self.bind(self.runtime_dir / "runtime.json", self.runtime),
@@ -89,15 +89,13 @@ class SourceFixture:
         self.request_path = self.local / "request.json"
         self.save_request()
         self.models = export.schema_models(self.backend)
-        self.calls, self.inventory_count = [], 0
+        self.calls, self.native_requests, self.inventory_count = [], [], 0
         self.uuid_failure = self.owner_failure = self.unknown_table = self.inventory_change = False
         self.unknown_column = False
         self.ledger_sets = {}
         self.missing_target = self.omit_empty_table = False
         self.backup_omits_empty = False
-        self.environment = {"APP_ENV": "test", "APP_SCOPE_ID": self.scope, "APP_JOBS_MODE": "external",
-                            "APP_SOURCE_PASSWORD": "fixture-secret", "APP_CONFIG_DIR": str(self.backend / "config"),
-                            "TEST_ACCESS": "access-fixture", "TEST_SECRET": "secret-fixture"}
+        self.environment = {"APP_ENV": "test"}
         self.patches = [patch.dict(os.environ, self.environment, clear=True),
                         patch.object(proof, "verify_source", side_effect=self.verify_source),
                         patch.object(proof, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance)),
@@ -125,15 +123,18 @@ class SourceFixture:
         config = self.backend / "config"
         config.mkdir(exist_ok=True)
         control = source["databases"][0]
-        content = ('[app]\nhost="127.0.0.1"\nport=18210\n[database.primary]\nhost="127.0.0.1"\nport=3306\n'
+        content = (f'scope_id="{self.scope}"\n[app]\nhost="127.0.0.1"\nport=18210\n'
+                   '[jobs]\nmode="external"\n[database.primary]\nhost="127.0.0.1"\nport=3306\n'
                    f'database="{control["database"]}"\nusername="fixture"\npassword="fixture-secret"\ntls_mode="disabled"\n'
+                   '[redis]\nhost="127.0.0.1"\nport=16379\npassword="redis-fixture-secret"\ndatabase=0\n'
                    '[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:29200"\nregion="us-east-1"\n'
                    'access_key="access-fixture"\nsecret_key="secret-fixture"\nuse_ssl=false\n')
         for database in source["databases"][1:]:
             target = {"key": database["key"], "kind": "mysql", "mode": database["mode"], "host": "127.0.0.1", "port": 3306,
-                      "database": database["database"], "username": "fixture", "password_env": "APP_SOURCE_PASSWORD", "tls_mode": "disabled"}
+                      "database": database["database"], "username": "fixture", "password": "fixture-secret", "tls_mode": "disabled"}
             content += "[[tenant_data.targets]]\n" + "".join(f"{key}={json.dumps(value)}\n" for key, value in target.items())
-        (config / "app.toml").write_text(content, encoding="utf-8")
+        (config / "app.toml").write_text("# 隔离服务连接和凭据全部由 app.test.toml 提供。\n", encoding="utf-8")
+        (config / "app.test.toml").write_text(content, encoding="utf-8")
 
     def inventory(self, command):
         self.inventory_count += 1
@@ -171,8 +172,8 @@ class SourceFixture:
 
     def __call__(self, command, **kwargs):
         self.calls.append(command)
-        if "s3api" in command:
-            return self.aws(command)
+        if "__s3-read" in command or "__s3-inspect" in command:
+            return self.native_read(command, kwargs)
         if "backup-inventory" in command:
             Path(command[command.index("--output") + 1]).write_text(json.dumps(self.inventory(command)), encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, stdout=b"inventory written", stderr=b"")
@@ -213,15 +214,35 @@ class SourceFixture:
             raise AssertionError("未声明的 SQL 请求")
         return mysql_output(command, kwargs, output.encode())
 
-    def aws(self, command):
-        operation = command[command.index("s3api") + 1]
+    def native_read(self, command, kwargs):
+        request = json.loads(kwargs["input"])
+        self.native_requests.append(copy.deepcopy(request))
+        assert request["format_version"] == 1
+        assert request["scope_id"] == self.scope
+        assert request["configuration"] == self.request["source"]["s3"]
+        assert request["bucket"] in BUCKETS
+        assert not any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"])
+        if "__s3-inspect" in command:
+            assert request["kind"] == "ryframe-native-s3-inspect"
+            assert request["operation"] == "list-objects-v2"
+            assert request["prefix"] == self.scope + "/"
+            assert request["continuation"] is None
+            keys = [self.scope + "/.ryframe-owner"]
+            if request["bucket"] == "uploads":
+                keys.append(self.scope + "/system/file.txt")
+            value = {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]}
+        else:
+            assert request["kind"] == "ryframe-native-s3-read"
+            value = self.object_response(request["operation"], request["bucket"], request["key"], request["destination"])
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"ok": True, "result": value}).encode(), stderr=b"")
+
+    def object_response(self, operation, bucket, key, destination):
         assert operation in {"head-object", "get-object"}
-        bucket, key = command[command.index("--bucket") + 1], command[command.index("--key") + 1]
         assert key.startswith(self.scope + "/")
         body = (f"ryframe-owner:v1:{self.scope}:object-storage:{bucket}".encode()
                 if key.endswith("/.ryframe-owner") else b"data")
         if operation == "get-object":
-            Path(command[-1]).write_bytes(body)
+            Path(destination).write_bytes(body)
         result = {"ContentType": "text/plain", "Metadata": {}, "ETag": '"fixture-etag"', "ContentLength": len(body),
                   "LastModified": "2026-09-04T00:00:00+00:00"}
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(result).encode(), stderr=b"")
+        return result

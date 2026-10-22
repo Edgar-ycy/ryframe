@@ -1,9 +1,14 @@
 # 生产环境配置
-# 数据库连接统一使用各自连接块中的显式 password 字段；其他敏感配置仍通过 APP_*_FILE
-# 或部署平台环境变量注入，不把 Redis、对象存储和 JWT 密钥写入配置文件。
+# 密码、JWT、监控令牌与对象存储凭据直接填写在本文件的对应字段中。
+# 本样例保留安全占位值；部署前必须填写实际值并通过生产校验。
+snowflake_worker_id = 1
 
 # 每个生产部署必须覆盖为自身稳定且唯一的资源作用域；该哨兵值无法通过生产校验。
 scope_id = "replace-with-unique-scope"
+
+[bootstrap]
+# 仅首次显式初始化需要填写；正常服务启动不要求保留该密码。
+# admin_password = "请填写符合复杂度要求的管理员密码"
 
 [api_docs]
 enabled = false

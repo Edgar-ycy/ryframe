@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path, time::Duration};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use chrono::DateTime;
 use serde_json::{Value, json};
@@ -8,19 +8,20 @@ use super::super::{digest, input::BUCKETS, json as json_io, json::exact, metadat
 use super::{
     input::Context,
     object_owner::owner_proofs,
-    transport::{CommandSpec, StdoutTarget, Transport},
+    transport::{StdoutTarget, Transport},
 };
 use crate::Result;
 
 pub(crate) type ObjectIndex = BTreeMap<(String, String), Value>;
 
-pub(super) struct AwsCall<'a> {
+pub(super) struct ObjectCall<'a> {
     pub(super) operation: &'a str,
     pub(super) bucket: &'a str,
     pub(super) key: &'a str,
     pub(super) stdout: StdoutTarget,
     pub(super) extra: Option<&'a [String]>,
     pub(super) label: &'a str,
+    pub(super) max_bytes: u64,
 }
 
 pub(crate) fn verify_owners<T: Transport>(
@@ -33,19 +34,19 @@ pub(crate) fn verify_owners<T: Transport>(
         .ok_or("源 scope 无效")?;
     for bucket in BUCKETS {
         let output = context.output().join(format!("{phase}-{bucket}.bin"));
-        let response = aws(
+        object_read(
             context,
             transport,
-            AwsCall {
+            ObjectCall {
                 operation: "get-object",
                 bucket,
                 key: &format!("{scope}/.ryframe-owner"),
                 stdout: StdoutTarget::File(output.clone()),
                 extra: None,
                 label: &format!("owner-{phase}-{bucket}"),
+                max_bytes: 4096,
             },
         )?;
-        response.success("对象 ownership 读取")?;
         let expected = format!("ryframe-owner:v1:{scope}:object-storage:{bucket}");
         if fs::read(&output)? != expected.as_bytes() {
             return Err("对象 ownership 不属于本次明确隔离 scope".into());
@@ -191,7 +192,7 @@ fn read_object<T: Transport>(
     expected: &Value,
 ) -> Result<ObjectReads> {
     let body = directory.join("object.bin");
-    let head_before = aws_json(
+    let head_before = object_json(
         context,
         transport,
         "head-object",
@@ -212,26 +213,27 @@ fn read_object<T: Transport>(
     if let Some(version) = head_before.get("VersionId").and_then(Value::as_str) {
         identity_args.extend(["--version-id".into(), version.to_owned()]);
     }
-    let get = aws(
+    let get = object_read(
         context,
         transport,
-        AwsCall {
+        ObjectCall {
             operation: "get-object",
             bucket,
             key,
             stdout: StdoutTarget::File(body.clone()),
             extra: Some(&identity_args),
             label: &format!("get-body-{}", safe_key(key)),
+            max_bytes: expected["bytes"].as_u64().ok_or("对象库存缺少长度")?,
         },
     )?;
-    let get = get.success("对象读取")?;
-    let get_json: Value = serde_json::from_slice(&get.stdout)?;
+    let get_json = get;
+    validate_response(&get_json)?;
     if !get_json.is_object() {
         return Err("对象 GET 响应不是 JSON 对象".into());
     }
     write_stage_proof(directory, "get", "get-object", &get_json)?;
     ensure_same_identity(&head_before, &get_json)?;
-    let head_after = aws_json(
+    let head_after = object_json(
         context,
         transport,
         "head-object",
@@ -276,7 +278,7 @@ fn object_request(
         "key": key,
         "expected": expected,
         "max_bytes": max_bytes,
-        "aws_tool": context.request["tools"]["aws"],
+        "transport": "rust-s3-sigv4",
         "clone_verified": false,
     })
 }
@@ -318,7 +320,7 @@ fn capture_value(
         "region": context.source()["s3"]["region"],
         "expected": expected,
         "max_bytes": max_bytes,
-        "aws_tool": context.request["tools"]["aws"],
+        "transport": "rust-s3-sigv4",
         "clone_verified": false,
         "stored_metadata_verified": true,
         "bytes_verified": true,
@@ -359,6 +361,7 @@ fn write_stage_proof(directory: &Path, stage: &str, operation: &str, raw: &Value
 }
 
 fn validate_head(value: &Value, expected: &Value) -> Result<()> {
+    validate_response(value)?;
     let length = value
         .get("ContentLength")
         .and_then(Value::as_u64)
@@ -384,6 +387,45 @@ fn validate_head(value: &Value, expected: &Value) -> Result<()> {
             != "STANDARD"
     {
         return Err("对象 HEAD 含截断、标签或非 STANDARD 存储策略".into());
+    }
+    Ok(())
+}
+
+fn validate_response(value: &Value) -> Result<()> {
+    let allowed = [
+        "ContentType",
+        "CacheControl",
+        "ContentDisposition",
+        "ContentEncoding",
+        "ContentLanguage",
+        "Expires",
+        "WebsiteRedirectLocation",
+        "Metadata",
+        "AcceptRanges",
+        "ContentLength",
+        "ETag",
+        "LastModified",
+        "VersionId",
+        "StorageClass",
+        "MissingMeta",
+        "TagCount",
+        "PartsCount",
+        "ChecksumCRC32",
+        "ChecksumCRC32C",
+        "ChecksumCRC64NVME",
+        "ChecksumSHA1",
+        "ChecksumSHA256",
+        "ChecksumType",
+    ];
+    if value
+        .as_object()
+        .is_none_or(|object| object.keys().any(|key| !allowed.contains(&key.as_str())))
+        || value
+            .get("AcceptRanges")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value != "bytes")
+    {
+        return Err("对象 HEAD 含不支持的对象策略或非完整内容响应".into());
     }
     Ok(())
 }
@@ -441,7 +483,7 @@ fn differences(left: &Value, right: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn aws_json<T: Transport>(
+fn object_json<T: Transport>(
     context: &Context,
     transport: &T,
     operation: &str,
@@ -450,110 +492,70 @@ fn aws_json<T: Transport>(
     extra: &[String],
     label: &str,
 ) -> Result<Value> {
-    let output = aws(
+    let output = object_read(
         context,
         transport,
-        AwsCall {
+        ObjectCall {
             operation,
             bucket,
             key,
             stdout: StdoutTarget::Capture,
             extra: Some(extra),
             label,
+            max_bytes: 0,
         },
     )?;
-    let output = output.success(label)?;
-    let value: Value = serde_json::from_slice(&output.stdout)?;
+    let value = output;
     if !value.is_object() {
         return Err("对象工具响应不是 JSON 对象".into());
     }
     Ok(value)
 }
 
-pub(super) fn aws<T: Transport>(
+pub(super) fn object_read<T: Transport>(
     context: &Context,
     transport: &T,
-    call: AwsCall<'_>,
-) -> Result<super::transport::CommandOutput> {
-    let config = context.source()["s3"].as_object().ok_or("源对象配置无效")?;
-    let access = context
-        .environment
-        .get(
-            config["access_key_env"]
-                .as_str()
-                .ok_or("对象 access env 无效")?,
-        )
-        .ok_or("缺少显式外部对象工具凭据环境变量")?;
-    let secret = context
-        .environment
-        .get(
-            config["secret_key_env"]
-                .as_str()
-                .ok_or("对象 secret env 无效")?,
-        )
-        .ok_or("缺少显式外部对象工具凭据环境变量")?;
-    let mut environment = context.environment.clone();
-    environment.retain(|key, _| {
-        !key.to_ascii_uppercase().starts_with("AWS_")
-            && !matches!(
-                key.to_ascii_uppercase().as_str(),
-                "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY"
-            )
-    });
-    environment.insert("AWS_ACCESS_KEY_ID".into(), access.clone());
-    environment.insert("AWS_SECRET_ACCESS_KEY".into(), secret.clone());
-    environment.insert(
-        "AWS_DEFAULT_REGION".into(),
-        config["region"].as_str().unwrap_or("").to_owned(),
-    );
-    environment.insert("AWS_EC2_METADATA_DISABLED".into(), "true".into());
-    environment.insert(
-        "AWS_CONFIG_FILE".into(),
-        if cfg!(windows) {
-            "NUL".into()
-        } else {
-            "/dev/null".into()
-        },
-    );
-    environment.insert(
-        "AWS_SHARED_CREDENTIALS_FILE".into(),
-        if cfg!(windows) {
-            "NUL".into()
-        } else {
-            "/dev/null".into()
-        },
-    );
-    environment.insert("AWS_PAGER".into(), String::new());
-    environment.insert("AWS_MAX_ATTEMPTS".into(), "1".into());
-    let mut args = vec![
-        "--endpoint-url".into(),
-        config["endpoint"].as_str().ok_or("对象端点无效")?.into(),
-        "--region".into(),
-        config["region"].as_str().ok_or("对象 region 无效")?.into(),
-        "s3api".into(),
-        call.operation.into(),
-        "--bucket".into(),
-        call.bucket.into(),
-        "--key".into(),
-        call.key.into(),
-    ];
+    call: ObjectCall<'_>,
+) -> Result<Value> {
+    use super::super::s3::{Configuration, Operation, Request};
+    let configuration = Configuration::read(&context.source()["s3"])?;
+    let mut if_match = None;
+    let mut version = None;
     if let Some(extra) = call.extra {
-        args.extend(extra.iter().cloned());
+        let (pairs, remainder) = extra.as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err("对象读取条件不完整".into());
+        }
+        for pair in pairs {
+            match pair[0].as_str() {
+                "--if-match" if if_match.is_none() => if_match = Some(pair[1].clone()),
+                "--version-id" if version.is_none() => version = Some(pair[1].clone()),
+                _ => return Err("对象读取包含未知或重复条件".into()),
+            }
+        }
     }
-    if let StdoutTarget::File(path) = &call.stdout {
-        args.push(path.display().to_string());
-    }
-    transport.run(CommandSpec {
-        program: context.tool("aws")?,
-        args,
-        cwd: context.execution_backend.clone(),
-        environment,
-        stdin: None,
-        stdout: StdoutTarget::Capture,
-        work_dir: context.output(),
-        label: call.label.to_owned(),
-        timeout: Duration::from_secs(1800),
-    })
+    let operation = match (call.operation, call.stdout) {
+        ("head-object", StdoutTarget::Capture) => Operation::Head {
+            key: call.key.to_owned(),
+            if_match,
+            version,
+        },
+        ("get-object", StdoutTarget::File(destination)) => Operation::Get {
+            key: call.key.to_owned(),
+            if_match,
+            version,
+            destination,
+            max_bytes: call.max_bytes,
+        },
+        _ => return Err("原生对象读取操作与输出方式不匹配".into()),
+    };
+    transport
+        .s3(Request {
+            configuration,
+            bucket: call.bucket.to_owned(),
+            operation,
+        })
+        .map_err(|error| format!("{}：{error}", call.label).into())
 }
 
 fn safe_key(value: &str) -> String {

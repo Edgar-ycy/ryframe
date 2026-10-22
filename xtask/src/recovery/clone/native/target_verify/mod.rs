@@ -65,7 +65,7 @@ pub(crate) fn execute_with<T: super::export::transport::Transport>(
             inner: storage_observer,
             frame: &frame,
         };
-        verify(&context, &transport, &observer, &|| frame.check())
+        verify(&context, &transport, &observer, &|| frame.checkpoint())
     })();
     let result = frame.finish(result, authority_observer);
     match result {

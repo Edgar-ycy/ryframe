@@ -98,9 +98,8 @@ class Context:
             self.build = read_json(bound_file(backend, self.request["backend_build"]))
             self.redaction = {}
             for side, config in (("source", self.source_config), ("target", self.target_config)):
-                env = self.environments.values[side]
-                for field in ("access_key_env", "secret_key_env"):
-                    self.redaction[f"SECRET_{side}_{field}"] = env[config["s3"][field]]
+                for field in ("access_key", "secret_key"):
+                    self.redaction[f"SECRET_{side}_{field}"] = config["s3"][field]
                 for db in config["databases"]:
                     self.redaction["PASSWORD_" + side + db["key"]] = defaults_connection(backend, db)["password"]
 
@@ -155,7 +154,7 @@ class Context:
             if source_binding(self.backend, {"source": self.target_config}) != self.initial["generation"]["physical"]:
                 raise ValueError("派生 API 物理目标不是原复制目标")
             verify_api_address(self.backend, self.selected["api_url"])
-            if worker_ready_url() != self.selected["worker_ready_url"]:
+            if worker_ready_url(execution_root(self.backend, self.target)) != self.selected["worker_ready_url"]:
                 raise ValueError("Worker 地址变化")
             require_closed_port(self.selected["worker_ready_url"])
             absent(self.runtime / "worker.json")

@@ -177,7 +177,8 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(self.events[0], "lock")
         self.assertEqual(self.events[-1], "unlock")
         self.assertEqual(tools.restore_database.call_count, 2)
-        self.assertEqual(tools.aws.call_args.args[:4], ("target", "put-object", "uploads", "target/tenant/file.txt"))
+        self.assertEqual(tools.create_object_if_absent.call_args.args[:2],
+                         ("uploads", "target/tenant/file.txt"))
         for call in tools.restore_database.call_args_list:
             self.assertEqual(call.args[1], ["sys_post"])
 

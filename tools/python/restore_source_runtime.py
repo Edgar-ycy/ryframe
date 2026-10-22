@@ -384,7 +384,8 @@ def _resources(backend: Path, facts: dict, output: Path, run):
     review_binding = {key: value for key, value in target["review"].items() if key != "canonical_sha256"}
     review = read_json(bound_file(backend, review_binding))
     selected = review["scopes"]["seed"]
-    redis_configuration(target, selected)
+    redis_configuration(facts["execution"], target, selected,
+                        environment=facts["environment"]["environment"])
     return Resources(
         backend,
         target,

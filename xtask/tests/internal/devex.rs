@@ -118,90 +118,6 @@ fn resource_gate_decision_artifact_must_prove_targeted_mode() {
 }
 
 #[test]
-fn suite_definitions_select_the_measured_workload() {
-    let api = DevexSuite::RustColdBuild.definition("api").unwrap();
-    assert_eq!(api.features, &["bin-api"]);
-    assert_eq!(api.steps.len(), 1);
-    assert!(
-        api.steps[0]
-            .args
-            .windows(2)
-            .any(|pair| pair == ["--bin", "ryframe"])
-    );
-
-    let save = DevexSuite::CargoDevSave.definition("config-only").unwrap();
-    assert_eq!(
-        save.environment,
-        &[
-            ("RYFRAME_DEVEX_SAVE_CASE", "config-only"),
-            (
-                "RYFRAME_DEVEX_SAVE_RESULT_PATH",
-                "{target}/cargo-dev-save-result.json"
-            )
-        ]
-    );
-    let frontend = DevexSuite::FrontendFast.definition("default").unwrap();
-    assert_eq!(frontend.steps[0].args, &["pnpm", "check"]);
-    let baseline_frontend = DevexSuite::FrontendFast
-        .paired_definition(
-            "default",
-            Some(BaselineContract::LegacyStableReadinessB0V1),
-            PairedArm::Baseline,
-        )
-        .unwrap();
-    assert_eq!(baseline_frontend.steps[0].args, &["pnpm", "check:fast"]);
-    let candidate_frontend = DevexSuite::FrontendFast
-        .paired_definition(
-            "default",
-            Some(BaselineContract::LegacyStableReadinessB0V1),
-            PairedArm::Candidate,
-        )
-        .unwrap();
-    assert_eq!(candidate_frontend.steps[0].args, &["pnpm", "check"]);
-    let workload = BaselineContract::LegacyStableReadinessB0V1
-        .workload_contract(DevexSuite::FrontendFast, "default")
-        .unwrap();
-    assert_eq!(workload.baseline_primitives.len(), 9);
-    assert_eq!(workload.candidate_primitives.len(), 8);
-    assert_eq!(
-        workload
-            .candidate_primitives
-            .iter()
-            .find(|primitive| primitive.id == "imports")
-            .unwrap()
-            .covers,
-        ["imports", "api-operation-policy"]
-    );
-
-    let incremental = DevexSuite::RustIncremental
-        .definition("application")
-        .unwrap();
-    assert_eq!(
-        incremental.steps[0].args,
-        &["check", "--locked", "-p", "ryframe-application"]
-    );
-    assert_eq!(incremental.features, &["application"]);
-    assert_eq!(
-        DevexSuite::RustIncremental
-            .incremental_source("application")
-            .unwrap(),
-        Some("crates/ryframe-application/src/lib.rs")
-    );
-    assert!(DevexSuite::RustColdBuild.definition("application").is_err());
-
-    let generator = DevexSuite::ResourceGenerator.definition("post").unwrap();
-    assert!(generator.steps[0].args.contains(&"{target}"));
-    assert!(
-        api.remove_environment
-            .contains(&"CMAKE_C_COMPILER_LAUNCHER")
-    );
-    assert!(
-        api.remove_environment
-            .contains(&"CMAKE_CXX_COMPILER_LAUNCHER")
-    );
-}
-
-#[test]
 fn frontend_fast_machine_plan_extracts_the_exact_candidate_primitive_ids() {
     let plan = "将执行以下任务：\n  阶段 1:\n    format {\"cache\":true}\n    imports {}\n";
     assert_eq!(parse_frontend_fast_plan(plan), ["format", "imports"]);
@@ -223,10 +139,15 @@ fn suite_sample_policy_rejects_semantic_cache_mismatches() {
     );
     assert_eq!(DevexSuite::RustSccache.minimum_runs("workspace"), 20);
     let cancellation = DevexSuite::CargoDevSave.definition("cancellation").unwrap();
+    assert!(cancellation.environment.is_empty());
     assert!(
-        cancellation
-            .environment
-            .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
+        cancellation.steps[0]
+            .args
+            .iter()
+            .map(|arg| arg.replace("{variant}", "cancellation"))
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["--case", "cancellation"])
     );
     assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 6);
     assert!(
@@ -990,3 +911,6 @@ pub(super) fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> Path
     fs::write(directory.join("samples.jsonl"), format!("{samples}\n")).unwrap();
     directory
 }
+
+#[path = "devex/workloads.rs"]
+mod workloads;

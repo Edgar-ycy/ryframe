@@ -45,7 +45,8 @@ class SharedCaptureStagesTests(unittest.TestCase):
         self.assertEqual(len(self.store.calls), 5)
         self.assertEqual(capture.read_json(observed.capture_directory / "capture.json"), direct)
         verified = capture.verify_capture(self.tools, "target", "uploads", "target/system/file.bin",
-                                          observed.capture_directory, expected=self.expected, max_bytes=1024, owner_buckets=("uploads",))
+                                          observed.capture_directory, expected=self.expected, max_bytes=1024,
+                                          owner_buckets=("uploads",), transport="rust-s3-sigv4")
         self.assertEqual(verified["capture"], direct)
         self.assertEqual(len(self.store.calls), 5, "保存证据的复核不能新增远端读取")
         outer = capture.read_json(self.output / "observation.json")
@@ -92,7 +93,8 @@ class SharedCaptureStagesTests(unittest.TestCase):
     def test_mutation_during_download_cannot_publish_or_adopt_initial_evidence(self):
         def changed(command, **kwargs):
             result = self.store(command, **kwargs)
-            if command[command.index("s3api") + 1] == "get-object" and not command[command.index("--key") + 1].endswith("/.ryframe-owner"):
+            request = json.loads(kwargs["input"])
+            if request["operation"] == "get-object" and not request["key"].endswith("/.ryframe-owner"):
                 (self.output / "owner-before-uploads.diagnostic.json").write_text("{}", encoding="utf-8")
             return result
 
@@ -115,7 +117,8 @@ class SharedCaptureStagesTests(unittest.TestCase):
                 if name == "owner":
                     def changed(command, **kwargs):
                         result = self.store(command, **kwargs)
-                        if command[command.index("s3api") + 1] == "get-object" and not command[command.index("--key") + 1].endswith("/.ryframe-owner"):
+                        request = json.loads(kwargs["input"])
+                        if request["operation"] == "get-object" and not request["key"].endswith("/.ryframe-owner"):
                             self.store.owner_failure = "uploads"
                         return result
                     self.tools.run = changed
@@ -151,19 +154,23 @@ class ConcurrentSourceHeadTests(unittest.TestCase):
         self.lock, self.on_head = threading.Lock(), None
 
     def read(self, command, **kwargs):
-        operation = command[command.index("s3api") + 1]
-        bucket = command[command.index("--bucket") + 1]
+        self.assertTrue("__s3-read" in command or "__s3-inspect" in command)
+        request = json.loads(kwargs["input"])
+        self.assertEqual(request["configuration"], self.f.request["source"]["s3"])
+        self.assertFalse(any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"]))
+        operation, bucket = request["operation"], request["bucket"]
         if operation == "list-objects-v2":
             with self.lock:
                 self.events.append("list")
             keys = [self.f.scope + "/.ryframe-owner"] + (self.keys if bucket == "uploads" else [])
-            return subprocess.CompletedProcess(command, 0, json.dumps({"IsTruncated": False, "Contents": [{"Key": key} for key in keys]}).encode(), b"")
-        key = command[command.index("--key") + 1]
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "result": {
+                "IsTruncated": False, "Contents": [{"Key": key} for key in keys]}}).encode(), b"")
+        key = request["key"]
         if operation == "get-object":
             self.assertTrue(key.endswith("/.ryframe-owner"))
             with self.lock:
                 self.events.append("owner")
-            return self.f.aws(command)
+            return self.f.native_read(command, kwargs)
         self.assertEqual(operation, "head-object")
         index = self.keys.index(key)
         with self.lock:
@@ -172,7 +179,7 @@ class ConcurrentSourceHeadTests(unittest.TestCase):
         try:
             if self.on_head:
                 self.on_head(index)
-            return self.f.aws(command)
+            return self.f.native_read(command, kwargs)
         finally:
             with self.lock:
                 self.finished.append(index)

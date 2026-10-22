@@ -1,18 +1,19 @@
-use std::{env, process};
+use std::{path::Path, process};
 
 use ryframe_application::DataScopeProjectionEvent;
-use ryframe_config::{DbConnection, DbTlsMode, SqlLogLevel, TenantDataConfig};
+use ryframe_config::{
+    AppConfig, DbConnection, DbTlsMode, Environment, SqlLogLevel, TenantDataConfig,
+};
 use ryframe_db::{ControlDatabaseCluster, connection, migration::BootstrapHashes};
 use ryframe_tenant_db::{TenantDataError, TenantDatabaseRouter};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn projection_publish_is_versioned_atomic_and_fails_closed() {
-    if env::var("RYFRAME_MYSQL_INTEGRATION").as_deref() != Ok("1") {
-        eprintln!("跳过数据范围投影测试：设置 RYFRAME_MYSQL_INTEGRATION=1");
+    let Some(config) = isolated_configuration() else {
         return;
-    }
-    let fixture = Fixture::create().await;
+    };
+    let fixture = Fixture::create(&config).await;
     let result = run(&fixture.database).await;
     let cleanup = fixture.cleanup().await;
     result.unwrap_or_else(|error| panic!("{error}"));
@@ -225,18 +226,18 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn create() -> Self {
+    async fn create(config: &DbConnection) -> Self {
         let schema = format!(
             "ryframe_it_scope_{}_{}",
             process::id(),
             chrono::Utc::now().timestamp_micros()
         );
-        let admin = connect("mysql").await;
+        let admin = connect(config, "mysql").await;
         admin
             .execute_unprepared(&format!("CREATE DATABASE `{schema}` CHARACTER SET utf8mb4"))
             .await
             .expect("创建隔离租户库失败");
-        let database = connect(&schema).await;
+        let database = connect(config, &schema).await;
         Self {
             admin,
             database,
@@ -260,27 +261,38 @@ impl Fixture {
     }
 }
 
-async fn connect(database: &str) -> DatabaseConnection {
+fn isolated_configuration() -> Option<DbConnection> {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.local-tests/tenant-db/data-scope-projection");
+    if !directory.exists() {
+        eprintln!(
+            "跳过数据范围投影测试：请在后端 .local-tests/tenant-db/data-scope-projection 提供隔离的 app.toml 与 app.test.toml"
+        );
+        return None;
+    }
+    let config = AppConfig::load(&directory, Environment::Test).unwrap_or_else(|_| {
+        panic!("隔离数据范围投影测试配置无效；请检查 app.toml 与 app.test.toml 的必填字段、类型及明文凭据")
+    });
+    assert!(
+        config.database.primary.tls_mode != DbTlsMode::Disabled,
+        "隔离数据范围投影测试仍要求 MySQL TLS；请将测试配置的 database.primary.tls_mode 设置为 required、verify_ca 或 verify_identity"
+    );
+    Some(config.database.primary)
+}
+
+async fn connect(config: &DbConnection, database: &str) -> DatabaseConnection {
     connection::connect(&DbConnection {
-        host: env::var("RYFRAME_MYSQL_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-        port: env::var("RYFRAME_MYSQL_PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(3306),
         database: database.into(),
-        username: env::var("RYFRAME_MYSQL_USERNAME").unwrap_or_else(|_| "root".into()),
-        password: env::var("RYFRAME_MYSQL_PASSWORD").unwrap_or_default(),
         max_connections: 8,
         min_connections: 0,
         acquire_timeout_secs: 5,
         idle_timeout_secs: 30,
         max_lifetime_secs: 60,
         connect_timeout_secs: 5,
-        tls_mode: DbTlsMode::Required,
-        tls_ca: None,
-        tls_client_cert: None,
-        tls_client_key: None,
+        ..config.clone()
     })
     .await
-    .unwrap_or_else(|error| panic!("连接 MySQL {database} 失败: {error}"))
+    .unwrap_or_else(|_| {
+        panic!("连接隔离测试 MySQL 失败；请核对测试配置中的地址、明文凭据与 TLS 参数")
+    })
 }

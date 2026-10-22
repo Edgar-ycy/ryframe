@@ -3,7 +3,7 @@ use std::{fs, path::Path, process::Command};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use super::check::{PYTHON_TEST_ARGS, python_suite};
+use super::check::{PYTHON_TEST_ARGS, consumer_context::python, python_suite};
 
 #[test]
 fn suite_keeps_each_binding_argument_and_every_unittest_selection() {
@@ -47,8 +47,8 @@ impl BootstrapFixture {
             .unwrap();
         fs::create_dir(directory.path().join("config")).unwrap();
         fs::write(
-            directory.path().join("config/app.toml"),
-            "[rate_limit]\ncapacity=173\nwindow_secs=60\n",
+            directory.path().join("config/app.test.toml"),
+            "[rate_limit]\ncapacity=173\n",
         )
         .unwrap();
         Self { directory }
@@ -79,7 +79,7 @@ impl BootstrapFixture {
             .unwrap()
             + 1;
         arguments[directory] = self.directory.path().to_str().unwrap().into();
-        Command::new(super::process::resolved_executable(root, "python").unwrap())
+        Command::new(python::selected_program(root).unwrap())
             .args(arguments)
             .current_dir(root)
             .env("CARGO", "ryframe-cargo-must-not-be-started")

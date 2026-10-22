@@ -15,8 +15,10 @@ pub(crate) use requirements::{Requirement, parse as parse_requirements};
 
 use crate::{
     Result,
-    process::{PreservedFailure, command_output_with_input_timeout, failure_exit_code},
+    process::{PreservedFailure, failure_exit_code},
 };
+
+use super::consumer_context::python;
 
 pub(crate) const REQUIREMENTS_PATH: &str = "scripts/requirements-ci.txt";
 pub(crate) const NATIVE_PROBE_PATH: &str = "tools/python/rust_function_size.py";
@@ -27,9 +29,8 @@ const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) fn run(root: &Path) -> Result<()> {
     let requirements_path = root.join(REQUIREMENTS_PATH);
     let requirements = read_requirements(&requirements_path)?;
-    let requested = crate::process::resolved_executable(root, "python")?
-        .to_string_lossy()
-        .into_owned();
+    let program = python::selected_program(root)?;
+    let requested = program.to_string_lossy().into_owned();
     println!(
         "→ 核验 Python 解释器与 {} 项固定依赖：{requested}",
         requirements.len()
@@ -37,6 +38,7 @@ pub(crate) fn run(root: &Path) -> Result<()> {
     let request = protocol::encode_request(&requirements, MINIMUM_PYTHON)?;
     let output = run_python(
         root,
+        &program,
         &["-I", "-c", protocol::ENVIRONMENT_PROBE],
         Some(&request),
         ENVIRONMENT_TIMEOUT,
@@ -70,6 +72,7 @@ pub(crate) fn run(root: &Path) -> Result<()> {
     println!("→ 执行 tree-sitter Rust 64 轮原生探针：{probe}");
     let output = run_python(
         root,
+        &program,
         &["-I", "-B", probe, "--native-probe"],
         None,
         NATIVE_PROBE_TIMEOUT,
@@ -80,7 +83,7 @@ pub(crate) fn run(root: &Path) -> Result<()> {
                 PreservedFailure::new(
                     format!(
                         "{error}\n解释器身份：{identity}\n修复：确认固定 Python 依赖已按 {} 安装，\
-                 并可用工具文件 verification.python_program 指定隔离解释器。",
+                 并在工具文件 verification.python_program 指定隔离解释器。",
                         requirements_path.display()
                     ),
                     failure_exit_code(error.as_ref()).or(Some(1)),
@@ -110,11 +113,12 @@ fn read_requirements(path: &Path) -> Result<Vec<requirements::Requirement>> {
 
 fn run_python(
     root: &Path,
+    program: &Path,
     args: &[&str],
     input: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<Output> {
-    command_output_with_input_timeout(root, "python", args, &[], input, timeout)
+    python::output(root, python::command(root, program, args), input, timeout)
 }
 
 fn environment_report(output: &Output, requested: &str) -> Result<protocol::EnvironmentReport> {
@@ -126,7 +130,7 @@ fn environment_report(output: &Output, requested: &str) -> Result<protocol::Envi
                  配置解释器={requested}\n\
                  修复：使用 Python 3.11+ 创建隔离环境，并运行 \
                  `python -m pip install --disable-pip-version-check --require-hashes \
-                 --requirement scripts/requirements-ci.txt`；也可用工具文件 verification.python_program 指定该环境。",
+                 --requirement scripts/requirements-ci.txt`；在工具文件 verification.python_program 指定该环境。",
                 output
                     .status
                     .code()
@@ -161,7 +165,7 @@ fn environment_failure(
              配置解释器={requested}\n实际解释器={identity}\n\
              依赖清单={}\n\
              修复：使用 Python 3.11+ 创建隔离环境，并按依赖清单安装；\
-             随后通过工具文件 verification.python_program 指定该环境或重新运行 cargo xtask check。",
+             随后在工具文件 verification.python_program 指定该环境并重新运行 cargo xtask check。",
             requirements.display()
         ),
         failure_exit_code(error).or(Some(1)),

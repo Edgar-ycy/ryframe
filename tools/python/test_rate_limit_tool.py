@@ -174,14 +174,15 @@ class ToolFixture(unittest.TestCase):
     def invoke(self, operation):
         if operation == "login-budget":
             return client.login_budget_environment(
-                self.directory, {"APP_ENV": "explicit"}, self.directory / "budget.json"
+                self.directory, {"APP_ENV": "test"}, self.directory / "budget.json",
+                config_dir="配置 目录",
             )
         function = {
             "authority": client.rate_limit_authority,
             "load-table": client.load_app_table,
             "settings": client.rate_limit_settings,
         }[operation]
-        return function(self.directory, {"APP_ENV": "explicit"})
+        return function(self.directory, {"APP_ENV": "test"}, config_dir="配置 目录")
 
 
 class BoundClientTests(ToolFixture):
@@ -217,7 +218,9 @@ class BoundClientTests(ToolFixture):
             self.assertEqual(child["THIRD_PARTY_FEATURE"], "preserved")
             self.assertEqual(child["CARGO"], "must-never-start-cargo")
             request = json.loads(call.kwargs["input"].decode("utf-8"))
-            expected = {"backend": str(self.directory), "environment": {"APP_ENV": "explicit"}}
+            expected = {
+                "backend": str(self.directory), "app_env": "test", "config_dir": "配置 目录"
+            }
             if operation == "login-budget":
                 expected["state_path"] = str(self.directory / "budget.json")
             self.assertEqual(request, expected)
@@ -234,19 +237,19 @@ class BoundClientTests(ToolFixture):
                 argv, 0, json.dumps({"ok": True, "result": result}).encode("utf-8")
             )
 
-        environment = {"APP_ENV": "first"}
+        environment = {"APP_ENV": "dev"}
         with (
             mock.patch.dict(os.environ, self.environment, clear=True),
             mock.patch.object(client.subprocess, "run", side_effect=respond) as run,
         ):
             table.write_text("first", encoding="utf-8")
             self.assertEqual(client.load_app_table(self.directory, environment), {"contents": "first"})
-            environment["APP_ENV"] = "second"
+            environment["APP_ENV"] = "test"
             table.write_text("second", encoding="utf-8")
             self.assertEqual(client.load_app_table(self.directory, environment), {"contents": "second"})
         self.assertEqual(run.call_count, 2)
-        self.assertEqual([item["environment"] for item in requests],
-                         [{"APP_ENV": "first"}, {"APP_ENV": "second"}])
+        self.assertEqual([item["app_env"] for item in requests], ["dev", "test"])
+        self.assertTrue(all("environment" not in item and "config_dir" not in item for item in requests))
         self.assert_released()
 
     def test_invalid_bindings_never_spawn_or_fall_back(self):

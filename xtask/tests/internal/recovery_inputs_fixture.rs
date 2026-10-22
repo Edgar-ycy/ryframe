@@ -607,7 +607,6 @@ fn review(backend: &Path, root: &Path, defaults: &Path, tool: &Path) -> Value {
         "tools": {
             "mysql": tool_binding,
             "mysqldump": tool_binding,
-            "aws": tool_binding,
             "rustfs": tool_binding,
             "redis_server": {
                 "distribution": "fixture",
@@ -669,14 +668,14 @@ fn target_request(
             "s3": {
                 "endpoint": selected["objects"]["endpoint"],
                 "region": selected["objects"]["region"],
-                "access_key_env": "TARGET_ACCESS",
-                "secret_key_env": "TARGET_SECRET",
+                "access_key": "target-access",
+                "secret_key": "target-secret",
             },
             "databases": databases,
         },
         "maintenance_build": maintenance_binding,
         "configuration_sha256": "c".repeat(64),
-        "tools": {"mysql": tool_binding, "aws": tool_binding},
+        "tools": {"mysql": tool_binding},
         "storage": {"rustfs": {}, "redis": {}},
         "reset": {},
     })
@@ -720,15 +719,14 @@ fn source_request(
             "s3": {
                 "endpoint": "http://127.0.0.1:19000",
                 "region": "us-east-1",
-                "access_key_env": "SOURCE_ACCESS",
-                "secret_key_env": "SOURCE_SECRET",
+                "access_key": "source-access",
+                "secret_key": "source-secret",
             },
             "databases": databases,
         },
         "tools": {
             "mysql": tool,
             "mysqldump": tool,
-            "aws": tool,
             "node": tool,
         },
         "backend_build": backend_build,

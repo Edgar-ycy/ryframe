@@ -263,7 +263,7 @@ fn side<'a>(
     scope_identifier(scope)?;
     let s3 = exact(
         side.get("s3").unwrap(),
-        &["endpoint", "region", "access_key_env", "secret_key_env"],
+        &["endpoint", "region", "access_key", "secret_key"],
         "对象存储定义",
     )?;
     endpoint(s3.get("endpoint").unwrap(), "对象存储端点", None)?;
@@ -287,10 +287,10 @@ fn side<'a>(
     if !Regex::new(r"^[a-z0-9-]+$")?.is_match(text(s3.get("region").unwrap(), "S3 region")?) {
         return Err("S3 region 无效".into());
     }
-    let environment_name = Regex::new(r"^[A-Z][A-Z0-9_]+$")?;
-    for field in ["access_key_env", "secret_key_env"] {
-        if !environment_name.is_match(text(s3.get(field).unwrap(), "凭据环境变量")?) {
-            return Err("凭据必须通过命名环境变量提供".into());
+    for field in ["access_key", "secret_key"] {
+        let credential = text(s3.get(field).unwrap(), "对象存储凭据")?;
+        if credential.is_empty() || credential.chars().any(char::is_control) {
+            return Err("对象存储凭据必须在绑定文件中直接提供且不能为空".into());
         }
     }
     let databases = databases(side.get("databases").unwrap(), backend)?;
@@ -372,7 +372,7 @@ fn databases<'a>(value: &'a Value, backend: &Path) -> Result<Databases<'a>> {
 }
 
 fn validate_tools(value: &Value) -> Result<()> {
-    let tools = exact(value, &["mysql", "mysqldump", "aws", "node"], "参考工具")?;
+    let tools = exact(value, &["mysql", "mysqldump", "node"], "参考工具")?;
     for tool in tools.values() {
         let tool = exact(tool, &["path", "sha256"], "参考工具")?;
         let path = PathBuf::from(text(tool.get("path").unwrap(), "工具路径")?);

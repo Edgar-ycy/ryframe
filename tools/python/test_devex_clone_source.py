@@ -21,6 +21,36 @@ from devex_clone_source_fixture import SourceFixture
 from devex_clone_jobs_fixture import add_cleanup
 from restore_reference_io import ExternalTools
 from process_environment import Environments, configured
+from rate_limit_client import load_app_table
+
+
+class SourceFileConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = SourceFixture(self)
+
+    def test_isolated_test_file_supplies_all_service_credentials(self):
+        item = self.fixture
+        self.assertEqual(dict(os.environ), {"APP_ENV": "test"})
+        table = load_app_table(item.backend, item.environment)
+        self.assertEqual(table["database"]["primary"]["password"], "fixture-secret")
+        self.assertTrue(all(target["password"] == "fixture-secret" for target in table["tenant_data"]["targets"]))
+        self.assertEqual(table["redis"]["password"], "redis-fixture-secret")
+        self.assertEqual({field: table["object_storage"][field] for field in ("access_key", "secret_key")},
+                         {field: item.request["source"]["s3"][field] for field in ("access_key", "secret_key")})
+        self.assertEqual(load_app_table(item.backend, item.environment, config_dir=item.backend / "config"), table)
+        self.assertEqual((item.backend / "config/app.toml").read_text(encoding="utf-8").count("="), 0)
+
+    def test_missing_test_file_cannot_fall_back_to_common_configuration(self):
+        (self.fixture.backend / "config/app.test.toml").unlink()
+        with self.assertRaises((FileNotFoundError, ValueError)):
+            load_app_table(self.fixture.backend, self.fixture.environment)
+
+    def test_plaintext_password_change_is_read_from_the_selected_file(self):
+        path = self.fixture.backend / "config/app.test.toml"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            'password="redis-fixture-secret"', 'password="changed-fixture-secret"'), encoding="utf-8")
+        self.assertEqual(load_app_table(self.fixture.backend, self.fixture.environment)["redis"]["password"],
+                         "changed-fixture-secret")
 
 
 class SourceExportTests(unittest.TestCase):
@@ -209,8 +239,10 @@ class SourceExportTests(unittest.TestCase):
             self.failed("source_row_state_before_objects")
             capture.assert_not_called()
         self.assertFalse((self.fixture.output / "objects").exists())
-        self.assertFalse(any("get-object" in command and command[command.index("--key") + 1].endswith("file.txt")
-                             for command in self.fixture.calls if "s3api" in command))
+        reads = [request for request in self.fixture.native_requests
+                 if request["kind"] == "ryframe-native-s3-read"]
+        self.assertTrue(reads)
+        self.assertTrue(all(request["key"].endswith("/.ryframe-owner") for request in reads))
 
     def test_inventory_objects_are_only_early_evidence_and_captured_index_is_rechecked(self):
         calls, check, capture = [], source.validate_dump_state, source.capture_objects
@@ -296,7 +328,7 @@ class SourceExportTests(unittest.TestCase):
                 if field == "binary":
                     path = Path(self.fixture.build["artifacts"]["api"]["executable"])
                 elif field == "config":
-                    path = self.fixture.backend / "config/app.toml"
+                    path = self.fixture.backend / "config/app.test.toml"
                 else:
                     path = self.fixture.runtime_dir / "runtime.json"
                 original = path.read_bytes()
@@ -364,7 +396,7 @@ class SourceExportTests(unittest.TestCase):
         self.assertEqual(len(self.fixture.calls), calls)
 
     def test_exact_tool_file_change_or_bad_database_overlap_is_rejected(self):
-        tool = Path(self.fixture.request["tools"]["aws"]["path"])
+        tool = Path(self.fixture.request["tools"]["mysqldump"]["path"])
         old = tool.read_bytes()
         tool.write_bytes(b"changed")
         self.failed("source_generation_before")
@@ -375,10 +407,10 @@ class SourceExportTests(unittest.TestCase):
         self.fixture.output = self.fixture.local / "physical-overlap"
         self.failed("source_generation_before")
 
-    def test_old_non_app_password_binding_and_wrong_api_port_are_rejected(self):
-        path = self.fixture.backend / "config/app.toml"
+    def test_plaintext_password_mismatch_and_wrong_api_port_are_rejected(self):
+        path = self.fixture.backend / "config/app.test.toml"
         original = path.read_bytes()
-        path.write_bytes(original.replace(b"APP_SOURCE_PASSWORD", b"SOURCE_PASSWORD"))
+        path.write_bytes(original.replace(b'password="fixture-secret"', b'password="wrong-secret"', 1))
         self.failed("source_generation_before")
         path.write_bytes(original)
         self.fixture.request["source"]["api_url"] = "http://127.0.0.1:18211"

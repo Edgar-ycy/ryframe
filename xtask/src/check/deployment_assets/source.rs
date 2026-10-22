@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -11,9 +11,7 @@ use super::{
 use crate::Result;
 
 const DOCKERFILE: &str = "deploy/Dockerfile";
-const COMPOSE_FILE: &str = "deploy/compose.prod.yml";
 const ALERT_RULES: &str = "deploy/prometheus/ryframe-alerts.yml";
-const FIXTURE_ENV: &str = "tools/fixtures/deployment/deploy.env";
 const EXPECTED_BASE_IMAGES: [(&str, &str); 2] = [
     (
         "RUST_IMAGE",
@@ -29,7 +27,7 @@ pub(super) fn violations(root: &Path) -> Result<Vec<String>> {
     let mut violations = Vec::new();
     check_dockerfile(root, &mut violations)?;
     check_online_generator(root, &mut violations)?;
-    check_compose_fixture(root, &mut violations)?;
+    super::compose::check(root, &mut violations)?;
     check_alert_runbooks(root, &mut violations)?;
     check_pinned_actions(root, &mut violations)?;
     Ok(violations)
@@ -39,6 +37,7 @@ fn check_dockerfile(root: &Path, violations: &mut Vec<String>) -> Result<()> {
     let source = read(root, DOCKERFILE)?;
     check_rust_toolchain(root, &source, violations)?;
     let normalized = regex(r"\\\r?\n\s*").replace_all(&source, " ");
+    check_runtime_environment(&normalized, violations);
     for (argument, expected) in EXPECTED_BASE_IMAGES {
         let pattern = format!(r"(?m)^ARG\s+{argument}=([^\s]+)\s*$");
         let actual = regex::Regex::new(&pattern)?
@@ -97,6 +96,32 @@ fn check_dockerfile(root: &Path, violations: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+fn check_runtime_environment(normalized: &str, violations: &mut Vec<String>) {
+    let lines = normalized.lines().collect::<Vec<_>>();
+    let instruction = |line: &str, name: &str| {
+        line.split_ascii_whitespace()
+            .next()
+            .is_some_and(|value| value.eq_ignore_ascii_case(name))
+    };
+    let Some(stage) = lines.iter().rposition(|line| {
+        instruction(line, "FROM") && line.split_ascii_whitespace().nth(1).is_some()
+    }) else {
+        violations.push("生产 Dockerfile 缺少 FROM，无法定位最终运行阶段".to_owned());
+        return;
+    };
+    let environment = lines[stage + 1..]
+        .iter()
+        .filter(|line| instruction(line, "ENV"))
+        .map(|line| line.split_ascii_whitespace().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    if environment.len() != 1 || environment[0].len() != 2 || environment[0][1] != "APP_ENV=prod" {
+        violations.push(
+            "生产 Dockerfile 运行阶段必须且只能声明一条 ENV APP_ENV=prod，不得缺失、重复、插值或增加其他环境配置"
+                .to_owned(),
+        );
+    }
+}
+
 fn check_rust_toolchain(root: &Path, source: &str, violations: &mut Vec<String>) -> Result<()> {
     let toolchain = read(root, "rust-toolchain.toml")?;
     let manifest = read(root, "Cargo.toml")?;
@@ -131,56 +156,6 @@ fn check_online_generator(root: &Path, violations: &mut Vec<String>) -> Result<(
                 violations.push(format!("{}: 生产 API 仍包含{label}", relative(root, &path)));
             }
         }
-    }
-    Ok(())
-}
-
-fn check_compose_fixture(root: &Path, violations: &mut Vec<String>) -> Result<()> {
-    let compose = read(root, COMPOSE_FILE)?;
-    if compose.contains("curl") || compose.contains("CMD-SHELL") {
-        violations.push("生产 Compose 健康检查不得依赖 shell 或 curl".to_owned());
-    }
-    for command in [
-        r#"["CMD", "/usr/local/bin/ryframe", "--healthcheck"]"#,
-        r#"["CMD", "/usr/local/bin/ryframe-worker", "--healthcheck"]"#,
-    ] {
-        if !compose.contains(command) {
-            violations.push(format!("生产 Compose 缺少内置健康检查: {command}"));
-        }
-    }
-    let values = match parse_env(&root.join(FIXTURE_ENV)) {
-        Ok(values) => values,
-        Err(error) => {
-            violations.push(error);
-            return Ok(());
-        }
-    };
-    let required = captures(r"\$\{([A-Z][A-Z0-9_]*):\?[^}]+}", &compose);
-    let missing = required
-        .difference(&values.keys().cloned().collect())
-        .cloned()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        violations.push(format!("Compose 校验环境缺少变量: {}", missing.join(", ")));
-    }
-    if !regex(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
-        .is_match(values.get("RYFRAME_IMAGE").map_or("", String::as_str))
-    {
-        violations.push("Compose 校验镜像必须使用完整 sha256 摘要".to_owned());
-    }
-    let forbidden = values
-        .keys()
-        .filter(|name| regex(r"(?:PASSWORD|SECRET|TOKEN|PRIVATE_KEY)$").is_match(name))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !forbidden.is_empty() {
-        violations.push(format!(
-            "Compose fixture 只能保存无秘密配置或文件路径: {}",
-            forbidden.join(", ")
-        ));
-    }
-    if !regex(r"(?m)^\s*APP_ENV:\s*prod\s*$").is_match(&compose) {
-        violations.push("生产 Compose 必须固定 APP_ENV=prod".to_owned());
     }
     Ok(())
 }
@@ -254,40 +229,6 @@ fn check_pinned_actions(root: &Path, violations: &mut Vec<String>) -> Result<()>
     Ok(())
 }
 
-fn parse_env(path: &Path) -> std::result::Result<BTreeMap<String, String>, String> {
-    let source =
-        fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let mut values = BTreeMap::new();
-    for (number, raw_line) in source.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((name, value)) = line.split_once('=') else {
-            return Err(format!(
-                "{}:{}: 环境变量格式无效",
-                path.display(),
-                number + 1
-            ));
-        };
-        if !regex(r"^[A-Z][A-Z0-9_]*$").is_match(name) {
-            return Err(format!(
-                "{}:{}: 环境变量格式无效",
-                path.display(),
-                number + 1
-            ));
-        }
-        if values.insert(name.to_owned(), value.to_owned()).is_some() {
-            return Err(format!(
-                "{}:{}: 环境变量重复: {name}",
-                path.display(),
-                number + 1
-            ));
-        }
-    }
-    Ok(values)
-}
-
 fn rust_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -322,4 +263,73 @@ fn relative(root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_runtime_environment, regex};
+
+    fn runtime_violations(source: &str) -> Vec<String> {
+        let normalized = regex(r"\\\r?\n\s*").replace_all(source, " ");
+        let mut violations = Vec::new();
+        check_runtime_environment(&normalized, &mut violations);
+        violations
+    }
+
+    #[test]
+    fn runtime_accepts_prod_and_preserves_builder_environment() {
+        for source in [
+            "FROM runtime\nENV APP_ENV=prod\n",
+            "FROM builder AS builder\nENV CARGO_HOME=/cargo\nENV PATH=/tools\nFROM runtime\nENV APP_ENV=prod\n",
+            "FROM builder\nENV CARGO_NET_OFFLINE=true \\\n                CARGO_INCREMENTAL=0\nFROM runtime\nENV \\\n                APP_ENV=prod\n",
+            "from builder\r\nENV CARGO_HOME=/cargo\r\nfrom runtime\r\nenv APP_ENV=prod\r\n",
+        ] {
+            assert!(runtime_violations(source).is_empty(), "合法运行阶段应通过");
+        }
+    }
+
+    #[test]
+    fn runtime_rejects_missing_extra_duplicate_or_invalid_environment() {
+        for declaration in [
+            "",
+            "ENV",
+            "ENV APP_CONFIG_DIR=/opt/ryframe/config",
+            "ENV APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads",
+            "ENV APP_ENV=prod\nENV APP_CONFIG_DIR=/opt/ryframe/config",
+            "ENV APP_ENV=prod\nENV APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads",
+            "ENV APP_ENV=prod\nENV TZ=UTC",
+            "ENV APP_ENV=prod\nENV APP_ENV=prod",
+            "ENV APP_ENV=prod APP_ENV=prod",
+            "ENV APP_ENV=dev",
+            "ENV APP_ENV=PROD",
+            "ENV app_env=prod",
+            "ENV APP_ENV prod",
+            "ENV APP_ENV=$APP_ENV",
+            "ENV APP_ENV=${APP_ENV:-prod}",
+            "ENV APP_ENV=prod \\\n                APP_CONFIG_DIR=/opt/ryframe/config \\\n                APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads",
+            "ENV APP_ENV=prod \\\r\n                TZ=UTC",
+        ] {
+            let source = format!(
+                "FROM builder\nENV APP_ENV=prod\nFROM intermediate\nENV APP_ENV=prod\nFROM runtime\n{declaration}\n"
+            );
+            assert!(
+                !runtime_violations(&source).is_empty(),
+                "非法运行环境声明必须拒绝：{declaration}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_runtime_stage_has_an_explicit_diagnostic() {
+        for source in [
+            "",
+            "ENV APP_ENV=prod\n",
+            "# FROM runtime\nENV APP_ENV=prod\n",
+        ] {
+            let violations = runtime_violations(source);
+            assert_eq!(violations.len(), 1);
+            assert!(violations[0].contains("缺少 FROM"));
+            assert!(violations[0].contains("运行阶段"));
+        }
+    }
 }

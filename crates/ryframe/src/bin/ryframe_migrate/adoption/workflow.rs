@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, path::Path};
 
 use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetKind};
 use ryframe_sdk::{BusinessAdoptionPlan, BusinessMigrationScope, RyFrameBusinessModule};
@@ -64,7 +64,7 @@ impl Connection {
     }
 }
 
-pub(super) async fn run(options: Options) -> Result<(), Box<dyn Error>> {
+pub(super) async fn run(directory: &Path, options: Options) -> Result<(), Box<dyn Error>> {
     let tasks = tasks(&options);
     if options.plan {
         print_plan(&options, &tasks);
@@ -72,7 +72,7 @@ pub(super) async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     }
     let mut state = State::default();
     for task in tasks {
-        if let Err(error) = execute(task, &options, &mut state).await {
+        if let Err(error) = execute(task, directory, &options, &mut state).await {
             if let Some(connection) = state.connection.take()
                 && let Err(close) = connection.close().await
             {
@@ -86,7 +86,12 @@ pub(super) async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn execute(task: Task, options: &Options, state: &mut State) -> Result<(), Box<dyn Error>> {
+async fn execute(
+    task: Task,
+    directory: &Path,
+    options: &Options,
+    state: &mut State,
+) -> Result<(), Box<dyn Error>> {
     match task {
         Task::ReadPlan => {
             let path = match &options.action {
@@ -102,7 +107,7 @@ async fn execute(task: Task, options: &Options, state: &mut State) -> Result<(),
             state.saved = Some(saved);
         }
         Task::LoadConfig => {
-            state.config = Some(AppConfig::load_from_env(Environment::from_env()?)?)
+            state.config = Some(AppConfig::load(directory, Environment::from_env()?)?)
         }
         Task::RegisterModules => state.modules = ryframe::business::registered_business_modules()?,
         Task::Connect => {

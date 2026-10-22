@@ -15,6 +15,8 @@ use winsafe::{HPROCESS, co, prelude::kernel_Hprocess};
 
 #[path = "../src/process.rs"]
 mod process;
+#[path = "support/process_liveness.rs"]
+mod process_liveness;
 #[path = "../src/workspace.rs"]
 mod workspace;
 
@@ -78,7 +80,7 @@ fn stopping_command_tree_reclaims_descendant_after_direct_child_exits() {
     let descendant_id = read_pid(&files.descendant_pid);
     let descendant = open_process(descendant_id);
     assert!(
-        process::process_is_running(descendant_id),
+        process_liveness::process_is_running(descendant_id),
         "后代进程应仍在运行"
     );
     assert_eq!(
@@ -120,7 +122,7 @@ fn stopping_command_tree_reclaims_descendant_after_direct_child_exits() {
         "停止命令级 Job Object 应回收已脱离直接父进程的后代"
     );
     assert!(
-        !process::process_is_running(descendant_id),
+        !process_liveness::process_is_running(descendant_id),
         "仍持有句柄的已退出后代不得被判为存活"
     );
     files.cleanup();
@@ -193,8 +195,8 @@ fn owner_exit_closes_job_and_reclaims_descendant() {
 
 #[test]
 fn process_liveness_distinguishes_current_process_from_unopenable_pid() {
-    assert!(process::process_is_running(std::process::id()));
-    assert!(!process::process_is_running(0));
+    assert!(process_liveness::process_is_running(std::process::id()));
+    assert!(!process_liveness::process_is_running(0));
 }
 
 fn run_abrupt_controller() -> ! {

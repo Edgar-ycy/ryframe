@@ -29,7 +29,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     target = source["seed_target"]
     review = read_json(bound_file(backend, {key: value for key, value in target["review"].items() if key != "canonical_sha256"}))
     seed = review["scopes"]["seed"]
-    redis_configuration(target, seed)
+    redis_configuration(execution, target, seed, environment=environment)
     resources = Resources(backend, target, output, seed, review, run, execution_backend=execution,
                           storage_run=source["directory"])
     storage = resources.storage_identity()
@@ -147,7 +147,7 @@ def verify_image(backend: Path, descriptor: dict, selected: dict, predecessor: d
         expected = value["image"]["objects"][bucket][key]
         capture = verify_capture(tools, "source", bucket, key, capture_path.parent,
                                  expected={field: expected[field] for field in ("bytes", "sha256")},
-                                 max_bytes=predecessor["max_object_bytes"])["capture"]
+                                 max_bytes=predecessor["max_object_bytes"], transport="rust-s3-sigv4")["capture"]
         if key in observed[bucket]:
             raise ValueError("source-generation 对象证据重复")
         observed[bucket][key] = {"bytes": capture["artifact"]["bytes"], "sha256": capture["artifact"]["sha256"],

@@ -40,7 +40,6 @@ class PublishedSeedTests(unittest.TestCase):
         maintenance = self.file(self.local / "maintenance.json", {"build": True})
         tools = {
             "mysql": self.file(self.local / "mysql.json", {"tool": "mysql"}),
-            "aws": self.file(self.local / "aws.json", {"tool": "aws"}),
         }
         seed_target = {
             "side": "seed",
@@ -66,7 +65,9 @@ class PublishedSeedTests(unittest.TestCase):
         request = {
             "source": request_source,
             "maintenance_build": maintenance,
-            "tools": tools,
+            "tools": {**tools,
+                      "mysqldump": self.file(self.local / "mysqldump.json", {"tool": "mysqldump"}),
+                      "node": self.file(self.local / "node.json", {"tool": "node"})},
             "worktree_fingerprint": "product-a",
         }
         source_request = self.file(self.attempt / "source-request.json", request)

@@ -24,8 +24,10 @@ static NEXT_ID: AtomicI64 = AtomicI64::new(1_000_000);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn initial_user_login_requires_and_completes_password_change() {
-    if !mysql::integration_enabled("RYFRAME_MYSQL_INTEGRATION") {
-        eprintln!("跳过初始用户首次改密真实协议测试：需显式 RYFRAME_MYSQL_INTEGRATION=1");
+    if !mysql::integration_enabled() {
+        eprintln!(
+            "跳过初始用户首次改密真实协议测试：缺少显式 .local-tests/mysql/config 配置目录（未验收）"
+        );
         return;
     }
     initialize();
@@ -93,8 +95,10 @@ async fn initial_user_login_requires_and_completes_password_change() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn existing_abnormal_accounts_recover_explicitly_and_old_credentials_stay_invalid() {
-    if !mysql::integration_enabled("RYFRAME_MYSQL_INTEGRATION") {
-        eprintln!("跳过异常账号恢复真实协议测试：需显式 RYFRAME_MYSQL_INTEGRATION=1");
+    if !mysql::integration_enabled() {
+        eprintln!(
+            "跳过异常账号恢复真实协议测试：缺少显式 .local-tests/mysql/config 配置目录（未验收）"
+        );
         return;
     }
     initialize();
@@ -134,8 +138,10 @@ async fn existing_abnormal_accounts_recover_explicitly_and_old_credentials_stay_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn password_reset_races_and_failures_keep_credentials_atomic() {
-    if !mysql::integration_enabled("RYFRAME_MYSQL_INTEGRATION") {
-        eprintln!("跳过密码重置并发与事务真实协议测试：需显式 RYFRAME_MYSQL_INTEGRATION=1");
+    if !mysql::integration_enabled() {
+        eprintln!(
+            "跳过密码重置并发与事务真实协议测试：缺少显式 .local-tests/mysql/config 配置目录（未验收）"
+        );
         return;
     }
     initialize();

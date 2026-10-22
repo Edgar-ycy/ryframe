@@ -114,13 +114,12 @@ pub(crate) fn validate(
         let descriptor = credentials.get(key).unwrap();
         let path = common::bound_file(backend, descriptor, "RustFS 凭据文件")?;
         let contents = fs::read_to_string(path)?.trim().to_owned();
-        let env_key = selected
-            .pointer(&format!("/s3/{key}_env"))
+        let configured = selected
+            .pointer(&format!("/s3/{key}"))
             .and_then(Value::as_str)
-            .ok_or("原业务对象存储缺少凭据环境键")?;
-        if contents.is_empty()
-            || private.get(env_key).map(String::as_str) != Some(contents.as_str())
-        {
+            .filter(|value| !value.is_empty())
+            .ok_or("原业务对象存储缺少明文凭据")?;
+        if contents.is_empty() || configured != contents {
             return Err("存储凭据文件与原业务认证不符".into());
         }
     }

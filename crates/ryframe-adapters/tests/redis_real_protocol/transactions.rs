@@ -10,7 +10,9 @@ use redis::{AsyncCommands, RedisResult};
 use ryframe_adapters::RedisClient;
 use tokio::sync::{Barrier, Notify, mpsc};
 
-use super::{ENABLE_ENV, finish_with_cleanup, integration_enabled, redis_config, skip_message};
+use super::{
+    GENERAL, ScopedClient, finish_with_cleanup, integration_enabled, redis_config, skip_message,
+};
 
 #[tokio::test]
 async fn successful_transactions_reuse_one_connection_for_4000_operations() {
@@ -69,12 +71,16 @@ async fn configured_pool_allows_two_transactions_to_enter_concurrently() {
     if !enabled() {
         return;
     }
-    let mut config = redis_config("tx-pool-concurrency");
+    let (mut config, snapshot) = redis_config("tx-pool-concurrency");
     config.max_pool_size = 2;
     let owner = config.scope_id().ownership_marker("redis");
     let client = RedisClient::connect(&config)
         .await
         .expect("连接隔离协议环境");
+    let client = ScopedClient {
+        client,
+        configuration: snapshot,
+    };
     client
         .ensure_scope_ownership(&owner)
         .await
@@ -135,12 +141,16 @@ async fn pool_limit_blocks_extra_transaction_and_cancel_releases_its_permit() {
     if !enabled() {
         return;
     }
-    let mut config = redis_config("tx-pool-limit");
+    let (mut config, snapshot) = redis_config("tx-pool-limit");
     config.max_pool_size = 1;
     let owner = config.scope_id().ownership_marker("redis");
     let client = RedisClient::connect(&config)
         .await
         .expect("连接隔离协议环境");
+    let client = ScopedClient {
+        client,
+        configuration: snapshot,
+    };
     client
         .ensure_scope_ownership(&owner)
         .await
@@ -427,12 +437,16 @@ async fn executed_transaction_with_lost_response_is_not_replayed() {
     if !enabled() {
         return;
     }
-    let mut config = redis_config("tx-unknown-result");
+    let (mut config, snapshot) = redis_config("tx-unknown-result");
     config.timeout_secs = 1;
     let owner = config.scope_id().ownership_marker("redis");
     let client = RedisClient::connect(&config)
         .await
         .expect("连接隔离协议环境");
+    let client = ScopedClient {
+        client,
+        configuration: snapshot,
+    };
     client
         .ensure_scope_ownership(&owner)
         .await
@@ -515,12 +529,16 @@ async fn cancelled_transaction_discards_its_connection_and_watch_state() {
     finish_owned(result, &client, &owner, &[stale_key]).await;
 }
 
-async fn connect_owned(name: &str) -> (RedisClient, String) {
-    let config = redis_config(name);
+async fn connect_owned(name: &str) -> (ScopedClient<RedisClient>, String) {
+    let (config, snapshot) = redis_config(name);
     let owner = config.scope_id().ownership_marker("redis");
     let client = RedisClient::connect(&config)
         .await
         .expect("连接隔离协议环境");
+    let client = ScopedClient {
+        client,
+        configuration: snapshot,
+    };
     client
         .ensure_scope_ownership(&owner)
         .await
@@ -544,7 +562,7 @@ async fn finish_owned(
 }
 
 fn enabled() -> bool {
-    if integration_enabled(ENABLE_ENV) {
+    if integration_enabled(GENERAL) {
         true
     } else {
         skip_message();

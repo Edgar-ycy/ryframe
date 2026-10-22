@@ -7,6 +7,17 @@ use chrono::Utc;
 use ryframe::reset::{engine::*, ledger::*, model::*, *};
 use ryframe_config::Environment;
 
+#[path = "reset_contract/file_configuration.rs"]
+mod file_configuration;
+
+fn test_state_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("ryframe 位于工作区 crates 目录")
+        .join(".local-tests/reset-contract")
+}
+
 mod command {
     use super::*;
 
@@ -49,9 +60,7 @@ mod command {
         let guard = main_body
             .find("reject_production(environment)")
             .expect("生产环境保护存在");
-        let config = main_body
-            .find("AppConfig::load_from_env")
-            .expect("配置加载存在");
+        let config = main_body.find("AppConfig::load(").expect("配置加载存在");
         let runtime = main_body
             .find("ExternalResetRuntime::new")
             .expect("外部资源运行时存在");
@@ -80,7 +89,7 @@ mod command {
     #[test]
     fn execution_authorization_is_fail_closed() {
         let manifest = ResetManifest {
-            manifest_version: 3,
+            manifest_version: MANIFEST_VERSION,
             environment: "test".into(),
             scope_id: "test-a".into(),
             code_sha: "a".repeat(40),
@@ -98,8 +107,8 @@ mod command {
                 endpoint: "unused".into(),
                 use_ssl: false,
                 region: String::new(),
-                access_key_env: None,
-                secret_key_env: None,
+                access_key_config_key: None,
+                secret_key_config_key: None,
                 prefixes: Vec::new(),
             },
             databases: Vec::new(),
@@ -192,7 +201,7 @@ mod engine {
 
     fn manifest() -> ResetManifest {
         ResetManifest {
-            manifest_version: 3,
+            manifest_version: MANIFEST_VERSION,
             environment: "test".into(),
             scope_id: "test-a".into(),
             code_sha: "a".repeat(40),
@@ -210,8 +219,8 @@ mod engine {
                 endpoint: "unused".into(),
                 use_ssl: false,
                 region: String::new(),
-                access_key_env: None,
-                secret_key_env: None,
+                access_key_config_key: None,
+                secret_key_config_key: None,
                 prefixes: Vec::new(),
             },
             databases: Vec::new(),
@@ -219,7 +228,7 @@ mod engine {
     }
 
     fn state_dir(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
+        test_state_root().join(format!(
             "ryframe-reset-engine-{label}-{}-{}",
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -458,7 +467,7 @@ mod ledger {
 
     fn manifest() -> ResetManifest {
         ResetManifest {
-            manifest_version: 3,
+            manifest_version: MANIFEST_VERSION,
             environment: "test".into(),
             scope_id: "test-a".into(),
             code_sha: "a".repeat(40),
@@ -476,8 +485,8 @@ mod ledger {
                 endpoint: "unused".into(),
                 use_ssl: false,
                 region: String::new(),
-                access_key_env: None,
-                secret_key_env: None,
+                access_key_config_key: None,
+                secret_key_config_key: None,
                 prefixes: Vec::new(),
             },
             databases: Vec::new(),
@@ -487,7 +496,7 @@ mod ledger {
     #[test]
     fn same_hash_resumes_and_other_identity_is_rejected() {
         let manifest = manifest();
-        let base = std::env::temp_dir().join(format!(
+        let base = test_state_root().join(format!(
             "ryframe-reset-ledger-{}-{}",
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -512,7 +521,7 @@ mod ledger {
     #[test]
     fn old_ledger_version_is_rejected_without_rewriting_evidence() {
         let manifest = manifest();
-        let base = std::env::temp_dir().join(format!(
+        let base = test_state_root().join(format!(
             "ryframe-reset-old-{}-{}",
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -534,7 +543,7 @@ mod ledger {
     #[test]
     fn recovers_ledger_from_previous_copy_after_interrupted_replace() {
         let manifest = manifest();
-        let base = std::env::temp_dir().join(format!(
+        let base = test_state_root().join(format!(
             "ryframe-reset-ledger-recovery-{}-{}",
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -590,7 +599,7 @@ mod ledger {
             database: "ryframe_test".into(),
             connection: DatabaseConnectionIdentity {
                 username: "reset".into(),
-                password_env: "RYFRAME_TEST_PASSWORD".into(),
+                password_config_key: "database.primary.password".into(),
                 tls_mode: "required".into(),
                 tls_ca_sha256: None,
                 tls_client_cert_sha256: None,
@@ -636,10 +645,10 @@ mod ledger {
 mod model {
     use super::*;
 
-    fn connection_identity(password_env: &str) -> DatabaseConnectionIdentity {
+    fn connection_identity(password_config_key: &str) -> DatabaseConnectionIdentity {
         DatabaseConnectionIdentity {
             username: "reset".into(),
-            password_env: password_env.into(),
+            password_config_key: password_config_key.into(),
             tls_mode: "verify_identity".into(),
             tls_ca_sha256: Some("a".repeat(64)),
             tls_client_cert_sha256: None,
@@ -655,7 +664,7 @@ mod model {
             "LOCALHOST",
             3306,
             "tenant_a",
-            connection_identity("TENANT_A_PASSWORD"),
+            connection_identity("tenant_data.targets.tenant-a.password"),
             "shared-control",
             true,
             true,
@@ -667,7 +676,7 @@ mod model {
             "localhost",
             3306,
             "tenant_a",
-            connection_identity("TENANT_A_PASSWORD"),
+            connection_identity("tenant_data.targets.tenant-a.password"),
             "tenant-a",
             false,
             true,
@@ -683,8 +692,8 @@ mod model {
 
     #[test]
     fn connection_identity_is_part_of_the_plan_hash_and_deduplication_key() {
-        let baseline = connection_identity("TENANT_A_PASSWORD");
-        let changed = connection_identity("TENANT_B_PASSWORD");
+        let baseline = connection_identity("tenant_data.targets.tenant-a.password");
+        let changed = connection_identity("tenant_data.targets.tenant-b.password");
         assert_ne!(
             sha256_hex(&canonical_json(&baseline).expect("编码连接身份")),
             sha256_hex(&canonical_json(&changed).expect("编码连接身份"))

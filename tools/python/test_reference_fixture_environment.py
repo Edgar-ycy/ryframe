@@ -192,7 +192,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         stable = self.write("stable-pending.json", self.review)
         terminal_output = self.root / "terminal-ready.json"
         drifted = copy.deepcopy(observed)
-        drifted["aws"]["sha256"] = "f" * 64
+        drifted["mysqldump"]["sha256"] = "f" * 64
         with (
             patch.object(environment, "_preflight", side_effect=[observed, drifted]),
             self.assertRaisesRegex(ValueError, "当前工具"),

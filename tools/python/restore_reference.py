@@ -121,7 +121,8 @@ def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
         entries = []
         for entry in objects["entries"]:
             path = directory / (hashlib.sha256(entry["key"].encode()).hexdigest() + ".bin")
-            metadata = tools.aws("source", "get-object", objects["bucket"], entry["key"], path)
+            metadata = tools.read_object("source", objects["bucket"], entry["key"], path,
+                                         max_bytes=max(1, entry["bytes"]))
             if any(file_digest(path)[key] != entry[key] for key in ("bytes", "sha256")):
                 raise ValueError("外部对象复制与静止采集清单不一致")
             value = artifact(root, path, f"objects:{objects['bucket']}")
@@ -226,7 +227,15 @@ def restore_resources(plan: dict, tools: ExternalTools, current: RestoreInputs, 
             current.assert_unchanged()
             key = plan["target"]["scope_id"] + "/" + entry["key"].removeprefix(plan["source"]["scope_id"] + "/")
             with images.target_environment():
-                tools.aws("target", "put-object", bucket, key, bound_artifact(entry["file"]), content_type=entry["content_type"])
+                source = bound_artifact(entry["file"])
+                tools.create_object_if_absent(
+                    bucket, key, source,
+                    {"ContentType": entry["content_type"], "CacheControl": None,
+                     "ContentDisposition": None, "ContentEncoding": None,
+                     "ContentLanguage": None, "Expires": None,
+                     "WebsiteRedirectLocation": None, "Metadata": {}},
+                    file_digest(source),
+                )
 
 
 def copy_backup(work: Path, manifest: dict, source: Path, new_id: str) -> dict:

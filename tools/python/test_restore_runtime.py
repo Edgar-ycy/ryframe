@@ -21,6 +21,7 @@ import restore_runtime_evidence
 import source_inventory
 from artifact_digests import filesystem_path
 from workspace_directory import WorkspaceDirectory
+from frontend_receipt_fixture import prepare_frontend, frontend_receipt as frontend_receipt_value
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": [], "clean": True}
@@ -82,14 +83,8 @@ class RestoreRuntimeTests(unittest.TestCase):
             patch.object(
                 restore_runtime,
                 "capture_inventory",
-                side_effect=lambda *_args: copy.deepcopy(INVENTORY),
-            )
-        )
-        self.enterContext(
-            patch.object(
-                restore_frontend_build,
-                "capture_inventory",
-                side_effect=lambda *_args: copy.deepcopy(INVENTORY),
+                side_effect=lambda root: (source_inventory.capture_inventory(root)
+                                          if Path(root) == self.frontend else copy.deepcopy(INVENTORY)),
             )
         )
         local = ROOT / ".local-tests/python-unit"
@@ -102,6 +97,7 @@ class RestoreRuntimeTests(unittest.TestCase):
         (self.frontend / "dist/index.html").write_text("<script src='/app.js'></script>", encoding="utf-8")
         (self.frontend / "dist/app.js").write_bytes(b"\x00RyFrame fixture\xff")
         (self.frontend / "dist/.vite/manifest.json").write_text("{}", encoding="utf-8")
+        self.frontend_head = prepare_frontend(self.frontend)
         self.identities = {}
 
     def write_json(self, path, value):
@@ -135,7 +131,7 @@ class RestoreRuntimeTests(unittest.TestCase):
             "backend_product_sha": SOURCE["head"],
             "backend_execution_sha": SOURCE["head"],
             "backend_adapter_contract": None,
-            "frontend_sha": SOURCE["head"],
+            "frontend_sha": self.frontend_head,
             "api_endpoint": "http://127.0.0.1:18080/readyz",
             "worker_endpoint": "http://127.0.0.1:19091/readyz",
             "frontend_endpoint": "http://127.0.0.1:14174",
@@ -148,21 +144,7 @@ class RestoreRuntimeTests(unittest.TestCase):
         with patch.object(restore_build, "source_snapshot", return_value=SOURCE):
             backend_build = restore_build.build(self.backend, self.cargo_run)
         build_path = self.write_json(self.root / "backend-build.json", backend_build)
-        frontend_build = {
-            "format_version": 2,
-            "kind": "restore-frontend-build",
-            "sources": source_inventory.build_source_domains(INVENTORY, "frontend"),
-            "build": {
-                "command": ["vite", "build"], "mode": "production", "target": "vite-default",
-                "toolchain": {"node": "v24.0.0",
-                              "pnpm": {"pinned": "11.20.0", "observed": "11.20.0"},
-                              "vite": "7.1.7"},
-                "environment": {"variables": [],
-                                "sha256": source_inventory.canonical_digest([])},
-                "environment_files": [],
-            },
-            "files": restore_frontend_build.frontend_files(self.frontend),
-        }
+        frontend_build = frontend_receipt_value(self.frontend)
         frontend_path = self.write_json(
             self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT,
             frontend_build,
@@ -554,7 +536,8 @@ class RestoreRuntimeTests(unittest.TestCase):
         self.assertEqual(result["runtime_receipt_sha256"], "f" * 64)
         self.assertEqual(result["api_readiness"], READY)
         self.assertEqual(set(result["processes"]), {"api", "worker", "frontend"})
-        self.assertEqual({item["path"] for item in result["frontend"]["files"]}, {"index.html", "app.js", ".vite/manifest.json"})
+        self.assertEqual({item["path"] for item in result["frontend"]["files"]},
+                         {"index.html", "app.js", ".vite/manifest.json", "build-identity.json"})
 
     def test_arbitrary_200_and_invalid_readiness_payloads_are_rejected(self):
         payloads = [
@@ -623,7 +606,7 @@ class RestoreRuntimeTests(unittest.TestCase):
                 **common,
                 "frontend_dir": str(self.frontend),
                 "expected_head": SOURCE["head"],
-                "expected_frontend_head": SOURCE["head"],
+                "expected_frontend_head": self.frontend_head,
             },
             "bind": {
                 **common,
@@ -690,13 +673,13 @@ class RestoreRuntimeTests(unittest.TestCase):
         frontend_receipt = restore_runtime.read_json_document(
             self.write_json(
                 self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT,
-                {"format_version": 2, "kind": "restore-frontend-build"},
+                frontend_receipt_value(self.frontend),
             )
         )
         request = private_request(
             "build", backend_dir=self.backend, source_backend=str(self.root),
             expected_head=SOURCE["head"], frontend_dir=str(self.frontend),
-            source_frontend=str(self.frontend), expected_frontend_head=SOURCE["head"],
+            source_frontend=str(self.frontend), expected_frontend_head=self.frontend_head,
             output=str(output),
         )
         with patch.object(sys, "stdout", io.StringIO()) as stdout, \
@@ -720,7 +703,7 @@ class RestoreRuntimeTests(unittest.TestCase):
             product_backend=None,
         )
         frontend_build.assert_called_once_with(
-            self.frontend.resolve(), self.frontend, SOURCE["head"]
+            self.frontend.resolve(), self.frontend, self.frontend_head
         )
         validate.assert_called_once_with(output, self.root)
         write.assert_called_once_with(output, receipt, self.root)
@@ -728,17 +711,14 @@ class RestoreRuntimeTests(unittest.TestCase):
 
     def test_registered_frontend_reuses_only_an_exact_existing_receipt(self):
         self.prepare()
-        scripts = self.frontend / "scripts"
-        scripts.mkdir()
-        for relative in restore_frontend_build.FRONTEND_BUILD_TOOL_FILES:
-            (self.frontend / relative).write_text(relative, encoding="utf-8")
+        run = unittest.mock.Mock()
         with patch.object(
             restore_frontend_build,
             "repository",
             side_effect=lambda path, _label: Path(path).resolve(),
-        ), patch.object(restore_frontend_build.subprocess, "run") as run:
+        ):
             source, receipt, action = restore_frontend_build.build_registered_frontend(
-                self.frontend, self.frontend, SOURCE["head"]
+                self.frontend, self.frontend, self.frontend_head, run
             )
         self.assertEqual(source, self.frontend)
         self.assertEqual(receipt.value["kind"], "restore-frontend-build")
@@ -749,15 +729,11 @@ class RestoreRuntimeTests(unittest.TestCase):
         _authority, _backend, frontend_path, _bindings = self.prepare()
         value = json.loads(frontend_path.read_text(encoding="utf-8"))
         frontend_path.unlink()
-        scripts = self.frontend / "scripts"
-        scripts.mkdir()
-        for relative in restore_frontend_build.FRONTEND_BUILD_TOOL_FILES:
-            (self.frontend / relative).write_text(relative, encoding="utf-8")
 
         def run(command, **options):
             self.assertEqual(command[0], "node")
             self.assertEqual(command[2:4], ["external-build", "--source-root"])
-            self.assertEqual(command[-3:], ["--expected-head", SOURCE["head"], "--write"])
+            self.assertEqual(command[-3:], ["--expected-head", self.frontend_head, "--write"])
             self.assertEqual(options["cwd"], self.frontend)
             self.assertTrue(options["check"])
             self.write_json(frontend_path, value)
@@ -769,7 +745,7 @@ class RestoreRuntimeTests(unittest.TestCase):
             side_effect=lambda path, _label: Path(path).resolve(),
         ):
             source, receipt, action = restore_frontend_build.build_registered_frontend(
-                self.frontend, self.frontend, SOURCE["head"], run
+                self.frontend, self.frontend, self.frontend_head, run
             )
         self.assertEqual(source, self.frontend)
         self.assertEqual(receipt.path, frontend_path)

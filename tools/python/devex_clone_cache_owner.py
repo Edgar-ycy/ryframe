@@ -1,5 +1,6 @@
 """只恢复原初始化的两个验收标记；未知响应先核对，不恢复会话或锁。"""
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 from devex_clone_capture import read_json, write_json
@@ -9,9 +10,13 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_resources import Resources
 
 
-def transport(request, environment, checkpoint):
+def transport(backend: Path, request, environment, checkpoint, *, password=None):
+    password = request.get("process", {}).get("password") if password is None else password
+    if not isinstance(password, str) or not password:
+        raise ValueError("Redis 标记传输必须使用已由配置文件校验的密码")
     resource = SimpleNamespace(request={"storage": {"redis": request["previous"]}},
-                               environment=environment, checkpoint=checkpoint)
+                               environment=environment, checkpoint=checkpoint,
+                               execution_backend=backend, redis_password=password)
     resource._response = Resources._response
     return lambda parts: Resources._redis(resource, parts)
 

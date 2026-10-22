@@ -46,7 +46,7 @@ pub(crate) fn validate(review: &Value) -> Result<()> {
         "审阅三侧资源",
     )?;
     let tools = json_io::object(root.get("tools").ok_or("审阅计划缺少工具")?, "审阅工具")?;
-    for role in ["mysql", "mysqldump", "aws", "rustfs"] {
+    for role in ["mysql", "mysqldump", "rustfs"] {
         let tool = tools.get(role).ok_or("审阅计划工具定义缺失")?;
         text(&tool["path"], "审阅工具路径")?;
         digest_shape(&tool["sha256"])?;

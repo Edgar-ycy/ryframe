@@ -60,7 +60,7 @@ impl ResourceScopeId {
     /// 校验作用域是否满足指定环境的安全要求。
     pub fn validate_environment(&self, environment: Environment) -> Result<(), String> {
         if environment.is_production() && self.as_str() == PRODUCTION_SCOPE_PLACEHOLDER {
-            return Err("生产环境必须显式设置唯一的 APP_SCOPE_ID，不允许使用配置占位值".into());
+            return Err("生产环境必须在配置文件中设置唯一的 scope_id，不允许使用配置占位值".into());
         }
         Ok(())
     }

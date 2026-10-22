@@ -15,13 +15,16 @@ mod devex;
 mod diff;
 mod doctor;
 mod frontend_origin;
+mod http_session;
 mod local_test_path;
+mod login_budget;
 mod migration;
 mod process;
 mod rate_limit;
 mod recovery;
 mod release;
 mod resource;
+mod session_pacing;
 mod source_edit;
 mod watch;
 mod workspace;
@@ -33,6 +36,12 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    if let Some(code) = recovery::clone::native::s3::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::clone::native::session::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = frontend_origin::run_hidden_if_requested() {
         std::process::exit(code);
     }
@@ -84,10 +93,7 @@ fn main() {
 
 fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Dev { measure_once: true } => dev::measure_once(),
-        Command::Dev {
-            measure_once: false,
-        } => dev::run(),
+        Command::Dev(options) => dev::execute(&options),
         Command::Check(command) => dispatch_check(command, &cli.frontend_dir),
         Command::Build(options) => build::run(options, &cli.frontend_dir),
         Command::Generate(command) => dispatch_generate(command, &cli.frontend_dir),

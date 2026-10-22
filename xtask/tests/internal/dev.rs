@@ -12,11 +12,11 @@ use std::{
 
 use super::dev::{
     ArtifactAction, BuildPlan, CandidateProbeDisposition, ChangeKind, ChangeOutcome, CycleControl,
-    DEV_API_FEATURES, MigrationValidation, ProbeResult, ReadyKind, RuntimeInputPaths,
-    RuntimeSecrets, SaveCase, TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports,
-    candidate_probe_disposition, classify_change, combine_failures, failure_exit_code, ready_kind,
-    start_worker_after_api_ready, switch_services_with_rollback, tool_self_changed_error,
-    wait_services_ready_until, wait_services_ready_until_controlled, worker_command,
+    DEV_API_FEATURES, MigrationValidation, ProbeResult, ReadyKind, RuntimeInputPaths, SaveCase,
+    TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports, candidate_probe_disposition,
+    classify_change, combine_failures, failure_exit_code, ready_kind, start_worker_after_api_ready,
+    switch_services_with_rollback, tool_self_changed_error, wait_services_ready_until,
+    wait_services_ready_until_controlled, worker_command,
 };
 use super::watch::{ChangeBatch, SourceRevision, SourceRevisionTracker};
 
@@ -365,113 +365,41 @@ fn resource_only_plan_checks_without_restarting_services() {
 fn worker_probe_uses_isolated_non_consuming_mode() {
     let command = worker_command(
         Path::new("D:/workspace"),
-        Path::new("D:/workspace/worker.exe"),
-        RuntimeInputPaths::new(
-            Path::new("D:/workspace/config"),
-            Path::new("D:/workspace/locales"),
-            &RuntimeSecrets::default(),
-        ),
-        19091,
-        4,
+        Path::new("worker.exe"),
+        RuntimeInputPaths::new(Path::new("D:/workspace/probe-worker")),
         true,
     );
-    assert_eq!(
-        command
-            .get_args()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        ["--probe"]
-    );
-    let environment = command
-        .get_envs()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.map(|value| value.to_string_lossy().into_owned()),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    assert_eq!(
-        environment.get("APP_JOBS_WORKER_ID"),
-        Some(&Some("ryframe-dev-probe".into()))
-    );
-    assert_eq!(
-        environment.get("APP_JOBS_HEALTH_PORT"),
-        Some(&Some("19091".into()))
-    );
-    assert_eq!(
-        environment.get("APP_JOBS_HEALTH_HOST"),
-        Some(&Some("127.0.0.1".into()))
-    );
-    assert_eq!(
-        environment.get("APP_TELEMETRY_ENABLED"),
-        Some(&Some("false".into()))
-    );
-    assert_eq!(
-        environment.get("APP_LOGGER_OUTPUT"),
-        Some(&Some("stdout".into()))
-    );
-    assert_eq!(
-        environment.get("APP_DATABASE_MIGRATION_MODE"),
-        Some(&Some("verify".into()))
-    );
-    assert_eq!(
-        environment.get("APP_CONFIG_DIR"),
-        Some(&Some("D:/workspace/config".into()))
-    );
-    assert_eq!(
-        environment.get("APP_LOCALES_DIR"),
-        Some(&Some("D:/workspace/locales".into()))
-    );
+    assert_role_command(&command, "D:/workspace/probe-worker", true);
 }
 
 #[test]
 fn api_probe_uses_explicit_side_effect_free_mode() {
     let command = api_command(
         Path::new("D:/workspace"),
-        Path::new("D:/workspace/api.exe"),
-        RuntimeInputPaths::new(
-            Path::new("D:/workspace/config"),
-            Path::new("D:/workspace/locales"),
-            &RuntimeSecrets::default(),
-        ),
-        18080,
-        19091,
-        3,
+        Path::new("api.exe"),
+        RuntimeInputPaths::new(Path::new("D:/workspace/probe-api")),
         true,
     );
+    assert_role_command(&command, "D:/workspace/probe-api", true);
+}
+
+fn assert_role_command(command: &std::process::Command, config: &str, probe: bool) {
+    let mut expected = vec!["--config-dir", config];
+    if probe {
+        expected.push("--probe");
+    }
     assert_eq!(
         command
             .get_args()
-            .map(|value| value.to_string_lossy().into_owned())
+            .map(|arg| arg.to_str().unwrap())
             .collect::<Vec<_>>(),
-        ["--probe"]
+        expected
     );
-    let environment = command
+    let env = command
         .get_envs()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.map(|value| value.to_string_lossy().into_owned()),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    assert_eq!(
-        environment.get("APP_APP_HOST"),
-        Some(&Some("127.0.0.1".into()))
-    );
-    assert_eq!(
-        environment.get("APP_TELEMETRY_ENABLED"),
-        Some(&Some("false".into()))
-    );
-    assert_eq!(
-        environment.get("APP_LOGGER_OUTPUT"),
-        Some(&Some("stdout".into()))
-    );
-    assert_eq!(
-        environment.get("APP_DATABASE_MIGRATION_MODE"),
-        Some(&Some("verify".into()))
-    );
+        .map(|(key, value)| (key.to_str().unwrap(), value.unwrap().to_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(env, [("APP_ENV", "dev")]);
 }
 
 #[test]
@@ -631,59 +559,18 @@ fn controlled_probe_rechecks_between_api_and_worker_requests() {
 fn normal_services_start_without_probe_mode() {
     let api = api_command(
         Path::new("D:/workspace"),
-        Path::new("D:/workspace/api.exe"),
-        RuntimeInputPaths::new(
-            Path::new("D:/workspace/config"),
-            Path::new("D:/workspace/locales"),
-            &RuntimeSecrets::default(),
-        ),
-        18080,
-        19091,
-        3,
+        Path::new("api.exe"),
+        RuntimeInputPaths::new(Path::new("D:/workspace/api")),
         false,
     );
     let worker = worker_command(
         Path::new("D:/workspace"),
-        Path::new("D:/workspace/worker.exe"),
-        RuntimeInputPaths::new(
-            Path::new("D:/workspace/config"),
-            Path::new("D:/workspace/locales"),
-            &RuntimeSecrets::default(),
-        ),
-        19091,
-        4,
+        Path::new("worker.exe"),
+        RuntimeInputPaths::new(Path::new("D:/workspace/worker")),
         false,
     );
-
-    assert_eq!(api.get_args().count(), 0);
-    assert_eq!(worker.get_args().count(), 0);
-    let api_environment = api
-        .get_envs()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.map(|value| value.to_string_lossy().into_owned()),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let worker_environment = worker
-        .get_envs()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.map(|value| value.to_string_lossy().into_owned()),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    assert_eq!(
-        worker_environment.get("APP_JOBS_WORKER_ID"),
-        Some(&Some("ryframe-dev-worker".into()))
-    );
-    assert!(!worker_environment.contains_key("APP_JOBS_HEALTH_HOST"));
-    for environment in [&api_environment, &worker_environment] {
-        assert!(!environment.contains_key("APP_TELEMETRY_ENABLED"));
-        assert!(!environment.contains_key("APP_LOGGER_OUTPUT"));
-    }
+    assert_role_command(&api, "D:/workspace/api", false);
+    assert_role_command(&worker, "D:/workspace/worker", false);
 }
 
 #[test]
@@ -766,67 +653,36 @@ fn candidate_start_failure_restores_last_known_good() {
 }
 
 #[test]
-fn partial_stop_failure_restores_last_known_good_without_starting_candidate() {
-    #[derive(Debug, PartialEq)]
-    struct FakeServices {
-        version: &'static str,
-        api_running: bool,
-        worker_running: bool,
-    }
-
-    let calls = RefCell::new(Vec::new());
-    let mut current = FakeServices {
-        version: "previous",
-        api_running: true,
-        worker_running: true,
-    };
-    let promoted = switch_services_with_rollback(
+fn partial_stop_failure_preserves_state_without_starting_another_worker() {
+    let mut current = (true, true);
+    let error = switch_services_with_rollback(
         &mut current,
-        |services| {
-            calls.borrow_mut().push("stop:api");
-            services.api_running = false;
+        |state| {
+            state.0 = false;
             Err("worker stop failed".into())
         },
-        || panic!("部分停止失败时不能启动候选服务"),
-        || {
-            calls.borrow_mut().push("start:previous");
-            Ok(FakeServices {
-                version: "previous",
-                api_running: true,
-                worker_running: true,
-            })
-        },
-        || panic!("部分停止失败时不能清理 last-known-good"),
+        || panic!("不能启动候选"),
+        || panic!("停止结果未知时不能重复启动旧 Worker"),
+        || panic!("不能清理旧代次"),
     )
-    .unwrap();
-
-    assert!(!promoted);
-    assert_eq!(
-        current,
-        FakeServices {
-            version: "previous",
-            api_running: true,
-            worker_running: true,
-        }
-    );
-    assert_eq!(calls.into_inner(), ["stop:api", "start:previous"]);
+    .unwrap_err();
+    assert!(error.to_string().contains("worker stop failed"));
+    assert_eq!(current, (false, true));
 }
 
 #[test]
-fn stop_and_restore_failures_are_reported_together() {
+fn stop_failure_is_reported_without_attempting_untrusted_restore() {
     let mut current = "previous";
     let error = switch_services_with_rollback(
         &mut current,
         |_| Err("worker stop failed".into()),
-        || panic!("停止失败时不能启动候选服务"),
-        || Err("previous restore failed".into()),
-        || panic!("停止失败时不能清理 last-known-good"),
+        || panic!("停止失败不得启动候选"),
+        || panic!("停止失败不得重复恢复 Worker"),
+        || panic!("不得清理现场"),
     )
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("worker stop failed"));
-    assert!(error.contains("previous restore failed"));
+    .unwrap_err();
+    assert!(error.to_string().contains("worker stop failed"));
+    assert_eq!(current, "previous");
 }
 
 #[test]

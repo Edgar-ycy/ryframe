@@ -23,12 +23,12 @@ def environment(test):
     plan = {"format_version": 1, "id": "restore-case", "target_side": "base",
             "work_dir": str(config.parent / "reference"),
             "tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]}
-                      for name in ("mysql", "mysqldump", "aws", "node")}}
+                      for name in ("mysql", "mysqldump", "node")}}
     for side in ("source", "target"):
         plan[side] = {"scope_id": side, "runtime_dir": str(config.parent / side),
                       "api_url": "http://127.0.0.1:3000",
                       "s3": {"endpoint": "http://127.0.0.1:9000", "region": "us-east-1",
-                             "access_key_env": "TEST_ACCESS", "secret_key_env": "TEST_SECRET"},
+                             "access_key": "access-fixture", "secret_key": "secret-fixture"},
                       "databases": [{"key": key, "kind": kind, "mode": mode,
                                      "database": f"{side}_{key}", "server_uuid": "uuid-1", "defaults_file": str(config),
                                      "defaults_sha256": file_digest(config)["sha256"]}

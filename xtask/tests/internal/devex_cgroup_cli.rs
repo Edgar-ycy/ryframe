@@ -97,7 +97,9 @@ fn cgroup_cli_rejects_missing_duplicate_unknown_and_escaping_arguments() {
         ]))
         .is_err()
     );
-    let outside = std::env::temp_dir().join("ryframe-cgroup-outside");
+    let root = root_dir();
+    let outside = root.parent().unwrap().join("ryframe-cgroup-outside");
+    assert!(!outside.starts_with(root.join(".local-tests")));
     assert!(
         parse(vec![
             "check".to_owned(),

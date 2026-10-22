@@ -162,11 +162,14 @@ pub(crate) struct HttpConfig {
 pub(crate) struct HttpExporterBuilder {
     pub(crate) exporter_config: ExportConfig,
     pub(crate) http_config: HttpConfig,
+    // 显式关闭时，导出配置仅采用程序设置值，不读取 OTEL 环境变量。
+    read_environment: bool,
 }
 
 impl Default for HttpExporterBuilder {
     fn default() -> Self {
         HttpExporterBuilder {
+            read_environment: true,
             exporter_config: ExportConfig::default(),
             http_config: HttpConfig {
                 headers: Some(default_headers()),
@@ -177,6 +180,14 @@ impl Default for HttpExporterBuilder {
 }
 
 impl HttpExporterBuilder {
+    /// 保留原有安全默认值，并禁用导出配置的环境读取。
+    pub(crate) fn without_environment() -> Self {
+        Self {
+            read_environment: false,
+            ..Self::default()
+        }
+    }
+
     fn build_client(
         &mut self,
         signal_endpoint_var: &str,
@@ -186,7 +197,16 @@ impl HttpExporterBuilder {
         signal_compression_var: &str,
         signal_protocol_var: &str,
     ) -> Result<OtlpHttpClient, ExporterBuildError> {
-        let protocol = super::resolve_protocol(signal_protocol_var, self.exporter_config.protocol);
+        let protocol = if self.read_environment {
+            super::resolve_protocol(signal_protocol_var, self.exporter_config.protocol)
+        } else {
+            self.exporter_config.protocol.ok_or_else(|| {
+                ExporterBuildError::invalid_configuration(
+                    "protocol",
+                    "禁用环境读取时必须显式设置 HTTP 协议",
+                )
+            })?
+        };
 
         // Validate protocol is compatible with HTTP transport
         #[cfg(feature = "grpc-tonic")]
@@ -197,15 +217,44 @@ impl HttpExporterBuilder {
             ));
         }
 
-        let endpoint = resolve_http_endpoint(
-            signal_endpoint_var,
-            signal_endpoint_path,
-            self.exporter_config.endpoint.as_deref(),
-        )?;
+        let endpoint = if self.read_environment {
+            resolve_http_endpoint(
+                signal_endpoint_var,
+                signal_endpoint_path,
+                self.exporter_config.endpoint.as_deref(),
+            )?
+        } else {
+            let endpoint = self
+                .exporter_config
+                .endpoint
+                .as_deref()
+                .filter(|endpoint| !endpoint.is_empty())
+                .ok_or_else(|| {
+                    ExporterBuildError::invalid_configuration(
+                        "endpoint",
+                        "禁用环境读取时必须显式设置非空 HTTP endpoint",
+                    )
+                })?;
+            endpoint.parse::<Uri>().map_err(|_| {
+                ExporterBuildError::invalid_configuration(
+                    "endpoint",
+                    "显式 HTTP endpoint 不是有效 URI；请修正配置",
+                )
+            })?
+        };
 
         let compression = self.resolve_compression(signal_compression_var)?;
 
-        let timeout = resolve_timeout(signal_timeout_var, self.exporter_config.timeout.as_ref());
+        let timeout = if self.read_environment {
+            resolve_timeout(signal_timeout_var, self.exporter_config.timeout.as_ref())
+        } else {
+            self.exporter_config.timeout.ok_or_else(|| {
+                ExporterBuildError::invalid_configuration(
+                    "timeout",
+                    "禁用环境读取时必须显式设置 HTTP 超时",
+                )
+            })?
+        };
 
         #[allow(unused_mut)] // TODO - clippy thinks mut is not needed, but it is
         let mut http_client = self.http_config.client.take();
@@ -290,11 +339,13 @@ impl HttpExporterBuilder {
             })
             .collect();
 
-        // read headers from env var - signal specific env var is preferred over general
-        if let Ok(input) =
-            env::var(signal_http_headers_var).or_else(|_| env::var(OTEL_EXPORTER_OTLP_HEADERS))
-        {
-            add_header_from_string(&input, &mut headers);
+        // 仅原有默认路径读取环境 header，信号专用配置优先于通用配置。
+        if self.read_environment {
+            if let Ok(input) =
+                env::var(signal_http_headers_var).or_else(|_| env::var(OTEL_EXPORTER_OTLP_HEADERS))
+            {
+                add_header_from_string(&input, &mut headers);
+            }
         }
 
         let mut client = OtlpHttpClient::new(
@@ -316,24 +367,17 @@ impl HttpExporterBuilder {
         &self,
         env_override: &str,
     ) -> Result<Option<crate::Compression>, super::ExporterBuildError> {
+        if !self.read_environment {
+            return self
+                .http_config
+                .compression
+                .map(validate_compression)
+                .transpose();
+        }
         super::resolve_compression_from_env(
             self.http_config.compression,
             env_override,
-            |compression| match compression {
-                crate::Compression::Gzip if !cfg!(feature = "gzip-http") => {
-                    Err(ExporterBuildError::invalid_configuration(
-                        "compression",
-                        "gzip compression requested but gzip-http feature not enabled",
-                    ))
-                }
-                crate::Compression::Zstd if !cfg!(feature = "zstd-http") => {
-                    Err(ExporterBuildError::invalid_configuration(
-                        "compression",
-                        "zstd compression requested but zstd-http feature not enabled",
-                    ))
-                }
-                _ => Ok(compression),
-            },
+            validate_compression,
         )
     }
 
@@ -401,6 +445,27 @@ impl HttpExporterBuilder {
         )?;
 
         Ok(crate::MetricExporter::from_http(client, temporality))
+    }
+}
+
+// 两条配置路径共用压缩能力校验，保持原有 gzip/zstd feature 约束。
+fn validate_compression(
+    compression: crate::Compression,
+) -> Result<crate::Compression, ExporterBuildError> {
+    match compression {
+        crate::Compression::Gzip if !cfg!(feature = "gzip-http") => {
+            Err(ExporterBuildError::invalid_configuration(
+                "compression",
+                "gzip compression requested but gzip-http feature not enabled",
+            ))
+        }
+        crate::Compression::Zstd if !cfg!(feature = "zstd-http") => {
+            Err(ExporterBuildError::invalid_configuration(
+                "compression",
+                "zstd compression requested but zstd-http feature not enabled",
+            ))
+        }
+        _ => Ok(compression),
     }
 }
 
@@ -1204,6 +1269,7 @@ mod tests {
             },
         );
         let builder = HttpExporterBuilder {
+            read_environment: true,
             http_config: HttpConfig {
                 client: None,
                 headers: Some(initial_headers),
@@ -1268,12 +1334,14 @@ mod tests {
         use export_body_tests::MockHttpClient;
 
         let _ = HttpExporterBuilder {
+            read_environment: true,
             exporter_config: ExportConfig::default(),
             http_config: HttpConfig::default(),
         }
         .with_http_client(MockHttpClient);
 
         let _ = HttpExporterBuilder {
+            read_environment: true,
             exporter_config: ExportConfig::default(),
             http_config: HttpConfig::default(),
         }

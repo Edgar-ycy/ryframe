@@ -130,7 +130,7 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
         raise ValueError("存储环境必须是明确文本映射")
     for key, descriptor in request["credential_files"].items():
         contents = bound_file(backend, descriptor).read_text(encoding="utf-8").strip()
-        if not contents or contents != private["environment"].get(selected["s3"][key + "_env"]):
+        if not contents or contents != selected["s3"].get(key):
             raise ValueError("存储凭据文件与原业务认证不符")
     return copy.deepcopy(private["environment"])
 

@@ -20,6 +20,7 @@ import devex_clone_target_storage as storage
 from devex_clone_transfer import DatabaseObservation
 from devex_clone_run_state import binding as receipt_binding
 from full_stack_runtime import configuration_digest
+from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
 
@@ -33,10 +34,26 @@ class Fixture:
         )
         self.scope, self.uuid = "perf-seed-fixture", "67cd8d4a-fe90-11ef-98fd-5847ca786499"
         self.paths = {}
-        for role in ("mysql", "mysqldump", "aws", "rustfs", "wsl", "reset", "migrate", "tenant-data"):
+        for role in ("mysql", "mysqldump", "rustfs", "wsl", "reset", "migrate", "tenant-data"):
             p = self.local / (role + ".exe"); p.write_bytes(role.encode()); self.paths[role] = p
         self.configuration = root / "config"; self.configuration.mkdir()
-        (self.configuration / "app.toml").write_text('[app]\nhost="127.0.0.1"\nport=18210\n[database]\nreplicas=[]\nsources=[]\n[database.primary]\nhost="127.0.0.1"\nport=3306\ndatabase="fresh_seed_control"\nusername="root"\npassword="db-secret"\ntls_mode="disabled"\n[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:29200"\nregion="us-east-1"\naccess_key="access"\nsecret_key="secret"\nuse_ssl=false\n', encoding="utf-8")
+        configuration = (f'scope_id="{self.scope}"\n[app]\nhost="127.0.0.1"\nport=18210\n'
+                         '[jobs]\nmode="external"\nhealth_host="127.0.0.1"\nhealth_port=19210\n'
+                         '[bootstrap]\nadmin_password="Fixture!Admin123"\n'
+                         '[database]\nreplicas=[]\nsources=[]\n'
+                         '[database.primary]\nhost="127.0.0.1"\nport=3306\n'
+                         'database="fresh_seed_control"\nusername="root"\npassword="db-secret"\n'
+                         'tls_mode="disabled"\n[object_storage]\nbackend="rustfs"\n'
+                         'endpoint="http://127.0.0.1:29200"\nregion="us-east-1"\n'
+                         'access_key="access"\nsecret_key="secret"\nuse_ssl=false\n'
+                         '[redis]\nmode="required"\nhost="127.0.0.1"\nport=16390\n'
+                         'password="redis-secret"\ndatabase=0\nmax_pool_size=16\ntimeout_secs=3\ntls=false\n'
+                         '[reset]\nlegacy_mysql_exclusive=true\nlegacy_redis_exclusive=true\n'
+                         'legacy_object_storage_exclusive=true\ncredential_version="fixture-v1"\n'
+                         f'source_sha={json.dumps("1" * 40)}\n'
+                         f'state_directory={json.dumps(str(self.local / "new-generation" / "reset-state"))}\n'
+                         'services_stopped=true\n'
+                         f'redis_outside_sentinel_key="ryframe:devex-fresh:{self.scope}:sentinel"\n')
         defaults = self.local / "mysql.cnf"
         defaults.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=root\npassword=db-secret\nssl-mode=DISABLED\n", encoding="utf-8")
         self.review = {"kind": "review-only-perf-resource-plan-with-readonly-preflight", "ready_for_execution": True, "scopes": {},
@@ -63,6 +80,17 @@ class Fixture:
         databases = [{"key": db["key"], "kind": binding.KEYS[db["key"]][0], "mode": binding.KEYS[db["key"]][1],
                       "database": db["database"], "server_uuid": self.uuid, "defaults_file": str(defaults),
                       "defaults_sha256": file_digest(defaults)["sha256"]} for db in selected["databases"]]
+        for database in databases[1:]:
+            target_config = {"key": database["key"], "kind": "mysql", "mode": database["mode"],
+                             "host": "127.0.0.1", "port": 3306, "database": database["database"],
+                             "username": "root", "password": "db-secret", "tls_mode": "disabled"}
+            configuration += "[[tenant_data.targets]]\n" + "".join(
+                f"{key}={json.dumps(value)}\n" for key, value in target_config.items()
+            )
+        (self.configuration / "app.toml").write_text(configuration, encoding="utf-8")
+        (self.configuration / "app.test.toml").write_text(
+            "# 测试环境由公共夹具配置提供。\n", encoding="utf-8"
+        )
         self.maintenance = {"kind": "devex-clone-tool-build", "backend_root": str(root),
                             "source": {"snapshot": {"head": "1" * 40}, "worktree_fingerprint": "sha256:" + "2" * 64},
                             "artifacts": {role: {"executable": str(self.paths[role]), **file_digest(self.paths[role])}
@@ -71,9 +99,9 @@ class Fixture:
         self.request = {"format_version": 1, "kind": "devex-clone-fresh-target", "id": "fresh-fixture", "side": "seed",
                         "review": self.bound(self.local / "review.json", self.review),
                         "target": {"scope_id": self.scope, "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
-                                    "access_key_env": "APP_OBJECT_STORAGE_ACCESS_KEY", "secret_key_env": "APP_OBJECT_STORAGE_SECRET_KEY"}, "databases": databases},
+                                    "access_key": "access", "secret_key": "secret"}, "databases": databases},
                         "maintenance_build": self.bound(self.local / "build.json", self.maintenance),
-                        "tools": {key: self.review["tools"][key] for key in ("mysql", "aws")},
+                        "tools": {"mysql": self.review["tools"]["mysql"]},
                         "storage": {"rustfs": {"identity": self.identity, "sha256": file_digest(self.paths["rustfs"])["sha256"]},
                                     "redis": {"port": 16390, "wsl": {"path": str(self.paths["wsl"]), "sha256": file_digest(self.paths["wsl"])["sha256"]},
                                               "distribution": "Ubuntu-24.04", "pid": 200, "started": "67890", "executable": "/usr/bin/redis-server", "sha256": "9" * 64, "run_id": "3" * 40}},
@@ -104,17 +132,7 @@ class Fixture:
         self.linux_path = lambda path: "/fixture/" + path.name
         self.redis_config = {"bind": "127.0.0.1", "port": "16390", "dir": self.linux_path(redis_dir), "databases": "1",
                              "protected-mode": "yes", "save": "", "appendonly": "no"}
-        targets = [{"key": db["key"], "kind": "mysql", "mode": db["mode"], "host": "127.0.0.1", "port": 3306,
-                    "database": db["database"], "username": "root", "password_env": "APP_DB_PASSWORD", "tls_mode": "disabled"}
-                   for db in databases if db["key"] != "shared-control"]
-        self.environment = {"APP_ENV": "test", "APP_SCOPE_ID": self.scope, "APP_CONFIG_DIR": str(self.configuration),
-            "APP_JOBS_MODE": "external", "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19210",
-            "APP_DB_PASSWORD": "db-secret", "APP_TENANT_DATA_TARGETS": json.dumps(targets), "APP_OBJECT_STORAGE_ACCESS_KEY": "access",
-            "APP_OBJECT_STORAGE_SECRET_KEY": "secret", "APP_REDIS_PASSWORD": "redis-secret", "APP_REDIS_HOST": "127.0.0.1",
-            "APP_REDIS_PORT": "16390", "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false",
-            "APP_RESET_CREDENTIAL_VERSION": "fixture-v1", "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": self.request["reset"]["sentinel_key"],
-            "RYFRAME_RESET_ADMIN_PASSWORD": "Fixture!Admin123",
-            **{"APP_RESET_LEGACY_" + key.upper(): "true" for key in binding.EXCLUSIVE}}
+        self.environment = {"APP_ENV": "test"}
         self.patches = [patch.dict(os.environ, self.environment, clear=True),
                         patch.object(binding, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance)),
                         patch.object(binding, "require_closed_port"), patch.object(resources, "process_identity", side_effect=lambda _: self.identity),
@@ -213,6 +231,36 @@ class Fixture:
 
     def run(self, command, **kwargs):
         self.calls.append(command)
+        if "__s3-inspect" in command or "__s3-read" in command:
+            request = json.loads(kwargs["input"])
+            assert request["format_version"] == 1
+            assert request["scope_id"] == self.scope
+            assert request["configuration"] == self.request["target"]["s3"]
+            assert not any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"])
+            operation, bucket = request["operation"], request["bucket"]
+            assert bucket in BUCKETS
+            if "__s3-inspect" in command:
+                assert request["kind"] == "ryframe-native-s3-inspect"
+                assert request["prefix"] == (self.scope + "/" if operation == "list-objects-v2" else None)
+                assert request["continuation"] is None
+            else:
+                assert request["kind"] == "ryframe-native-s3-read"
+                assert request["key"] == self.scope + "/.ryframe-owner"
+            value = {}
+            if operation == "list-objects-v2":
+                keys = self.extra_objects.get(bucket, []) + ([self.scope + "/.ryframe-owner"] if self.initialized else [])
+                value = {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]}
+            elif operation == "get-object":
+                Path(request["destination"]).write_bytes(
+                    f"ryframe-owner:v1:{self.scope}:object-storage:{bucket}".encode()
+                )
+                value = {"ContentType": "text/plain", "Metadata": {}, "ETag": '"owner"',
+                         "ContentLength": Path(request["destination"]).stat().st_size,
+                         "LastModified": "2026-09-04T00:00:00+00:00"}
+            elif operation not in ("head-bucket", "get-bucket-versioning"):
+                raise AssertionError(operation)
+            raw = json.dumps({"ok": True, "result": value}).encode()
+            return subprocess.CompletedProcess(command, 0, raw, b"")
         role = Path(command[0]).stem; raw = b""
         if role == "mysql":
             sql = mysql_input(command, kwargs)
@@ -226,15 +274,6 @@ class Fixture:
                 self.databases.add(name)
                 if self.unknown_create: raise subprocess.TimeoutExpired(command, 30, stderr=b"db-secret timeout")
             elif not sql.startswith("SELECT TABLE_NAME"): raise AssertionError(sql)
-        elif role == "aws":
-            operation = command[command.index("s3api") + 1]; bucket = command[command.index("--bucket") + 1]
-            value = {}
-            if operation == "list-objects-v2":
-                keys = self.extra_objects.get(bucket, []) + ([self.scope + "/.ryframe-owner"] if self.initialized else [])
-                value = {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]}
-            elif operation == "get-object": Path(command[-1]).write_bytes(f"ryframe-owner:v1:{self.scope}:object-storage:{bucket}".encode())
-            elif operation not in ("head-bucket", "get-bucket-versioning"): raise AssertionError(operation)
-            raw = json.dumps(value).encode()
         elif role == "wsl":
             operation = command[command.index("--exec") + 1]
             raw = ({"/usr/bin/cat": "200 (redis-server) " + " ".join(["S"] + ["0"] * 18 + ["67890"]),
@@ -249,7 +288,9 @@ class Fixture:
             else:
                 self.initialized = True
                 redis = self.review["scopes"]["seed"]["redis"]; self.redis_values[redis["ownership_key"]] = redis["ownership_value"]
-                sha = command[command.index("--plan-hash") + 1]; directory = Path(kwargs["env"]["RYFRAME_RESET_STATE_DIR"])
+                sha = command[command.index("--plan-hash") + 1]
+                table = load_app_table(self.root, {"APP_ENV": kwargs["env"].get("APP_ENV")})
+                directory = Path(table["reset"]["state_directory"])
                 phases = {phase: {"status": "complete", "completed_at": "2026-09-04T00:00:00Z"}
                           for phase in PHASES}
                 common = {**{key: manifest[key] for key in ("environment", "scope_id", "code_sha", "config_sha", "credential_version")},

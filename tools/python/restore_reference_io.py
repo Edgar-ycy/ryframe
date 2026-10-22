@@ -1,4 +1,4 @@
-"""用外部 MySQL/AWS CLI 精确复制声明资源，不扫描服务器或替代产品备份引擎。"""
+"""用外部 MySQL 与原生 Rust S3 精确复制声明资源，不扫描服务器或替代产品备份引擎。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from urllib.parse import quote, quote_plus
 
 from artifact_digests import filesystem_path
 from restore_build import file_digest
+from native_s3_client import (NativeS3InvocationError, put_if_absent as native_put_if_absent,
+                              read as native_s3_read)
 from restore_reference_plan import BUCKETS, identifier, safe_file
 
 DATA_HEADER = "-- ryframe-reference-data-v1\n"
@@ -69,16 +71,6 @@ class ObjectCreateError(RuntimeError):
         self.request_file = str(request)
         self.diagnostic_file = str(diagnostic)
         super().__init__(f"对象条件创建未确认：{outcome}；禁止降级或自动重试")
-
-
-def object_create_outcome(stderr: str) -> str:
-    matches = re.findall(r"^(?:aws: \[ERROR\]: )?An error occurred \(([^()\r\n]+)\) when calling the PutObject operation"
-                         r"(?: \(reached max retries: [0-9]+\))?:", stderr, re.MULTILINE)
-    if len(matches) != 1:
-        return "needs_reconciliation"
-    return {"PreconditionFailed": "already_exists", "412": "already_exists",
-            "ConditionalRequestConflict": "conflict", "409": "conflict",
-            "AccessDenied": "denied", "403": "denied"}.get(matches[0], "needs_reconciliation")
 
 
 def redact_object_diagnostic(stderr, env: dict) -> str:
@@ -393,34 +385,26 @@ class ExternalTools:
             if owners != expected:
                 raise DatabaseVerificationError("ownership", database["key"], len(expected), rows)
 
-    def aws_context(self, side: str) -> tuple[dict, dict]:
-        config = self.plan[side]["s3"]
-        access, secret = os.environ.get(config["access_key_env"]), os.environ.get(config["secret_key_env"])
-        if not access or not secret:
-            raise ValueError("缺少显式外部对象工具凭据环境变量")
-        env = {key: value for key, value in os.environ.items()
-               if not key.upper().startswith("AWS_") and key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}
-        env.update(AWS_ACCESS_KEY_ID=access, AWS_SECRET_ACCESS_KEY=secret, AWS_DEFAULT_REGION=config["region"],
-                   AWS_EC2_METADATA_DISABLED="true", AWS_CONFIG_FILE=os.devnull, AWS_SHARED_CREDENTIALS_FILE=os.devnull,
-                   AWS_PAGER="", AWS_MAX_ATTEMPTS="1")
-        return config, env
-
-    def aws(self, side: str, operation: str, bucket: str, key: str, destination: Path, *, content_type=None) -> dict:
+    def read_object(self, side: str, bucket: str, key: str, destination: Path,
+                    *, max_bytes: int) -> dict:
         scope = self.plan[side]["scope_id"]
         if bucket not in BUCKETS or not key.startswith(scope + "/"):
             raise ValueError("对象操作越过明确的桶和 scope")
-        config, env = self.aws_context(side)
-        command = [*self.command("aws"), "--endpoint-url", config["endpoint"], "--region", config["region"],
-                   "s3api", operation, "--bucket", bucket, "--key", key]
-        if operation == "get-object":
-            if destination.exists() or destination.is_symlink():
-                raise ValueError("外部对象复制不能覆盖已有本地文件")
-            command.append(str(destination))
-        elif operation == "put-object":
-            command.extend(["--body", str(destination), "--content-type", content_type or "application/octet-stream"])
-        else:
-            raise ValueError("参考对象复制只支持 get-object 和 put-object")
-        return json.loads(self.execute(command, env=env).stdout)
+        if destination.exists() or destination.is_symlink():
+            raise ValueError("外部对象复制不能覆盖已有本地文件")
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("对象读取必须绑定正整数大小上限")
+        if self.before_execute is not None:
+            self.before_execute()
+        response, _ = native_s3_read({
+            "format_version": 1, "kind": "ryframe-native-s3-read", "scope_id": scope,
+            "configuration": self.plan[side]["s3"], "bucket": bucket,
+            "operation": "get-object", "key": key, "if_match": None, "version": None,
+            "destination": str(destination), "max_bytes": max_bytes,
+        }, self.run)
+        if self.before_execute is not None:
+            self.before_execute()
+        return response
 
     def create_object_if_absent(self, bucket: str, key: str, source: Path, metadata: dict, expected: dict) -> dict:
         """只向目标精确 key 条件创建一次；返回未复验状态，不承担复制事务或重试。"""
@@ -444,50 +428,53 @@ class ExternalTools:
                 raise ValueError("条件创建文件和证据目录不能经过链接")
         if not source.is_absolute() or file_digest(source) != expected:
             raise ValueError("条件创建本地对象与计划摘要不同")
-        config, env = self.aws_context("target")
+        config = self.plan["target"]["s3"]
         request = self.work / f"object-create-{uuid.uuid4().hex}.json"
         with request.open("x", encoding="utf-8", newline="\n") as stream:
-            json.dump({key: value for key, value in metadata.items() if value is not None}, stream,
-                      ensure_ascii=False, sort_keys=True)
+            json.dump({"format_version": 1, "kind": "ryframe-native-s3-put-if-absent-intent",
+                       "transport": "rust-s3-sigv4", "scope_id": scope,
+                       "endpoint": config["endpoint"], "region": config["region"],
+                       "bucket": bucket, "key": key, "source": str(source),
+                       "expected": expected, "metadata": metadata}, stream,
+                      ensure_ascii=False, sort_keys=True, indent=2)
             stream.write("\n")
-        command = [*self.command("aws"), "--endpoint-url", config["endpoint"], "--region", config["region"],
-                   "s3api", "put-object", "--bucket", bucket, "--key", key, "--if-none-match", "*",
-                   "--body", str(source), "--cli-input-json", "file://" + str(request)]
         diagnostic = request.with_suffix(".diagnostic.json")
-        outcome, stderr, returncode, error_type = "needs_reconciliation", b"", None, None
+        outcome, returncode, error_type = "needs_reconciliation", None, None
+        remote_write_may_have_occurred = False
         # 先排他创建诊断文件；无法保存证据时不发出写请求。
         with diagnostic.open("x", encoding="utf-8", newline="\n") as stream:
             try:
-                result = self.execute(command, env=env)
-                stderr, returncode = result.stderr, result.returncode
-                response = json.loads(result.stdout)
-                if not isinstance(response, dict) or not isinstance(response.get("ETag"), str) or not response["ETag"]:
-                    raise ValueError("条件写响应未确认")
-                if file_digest(source) != expected:
-                    raise ValueError("条件写期间本地对象变化")
-                outcome = "created_unverified"
-            except subprocess.CalledProcessError as error:
-                stderr, returncode, error_type = error.stderr, error.returncode, type(error).__name__
-                text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else stderr or ""
-                outcome = object_create_outcome(text)
-            except (subprocess.TimeoutExpired, OSError, ValueError) as error:
-                stderr = getattr(error, "stderr", stderr)
-                error_type = type(error).__name__
+                if self.before_execute is not None:
+                    self.before_execute()
+                response, invocation = native_put_if_absent({
+                    "format_version": 1, "kind": "ryframe-native-s3-put-if-absent",
+                    "scope_id": scope, "configuration": config, "bucket": bucket, "key": key,
+                    "source": str(source), "expected": expected, "metadata": metadata,
+                }, self.run)
+                outcome = response["status"]
+                remote_write_may_have_occurred = response["remote_write_may_have_occurred"]
+                returncode, error_type = invocation["returncode"], invocation["error_type"]
+            except NativeS3InvocationError as error:
+                outcome, returncode, error_type = error.outcome, error.returncode, error.error_type
+                remote_write_may_have_occurred = error.remote_write_may_have_occurred
             json.dump({"format_version": 1, "request_file": str(request), "outcome": outcome,
                        "returncode": returncode, "error_type": error_type,
-                       "stderr": redact_object_diagnostic(stderr, env)}, stream, ensure_ascii=False, indent=2)
+                       "remote_write_may_have_occurred": remote_write_may_have_occurred,
+                       "automatic_retry_permitted": False}, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
         if outcome != "created_unverified":
             raise ObjectCreateError(outcome, request, diagnostic) from None
-        return {"status": outcome, "response": response, "request_file": str(request), "diagnostic_file": str(diagnostic)}
+        return {"status": outcome, "response": response.get("response"), "request_file": str(request),
+                "diagnostic_file": str(diagnostic)}
 
     def verify_objects(self, side: str) -> None:
         scope = self.plan[side]["scope_id"]
         for bucket in sorted(BUCKETS):
             destination = self.work / f"owner-{side}-{bucket}-{uuid.uuid4().hex}.txt"
-            self.aws(side, "get-object", bucket, f"{scope}/.ryframe-owner", destination)
+            self.read_object(side, bucket, f"{scope}/.ryframe-owner", destination,
+                             max_bytes=4096)
             if destination.read_bytes() != f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode():
                 raise ValueError("对象 ownership 不属于本次明确隔离 scope")
 

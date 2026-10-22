@@ -29,7 +29,7 @@ def capture_one(tools: ExternalTools, request: dict, bucket: dict, item: dict) -
     captured = capture_object(tools, "source", bucket["bucket"], item["key"], output,
                               expected=expected, max_bytes=request["max_object_bytes"])
     verify_capture(tools, "source", bucket["bucket"], item["key"], output,
-                   expected=expected, max_bytes=request["max_object_bytes"])
+                   expected=expected, max_bytes=request["max_object_bytes"], transport="rust-s3-sigv4")
     artifact = {"file": (output / "object.bin").relative_to(tools.work).as_posix(), **expected}
     entry = {"key": item["key"], "artifact": artifact, "metadata": captured["metadata"],
              "capture": {"file": (output / "capture.json").relative_to(tools.work).as_posix(),

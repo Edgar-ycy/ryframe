@@ -4,31 +4,20 @@
 
 ## 部署与发布
 
-生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。部署前复制 `deploy/.env.production.example`，在受控环境中填写镜像摘要、服务地址、`APP_SCOPE_ID` 和各密钥文件路径。 先展开 Compose 配置检查最终变量和挂载，再启动服务：
+生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在受控的忽略目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <目录>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<摘要>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过：
 
 ```powershell
-docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml config
-docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml up -d
+docker compose -f deploy/compose.prod.yml config
+docker compose -f deploy/compose.prod.yml up -d
 ```
 
-Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；SQL 导入后仍须 `control verify`，并为实际租户目标运行 `tenant-data up/verify`。
+四角色部署顺序是先更新控制库与租户库，再启动 Worker 和 API；模板结构检查不替代真实环境的启动和升级验收。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；SQL 导入后仍须 `control verify`，并为实际租户目标运行 `tenant-data up/verify`。 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
-当前版本只接受全新生产库。已有真实生产旧库需要先设计并演练非破坏升级方案，不能使用 reset 代替升级。
+当前版本只接受全新生产库。已有真实生产旧库需要先设计并演练非破坏升级方案，不能使用 reset 代替升级。 生产 API 还必须通过 TOML 的 `app.locales_dir` 提供完整 `zh-CN.toml` 与 `en-US.toml`；默认目录为 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`。缺失或加载失败会严格拒绝生产启动；开发环境的内嵌回退不能替代生产资源部署。
 
 ## 非生产重建
 
-`ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。执行前必须停止 API、Worker 和 scheduler，并完成全部只读预检。执行重建时必须通过 `RYFRAME_RESET_ADMIN_PASSWORD` 显式提供符合复杂度策略的管理员密码；普通种子用户 `user` 使用统一初始密码 `123456`，无需额外提供普通用户密码。重建验证同时核对 `admin`、`user` 的密码哈希及 `password_change_required=true`，任一不符均失败关闭；两个账号首次登录后都必须修改密码。
-
-```powershell
-$env:APP_ENV = "test"
-$env:RYFRAME_RESET_STATE_DIR = "D:/project/rustProject/ryframe/ryframe/.local-tests/reset/<本次目录>"
-cargo reset -- plan
-cargo reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
-```
-
-执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。`cargo reset` 是使用者直接入口；框架维护工具 `cargo xtask data reset` 消费同一任务图并要求显式 `--write`。排障时不要混用两种入口的状态目录，也不要通过删除 ledger 启动新的重建。
-
-报告的 `status` 区分 `completed`（本次完成）、`reused`（复用同一 ledger 的原完成）和 `failed`。`completed_at` 记录锁释放后持久化的原完成时间，重复执行不更新该值，也不重新运行预检或破坏性阶段；`reported_at` 仅表示报告生成时间。锁释放失败、中断或缺少完成证据时，重复执行仍失败，必须人工核对服务停止状态、MySQL 环境锁及清单内精确资源，保留原始失败记录。新的绝对 `RYFRAME_RESET_STATE_DIR` 表示一次新的维护操作，必须重新生成并核验 plan、ownership 和资源范围；不得通过删除或覆盖旧 ledger 触发重置。当前开发版本使用 ledger v4 和 report v2，旧版账本明确拒绝，不自动转换，旧本地证据继续保留。
+重建仅用于非生产环境。完整配置、双阶段命令、账本及失败恢复规则见[架构说明：非生产重建](architecture.md#非生产重建)；生产环境永久拒绝该入口。
 
 ## HTTP 5xx 与高延迟
 
@@ -50,35 +39,37 @@ cargo reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
 
 立即撤销 token family 和当前会话，核对用户授权版本、客户端 IP 与审计事件。确认泄露后轮换相关凭据并保留证据。旧开发版普通账号无法登录且密码未知时，使用[显式账号恢复流程](api.md#异常账号恢复)；不要重复初始化或直接修改密码哈希。停用与改密要求独立，重置成功不会自动启用账号。
 
-## 限流拒绝
+## 依赖与任务排障
+
+### 限流拒绝
 
 区分租户配额、账号策略和基础设施故障。只在确认业务容量允许后调整配置，不删除限流键或绕过租户边界。
 
-## 数据库副本与读回退
+### 数据库副本与读回退
 
 检查复制延迟、连接健康和 read consistency。授权、任务、导出与状态变更必须回到主库；不要把强一致读临时改为副本读。
 
-## 后台任务
+### 后台任务
 
 检查 lease、heartbeat、attempt、公开错误和死信状态。数据库会拒绝重复领取；修复原因后使用受控重试，不直接改任务终态。
 
-## 定时调度
+### 定时调度
 
 核对表达式、时区、misfire 策略和下一次运行时间。避免同一业务任务由多个 scheduler 重复创建。
 
-## 消息中心投递
+### 消息中心投递
 
 检查 outbox、分发任务、目标受众和多语言参数。先恢复幂等消费，再处理积压；不要跳过租户或权限过滤。
 
-## OpenTelemetry 导出器
+### OpenTelemetry 导出器
 
 导出失败不应阻断业务请求。检查 endpoint、TLS、超时和队列丢弃指标，恢复后确认 traceparent 继续传播。
 
-## 数据库连接容量
+### 数据库连接容量
 
 按控制库、租户目标和 Worker 分别统计池使用量。优先处理泄漏、慢查询和错误并发，再调整池上限；总连接预算不得超过数据库限制。
 
-## 磁盘容量
+### 磁盘容量
 
 检查 `target`、日志、临时 XLSX、上传暂存和本地对象目录。只删除已确认的构建缓存或已过期产物，保留最新调试符号和 reset ledger。
 
@@ -114,7 +105,7 @@ cargo xtask data backup status
 
 ### 隔离恢复与验收
 
-1. 准备全新的隔离数据库和对象前缀，先按当前基线初始化并建立目标 ownership。逻辑 target key 保持一致，物理数据库、scope、JWT 密钥和 Redis namespace 必须与原环境不同，Worker 使用 external 模式。维护机的 `APP_CONFIG_DIR` 指向登记库，`--restore-config-dir` 指向隔离环境配置；检查实际生效的 `APP_*` 覆盖值，避免把源配置覆盖到目标上。
+1. 准备全新的隔离数据库和对象前缀，先按当前基线初始化并建立目标 ownership。逻辑 target key 保持一致，物理数据库、scope、JWT 密钥和 Redis namespace 必须与原环境不同，Worker 使用 external 模式。维护命令的 `--config-dir <目录>` 选择源侧登记库配置，`--restore-config-dir <目录>` 只选择隔离恢复目标配置；核对两份明文文件中的物理身份、scope 和端点，避免混用源与目标。应用相对配置目录以命令当前工作目录解析，建议使用绝对路径。
 2. 按 `crates/ryframe-application/src/ports/backup/restore.rs` 的 `RestorePlan` 填写完整目标、故障时间、前端 SHA、API/Worker 就绪地址和新对象前缀。物理数据库身份必须匹配，不能指向任一原业务库。
 3. 在开始外部还原之前执行 `restore-begin`。重复相同 plan 不重置计时。外部还原仅覆盖该 plan 中已核验的隔离资源，保留目标自己的 ownership 和备份登记元数据；数据库转储只含清单中的业务表，不执行指向源库的 `USE`、数据库创建或跨库语句。对象路径仅替换 scope 前缀，不能复制源 ownership 标记。
 4. 停止目标业务写入，执行 `restore-verify-data`。它重新验证备份文件、当前 schema、完整表内容、租户关系和完整对象集合，缺失、多余、损坏或错误 ownership 都会失败。
@@ -122,24 +113,26 @@ cargo xtask data backup status
 
 依次运行 `cargo xtask data restore begin --plan <绝对计划> --output <绝对新running.json> --restore-config-dir <绝对目标配置> --write`、`cargo xtask data restore verify-data --id <演练ID> --backup-root <绝对备份根> --output <绝对新data-verified.json> --restore-config-dir <绝对目标配置> --write` 和 `cargo xtask data restore verify --id <演练ID> --proof <绝对业务证明> --tests-receipt <绝对测试明细> --runtime-receipt <绝对运行收据> --target-plan <绝对目标计划> --runner-root <绝对干净测试runner工作树> --restore-config-dir <绝对目标配置> --write`。计划、证明、收据和输出必须位于当前后端 `.local-tests` 子目录；备份根、隔离配置和干净 runner 可以使用已登记的外部绝对目录。所有路径都不能经过符号链接或重解析点；输入文件和目录必须存在，输出父目录必须存在且目标文件必须不存在。这些条件及 `--write` 在启动维护二进制和连接资源前核验。业务成功后先在同目录写入并同步临时文件，再以 create-new 语义原子发布并重读规范字节、JSON 和路径。参数错误、业务失败或已有目标不会创建或截断成功记录；若业务写入成功后发布或复核失败，保留登记库状态和任何已发布文件，先运行只读状态核对，不得盲目重放。
 
+原生 fresh-target 静态校验只从所选明文配置文件读取连接、凭据、Redis 和 Worker 地址，环境映射仅用 `APP_ENV=test` 选择测试文件。请求可用 `configuration_directory` 明确绑定执行后端内的配置目录，省略时使用该后端的 `config`；`app.test.toml` 必须存在，公共 `app.toml` 可省略。旧配置目录、端点、密码和 `_FILE` 环境覆盖不参与本入口的配置或摘要，旧对象凭据变量名也不能代替请求中的明确凭据字段。静态校验通过不能代替进程、端口、实际 ownership 和完整恢复链路的验证。 原生源对象采集和目标对象复核使用 Rust S3 读取端口，凭据来自已绑定文件，HTTP 使用 AWS-LC TLS 和 SigV4。目标清单逐页读取并核对完成状态、scope、重复 key 和 continuation token；对象 GET 使用明确的长度上限、条件 ETag/版本和独占创建的文件，禁止重定向、自动重试、自动解压和部分内容响应。读取中断后保留部分文件，须核查该 attempt 的失败证据，不能把残留文件当作成功导出。源导出的公开 `request.json` 和 `export.json` 只保留 S3 端点与区域，凭据保留在原始私有文件中；原文件的字节数和摘要仍独立绑定，并在复核时重新生成公开投影进行比较。原生读取不需要 AWS 子进程；恢复流程其余尚由 Python 采集或复制的步骤仍按各自预检核对工具依赖，不能仅凭原生读取通过就省略完整恢复验收。
+
 首次向 fresh target 写入数据库或对象前，执行 `cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write`，登记目标从未启动。登记入口在 ownership 控制锁内，写入前后核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入过程，并在每次数据库或对象写入前及退出时重新核验。登记文件绑定两个计划的绝对路径、大小和 SHA-256 及零进程观察；恢复收据绑定该登记文件，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
 
 完整验收保留成功恢复及损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源；`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败，超时未完成仍会触发告警。
 
 ### 生成恢复业务证明
 
-使用 `cargo xtask check recovery inputs bindings --reference-plan <本侧参考计划> --target-plan <本侧目标计划> --backup-receipt <同一backup.json> --record <data-verified.json>` 只读预览数据绑定；加 `--output <新绑定文件> --write` 才原子发布。该入口从已核验记录和原备份清单推导唯一的 `record`、`manifest`，不接受人工摘抄或重组。前后端必须是清单绑定 SHA 的干净源码，使用 `cargo xtask check recovery runtime build --source-backend <后端绝对工作树> --expected-head <后端完整 SHA> --source-frontend <前端绝对工作树> --expected-frontend-head <前端完整 SHA> --output <后端工作树/.local-tests/restore/build.json> --write --frontend-dir <当前工具前端>` 统一生成并核验实际 API、Worker 和前端生产构建收据。历史源码不需要提供当前 CLI；协调器使用当前干净工具调用目标工作树自己的 Vite，并在目标前端写入 `.vite/restore-build.json`。已有前端收据会经过相同的严格核验后复用，绝不覆盖或补造构建事实。两份当前构建收据均使用 v2 格式，分开绑定按产物角色计算的产品输入、验收工具输入、完整源码清单、实际工具链和有效构建参数；前端另绑定 production 模式读取的环境文件及完整 `dist` 文件清单。旧格式仅保留为历史文件，不能用于当前恢复。
+使用 `cargo xtask check recovery inputs bindings --reference-plan <本侧参考计划> --target-plan <本侧目标计划> --backup-receipt <同一backup.json> --record <data-verified.json>` 只读预览数据绑定；加 `--output <新绑定文件> --write` 才原子发布。该入口从已核验记录和原备份清单推导唯一的 `record`、`manifest`，不接受人工摘抄或重组。前后端必须是清单绑定 SHA 的干净源码，使用 `cargo xtask check recovery runtime build --source-backend <后端绝对工作树> --expected-head <后端完整 SHA> --source-frontend <前端绝对工作树> --expected-frontend-head <前端完整 SHA> --output <后端工作树/.local-tests/restore/build.json> --write --frontend-dir <当前工具前端>` 统一生成并核验实际 API、Worker 和前端生产构建收据。历史源码不需要提供当前 CLI；协调器使用当前干净工具调用目标工作树自己的 Vite，并在目标前端写入 `.vite/restore-build.json`。已有前端收据会经过相同的严格核验后复用，绝不覆盖或补造构建事实。当前后端构建收据使用 v2、前端构建收据使用 v3，分开绑定按产物角色计算的产品输入、验收工具输入、完整源码清单、实际工具链和有效构建参数。前端从收据保存的 `configuration.environment` 选择 `app.dev.toml`、`app.test.toml` 或 `app.prod.toml`，按公共 `app.toml`（可缺省）、所选环境文件（必需）的读取顺序绑定路径和摘要；同时绑定 `config/tools.json` 与 `.local-tests/frontend-tools.json` 的实际来源及优先级、受管 `.local-tests/build/source.json` 身份和完整 `dist` 清单。核验不依赖当前 shell 的 `APP_ENV` 或旧 `VITE_*`；真实构建要求合并后的 `api_origin` 为空，正式来源身份必须等于声明的精确干净 HEAD，且与 `dist/build-identity.json` 一致。旧格式仅保留为历史文件，不能用于当前恢复。
 
-`runtime start` 必须同时传入 runtime registration、完整 target plan、双端来源、构建收据和数据绑定；它从 target plan 绑定的环境文件启动 API、Worker、前端，并为每个角色先保存 operation intent，再用同一 Job Object 或进程组登记完整树。首次创建运行目录前还会在目录外写入唯一 creation intent，因此控制器在目录创建、状态写入或进程收据发布的任一切点退出后，都只能通过绑定 owner 和 generation 的 `runtime recover --write` 接管。每个 generation 只允许当前 operation ID 对应的日志、进程、完整树、成员、控制、结果、完成和 launch 收据；未知文件、目录或链接会阻断继续操作并保留现场。`runtime status` 只读派生真实的 `registered_not_started`、`running`、`degraded`、`exited`、`interrupted` 或停止状态；`runtime stop --generation <N> --write` 反向回收三棵树并证明端口释放。
+`runtime start` 必须同时传入 runtime registration、完整 target plan、双端来源、构建收据和数据绑定；它从 target plan 绑定的明文配置文件或原子配置快照启动 API、Worker、前端，并为每个角色先保存 operation intent，再用同一 Job Object 或进程组登记完整树。首次创建运行目录前还会在目录外写入唯一 creation intent，因此控制器在目录创建、状态写入或进程收据发布的任一切点退出后，都只能通过绑定 owner 和 generation 的 `runtime recover --write` 接管。每个 generation 只允许当前 operation ID 对应的日志、进程、完整树、成员、控制、结果、完成和 launch 收据；未知文件、目录或链接会阻断继续操作并保留现场。`runtime status` 只读派生真实的 `registered_not_started`、`running`、`degraded`、`exited`、`interrupted` 或停止状态；`runtime stop --generation <N> --write` 反向回收三棵树并证明端口释放。
 三端就绪后，用 `cargo xtask check recovery runtime bind --source-backend <执行后端工作树> --source-frontend <前端工作树> --build-receipt <build.json> --launch-receipt <generation目录/runtime-launch.json> --bindings <绑定文件> --output .local-tests/restore/runtime.json --write` 签发 v3 运行收据。普通候选的产品与执行后端必须是同一提交；B0 另外显式传入 `--adapter-contract legacy-stable-readiness-b0-v1 --product-backend <815c5eaf 产品工作树>`，执行来源必须是已登记的 `c05114bc` 适配提交。运行收据分别保存备份来源、后端产品来源、后端执行来源、适配合同、前端来源以及三进程 generation，不能用备份清单的源码 SHA 冒充运行二进制来源。该入口核对源码、二进制、进程创建身份、完整树、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
 
-前端成组设置 `RYFRAME_RESTORE_BINDINGS`、`RYFRAME_RESTORE_RUNTIME_RECEIPT`、`RYFRAME_RESTORE_TARGET_PLAN`、`RYFRAME_RESTORE_BACKEND_DIR`、`RYFRAME_RESTORE_RUNNER_SHA` 和 `RYFRAME_RESTORE_VERIFIER_SHA`：前三项分别指向绑定文件、运行收据和严格目标计划，后三项指向当前干净协调器源码、当前干净前端测试 runner 的完整 SHA，以及当前干净后端核验器的完整 SHA。另用 `RYFRAME_E2E_SCOPE_ID` 和 `RYFRAME_E2E_BASE_URL` 绑定新 scope 和已启动的生产站点；原数据身份从严格目标计划绑定的备份、同代 STOP/START 与 source-runtime 递归推导，再运行 `corepack pnpm check --stage browser --real --server preview`。目标计划和运行收据独立绑定实际产品前后端，因此 B0 产品前端可以与当前测试 runner 不同。首次登录前，测试 runner 使用绝对路径 `RYFRAME_PYTHON` 调用已核验后端的只读数据预检，完整重验目标计划、来源代次和血缘，并将运行收据的 launch 规范路径与摘要、lifecycle、构建、端点和三角色进程文件交叉绑定后，取得内存中的唯一文件绑定；预检不访问服务、不创建控制锁或 Python 字节码；预检失败不得进行登录、注销或业务请求，不自行抽查少量收据字段替代完整核验。测试开始及结束均复核来源；运行期间替换进程、修改源码或产物都会拒绝生成成功证明。各文件只保存摘要和资源归属，不包含密钥。
+在隔离验收配置文件中成组登记绑定文件、运行收据、严格目标计划、当前干净协调器源码路径、当前干净前端测试 runner 完整 SHA 和当前干净后端核验器完整 SHA，并绑定新 scope 与已启动的生产站点。字段和文件选择参数以配置事实源及 CLI help 为准，接线仍待整合核对；原数据身份从严格目标计划绑定的备份、同代 STOP/START 与 source-runtime 递归推导，再运行 `corepack pnpm check --stage browser --real --server preview`。目标计划和运行收据独立绑定实际产品前后端，因此 B0 产品前端可以与当前测试 runner 不同。首次登录前，测试 runner 使用工具文件中登记的已验证解释器绝对路径调用已核验后端的只读数据预检，完整重验目标计划、来源代次和血缘，并将运行收据的 launch 规范路径与摘要、lifecycle、构建、端点和三角色进程文件交叉绑定后，取得内存中的唯一文件绑定；预检不访问服务、不创建控制锁或 Python 字节码；预检失败不得进行登录、注销或业务请求，不自行抽查少量收据字段替代完整核验。测试开始及结束均复核来源；运行期间替换进程、修改源码或产物都会拒绝生成成功证明。各文件只保存摘要和资源归属，不包含密钥。
 
-测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 runner 的 `.local-tests/playwright-real/restore-<演练ID>.json`，测试明细和运行收据副本使用同一前缀相邻保存。证明明确记录备份来源、后端产品与执行来源、适配合同、产品前端、测试 runner 和当前后端核验器 SHA；测试明细同时绑定演练、目标计划、运行收据、双端来源与测试时间，并保存唯一 STOP source-generation 与派生 dataset-lineage 的完整文件描述；证明保存这两份文件的 SHA-256。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配、明细不一致或数据验证尚未完成时不生成成功证明。最终 `restore verify` 必须同时收到三份相邻证据、原目标计划和 runner 根目录；维护 CLI 会从登记库构造权威上下文，由当前干净后端从 runtime launch 绑定的 registration 读取本侧参考计划，重新核验目标计划、运行中三进程、完整构建来源、runner 以及全部摘要，再登记成功。数据血缘必须与同一备份的 STOP、START、当前 source-runtime 全部一致；另一份独立 lineage 或另一侧参考计划不能替代此链。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。最终核验使用统一 data 入口在编译时绑定当前后端 SHA；直接运行旧维护二进制会失败。若设置 `RYFRAME_PYTHON`，必须提供已验证解释器的绝对路径。核验器会以隔离模式重新执行 Python 环境检查，绑定解释器文件身份与摘要，限制输出和运行时间，并在前后再次核对解释器及双端 Git 来源。
+测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 runner 的 `.local-tests/playwright-real/restore-<演练ID>.json`，测试明细和运行收据副本使用同一前缀相邻保存。证明明确记录备份来源、后端产品与执行来源、适配合同、产品前端、测试 runner 和当前后端核验器 SHA；测试明细同时绑定演练、目标计划、运行收据、双端来源与测试时间，并保存唯一 STOP source-generation 与派生 dataset-lineage 的完整文件描述；证明保存这两份文件的 SHA-256。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配、明细不一致或数据验证尚未完成时不生成成功证明。最终 `restore verify` 必须同时收到三份相邻证据、原目标计划和 runner 根目录；维护 CLI 会从登记库构造权威上下文，由当前干净后端从 runtime launch 绑定的 registration 读取本侧参考计划，重新核验目标计划、运行中三进程、完整构建来源、runner 以及全部摘要，再登记成功。数据血缘必须与同一备份的 STOP、START、当前 source-runtime 全部一致；另一份独立 lineage 或另一侧参考计划不能替代此链。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。最终核验使用统一 data 入口在编译时绑定当前后端 SHA；直接运行旧维护二进制会失败。解释器必须在工具文件配置中以已验证的绝对路径登记。核验器会以隔离模式重新执行 Python 环境检查，绑定解释器文件身份与摘要，限制输出和运行时间，并在前后再次核对解释器及双端 Git 来源。
 
 ### 参考环境的外部验收驱动
 
-`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、AWS CLI 和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <新文件> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 隔离业务 crate 生成资源验收覆盖。
+`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、原生 Rust S3 客户端和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <新文件> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要；原生 S3 客户端直接读取计划绑定的受控明文配置，不启动 AWS CLI 子进程，也不通过环境变量传递访问密钥。凭据值不得进入计划或公开收据。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由隔离业务 crate 生成资源验收覆盖。
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
@@ -157,7 +150,7 @@ cargo xtask data backup status
 | `copy --backup-root <备份目录> --copy-id <独立副本ID>` | 创建保留原摘要的独立备份副本；先登记副本并执行 `restore-begin`。 |
 | `damage --backup-root <副本目录> --artifact <清单内路径> [--missing]` | 仅损坏或删除指定副本产物，保留原备份；随后用 `restore-verify-data` 验证失败状态及告警。 |
 
-发布本侧目标计划后，先用 `cargo xtask check recovery runtime register --plan <本侧参考计划> --target-plan <本侧目标计划> --output <新运行登记文件> --write` 登记从未启动的目标。产品 `backup-register`、`restore-begin`、后续验证的状态仍写入 `APP_CONFIG_DIR` 指定的源侧登记库，`--restore-config-dir` 只指定独立恢复目标；`restore-begin --output <新文件>` 直接原子发布运行中记录，再传给外部恢复阶段。目标侧 ownership 与备份、恢复登记表必须完整保持初始化前像，不因登记操作获得例外。运行登记、完整资源像或任意产物漂移都会失败；失败记录保留后像复核结果，未知写入不能自动重放。
+发布本侧目标计划后，先用 `cargo xtask check recovery runtime register --plan <本侧参考计划> --target-plan <本侧目标计划> --output <新运行登记文件> --write` 登记从未启动的目标。产品 `backup-register`、`restore-begin`、后续验证的状态仍写入 `--config-dir <目录>` 指定的源侧登记库，`--restore-config-dir` 只指定独立恢复目标；`restore-begin --output <新文件>` 直接原子发布运行中记录，再传给外部恢复阶段。目标侧 ownership 与备份、恢复登记表必须完整保持初始化前像，不因登记操作获得例外。运行登记、完整资源像或任意产物漂移都会失败；失败记录保留后像复核结果，未知写入不能自动重放。
 
 正式双侧恢复分别使用 `target_side: base` 与 `target_side: candidate` 的参考计划和独立工作目录。通过 `cargo xtask check recovery plan --plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧已发布arm结果> --fresh-target-verify <本侧观察目录/verify.json> --product-plan <产品RestorePlan文件>` 推导完整目标计划；加 `--output <新目标计划文件> --write` 才发布。它把 base 固定映射到 b0、candidate 固定映射到 b1，并绑定同一共享导出、原备份摘要、本侧初始化与完整 ownership、探针、前端 SHA 和产品恢复计划。目标计划分别记录维护初始化的 `maintenance_execution` 与比较产品的 `product_execution`；双侧可共享候选维护工具，B0 产品运行仍必须使用已登记适配源码和对应构建。产品计划的 `fault_at` 必须使用 UTC `Z` 格式，小数位按实际精度保留 0、3 或 6 位，保证经过产品序列化后仍逐字段一致。`plan --plan <本侧参考计划> --target-plan <已发布目标计划>` 重新核对全部绑定；未知字段、侧别混用、证据漂移或输出覆盖都会失败。
 
@@ -169,7 +162,7 @@ cargo xtask data backup status
 
 成功后在同一账本执行 source-generation-stop，显式消费该 `source-runtime.json`。停止阶段亲自回收已登记 API/Worker 树，核对完整前后像并记录停止观察时间，然后才允许唯一 source-export。给 `backup` 传入同一停止外层结果、共享导出外层结果及其原始库存；备份前后均验证源没有换代，以及当前复验、实际停止观察、正式库存的时间顺序。清单先采集、进程后来才停止的流程会失败。验证或停止失败均保留证据且不可重放；不改写历史计划、收据、摘要或完成时间。
 
-B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-capture --help` 查看来源参数，再以 `comparison-capture ... --source-export-result <唯一导出外层结果> --output <新来源清单> --write` 生成严格的双版本来源清单。B0 必须分别提供原产品源码、已登记的工具适配源码和前端源码；B1 必须提供最终干净的双端源码。两侧都必须提供对应源码上的 v2 后端与前端生产构建收据，并共同绑定同一个已发布 `source-export` 的外层文件摘要及内部导出身份。`cargo xtask check recovery source comparison-verify --receipt <来源清单>` 只读重建并核对全部来源、构建产物、完整前端 `dist` 和导出证据；它不创建恢复 run、锁或业务写入，也不接受旧格式字段。
+B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-capture --help` 查看来源参数，再以 `comparison-capture ... --source-export-result <唯一导出外层结果> --output <新来源清单> --write` 生成严格的双版本来源清单。B0 必须分别提供原产品源码、已登记的工具适配源码和前端源码；B1 必须提供最终干净的双端源码。两侧都必须提供对应源码上的 v2 后端与 v3 前端生产构建收据，并共同绑定同一个已发布 `source-export` 的外层文件摘要及内部导出身份。`cargo xtask check recovery source comparison-verify --receipt <来源清单>` 只读重建并核对全部来源、构建产物、完整前端 `dist` 和导出证据；它不创建恢复 run、锁或业务写入，也不接受旧格式字段。历史 B0 前端尚无当前 TOML 和受管身份布局，必须另行完成正式适配登记；当前明确拒绝旧布局，不代表 B0 恢复已经验证通过。
 
 B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须指向登记的适配提交，并同时提供 `--expected-head <适配 SHA> --adapter-contract legacy-stable-readiness-b0-v1 --product-backend <原 B0 绝对工作树>`。入口会从当前工具内嵌补丁重建适配树，核对原 B0、适配提交、补丁摘要和产品输入域，任一项不匹配都会在调用 Cargo 前失败；不能复制当前脚本到旧工作树或手工补写 v2 收据。
 
@@ -183,7 +176,7 @@ API 与 Worker 的备份采集器每 60 秒读取控制库汇总，整次采集�
 
 `deploy/prometheus/ryframe-alerts.yml` 在 23 小时预警、24 小时告警，并分别检查缺失、过期、校验失败和采集失败。收到恢复失败或超时告警时先查看登记状态和保留的演练证据，不通过改登记时间消除告警。
 
-将该规则文件只读挂载或复制到现有 Prometheus 的 `/etc/prometheus/rules/ryframe-alerts.yml`，在其配置中显式加载这个文件。下例中的两个 HTTPS 地址应替换为现有监控入口，分别转发到 API 的 `/api/v1/monitor/metrics` 和 Worker 健康端口的 `/metrics`；生产 Compose 中的 Worker 默认只在后端网络可见，需要由现有监控网络或反向代理提供访问。密钥文件只保存与 RyFrame `APP_MONITOR_METRICS_BEARER_TOKEN_FILE` 相同的 token 内容，路径以 Prometheus 所在主机或容器为准。
+将该规则文件只读挂载或复制到现有 Prometheus 的 `/etc/prometheus/rules/ryframe-alerts.yml`，在其配置中显式加载这个文件。下例中的两个 HTTPS 地址应替换为现有监控入口，分别转发到 API 的 `/api/v1/monitor/metrics` 和 Worker 健康端口的 `/metrics`；生产 Compose 中的 Worker 默认只在后端网络可见，需要由现有监控网络或反向代理提供访问。密钥文件只保存与 RyFrame 明文配置 `monitor.metrics_bearer_token` 相同的 token 内容；这是 Prometheus 自身的凭据文件读取，路径以 Prometheus 所在主机或容器为准。
 
 ```yaml
 global:
@@ -229,6 +222,12 @@ scrape_configs:
 ## TLS 证书
 
 检查到期时间、主机名、完整链和私钥权限。轮换后验证 MySQL、Redis、对象存储、OTLP 与 Nginx；不要关闭证书校验作为长期修复。
+
+Redis 一般协议、Redis TLS、S3 HTTPS 和 OTLP HTTPS 真实测试分别使用后端根目录下 `.local-tests/service-tests/{redis,redis-tls,s3-https,otlp-https}/config` 中的显式 `AppConfig` 测试配置。公共 `app.toml` 可缺省，`app.test.toml` 必须存在；仅目录缺失会明确跳过并标记真实链路未验收，已有目录缺文件、配置非法、无权限或任何路径层级含链接/重解析点均失败。Redis 必须配置 `mode="required"`，TLS 角色还须 `tls=true`；连接、密码、DB、池和超时来自文件。每次测试在独占运行目录派生 scope 快照，保留其余字段及公共文件字节，清理结束前持有快照；来源漂移拒绝重新捕获。S3/OTLP 的 `test.toml` 必须且仅含 `ca_certificate` 绝对文件路径，客户端显式加载该 CA，不用环境变量传递项目端点、凭据或 CA，也不降级 HTTPS。
+
+TLS 执行器消费调用方已从 `.local-tests/integration/ci.toml` 加载的同一 `IntegrationConfiguration` 对象，不重新加载参数，也不使用环境回退。文件严格要求 `format_version=1`、`run_id`、`artifact_root`、`redis_config_dir`、`openssl_program`，仅 `test_jobs`、`timeout_secs` 可省略。`run_id` 为 1～64 位 ASCII 字母、数字或短横线；`test_jobs` 默认 4、范围 1～64，Windows 必须为 4；`timeout_secs` 默认 900、范围 1～3600 秒。相对路径以后端根目录解析；路径不得为空、含控制字符或父目录跳转，各层拒绝链接/重解析点。`openssl_program` 指向普通程序文件，明确值 `"openssl"` 则使用工具 PATH。上游 Redis 必须显式配置回环主机和端口，并使用普通 TCP；配置 `tls=true` 会明确报告不支持，不自动降级。
+
+fixture 启动后，执行器独占创建三个 TLS 角色配置目录。Redis 保留捕获的账号、DB、客户端证书/私钥、池和超时，只替换代理端点与 CA；S3/OTLP 使用 fixture 端点及测试字段。执行前后复核输入和发布文件；已有目录不覆盖，发布不完整、来源漂移或外来文件均保留现场及证书并报错。该执行器和测试消费者的文件协议不能替代 CI 生产者接线；工作流仍须生成这些文件并同步产物上传路径，真实服务验收须另行执行。
 
 ## 故障记录
 

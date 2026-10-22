@@ -56,15 +56,20 @@ impl FrozenEntry {
     }
 
     fn check(&self) -> Result<()> {
-        if handle_identity(&self.handle, self.directory)? != self.identity
-            || path_identity(&self.path, self.directory)? != self.identity
-        {
-            return Err("目标输入的内核身份、链接数量或文件内容发生变化".into());
-        }
+        self.check_identity()?;
         if let Some(expected) = &self.sha256
             && digest::file(&self.path)?.sha256 != *expected
         {
             return Err("目标保护输入的文件摘要发生变化".into());
+        }
+        Ok(())
+    }
+
+    fn check_identity(&self) -> Result<()> {
+        if handle_identity(&self.handle, self.directory)? != self.identity
+            || path_identity(&self.path, self.directory)? != self.identity
+        {
+            return Err("目标输入的内核身份、链接数量或文件内容发生变化".into());
         }
         Ok(())
     }
@@ -87,6 +92,19 @@ impl Inputs {
         for entry in &self.entries {
             entry.check()?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn checkpoint(&self) -> Result<()> {
+        // Windows 保护句柄不共享写入和删除权限，持有期间路径无法被改写或替换；
+        // 阶段边界仍执行完整身份与摘要复核。Unix 没有同等共享模式，逐项核对身份。
+        #[cfg(windows)]
+        return Ok(());
+        #[cfg(not(windows))]
+        for entry in &self.entries {
+            entry.check_identity()?;
+        }
+        #[cfg(not(windows))]
         Ok(())
     }
 }
@@ -128,6 +146,16 @@ impl Generation {
         self.guard_file.check()?;
         self.process.check()?;
         self.lock.as_ref().ok_or("目标初始化目录锁已释放")?.check()
+    }
+
+    pub(crate) fn checkpoint(&self) -> Result<()> {
+        self.lock.as_ref().ok_or("目标初始化目录锁已释放")?;
+        self.process.check()?;
+        // Windows 目录保护句柄不共享删除权限，目标根和初始化锁不能在本代次中被替换。
+        // 阶段边界仍调用 check 完整核对所有内核身份。
+        #[cfg(not(windows))]
+        self.check()?;
+        Ok(())
     }
 
     pub(crate) fn finish<T>(mut self, result: Result<T>) -> Result<T> {

@@ -38,8 +38,24 @@ pub(super) fn capture(context: &TargetContext) -> Result<Value> {
     }
     let configuration = configuration(context)?;
     let table = serde_json::to_value(
-        crate::rate_limit::load_app_table(&execution, &context.environment)
-            .map_err(|_| "库存运行配置无法读取")?,
+        crate::rate_limit::load_app_table(
+            &execution,
+            configuration["directory"]
+                .as_str()
+                .map(std::path::Path::new),
+            context
+                .environment
+                .get("APP_ENV")
+                .map(String::as_str)
+                .unwrap_or(""),
+        )
+        .map_err(|error| {
+            format!(
+                "库存运行配置无法读取：{}；{}",
+                error.code(),
+                error.message()
+            )
+        })?,
     )?;
     // 配置从执行工作树读取；凭据和物理资源的边界仍属于协调后端。
     let physical = request_physical::binding(
@@ -76,13 +92,12 @@ pub(super) fn capture(context: &TargetContext) -> Result<Value> {
     Ok(result)
 }
 
-fn configuration(context: &TargetContext) -> Result<Value> {
+pub(super) fn configuration(context: &TargetContext) -> Result<Value> {
     let execution = context.execution_backend()?;
-    let directory = context
-        .environment
-        .get("APP_CONFIG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| execution.join("config"));
+    let directory = match context.request.get("configuration_directory") {
+        Some(value) => PathBuf::from(request_physical::strict_text(value)?),
+        None => execution.join("config"),
+    };
     let directory = if directory.is_absolute() {
         directory
     } else {
@@ -96,6 +111,16 @@ fn configuration(context: &TargetContext) -> Result<Value> {
     {
         return Err("库存配置必须位于执行后端或协调后端".into());
     }
+    let app_env = context
+        .environment
+        .get("APP_ENV")
+        .filter(|value| matches!(value.as_str(), "dev" | "test" | "prod"))
+        .ok_or("库存 APP_ENV 必须明确选择 dev、test 或 prod")?;
+    validate_absolute_path(
+        &directory.join(format!("app.{app_env}.toml")),
+        LocalTestPathKind::ExistingFile,
+    )
+    .map_err(|_| "库存配置缺少无链接的已选环境文件")?;
     let mut files = BTreeMap::new();
     for entry in fs::read_dir(&directory)? {
         let entry = entry?;
@@ -123,28 +148,10 @@ fn configuration(context: &TargetContext) -> Result<Value> {
     if files.is_empty() {
         return Err("库存配置目录没有 TOML 文件".into());
     }
-    let mut environment = context
-        .environment
-        .iter()
-        .filter(|(key, _)| key.starts_with("APP_"))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<BTreeMap<_, _>>();
-    for field in ["access_key_env", "secret_key_env"] {
-        let key = text(&context.target()["s3"][field], "对象凭据变量")?;
-        environment.insert(
-            key.into(),
-            context
-                .environment
-                .get(key)
-                .filter(|value| !value.is_empty())
-                .ok_or("库存环境缺少已登记凭据")?
-                .clone(),
-        );
-    }
     let path = resolved.to_str().ok_or("配置目录必须为 UTF-8")?;
     #[cfg(windows)]
     let path = path.strip_prefix(r"\\?\").unwrap_or(path);
     Ok(
-        json!({"directory": path, "files": files, "environment_sha256": digest::plan_hash(&serde_json::to_value(environment)?)?}),
+        json!({"directory": path, "files": files, "environment_sha256": digest::plan_hash(&json!({"APP_ENV": app_env}))?}),
     )
 }

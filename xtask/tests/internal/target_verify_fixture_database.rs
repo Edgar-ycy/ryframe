@@ -76,32 +76,40 @@ impl<'a> FakeTransport<'a> {
         };
         Ok(output(0, stdout.into_bytes()))
     }
-
-    fn objects(&self, spec: &CommandSpec) -> Result<CommandOutput> {
-        let bucket = argument(&spec.args, "--bucket")?;
-        assert!(["avatar", "config-packages", "exports", "imports", "uploads"].contains(&bucket));
-        let stdout = match spec.label.as_str() {
-            "head-bucket" | "get-bucket-versioning" => b"{}".to_vec(),
-            "list-objects-v2" => serde_json::to_vec(
-                &json!({"IsTruncated":false,"Contents":[{"Key":format!("{SCOPE}/.ryframe-owner")}]}),
-            )?,
-            "get-object-owner" => {
-                let path = Path::new(spec.args.last().ok_or("fixture owner path")?);
-                let mut file = fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(path)?;
-                std::io::Write::write_all(&mut file, owner(bucket).as_bytes())?;
-                file.sync_all()?;
-                b"{}".to_vec()
-            }
-            _ => return Err("fixture 不支持非固定只读对象操作".into()),
-        };
-        Ok(output(0, stdout))
-    }
 }
 
 impl Transport for FakeTransport<'_> {
+    fn s3(&self, request: crate::recovery::clone::native::s3::Request) -> Result<Value> {
+        use crate::recovery::clone::native::s3::Operation;
+        let bucket = request.bucket.as_str();
+        assert!(["avatar", "config-packages", "exports", "imports", "uploads"].contains(&bucket));
+        Ok(match request.operation {
+            Operation::HeadBucket | Operation::Versioning => json!({}),
+            Operation::List {
+                prefix,
+                continuation,
+            } => {
+                assert_eq!(prefix, format!("{SCOPE}/"));
+                assert!(continuation.is_none());
+                json!({"IsTruncated":false,"Contents":[{"Key":format!("{SCOPE}/.ryframe-owner")}]})
+            }
+            Operation::Get {
+                destination, key, ..
+            } => {
+                assert!(destination.starts_with(&self.fixture.local));
+                assert_eq!(key, format!("{SCOPE}/.ryframe-owner"));
+                let mut file = fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(destination)?;
+                std::io::Write::write_all(&mut file, owner(bucket).as_bytes())?;
+                file.sync_all()?;
+                json!({})
+            }
+            _ => return Err("fixture 不支持非固定只读对象操作".into()),
+        })
+    }
+
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
         assert_eq!(spec.cwd, self.fixture.backend);
         assert!(spec.stdin.is_none());
@@ -120,14 +128,6 @@ impl Transport for FakeTransport<'_> {
             )
         {
             self.mysql(&spec)
-        } else if spec.program
-            == Path::new(
-                self.fixture.request["tools"]["aws"]["path"]
-                    .as_str()
-                    .unwrap(),
-            )
-        {
-            self.objects(&spec)
         } else {
             Err("fixture 外部命令不在已声明替身内".into())
         }?;

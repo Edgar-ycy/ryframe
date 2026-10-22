@@ -102,9 +102,9 @@ impl DevexSuite {
                 requires_frontend: false,
             }),
             Self::CargoDevSave => Ok(SuiteDefinition {
-                steps: CARGO_DEV_SAVE,
+                steps: save_steps(variant)?,
                 features: &[],
-                environment: save_case_environment(variant)?,
+                environment: &[],
                 remove_environment: &[],
                 requirement: SuiteRequirement::Ready,
                 requires_frontend: false,
@@ -281,22 +281,21 @@ fn resource_generator_steps(variant: &str) -> Result<&'static [StepDefinition], 
     }
 }
 
-fn save_case_environment(variant: &str) -> Result<&'static [(&'static str, &'static str)], String> {
-    const RESULT: (&str, &str) = (
-        "RYFRAME_DEVEX_SAVE_RESULT_PATH",
-        "{target}/cargo-dev-save-result.json",
-    );
-    match variant {
-        "config-only" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "config-only"), RESULT]),
-        "api-only" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "api-only"), RESULT]),
-        "worker-only" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "worker-only"), RESULT]),
-        "shared-runtime" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "shared-runtime"), RESULT]),
-        "locales" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "locales"), RESULT]),
-        "migration-only" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "migration-only"), RESULT]),
-        "resource-manifest" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "resource-manifest"), RESULT]),
-        "cancellation" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "cancellation"), RESULT]),
-        _ => Err("cargo-dev-save 的 --variant 不是已登记保存场景".into()),
+fn save_steps(variant: &str) -> Result<&'static [StepDefinition], String> {
+    crate::dev::SaveCase::parse(variant).ok_or("cargo-dev-save 的 --variant 不是已登记保存场景")?;
+    Ok(CARGO_DEV_SAVE)
+}
+
+pub(crate) fn step_arguments(step: &StepDefinition, variant: &str) -> Result<Vec<String>, String> {
+    if step.args.contains(&"{variant}") {
+        crate::dev::SaveCase::parse(variant)
+            .ok_or("cargo-dev-save 的 --case 不是已校验保存场景")?;
     }
+    Ok(step
+        .args
+        .iter()
+        .map(|arg| arg.replace("{variant}", variant))
+        .collect())
 }
 
 fn exact_variant(

@@ -1,14 +1,18 @@
 use std::{
-    env,
     fs::{self, OpenOptions},
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::Result;
+
+#[path = "tls/configuration.rs"]
+pub(crate) mod configuration;
+use super::integration_configuration;
+use integration_configuration::IntegrationConfiguration;
 
 #[path = "tls/certificate.rs"]
 mod certificate;
@@ -24,15 +28,8 @@ pub(crate) use fixture::FixtureServers;
 #[allow(unused_imports)]
 pub(crate) use process::{ProcessOutcome, run_redirected};
 
-const LOOPBACK_HOST: &str = "127.0.0.1";
 const LOOPBACK_NAMES: &[&str] = &["127.0.0.1", "::1", "localhost"];
-const DEFAULT_REDIS_PORT: u16 = 6379;
-const DEFAULT_REDIS_DATABASE: &str = "15";
-const DEFAULT_TIMEOUT_SECONDS: u64 = 900;
 const MAX_LOG_TAIL_LINES: usize = 80;
-const ARTIFACT_ENV: &str = "RYFRAME_TLS_ARTIFACT_DIR";
-const RUN_ID_ENV: &str = "RYFRAME_INTEGRATION_RUN_ID";
-const DEFAULT_ARTIFACT_ROOT: &str = ".local-tests/integration/tls";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TestSpec {
@@ -69,111 +66,128 @@ pub(crate) struct RedisEndpoint {
     pub(crate) port: u16,
 }
 
-struct GateOptions {
+struct GateOptions<'a> {
     backend_root: PathBuf,
     target_dir: PathBuf,
     jobs: usize,
     timeout: Duration,
-    artifact_root: PathBuf,
+    input: &'a IntegrationConfiguration,
 }
 
-pub(crate) struct TestEnvironment {
-    pub(crate) values: Vec<(String, String)>,
-    pub(crate) removed: Vec<&'static str>,
-}
-
-pub(crate) fn run_from_environment(
+// 主控制器加载一次；TLS只消费同一配置对象并按捕获前像复核，不重新加载参数。
+pub(crate) fn run_from_configuration(
     backend_root: &Path,
     target_dir: &Path,
-    jobs: usize,
+    configuration: &IntegrationConfiguration,
 ) -> Result<PathBuf> {
-    let artifact_root = env::var_os(ARTIFACT_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_ARTIFACT_ROOT));
+    configuration.verify()?;
     run_gate(GateOptions {
-        backend_root: backend_root.to_path_buf(),
-        target_dir: target_dir.to_path_buf(),
-        jobs: jobs.max(1),
-        timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECONDS),
-        artifact_root: if artifact_root.is_absolute() {
-            artifact_root
-        } else {
-            backend_root.join(artifact_root)
-        },
+        backend_root: backend_root.to_owned(),
+        target_dir: target_dir.to_owned(),
+        jobs: configuration.test_jobs,
+        timeout: configuration.timeout,
+        input: configuration,
     })
 }
 
-fn run_gate(options: GateOptions) -> Result<PathBuf> {
-    let run_id = env::var(RUN_ID_ENV)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| format!("local-{}", std::process::id()));
-    let output_dir = reserve_output_dir(&options.artifact_root, &run_id)?;
-    println!("tls_integration_artifacts={}", output_dir.display());
-    let material_dir = output_dir.join("fixture-material");
+fn run_gate(options: GateOptions<'_>) -> Result<PathBuf> {
+    options.input.verify()?;
+    integration_configuration::files::create_parents(&options.input.artifact_root)?;
+    let output = reserve_output_dir(&options.input.artifact_root, &options.input.run_id)?;
+    println!("tls_integration_artifacts={}", output.display());
+    let material = output.join("fixture-material");
     let mut failures = Vec::new();
     let mut fixtures = None;
-    let mut ca_cert = None;
-
-    let started = (|| -> Result<()> {
-        let endpoint = redis_endpoint_from_environment()?;
-        let upstream = check_redis(&endpoint)?;
-        fs::create_dir(&material_dir).map_err(|error| {
-            format!(
-                "无法创建 TLS fixture 证书目录 {}：{error}",
-                material_dir.display()
-            )
-        })?;
-        let material =
-            certificate::generate_certificates(&material_dir, &output_dir.join("openssl.log"))?;
-        ca_cert = Some(material.ca_cert.clone());
-        let servers = fixture::FixtureServers::start(
-            &material.server_cert,
-            &material.server_key,
-            upstream,
-            &output_dir.join("fixtures.log"),
-        )?;
-        fixtures = Some(servers);
-        Ok(())
-    })();
-    if let Err(error) = started {
+    let mut published = configuration::Published::new();
+    if let Err(error) = start_and_run(&options, &output, &material, &mut fixtures, &mut published) {
         failures.push(error.to_string());
-    } else {
-        let servers = fixtures
-            .as_ref()
-            .expect("成功启动 TLS fixture 后必须保存服务句柄");
-        let environment = test_environment(
-            ca_cert
-                .as_ref()
-                .expect("成功生成 TLS fixture 证书后必须保存 CA"),
-            servers.redis_port(),
-            servers.https_port(),
-            env::var("RYFRAME_REDIS_DATABASE").ok(),
-        );
-        failures.extend(collect_test_failures(|spec| {
-            run_test(
-                spec,
-                &options,
-                &environment,
-                &output_dir.join(format!("{}.log", spec.name)),
-            )
-        }));
     }
-
     if let Some(mut servers) = fixtures
         && let Err(error) = servers.stop()
     {
         failures.push(error.to_string());
     }
-    if let Err(error) = remove_material(&output_dir, &material_dir) {
-        failures.push(error.to_string());
-    }
-    write_summary(&output_dir, &failures)?;
-    if failures.is_empty() {
-        Ok(output_dir)
+    let cleanup = published.clean(options.input);
+    let preserve_material = !cleanup.is_empty();
+    failures.extend(cleanup);
+    if !preserve_material {
+        if let Err(error) = remove_material(&output, &material) {
+            failures.push(error.to_string());
+        }
     } else {
-        print_failure_tails(&output_dir);
+        failures.push(format!(
+            "配置发布/归属未确认，保留证书目录 {}，请核对现场，不自动重放",
+            material.display()
+        ));
+    }
+    if let Err(error) = options.input.verify() {
+        failures.push(error);
+    }
+    write_summary(&output, &failures)?;
+    if failures.is_empty() {
+        Ok(output)
+    } else {
+        print_failure_tails(&output);
+        Err(failures.join("\n").into())
+    }
+}
+
+fn start_and_run(
+    options: &GateOptions<'_>,
+    output: &Path,
+    material_dir: &Path,
+    fixtures: &mut Option<FixtureServers>,
+    published: &mut configuration::Published,
+) -> Result<()> {
+    let redis = options
+        .input
+        .redis
+        .app
+        .redis
+        .as_ref()
+        .expect("输入已验证redis");
+    let endpoint = redis_endpoint(&redis.host, &redis.port.to_string())?;
+    let upstream = check_redis(
+        &endpoint,
+        &redis.password,
+        Duration::from_secs(redis.timeout_secs),
+    )?;
+    fs::create_dir(material_dir).map_err(|error| {
+        integration_configuration::files::io_error(material_dir, "创建TLS证书目录", error)
+    })?;
+    let material = certificate::generate_certificates_with_program(
+        options.input.openssl_program.clone().into_os_string(),
+        material_dir,
+        &output.join("openssl.log"),
+    )?;
+    *fixtures = Some(FixtureServers::start(
+        &material.server_cert,
+        &material.server_key,
+        upstream,
+        &output.join("fixtures.log"),
+    )?);
+    let servers = fixtures.as_ref().expect("已保存fixture句柄");
+    published.publish(
+        &options.backend_root,
+        options.input,
+        &material.ca_cert,
+        servers.redis_port(),
+        servers.https_port(),
+    )?;
+    let failures = collect_test_failures(|spec| {
+        if let Err(error) = published.verify(options.input) {
+            return Some(error);
+        }
+        let failure = run_test(spec, options, &output.join(format!("{}.log", spec.name)));
+        match (failure, published.verify(options.input)) {
+            (Some(error), Err(check)) => Some(format!("{error}；{check}")),
+            (failure, Ok(())) => failure,
+            (None, Err(error)) => Some(error),
+        }
+    });
+    if failures.is_empty() {
+        Ok(())
+    } else {
         Err(failures.join("\n").into())
     }
 }
@@ -204,12 +218,7 @@ pub(crate) fn test_command(spec: &TestSpec, target_dir: &Path, jobs: usize) -> V
     command
 }
 
-fn run_test(
-    spec: &TestSpec,
-    options: &GateOptions,
-    environment: &TestEnvironment,
-    log_path: &Path,
-) -> Option<String> {
+fn run_test(spec: &TestSpec, options: &GateOptions<'_>, log_path: &Path) -> Option<String> {
     let mut log = match OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -225,10 +234,7 @@ fn run_test(
     command
         .args(&arguments[1..])
         .current_dir(&options.backend_root);
-    command.envs(environment.values.iter().map(|(key, value)| (key, value)));
-    for name in &environment.removed {
-        command.env_remove(name);
-    }
+    command.env("APP_ENV", "test");
     match process::run_redirected(command, &mut log, options.timeout) {
         Ok(process::ProcessOutcome::Exited(status)) if status.success() => None,
         Ok(process::ProcessOutcome::Exited(status)) => Some(format!(
@@ -256,58 +262,6 @@ pub(crate) fn collect_test_failures(
         .collect()
 }
 
-pub(crate) fn test_environment(
-    ca_cert: &Path,
-    redis_port: u16,
-    https_port: u16,
-    redis_database: Option<String>,
-) -> TestEnvironment {
-    let ca = ca_cert.to_string_lossy().into_owned();
-    let database = redis_database
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_REDIS_DATABASE.to_owned());
-    TestEnvironment {
-        values: vec![
-            ("NO_PROXY".to_owned(), "127.0.0.1,localhost".to_owned()),
-            ("no_proxy".to_owned(), "127.0.0.1,localhost".to_owned()),
-            ("SSL_CERT_FILE".to_owned(), ca.clone()),
-            ("RYFRAME_REDIS_HOST".to_owned(), LOOPBACK_HOST.to_owned()),
-            ("RYFRAME_REDIS_PORT".to_owned(), redis_port.to_string()),
-            ("RYFRAME_REDIS_DATABASE".to_owned(), database),
-            ("RYFRAME_REDIS_TLS".to_owned(), "1".to_owned()),
-            ("RYFRAME_REDIS_TLS_CA".to_owned(), ca.clone()),
-            ("RYFRAME_REDIS_TLS_INTEGRATION".to_owned(), "1".to_owned()),
-            ("RYFRAME_HTTPS_CA_PEM".to_owned(), ca),
-            ("RYFRAME_S3_HTTPS_INTEGRATION".to_owned(), "1".to_owned()),
-            (
-                "RYFRAME_S3_HTTPS_ENDPOINT".to_owned(),
-                format!("https://{LOOPBACK_HOST}:{https_port}"),
-            ),
-            ("RYFRAME_S3_HTTPS_REGION".to_owned(), "us-east-1".to_owned()),
-            ("RYFRAME_OTLP_HTTPS_INTEGRATION".to_owned(), "1".to_owned()),
-            (
-                "RYFRAME_OTLP_HTTPS_ENDPOINT".to_owned(),
-                format!("https://{LOOPBACK_HOST}:{https_port}/v1/traces"),
-            ),
-        ],
-        removed: vec![
-            "RYFRAME_REDIS_TLS_CLIENT_CERT",
-            "RYFRAME_REDIS_TLS_CLIENT_KEY",
-            "SSL_CERT_DIR",
-        ],
-    }
-}
-
-fn redis_endpoint_from_environment() -> Result<RedisEndpoint> {
-    let host = env::var("RYFRAME_REDIS_HOST")
-        .ok()
-        .unwrap_or_else(|| LOOPBACK_HOST.to_owned());
-    let port = env::var("RYFRAME_REDIS_PORT")
-        .ok()
-        .unwrap_or_else(|| DEFAULT_REDIS_PORT.to_string());
-    redis_endpoint(&host, &port)
-}
-
 pub(crate) fn redis_endpoint(host: &str, raw_port: &str) -> Result<RedisEndpoint> {
     let host = host.trim();
     if !LOOPBACK_NAMES.contains(&host) {
@@ -316,9 +270,9 @@ pub(crate) fn redis_endpoint(host: &str, raw_port: &str) -> Result<RedisEndpoint
     let port = raw_port
         .trim()
         .parse::<u16>()
-        .map_err(|error| format!("RYFRAME_REDIS_PORT 不是有效端口 {raw_port:?}：{error}"))?;
+        .map_err(|error| format!("redis.port 不是有效端口：{error}；请填写1..65535整数"))?;
     if port == 0 {
-        return Err("RYFRAME_REDIS_PORT 必须在 1 到 65535 之间，实际为 0".into());
+        return Err("redis.port 必须在 1 到 65535 之间；请修正文件配置".into());
     }
     Ok(RedisEndpoint {
         host: host.to_owned(),
@@ -326,44 +280,132 @@ pub(crate) fn redis_endpoint(host: &str, raw_port: &str) -> Result<RedisEndpoint
     })
 }
 
-pub(crate) fn check_redis(endpoint: &RedisEndpoint) -> Result<SocketAddr> {
+pub(crate) fn check_redis(
+    endpoint: &RedisEndpoint,
+    password: &str,
+    timeout: Duration,
+) -> Result<SocketAddr> {
+    let operation = if password.is_empty() { "PING" } else { "AUTH" };
+    let addresses = fixture::resolved_endpoints(endpoint).map_err(|_| {
+        format!(
+            "Redis {operation} 端点={}:{}；IOkind=不可用；端点解析失败；请核对回环主机和端口",
+            endpoint.host, endpoint.port
+        )
+    })?;
     let mut errors = Vec::new();
-    for address in fixture::resolved_endpoints(endpoint)? {
-        match probe_redis(address) {
+    for address in addresses {
+        if !address.ip().is_loopback() {
+            return Err(probe_error(
+                address,
+                operation,
+                None,
+                "解析结果不是回环地址，拒绝连接",
+            ));
+        }
+        match probe_redis(address, password, timeout) {
             Ok(()) => return Ok(address),
-            Err(error) => errors.push(format!("{address}: {error}")),
+            Err(error) => errors.push(error.to_string()),
         }
     }
-    Err(format!(
-        "回环 Redis {}:{} 不可用：{}",
-        endpoint.host,
-        endpoint.port,
-        errors.join("; ")
-    )
-    .into())
+    Err(errors.join("；").into())
 }
 
-fn probe_redis(address: SocketAddr) -> Result<()> {
-    let mut connection = TcpStream::connect_timeout(&address, Duration::from_secs(3))
-        .map_err(|error| error.to_string())?;
-    connection
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .and_then(|_| connection.set_write_timeout(Some(Duration::from_secs(3))))
-        .map_err(|error| format!("无法设置探测超时：{error}"))?;
-    connection
-        .write_all(b"*1\r\n$4\r\nPING\r\n")
-        .and_then(|_| connection.flush())
-        .map_err(|error| format!("无法发送 PING：{error}"))?;
-    let mut response = [0_u8; 256];
-    let read = connection
-        .read(&mut response)
-        .map_err(|error| format!("无法读取 PING 响应：{error}"))?;
-    let response = &response[..read];
-    if response.starts_with(b"+PONG") || response.starts_with(b"-NOAUTH") {
-        Ok(())
-    } else {
-        Err(format!("未返回预期 Redis PING 响应：{response:?}").into())
+fn probe_redis(address: SocketAddr, password: &str, timeout: Duration) -> Result<()> {
+    let operation = if password.is_empty() { "PING" } else { "AUTH" };
+    if timeout.is_zero() {
+        return Err(probe_error(
+            address,
+            operation,
+            None,
+            "探测timeout必须大于0",
+        ));
     }
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| probe_error(address, operation, None, "探测timeout超出可表示范围"))?;
+    let mut connection = TcpStream::connect_timeout(&address, timeout)
+        .map_err(|error| probe_error(address, operation, Some(error.kind()), "连接失败"))?;
+    if !password.is_empty() {
+        // RESP bulk长度按UTF8字节计算，密码中的空格或CR/LF不会形成额外命令。
+        let auth = format!("*2\r\n$4\r\nAUTH\r\n${}\r\n{password}\r\n", password.len());
+        probe_exchange(
+            &mut connection,
+            address,
+            "AUTH",
+            auth.as_bytes(),
+            b"+OK\r\n",
+            deadline,
+        )?;
+    }
+    probe_exchange(
+        &mut connection,
+        address,
+        "PING",
+        b"*1\r\n$4\r\nPING\r\n",
+        b"+PONG\r\n",
+        deadline,
+    )
+}
+
+fn probe_exchange(
+    connection: &mut TcpStream,
+    address: SocketAddr,
+    operation: &str,
+    request: &[u8],
+    expected: &[u8],
+    deadline: Instant,
+) -> Result<()> {
+    let sent = (|| -> std::io::Result<()> {
+        connection.set_write_timeout(Some(probe_remaining(deadline)?))?;
+        connection.write_all(request)?;
+        connection.flush()
+    })();
+    sent.map_err(|error| probe_error(address, operation, Some(error.kind()), "写入命令失败"))?;
+    let response = read_probe_line(connection, deadline).map_err(|error| {
+        probe_error(address, operation, Some(error.kind()), "读取完整RESP行失败")
+    })?;
+    if response != expected {
+        return Err(probe_error(
+            address,
+            operation,
+            None,
+            "未返回预期完整RESP成功行；认证拒绝或协议不符",
+        ));
+    }
+    Ok(())
+}
+
+fn read_probe_line(connection: &mut TcpStream, deadline: Instant) -> std::io::Result<Vec<u8>> {
+    let mut response = Vec::with_capacity(16);
+    for _ in 0..1024 {
+        connection.set_read_timeout(Some(probe_remaining(deadline)?))?;
+        let mut byte = [0_u8; 1];
+        connection.read_exact(&mut byte)?;
+        response.push(byte[0]);
+        if response.ends_with(b"\r\n") {
+            return Ok(response);
+        }
+        if byte[0] == b'\n' {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+    }
+    Err(std::io::ErrorKind::InvalidData.into())
+}
+
+fn probe_remaining(deadline: Instant) -> std::io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| std::io::ErrorKind::TimedOut.into())
+}
+
+fn probe_error(
+    address: SocketAddr,
+    operation: &str,
+    kind: Option<std::io::ErrorKind>,
+    reason: &str,
+) -> Box<dyn std::error::Error> {
+    format!("Redis {operation} 端点={address}；IOkind={kind:?}；原因={reason}；请核对文件中的Redis密码、端点和timeout及服务协议，不自动降级或忽略认证").into()
 }
 
 pub(crate) fn reserve_output_dir(root: &Path, run_id: &str) -> Result<PathBuf> {

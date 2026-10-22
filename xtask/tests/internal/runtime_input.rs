@@ -47,6 +47,7 @@ impl Fixture {
         fs::create_dir(directory.path().join("config")).unwrap();
         fs::create_dir(directory.path().join("openapi")).unwrap();
         fs::write(directory.path().join("config/app.toml"), APP).unwrap();
+        fs::write(directory.path().join("config/app.test.toml"), "").unwrap();
         fs::write(
             directory.path().join("openapi/openapi.json"),
             serde_json::to_vec(&openapi()).unwrap(),
@@ -54,7 +55,6 @@ impl Fixture {
         .unwrap();
         let environment = BTreeMap::from([
             ("APP_ENV".into(), "test".into()),
-            ("APP_CONFIG_DIR".into(), "config".into()),
             ("RYFRAME_DEVEX_CONCURRENCY".into(), "10".into()),
             ("RYFRAME_RUNTIME_INPUT_PASSWORD".into(), SECRET.into()),
         ]);
@@ -79,12 +79,22 @@ impl Fixture {
         let error = self.check(suite).unwrap_err().to_string();
         assert!(!error.contains(SECRET));
         assert!(!error.contains("http://"));
-        assert!(!error.contains(self.root().to_str().unwrap()));
+        if !error.contains("config_document_invalid：") {
+            assert!(!error.contains(self.root().to_str().unwrap()));
+        }
         error
     }
 
     fn refresh_digest(&mut self) {
-        let authority = crate::rate_limit::authority(self.root(), &self.environment).unwrap();
+        let authority = crate::rate_limit::authority(
+            self.root(),
+            None,
+            self.environment
+                .get("APP_ENV")
+                .map(String::as_str)
+                .unwrap_or(""),
+        )
+        .unwrap();
         let authority = serde_json::to_value(authority).unwrap();
         let bytes = serde_json::to_vec(&authority).unwrap();
         self.config["contract"]["pacing"]["authority_sha256"] =
@@ -320,7 +330,7 @@ fn pacing_and_nonexistent_operation_rules_are_rejected_with_reasons() {
 }
 
 #[test]
-fn authority_digest_tracks_the_injected_environment_and_actual_configuration() {
+fn authority_digest_tracks_each_selected_file_configuration() {
     let mut fixture = Fixture::new();
     fixture.config["contract"]["pacing"]["authority_sha256"] = json!("0".repeat(64));
     assert_eq!(
@@ -328,9 +338,11 @@ fn authority_digest_tracks_the_injected_environment_and_actual_configuration() {
         "实际限流配置与固定节奏摘要不一致"
     );
     fixture.refresh_digest();
-    fixture
-        .environment
-        .insert("APP_RATE_LIMIT_CAPACITY".into(), "101".into());
+    fs::write(
+        fixture.root().join("config/app.test.toml"),
+        "[rate_limit]\ncapacity = 101\n",
+    )
+    .unwrap();
     assert_eq!(
         fixture.error(DevexSuite::RuntimeApi),
         "实际限流配置与固定节奏摘要不一致"
@@ -342,13 +354,66 @@ fn authority_digest_tracks_the_injected_environment_and_actual_configuration() {
         "[rate_limit]\ncapacity = 102\n",
     )
     .unwrap();
-    fixture.environment.remove("APP_RATE_LIMIT_CAPACITY");
     assert_eq!(
         fixture.error(DevexSuite::RuntimeApi),
         "实际限流配置与固定节奏摘要不一致"
     );
     fixture.refresh_digest();
     fixture.check(DevexSuite::RuntimeApi).unwrap();
+}
+
+#[test]
+fn authority_uses_the_explicit_file_directory_and_ignores_legacy_overrides() {
+    let mut fixture = Fixture::new();
+    let relative = "中文 隔离配置";
+    let directory = fixture.root().join(relative);
+    fs::rename(fixture.root().join("config"), &directory).unwrap();
+    fixture.config["bindings"]["app_config_dir"] = json!(relative);
+    fixture
+        .environment
+        .insert("APP_CONFIG_DIR".into(), "missing-config".into());
+    fixture
+        .environment
+        .insert("APP_RATE_LIMIT_CAPACITY".into(), "991".into());
+    let before = snapshot(fixture.root());
+    fixture.check(DevexSuite::RuntimeApi).unwrap();
+    fixture.config["bindings"]["app_config_dir"] = json!(directory);
+    fixture.check(DevexSuite::RuntimeApi).unwrap();
+    assert_eq!(snapshot(fixture.root()), before);
+    fs::write(
+        directory.join("app.test.toml"),
+        "[rate_limit]\ncapacity=137\n",
+    )
+    .unwrap();
+    assert_eq!(
+        fixture.error(DevexSuite::RuntimeApi),
+        "实际限流配置与固定节奏摘要不一致"
+    );
+}
+
+#[test]
+fn authority_rejects_invalid_explicit_configuration_paths_without_echoing_values() {
+    let mut fixture = Fixture::new();
+    for value in [
+        json!(false),
+        json!(137),
+        json!([]),
+        json!({"password": SECRET}),
+    ] {
+        fixture.config["bindings"]["app_config_dir"] = value;
+        assert_eq!(
+            fixture.error(DevexSuite::RuntimeApi),
+            "bindings.app_config_dir 必须是文本路径；请修正运行测量配置文件"
+        );
+    }
+    for path in ["", "bad\npath", "nul\0path"] {
+        fixture.config["bindings"]["app_config_dir"] = json!(path);
+        assert!(
+            fixture
+                .error(DevexSuite::RuntimeApi)
+                .contains("config_directory_invalid")
+        );
+    }
 }
 
 #[test]
@@ -376,25 +441,34 @@ fn configuration_errors_precede_io_and_keep_constant_details() {
 }
 
 #[test]
-fn authority_failures_report_only_fixed_code_and_message() {
+fn authority_failures_keep_safe_document_details_and_hide_values() {
     let mut fixture = Fixture::new();
     fixture.environment.remove("APP_ENV");
     assert_eq!(
         fixture.error(DevexSuite::RuntimeApi),
         concat!(
             "无法读取运行时测量的实际限流配置：config_environment_invalid：",
-            "必须显式设置 APP_ENV=dev 或 APP_ENV=test"
+            "app_env 必须显式设置为 dev 或 test；请修正请求字段"
         )
     );
     fixture.environment.insert("APP_ENV".into(), "test".into());
     fs::write(fixture.root().join("config/app.toml"), format!("[{SECRET}")).unwrap();
-    assert_eq!(
-        fixture.error(DevexSuite::RuntimeApi),
-        concat!(
-            "无法读取运行时测量的实际限流配置：config_toml_invalid：",
-            "APP 配置不是有效 TOML；请检查 app.toml 与环境覆盖文件"
-        )
+    let error = fixture.error(DevexSuite::RuntimeApi);
+    assert!(error.starts_with("无法读取运行时测量的实际限流配置：config_document_invalid："));
+    assert!(
+        error.contains(
+            &fixture
+                .root()
+                .join("config")
+                .join("app.toml")
+                .display()
+                .to_string()
+        ),
+        "{error}"
     );
+    assert!(error.contains("TOML 语法错误"));
+    assert!(error.contains("行第"));
+    assert!(error.contains("请检查"));
 }
 
 #[test]

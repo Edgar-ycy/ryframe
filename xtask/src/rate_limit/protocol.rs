@@ -1,22 +1,18 @@
-use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
+use super::FileContext;
 use super::config::{self, RateLimitError};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TableRequest {
-    backend: PathBuf,
-    environment: BTreeMap<String, String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoginBudgetRequest {
     backend: PathBuf,
-    environment: BTreeMap<String, String>,
+    app_env: String,
+    #[serde(default)]
+    config_dir: Option<PathBuf>,
     state_path: String,
 }
 
@@ -42,28 +38,41 @@ fn execute_inner(arguments: &[OsString], input: &[u8]) -> Result<Value, Failure>
     };
     match operation {
         "authority" => {
-            let request = decode::<TableRequest>(input)?;
-            config::authority(&request.backend, &request.environment)
-                .and_then(to_value)
-                .map_err(Failure::Config)
+            let request = decode::<FileContext>(input)?;
+            config::authority(
+                &request.backend,
+                request.config_dir.as_deref(),
+                &request.app_env,
+            )
+            .and_then(to_value)
+            .map_err(Failure::Config)
         }
         "load-table" => {
-            let request = decode::<TableRequest>(input)?;
-            config::load_app_table(&request.backend, &request.environment)
-                .and_then(to_value)
-                .map_err(Failure::Config)
+            let request = decode::<FileContext>(input)?;
+            config::load_app_table(
+                &request.backend,
+                request.config_dir.as_deref(),
+                &request.app_env,
+            )
+            .and_then(to_value)
+            .map_err(Failure::Config)
         }
         "settings" => {
-            let request = decode::<TableRequest>(input)?;
-            config::settings(&request.backend, &request.environment)
-                .and_then(to_value)
-                .map_err(Failure::Config)
+            let request = decode::<FileContext>(input)?;
+            config::settings(
+                &request.backend,
+                request.config_dir.as_deref(),
+                &request.app_env,
+            )
+            .and_then(to_value)
+            .map_err(Failure::Config)
         }
         "login-budget" => {
             let request = decode::<LoginBudgetRequest>(input)?;
             config::login_budget_environment(
                 &request.backend,
-                &request.environment,
+                request.config_dir.as_deref(),
+                &request.app_env,
                 &request.state_path,
             )
             .and_then(to_value)
@@ -94,7 +103,7 @@ impl Failure {
                 2,
                 failure_text_with(
                     "invalid_request",
-                    "请求必须仅包含 backend、environment 及操作所需字段",
+                    "请求必须仅包含 backend、app_env、可选 config_dir 及操作所需字段",
                 ),
             ),
             Self::Config(error) => (1, failure_text(error)),
@@ -109,22 +118,22 @@ struct Success {
 }
 
 #[derive(Serialize)]
-struct ErrorResponse {
+struct ErrorResponse<'a> {
     ok: bool,
-    error: ErrorBody,
+    error: ErrorBody<'a>,
 }
 
 #[derive(Serialize)]
-struct ErrorBody {
+struct ErrorBody<'a> {
     code: &'static str,
-    message: &'static str,
+    message: &'a str,
 }
 
 fn failure_text(error: RateLimitError) -> String {
     failure_text_with(error.code(), error.message())
 }
 
-fn failure_text_with(code: &'static str, message: &'static str) -> String {
+fn failure_text_with(code: &'static str, message: &str) -> String {
     serde_json::to_string(&ErrorResponse {
         ok: false,
         error: ErrorBody { code, message },
