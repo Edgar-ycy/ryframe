@@ -100,7 +100,7 @@ class RestoreRuntimeTests(unittest.TestCase):
         self.backend.mkdir()
         (self.frontend / "dist/.vite").mkdir(parents=True)
         (self.frontend / "dist/index.html").write_text("<script src='/app.js'></script>", encoding="utf-8")
-        (self.frontend / "dist/app.js").write_text("console.log(42)", encoding="utf-8")
+        (self.frontend / "dist/app.js").write_bytes(b"\x00RyFrame fixture\xff")
         (self.frontend / "dist/.vite/manifest.json").write_text("{}", encoding="utf-8")
         self.identities = {}
 

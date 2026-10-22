@@ -34,7 +34,7 @@ class RestoreFrontendServerTests(unittest.TestCase):
         (dist / ".vite").mkdir(parents=True)
         (dist / "assets").mkdir()
         (dist / "index.html").write_bytes(b"<main>RyFrame</main>")
-        (dist / "assets/app.js").write_bytes(b"globalThis.ryframe = true")
+        (dist / "assets/app.js").write_bytes(b"\x00RyFrame fixture\xff")
         (dist / ".vite/manifest.json").write_bytes(b"{}")
         receipt = {
             "format_version": 2,
@@ -78,7 +78,7 @@ class RestoreFrontendServerTests(unittest.TestCase):
 
         connection.request("GET", "/assets/app.js")
         response = connection.getresponse()
-        self.assertEqual((response.status, response.read()), (200, b"globalThis.ryframe = true"))
+        self.assertEqual((response.status, response.read()), (200, b"\x00RyFrame fixture\xff"))
         connection.request("GET", "/post/42", headers={"Accept": "text/html"})
         response = connection.getresponse()
         self.assertEqual((response.status, response.read()), (200, b"<main>RyFrame</main>"))
