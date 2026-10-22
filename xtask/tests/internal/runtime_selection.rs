@@ -181,7 +181,7 @@ fn original_invalid_pool_cases_fail_closed() {
         .expect("池")
         .remove("roles_sha256");
     assert_eq!(selection::validate_suite(&missing, "api", 10), Err(POOL));
-    let mut extra = base.clone();
+    let mut extra = base;
     extra["bindings"]["identity_pools"]["readers"][1]["token"] = json!("forbidden");
     assert_eq!(selection::validate_suite(&extra, "api", 10), Err(BINDING));
 }
@@ -640,7 +640,7 @@ fn declared_distribution_is_exact_for_the_selected_prefix() {
             Err(DISTRIBUTION)
         );
     }
-    let mut missing = base.clone();
+    let mut missing = base;
     missing["contract"]["identity_pools"]["readers"]["selections"]
         .as_object_mut()
         .expect("声明")
