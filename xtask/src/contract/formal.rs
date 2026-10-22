@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use crate::{
     Result,
-    process::{command_output, run_with_env},
+    process::{command_output, run, run_owned},
     workspace::root_dir,
 };
 
@@ -18,10 +18,26 @@ use super::{
     transaction::install_snapshots,
 };
 
-pub(crate) const FORMAL_SYNC_ARGS: &[&[&str]] = &[
-    &["scripts/sync-api-contract.mjs"],
-    &["scripts/generate-api-artifacts.mjs", "--write"],
-];
+pub(crate) const FORMAL_DERIVATION_ARGS: &[&str] =
+    &["scripts/generate-api-artifacts.mjs", "--write"];
+
+pub(crate) fn formal_sync_arguments(repository: &str, commit: &str, worktree: &str) -> Vec<String> {
+    [
+        "scripts/sync-api-contract.mjs",
+        "--backend-repository",
+        repository,
+        "--backend-commit",
+        commit,
+        "--backend-worktree",
+        worktree,
+        "--openapi-path",
+        "openapi/openapi.json",
+        "--write",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
 
 pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
@@ -36,12 +52,7 @@ pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     let worktree = root
         .to_str()
         .ok_or("后端工作区路径不是有效 UTF-8，无法同步契约")?;
-    let environment = [
-        ("RYFRAME_BACKEND_REPOSITORY", repository.as_str()),
-        ("RYFRAME_BACKEND_COMMIT", commit.as_str()),
-        ("RYFRAME_BACKEND_WORKTREE", worktree),
-        ("RYFRAME_OPENAPI_PATH", "openapi/openapi.json"),
-    ];
+    let sync_arguments = formal_sync_arguments(&repository, &commit, worktree);
     let _lock = ContractLock::acquire(frontend_dir)?;
     let inputs = snapshot_staging_inputs(frontend_dir)?;
     let artifact_paths = artifact_paths_from_inputs(&inputs, frontend_dir)?;
@@ -49,9 +60,8 @@ pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     reject_contract_recovery_artifacts(&managed_paths)?;
     let before = snapshot_managed_files(&managed_paths)?;
     let staging = prepare_staging_frontend(frontend_dir, &before, &inputs)?;
-    for args in FORMAL_SYNC_ARGS {
-        run_with_env(&staging.path, "node", args, &environment)?;
-    }
+    run_owned(&staging.path, "node", &sync_arguments)?;
+    run(&staging.path, "node", FORMAL_DERIVATION_ARGS)?;
     validate_formal_sync(&staging.path, &repository, &commit, &artifact_paths)?;
     verify_input_snapshots(&inputs)?;
     let desired = desired_frontend_snapshots(&before, frontend_dir, &staging.path)?;

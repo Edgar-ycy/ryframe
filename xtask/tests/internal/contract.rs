@@ -5,10 +5,10 @@ use std::{
 };
 
 use super::contract::{
-    CANDIDATE_GENERATION_ARGS, ContractFileOperations, FORMAL_SYNC_ARGS, Snapshot, apply_candidate,
-    apply_candidate_with_staging_hook, generated_artifact_paths, github_repository_identifier,
-    install_snapshots_with, sha256_hex, validate_candidate_contract, validate_formal_sync,
-    write_atomically_with,
+    CANDIDATE_GENERATION_ARGS, ContractFileOperations, FORMAL_DERIVATION_ARGS, Snapshot,
+    apply_candidate, apply_candidate_with_staging_hook, formal_sync_arguments,
+    generated_artifact_paths, github_repository_identifier, install_snapshots_with, sha256_hex,
+    validate_candidate_contract, validate_formal_sync, write_atomically_with,
 };
 
 const CANDIDATE_MANAGED_PATHS: &[&str] = &[
@@ -40,10 +40,22 @@ fn staging_contract_generation_runs_node_without_package_installation() {
         ["scripts/generate-api-artifacts.mjs", "--write"]
     );
     assert_eq!(
-        FORMAL_SYNC_ARGS,
-        [
-            &["scripts/sync-api-contract.mjs"][..],
-            &["scripts/generate-api-artifacts.mjs", "--write"][..],
+        FORMAL_DERIVATION_ARGS,
+        ["scripts/generate-api-artifacts.mjs", "--write"]
+    );
+    assert_eq!(
+        formal_sync_arguments("owner/backend", &"a".repeat(40), "D:/backend"),
+        vec![
+            "scripts/sync-api-contract.mjs".to_owned(),
+            "--backend-repository".to_owned(),
+            "owner/backend".to_owned(),
+            "--backend-commit".to_owned(),
+            "a".repeat(40),
+            "--backend-worktree".to_owned(),
+            "D:/backend".to_owned(),
+            "--openapi-path".to_owned(),
+            "openapi/openapi.json".to_owned(),
+            "--write".to_owned(),
         ]
     );
 }
