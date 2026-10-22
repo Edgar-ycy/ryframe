@@ -354,6 +354,30 @@ pub fn public_error_details(error: &AppError) -> Option<serde_json::Value> {
             "matched_rows": matched_rows,
             "limit": limit,
         })),
+        AppError::Validation(message) if message == "验证码错误或已过期" => {
+            Some(serde_json::json!({
+                "reason": "captcha_invalid_or_expired",
+                "field": "captcha",
+            }))
+        }
+        AppError::Validation(message) if message.starts_with("单租户模式只允许使用 ") => {
+            Some(serde_json::json!({
+                "reason": "fixed_tenant_required",
+                "field": "tenant_id",
+            }))
+        }
+        AppError::Validation(_) => Some(serde_json::json!({
+            "reason": "invalid_parameters",
+        })),
+        AppError::Authorization(message)
+            if message.starts_with("仅系统租户")
+                || message.contains("仅允许系统租户")
+                || message.contains("只允许系统租户") =>
+        {
+            Some(serde_json::json!({
+                "reason": "system_tenant_required",
+            }))
+        }
         _ => None,
     }
 }

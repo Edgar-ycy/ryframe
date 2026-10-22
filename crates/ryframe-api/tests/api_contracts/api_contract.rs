@@ -50,6 +50,46 @@ mod http {
             StatusCode::BAD_REQUEST
         );
     }
+
+    #[test]
+    fn client_errors_only_publish_allowlisted_reasons() {
+        assert_eq!(
+            public_error_details(&AppError::Validation("验证码错误或已过期".into())),
+            Some(serde_json::json!({
+                "reason": "captcha_invalid_or_expired",
+                "field": "captcha",
+            }))
+        );
+        assert_eq!(
+            public_error_details(&AppError::Validation(
+                "单租户模式只允许使用 system 租户".into(),
+            )),
+            Some(serde_json::json!({
+                "reason": "fixed_tenant_required",
+                "field": "tenant_id",
+            }))
+        );
+        assert_eq!(
+            public_error_details(&AppError::Validation("page must be greater than 0".into())),
+            Some(serde_json::json!({"reason": "invalid_parameters"}))
+        );
+        assert_eq!(
+            public_error_details(&AppError::Authorization(
+                "全局业务仅允许系统租户访问".into(),
+            )),
+            Some(serde_json::json!({"reason": "system_tenant_required"}))
+        );
+        assert_eq!(
+            public_error_details(&AppError::Authentication("用户名存在但密码错误".into(),)),
+            None
+        );
+        assert_eq!(
+            public_error_details(&AppError::Database(
+                "mysql://admin:secret@database/control".into(),
+            )),
+            None
+        );
+    }
 }
 
 mod auth_dto {
