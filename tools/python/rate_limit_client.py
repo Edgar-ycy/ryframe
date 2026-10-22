@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from typing import Mapping
 
-from rate_limit_tool import TOOL_ENVIRONMENT, tool_binding, verified_tool
+from rate_limit_tool import tool_binding, verified_tool
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
@@ -157,8 +157,8 @@ def _child_environment() -> dict[str, str]:
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key.upper() not in {*_ENCODING_NAMES, TOOL_ENVIRONMENT}
-        and not key.upper().startswith("APP_")
+        if key.upper() not in _ENCODING_NAMES
+        and not key.upper().startswith(("APP_", "RYFRAME_"))
     }
     for key, value in _HOST_PROCESS_ENVIRONMENT.items():
         environment.setdefault(key, value)

@@ -491,8 +491,7 @@ try:
 except ValueError:
     print(json.dumps({'ok':False}))
 "#;
-    let output = crate::target_configuration_fixture::python_command()
-        .args(["-c", script])
+    let output = crate::target_configuration_fixture::python_command(script)
         .arg(fixture.context.execution_backend().unwrap())
         .arg(input)
         .env(
@@ -675,8 +674,7 @@ expected={'side':'target','tools_plan_sha256':plan_hash({'target':side,'tools':r
 assert result['binding']==expected
 print(json.dumps(result['receipt']))
 "#;
-    let output = crate::target_configuration_fixture::python_command()
-        .args(["-c", script])
+    let output = crate::target_configuration_fixture::python_command(script)
         .arg(&fixture.context.backend)
         .arg(fixture.context.execution_backend().unwrap())
         .arg(arguments)

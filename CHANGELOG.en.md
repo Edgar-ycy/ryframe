@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Python checks install the fixed native-tool descriptor through explicit arguments, removing the rate-limit tool's environment binding. The binding can be installed only once and cannot be replaced; binary identity and digests remain verified for each invocation. The check entry preserves all unittest arguments, UTF-8 mode, and failing test exit statuses.
+
 - Database connections now share an options factory so controlled callers can append validation for new physical connections while preserving existing pool, TLS, SQL logging, and trace-recording policies.
 
 - Python and Node check interpreters now use `[verification]` in `config/tools.toml` and local `.local-tests/tools.toml`, with local fields taking precedence and operating-system PATH as the default. Relative entries resolve from the backend root, preserve venv entries, and reject empty values, control characters, and parent traversal. Removed former `RYFRAME_PYTHON` and `RYFRAME_NODE` selection and the private CI export; interpreter preflight and Rust AST checks reuse file selection. Configuration failures retain the file, specific safe reason, and field repair instructions without echoing raw values; invalid local configuration never falls back.

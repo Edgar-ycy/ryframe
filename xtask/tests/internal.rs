@@ -202,6 +202,8 @@ mod performance_identities_tests;
 mod process_tests;
 #[path = "internal/python_environment.rs"]
 mod python_environment_tests;
+#[path = "internal/python_suite.rs"]
+mod python_suite_tests;
 #[path = "internal/rate_limit_protocol.rs"]
 mod rate_limit_protocol_tests;
 #[path = "internal/rate_limit.rs"]

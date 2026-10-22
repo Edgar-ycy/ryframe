@@ -21,6 +21,7 @@ from workspace_directory import WorkspaceDirectory
 
 
 ROOT = Path(__file__).resolve().parents[2]
+LEGACY_BINDING_KEY = "RYFRAME_RATE_LIMIT_TOOL_BINDING"
 
 
 class DescriptorTests(unittest.TestCase):
@@ -37,13 +38,14 @@ class DescriptorTests(unittest.TestCase):
         }
 
     def parse(self, raw):
-        with mock.patch.dict(os.environ, {tool.TOOL_ENVIRONMENT: raw}, clear=True):
-            return tool.tool_binding()
+        return tool.parse_binding(raw)
 
     def test_absent_binding_alone_selects_the_unbound_entry(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(tool.tool_binding())
         self.assertEqual(self.parse(json.dumps(self.value)), self.value)
+        tool.install_binding(json.dumps(self.value))
+        self.assertEqual(tool.tool_binding(), self.value)
 
     def test_duplicate_extra_and_missing_fields_are_rejected(self):
         encoded = json.dumps(self.value)
@@ -62,9 +64,45 @@ class DescriptorTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"APP_ENV": "test"}, clear=True):
                 self.assertEqual(tool.tool_binding(), self.value)
             override = {**self.value, "bytes": 333}
-            self.assertEqual(self.parse(json.dumps(override)), override)
+            for raw in (json.dumps(override), "", "private-value"):
+                with mock.patch.dict(os.environ, {LEGACY_BINDING_KEY: raw}, clear=True):
+                    self.assertEqual(tool.tool_binding(), self.value)
+
+    def test_legacy_environment_alone_cannot_install_a_binding(self):
+        for raw in (json.dumps(self.value), "", "private-value"):
+            with mock.patch.dict(os.environ, {LEGACY_BINDING_KEY: raw}, clear=True):
+                self.assertIsNone(tool.tool_binding())
+
+    def test_install_is_once_only_and_rejects_the_same_or_replacement_binding(self):
+        original = json.dumps(self.value)
+        tool.install_binding(original)
+        for raw in (original, json.dumps({**self.value, "bytes": 333})):
+            with self.subTest(raw_bytes=len(raw)), self.assertRaisesRegex(ValueError, "重复安装"):
+                tool.install_binding(raw)
+            self.assertEqual(tool._COORDINATOR_BINDING, original)
+            self.assertEqual(tool.tool_binding(), self.value)
+
+    def test_invalid_install_does_not_bind_and_every_lookup_returns_an_independent_object(self):
+        for raw in ("private-value", "{}", None, b"private-value"):
+            with self.subTest(kind=type(raw).__name__), self.assertRaises(ValueError):
+                tool.install_binding(raw)
+            self.assertIsNone(tool._COORDINATOR_BINDING)
+        original = json.dumps(self.value)
+        tool.install_binding(original)
+        first, second = tool.tool_binding(), tool.tool_binding()
+        self.assertIsNot(first, second)
+        first.clear()
+        second["path"] = "private-value"
+        self.assertEqual(tool.tool_binding(), self.value)
+        self.assertEqual(tool._COORDINATOR_BINDING, original)
+
+    def test_install_parses_even_when_a_binding_is_already_installed(self):
+        tool.install_binding(json.dumps(self.value))
+        with mock.patch.object(tool, "parse_binding", wraps=tool.parse_binding) as parse:
             with self.assertRaises(ValueError):
-                self.parse("")
+                tool.install_binding("private-value")
+        parse.assert_called_once_with("private-value")
+        self.assertEqual(tool.tool_binding(), self.value)
 
     def test_strict_types_versions_sizes_absolute_paths_and_hashes(self):
         invalid = {
@@ -113,13 +151,20 @@ class ToolFixture(unittest.TestCase):
             "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
         }
+        coordinator = mock.patch.object(tool, "_COORDINATOR_BINDING", json.dumps(self.value))
+        coordinator.start()
+        self.addCleanup(coordinator.stop)
         self.environment = {
-            tool.TOOL_ENVIRONMENT: json.dumps(self.value),
+            LEGACY_BINDING_KEY: "old-environment-cannot-replace-host-binding",
             "CARGO": "must-never-start-cargo",
             "APP_DATABASE_PASSWORD": "private-value",
+            "app_mixed_case": "private-value",
+            "RYFRAME_PRIVATE": "private-value",
+            "ryframe_mixed_case": "private-value",
             "APP_ENV": "ambient-value",
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "cp936",
+            "THIRD_PARTY_FEATURE": "preserved",
         }
 
     def assert_released(self):
@@ -165,10 +210,12 @@ class BoundClientTests(ToolFixture):
             if os.name == "nt":
                 self.assertEqual(call.kwargs["creationflags"], subprocess.CREATE_NO_WINDOW)
             child = call.kwargs["env"]
-            self.assertFalse(any(key.upper().startswith("APP_") for key in child))
-            self.assertNotIn(tool.TOOL_ENVIRONMENT, child)
+            self.assertFalse(any(key.upper().startswith(("APP_", "RYFRAME_")) for key in child))
+            self.assertNotIn(LEGACY_BINDING_KEY, child)
             self.assertNotIn("PYTHONUTF8", child)
             self.assertNotIn("PYTHONIOENCODING", child)
+            self.assertEqual(child["THIRD_PARTY_FEATURE"], "preserved")
+            self.assertEqual(child["CARGO"], "must-never-start-cargo")
             request = json.loads(call.kwargs["input"].decode("utf-8"))
             expected = {"backend": str(self.directory), "environment": {"APP_ENV": "explicit"}}
             if operation == "login-budget":
@@ -206,10 +253,10 @@ class BoundClientTests(ToolFixture):
         for change in ({"sha256": "0" * 64}, {"bytes": self.value["bytes"] + 1},
                        {"path": str(self.directory / "missing.exe")},
                        {"path": str(self.directory)}, {"format_version": True}):
-            environment = {**self.environment, tool.TOOL_ENVIRONMENT: json.dumps({**self.value, **change})}
             with (
                 self.subTest(change=change),
-                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.dict(os.environ, self.environment, clear=True),
+                mock.patch.object(tool, "_COORDINATOR_BINDING", json.dumps({**self.value, **change})),
                 mock.patch.object(client.subprocess, "run") as run,
                 self.assertRaises((ValueError, RuntimeError)),
             ):
@@ -219,7 +266,7 @@ class BoundClientTests(ToolFixture):
         for raw in ("", "{}", "not-json"):
             with (
                 self.subTest(raw=raw),
-                mock.patch.dict(os.environ, {tool.TOOL_ENVIRONMENT: raw}, clear=True),
+                mock.patch.object(tool, "_COORDINATOR_BINDING", raw),
                 mock.patch.object(client.subprocess, "run") as run,
                 self.assertRaises(ValueError),
             ):
@@ -246,10 +293,12 @@ class BoundClientTests(ToolFixture):
             mock.patch.object(client.subprocess, "run", return_value=completed) as run,
         ):
             self.assertEqual(self.invoke("settings"), {})
-            os.environ[tool.TOOL_ENVIRONMENT] = ""
-            with self.assertRaises(ValueError):
-                self.invoke("settings")
-        run.assert_called_once()
+            os.environ[LEGACY_BINDING_KEY] = ""
+            self.assertEqual(self.invoke("settings"), {})
+            with mock.patch.object(tool, "_COORDINATOR_BINDING", ""):
+                with self.assertRaises(ValueError):
+                    self.invoke("settings")
+        self.assertEqual(run.call_count, 2)
         self.assert_released()
 
 

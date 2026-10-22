@@ -2,28 +2,35 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::{
-    Result,
-    process::{run_with_env, run_with_env_removed},
-    recovery::clone::native::digest,
-};
+use crate::{Result, process::run as run_process, recovery::clone::native::digest};
 
 use super::PYTHON_TEST_ARGS;
 
-const TOOL_ENVIRONMENT: &str = "RYFRAME_RATE_LIMIT_TOOL_BINDING";
-
-/// 兼容测试复用当前已构建的工具，配置内容仍通过每次独立调用重新加载。
+/// Python 检查通过显式参数复用当前工具，配置内容仍逐次独立加载。
 pub(super) fn run(root: &Path) -> Result<()> {
     let executable = std::env::current_exe()?;
-    let Some(binding) = binding(&executable)? else {
-        return run_with_env_removed(root, "python", PYTHON_TEST_ARGS, &[], &[TOOL_ENVIRONMENT]);
-    };
-    run_with_env(
-        root,
-        "python",
-        PYTHON_TEST_ARGS,
-        &[(TOOL_ENVIRONMENT, &binding)],
-    )
+    let binding = binding(&executable)?;
+    let arguments = arguments(binding.as_deref());
+    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    run_process(root, "python", &arguments)
+}
+
+/// 工具描述作为独立参数交给检查入口，不进入应用配置或子进程环境。
+pub(crate) fn arguments(binding: Option<&str>) -> Vec<String> {
+    let mut arguments = ["-X", "utf8", "-B", "tools/python/run_checks.py"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if let Some(binding) = binding {
+        arguments.extend(["--rate-limit-tool-binding".to_owned(), binding.to_owned()]);
+    }
+    arguments.push("--".to_owned());
+    arguments.extend(
+        PYTHON_TEST_ARGS
+            .iter()
+            .map(|argument| (*argument).to_owned()),
+    );
+    arguments
 }
 
 pub(crate) fn binding(executable: &Path) -> Result<Option<String>> {

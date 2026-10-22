@@ -202,8 +202,10 @@ fn python_bound_tool_reloads_configuration_without_starting_cargo() {
     };
     let fixture = Fixture::new();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let output = Command::new("python")
+    let output = Command::new(super::process::resolved_executable(root, "python").unwrap())
         .args([
+            "-X",
+            "utf8",
             "-B",
             "-c",
             r#"
@@ -211,6 +213,8 @@ import json, os, sys
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(sys.argv[1]) / 'tools/python'))
+from rate_limit_tool import install_binding
+install_binding(sys.argv[3])
 from rate_limit_client import load_app_table, rate_limit_settings
 backend = Path(sys.argv[2])
 environment = {'APP_ENV': 'test'}
@@ -229,7 +233,8 @@ print(json.dumps({'calls': 3, 'capacities': [100, 137, 149]}))
 "#,
         ])
         .args([root, &fixture.backend])
-        .env("RYFRAME_RATE_LIMIT_TOOL_BINDING", binding)
+        .arg(binding)
+        .env("RYFRAME_RATE_LIMIT_TOOL_BINDING", "invalid-legacy-binding")
         .env("CARGO", "ryframe-cargo-must-not-be-started")
         .env("APP_RATE_LIMIT_CAPACITY", "991")
         .env("PYTHONUTF8", "1")

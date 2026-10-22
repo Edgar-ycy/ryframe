@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
-import os
 from pathlib import Path
 import re
 import stat
@@ -12,18 +11,14 @@ import stat
 from artifact_digests import file_digest, protect_binary_invocation
 
 
-TOOL_ENVIRONMENT = "RYFRAME_RATE_LIMIT_TOOL_BINDING"
-# 协调器在启动测试进程时明确绑定工具；清理服务环境不能丢失宿主工具身份。
-_COORDINATOR_BINDING = os.environ.get(TOOL_ENVIRONMENT)
+# 协调器仅显式安装不可变描述；每次读取重新解析，避免调用方修改共享对象。
+_COORDINATOR_BINDING: str | None = None
 FIELDS = frozenset({"format_version", "kind", "path", "bytes", "sha256"})
 MAX_BINDING_BYTES = 16 * 1024
 
 
-def tool_binding() -> dict | None:
-    raw = os.environ.get(TOOL_ENVIRONMENT, _COORDINATOR_BINDING)
-    if raw is None:
-        return None
-    if not raw or len(raw.encode("utf-8")) > MAX_BINDING_BYTES:
+def parse_binding(raw: str) -> dict:
+    if not isinstance(raw, str) or not raw or len(raw.encode("utf-8")) > MAX_BINDING_BYTES:
         raise ValueError("限流工具绑定为空或超过 16 KiB")
     try:
         value = json.loads(raw, object_pairs_hook=_unique_object)
@@ -31,6 +26,19 @@ def tool_binding() -> dict | None:
         raise ValueError("限流工具绑定不是唯一字段的 JSON 对象") from None
     _validate_binding(value)
     return value
+
+
+def install_binding(raw: str) -> None:
+    global _COORDINATOR_BINDING
+    parse_binding(raw)
+    if _COORDINATOR_BINDING is not None:
+        raise ValueError("限流工具绑定已经安装，不能重复安装")
+    _COORDINATOR_BINDING = raw
+
+
+def tool_binding() -> dict | None:
+    raw = _COORDINATOR_BINDING
+    return None if raw is None else parse_binding(raw)
 
 
 def _validate_binding(value: object) -> None:
