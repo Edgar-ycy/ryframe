@@ -42,6 +42,10 @@ rustls = { workspace = true, optional = true }
 [dev-dependencies]
 futures-util.workspace = true
 tempfile.workspace = true
+hex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+toml.workspace = true
 
 [features]
 default = ["bin-api", "runtime-swagger-ui"]

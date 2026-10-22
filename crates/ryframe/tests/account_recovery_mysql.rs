@@ -3,8 +3,11 @@ use std::sync::{
     atomic::{AtomicI64, Ordering},
 };
 
+use futures_util::FutureExt;
+use redis::AsyncCommands;
+use ryframe_adapters::RedisClient;
 use ryframe_application::{
-    AuthPolicy, AuthService, AuthorizationCache, PrincipalResolver,
+    AuthPolicy, AuthService, AuthorizationCache, CacheAvailabilityPolicy, PrincipalResolver,
     system::identity::{
         CreateUserParams, ProfileService, USER_STATUS_DISABLED, USER_STATUS_MUST_RESET_PASSWORD,
         USER_STATUS_NORMAL, USER_STATUS_PENDING_ACTIVATION, UserService,
@@ -17,10 +20,191 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
+#[path = "../../ryframe-adapters/tests/support/configuration.rs"]
+mod redis_configuration;
 
 const OLD_PASSWORD: &str = "AbandonedRandom123!";
 const NEW_PASSWORD: &str = "RecoveredUser123!";
 static NEXT_ID: AtomicI64 = AtomicI64::new(1_000_000);
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_user_real_redis_repairs_lagging_authorization_after_password_change() {
+    let mysql_enabled = mysql::integration_enabled();
+    let redis_enabled = redis_configuration::enabled("redis");
+    if !mysql_enabled || !redis_enabled {
+        eprintln!(
+            "跳过 MySQL+Redis 首次改密和授权缓存真实协议测试（未验收）：必须同时存在显式 .local-tests/mysql/config 和 .local-tests/service-tests/redis/config 配置目录"
+        );
+        return;
+    }
+    initialize();
+    let configuration = redis_configuration::Configuration::load("redis", "account-recovery");
+    let config = configuration
+        .app
+        .redis
+        .as_ref()
+        .expect("Redis 测试配置缺少 redis 字段；请修复显式文件配置");
+    let client = RedisClient::connect(config)
+        .await
+        .unwrap_or_else(|_| panic!("Redis 连接失败；请核对显式文件配置、TLS 和服务状态"));
+    let redis = redis_configuration::ScopedClient {
+        client,
+        configuration,
+    };
+    mysql::run_mysql_test("account-redis", |database| async {
+        // 无论断言失败或返回错误，都先清理明确的三个键，再交回 MySQL fixture 保留证据。
+        let result = std::panic::AssertUnwindSafe(real_redis_password_change(database, &redis))
+            .catch_unwind()
+            .await;
+        cleanup_authorization_keys(&redis).await?;
+        match result {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+    .await;
+}
+
+async fn real_redis_password_change(
+    database: DatabaseConnection,
+    redis: &RedisClient,
+) -> Result<(), String> {
+    let hashes = migration::BootstrapHashes::new(
+        password::hash("ExplicitAdmin123!").map_err(message)?,
+        password::hash("123456").map_err(message)?,
+    )
+    .map_err(message)?;
+    migration::up(&database, Some(&hashes))
+        .await
+        .map_err(message)?;
+    let cache = ryframe::boot::authorization_cache::cache(
+        Some(redis.clone()),
+        CacheAvailabilityPolicy::Required,
+    );
+    let (_, auth) = services_with_cache(database.clone(), cache.clone())?;
+    let initial = auth
+        .login("system", "user", "123456")
+        .await
+        .map_err(message)?;
+    assert!(initial.user_info.password_change_required);
+    let claims = ryframe_auth::jwt::decode_token(&initial.access_token, &auth.token_settings())
+        .map_err(message)?;
+    let initial_version = claims.user_authorization_version;
+    let principal = auth.resolve_principal(&claims).await.map_err(message)?;
+    assert!(principal.password_change_required);
+    let profile = ProfileService::new(
+        application_ports::users::profile(
+            ControlDatabaseCluster::single(database.clone()),
+            cache.clone(),
+        ),
+        cache.clone(),
+    );
+    profile
+        .change_password(&principal.actor, "123456", "FirstLogin123!")
+        .await
+        .map_err(message)?;
+    assert_session_rejected(&auth, &initial).await;
+    assert!(auth.login("system", "user", "123456").await.is_err());
+    let changed = auth
+        .login("system", "user", "FirstLogin123!")
+        .await
+        .map_err(message)?;
+    assert!(!changed.user_info.password_change_required);
+    let claims = ryframe_auth::jwt::decode_token(&changed.access_token, &auth.token_settings())
+        .map_err(message)?;
+    mysql::require_count(
+        &database,
+        "SELECT authorization_version AS value FROM sys_user WHERE id=2",
+        i64::from(claims.user_authorization_version),
+    )
+    .await?;
+    assert!(claims.user_authorization_version > initial_version);
+    assert_lagging_cache_repaired(redis, &cache, &auth, &claims).await?;
+    assert_session_rejected(&auth, &initial).await;
+    Ok(())
+}
+
+async fn assert_lagging_cache_repaired(
+    redis: &RedisClient,
+    cache: &AuthorizationCache,
+    auth: &AuthService,
+    claims: &ryframe_auth::jwt::Claims,
+) -> Result<(), String> {
+    auth.resolve_principal(claims).await.map_err(message)?;
+    assert!(
+        cache
+            .lookup_snapshot("system", 2)
+            .await
+            .map_err(message)?
+            .snapshot
+            .is_some()
+    );
+    let mut connection = redis.conn().clone();
+    let key = redis
+        .scoped_key(&ryframe::boot::authorization_cache_keyspace::user_version_key("system", 2));
+    let lagging = claims.user_authorization_version - 1;
+    let _: () = connection
+        .set(&key, lagging)
+        .await
+        .map_err(|_| "写入授权版本落后夹具失败")?;
+    assert_eq!(
+        cache
+            .lookup_snapshot("system", 2)
+            .await
+            .map_err(message)?
+            .user_authorization_version,
+        Some(lagging)
+    );
+    let principal = auth.resolve_principal(claims).await.map_err(message)?;
+    assert_eq!(principal.actor.user_id, 2);
+    assert!(!principal.password_change_required);
+    assert_eq!(
+        principal.user_authorization_version,
+        claims.user_authorization_version
+    );
+    let repaired = cache.lookup_snapshot("system", 2).await.map_err(message)?;
+    assert_eq!(
+        repaired.user_authorization_version,
+        Some(claims.user_authorization_version)
+    );
+    let snapshot = repaired
+        .snapshot
+        .expect("数据库权威版本必须重新写入真实 Redis 快照");
+    assert_eq!(
+        snapshot.versions.user_authorization_version,
+        claims.user_authorization_version
+    );
+    let persisted: i32 = connection
+        .get(&key)
+        .await
+        .map_err(|_| "读取修复后的授权版本失败")?;
+    assert_eq!(persisted, claims.user_authorization_version);
+    auth.resolve_principal(claims).await.map_err(message)?;
+    Ok(())
+}
+
+async fn cleanup_authorization_keys(redis: &RedisClient) -> Result<(), String> {
+    use ryframe::boot::authorization_cache_keyspace::{
+        snapshot_hash_key, tenant_epoch_key, user_version_key,
+    };
+    let keys = [
+        tenant_epoch_key("system"),
+        user_version_key("system", 2),
+        snapshot_hash_key("system", 2),
+    ]
+    .map(|key| redis.scoped_key(&key));
+    let mut connection = redis.conn().clone();
+    let _: usize = connection
+        .del(&keys)
+        .await
+        .map_err(|_| "精确清理本次 scope 的授权键失败；保留现场，不自动重放")?;
+    let remaining: usize = connection
+        .exists(&keys)
+        .await
+        .map_err(|_| "复核授权键清理失败；保留现场，不自动重放")?;
+    assert_eq!(remaining, 0, "本次 scope 的三个已知授权键必须全部清理");
+    Ok(())
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn initial_user_login_requires_and_completes_password_change() {
@@ -544,8 +728,14 @@ async fn prepare(database: &DatabaseConnection, status: &str) -> Result<(), Stri
 }
 
 fn services(database: DatabaseConnection) -> Result<(UserService, AuthService), String> {
+    services_with_cache(database, AuthorizationCache::disabled())
+}
+
+fn services_with_cache(
+    database: DatabaseConnection,
+    cache: AuthorizationCache,
+) -> Result<(UserService, AuthService), String> {
     let cluster = ControlDatabaseCluster::single(database);
-    let cache = AuthorizationCache::disabled();
     let identity = application_ports::auth::identity(cluster.clone());
     let users = UserService::new(
         cache.clone(),
