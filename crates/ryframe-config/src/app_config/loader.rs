@@ -12,6 +12,8 @@ use super::{
 };
 use crate::{AppConfig, Environment};
 
+mod connections;
+
 impl AppConfig {
     /// 加载配置：app.toml → app.{env}.toml → APP_* 环境变量
     ///
@@ -30,6 +32,16 @@ impl AppConfig {
             .is_some_and(|jobs| jobs.contains_key("mode"));
         apply_job_mode_default(&mut table, environment);
         reject_removed_database_fields(&table)?;
+        connections::validate(&table).map_err(|error| {
+            let directory = config_dir.as_ref();
+            AppError::Config(format!(
+                "配置文件 {} 与 {}：{error}",
+                directory.join("app.toml").display(),
+                directory
+                    .join(format!("app.{}.toml", environment.as_str()))
+                    .display()
+            ))
+        })?;
 
         let mut config: AppConfig = table
             .try_into()
