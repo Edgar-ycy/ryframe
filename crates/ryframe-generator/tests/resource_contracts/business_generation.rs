@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::BTreeSet, fs, path::Path};
 
 use ryframe_generator::business::{BusinessGenerateOptions, generate_business_package};
 
@@ -13,6 +13,10 @@ fn auto_increment_business_preserves_tenant_primary_key_and_repeatability() {
 }
 
 fn assert_business_generation(auto_increment: bool) {
+    let framework = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("生成器应位于框架 crates 目录");
     let workspace = tempfile::Builder::new()
         .prefix("business-generation-")
         .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
@@ -20,11 +24,7 @@ fn assert_business_generation(auto_increment: bool) {
     let sdk = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ryframe-sdk");
     fs::create_dir_all(workspace.path().join("order-business/src/resources"))
         .expect("应创建业务源码目录");
-    fs::write(
-        workspace.path().join("Cargo.toml"),
-        "[workspace]\nmembers = [\"order-business\"]\nresolver = \"3\"\n",
-    )
-    .expect("应写入工作区清单");
+    write_fixture_workspace(workspace.path(), framework);
     write_business_manifest(workspace.path(), &sdk);
     fs::write(
         workspace.path().join("order-business/src/lib.rs"),
@@ -37,7 +37,7 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     )
     .expect("应写入业务入口");
     write_order_model(workspace.path());
-    let locked = prepare_lock(workspace.path());
+    let locked = prepare_lock(workspace.path(), framework);
     if auto_increment {
         let model = workspace.path().join("order-business/src/resources/mod.rs");
         fs::write(
@@ -108,7 +108,44 @@ pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
     );
 }
 
-fn prepare_lock(workspace: &std::path::Path) -> Vec<u8> {
+fn write_fixture_workspace(workspace: &Path, framework: &Path) {
+    let source: toml::Value = toml::from_str(
+        &fs::read_to_string(framework.join("Cargo.toml")).expect("应读取当前框架清单"),
+    )
+    .expect("框架清单应为有效 TOML");
+    let mut manifest: toml::Value =
+        toml::from_str("[workspace]\nmembers = [\"order-business\"]\nresolver = \"3\"\n")
+            .expect("隔离工作区清单应为有效 TOML");
+    if let Some(mut patches) = source.get("patch").cloned() {
+        for (_, entries) in patches.as_table_mut().expect("patch 应为来源表").iter_mut() {
+            for (_, entry) in entries.as_table_mut().expect("patch 来源应为表").iter_mut() {
+                if let Some(value) = entry.get("path") {
+                    let path = Path::new(value.as_str().expect("patch 路径应为字符串"));
+                    let absolute = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        framework.join(path)
+                    };
+                    entry.as_table_mut().expect("patch 条目应为表").insert(
+                        "path".into(),
+                        toml::Value::String(absolute.to_string_lossy().into_owned()),
+                    );
+                }
+            }
+        }
+        manifest
+            .as_table_mut()
+            .expect("工作区清单应为表")
+            .insert("patch".into(), patches);
+    }
+    fs::write(
+        workspace.join("Cargo.toml"),
+        toml::to_string(&manifest).expect("应序列化隔离工作区清单"),
+    )
+    .expect("应写入工作区清单");
+}
+
+fn prepare_lock(workspace: &Path, framework: &Path) -> Vec<u8> {
     let error = generate_business_package(BusinessGenerateOptions {
         catalog_target: None,
         current_dir: workspace,
@@ -123,8 +160,11 @@ fn prepare_lock(workspace: &std::path::Path) -> Vec<u8> {
             .contains("cargo generate-lockfile --offline")
     );
     assert!(!workspace.join("target/ryframe-generate").exists());
+    let framework_lock = fs::read(framework.join("Cargo.lock")).expect("应读取当前框架锁文件");
+    fs::write(workspace.join("Cargo.lock"), &framework_lock).expect("应复制框架锁到隔离工作区");
+    // 沿用真实 SDK 与 vendor 的锁定来源，仅在夹具中登记业务包，不重新挑选依赖版本。
     let output = std::process::Command::new("cargo")
-        .args(["generate-lockfile", "--offline"])
+        .args(["metadata", "--offline", "--format-version", "1"])
         .current_dir(workspace)
         .output()
         .unwrap();
@@ -133,7 +173,60 @@ fn prepare_lock(workspace: &std::path::Path) -> Vec<u8> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    fs::read(workspace.join("Cargo.lock")).unwrap()
+    let locked = fs::read(workspace.join("Cargo.lock")).expect("应读取登记业务包后的隔离锁文件");
+    assert_fixture_lock(workspace, &framework_lock, &locked);
+    assert!(!workspace.join("target/ryframe-generate").exists());
+    locked
+}
+
+type LockedPackage = (String, String, Option<String>, Option<String>);
+
+fn lock_identities(bytes: &[u8]) -> BTreeSet<LockedPackage> {
+    let lock: toml::Value = toml::from_str(std::str::from_utf8(bytes).expect("锁文件应为 UTF-8"))
+        .expect("锁文件应为有效 TOML");
+    lock.get("package")
+        .and_then(toml::Value::as_array)
+        .expect("锁文件应包含 package 数组")
+        .iter()
+        .map(|package| {
+            let field = |name| {
+                package
+                    .get(name)
+                    .map(|value| value.as_str().expect("锁定身份字段应为字符串").to_owned())
+            };
+            (
+                field("name").expect("锁定包应有名称"),
+                field("version").expect("锁定包应有版本"),
+                field("source"),
+                field("checksum"),
+            )
+        })
+        .collect()
+}
+
+fn assert_fixture_lock(workspace: &Path, framework_lock: &[u8], fixture_lock: &[u8]) {
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(workspace.join("order-business/Cargo.toml"))
+            .expect("应读取夹具业务清单"),
+    )
+    .expect("夹具业务清单应为有效 TOML");
+    let business = (
+        "order-business".to_owned(),
+        manifest["package"]["version"]
+            .as_str()
+            .expect("夹具业务包应声明版本")
+            .to_owned(),
+        None,
+        None,
+    );
+    let framework = lock_identities(framework_lock);
+    let fixture = lock_identities(fixture_lock);
+    assert!(!framework.contains(&business), "业务夹具不应属于框架锁");
+    assert_eq!(
+        fixture.difference(&framework).collect::<Vec<_>>(),
+        vec![&business],
+        "隔离锁只能新增本地业务包，其余包的名称、版本、来源和校验和必须来自当前框架锁"
+    );
 }
 
 fn assert_auto_increment_assets(workspace: &std::path::Path) {
