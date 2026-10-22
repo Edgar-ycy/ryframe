@@ -32,6 +32,17 @@ pub async fn connect_with_sql_logging(
     sql_log_level: SqlLogLevel,
     slow_threshold_ms: u64,
 ) -> AppResult<DatabaseConnection> {
+    Database::connect(options(config, sql_log_level, slow_threshold_ms))
+        .await
+        .db_context("数据库连接失败")
+}
+
+/// 统一构造连接选项，供受控工具追加连接校验；保留池参数、TLS 和 SQL 日志策略。
+pub fn options(
+    config: &DbConnection,
+    sql_log_level: SqlLogLevel,
+    slow_threshold_ms: u64,
+) -> ConnectOptions {
     let url = config.connection_url();
 
     let mut opt = ConnectOptions::new(url);
@@ -45,7 +56,7 @@ pub async fn connect_with_sql_logging(
     // 根据配置控制 SQL 日志输出
     configure_sql_logging(&mut opt, sql_log_level, slow_threshold_ms);
 
-    Database::connect(opt).await.db_context("数据库连接失败")
+    opt
 }
 
 /// 根据 SqlLogLevel 配置 sqlx 日志
