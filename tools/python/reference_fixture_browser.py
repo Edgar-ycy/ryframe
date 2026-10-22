@@ -30,7 +30,10 @@ from reference_fixture_browser_process import (
 )
 from reference_fixture_browser_publish import publish_terminal_success
 from reference_fixture_browser_responses import preview_responses
-from reference_fixture_browser_security import browser_environment, secret_values
+from reference_fixture_browser_security import (
+    browser_configuration, browser_environment, secret_values,
+)
+from reference_fixture_browser_tools import ToolConfiguration
 from restore_build import file_digest
 from restore_frontend_build import validate_frontend_build
 from restore_runtime_evidence import artifact_snapshot, publish_json as _publish_json
@@ -275,8 +278,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
         "tools": {"python": _tool(Path(sys.executable), "Python"), "mysql": mysql_tool,
                   **corepack_tools},
         "endpoints": {"api": api_url, "frontend": frontend_url},
-        "identity": {"tenant_id": "system", "username": "admin",
-                     "password_env": "RYFRAME_RESET_ADMIN_PASSWORD"},
+        "identity": {"tenant_id": "system", "username": "admin"},
         "rate_limits": {"request": {"capacity": limits["capacity"],
                                     "window_secs": limits["window_secs"]},
                         "login": {"capacity": limits["api_limits"].get(
@@ -289,16 +291,21 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
         "commands": _commands(frontend, server),
         "remote_writes": 0,
     }
-    if not private.get(binding["identity"]["password_env"]):
-        raise ValueError("业务 crate 浏览器环境缺少已登记管理员凭据")
     source_guards = (
         SourceGuard.capture(execution, binding["backend"]["source"]),
         SourceGuard.capture(frontend, frontend_source["generated"]),
     )
     bootstrap = read_json(bootstrap_file)
+    password_file = Path(bootstrap["secret_files"]["reset-admin-password.txt"]["path"])
+    password_guard = artifact_snapshot(password_file)
+    password = password_file.read_text(encoding="utf-8").strip()
+    password_guard.assert_unchanged()
+    configuration = browser_configuration(binding, password)
     return binding, {"private": private, "frontend": frontend, "runtime": runtime,
                      "outputs": outputs, "source_guards": source_guards,
-                     "input_guards": _input_guards(binding),
+                     "input_guards": (*_input_guards(binding), password_guard),
+                     "tool_configuration": ToolConfiguration.capture(frontend),
+                     "browser_configuration": configuration,
                      "secrets": secret_values(private, bootstrap)}
 
 
@@ -328,10 +335,7 @@ def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_
 
 
 def _build_environment(context: dict, binding: dict) -> dict:
-    return configured({"COREPACK_ENABLE_NETWORK": "0", "VITE_APP_API_ORIGIN": "",
-                       "COREPACK_HOME": binding["tools"]["corepack_home"],
-                       "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
-                       "TEMP": context["private"]["TEMP"], "TMP": context["private"]["TMP"]})
+    return browser_environment(context["private"], binding)
 
 
 def _preview_build(binding: dict, context: dict,
@@ -510,6 +514,11 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
     secrets = context["secrets"]
     try:
         _publish_json(outputs["intent"], intent)
+        stage = "tool_configuration"
+        configuration_guard = context["tool_configuration"].publish(
+            context["browser_configuration"]
+        )
+        context["input_guards"] = (*context["input_guards"], configuration_guard)
         stage, business_started = (("build", False) if server == "preview"
                                    else ("browser", True))
         if server == "preview":

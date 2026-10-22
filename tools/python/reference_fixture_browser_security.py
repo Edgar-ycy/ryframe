@@ -6,19 +6,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from process_environment import configured
-from rate_limit_client import login_budget_environment
 
 
-RUNTIME_NAMES = frozenset({
-    "APP_ENV", "APP_SCOPE_ID", "APP_CONFIG_DIR", "APP_APP_HOST", "APP_APP_PORT",
-    "APP_CORS_ALLOW_ORIGINS", "APP_DATABASE_HOST", "APP_DATABASE_PORT", "APP_DATABASE_NAME",
-    "APP_DATABASE_USERNAME", "APP_DATABASE_PASSWORD", "APP_DATABASE_TLS_MODE", "APP_DB_PASSWORD",
-    "APP_TENANT_DATA_TARGETS", "APP_OBJECT_STORAGE_BACKEND", "APP_OBJECT_STORAGE_ENDPOINT",
-    "APP_OBJECT_STORAGE_REGION", "APP_OBJECT_STORAGE_USE_SSL", "APP_OBJECT_STORAGE_ACCESS_KEY",
-    "APP_OBJECT_STORAGE_SECRET_KEY", "APP_REDIS_HOST", "APP_REDIS_PORT", "APP_REDIS_DATABASE",
-    "APP_REDIS_TLS", "APP_REDIS_PASSWORD", "APP_JOBS_MODE", "APP_JOBS_HEALTH_HOST",
-    "APP_JOBS_HEALTH_PORT", "APP_AUTH_JWT_SECRET", "APP_MONITOR_METRICS_BEARER_TOKEN", "TEMP", "TMP",
-})
 SECRET_HINTS = ("PASSWORD", "SECRET", "TOKEN", "ACCESS_KEY", "CREDENTIAL")
 
 
@@ -49,43 +38,41 @@ def secret_values(private: dict, bootstrap: dict) -> tuple[str, ...]:
 
 
 def browser_environment(private: dict, binding: dict) -> dict:
-    missing = sorted(name for name in RUNTIME_NAMES if not isinstance(private.get(name), str))
-    if missing:
-        raise ValueError("业务 crate 浏览器环境缺少运行字段：" + "、".join(missing))
-    # 全栈 Worker 控制会用进程内的完整 APP_* 集合复核运行收据；浏览器环境必须携带与运行
-    # 环境完全相同的 APP_* 键值，否则配置摘要不同会拒绝停止或重启 Worker。
-    values = configured({**{name: private[name] for name in RUNTIME_NAMES},
-                         **{name: value for name, value in private.items() if name.startswith("APP_")}})
-    request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
-    values.update({
-        "COREPACK_ENABLE_NETWORK": "0", "PLAYWRIGHT_CHANNEL": "chrome", "PYTHONUTF8": "1",
+    """只向子进程传递环境选择及已登记的第三方工具路径。"""
+    if not isinstance(private.get("APP_ENV"), str) or not private["APP_ENV"]:
+        raise ValueError("业务 crate 浏览器缺少 APP_ENV 环境选择")
+    return configured({
+        "APP_ENV": private["APP_ENV"],
+        "COREPACK_ENABLE_NETWORK": "0", "PYTHONUTF8": "1",
         "COREPACK_HOME": binding["tools"]["corepack_home"],
-        "APP_API_DOCS_ENABLED": "false", "RYFRAME_CODE_SHA": binding["backend"]["source"]["head"],
-        "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
-        "RYFRAME_E2E_FIXTURE": "business", "RYFRAME_E2E_SERVER": binding.get("server", "preview"),
-        "RYFRAME_E2E_SCOPE_ID": binding["scope_id"], "RYFRAME_E2E_TENANT_ID": "system",
-        "RYFRAME_E2E_USERNAME": "admin",
-        "RYFRAME_E2E_PASSWORD": private[binding["identity"]["password_env"]],
-        "RYFRAME_E2E_BACKEND_DIR": binding["backend"]["path"],
-        "RYFRAME_E2E_RUNTIME_DIR": str(Path(binding["runtime"]["path"]).parent),
-        "RYFRAME_E2E_PYTHON": binding["tools"]["python"]["path"],
-        "RYFRAME_E2E_MYSQL_CLIENT": binding["tools"]["mysql"]["path"],
-        "RYFRAME_E2E_RATE_LIMIT_CAPACITY": str(request["capacity"]),
-        "RYFRAME_E2E_RATE_LIMIT_WINDOW_SECS": str(request["window_secs"]),
-        "RYFRAME_E2E_FRONTEND_PORT": str(urlsplit(binding["endpoints"]["frontend"]).port),
-        "RYFRAME_E2E_RUN_ID": binding["run_id"],
+        **{name: private[name] for name in ("TEMP", "TMP") if name in private},
     })
-    state = Path(binding["login_budget"]["path"])
-    values.update(login_budget_environment(Path(binding["backend"]["path"]), private, state))
-    if (values["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"] != str(login["capacity"])
-            or values["RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS"] != str(login["window_secs"])):
-        raise ValueError("业务 crate 浏览器登录预算与绑定不一致")
+
+
+def browser_configuration(binding: dict, password: str) -> dict:
+    """凭据仅写入本机受管工具文件，不进入环境、命令或公开收据。"""
+    if not isinstance(password, str) or not password.strip():
+        raise ValueError("业务 crate 浏览器缺少已登记管理员凭据")
+    request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
+    values = {
+        "scopeId": binding["scope_id"], "tenantId": binding["identity"]["tenant_id"],
+        "username": binding["identity"]["username"], "password": password,
+        "backendDir": binding["backend"]["path"],
+        "runtimeDir": str(Path(binding["runtime"]["path"]).parent),
+        "python": binding["tools"]["python"]["path"],
+        "requestCapacity": request["capacity"], "requestWindowSeconds": request["window_secs"],
+        "loginCapacity": login["capacity"], "loginWindowSeconds": login["window_secs"],
+        "loginBudgetState": binding["login_budget"]["path"],
+        "port": urlsplit(binding["endpoints"]["frontend"]).port,
+        "serverMode": binding["server"], "fixture": "business", "runId": binding["run_id"],
+        "channel": "chrome",
+    }
     response_audit = binding.get("response_audit")
     if binding["server"] == "preview":
         if not isinstance(response_audit, dict) or set(response_audit) != {
                 "path", "initial_state", "first_writer"}:
             raise ValueError("业务 crate preview 缺少静态响应审计绑定")
-        values["RYFRAME_E2E_PREVIEW_RESPONSE_AUDIT"] = response_audit["path"]
+        values["previewResponseAudit"] = response_audit["path"]
     elif response_audit is not None:
         raise ValueError("业务 crate dev 不得绑定生产静态响应审计")
     return values

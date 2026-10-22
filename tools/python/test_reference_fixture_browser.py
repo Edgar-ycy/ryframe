@@ -18,8 +18,10 @@ import reference_fixture_browser as browser
 import reference_fixture_browser_process as browser_process
 import reference_fixture_browser_publish as terminal_publish
 import reference_fixture_browser_security as security
+import reference_fixture_browser_tools as browser_tools
 import reference_fixture_environment as fixture_environment
 import reference_fixture_runtime as runtime
+from process_environment import configured as safe_process_environment
 from devex_clone_capture import write_json
 from workspace_directory import WorkspaceDirectory
 
@@ -131,11 +133,6 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         stack.enter_context(patch.object(browser, "rate_limit_settings", return_value={
             "capacity": 100, "window_secs": 60, "api_window_secs": 30,
             "api_limits": {"POST /api/v1/auth/login": 7},
-        }))
-        stack.enter_context(patch.object(security, "login_budget_environment", return_value={
-            "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(self.output / "browser-r24-business-login-budget.json"),
-            "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "7",
-            "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "30",
         }))
         stack.enter_context(patch.object(browser.SourceGuard, "capture", return_value=StableGuard()))
         stack.enter_context(patch.object(browser, "require_closed_port"))
@@ -260,13 +257,18 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             ["exec", "node", "scripts/restore-build.mjs", "verify", "--source-root", str(self.frontend)],
         ])
         self.assertNotIn("RYFRAME_E2E_PASSWORD", calls[0][1])
-        self.assertEqual(calls[0][1]["VITE_APP_API_ORIGIN"], "")
-        self.assertEqual(calls[0][1]["VITE_APP_PROXY_TARGET"], "http://127.0.0.1:18200")
-        self.assertEqual(calls[2][1]["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
-        self.assertEqual(calls[2][1]["RYFRAME_E2E_RUNTIME_DIR"], str(self.output))
-        self.assertEqual(calls[2][1]["RYFRAME_E2E_PREVIEW_RESPONSE_AUDIT"],
+        for _, environment in calls:
+            self.assertEqual(environment["APP_ENV"], "test")
+            self.assertFalse(any(name.startswith(("RYFRAME_", "VITE_"))
+                                 or name.startswith("APP_") and name != "APP_ENV"
+                                 or name == "PLAYWRIGHT_CHANNEL" for name in environment))
+            self.assertNotIn("Secret123", json.dumps(environment))
+        configured = read(self.frontend / ".local-tests/frontend-tools.json")["real_browser"]
+        self.assertEqual(configured["password"], "Admin!Secret123")
+        self.assertEqual(configured["runtimeDir"], str(self.output))
+        self.assertEqual(configured["previewResponseAudit"],
                          str(self.output / "browser-r24-business-preview-responses.json"))
-        self.assertEqual(calls[2][1]["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"], "7")
+        self.assertEqual(configured["loginCapacity"], 7)
         self.assertEqual(result["status"], "passed")
         self.assertNotIn("Secret123", json.dumps(result))
         self.assertNotIn("RustfsAccess123", json.dumps(result))
@@ -296,17 +298,135 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 self.api, self.backend, self.bootstrap, self.output, "r24-business", "preview",
                 require_fresh=True)
             values = security.browser_environment(context["private"], binding)
-        self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "RustfsAccess123")
-        self.assertEqual(values["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
-        self.assertNotIn("RYFRAME_RESET_ADMIN_PASSWORD", values)
-        # 运行收据的配置摘要覆盖进程内全部 APP_*；浏览器环境必须与运行环境保持同一集合。
-        runtime_app = {key: value for key, value in context["private"].items() if key.startswith("APP_")}
-        runtime_app["APP_API_DOCS_ENABLED"] = "false"
-        self.assertEqual(
-            {key: value for key, value in values.items() if key.startswith("APP_")}, runtime_app)
-        self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
+        self.assertEqual({key: value for key, value in values.items() if key.startswith("APP_")},
+                         {"APP_ENV": "test"})
+        self.assertFalse(any(name.startswith("RYFRAME_") for name in values))
+        self.assertNotIn("Secret123", json.dumps(values))
         self.assertIn("RustfsAccess123", context["secrets"])
         self.assertIn("Database!Secret123", context["secrets"])
+
+    def test_tool_configuration_merge_is_atomic_and_preserves_other_fields(self):
+        target = self.frontend / ".local-tests/frontend-tools.json"
+        original = {"api_contract": {"backend_commit": "a" * 40},
+                    "browser_smoke": {"channel": "chromium"},
+                    "real_browser": {"restore": {"obsolete": True}, "password": "old"}}
+        target.write_text(json.dumps(original), encoding="utf-8")
+        before = browser_tools.ToolConfiguration.capture(self.frontend)
+        replace = browser_tools.os.replace
+
+        def atomic(source, destination):
+            self.assertEqual(read(target), original)
+            self.assertEqual(Path(source).parent, target.parent)
+            return replace(source, destination)
+
+        with patch.object(browser_tools.os, "replace", side_effect=atomic) as replaced:
+            guard = before.publish({"password": "new", "fixture": "business"})
+        replaced.assert_called_once()
+        guard.assert_unchanged()
+        self.assertEqual(read(target), {**original, "real_browser": {
+            "password": "new", "fixture": "business"}})
+        self.assertFalse(list(target.parent.glob("*.lock")))
+        self.assertFalse(list(target.parent.glob("*.pending")))
+
+    def test_tool_configuration_rejects_content_drift_and_concurrent_creation(self):
+        target = self.frontend / ".local-tests/frontend-tools.json"
+        absent = browser_tools.ToolConfiguration.capture(self.frontend)
+        target.write_text('{"browser_smoke":{}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "并发创建"):
+            absent.publish({"password": "not-printed"})
+        before = browser_tools.ToolConfiguration.capture(self.frontend)
+        target.write_text('{"browser_smoke":{"channel":"chrome"}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "漂移"):
+            before.publish({"password": "not-printed"})
+        self.assertEqual(read(target), {"browser_smoke": {"channel": "chrome"}})
+
+    def test_unknown_tool_write_keeps_pending_and_never_exposes_password(self):
+        target = self.frontend / ".local-tests/frontend-tools.json"
+        before = browser_tools.ToolConfiguration.capture(self.frontend)
+        with patch.object(browser_tools.os, "link", side_effect=OSError("Admin!Secret123")):
+            with self.assertRaisesRegex(ValueError, "禁止自动重放") as raised:
+                before.publish({"password": "Admin!Secret123"})
+        self.assertNotIn("Admin!Secret123", str(raised.exception))
+        self.assertTrue(target.with_name(target.name + ".lock").is_file())
+        pending = list(target.parent.glob(".*.pending"))
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(read(pending[0])["real_browser"]["password"], "Admin!Secret123")
+        with self.assertRaisesRegex(ValueError, "未确认写入"):
+            before.publish({"password": "replacement"})
+
+    def test_tool_write_visible_then_interrupted_keeps_evidence_and_blocks_replay(self):
+        target = self.frontend / ".local-tests/frontend-tools.json"
+        before = browser_tools.ToolConfiguration.capture(self.frontend)
+        link = browser_tools.os.link
+
+        def published_then_interrupted(source, destination):
+            link(source, destination)
+            raise KeyboardInterrupt()
+
+        with patch.object(browser_tools.os, "link", side_effect=published_then_interrupted):
+            with self.assertRaisesRegex(ValueError, "禁止自动重放"):
+                before.publish({"password": "Admin!Secret123"})
+        self.assertEqual(read(target)["real_browser"]["password"], "Admin!Secret123")
+        self.assertTrue(target.with_name(target.name + ".lock").exists())
+        self.assertEqual(len(list(target.parent.glob(".*.pending"))), 1)
+        with self.assertRaisesRegex(ValueError, "未确认写入"):
+            browser_tools.ToolConfiguration.capture(self.frontend).publish({"password": "next"})
+
+    def test_tool_write_rechecks_drift_after_pending_flush(self):
+        target = self.frontend / ".local-tests/frontend-tools.json"
+        target.write_text('{"browser_smoke":{}}', encoding="utf-8")
+        before = browser_tools.ToolConfiguration.capture(self.frontend)
+        fsync = browser_tools.os.fsync
+
+        def concurrent_change(descriptor):
+            fsync(descriptor)
+            target.write_text('{"browser_smoke":{"channel":"chrome"}}', encoding="utf-8")
+
+        with patch.object(browser_tools.os, "fsync", side_effect=concurrent_change):
+            with self.assertRaisesRegex(ValueError, "禁止自动重放"):
+                before.publish({"password": "secret"})
+        self.assertEqual(read(target), {"browser_smoke": {"channel": "chrome"}})
+        self.assertFalse(target.with_name(target.name + ".lock").exists())
+
+    def test_browser_ignores_old_configuration_environment_and_password_alias(self):
+        poisoned = {"RYFRAME_E2E_PASSWORD": "poisoned", "PLAYWRIGHT_CHANNEL": "edge",
+                    "APP_DATABASE_PASSWORD": "poisoned", "RYFRAME_RESET_ADMIN_PASSWORD": "poisoned"}
+        with self.patches(), patch.dict(os.environ, poisoned), \
+                patch.object(security, "configured", side_effect=safe_process_environment):
+            self.private.pop("RYFRAME_RESET_ADMIN_PASSWORD")
+            # Bootstrap 仍须绑定其当前输入；凭据只能来自已登记文件。
+            value = read(self.bootstrap)
+            value["environment_sha256"] = fixture_environment.plan_hash(self.private)
+            self.bootstrap.write_text(json.dumps(value), encoding="utf-8")
+            (self.environment / "environment.json").write_text(
+                json.dumps({"environment": self.private}), encoding="utf-8")
+            binding, context = browser._plan(
+                self.api, self.backend, self.bootstrap, self.output, "legacy-ignored", "dev",
+                require_fresh=True)
+            values = security.browser_environment(context["private"], binding)
+        self.assertEqual(context["browser_configuration"]["password"], "Admin!Secret123")
+        self.assertEqual(context["browser_configuration"]["channel"], "chrome")
+        self.assertNotIn("poisoned", json.dumps(values))
+
+    def test_tool_configuration_drift_during_browser_blocks_success(self):
+        def execute(_binding, _frontend, _arguments, _environment, log, process_dir,
+                    _timeout, _secrets):
+            process_dir.mkdir()
+            log.write_text("ok", encoding="utf-8")
+            self.browser_artifacts("dev", "drift")
+            target = self.frontend / ".local-tests/frontend-tools.json"
+            target.write_text('{"browser_smoke":{}}', encoding="utf-8")
+            return {"directory": str(process_dir)}
+
+        with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute):
+            binding, _ = self.bind("dev", "drift")
+            with self.assertRaisesRegex(ValueError, "漂移"):
+                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+        self.assertEqual(read(self.frontend / ".local-tests/frontend-tools.json"),
+                         {"browser_smoke": {}})
+        failure = read(self.output / "browser-drift-failure.json")
+        self.assertTrue(failure["unknown_business_writes"])
+        self.assertFalse((self.output / "browser-drift-result.json").exists())
 
     def test_failure_preserves_exit_code_blocks_replay_and_does_not_publish_success(self):
         error = subprocess.CalledProcessError(19, ["corepack", "pnpm", "build", "--real"])
