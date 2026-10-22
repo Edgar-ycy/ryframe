@@ -5,7 +5,7 @@ use opentelemetry::{
     propagation::{Extractor, Injector},
 };
 use ryframe_adapters::telemetry::{TelemetryGuard, init_tracer_provider};
-use ryframe_config::{AppConfig, LoggerFormat, LoggerOutput};
+use ryframe_config::{AppConfig, LoggerFormat, LoggerLevel, LoggerOutput};
 use ryframe_db::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 use ryframe_kernel::AppError;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -13,6 +13,13 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{
     EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
 };
+
+#[cfg(test)]
+mod testing;
+
+fn configured_filter(level: LoggerLevel) -> EnvFilter {
+    EnvFilter::new(level.as_str())
+}
 
 /// 日志 Guard，保证滚动文件 writer 不被提前 Drop
 pub struct LoggerGuard {
@@ -79,11 +86,10 @@ impl Extractor for HeaderCarrier {
 /// - `output = "stdout"` → 控制台输出
 /// - `output = "file"` → 每天滚动，并按 `retention_days` 有界保留
 /// - `format = "json"` → JSON 格式，否则 text 格式
-/// - 同时初始化 OpenTelemetry 链路追踪（通过环境变量控制）
+/// - 同时初始化 OpenTelemetry 链路追踪（通过文件配置控制）
 pub fn init(config: &AppConfig) -> Result<(LoggerGuard, TelemetryGuard), AppError> {
     config.logger.validate().map_err(AppError::Config)?;
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(config.logger.level.as_str()));
+    let env_filter = configured_filter(config.logger.level);
 
     let is_json = config.logger.format == LoggerFormat::Json;
     let sql_log_level = config.database.sql_log_level;

@@ -32,6 +32,8 @@ cargo reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
 
 ## HTTP 5xx 与高延迟
 
+应用日志过滤级别使用配置中的 `logger.level`；`RUST_LOG` 不会覆盖该级别。排查时修改所选配置文件并重启对应进程。
+
 先按请求 ID 检查 API 日志和 trace，再检查数据库、Redis、对象存储与 Worker。确认是单一依赖故障后按降级策略处理；不要通过扩大重试放大故障。
 
 ## Redis 降级
