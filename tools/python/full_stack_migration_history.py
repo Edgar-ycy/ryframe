@@ -271,8 +271,10 @@ def run(
         and worker_identity(directory, receipt) is not None
     ):
         raise ValueError("人工历史调整和备份前必须先停止本次已登记 Worker")
-    control, source = bindings(backend, "dedicated-a")
-    _, target = bindings(backend, "dedicated-b")
+    control, source = bindings(backend, "dedicated-a", config_dir=directory / "config")
+    _, target = bindings(backend, "dedicated-b", config_dir=directory / "config")
+    if control["_scope_id"] != receipt["scope_id"]:
+        raise ValueError("数据库文件配置与运行 scope 不匹配")
     schemas = [control["database"], source["database"], target["database"]]
     if len(set(schemas)) != 3:
         raise ValueError("历史 fixture 必须使用三个不同的明确 schema")

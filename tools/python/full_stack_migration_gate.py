@@ -78,12 +78,14 @@ def emit(value: dict) -> None:
     print(json.dumps(value, ensure_ascii=False), flush=True)
 
 
-def hold(backend: Path, directory: Path, tenant: str, migration: str) -> None:
+def hold(backend: Path, directory: Path, tenant: str, migration: str, *, config_dir: Path | None = None) -> None:
     validate_selection(tenant, migration)
     receipt = verify_runtime(backend, directory)
     if worker_identity(directory, receipt) is not None:
         raise ValueError("创建测试 gate 前必须先停止本次已登记 Worker")
-    control, target = bindings(backend)
+    control, target = bindings(backend, config_dir=config_dir or directory / "config")
+    if control["_scope_id"] != receipt["scope_id"]:
+        raise ValueError("数据库文件配置与运行 scope 不匹配")
     with MysqlSession(control) as observer, MysqlSession(target) as gate:
         server = ownership(
             observer, control["database"], receipt["scope_id"], "control"
@@ -149,12 +151,14 @@ def main() -> None:
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--migration", required=True)
+    parser.add_argument("--config-dir", type=Path)
     args = parser.parse_args()
     hold(
         args.backend_root.resolve(),
         args.runtime_dir.resolve(),
         args.tenant,
         args.migration,
+        config_dir=args.config_dir,
     )
 
 

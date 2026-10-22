@@ -1,6 +1,9 @@
 import io
+import copy
+from contextlib import nullcontext
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -79,7 +82,7 @@ class MigrationGateTests(unittest.TestCase):
         self.worker = self.patch("worker_identity", return_value=None)
         self.patch(
             "bindings",
-            return_value=({"database": "control_test"}, {"database": "shared_test"}),
+            return_value=({"database": "control_test", "_scope_id": SCOPE}, {"database": "shared_test"}),
         )
         self.output = self.patch("emit")
         self.patch_time = mock.patch.object(gate.time, "sleep")
@@ -203,115 +206,130 @@ class MigrationMysqlTests(unittest.TestCase):
         self.temporary = WorkspaceDirectory(dir=local)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.configuration = self.root / "app.test.toml"
-        self.configuration.write_text(
-            """[[tenant_data.targets]]
-key = "shared"
-kind = "mysql"
-mode = "shared"
-host = "127.0.0.1"
-port = 3317
-database = "shared_test"
-username = "root"
-password_env = "TARGET_TEST_PASSWORD"
-tls_mode = "disabled"
-""",
-            encoding="utf-8",
-        )
-        self.environment = mock.patch.dict(
-            os.environ,
-            {
-                "APP_CONFIG_DIR": str(self.root),
-                "APP_DATABASE_HOST": "127.0.0.1",
-                "APP_DATABASE_PORT": "3317",
-                "APP_DATABASE_NAME": "control_test",
-                "APP_DATABASE_USERNAME": "root",
-                "APP_DATABASE_TLS_MODE": "required",
-                "APP_DATABASE_PASSWORD": "control-secret",
-                "TARGET_TEST_PASSWORD": "target-secret",
-                "RYFRAME_E2E_MYSQL_CLIENT": str(Path(sys.executable).resolve()),
-            },
-            clear=True,
-        )
-        self.environment.start()
-        self.addCleanup(self.environment.stop)
+        self.settings = {"scope_id": "ci-123-2", "database": {"primary": {
+            "host": "127.0.0.1", "port": 3317, "database": "control_test",
+            "username": "root", "password": "control-secret", "tls_mode": "required"}},
+            "tenant_data": {"targets": [{"key": "shared", "kind": "mysql", "mode": "shared",
+                "host": "127.0.0.1", "port": 3317, "database": "shared_test",
+                "username": "root", "password": "target-secret", "tls_mode": "disabled"}]}}
+        environment = mock.patch.dict(os.environ, {"APP_ENV": "test",
+            "RYFRAME_E2E_MYSQL_CLIENT": str(Path(sys.executable).resolve())}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+        loader = mock.patch.object(mysql, "load_app_table", side_effect=lambda *a, **k: copy.deepcopy(self.settings))
+        self.load = loader.start()
+        self.addCleanup(loader.stop)
 
-    def test_native_and_ci_keep_credentials_in_environment_and_bind_explicit_target(
-        self,
-    ):
-        control, target = mysql.bindings(self.root)
-        arguments, environment = mysql.invocation(target)
-        self.assertEqual(arguments[1], "--no-defaults")
-        self.assertIn("--port=3317", arguments)
-        self.assertEqual(environment["MYSQL_PWD"], "target-secret")
-        self.assertNotIn("secret", " ".join(arguments))
-        with mock.patch.dict(
-            os.environ,
-            {
-                "GITHUB_ACTIONS": "true",
-                "GITHUB_RUN_ID": "123",
-                "GITHUB_RUN_ATTEMPT": "2",
-                "APP_SCOPE_ID": "ci-123-2",
-                "RYFRAME_CI_MYSQL_CONTAINER_ID": "abcdef012345",
-            },
-        ):
-            arguments, environment = mysql.invocation(control)
-            self.assertEqual(
-                arguments[:7],
-                ["docker", "exec", "-i", "--env", "MYSQL_PWD", "abcdef012345", "mysql"],
-            )
-            self.assertIn("--port=3306", arguments)
-            self.assertEqual(environment["MYSQL_PWD"], "control-secret")
+    def test_native_credentials_use_managed_file_and_cleanup_even_on_error(self):
+        control, target = mysql.bindings(self.root, config_dir=self.root / "explicit")
+        self.load.assert_called_once_with(self.root, {"APP_ENV": "test"}, config_dir=self.root / "explicit")
+        with mysql.invocation(target) as (arguments, environment, prefix):
+            option_file = Path(arguments[1].removeprefix("--defaults-file="))
+            self.assertEqual(option_file.read_text(encoding="utf-8"), '[client]\npassword="target-secret"\n')
+            self.assertIn("--port=3317", arguments)
+            self.assertIn("--host=127.0.0.1", arguments)
+            self.assertIn("--ssl-mode=DISABLED", arguments)
+            self.assertEqual(prefix, "")
+            self.assertNotIn("MYSQL_PWD", environment)
             self.assertNotIn("secret", " ".join(arguments))
-            with mock.patch.dict(os.environ, {"APP_SCOPE_ID": "ci-123-1"}):
-                with self.assertRaisesRegex(ValueError, "当前 CI"):
-                    mysql.invocation(control)
+        self.assertFalse(option_file.exists())
+        with self.assertRaisesRegex(RuntimeError, "caller"):
+            with mysql.invocation(control) as (arguments, _, _):
+                option_file = Path(arguments[1].removeprefix("--defaults-file="))
+                raise RuntimeError("caller")
+        self.assertFalse(option_file.exists())
 
-    def test_remote_shared_database_and_unverified_client_are_rejected(self):
-        for name, value in (
-            ("APP_DATABASE_HOST", "db.example"),
-            ("APP_DATABASE_NAME", "shared_test"),
-            ("APP_DATABASE_NAME", "db`;DROP DATABASE x"),
-            ("APP_DATABASE_PORT", "3306"),
-            ("APP_DATABASE_TLS_MODE", "verify_identity"),
-        ):
-            with (
-                self.subTest(name=name, value=value),
-                mock.patch.dict(os.environ, {name: value}),
-            ):
+    def test_ci_credentials_use_stdin_and_exact_job_container(self):
+        control, _ = mysql.bindings(self.root)
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123",
+                "GITHUB_RUN_ATTEMPT": "2", "RYFRAME_CI_MYSQL_CONTAINER_ID": "abcdef012345",
+                "MYSQL_PWD": "host-secret", "APP_DATABASE_PASSWORD": "host-secret"}):
+            with mysql.invocation(control) as (arguments, environment, prefix):
+                self.assertEqual(arguments[:4], ["docker", "exec", "-i", "abcdef012345"])
+                self.assertIn("--port=3306", arguments)
+                self.assertIn("--ssl-mode=REQUIRED", arguments)
+                self.assertEqual(prefix, '[client]\npassword="control-secret"\n')
+                self.assertNotIn("MYSQL_PWD", environment)
+                self.assertNotIn("host-secret", str(environment))
+                self.assertNotIn("secret", " ".join(arguments))
+            control["_scope_id"] = "ci-123-1"
+            with self.assertRaisesRegex(ValueError, "当前 CI"):
+                with mysql.invocation(control):
+                    pass
+
+    def test_invalid_targets_and_unverified_client_fail_closed(self):
+        primary = self.settings["database"]["primary"]
+        for field, value in (("host", "db.example"), ("database", "shared_test"),
+                ("database", "db`;DROP DATABASE x"), ("port", 3306), ("port", "3317"),
+                ("password", ""), ("password_env", "PRIVATE"), ("tls_mode", "verify_identity")):
+            with self.subTest(field=field), mock.patch.dict(primary, {field: value}):
                 with self.assertRaises(ValueError):
                     mysql.bindings(self.root)
         control, _ = mysql.bindings(self.root)
         with mock.patch.dict(os.environ, {"RYFRAME_E2E_MYSQL_CLIENT": "mysql"}):
             with self.assertRaisesRegex(ValueError, "绝对路径"):
-                mysql.invocation(control)
+                with mysql.invocation(control):
+                    pass
+        with mock.patch.dict(os.environ, {"APP_ENV": "prod"}):
+            with self.assertRaisesRegex(ValueError, "APP_ENV=test"):
+                mysql.bindings(self.root)
 
-    def test_child_protocol_flushes_each_statement_and_rolls_back_on_exit(self):
+    def test_client_option_escaping_keeps_password_on_one_line(self):
+        value = 'quote"slash\\line\nnext\rtab\t中文#;'
+        options = mysql.client_options(value)
+        self.assertEqual(len(options.splitlines()), 2)
+        self.assertIn('\\"', options)
+        self.assertIn('\\\\', options)
+        self.assertIn('\\n', options)
+        self.assertIn('中文#;', options)
+
+    def test_process_failure_cleans_option_file_without_connecting(self):
+        control, _ = mysql.bindings(self.root)
+        with mock.patch.object(mysql.subprocess, "Popen", side_effect=OSError("spawn failed")):
+            with self.assertRaises(OSError):
+                mysql.MysqlSession(control)
+        self.assertEqual(list((self.root / ".local-tests/mysql-client").iterdir()), [])
+
+    def test_wait_failure_still_removes_managed_credentials(self):
+        control, _ = mysql.bindings(self.root)
+        process = mock.Mock(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO())
+        process.poll.return_value = None
+        process.wait.side_effect = subprocess.TimeoutExpired("mysql", 5)
+        with mock.patch.object(mysql.subprocess, "Popen", return_value=process) as spawn:
+            session = mysql.MysqlSession(control)
+            option_file = Path(spawn.call_args.args[0][1].removeprefix("--defaults-file="))
+            self.assertTrue(option_file.exists())
+            with self.assertRaises(subprocess.TimeoutExpired):
+                session.close()
+            for reader in session.readers:
+                reader.join(timeout=5)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
+        self.assertFalse(option_file.exists())
+
+    def test_child_protocol_flushes_and_rolls_back_and_redacts_stderr(self):
         log = self.root / "statements.jsonl"
         script = """import json, re, sys
+assert sys.stdin.readline() == '[client]\\n'
+assert sys.stdin.readline() == 'password="control-secret"\\n'
 with open(sys.argv[1], 'w', encoding='utf-8') as output:
+    print('control-secret', file=sys.stderr, flush=True)
     for line in sys.stdin:
         output.write(json.dumps(line) + '\\n'); output.flush()
         marker = re.fullmatch(r"SELECT '(gate-[a-f0-9]+)';\\n", line)
         if marker: print(marker.group(1), flush=True)
         elif line == 'JSON;\\n': print('{"value":168}', flush=True)
 """
-        with mock.patch.object(
-            mysql,
-            "invocation",
-            return_value=(
-                [sys.executable, "-u", "-c", script, str(log)],
-                dict(os.environ),
-            ),
-        ):
-            with mysql.MysqlSession({}) as session:
+        with mock.patch.object(mysql, "invocation", side_effect=lambda _: nullcontext((
+                [sys.executable, "-u", "-c", script, str(log)], dict(os.environ), mysql.client_options("control-secret")))):
+            with mysql.MysqlSession({"password": "control-secret"}) as session:
                 self.assertEqual(session.execute("JSON", timeout=5), [{"value": 168}])
                 self.assertEqual(session.execute("JSON", timeout=5), [{"value": 168}])
             self.assertIsNotNone(session.process.poll())
             self.assertFalse(any(reader.is_alive() for reader in session.readers))
-        statements = [
-            json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
-        ]
+            self.assertNotIn("control-secret", " ".join(session.errors))
+            self.assertIn("<redacted>", " ".join(session.errors))
+        statements = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
         self.assertIn("ROLLBACK;\n", statements)
 
 

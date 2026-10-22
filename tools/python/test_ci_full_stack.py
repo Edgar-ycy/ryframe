@@ -64,6 +64,7 @@ class FullStackCiTests(unittest.TestCase):
     def test_prepare_uses_reset_plan_and_explicit_migration_commands(self) -> None:
         with test_directory() as root:
             commands: list[list[str]] = []
+            database_plan = mock.Mock(scope_id="ci-12-3")
 
             def run(arguments: list[str], **_: object):
                 commands.append(arguments)
@@ -86,7 +87,7 @@ class FullStackCiTests(unittest.TestCase):
                 mock.patch.dict(os.environ, self.environment(root), clear=True),
                 mock.patch.object(MODULE, "_run", side_effect=run),
                 mock.patch.object(
-                    MODULE, "plan_databases", return_value=mock.sentinel.plan
+                    MODULE, "plan_databases", return_value=database_plan
                 ),
                 mock.patch.object(MODULE, "prepare_databases") as databases,
             ):
@@ -96,7 +97,7 @@ class FullStackCiTests(unittest.TestCase):
                     MODULE._required_environment,
                     root,
                     root / "runner/ryframe-full-stack",
-                    plan=mock.sentinel.plan,
+                    plan=database_plan,
                 )
 
             for bucket in BUCKETS:
@@ -143,11 +144,12 @@ class FullStackCiTests(unittest.TestCase):
                     "RESET-RYFRAME-test-ci-12-3",
                 ],
             )
+            config_args = ["--config-dir", str(root / "runner/ryframe-full-stack/config")]
             migrate = str(root / "artifacts/ryframe-migrate")
-            self.assertEqual(commands[-4], [migrate, "control", "up"])
-            self.assertEqual(commands[-3], [migrate, "tenant-data", "up", "--all"])
-            self.assertEqual(commands[-2], [migrate, "control", "verify"])
-            self.assertEqual(commands[-1], [migrate, "tenant-data", "verify", "--all"])
+            self.assertEqual(commands[-4], [migrate, *config_args, "control", "up"])
+            self.assertEqual(commands[-3], [migrate, *config_args, "tenant-data", "up", "--all"])
+            self.assertEqual(commands[-2], [migrate, *config_args, "control", "verify"])
+            self.assertEqual(commands[-1], [migrate, *config_args, "tenant-data", "verify", "--all"])
 
     def test_wait_for_api_stops_on_success_or_process_exit(self) -> None:
         ready = mock.Mock(side_effect=[False, True])
@@ -198,7 +200,7 @@ class FullStackCiTests(unittest.TestCase):
                 MODULE.start(root)
                 self.assertEqual(ready.call_count, 1)
                 self.assertEqual(launch.call_args.args[5]["SNOWFLAKE_WORKER_ID"], "1")
-                self.assertEqual(launch.call_args.args[3], [executable])
+                self.assertEqual(launch.call_args.args[3], [executable, "--config-dir", str(root / "runner/ryframe-full-stack/config")])
                 worker.assert_called_once_with(
                     "start", root, root / "runner/ryframe-full-stack", timeout=180
                 )
@@ -379,6 +381,7 @@ class FullStackCiTests(unittest.TestCase):
         with test_directory() as root:
             output = root / "github-environment"
             environment = {
+                "RUNNER_TEMP": str(root / "runner"),
                 "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(root / "budget.json")
             }
             values = {
@@ -397,6 +400,7 @@ class FullStackCiTests(unittest.TestCase):
                 self.assertEqual(export.call_args.args[0], root)
                 self.assertEqual(dict(export.call_args.args[1]), environment)
                 self.assertEqual(export.call_args.args[2], root / "budget.json")
+                self.assertEqual(export.call_args.kwargs["config_dir"], root / "runner/ryframe-full-stack/config")
             self.assertEqual(
                 output.read_text(encoding="utf-8").splitlines(),
                 [f"{key}={value}" for key, value in values.items()],

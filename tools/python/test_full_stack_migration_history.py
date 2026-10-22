@@ -1,4 +1,5 @@
 import copy
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -375,7 +376,7 @@ class HistoryTests(unittest.TestCase):
             mock.patch.object(
                 backup,
                 "client_invocation",
-                return_value=(["mysqldump"], {"MYSQL_PWD": "secret"}),
+                side_effect=lambda *args: nullcontext((["mysqldump"], {}, "")),
             ),
             mock.patch.object(backup.subprocess, "run", side_effect=complete),
         ):
@@ -396,7 +397,7 @@ class HistoryTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                backup, "client_invocation", return_value=(["mysqldump"], {})
+                backup, "client_invocation", side_effect=lambda *args: nullcontext((["mysqldump"], {}, ""))
             ),
             mock.patch.object(backup.subprocess, "run", side_effect=failed),
         ):
@@ -414,7 +415,7 @@ class HistoryTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                backup, "client_invocation", return_value=(["mysqldump"], {})
+                backup, "client_invocation", side_effect=lambda *args: nullcontext((["mysqldump"], {}, ""))
             ),
             mock.patch.object(backup.subprocess, "run", side_effect=incomplete),
         ):

@@ -72,7 +72,8 @@ def _api_ready_url() -> str:
 
 
 def _preflight_prepare(backend_root: Path, output_dir: Path) -> DatabasePlan:
-    plan = plan_databases(_required_environment, backend_root, output_dir)
+    plan = plan_databases(_required_environment, backend_root, output_dir,
+                          config_dir=backend_root / ".local-tests/full-stack-config")
     target = Path(_required_environment("CARGO_TARGET_DIR"))
     if not target.is_absolute():
         raise FullStackError("CARGO_TARGET_DIR 必须是明确的绝对路径")
@@ -96,6 +97,7 @@ def _run(
     capture_output: bool = False,
     stdout: object | None = None,
     env: dict[str, str] | None = None,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         arguments,
@@ -106,6 +108,7 @@ def _run(
         stdout=stdout,
         stderr=subprocess.STDOUT if stdout is not None else None,
         env=env,
+        input=input,
     )
     if completed.returncode != 0:
         detail = (
@@ -126,6 +129,7 @@ def prepare(backend_root: Path) -> None:
     prepare_databases(
         _run, _required_environment, backend_root, output_dir, plan=database_plan
     )
+    config_arguments = ["--config-dir", str(output_dir / "config")]
 
     _run(
         [
@@ -144,19 +148,20 @@ def prepare(backend_root: Path) -> None:
         stdout=subprocess.DEVNULL,
     )
     reset = binaries["ryframe-reset"]
-    plan = _run([str(reset), "plan"], cwd=backend_root, capture_output=True).stdout
+    plan = _run([str(reset), *config_arguments, "plan"], cwd=backend_root, capture_output=True).stdout
     (output_dir / "reset-plan.log").write_text(plan, encoding="utf-8", newline="\n")
     hashes = PLAN_HASH_PATTERN.findall(plan)
     if not hashes:
         raise FullStackError("未能从 reset plan 读取有效 hash")
     confirmation = (
         f"RESET-RYFRAME-{_required_environment('APP_ENV')}-"
-        f"{_required_environment('APP_SCOPE_ID')}"
+        f"{database_plan.scope_id}"
     )
     with (output_dir / "reset-execute.log").open("w", encoding="utf-8") as log:
         _run(
             [
                 str(reset),
+                *config_arguments,
                 "execute",
                 "--plan-hash",
                 hashes[-1],
@@ -167,10 +172,10 @@ def prepare(backend_root: Path) -> None:
             stdout=log,
         )
     migrate = binaries["ryframe-migrate"]
-    _run([str(migrate), "control", "up"], cwd=backend_root)
-    _run([str(migrate), "tenant-data", "up", "--all"], cwd=backend_root)
-    _run([str(migrate), "control", "verify"], cwd=backend_root)
-    _run([str(migrate), "tenant-data", "verify", "--all"], cwd=backend_root)
+    _run([str(migrate), *config_arguments, "control", "up"], cwd=backend_root)
+    _run([str(migrate), *config_arguments, "tenant-data", "up", "--all"], cwd=backend_root)
+    _run([str(migrate), *config_arguments, "control", "verify"], cwd=backend_root)
+    _run([str(migrate), *config_arguments, "tenant-data", "verify", "--all"], cwd=backend_root)
 
 
 def _ready(url: str = "http://127.0.0.1:8080/readyz") -> bool:
@@ -242,7 +247,7 @@ def start(backend_root: Path) -> None:
                     output_dir,
                     name,
                     receipt["scope_id"],
-                    [str(Path(binaries[binary]).resolve(strict=True))],
+                    [str(Path(binaries[binary]).resolve(strict=True)), "--config-dir", str(output_dir / "config")],
                     backend_root,
                     service_environment,
                     log,
@@ -356,7 +361,7 @@ def export_rate_limit(backend_root: Path, environment_file: Path) -> None:
     """从当前隔离配置导出浏览器登录预算。"""
 
     raw = _required_environment("RYFRAME_E2E_LOGIN_BUDGET_STATE")
-    values = login_budget_environment(backend_root, os.environ, Path(raw))
+    values = login_budget_environment(backend_root, os.environ, Path(raw), config_dir=_output_dir() / "config")
     with environment_file.open("a", encoding="utf-8", newline="\n") as output:
         output.writelines(f"{key}={value}\n" for key, value in values.items())
     print("已从当前配置导出登录预算容量与窗口")

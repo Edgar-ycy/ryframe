@@ -13,8 +13,7 @@ from full_stack_migration_mysql import client_invocation, identifier
 def export_target(binding: dict, directory: Path, migration: str) -> dict:
     database = identifier(binding["database"])
     artifact = directory / f"business-retention-{migration}.sql"
-    command, environment = client_invocation(binding, "mysqldump")
-    command += [
+    arguments = [
         "--single-transaction",
         "--quick",
         "--skip-lock-tables",
@@ -30,11 +29,11 @@ def export_target(binding: dict, directory: Path, migration: str) -> dict:
         database,
     ]
     # 独占文件保留失败证据；不覆盖旧导出，也不扫描其他 schema。
-    with artifact.open("xb") as output:
+    with client_invocation(binding, "mysqldump") as (command, environment, prefix), artifact.open("xb") as output:
         result = subprocess.run(
-            command,
+            command + arguments,
             env=environment,
-            stdin=subprocess.DEVNULL,
+            input=prefix.encode("utf-8"),
             stdout=output,
             stderr=subprocess.PIPE,
             timeout=120,

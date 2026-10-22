@@ -114,13 +114,6 @@ jobs:
       APP_APP_PORT: "8080"
       APP_RATE_LIMIT_CAPACITY: "100"
       APP_RATE_LIMIT_WINDOW_SECS: "60"
-      APP_DATABASE_HOST: 127.0.0.1
-      APP_DATABASE_PORT: "3306"
-      APP_DATABASE_NAME: ryframe_e2e_${{ github.run_id }}_${{ github.run_attempt }}
-      APP_DATABASE_USERNAME: root
-      APP_DATABASE_PASSWORD: ryframe-ci-password
-      APP_DATABASE_TLS_MODE: disabled
-      APP_DATABASE_MIGRATION_MODE: verify
       APP_REDIS_MODE: required
       APP_REDIS_HOST: 127.0.0.1
       APP_REDIS_PORT: "6379"
@@ -302,6 +295,26 @@ jobs:
             echo '业务 crate fixture 未生成 prepare.log'
           fi
 
+      - name: 写入当前 Job 的隔离数据库文件配置
+        working-directory: ${{ matrix.backend }}
+        shell: bash
+        run: |
+          umask 077
+          mkdir -p .local-tests/full-stack-config
+          cp config/app.toml .local-tests/full-stack-config/app.toml
+          cat > .local-tests/full-stack-config/app.test.toml <<EOF
+          scope_id = "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          snowflake_worker_id = 3
+
+          [database.primary]
+          host = "127.0.0.1"
+          port = 3306
+          database = "ryframe_e2e_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          username = "root"
+          password = "ryframe-ci-password"
+          tls_mode = "disabled"
+          EOF
+
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
         env:
@@ -350,6 +363,7 @@ jobs:
           include-hidden-files: true
           path: |
             ${{ runner.temp }}/ryframe-full-stack
+            !${{ runner.temp }}/ryframe-full-stack/config/**
             backend/.local-tests/business-fixture/fixture.json
             backend/.local-tests/business-fixture/prepare.log
           if-no-files-found: error
