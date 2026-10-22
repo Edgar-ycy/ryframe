@@ -8,7 +8,7 @@ MQTT、邮件和乐观锁等插件属于后续路线：优先采用按需 Rust c
 
 ## 运行结构
 
-```text
+```text diagram
 浏览器 / 客户端
        │ HTTP / WebSocket
        ▼
@@ -24,7 +24,7 @@ ryframe-application（业务用例、事务、状态机、端口）
 ryframe（API、Worker、迁移与依赖装配）
 ```
 
-HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。组合根通过 `APP_ENV=dev|test|prod` 选择必须存在的 `config/app.<环境>.toml`，与公共 `config/app.toml` 合并；密码、JWT、监控、Redis 和存储凭据使用明文字段，初始管理员密码来自 `[bootstrap] admin_password`。根字段 `snowflake_worker_id` 在同一部署的各实例间必须不同。应用 `--config-dir <目录>` 默认 `config`，相对当前工作目录解析；生成器的 CLI、Builder `.configuration_directory(path)` 及可选 `[generator] config_dir` 相对后端 Workspace 根目录解析。生成器优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件不接受环境变量覆盖。本地化通过 TOML 的 `app.locales_dir` 指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；生产加载资源失败时严格拒绝启动，开发环境允许内嵌回退。配置保存后热切换、失败时回滚旧代次是已确定的 dev 行为要求，当前文件配置链路尚未实现，不能作为现有能力依赖。部署四角色模板与私有配置目录已集成并通过资产结构及 CI 工具测试；真实容器、镜像和整链仍未验收，局部检查不代表整体门禁。
+HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。组合根通过 `APP_ENV=dev|test|prod` 选择必须存在的 `config/app.<environment>.toml`，与公共 `config/app.toml` 合并；密码、JWT、监控、Redis 和存储凭据使用明文字段，初始管理员密码来自 `[bootstrap] admin_password`。根字段 `snowflake_worker_id` 在同一部署的各实例间必须不同。应用 `--config-dir <directory>` 默认 `config`，相对当前工作目录解析；生成器的 CLI、Builder `.configuration_directory(path)` 及可选 `[generator] config_dir` 相对后端 Workspace 根目录解析。生成器优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件不接受环境变量覆盖。本地化通过 TOML 的 `app.locales_dir` 指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；生产加载资源失败时严格拒绝启动，开发环境允许内嵌回退。配置保存后热切换、失败时回滚旧代次是已确定的 dev 行为要求，当前文件配置链路尚未实现，不能作为现有能力依赖。部署四角色模板与私有配置目录已集成并通过资产结构及 CI 工具测试；真实容器、镜像和整链仍未验收，局部检查不代表整体门禁。
 
 ## 模块定位
 
@@ -75,7 +75,7 @@ Worker 的健康状态模型与数据库监控端口位于 application，不依�
 
 跨仓 OpenAPI 派生文件以开发者前端仓库的 `scripts/api-artifact-manifest.json` 为清单事实源，前端生成器与后端契约事务共同读取。版本必须为 1，`files` 是非空、无重复的安全 `src/` 相对路径；清单、渲染器及其他输入均参与事务前后快照校验，变化时拒绝安装候选结果。
 
-RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-business <业务包名> --write` 在 `crates/` 下创建业务 crate，例如 `order-business`、`inventory-business`，通过 `ryframe-sdk` 使用框架扩展接口。省略 `--write` 预览；脚手架原子写入工作区成员、组合根依赖和唯一注册表。一个业务 crate 默认同时包含模型、用例、Repository、Handler、路由和迁移；业务复杂后再按实际边界拆分。
+RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-business <business-package-name> --write` 在 `crates/` 下创建业务 crate，例如 `order-business`、`inventory-business`，通过 `ryframe-sdk` 使用框架扩展接口。省略 `--write` 预览；脚手架原子写入工作区成员、组合根依赖和唯一注册表。一个业务 crate 默认同时包含模型、用例、Repository、Handler、路由和迁移；业务复杂后再按实际边界拆分。
 
 业务模块通过普通 Cargo 依赖显式接入。`crates/ryframe` 是唯一组合根，`business_modules()` 是唯一注册表；API、Worker 和迁移程序共用该列表。该结构不会使用运行时目录扫描、自动链接注册或构建脚本改写源码，Cargo 依赖图和模块依赖图都可以静态检查无环。
 
@@ -119,7 +119,7 @@ git rev-parse HEAD
 $env:APP_ENV = "test"
 cargo reset --help
 cargo reset -- plan --config-dir .local-tests/reset-config
-cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <精确短语>
+cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```
 
 `reset plan` 会真实读取、校验应用配置，生成绑定来源与资源范围的清单及哈希，不执行破坏性重建，也不能替代 `execute` 的 ownership 预检；它不属于不读应用配置的离线 `control export-sql --plan` 或 `adopt --plan`。reset 内部物理别名去重只避免重复处理同一物理数据库，不放宽独立租户目标的共库限制；仍须遵守[数据指南](data.md#租户路由)中的 schema 隔离约束。执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。`cargo reset` 是使用者直接入口；框架维护工具 `cargo xtask data reset` 消费同一任务图并要求显式 `--write`。排障时不要混用两种入口的状态目录，也不要通过删除 ledger 启动新的重建。

@@ -27,7 +27,7 @@ pub(super) fn validate(root: &Path, chinese: &str, errors: &mut Vec<String>) {
             "中英文文档章节或条目数量不一致：{chinese} / {english}"
         ));
     }
-    if left.blocks != right.blocks {
+    if !matching_blocks(&left.blocks, &right.blocks) {
         errors.push(format!("中英文文档代码示例不一致：{chinese} / {english}"));
     }
     if markdown::inline_codes(&left.prose) != markdown::inline_codes(&right.prose) {
@@ -64,6 +64,19 @@ pub(super) fn validate(root: &Path, chinese: &str, errors: &mut Vec<String>) {
             validate_link(root, relative, &target, errors);
         }
     }
+}
+
+fn matching_blocks(left: &[(String, String)], right: &[(String, String)]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|((language, body), (other, translated))| {
+                // 仅说明图允许翻译；普通文本、命令、配置和代码仍逐字核对。
+                language == other
+                    && (matches!(language.as_str(), "mermaid" | "text diagram")
+                        || body == translated)
+            })
 }
 
 fn validate_link(root: &Path, relative: &str, target: &str, errors: &mut Vec<String>) {

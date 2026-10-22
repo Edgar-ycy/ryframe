@@ -8,8 +8,8 @@ This document helps business developers understand how a request passes through 
 
 ## Runtime Structure
 
-```text
-浏览器 / 客户端
+```text diagram
+Browser / Client
        │ HTTP / WebSocket
        ▼
 ryframe-api (routing, DTOs, authentication extraction, OpenAPI)
@@ -75,7 +75,7 @@ When looking for an existing capability, start with the public services in its b
 
 Cross-repository OpenAPI-derived files use `scripts/api-artifact-manifest.json` in the developer's frontend repository as the authoritative manifest, read jointly by the frontend generator and backend contract transaction. The version must be 1, and `files` must be a nonempty collection of unique, safe paths relative to `src/`. The manifest, renderer, and other inputs are all included in snapshot checks before and after the transaction; changes cause installation of the candidate result to be rejected.
 
-RyFrame's official source does not include built-in business examples. Developers use `cargo generate -- new-business <业务包名> --write` to create a business crate under `crates/`, such as `order-business` or `inventory-business`, and access framework extension interfaces through `ryframe-sdk`. Omit `--write` to preview. The scaffold atomically writes the workspace member, composition root dependencies, and the single registry. By default, a business crate contains its model, use cases, Repository, Handler, routes, and migrations together; split it along actual boundaries as the business becomes more complex.
+RyFrame's official source does not include built-in business examples. Developers use `cargo generate -- new-business <business-package-name> --write` to create a business crate under `crates/`, such as `order-business` or `inventory-business`, and access framework extension interfaces through `ryframe-sdk`. Omit `--write` to preview. The scaffold atomically writes the workspace member, composition root dependencies, and the single registry. By default, a business crate contains its model, use cases, Repository, Handler, routes, and migrations together; split it along actual boundaries as the business becomes more complex.
 
 Business modules are explicitly connected through ordinary Cargo dependencies. `crates/ryframe` is the sole composition root, and `business_modules()` is the sole registry. The API, Worker, and migration programs share this list. This structure does not use runtime directory scanning, automatic link registration, or build scripts that rewrite source code. Both the Cargo dependency graph and module dependency graph can be checked statically for cycles.
 
@@ -119,7 +119,7 @@ git rev-parse HEAD
 $env:APP_ENV = "test"
 cargo reset --help
 cargo reset -- plan --config-dir .local-tests/reset-config
-cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <精确短语>
+cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```
 
 `reset plan` reads and validates application configuration and generates a manifest and hash binding source and resource scope, without executing the destructive rebuild or replacing the ownership preflight performed by `execute`. It differs from offline `control export-sql --plan` or `adopt --plan`, which do not read application configuration. Internal physical-alias deduplication in reset only avoids processing the same physical database twice; it does not relax restrictions on dedicated tenant targets sharing a database. The schema isolation constraints in the [Data Guide](data.en.md#tenant-routing) still apply. The execution order is fixed: object prefix, Redis namespace, physical databases, control baseline, tenant baseline, verification, then lock release. Manifests, ledgers, and reports contain no secrets. When an ordinary stage fails and lock release succeeds, resumption is only permitted with the same manifest and ledger. Production environments are permanently rejected before configuration is read or external resources are accessed. `cargo reset` is the direct user entry point; the framework maintenance tool `cargo xtask data reset` consumes the same task graph and requires explicit `--write`. During troubleshooting, do not mix state directories between these entry points or delete a ledger to start a new rebuild.

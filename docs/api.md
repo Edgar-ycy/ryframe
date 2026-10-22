@@ -26,7 +26,7 @@ ID 始终使用字符串传输。精确 Decimal 字段同样只接受十进制�
 
 上传同时遵守配置中的文件大小与请求体上限，分块传输同样受限，不叠加 Multipart 提取器的默认 2 MiB 限制。畸形上传表单返回 400，大小超限返回 413，底层读取故障返回 500。
 
-JSON 业务响应使用统一包络；文本和二进制响应直接使用契约声明的 content type，不附加 JSON 包络：
+JSON 业务响应使用统一包络，下面展示中文本地化响应样例；文本和二进制响应直接使用契约声明的 content type，不附加 JSON 包络：
 
 ```json
 {
@@ -41,7 +41,7 @@ JSON 业务响应使用统一包络；文本和二进制响应直接使用契约
 
 ## 认证与授权
 
-服务端通过唯一项目环境入口 `APP_ENV` 选择 `dev`、`test` 或 `prod`；`config/app.toml` 是公共默认值，所选 `config/app.<环境>.toml` 必须存在。JWT 密钥直接填写 `auth.jwt_secret`，指标凭据直接填写 `monitor.metrics_bearer_token`；明文配置不能进入日志或公开收据。应用通过 `--config-dir <目录>` 选择目录，默认 `config`，相对路径以当前工作目录解析。客户端不取得这些服务端凭据。本地化目录由 TOML 的 `app.locales_dir` 显式指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；资源缺失或加载失败时生产严格拒绝启动，开发环境可内嵌回退。配置与本地化的局部验证不代表 API 整体门禁通过。
+服务端通过唯一项目环境入口 `APP_ENV` 选择 `dev`、`test` 或 `prod`；`config/app.toml` 是公共默认值，所选 `config/app.<environment>.toml` 必须存在。JWT 密钥直接填写 `auth.jwt_secret`，指标凭据直接填写 `monitor.metrics_bearer_token`；明文配置不能进入日志或公开收据。应用通过 `--config-dir <directory>` 选择目录，默认 `config`，相对路径以当前工作目录解析。客户端不取得这些服务端凭据。本地化目录由 TOML 的 `app.locales_dir` 显式指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；资源缺失或加载失败时生产严格拒绝启动，开发环境可内嵌回退。配置与本地化的局部验证不代表 API 整体门禁通过。
 
 先请求 `/api/v1/auth/csrf` 获取 CSRF token，登录、刷新和退出等会话写操作在 `X-CSRF-Token` 请求头中携带它。登录和刷新响应都包含短期 access token 及同构的 `SessionContext`，`GET /api/v1/auth/context` 也返回同一会话快照；长期 refresh token 由 HttpOnly Cookie 保存。受保护接口使用：
 
@@ -71,6 +71,8 @@ Authorization: Bearer <access_token>
 ## 错误
 
 错误响应包含稳定错误码、可展示信息和请求追踪信息。调用方应按 HTTP 状态和错误码处理，不解析中文文本。
+
+统一错误包络的 `details.reason` 只公开白名单原因：`invalid_parameters`（请求参数无效）、`captcha_invalid_or_expired`（验证码无效或已过期）、`fixed_tenant_required`（必须使用固定租户）和 `system_tenant_required`（必须使用系统租户）。前端优先使用已知 reason 的本地化译文；reason 未知或缺失时回退到 `error_key` 对应译文，不解析服务端消息来猜测原因。认证与数据库内部原因不公开，也不通过此字段透传。
 
 - 400：请求或状态转换无效。
 - 401：未认证或会话失效。
@@ -109,7 +111,7 @@ Authorization: Bearer <access_token>
 
 ```http
 POST /api/v1/common/jobs/deletions
-Idempotency-Key: <可重试键>
+Idempotency-Key: <retryable-key>
 ```
 
 ```json

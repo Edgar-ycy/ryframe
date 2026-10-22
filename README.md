@@ -57,7 +57,7 @@ cargo serve -- --config-dir .local-tests/dev-config
 
 ## 数据库、配置与 SQL 导入
 
-`APP_ENV=dev|test|prod` 是唯一项目配置环境入口。配置按公共 `app.toml`、必须存在的 `app.<环境>.toml` 依次合并；密码、JWT、监控、Redis 与存储凭据直接使用明文字段。CLI 通过 `--config-dir <目录>` 选择配置目录，默认 `config`，本页本机示例统一显式使用忽略目录 `.local-tests/dev-config`；应用相对路径以当前工作目录解析，生成器相对路径以后端 Workspace 根目录解析。数组在环境文件中整体替换，不能只覆盖其中一项。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，placement、TLS、连接池和完整 TOML 示例见[数据指南](docs/data.md#租户路由)。`app.locales_dir` 在 TOML 中显式指定，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`，生产缺少资源严格失败，开发环境可使用内嵌回退。共享 MySQL 测试使用后端根 `.local-tests/mysql/config` 的显式文件，详见[集成验证](docs/development.md#集成验证)；真实协议当前未验收。部署四角色模板与私有配置目录已集成，资产结构及 CI 工具测试通过；真实容器、镜像和部署整链仍未验收，局部验证不等于整体门禁通过。
+`APP_ENV=dev|test|prod` 是唯一项目配置环境入口。配置按公共 `app.toml`、必须存在的 `app.<environment>.toml` 依次合并；密码、JWT、监控、Redis 与存储凭据直接使用明文字段。CLI 通过 `--config-dir <directory>` 选择配置目录，默认 `config`，本页本机示例统一显式使用忽略目录 `.local-tests/dev-config`；应用相对路径以当前工作目录解析，生成器相对路径以后端 Workspace 根目录解析。数组在环境文件中整体替换，不能只覆盖其中一项。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，placement、TLS、连接池和完整 TOML 示例见[数据指南](docs/data.md#租户路由)。`app.locales_dir` 在 TOML 中显式指定，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`，生产缺少资源严格失败，开发环境可使用内嵌回退。共享 MySQL 测试使用后端根 `.local-tests/mysql/config` 的显式文件，详见[集成验证](docs/development.md#集成验证)；真实协议当前未验收。部署四角色模板与私有配置目录已集成，资产结构及 CI 工具测试通过；真实容器、镜像和部署整链仍未验收，局部验证不等于整体门禁通过。
 
 ```powershell
 cargo migrate -- --config-dir .local-tests/dev-config control export-sql --output .local-tests/control-init.sql --write
@@ -65,7 +65,7 @@ cargo migrate -- --config-dir .local-tests/dev-config control export-sql --outpu
 
 推荐迁移初始化；需要直接导入时先导出上方完整 SQL，再选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir .local-tests/dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 只初始化控制库；使用租户业务数据时仍须对实际目标执行 `tenant-data up` 和 `verify`。
 
-租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <目标键>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
+租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 
 `cargo xtask dev --config-dir .local-tests/dev-config` 使用完整私有文件快照管理 API 与 Worker；保存端口或根实例编号后复用二进制切换新代次，失败恢复旧配置与旧端口。相对配置目录以后端 Workspace 根目录解析，也可在工具文件的 `[development].config_dir` 指定；`--plan` 不读配置或执行任务。该监督器改造仍待集成运行验证，不能据此声称完整验收。
 
@@ -87,7 +87,7 @@ cargo generate -- resource --package order-business --model Order --write
 cargo generate --features schema-import -- import --package order-business --connection primary --database tenant --tables biz_order,biz_order_item --config-dir .local-tests/dev-config
 ```
 
-`--connection` 只选择只读结构来源，可写 `primary`、`sources.<名称>` 或 `tenant_data.targets.<目标键>`；`--database` 单独决定生成模型的运行范围，二者不会自动联动。导入整批生成模型、CRUD 和迁移，原始结构保存在 `.ryframe/imports/`，不修改数据库，也不接管已有表。字段 `owner_field` 声明模型内保存用户 ID 的 `i64` 或 `Option<i64>` 字段；生成器会在创建时写入当前用户，并在列表、详情、更新和删除中应用同一数据范围。开启 `generator.sync_frontend` 或 `--sync-frontend` 后，候选 OpenAPI、typed caller、列表表单和路由经过类型及 lint 检查，再统一安装两仓文件；预览只写隔离缓存，`--no-sync-frontend` 临时关闭同步。不支持的结构整批报错。字段 `sql_type` 保留受支持的物理类型、容量和时间精度；表与字符串列的排序规则参与核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于 `.local-tests/tools.toml`，不通过环境变量覆盖；生成器的应用目录优先级为显式 `--config-dir <目录>` / Builder `.configuration_directory(path)`、本机工具文件、公共工具文件、`workspace/config`，可选 `[generator] config_dir` 的相对路径同样以后端 Workspace 根目录解析；`cargo generate -- run` 消费 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表必须先生成匹配模型，再使用显式接管计划，命令与失败核验见[数据指南](docs/data.md#已有表接管)。
+`--connection` 只选择只读结构来源，可写 `primary`、`sources.<name>` 或 `tenant_data.targets.<target-key>`；`--database` 单独决定生成模型的运行范围，二者不会自动联动。导入整批生成模型、CRUD 和迁移，原始结构保存在 `.ryframe/imports/`，不修改数据库，也不接管已有表。字段 `owner_field` 声明模型内保存用户 ID 的 `i64` 或 `Option<i64>` 字段；生成器会在创建时写入当前用户，并在列表、详情、更新和删除中应用同一数据范围。开启 `generator.sync_frontend` 或 `--sync-frontend` 后，候选 OpenAPI、typed caller、列表表单和路由经过类型及 lint 检查，再统一安装两仓文件；预览只写隔离缓存，`--no-sync-frontend` 临时关闭同步。不支持的结构整批报错。字段 `sql_type` 保留受支持的物理类型、容量和时间精度；表与字符串列的排序规则参与核验。工具默认值及前端目录在 `config/tools.toml` 配置，本机覆盖位于 `.local-tests/tools.toml`，不通过环境变量覆盖；生成器的应用目录优先级为显式 `--config-dir <directory>` / Builder `.configuration_directory(path)`、本机工具文件、公共工具文件、`workspace/config`，可选 `[generator] config_dir` 的相对路径同样以后端 Workspace 根目录解析；`cargo generate -- run` 消费 `tables` 或 `models`。Rust 入口 `GenerationBuilder` 支持 `.include_tables(["biz_order", "biz_order_item"])`，可编辑运行[示例](crates/ryframe-generator/examples/generate.rs)，详细流程见开发指南；已有表必须先生成匹配模型，再使用显式接管计划，命令与失败核验见[数据指南](docs/data.md#已有表接管)。
 
 精确 Decimal 字段须显式声明 `sql_type="DECIMAL(p,s)"`（1≤p≤28、0≤s≤p）；接口与表单使用十进制字符串，超出容量会拒绝。标准表单按字段类型提供文本或文本域、整数、开关、日期、日期时间、枚举单选和精确 Decimal 文本控件。JSON 使用可编辑文本域，提交前严格解析；标准查询拒绝 JSON 筛选，结构化条件须编写强类型扩展。模型和默认值写法见开发指南。
 

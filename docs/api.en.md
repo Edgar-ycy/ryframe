@@ -26,7 +26,7 @@ IDs are always transmitted as strings. Exact Decimal fields also accept only dec
 
 Uploads are subject to both the configured file size limit and request body limit, including chunked transfers. The Multipart extractor's default 2 MiB limit is not applied as an additional limit. Malformed upload forms return 400, size limit violations return 413, and underlying read failures return 500.
 
-JSON business responses use a unified envelope. Text and binary responses directly use the content type declared by the contract, without a JSON envelope:
+JSON business responses use a unified envelope; the example below shows a Chinese-localized response. Text and binary responses directly use the content type declared by the contract, without a JSON envelope:
 
 ```json
 {
@@ -41,7 +41,7 @@ JSON business responses use a unified envelope. Text and binary responses direct
 
 ## Authentication and Authorization
 
-The server selects `dev`, `test`, or `prod` through the sole project environment entry `APP_ENV`. `config/app.toml` supplies common defaults, and the selected `config/app.<环境>.toml` must exist. Set the JWT secret directly in `auth.jwt_secret` and metric credentials directly in `monitor.metrics_bearer_token`; plaintext configuration must not enter logs or public receipts. Applications select a directory using `--config-dir <目录>`, defaulting to `config`, and resolve relative paths from the current working directory. Clients do not receive these server credentials. Set the localization directory explicitly through TOML field `app.locales_dir`, defaulting to `locales`, resolved from the process current working directory for ordinary applications; `APP_LOCALES_DIR` is not read. Missing resources or loading failures strictly reject startup in production, while development can use an embedded fallback. Partial configuration and localization validation does not establish a complete API gate pass.
+The server selects `dev`, `test`, or `prod` through the sole project environment entry `APP_ENV`. `config/app.toml` supplies common defaults, and the selected `config/app.<environment>.toml` must exist. Set the JWT secret directly in `auth.jwt_secret` and metric credentials directly in `monitor.metrics_bearer_token`; plaintext configuration must not enter logs or public receipts. Applications select a directory using `--config-dir <directory>`, defaulting to `config`, and resolve relative paths from the current working directory. Clients do not receive these server credentials. Set the localization directory explicitly through TOML field `app.locales_dir`, defaulting to `locales`, resolved from the process current working directory for ordinary applications; `APP_LOCALES_DIR` is not read. Missing resources or loading failures strictly reject startup in production, while development can use an embedded fallback. Partial configuration and localization validation does not establish a complete API gate pass.
 
 First request `/api/v1/auth/csrf` to obtain a CSRF token. Session write operations such as login, refresh, and logout include it in the `X-CSRF-Token` request header. Login and refresh responses both contain a short-lived access token and a structurally identical `SessionContext`; `GET /api/v1/auth/context` returns the same session snapshot. The long-lived refresh token is stored in an HttpOnly Cookie. Protected APIs use:
 
@@ -71,6 +71,8 @@ Logged-in users read the current tenant's sidebar theme and skin through `GET /a
 ## Errors
 
 Error responses contain stable error codes, displayable messages, and request tracing information. Callers should handle them by HTTP status and error code rather than parsing the Chinese text.
+
+The unified error envelope exposes only allowlisted values in `details.reason`: `invalid_parameters` (invalid request parameters), `captcha_invalid_or_expired` (invalid or expired CAPTCHA), `fixed_tenant_required` (the fixed tenant is required), and `system_tenant_required` (the system tenant is required). The frontend first uses the localized translation for a known reason; if the reason is unknown or absent, it falls back to the translation for `error_key`, without guessing the reason by parsing the server message. Internal authentication and database causes are not public and are never passed through this field.
 
 - 400: invalid request or state transition.
 - 401: unauthenticated or invalid session.
@@ -109,7 +111,7 @@ Single and batch deletion of terminal records share the following endpoint:
 
 ```http
 POST /api/v1/common/jobs/deletions
-Idempotency-Key: <可重试键>
+Idempotency-Key: <retryable-key>
 ```
 
 ```json

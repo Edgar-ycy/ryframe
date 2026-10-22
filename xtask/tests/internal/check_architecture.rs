@@ -237,6 +237,117 @@ fn bilingual_documentation_checks_fenced_commands_links_and_history() {
 }
 
 #[test]
+fn bilingual_documentation_allows_only_matching_explanatory_diagram_fences() {
+    let directory = documentation_fixture();
+    for language in ["mermaid", "text diagram"] {
+        write(
+            directory.path(),
+            "docs/architecture.md",
+            &format!(
+                "# 架构\n\n[English](architecture.en.md)\n\n```{language}\nflowchart LR\n  client[客户端] --> api[接口]\n```\n"
+            ),
+        );
+        write(
+            directory.path(),
+            "docs/architecture.en.md",
+            &format!(
+                "# Architecture\n\n[简体中文](architecture.md)\n\n```{language}\nflowchart LR\n  client[Client] --> api[API]\n```\n"
+            ),
+        );
+        assert!(
+            documentation_errors(directory.path()).is_empty(),
+            "{language}"
+        );
+        write(
+            directory.path(),
+            "docs/architecture.en.md",
+            "# Architecture\n\n[简体中文](architecture.md)\n\n```text\nClient --> API\n```\n",
+        );
+        assert!(
+            documentation_errors(directory.path())
+                .iter()
+                .any(|error| error.contains("代码示例不一致")),
+            "{language}"
+        );
+    }
+}
+
+#[test]
+fn bilingual_documentation_keeps_non_diagram_examples_strict() {
+    let directory = documentation_fixture();
+    for language in [
+        "",
+        "text",
+        "plaintext",
+        "powershell",
+        "pwsh",
+        "sh",
+        "bash",
+        "shell",
+        "toml",
+        "yaml",
+        "json",
+        "rust",
+        "http",
+        "powershell diagram",
+        "rust diagram",
+        "text diagram extra",
+    ] {
+        for (document, command) in [
+            ("README.md", "cargo serve"),
+            ("README.en.md", "cargo reset"),
+        ] {
+            let counterpart = if document.ends_with(".en.md") {
+                "README.md"
+            } else {
+                "README.en.md"
+            };
+            write(
+                directory.path(),
+                document,
+                &format!("# Guide\n\n[Language]({counterpart})\n\n```{language}\n{command}\n```\n"),
+            );
+        }
+        assert!(
+            documentation_errors(directory.path())
+                .iter()
+                .any(|error| error.contains("代码示例不一致")),
+            "{language}"
+        );
+    }
+}
+
+#[test]
+fn bilingual_documentation_diagrams_do_not_hide_commands_missing_blocks_or_unclosed_fences() {
+    let directory = documentation_fixture();
+    for (suffix, expected) in [
+        ("\n```powershell\ncargo reset\n```\n", "代码示例不一致"),
+        ("", "代码示例不一致"),
+        ("\n```mermaid\nflowchart LR\n", "围栏未闭合"),
+        ("\n```text diagram\nClient --> API\n", "围栏未闭合"),
+    ] {
+        write(
+            directory.path(),
+            "README.md",
+            "# 说明\n\n[English](README.en.md)\n\n```mermaid\nflowchart LR\n  client[客户端] --> api[接口]\n```\n\n```powershell\ncargo serve\n```\n",
+        );
+        write(
+            directory.path(),
+            "README.en.md",
+            &format!(
+                "# Guide\n\n[简体中文](README.md)\n\n```mermaid\nflowchart LR\n  client[Client] --> api[API]\n```\n{suffix}"
+            ),
+        );
+        assert!(
+            documentation_errors(directory.path())
+                .iter()
+                .any(|error| error.contains(expected)),
+            "{suffix:?}"
+        );
+    }
+}
+
+#[test]
 fn system_surface_accepts_only_four_public_domains_and_no_root_reexports() {
     let directory = test_dir();
     write(
