@@ -108,6 +108,33 @@ pub(crate) fn run_with_env_removed(
     environment: &[(&str, &str)],
     removed_environment: &[&str],
 ) -> Result<()> {
+    run_with_stdio(
+        dir,
+        executable,
+        args,
+        environment,
+        removed_environment,
+        Stdio::inherit(),
+    )
+}
+
+pub(crate) fn run_with_stdin(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    input: Stdio,
+) -> Result<()> {
+    run_with_stdio(dir, executable, args, &[], &[], input)
+}
+
+fn run_with_stdio(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+    removed_environment: &[&str],
+    input: Stdio,
+) -> Result<()> {
     let started = Instant::now();
     let logged = process_log_active();
     let command_executable = resolved_executable(&root_dir(), executable)?;
@@ -120,7 +147,7 @@ pub(crate) fn run_with_env_removed(
     configure_cargo_cache(executable, &mut command);
     command.args(&args);
     configure_environment(&mut command, executable, environment, removed_environment);
-    command.current_dir(dir).stdin(Stdio::inherit());
+    command.current_dir(dir).stdin(input);
     configure_output(&mut command)?;
     let status = command_status(command);
     let elapsed = started.elapsed().as_secs_f64();

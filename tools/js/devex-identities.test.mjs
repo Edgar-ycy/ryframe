@@ -4,11 +4,13 @@ import { cp, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { Readable } from 'node:stream'
 import path from 'node:path'
 import {
   executeIdentityPlan,
   main,
   privateProtocolArguments,
+  readPrivateProtocol,
 } from './devex_prepare_identities.mjs'
 import { createIdentityPlan, validateEnvironment, localPath } from './identity-plan.mjs'
 import { activationSecret } from './identity-apply.mjs'
@@ -392,12 +394,8 @@ test('计划外receipt在apply和verify重进前均失败关闭且不被覆盖',
   assert.equal(JSON.parse(await readFile(path.join(state, 'ledger.json'))).status, 'prepared')
 })
 
-function privateEnvironment(value, extra = {}) {
-  return {
-    RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL:
-      typeof value === 'string' ? value : JSON.stringify(value),
-    ...extra,
-  }
+function privateInput(value) {
+  return typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)
 }
 
 test('私有协议把三种写操作映射为内部参数并保留中文空格路径', () => {
@@ -409,7 +407,7 @@ test('私有协议把三种写操作映射为内部参数并保留中文空格�
     output: path.join(root, '身份 计划.json'),
     write: true,
   }
-  assert.deepEqual(privateProtocolArguments([], privateEnvironment(plan)), [
+  assert.deepEqual(privateProtocolArguments([], privateInput(plan)), [
     'plan', '--environment', plan.environment, '--output', plan.output, '--write',
   ])
   for (const operation of ['apply', 'verify']) {
@@ -420,7 +418,7 @@ test('私有协议把三种写操作映射为内部参数并保留中文空格�
       state_dir: path.join(root, '身份 账本'),
       write: true,
     }
-    assert.deepEqual(privateProtocolArguments([], privateEnvironment(request)), [
+    assert.deepEqual(privateProtocolArguments([], privateInput(request)), [
       operation, '--plan', request.plan, '--state-dir', request.state_dir, '--write',
     ])
   }
@@ -435,7 +433,7 @@ test('私有协议拒绝公开argv、未知字段、错误类型和跨阶段字�
     output: path.join(root, 'plan.json'),
     write: true,
   }
-  assert.throws(() => privateProtocolArguments(['plan'], privateEnvironment(valid)), /不接受命令行参数/)
+  assert.throws(() => privateProtocolArguments(['plan'], privateInput(valid)), /不接受命令行参数/)
   for (const request of [
     { ...valid, unknown: true },
     {
@@ -450,10 +448,7 @@ test('私有协议拒绝公开argv、未知字段、错误类型和跨阶段字�
     { ...valid, output: '' },
     { ...valid, output: `${valid.output}\nother` },
     { ...valid, output: `${valid.output}\0other` },
-  ]) assert.throws(() => privateProtocolArguments([], privateEnvironment(request)))
-  assert.throws(() => privateProtocolArguments([], privateEnvironment(valid, {
-    RYFRAME_PERFORMANCE_IDENTITIES_EXTRA: 'unexpected',
-  })), /未知字段/)
+  ]) assert.throws(() => privateProtocolArguments([], privateInput(request)))
 })
 
 test('私有协议在JSON解析前拒绝普通及转义后的重复字段', () => {
@@ -463,7 +458,7 @@ test('私有协议在JSON解析前拒绝普通及转义后的重复字段', () =
   for (const repeated of [
     `{"format_version":1,"operation":"plan","operation":"plan",${suffix}`,
     `{"format_version":1,"operation":"plan","oper\\u0061tion":"plan",${suffix}`,
-  ]) assert.throws(() => privateProtocolArguments([], privateEnvironment(repeated)), /字段重复/)
+  ]) assert.throws(() => privateProtocolArguments([], privateInput(repeated)), /字段重复/)
 })
 
 test('私有协议拒绝空值、原始或转义后的换行和NUL', () => {
@@ -475,10 +470,30 @@ test('私有协议拒绝空值、原始或转义后的换行和NUL', () => {
     output: path.join(root, 'plan.json'),
     write: true,
   }
-  for (const raw of ['', `${JSON.stringify(valid)}\n`, `${JSON.stringify(valid)}\0`])
-    assert.throws(() => privateProtocolArguments([], privateEnvironment(raw)))
+  for (const raw of ['', `${JSON.stringify(valid)}\n`, `${JSON.stringify(valid)}\0`,
+    `${JSON.stringify(valid)}{}`, `${JSON.stringify(valid)} secret-credential`, '[]', 'null'])
+    assert.throws(() => privateProtocolArguments([], privateInput(raw)))
   for (const output of [`${valid.output}\nother`, `${valid.output}\0other`])
-    assert.throws(() => privateProtocolArguments([], privateEnvironment({ ...valid, output })))
+    assert.throws(() => privateProtocolArguments([], privateInput({ ...valid, output })))
+})
+
+test('私有stdin按UTF-8字节限制32 KiB并严格解码跨chunk中文', async () => {
+  const bytes = Buffer.from('环境 清单')
+  const text = await readPrivateProtocol(Readable.from([bytes.subarray(0, 1), bytes.subarray(1)]))
+  assert.equal(text, '环境 清单')
+  assert.equal((await readPrivateProtocol(Readable.from([Buffer.alloc(32 * 1024, 32)]))).length, 32 * 1024)
+  for (const chunks of [
+    [Buffer.alloc(32 * 1024, 32), Buffer.from('x')],
+    [Buffer.from('密'.repeat(11 * 1024))],
+    [Buffer.from([0xc3, 0x28])],
+  ]) await assert.rejects(readPrivateProtocol(Readable.from(chunks)), /私有协议输入无效/)
+  await assert.rejects(readPrivateProtocol(Readable.from((async function* () {
+    throw new Error('secret-credential')
+  })())), (error) => {
+    assert.doesNotMatch(error.message, /secret-credential/)
+    return true
+  })
+  assert.throws(() => privateProtocolArguments([], '密'.repeat(11 * 1024)), /超过32 KiB/)
 })
 
 test('身份准备私有进程以退出码2拒绝argv、缺失、重复和未知协议', () => {
@@ -491,16 +506,9 @@ test('身份准备私有进程以退出码2拒绝argv、缺失、重复和未知
     output: path.join(root, 'plan.json'),
     write: true,
   }
-  const run = (argv, protocol, extra = {}) => {
-    const environment = { ...process.env }
-    for (const name of Object.keys(environment))
-      if (name.startsWith('RYFRAME_PERFORMANCE_IDENTITIES_')) delete environment[name]
-    if (protocol !== undefined)
-      environment.RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL =
-        typeof protocol === 'string' ? protocol : JSON.stringify(protocol)
-    Object.assign(environment, extra)
-    return spawnSync(process.execPath, [script, ...argv], { encoding: 'utf8', env: environment })
-  }
+  const run = (argv, protocol, extra = {}) => spawnSync(process.execPath, [script, ...argv], {
+    encoding: 'utf8', input: privateInput(protocol), env: { ...process.env, ...extra },
+  })
   const repeated = JSON.stringify(valid).replace(
     '"operation":"plan"',
     '"operation":"plan","operation":"plan"',
@@ -510,14 +518,19 @@ test('身份准备私有进程以退出码2拒绝argv、缺失、重复和未知
     run([], undefined),
     run([], repeated),
     run([], { ...valid, unknown: true }),
-    run([], valid, { RYFRAME_PERFORMANCE_IDENTITIES_EXTRA: 'unexpected' }),
+    run([], { ...valid, 'secret-credential': true }),
+    run([], JSON.stringify(valid) + '{}secret-credential'),
+    run([], '密'.repeat(11 * 1024)),
+    run([], Buffer.from([0xc3, 0x28])),
+    run([], undefined, { RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL: JSON.stringify(valid) }),
   ]) {
     assert.equal(result.status, 2, result.stderr)
     assert.match(result.stderr, /identity_preparation_protocol_error/)
+    assert.doesNotMatch(result.stdout + result.stderr, /secret-credential/)
   }
 })
 
-test('身份准备私有进程接受三阶段单环境JSON后才进入原有执行边界', () => {
+test('身份准备私有进程只读取三阶段stdin JSON并忽略旧环境协议及同前缀字段', () => {
   const script = fileURLToPath(new URL('./devex_prepare_identities.mjs', import.meta.url))
   const root = path.resolve('.local-tests', 'identity-private-valid')
   for (const operation of ['plan', 'apply', 'verify']) {
@@ -529,13 +542,16 @@ test('身份准备私有进程接受三阶段单环境JSON后才进入原有执�
           state_dir: path.join(root, operation + '-state') }
     const result = spawnSync(process.execPath, [script], {
       encoding: 'utf8',
+      input: JSON.stringify(request),
       env: {
         ...process.env,
-        RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL: JSON.stringify(request),
+        RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL: 'secret-credential',
+        RYFRAME_PERFORMANCE_IDENTITIES_EXTRA: 'secret-credential',
       },
     })
     assert.equal(result.status, 1, operation + ': ' + result.stderr)
     assert.match(result.stderr, /identity_preparation_failed/)
     assert.doesNotMatch(result.stderr, /identity_preparation_protocol_error/)
+    assert.doesNotMatch(result.stdout + result.stderr, /secret-credential/)
   }
 })

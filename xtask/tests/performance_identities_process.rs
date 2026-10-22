@@ -50,6 +50,7 @@ fn invoke(arguments: &[String]) -> std::process::Output {
             "RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL",
             "untrusted inherited value",
         )
+        .env("RYFRAME_PERFORMANCE_IDENTITIES_EXTRA", "secret-credential")
         .output()
         .unwrap()
 }
@@ -89,7 +90,7 @@ fn invalid_paths_and_missing_write_exit_two_without_starting_node() {
 }
 
 #[test]
-fn valid_public_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn valid_public_request_uses_stdin_ignores_legacy_environment_and_hides_paths_from_argv() {
     let fixture = Fixture::new();
     let environment = fixture.environment();
     let output = fixture.directory.join("计划 输出.json");
@@ -119,4 +120,6 @@ fn valid_public_request_replaces_inherited_protocol_and_hides_paths_from_argv() 
         "{stderr}"
     );
     assert!(!output.exists());
+    assert!(!stdout.contains("secret-credential"));
+    assert!(!stderr.contains("secret-credential"));
 }

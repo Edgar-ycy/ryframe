@@ -8,8 +8,7 @@ import { applyIdentities } from './identity-apply.mjs'
 import { verifyPrepared } from './identity-verify.mjs'
 import { strictScalarJsonObject } from './private_json_protocol.mjs'
 
-const protocolKey = 'RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL'
-const protocolPrefix = 'RYFRAME_PERFORMANCE_IDENTITIES_'
+const maximumProtocolBytes = 32 * 1024
 
 export class IdentityProtocolError extends Error {}
 
@@ -26,13 +25,28 @@ function protocolPath(value, label) {
   return value
 }
 
-export function privateProtocolArguments(argv = process.argv.slice(2), environment = process.env) {
+export async function readPrivateProtocol(input = process.stdin) {
+  const chunks = []
+  let length = 0
+  try {
+    for await (const chunk of input) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      length += bytes.length
+      if (length > maximumProtocolBytes) throw new IdentityProtocolError('身份准备私有协议超过32 KiB')
+      chunks.push(bytes)
+    }
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length))
+  } catch {
+    throw new IdentityProtocolError('身份准备私有协议输入无效或超过32 KiB')
+  }
+}
+
+export function privateProtocolArguments(argv, source) {
   if (argv.length) throw new IdentityProtocolError('身份准备脚本是私有实现，不接受命令行参数')
-  const unknown = Object.keys(environment)
-    .filter((name) => name.startsWith(protocolPrefix) && name !== protocolKey)
-  if (unknown.length) throw new IdentityProtocolError(`身份准备私有环境含未知字段：${unknown.sort().join(',')}`)
+  if (typeof source === 'string' && Buffer.byteLength(source, 'utf8') > maximumProtocolBytes)
+    throw new IdentityProtocolError('身份准备私有协议超过32 KiB')
   const protocol = strictScalarJsonObject(
-    environment[protocolKey],
+    source,
     IdentityProtocolError,
     '身份准备私有协议',
   )
@@ -120,8 +134,9 @@ export async function main(argv, dependencies = {}) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const arguments_ = privateProtocolArguments()
-    delete process.env[protocolKey]
+    const argv = process.argv.slice(2)
+    if (argv.length) throw new IdentityProtocolError('身份准备脚本是私有实现，不接受命令行参数')
+    const arguments_ = privateProtocolArguments(argv, await readPrivateProtocol())
     await main(arguments_)
   } catch (error) {
     if (error instanceof IdentityProtocolError) {
