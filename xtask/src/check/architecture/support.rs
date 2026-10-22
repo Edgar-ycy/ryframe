@@ -1,5 +1,4 @@
 use std::{
-    env,
     ffi::OsStr,
     fs,
     io::Write,
@@ -118,10 +117,8 @@ pub(super) fn command_stdout(
     Ok(stdout)
 }
 
-pub(super) fn python_executable() -> std::ffi::OsString {
-    env::var_os("RYFRAME_PYTHON")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "python".into())
+pub(super) fn python_executable(root: &Path) -> Result<std::ffi::OsString, String> {
+    crate::process::resolved_executable(root, "python").map_err(|error| error.to_string())
 }
 
 pub(super) fn is_rust_file(path: &Path) -> bool {

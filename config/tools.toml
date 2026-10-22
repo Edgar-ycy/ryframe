@@ -3,6 +3,12 @@
 [workspace]
 frontend_dir = "../ryframe-vue3"
 
+[verification]
+# Python 检查入口；相对路径以后端根目录解析，缺省从操作系统 PATH 选择 python。
+# python_program = ".local-tests/python/Scripts/python.exe"
+# Node 检查入口；相同路径规则，缺省从操作系统 PATH 选择 node。
+# node_program = ".local-tests/node/node.exe"
+
 [generator]
 # 创建自己的业务 crate 后设置 package，避免每次在命令行重复传入。
 # package = "order-business"

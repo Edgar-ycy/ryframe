@@ -1,4 +1,4 @@
-use std::{env, ffi::OsString, fs, path::Path, process::Output, time::Duration};
+use std::{fs, path::Path, process::Output, time::Duration};
 
 #[path = "python_environment/protocol.rs"]
 mod protocol;
@@ -27,8 +27,9 @@ const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) fn run(root: &Path) -> Result<()> {
     let requirements_path = root.join(REQUIREMENTS_PATH);
     let requirements = read_requirements(&requirements_path)?;
-    let configured = env::var_os("RYFRAME_PYTHON").filter(|value| !value.is_empty());
-    let requested = configured_label(configured.as_ref());
+    let requested = crate::process::resolved_executable(root, "python")?
+        .to_string_lossy()
+        .into_owned();
     println!(
         "→ 核验 Python 解释器与 {} 项固定依赖：{requested}",
         requirements.len()
@@ -79,7 +80,7 @@ pub(crate) fn run(root: &Path) -> Result<()> {
                 PreservedFailure::new(
                     format!(
                         "{error}\n解释器身份：{identity}\n修复：确认固定 Python 依赖已按 {} 安装，\
-                 并可用 RYFRAME_PYTHON 指定隔离解释器。",
+                 并可用工具文件 verification.python_program 指定隔离解释器。",
                         requirements_path.display()
                     ),
                     failure_exit_code(error.as_ref()).or(Some(1)),
@@ -125,7 +126,7 @@ fn environment_report(output: &Output, requested: &str) -> Result<protocol::Envi
                  配置解释器={requested}\n\
                  修复：使用 Python 3.11+ 创建隔离环境，并运行 \
                  `python -m pip install --disable-pip-version-check --require-hashes \
-                 --requirement scripts/requirements-ci.txt`；也可用 RYFRAME_PYTHON 指定该环境。",
+                 --requirement scripts/requirements-ci.txt`；也可用工具文件 verification.python_program 指定该环境。",
                 output
                     .status
                     .code()
@@ -160,18 +161,12 @@ fn environment_failure(
              配置解释器={requested}\n实际解释器={identity}\n\
              依赖清单={}\n\
              修复：使用 Python 3.11+ 创建隔离环境，并按依赖清单安装；\
-             随后通过 RYFRAME_PYTHON 指定该环境或重新运行 cargo xtask check。",
+             随后通过工具文件 verification.python_program 指定该环境或重新运行 cargo xtask check。",
             requirements.display()
         ),
         failure_exit_code(error).or(Some(1)),
     )
     .into()
-}
-
-fn configured_label(configured: Option<&OsString>) -> String {
-    configured
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "python（PATH）".into())
 }
 
 fn interpreter_identity(report: &protocol::EnvironmentReport) -> String {

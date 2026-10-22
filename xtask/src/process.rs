@@ -110,7 +110,7 @@ pub(crate) fn run_with_env_removed(
 ) -> Result<()> {
     let started = Instant::now();
     let logged = process_log_active();
-    let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
+    let command_executable = resolved_executable(&root_dir(), executable)?;
     let command_label = command_executable.to_string_lossy();
     let args = python_arguments(executable, args);
     if !logged {
@@ -229,7 +229,7 @@ fn command_output_impl(
 ) -> Result<String> {
     let started = Instant::now();
     let logged = process_log_active();
-    let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
+    let command_executable = resolved_executable(&root_dir(), executable)?;
     let command_label = command_executable.to_string_lossy();
     let args = python_arguments(executable, args);
     if visible && !logged {
@@ -278,7 +278,7 @@ pub(crate) fn command_output_with_input_timeout(
     input: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<Output> {
-    let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
+    let command_executable = resolved_executable(&root_dir(), executable)?;
     let args = python_arguments(executable, args);
     let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
@@ -302,21 +302,41 @@ pub(crate) fn command_output_with_input_timeout(
     })
 }
 
-pub(crate) fn resolved_executable(
-    executable: &str,
-    configured_python: Option<OsString>,
-) -> OsString {
-    if executable == "node"
-        && let Some(configured) = env::var_os("RYFRAME_NODE").filter(|value| !value.is_empty())
+pub(crate) fn resolved_executable(root: &Path, executable: &str) -> Result<OsString> {
+    let field = match executable {
+        "python" => "python_program",
+        "node" => "node_program",
+        _ => return Ok(OsString::from(executable)),
+    };
+    let repair = format!(
+        "verification.{field} 无效；请检查 config/tools.toml 与 .local-tests/tools.toml，显式入口须非空、无控制字符和父目录跳转，相对路径以后端根目录解析"
+    );
+    let settings =
+        ryframe_config::ToolSettings::load(root).map_err(|error| format!("{error}；{repair}"))?;
+    let configured = if executable == "python" {
+        settings.verification.python_program
+    } else {
+        settings.verification.node_program
+    };
+    let Some(path) = configured else {
+        return Ok(OsString::from(executable));
+    };
+    if !path.to_str().is_some_and(|text| {
+        !text.is_empty()
+            && !text.chars().any(char::is_control)
+            && !text.split(['/', '\\']).any(|part| part == "..")
+    }) || path
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
     {
-        return configured;
+        return Err(repair.into());
     }
-    if executable == "python"
-        && let Some(configured) = configured_python.filter(|value| !value.is_empty())
-    {
-        return configured;
+    if path.is_absolute() {
+        return Ok(path.into_os_string());
     }
-    OsString::from(executable)
+    std::path::absolute(root.join(path))
+        .map(PathBuf::into_os_string)
+        .map_err(|_| repair.into())
 }
 
 /// 仓库任务不能把 xtask 自身的 Cargo 包上下文泄漏给嵌套命令。

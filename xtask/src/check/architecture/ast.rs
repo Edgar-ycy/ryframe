@@ -120,12 +120,14 @@ fn run_helper(
         "templates": templates,
     })
     .to_string();
-    let output = match command_stdout(
-        root,
-        python_executable().as_os_str(),
-        &["tools/python/rust_function_size.py", "--ast-json"],
-        Some(&request),
-    ) {
+    let output = match python_executable(root).and_then(|program| {
+        command_stdout(
+            root,
+            program.as_os_str(),
+            &["tools/python/rust_function_size.py", "--ast-json"],
+            Some(&request),
+        )
+    }) {
         Ok(output) => output,
         Err(error) => {
             errors.push(format!("Rust AST helper 执行失败: {error}"));
