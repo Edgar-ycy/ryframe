@@ -49,6 +49,7 @@ class ReferenceFixtureBrowserEvidenceTests(unittest.TestCase):
             link.symlink_to(outside)
         except OSError:
             self.skipTest("当前 Windows 权限不允许创建符号链接")
+        self.addCleanup(link.unlink)
         with self.assertRaisesRegex(ValueError, "链接|重解析"):
             evidence.artifact_manifest(self.root, self.parent, "结果")
 

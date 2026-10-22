@@ -374,6 +374,7 @@ class RestoreRuntimeTests(unittest.TestCase):
             link.symlink_to(document)
         except OSError:
             return
+        self.addCleanup(link.unlink)
         with self.assertRaisesRegex(ValueError, "符号链接"):
             restore_runtime.read_json_document(link)
 

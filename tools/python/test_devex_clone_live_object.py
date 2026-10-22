@@ -269,6 +269,7 @@ class LiveObjectTests(unittest.TestCase):
         except OSError:
             real.unlink()
             self.skipTest("当前 Windows 权限不允许创建符号链接")
+        self.addCleanup(path.unlink)
         with self.assertRaisesRegex(ValueError, "链接"):
             self.read()
 
