@@ -32,9 +32,7 @@ Report `status` distinguishes `completed` (completed by this invocation), `reuse
 
 ## HTTP 5xx and High Latency
 
-Application log filtering uses the configured `logger.level`; `RUST_LOG` does not override it. To change the level while troubleshooting, edit the selected configuration file and restart the corresponding process.
-
-First inspect API logs and traces by request ID, then check databases, Redis, object storage, and Worker. After confirming a failure in a single dependency, follow the degradation policy; do not amplify the incident by increasing retries.
+Application log filtering uses the configured `logger.level`; `RUST_LOG` does not override it. To change the level while troubleshooting, edit the selected configuration file and restart the corresponding process. First inspect API logs and traces by request ID, then check databases, Redis, object storage, and Worker. After confirming a failure in a single dependency, follow the degradation policy; do not amplify the incident by increasing retries.
 
 ## Redis Degradation
 

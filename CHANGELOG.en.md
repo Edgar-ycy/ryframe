@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix resource-gate replay joining multiple arguments into one, preserving Unicode, paths with spaces, and individual option boundaries. Tools first locate the backend workspace through ancestors of the command working directory, retain the compiled-manifest fallback, and remove legacy environment overrides for worktree selection.
+
 - Rust now validates identity pools, tenant distribution, configuration, the operation catalog and actual rate-limit pacing read-only before starting the measurement driver. Duplicate identities, incorrect digests and unresolvable rate-limit rules fail with specific safe reasons.
 
 - Non-production reset ordinary seed users now use the shared initial password `123456`, while administrators still require an explicitly supplied complex password; removes separate ordinary-user password credentials and dependencies in fixtures, source digests, and current callers. Rebuild verification checks both accounts' password hashes and mandatory password-change flags, retaining ownership and unknown-write protection.

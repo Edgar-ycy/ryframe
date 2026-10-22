@@ -149,34 +149,25 @@ pub(crate) fn command_for_replay(
     frontend: &Path,
     runner_target: &Path,
     runner_manifest: &Path,
-    workspace_root: &Path,
 ) -> Result<Vec<String>, String> {
     let normalized = command_for_frontend(command, frontend)?;
     if !normalized.starts_with(&["cargo".to_owned(), "xtask".to_owned()]) {
         return Ok(normalized);
     }
-    let workspace = workspace_root.to_string_lossy();
-    if workspace.contains(['"', '\n', '\r']) {
-        return Err("replay workspace 路径包含 Cargo 配置无法安全表示的字符".to_owned());
-    }
-    Ok(vec![
+    let mut expanded = vec![
         "cargo".to_owned(),
         "run".to_owned(),
         "--locked".to_owned(),
         "--manifest-path".to_owned(),
         path_text(runner_manifest)?,
-        "--config".to_owned(),
-        format!(
-            "env.RYFRAME_WORKSPACE_ROOT=\"{}\"",
-            workspace.replace('\\', "/")
-        ),
         "--target-dir".to_owned(),
         path_text(runner_target)?,
         "-p".to_owned(),
         "xtask".to_owned(),
         "--".to_owned(),
-        normalized[2..].iter().cloned().collect(),
-    ])
+    ];
+    expanded.extend_from_slice(&normalized[2..]);
+    Ok(expanded)
 }
 
 pub(crate) fn arm_order(index: usize) -> (bool, bool) {
@@ -229,7 +220,7 @@ fn run_case_command(
         &execution.tools.corepack,
         execution.base_environment,
     )?;
-    let environment = case_environment(execution, backend_worktree)?;
+    let environment = case_environment(execution)?;
     let target_root = canonical_path(execution.shared_target)
         .map_err(|error| format!("无法解析 replay Cargo target：{error}"))?;
     let command = command_for_replay(
@@ -237,7 +228,6 @@ fn run_case_command(
         frontend_worktree,
         &target_root.join("runner"),
         execution.runner_manifest,
-        backend_worktree,
     )?;
     let (status, duration_ms) =
         run_logged_command(&command, backend_worktree, &environment, command_log)?;
@@ -258,10 +248,7 @@ fn run_case_command(
     })
 }
 
-fn case_environment(
-    execution: &CaseExecution<'_>,
-    backend_worktree: &Path,
-) -> Result<ProcessEnvironment, String> {
+fn case_environment(execution: &CaseExecution<'_>) -> Result<ProcessEnvironment, String> {
     let target_root = canonical_path(execution.shared_target)
         .map_err(|error| format!("无法解析 replay Cargo target：{error}"))?;
     validate_inside(&target_root, execution.session, "replay Cargo target")?;
@@ -291,13 +278,6 @@ fn case_environment(
     environment.insert(
         "RYFRAME_DEVEX_TARGET_ROOT".to_owned(),
         target_root.as_os_str().to_owned(),
-    );
-    environment.insert(
-        "RYFRAME_WORKSPACE_ROOT".to_owned(),
-        canonical_path(backend_worktree)
-            .map_err(|error| format!("无法解析后端 replay worktree：{error}"))?
-            .as_os_str()
-            .to_owned(),
     );
     environment.insert(
         "CARGO_TARGET_DIR".to_owned(),

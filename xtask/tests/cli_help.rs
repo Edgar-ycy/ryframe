@@ -176,10 +176,37 @@ impl LanguageProcessFixture {
         let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
         command
             .current_dir(&self.0)
-            .env("RYFRAME_WORKSPACE_ROOT", &self.0)
             .env_remove("RYFRAME_DEVEX_TARGET_ROOT")
             .env_remove("GITHUB_OUTPUT");
         command
+    }
+
+    fn conflicting_root_target(&self) -> std::path::PathBuf {
+        let session = self.0.join(".local-tests/foreign-session");
+        let backend = session.join("worktree/b");
+        for root in [&self.0, &backend] {
+            std::fs::create_dir_all(root.join("xtask")).unwrap();
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+            std::fs::write(root.join(".gitignore"), ".local-tests/\n").unwrap();
+            std::fs::write(
+                root.join("foreign_only_marker.rs"),
+                "// foreign_root_rust_marker_9412dc6f\n",
+            )
+            .unwrap();
+            std::fs::write(
+                root.join("foreign_only_marker.js"),
+                b"\x00foreign-root-fixture\xff",
+            )
+            .unwrap();
+        }
+        let result = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&backend)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        std::fs::create_dir(session.join("target")).unwrap();
+        session.join("target")
     }
 }
 
@@ -257,4 +284,75 @@ fn language_default_stdout_is_read_only_and_explicit_threshold_exits_one() {
         .output()
         .unwrap();
     assert_eq!(invalid.status.code(), Some(2));
+}
+
+#[test]
+fn language_json_uses_cwd_ancestor_and_ignores_both_legacy_root_variables() {
+    let current = LanguageProcessFixture::new("当前 后端");
+    let foreign = LanguageProcessFixture::new("foreign 后端");
+    let target = foreign.conflicting_root_target();
+    let rust_source = "// current_root_rust_marker_2a97fb30\n";
+    std::fs::write(current.0.join("current_only_marker.rs"), rust_source).unwrap();
+    let nested = current.0.join("中文 带空格目录/深层 子目录");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::create_dir(current.0.join(".local-tests")).unwrap();
+    let report_path = current.0.join(".local-tests/current-root.json");
+    let result = current
+        .command()
+        .current_dir(&nested)
+        .env("RYFRAME_WORKSPACE_ROOT", &foreign.0)
+        .env("RYFRAME_DEVEX_TARGET_ROOT", &target)
+        .args(["check", "language", "--output"])
+        .arg(&report_path)
+        .arg("--write")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let bytes = std::fs::read(&report_path).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let expected = [
+        ".gitignore",
+        "Cargo.toml",
+        "check.py",
+        "current_only_marker.rs",
+    ];
+    let files = report["files"].as_array().unwrap();
+    let paths = files
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, expected);
+    let total_bytes = expected
+        .iter()
+        .map(|path| std::fs::metadata(current.0.join(path)).unwrap().len())
+        .sum::<u64>();
+    assert_eq!(
+        report["total"]["files"].as_u64(),
+        Some(expected.len() as u64)
+    );
+    assert_eq!(report["total"]["bytes"].as_u64(), Some(total_bytes));
+    assert_eq!(report["self_maintained"]["rust"]["files"].as_u64(), Some(1));
+    assert_eq!(
+        report["self_maintained"]["rust"]["bytes"].as_u64(),
+        Some(rust_source.len() as u64)
+    );
+    assert!(files.iter().all(|file| {
+        !file["path"]
+            .as_str()
+            .unwrap()
+            .contains("foreign_only_marker")
+    }));
+    assert!(!foreign.0.join(".local-tests/current-root.json").exists());
+    assert!(
+        !target
+            .parent()
+            .unwrap()
+            .join("worktree/b/.local-tests/current-root.json")
+            .exists()
+    );
+    assert!(!current.0.join("target").exists());
 }

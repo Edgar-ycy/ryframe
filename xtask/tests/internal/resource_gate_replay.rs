@@ -325,29 +325,73 @@ fn command_normalization_keeps_frontend_absolute_and_expands_xtask() {
     assert_eq!(normalized.last().unwrap(), &frontend.to_string_lossy());
     let runner = Path::new("D:/runner/Cargo.toml");
     let target = Path::new("D:/runner-target");
-    let backend = Path::new("D:/后端 worktree");
-    let expanded = command_for_replay(&command, frontend, target, runner, backend).unwrap();
+    let expanded = command_for_replay(&command, frontend, target, runner).unwrap();
     assert_eq!(
-        expanded[..10]
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        expanded.iter().map(String::as_str).collect::<Vec<_>>(),
         vec![
             "cargo",
             "run",
             "--locked",
             "--manifest-path",
             "D:/runner/Cargo.toml",
-            "--config",
-            r#"env.RYFRAME_WORKSPACE_ROOT="D:/后端 worktree""#,
             "--target-dir",
             "D:/runner-target",
             "-p",
+            "xtask",
+            "--",
+            "check",
+            "ci",
+            "resource-gate",
+            "--frontend-dir",
+            "D:/前端 worktree",
         ]
     );
-    assert_eq!(expanded[10], "xtask");
+    assert_eq!(expanded[8], "xtask");
     assert_eq!(arm_order(1), (true, false));
     assert_eq!(arm_order(2), (false, true));
+}
+
+#[test]
+fn command_expansion_preserves_option_and_unicode_path_argument_boundaries() {
+    let frontend = Path::new("D:/前端 目录/中文 worktree");
+    let runner = Path::new("D:/runner 目录/Cargo.toml");
+    let target = Path::new("D:/独立 runner target");
+    let command = [
+        "cargo",
+        "xtask",
+        "check",
+        "--scope",
+        "backend",
+        "--frontend-dir",
+        "../旧 前端",
+        "--plan",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let normalized = command_for_frontend(&command, frontend).unwrap();
+    assert_eq!(normalized[6], frontend.to_string_lossy());
+    let expanded = command_for_replay(&command, frontend, target, runner).unwrap();
+    assert_eq!(
+        expanded.iter().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "cargo",
+            "run",
+            "--locked",
+            "--manifest-path",
+            "D:/runner 目录/Cargo.toml",
+            "--target-dir",
+            "D:/独立 runner target",
+            "-p",
+            "xtask",
+            "--",
+            "check",
+            "--scope",
+            "backend",
+            "--frontend-dir",
+            "D:/前端 目录/中文 worktree",
+            "--plan",
+        ]
+    );
 }
 
 #[test]
