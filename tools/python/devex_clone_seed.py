@@ -13,22 +13,7 @@ from devex_clone_source_proof import bound_file
 from restore_reference_plan import plan_hash
 
 FIELDS = {"format_version", "kind", "run_manifest", "post_copy", "post_verify", "identity_plan",
-          "identity_state", "identity_environment", "api_process", "node"}
-
-
-def password_names(value):
-    """仅投影计划明确声明的密码变量名，不提供宽泛环境扩展口。"""
-    names = set()
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key == "password_env" and isinstance(item, str):
-                names.add(item)
-            else:
-                names.update(password_names(item))
-    elif isinstance(value, list):
-        for item in value:
-            names.update(password_names(item))
-    return names
+          "identity_state", "identity_tool", "api_process", "node"}
 
 
 def latest(directory, stage, modes, *, current=None, cleanup=False):
@@ -85,19 +70,23 @@ def history(backend, directory, request):
 def identity_inputs(backend, directory, request, post):
     path = bound_file(backend, request["identity_plan"])
     plan = read_json(path)
-    exact(plan, {"format_version", "kind", "environment", "groups", "plan_sha256"})
+    exact(plan, {"format_version", "kind", "configuration", "environment", "groups", "plan_sha256"})
     payload = {key: value for key, value in plan.items() if key != "plan_sha256"}
     if (plan["format_version"] != 1 or plan["kind"] != "devex-identities"
             or plan_hash(payload) != plan["plan_sha256"]):
         raise ValueError("身份计划原摘要变化")
     environment = plan["environment"]
-    api = read_json(bound_file(backend, post["api_environment"]))["environment"]
     active = post_registration(backend, directory, descriptor=request["post_copy"])
     if active.request != post:
         raise ValueError("身份计划引用的 post-copy 登记内容变化")
     runtime = active.runtime
     contract = read_json(runtime / "runtime.json")
-    if (environment["scope_id"] != api.get("APP_SCOPE_ID") or contract["scope_id"] != environment["scope_id"]
+    from rate_limit_client import load_app_table
+    from devex_clone_target_binding import external_file
+
+    api = load_app_table(backend, {"APP_ENV": "test"}, config_dir=Path(contract["api_config_dir"]))
+    external_file(request["identity_tool"])
+    if (environment["scope_id"] != api.get("scope_id") or contract["scope_id"] != environment["scope_id"]
             or Path(environment["backend_dir"]) != backend or environment["frontend_dir"] != post["frontend_root"]
             or Path(environment["runtime"]["directory"]) != runtime
             or environment["runtime"]["receipt_sha256"] != binding(runtime / "runtime.json")["sha256"]
@@ -106,7 +95,7 @@ def identity_inputs(backend, directory, request, post):
         raise ValueError("身份计划必须保留原 API 的 scope、配置与创建身份")
     handoff = read_json(runtime / "handoff.json")
     if (environment["api_url"].rstrip("/") != handoff["api_url"].rstrip("/")
-            or api["APP_CORS_ALLOW_ORIGINS"] != environment["frontend_url"].rstrip("/")):
+            or api["cors"]["allow_origins"] != [environment["frontend_url"].rstrip("/")]):
         raise ValueError("身份计划 API 或前端地址不同")
     document = environment["environment_document"]
     if binding(local_path(backend, document["path"]))["sha256"] != document["sha256"]:
@@ -114,18 +103,36 @@ def identity_inputs(backend, directory, request, post):
     state = local_path(backend, request["identity_state"])
     if state != directory / "seed-runtime/identities":
         raise ValueError("身份账本必须是本 run 固定 seed 目录")
-    private = read_json(bound_file(backend, request["identity_environment"]))
-    exact(private, {"environment"})
-    private = private["environment"]
-    if not isinstance(private, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in private.items()):
-        raise ValueError("身份私有环境必须是文本映射")
-    secrets = {environment["passwords"][key] for key in ("system_env", "tenant_env")}
-    secrets.update(password_names(plan))
-    if (any(private.get(k) != v for k, v in api.items()) or set(private) - set(api) - secrets
-            or any(not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or not private.get(key) for key in secrets)
-            or any(key.startswith("APP_") for key in set(private) - set(api))):
-        raise ValueError("身份环境仅可补充计划明确秘密，不能改变原配置或借 shell 环境")
-    return plan, private
+    private = private_configuration(backend, plan)
+    exact(private["passwords"], {"system", "tenant"})
+    for password in private["passwords"].values():
+        if not isinstance(password, str) or not password or "\0" in password:
+            raise ValueError("身份计划缺少明确的文件密码")
+    if private["database"]["control"] != {
+            key: api["database"]["primary"][key]
+            for key in ("host", "port", "username", "password", "database", "tls_mode")}:
+        raise ValueError("身份控制库必须与固定文件配置一致")
+    return plan, {"APP_ENV": "test"}
+
+
+def private_configuration(backend, plan):
+    """只在内存恢复已绑定私有文件；公开计划不保存任何凭据。"""
+    import copy
+
+    descriptor = plan["configuration"]
+    path = bound_file(backend, descriptor)
+    private = read_json(path)
+    public = copy.deepcopy(private)
+    public.pop("passwords")
+    public["system_admin"].pop("password")
+    public["database"]["control"].pop("password")
+    for target in public["database"]["targets"]:
+        target["connection"].pop("password")
+    for tenant in public["tenants"]:
+        tenant["admin"].pop("password")
+    if public != plan["environment"] or binding(path) != descriptor:
+        raise ValueError("身份私有配置文件或非敏感绑定变化")
+    return private
 
 
 def register(backend, directory, request_file):
@@ -156,7 +163,7 @@ def _publication_names(plan_sha256, root):
 
 
 def _encoded_sha256(value):
-    content = json.dumps(value, ensure_ascii=False, indent=2, separators=(",", ": ")) + "\n"
+    content = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, separators=(",", ": ")) + "\n"
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
@@ -172,10 +179,10 @@ def _expected_identities(plan, ledger):
                 or len(set(permissions)) != len(permissions)):
             raise ValueError("身份计划角色或权限不能形成固定验证投影")
         for user in group["users"]:
-            exact(user, {"user_slot", "username", "password_env", "client_address"})
+            exact(user, {"user_slot", "username", "credential_slot", "client_address"})
             identities.append({"tenant_slot": group["slot"], "user_slot": user["user_slot"],
                 "tenant_id": group["tenant_id"], "username": user["username"],
-                "client_address": user["client_address"], "password_env": user["password_env"],
+                "client_address": user["client_address"], "credential_slot": user["credential_slot"],
                 "user_id": snowflake(ledger["users"][user["user_slot"]]),
                 "roles_sha256": plan_hash([group["role_code"]]),
                 "permissions_sha256": plan_hash(sorted(permissions))})
@@ -205,7 +212,7 @@ def _expected_pools(identities):
             "client_address_model": "fixed-benchmark-per-user",
             "slots": [{key: item[key] for key in ("tenant_slot", "user_slot", "client_address")}
                       for item in selected], "selections": selections}
-        bindings[name] = [{key: item[key] for key in ("tenant_id", "username", "password_env")}
+        bindings[name] = [{key: item[key] for key in ("tenant_id", "username", "credential_slot")}
                           for item in selected]
     return {"contract": contract, "bindings": bindings}
 
@@ -218,7 +225,7 @@ def _verified_receipt(backend, root, plan, ledger, receipt):
     identities = _expected_identities(plan, ledger)
     for item in receipt["identities"] if isinstance(receipt["identities"], list) else ():
         exact(item, {"tenant_slot", "user_slot", "tenant_id", "username", "client_address",
-                     "password_env", "user_id", "roles_sha256", "permissions_sha256"})
+                     "credential_slot", "user_id", "roles_sha256", "permissions_sha256"})
     audience = [{"kind": "user", "target_id": item["user_id"]}
                 for item in identities if item["tenant_slot"] == "system"][:10]
     homepage = [item["user_slot"] for item in identities

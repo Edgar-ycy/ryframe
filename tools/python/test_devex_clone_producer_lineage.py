@@ -141,11 +141,11 @@ class ProducerLineageTests(unittest.TestCase):
 
     def node_attempt(self, number: int = 1) -> dict:
         stage, mode, kind = "seed-runtime", "identities-verify", "identity-verify"
-        script = self.backend / "tools" / "js" / "devex_clone_identity.mjs"
+        script = self.backend / "xtask/src/data/performance_identities/producer.rs"
         script_binding = binding(script)
         sources = {
             "snapshot": {"head": "a" * 40, "patch_sha256": "b" * 64, "clean": False,
-                         "files": [{"path": "tools/js/devex_clone_identity.mjs",
+                         "files": [{"path": "xtask/src/data/performance_identities/producer.rs",
                                     "sha256": script_binding["sha256"]}]},
             "worktree_fingerprint": "sha256:" + "c" * 64,
             "fingerprints": {name: {"sha256": character * 64, "files": 1}
@@ -173,7 +173,7 @@ class ProducerLineageTests(unittest.TestCase):
             self.write(registration, {"format_version": 1, "kind": "fixture-seed-registration"})
         output = self.run / stage / f"attempt-{number:04d}"
         output.mkdir(parents=True)
-        request = {"node": {"path": str(self.node), "sha256": file_digest(self.node)["sha256"]},
+        request = {"identity_tool": {"path": str(self.node), "sha256": file_digest(self.node)["sha256"]},
                    "identity_plan": {"path": str(self.run / "identity-plan.json"), "sha256": "1" * 64},
                    "identity_state": str(self.run / "identity-state")}
         self.requests[str(registration)] = request
@@ -183,10 +183,11 @@ class ProducerLineageTests(unittest.TestCase):
             "format_version": 1, "kind": "devex-post-producer-launch",
             "run_manifest": binding(self.run / "manifest.json"), "registration": binding(registration),
             "controller": binding(controller), "attempt": number, "producer_kind": kind, "command": command,
-            "node": request["node"], "script": script_binding,
+            "tool": request["identity_tool"], "source": script_binding,
         })
         self.write(output / "session-process.json", {
             "format_version": 1, "kind": "devex-post-producer", "launch": binding(launch),
+            "identity_lock_owner": "12345678-1234-4abc-8def-1234567890ab",
             "identity": {"pid": 7000 + number, "started": str(6000 + number),
                          "executable": str(self.node)},
         })
@@ -217,7 +218,7 @@ class ProducerLineageTests(unittest.TestCase):
         self.assertEqual(node["launch"], binding(self.run / "seed-runtime/attempt-0001/session-launch.json"))
         self.assertEqual(node["controller"], attempt["controller"])
 
-    def test_identity_node_accepts_optional_historical_lock_owner(self):
+    def test_native_identity_producer_requires_explicit_lock_owner(self):
         runtime = self.runtime("post-copy/runtime", pid=4242, started="100")
         attempt = self.node_attempt()
         process_path = self.run / "seed-runtime/attempt-0001/session-process.json"
@@ -239,7 +240,7 @@ class ProducerLineageTests(unittest.TestCase):
 
         for label, launch_change, process_change, message in (
             ("wrong-kind", {"producer_kind": "quota-plan"},
-             {"identity_lock_owner": "12345678-1234-4abc-8def-1234567890ab"}, "非身份"),
+             {"identity_lock_owner": "12345678-1234-4abc-8def-1234567890ab"}, "字段"),
             ("wrong-format", {}, {"identity_lock_owner": "not-a-uuid"}, "格式无效"),
             ("unknown-field", {}, {"unexpected": True}, "字段"),
         ):

@@ -5,7 +5,7 @@ import { PassThrough, Readable } from 'node:stream'
 import { QuotaSession, quotaAuthorization, quotaProducerArguments, runQuotaBridge, validateQuotaGrant } from './devex_clone_quota_bridge.mjs'
 
 const backend = process.cwd(), directory = path.join(backend, '.local-tests/quota-test')
-const identity = { subject_id: '1', tenant_id: 'system', username: 'admin', password_env: 'RYFRAME_TEST_PASSWORD', client_address: '198.19.20.1' }
+const identity = { subject_id: '1', tenant_id: 'system', username: 'admin', password: 'fixture-admin-password', client_address: '198.19.20.1' }
 const environment = { backend_dir: backend, frontend_dir: path.resolve('../ryframe-vue3'), scope_id: 'quota-fixture',
   api_url: 'http://127.0.0.1:12345/', frontend_url: 'http://127.0.0.1:12346/',
   tenants: Array.from({ length: 10 }, (_, index) => ({ tenant_id: `tenant-${index + 1}` })),

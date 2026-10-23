@@ -33,7 +33,7 @@ export function departmentTargets(plan) {
         !Array.isArray(group.permissions) || group.permissions.includes('*') ||
         !group.permissions.includes(templatePermission) || !templateUser)
       throw new Error('部门租户与身份组不一致')
-    exact(templateUser, ['user_slot', 'username', 'password_env', 'client_address'], '部门模板固定用户')
+    exact(templateUser, ['user_slot', 'username', 'credential_slot', 'client_address'], '部门模板固定用户')
     return { slot, tenant_id: tenant.tenant_id, admin: structuredClone(group.admin),
       template_user: structuredClone(templateUser) }
   })
@@ -48,9 +48,9 @@ export function departmentTemplateIdentities(plan, identities) {
   const subjects = new Set()
   return targets.map((target, index) => {
     const identity = identities[index]
-    exact(identity, ['subject_id', 'tenant_id', 'username', 'password_env', 'client_address'], '部门模板身份')
+    exact(identity, ['subject_id', 'tenant_id', 'username', 'password', 'client_address'], '部门模板身份')
     const expected = { tenant_id: target.tenant_id, username: target.template_user.username,
-      password_env: target.template_user.password_env, client_address: target.template_user.client_address }
+      password: plan.environment.passwords[target.template_user.credential_slot], client_address: target.template_user.client_address }
     if (!safeId(identity.subject_id) || Object.entries(expected).some(([key, value]) => identity[key] !== value) ||
         subjects.has(identity.subject_id)) throw new Error('部门模板身份与首个固定用户或账本主体不符')
     subjects.add(identity.subject_id)
@@ -81,7 +81,7 @@ export function validateDepartmentGrant(args, request, plan) {
   const expectedTenants = departmentTargets(plan).map((item) => item.tenant_id)
   if (!isDeepStrictEqual(request.tenant_ids, expectedTenants)) throw new Error('部门授权必须精确绑定十个普通租户')
   const templateIdentities = departmentTemplateIdentities(plan, request.template_identities)
-  exact(request.identity, ['subject_id', 'tenant_id', 'username', 'password_env', 'client_address'], '系统准备身份')
+  exact(request.identity, ['subject_id', 'tenant_id', 'username', 'password', 'client_address'], '系统准备身份')
   if (!safeId(request.identity.subject_id) || Object.entries(plan.environment.system_admin)
     .some(([key, value]) => request.identity[key] !== value)) throw new Error('部门授权的系统准备身份不符')
   const expected = { contract: { timeout_ms: 120000, pacing: plan.environment.pacing.contract }, bindings: {

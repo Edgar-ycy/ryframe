@@ -1,5 +1,7 @@
 //! 性能身份公开入口拒绝歧义或越界参数；离线计划由原生 Rust 生成。
 
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
@@ -179,4 +181,143 @@ fn private_plan_uses_native_rust_and_returns_operation_failure_for_invalid_envir
     assert!(error.contains("identity_preparation_failed"));
     assert!(!error.contains("protocol_error"));
     assert!(!output.exists());
+}
+
+fn hash(bytes: impl AsRef<[u8]>) -> String {
+    hex::encode(Sha256::digest(bytes.as_ref()))
+}
+
+fn private_environment(fixture: &Fixture) -> PathBuf {
+    let backend = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_owned();
+    let runtime = fixture.directory.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    for name in ["runtime.json", "api.json"] {
+        fs::write(runtime.join(name), "{}").unwrap();
+    }
+    let document = fixture.directory.join("environment.md");
+    fs::write(&document, "隔离环境").unwrap();
+    let connection = |database| json!({"host":"127.0.0.1","port":3306,"username":"fixture","password":"Process-Database-Secret!123","database":database,"tls_mode":"required"});
+    let admin = |tenant: &str, index| json!({"tenant_id":tenant,"username":"admin","password":"Process-Admin-Secret!123","client_address":format!("198.18.30.{index}")});
+    let value = json!({
+        "format_version":1,"plan_id":"process","scope_id":"identity-process","backend_dir":backend,"frontend_dir":backend.parent().unwrap().join("ryframe-vue3"),
+        "api_url":"http://127.0.0.1:18999/","frontend_url":"http://127.0.0.1:4199/",
+        "environment_document":{"path":document,"sha256":hash("隔离环境")},
+        "runtime":{"directory":runtime,"receipt_sha256":hash("{}"),"api_process_sha256":hash("{}")},
+        "database":{"python":backend.join("python-fixture"),"mysql_client":backend.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
+        "system_admin":admin("system",1),
+        "tenants":(1..=10).map(|index|json!({"slot":format!("tenant-{index:02}"),"tenant_id":format!("fixture-{index}"),"target_key":"shared","admin":admin(&format!("fixture-{index}"),index+1)})).collect::<Vec<_>>(),
+        "passwords":{"system":"Process-User-Secret!123","tenant":"Process-User-Secret!123"},
+        "quota":{"system_max_users":1000,"tenant_max_users":1000,"import_headroom_per_tenant":100},
+        "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"python":backend.join("python-fixture"),"login_budget_state":fixture.directory.join("budget.json")}}
+    });
+    let path = fixture.directory.join("private.json");
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    path
+}
+
+#[test]
+fn private_plan_and_all_process_outputs_never_persist_or_print_credentials() {
+    let fixture = Fixture::new();
+    let input = private_environment(&fixture);
+    let output = fixture.directory.join("public-plan.json");
+    let request = json!({"format_version":1,"operation":"plan","environment":input,"output":output,"write":true});
+    let result = private_invoke(&[], &serde_json::to_vec(&request).unwrap());
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let bytes = fs::read(&output).unwrap();
+    let plan: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        plan["configuration"]["sha256"],
+        hash(fs::read(&input).unwrap())
+    );
+    let mut artifacts = vec![bytes, result.stdout, result.stderr];
+    for operation in ["apply", "verify"] {
+        let payload = json!({"format_version":1,"operation":operation,"plan":output,"state_dir":fixture.directory.join("state"),"write":true});
+        let failed = private_invoke(&[], &serde_json::to_vec(&payload).unwrap());
+        assert!(!failed.status.success());
+        artifacts.extend([failed.stdout, failed.stderr]);
+    }
+    for secret in [
+        "Process-User-Secret!123",
+        "Process-Admin-Secret!123",
+        "Process-Database-Secret!123",
+        "private-secret",
+    ] {
+        for artifact in &artifacts {
+            assert!(!String::from_utf8_lossy(artifact).contains(secret));
+        }
+    }
+    assert!(!fixture.directory.join("state").exists());
+}
+
+#[test]
+fn native_clone_producer_waits_for_stdin_and_rejects_wrong_grants_before_state_creation() {
+    let fixture = Fixture::new();
+    let plan = fixture.environment();
+    let state = fixture.directory.join("seed-runtime/identities");
+    let arguments = vec![
+        "__identity-producer".into(),
+        "--run-dir".into(),
+        fixture.directory.display().to_string(),
+        "--attempt".into(),
+        "1".into(),
+        "--identity-plan".into(),
+        plan.display().to_string(),
+        "--identity-state".into(),
+        state.display().to_string(),
+        "--identity-mode".into(),
+        "apply".into(),
+        "--identity-plan-sha256".into(),
+        hash(fs::read(plan).unwrap()),
+    ];
+    for grant in [
+        None,
+        Some(
+            json!({"operation":"start","run_dir":fixture.directory,"attempt":2,"token":"Process-Reset-Secret!123"}),
+        ),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(&arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(child.try_wait().unwrap().is_none());
+        assert!(!state.exists());
+        if let Some(grant) = grant {
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(&serde_json::to_vec(&grant).unwrap())
+                .unwrap();
+        } else {
+            drop(child.stdin.take());
+        }
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("Process-Reset-Secret!123"));
+        assert!(!state.exists());
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(child.try_wait().unwrap().is_none());
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(!state.exists());
 }

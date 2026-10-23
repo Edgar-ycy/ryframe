@@ -13,12 +13,21 @@ use crate::{
 #[path = "plan/validation.rs"]
 mod validation;
 
-pub(crate) fn create(environment: &Value, backend: &Path) -> Result<Value> {
-    validation::environment(environment)?;
+pub(crate) fn create(environment: &Value, backend: &Path, source: &Path) -> Result<Value> {
+    validation::environment(environment, true)?;
     if Path::new(text(environment, "backend_dir")?) != backend {
         return Err("必须在身份清单绑定的后端目录运行".into());
     }
     validate_sources(environment, backend)?;
+    validate_local_test_path(source, backend, LocalTestPathKind::ExistingFile)?;
+    let before = digest::file(source)?;
+    if document::read(source)? != *environment || digest::file(source)? != before {
+        return Err("身份私有配置文件与计划输入不同或读取期间变化".into());
+    }
+    let configuration =
+        serde_json::json!({"path":source,"bytes":before.bytes,"sha256":before.sha256});
+    let environment = public(environment)?;
+    let environment = &environment;
     let mut groups = Vec::with_capacity(11);
     groups.push(group(
         environment,
@@ -49,7 +58,7 @@ pub(crate) fn create(environment: &Value, backend: &Path) -> Result<Value> {
             }
         }
     }
-    let mut plan = json!({"format_version":1,"kind":"devex-identities","environment":environment,"groups":groups});
+    let mut plan = json!({"format_version":1,"kind":"devex-identities","configuration":configuration,"environment":environment,"groups":groups});
     plan["plan_sha256"] = json!(digest::plan_hash(&plan)?);
     validate(&plan)?;
     Ok(plan)
@@ -59,7 +68,7 @@ pub(crate) fn write(environment: &Path, output: &Path, backend: &Path) -> Result
     validate_local_test_path(environment, backend, LocalTestPathKind::ExistingFile)?;
     validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)?;
     let before = digest::file(environment)?;
-    let plan = create(&document::read(environment)?, backend)?;
+    let plan = create(&document::read(environment)?, backend, environment)?;
     if digest::file(environment)? != before {
         return Err("身份计划生成期间环境清单变化；未发布计划，请核对来源".into());
     }
@@ -78,12 +87,25 @@ pub(crate) fn validate(plan: &Value) -> Result<()> {
             "format_version",
             "kind",
             "environment",
+            "configuration",
             "groups",
             "plan_sha256",
         ],
         "身份计划",
     )?;
-    validation::environment(&plan["environment"])?;
+    validation::environment(&plan["environment"], false)?;
+    document::exact(
+        &plan["configuration"],
+        &["path", "bytes", "sha256"],
+        "身份私有配置绑定",
+    )?;
+    if !Path::new(text(&plan["configuration"], "path")?).is_absolute()
+        || !plan["configuration"]["bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0 && bytes <= 16 * 1024 * 1024)
+    {
+        return Err("身份私有配置绑定路径或大小无效".into());
+    }
     let mut payload = plan.clone();
     payload
         .as_object_mut()
@@ -96,6 +118,55 @@ pub(crate) fn validate(plan: &Value) -> Result<()> {
         return Err("身份计划摘要、类型或版本无效".into());
     }
     Ok(())
+}
+
+/// 仅在内存恢复凭据；计划与每次执行均绑定同一份不可变私有文件。
+pub(crate) fn load(plan: &Value, backend: &Path) -> Result<Value> {
+    validate(plan)?;
+    let path = Path::new(text(&plan["configuration"], "path")?);
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)?;
+    let before = digest::file(path)?;
+    if plan["configuration"] != json!({"path":path,"bytes":before.bytes,"sha256":before.sha256}) {
+        return Err("身份私有配置文件摘要变化；未启动远程会话".into());
+    }
+    let private = document::read(path)?;
+    if *plan != create(&private, backend, path)? || digest::file(path)? != before {
+        return Err("身份模型、私有配置或来源漂移；未启动远程会话".into());
+    }
+    Ok(private)
+}
+
+fn public(environment: &Value) -> Result<Value> {
+    let mut value = environment.clone();
+    value
+        .as_object_mut()
+        .ok_or("身份私有配置必须为对象")?
+        .remove("passwords");
+    value["system_admin"]
+        .as_object_mut()
+        .ok_or("缺少管理员配置")?
+        .remove("password");
+    value["database"]["control"]
+        .as_object_mut()
+        .ok_or("缺少控制库配置")?
+        .remove("password");
+    for target in value["database"]["targets"]
+        .as_array_mut()
+        .ok_or("缺少目标配置")?
+    {
+        target["connection"]
+            .as_object_mut()
+            .ok_or("缺少目标连接")?
+            .remove("password");
+    }
+    for tenant in value["tenants"].as_array_mut().ok_or("缺少租户配置")? {
+        tenant["admin"]
+            .as_object_mut()
+            .ok_or("缺少租户管理员")?
+            .remove("password");
+    }
+    validation::environment(&value, false)?;
+    Ok(value)
 }
 
 fn validate_sources(environment: &Value, backend: &Path) -> Result<()> {
@@ -142,7 +213,7 @@ fn group(
     let role = format!("dv-{plan_id}-{kind}");
     let users = (1..=count).map(|number| {
         json!({"user_slot":format!("{slot}-user-{number:03}"),"username":format!("dv-{plan_id}-{number:03}"),
-            "password_env":environment["passwords"][format!("{kind}_env")],"client_address":format!("198.18.{}.{number}",40+index)})
+            "credential_slot":kind,"client_address":format!("198.18.{}.{number}",40+index)})
     }).collect::<Vec<_>>();
     if role.len() > 50
         || users

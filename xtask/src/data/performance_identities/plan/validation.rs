@@ -5,28 +5,27 @@ use serde_json::Value;
 use super::{array, text};
 use crate::{Result, recovery::clone::native::json};
 
-pub(super) fn environment(value: &Value) -> Result<()> {
-    json::exact(
-        value,
-        &[
-            "format_version",
-            "plan_id",
-            "scope_id",
-            "backend_dir",
-            "frontend_dir",
-            "api_url",
-            "frontend_url",
-            "environment_document",
-            "runtime",
-            "database",
-            "system_admin",
-            "tenants",
-            "passwords",
-            "quota",
-            "pacing",
-        ],
-        "身份环境清单",
-    )?;
+pub(super) fn environment(value: &Value, private: bool) -> Result<()> {
+    let mut fields = vec![
+        "format_version",
+        "plan_id",
+        "scope_id",
+        "backend_dir",
+        "frontend_dir",
+        "api_url",
+        "frontend_url",
+        "environment_document",
+        "runtime",
+        "database",
+        "system_admin",
+        "tenants",
+        "quota",
+        "pacing",
+    ];
+    if private {
+        fields.push("passwords");
+    }
+    json::exact(value, &fields, "身份环境清单")?;
     if value["format_version"] != 1
         || !identifier(text(value, "plan_id")?, 32)
         || !identifier(text(value, "scope_id")?, 64)
@@ -58,16 +57,18 @@ pub(super) fn environment(value: &Value) -> Result<()> {
             return Err("身份来源必须绑定真实 SHA-256".into());
         }
     }
-    database(&value["database"])?;
-    credential(&value["system_admin"], "system")?;
-    tenants(value)?;
-    json::exact(
-        &value["passwords"],
-        &["system_env", "tenant_env"],
-        "普通用户密码引用",
-    )?;
-    for key in ["system_env", "tenant_env"] {
-        secret_name(text(&value["passwords"], key)?)?;
+    database(&value["database"], private)?;
+    credential(&value["system_admin"], "system", private)?;
+    tenants(value, private)?;
+    if private {
+        json::exact(
+            &value["passwords"],
+            &["system", "tenant"],
+            "普通用户密码引用",
+        )?;
+        for key in ["system", "tenant"] {
+            password(text(&value["passwords"], key)?)?;
+        }
     }
     json::exact(
         &value["quota"],
@@ -93,7 +94,7 @@ pub(super) fn environment(value: &Value) -> Result<()> {
     pacing(&value["pacing"])
 }
 
-fn database(value: &Value) -> Result<()> {
+fn database(value: &Value, private: bool) -> Result<()> {
     json::exact(
         value,
         &[
@@ -115,7 +116,7 @@ fn database(value: &Value) -> Result<()> {
     {
         return Err("数据库来源 UUID 无效".into());
     }
-    connection(&value["control"])?;
+    connection(&value["control"], private)?;
     let mut keys = BTreeSet::new();
     for target in array(&value["targets"])? {
         json::exact(target, &["key", "mode", "connection"], "租户目标")?;
@@ -125,27 +126,17 @@ fn database(value: &Value) -> Result<()> {
         {
             return Err("租户目标重复或无效".into());
         }
-        connection(&target["connection"])?;
-        if !text(&target["connection"], "password_env")?.starts_with("APP_") {
-            return Err("目标密码引用必须由运行来源绑定".into());
-        }
+        connection(&target["connection"], private)?;
     }
     Ok(())
 }
 
-fn connection(value: &Value) -> Result<()> {
-    json::exact(
-        value,
-        &[
-            "host",
-            "port",
-            "database",
-            "username",
-            "password_env",
-            "tls_mode",
-        ],
-        "数据库绑定",
-    )?;
+fn connection(value: &Value, private: bool) -> Result<()> {
+    let mut fields = vec!["host", "port", "database", "username", "tls_mode"];
+    if private {
+        fields.push("password");
+    }
+    json::exact(value, &fields, "数据库绑定")?;
     let name = text(value, "database")?;
     if !matches!(value["host"].as_str(), Some("127.0.0.1" | "localhost"))
         || !value["port"]
@@ -160,10 +151,13 @@ fn connection(value: &Value) -> Result<()> {
         return Err("数据库必须是明确的本机隔离目标".into());
     }
     text(value, "username")?;
-    secret_name(text(value, "password_env")?)
+    if private {
+        password(text(value, "password")?)?;
+    }
+    Ok(())
 }
 
-fn tenants(value: &Value) -> Result<()> {
+fn tenants(value: &Value, private: bool) -> Result<()> {
     let tenants = array(&value["tenants"])?;
     if tenants.len() != 10 {
         return Err("必须登记十个普通租户".into());
@@ -191,7 +185,7 @@ fn tenants(value: &Value) -> Result<()> {
         {
             return Err("实际十租户映射无效".into());
         }
-        credential(&tenant["admin"], id)?;
+        credential(&tenant["admin"], id, private)?;
         if !addresses.insert(text(&tenant["admin"], "client_address")?) {
             return Err("准备管理员客户地址必须独立".into());
         }
@@ -216,12 +210,12 @@ fn tenants(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn credential(value: &Value, tenant: &str) -> Result<()> {
-    json::exact(
-        value,
-        &["tenant_id", "username", "password_env", "client_address"],
-        "准备管理员",
-    )?;
+fn credential(value: &Value, tenant: &str, private: bool) -> Result<()> {
+    let mut fields = vec!["tenant_id", "username", "client_address"];
+    if private {
+        fields.push("password");
+    }
+    json::exact(value, &fields, "准备管理员")?;
     let address = text(value, "client_address")?;
     if value["tenant_id"] != tenant
         || text(value, "username")?.trim().is_empty()
@@ -233,7 +227,10 @@ fn credential(value: &Value, tenant: &str) -> Result<()> {
     {
         return Err("准备管理员身份或固定地址无效".into());
     }
-    secret_name(text(value, "password_env")?)
+    if private {
+        password(text(value, "password")?)?;
+    }
+    Ok(())
 }
 
 fn pacing(value: &Value) -> Result<()> {
@@ -289,13 +286,9 @@ fn identifier(value: &str, maximum: usize) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
-fn secret_name(value: &str) -> Result<()> {
-    if !value.as_bytes()[0].is_ascii_uppercase()
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-    {
-        return Err("密码引用必须使用明确名称，不能包含密码值".into());
+fn password(value: &str) -> Result<()> {
+    if value.is_empty() || value.contains('\0') {
+        return Err("文件配置密码不能为空或包含 NUL".into());
     }
     Ok(())
 }

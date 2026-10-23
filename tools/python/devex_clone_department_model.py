@@ -32,7 +32,7 @@ def snowflake(value):
 
 def identity_plan(backend, request):
     plan = read_json(bound_file(backend, request["identity_plan"]))
-    exact(plan, {"format_version", "kind", "environment", "groups", "plan_sha256"})
+    exact(plan, {"format_version", "kind", "configuration", "environment", "groups", "plan_sha256"})
     payload = {key: value for key, value in plan.items() if key != "plan_sha256"}
     if (plan["format_version"] != 1 or plan["kind"] != "devex-identities"
             or plan_hash(payload) != plan["plan_sha256"]):
@@ -133,6 +133,9 @@ def identity_projection(backend, request, *, allow_absent):
 def template_identities(backend, request):
     """从已确认身份账本选择每租户第一个固定用户，不接受计划外主体。"""
     plan = identity_plan(backend, request)
+    from devex_clone_seed import private_configuration
+
+    private = private_configuration(backend, plan)
     projection = identity_projection(backend, request, allow_absent=False)
     if projection["state"] not in {"prepared", "verified"}:
         raise ValueError("部门模板需要已确认的固定身份账本")
@@ -147,10 +150,11 @@ def template_identities(backend, request):
                 or TEMPLATE_PERMISSION not in permissions or not isinstance(users, list) or not users):
             raise ValueError("部门模板用户不属于具备导入权限的固定租户身份组")
         user = users[0]
-        exact(user, {"user_slot", "username", "password_env", "client_address"})
+        exact(user, {"user_slot", "username", "credential_slot", "client_address"})
         subject_id = ledger["users"].get(user["user_slot"])
         identity = {"subject_id": snowflake(subject_id), "tenant_id": group["tenant_id"],
-                    "username": user["username"], "password_env": user["password_env"],
+                    "username": user["username"],
+                    "password": private["passwords"][user["credential_slot"]],
                     "client_address": user["client_address"]}
         identities.append(identity)
     if len(identities) != 10 or len({item["subject_id"] for item in identities}) != 10:

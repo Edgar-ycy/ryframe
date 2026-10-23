@@ -1,8 +1,6 @@
 use std::{
-    fs,
-    io::{Read, Seek, SeekFrom, Write},
+    io::Read,
     path::{Path, PathBuf},
-    process::Stdio,
 };
 
 use serde_json::{Value, json};
@@ -11,20 +9,44 @@ use crate::{
     Result,
     cli::PerformanceIdentitiesCommand,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_stdin,
     workspace::root_dir,
 };
 
-const SCRIPT: &str = "tools/js/devex_prepare_identities.mjs";
 const MAX_PROTOCOL_BYTES: usize = 32 * 1024;
 
+#[cfg(test)]
+#[path = "performance_identities/tests/execution.rs"]
+mod execution_tests;
+#[cfg(test)]
+#[path = "performance_identities/tests/producer.rs"]
+mod producer_tests;
+
+#[path = "performance_identities/evidence.rs"]
+mod evidence;
+#[path = "performance_identities/execution.rs"]
+mod execution;
+#[path = "performance_identities/inspection.rs"]
+mod inspection;
+#[path = "performance_identities/ledger.rs"]
+mod ledger;
+#[path = "performance_identities/native.rs"]
+mod native;
 #[path = "performance_identities/plan.rs"]
 pub(crate) mod plan;
+#[path = "performance_identities/producer.rs"]
+mod producer;
+#[path = "performance_identities/receipt.rs"]
+mod receipt;
+#[path = "performance_identities/run_lock.rs"]
+mod run_lock;
 #[path = "performance_identities/state.rs"]
 pub(crate) mod state;
 
 /// 私有入口只接收有界 stdin，不接受配置环境变量或业务路径参数。
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = producer::run_hidden_if_requested() {
+        return Some(code);
+    }
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
     if arguments.first().map(String::as_str) != Some("__prepare-identities") {
         return None;
@@ -133,27 +155,52 @@ pub(super) fn run(command: &PerformanceIdentitiesCommand) -> Result<()> {
         println!("{}", serde_json::to_string(&summary)?);
         return Ok(());
     }
-    let invocation = private_invocation_at(command, &root)?;
-    let (path, state_dir, verify) = match command {
-        PerformanceIdentitiesCommand::Apply { plan, state_dir } => (plan, state_dir, false),
-        PerformanceIdentitiesCommand::Verify { plan, state_dir } => (plan, state_dir, true),
+    private_invocation_at(command, &root)?;
+    let (path, state_dir) = match command {
+        PerformanceIdentitiesCommand::Apply { plan, state_dir } => (plan, state_dir),
+        PerformanceIdentitiesCommand::Verify { plan, state_dir } => (plan, state_dir),
         PerformanceIdentitiesCommand::Plan { .. } => unreachable!("离线计划已返回"),
     };
-    let prepared = crate::recovery::clone::native::json::read(path)?;
-    plan::validate(&prepared)?;
-    if prepared != plan::create(&prepared["environment"], &root)? {
-        return Err("身份计划与确定性账号模型不同；未启动身份生产者".into());
+    let summary = execute_at(
+        path,
+        state_dir,
+        command.operation(),
+        &uuid::Uuid::new_v4().to_string(),
+        None,
+    )?;
+    println!("{}", serde_json::to_string(&summary)?);
+    Ok(())
+}
+
+pub(super) fn execute_at(
+    path: &Path,
+    state_dir: &Path,
+    mode: &str,
+    owner: &str,
+    expected_raw_sha256: Option<&str>,
+) -> Result<Value> {
+    let root = root_dir();
+    let bytes = evidence::regular(path)?.ok_or("身份计划文件不存在")?;
+    if expected_raw_sha256.is_some_and(|expected| evidence::hash(&bytes) != expected) {
+        return Err("身份计划原始字节在授权后变化；未创建账本或远程会话".into());
     }
-    if verify {
+    let prepared = evidence::parse(&bytes)?;
+    plan::load(&prepared, &root)?;
+    if mode == "verify" {
         state::verify_input(&prepared, state_dir, &root)?;
     }
-    // 使用有界且已到 EOF 的独立输入，不继承终端，也不把协议放进环境或日志。
-    let input_directory = root.join(".local-tests");
-    fs::create_dir_all(&input_directory)?;
-    let mut input = tempfile::tempfile_in(input_directory)?;
-    input.write_all(invocation.protocol.as_bytes())?;
-    input.seek(SeekFrom::Start(0))?;
-    run_with_stdin(&root, "node", &[SCRIPT], Stdio::from(input))
+    let mut context = native::NativeContext::new(&prepared, state_dir, mode)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(execution::execute(
+        &prepared,
+        state_dir,
+        mode,
+        owner,
+        &mut context,
+        &mut |_| Ok(()),
+    ))
 }
 
 pub(crate) fn private_invocation_at(

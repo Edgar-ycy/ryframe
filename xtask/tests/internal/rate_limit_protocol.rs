@@ -371,7 +371,6 @@ fn node_and_python_callers_have_no_second_configuration_implementation() {
         "ci_full_stack.py",
         "devex_clone_target_binding.py",
         "devex_clone_source_proof.py",
-        "devex_identity_environment.py",
         "reference_fixture_browser.py",
         "reference_fixture_browser_security.py",
         "restore_source_binding.py",

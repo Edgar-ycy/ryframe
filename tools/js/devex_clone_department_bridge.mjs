@@ -27,17 +27,55 @@ export function departmentProducerArguments(argv) {
 async function dependencies(backend) {
   const { Session, operationCatalog } = await import(pathToFileURL(path.join(backend, 'tools/js/request.mjs')))
   const { createPacing } = await import(pathToFileURL(path.join(backend, 'tools/js/pacing.mjs')))
-  return { Session, operationCatalog, createPacing }
+  class FileSession extends Session {
+    async login() {
+      const password = this.identity.password
+      if (typeof password !== 'string' || !password) throw new Error('缺少文件配置的身份密码')
+      await this.request({ operation: 'get_auth_csrf' })
+      const response = await this.request({ operation: 'post_auth_login', body: { username: this.identity.username, password } })
+      if (typeof response?.data?.access_token !== 'string' || !response.data.access_token) throw new Error('登录缺少当前会话令牌')
+      this.token = response.data.access_token
+    }
+  }
+  return { Session: FileSession, operationCatalog, createPacing }
 }
 
 async function identityPlan(args, backend) {
-  const { localPath, validateIdentityPlan } = await import(pathToFileURL(path.join(backend, 'tools/js/identity-plan.mjs')))
-  const filename = await localPath(backend, args.plan)
-  if (!(await lstat(filename)).isFile()) throw new Error('身份计划必须为普通文件')
+  const filename = path.resolve(args.plan)
+  const local = path.join(backend, '.local-tests')
+  if (!filename.startsWith(local + path.sep) || filename !== args.plan) throw new Error('身份计划必须位于当前隔离目录')
+  for (let current = filename; current !== backend; current = path.dirname(current)) {
+    const info = await lstat(current)
+    if (info.isSymbolicLink() || (current === filename && (!info.isFile() || info.size > 16 * 1024 * 1024))) throw new Error('身份计划必须为无链接的有界普通文件')
+  }
   const content = await readFile(filename)
   if (createHash('sha256').update(content).digest('hex') !== args.planSha256) throw new Error('登记身份计划摘要发生变化')
-  const plan = validateIdentityPlan(JSON.parse(content))
+  const plan = JSON.parse(content)
+  const { hash } = await import(pathToFileURL(path.join(backend, 'tools/js/config.mjs')))
+  const { plan_sha256, ...payload } = plan
+  if (plan.format_version !== 1 || plan.kind !== 'devex-identities' || hash(payload) !== plan_sha256) throw new Error('Rust 身份计划摘要无效')
   departmentTargets(plan)
+  const configuration = path.resolve(plan.configuration.path)
+  if (!configuration.startsWith(local + path.sep) || configuration !== plan.configuration.path) throw new Error('私有配置必须位于当前隔离目录')
+  for (let current = configuration; current !== backend; current = path.dirname(current)) {
+    if ((await lstat(current)).isSymbolicLink()) throw new Error('私有配置不能经过链接')
+  }
+  const metadata = await lstat(configuration)
+  if (!metadata.isFile() || metadata.size > 16 * 1024 * 1024 || metadata.size !== plan.configuration.bytes) throw new Error('私有配置大小不同')
+  const bytes = await readFile(configuration)
+  if (createHash('sha256').update(bytes).digest('hex') !== plan.configuration.sha256) throw new Error('私有配置原始摘要变化')
+  const privateConfiguration = JSON.parse(bytes)
+  const publicConfiguration = structuredClone(privateConfiguration)
+  delete publicConfiguration.passwords
+  delete publicConfiguration.system_admin.password
+  delete publicConfiguration.database.control.password
+  for (const item of publicConfiguration.database.targets) delete item.connection.password
+  for (const item of publicConfiguration.tenants) delete item.admin.password
+  if (hash(publicConfiguration) !== hash(plan.environment)) throw new Error('私有配置绑定与公开计划不同')
+  plan.environment = privateConfiguration
+  for (const group of plan.groups) {
+    group.admin = group.kind === 'system' ? privateConfiguration.system_admin : privateConfiguration.tenants.find((tenant) => tenant.tenant_id === group.tenant_id).admin
+  }
   return plan
 }
 

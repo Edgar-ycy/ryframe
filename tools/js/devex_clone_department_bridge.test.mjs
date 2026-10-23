@@ -11,21 +11,21 @@ import { Session } from './request.mjs'
 
 const backend = process.cwd()
 const directory = path.join(backend, '.local-tests/department-test')
-const admin = (tenant_id, index) => ({ tenant_id, username: 'admin', password_env: 'RYFRAME_DEPARTMENT_PASSWORD',
+const admin = (tenant_id, index) => ({ tenant_id, username: 'admin', password: 'fixture-admin-password',
   client_address: `198.18.31.${index}` })
 const systemAdmin = admin('system', 1)
 const tenants = Array.from({ length: 10 }, (_, index) => ({ slot: `tenant-${String(index + 1).padStart(2, '0')}`,
   tenant_id: `fixture-${index + 1}`, target_key: 'shared', admin: admin(`fixture-${index + 1}`, index + 2) }))
 const plan = { environment: { plan_id: 'fixture', scope_id: 'department-fixture', backend_dir: backend,
   frontend_dir: path.resolve('../ryframe-vue3'), api_url: 'http://127.0.0.1:12345/', frontend_url: 'http://127.0.0.1:12346/',
-  pacing: { contract: { authority_sha256: 'a'.repeat(64) }, bindings: {} }, system_admin: systemAdmin, tenants },
+  passwords: { tenant: 'fixture-user-password' }, pacing: { contract: { authority_sha256: 'a'.repeat(64) }, bindings: {} }, system_admin: systemAdmin, tenants },
 groups: [{ slot: 'system', tenant_id: 'system', kind: 'system', admin: systemAdmin },
   ...tenants.map((item, index) => ({ slot: item.slot, tenant_id: item.tenant_id, kind: 'tenant', admin: item.admin,
     permissions: ['system:post:list', 'system:user-import:add'], users: [{ user_slot: `${item.slot}-user-001`,
-      username: `fixed-user-${index + 1}`, password_env: 'RYFRAME_FIXED_USER_PASSWORD',
+      username: `fixed-user-${index + 1}`, credential_slot: 'tenant',
       client_address: `198.18.41.${index + 1}` }] }))] }
 const templateIdentities = plan.groups.slice(1).map((group, index) => ({ subject_id: String(101 + index),
-  tenant_id: group.tenant_id, username: group.users[0].username, password_env: group.users[0].password_env,
+  tenant_id: group.tenant_id, username: group.users[0].username, password: plan.environment.passwords.tenant,
   client_address: group.users[0].client_address }))
 const argv = ['--run-dir', directory, '--attempt', '7', '--department-mode', 'apply',
   '--identity-plan', path.join(directory, 'identity.json'), '--identity-plan-sha256', 'b'.repeat(64)]

@@ -180,7 +180,7 @@ fn rejects_link_or_junction_components_even_when_the_target_exists() {
     let fixture = Fixture::new();
     let linked = fixture.directory.join("linked-scripts");
     create_directory_link(&root_dir().join("scripts"), &linked);
-    let target = linked.join("devex_prepare_identities.mjs");
+    let target = linked.join("private.json");
     let error = validate_local_test_path(&target, &root_dir(), LocalTestPathKind::ExistingFile)
         .unwrap_err();
     assert!(
@@ -208,28 +208,31 @@ fn environment_fixture(fixture: &Fixture) -> Value {
     for filename in ["runtime.json", "api.json"] {
         fs::write(runtime.join(filename), b"{}").unwrap();
     }
-    let connection = |database| json!({"host":"127.0.0.1","port":3306,"database":database,"username":"fixture","password_env":"APP_IDENTITY_DB_PASSWORD","tls_mode":"required"});
-    let admin = |tenant: &str, index| json!({"tenant_id":tenant,"username":"admin","password_env":"RYFRAME_IDENTITY_ADMIN_PASSWORD","client_address":format!("198.18.30.{}",index+1)});
+    let connection = |database| json!({"host":"127.0.0.1","port":3306,"database":database,"username":"fixture","password":"Fixture-Database-Password!123","tls_mode":"required"});
+    let admin = |tenant: &str, index| json!({"tenant_id":tenant,"username":"admin","password":"Fixture-Admin-Password!123","client_address":format!("198.18.30.{}",index+1)});
     json!({"format_version":1,"plan_id":"fixture","scope_id":"identity-fixture","backend_dir":root,"frontend_dir":root.parent().unwrap().join("ryframe-vue3"),
         "api_url":"http://127.0.0.1:18999/","frontend_url":"http://127.0.0.1:4199/",
         "environment_document":{"path":document,"sha256":digest::file(&document).unwrap().sha256},
         "runtime":{"directory":runtime,"receipt_sha256":digest::file(&runtime.join("runtime.json")).unwrap().sha256,"api_process_sha256":digest::file(&runtime.join("api.json")).unwrap().sha256},
         "database":{"python":root.join("python-fixture"),"mysql_client":root.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
         "system_admin":admin("system",0),"tenants":(1..=10).map(|index| { let tenant=format!("fixture-{index}"); json!({"slot":format!("tenant-{index:02}"),"tenant_id":tenant,"target_key":"shared","admin":admin(&tenant,index)}) }).collect::<Vec<_>>(),
-        "passwords":{"system_env":"RYFRAME_IDENTITY_SYSTEM_PASSWORD","tenant_env":"RYFRAME_IDENTITY_TENANT_PASSWORD"},
+        "passwords":{"system":"Fixture-User-Password!123","tenant":"Fixture-User-Password!123"},
         "quota":{"system_max_users":1000,"tenant_max_users":1000,"import_headroom_per_tenant":100},
         "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"python":root.join("python-fixture"),"login_budget_state":fixture.directory.join("login-budget.json")}}})
+}
+
+fn create_plan(environment: &Value, fixture: &Fixture) -> super::Result<Value> {
+    let path = fixture.directory.join("private.json");
+    fs::write(&path, serde_json::to_vec(environment)?)?;
+    native_plan::create(environment, &root_dir(), &path)
 }
 
 #[test]
 fn native_plan_is_offline_deterministic_and_keeps_two_hundred_fixed_identities() {
     let fixture = Fixture::new();
     let environment = environment_fixture(&fixture);
-    let plan = native_plan::create(&environment, &root_dir()).unwrap();
-    assert_eq!(
-        plan,
-        native_plan::create(&environment, &root_dir()).unwrap()
-    );
+    let plan = create_plan(&environment, &fixture).unwrap();
+    assert_eq!(plan, create_plan(&environment, &fixture).unwrap());
     let groups = plan["groups"].as_array().unwrap();
     assert_eq!(groups.len(), 11);
     assert_eq!(groups[0]["users"].as_array().unwrap().len(), 100);
@@ -258,7 +261,7 @@ fn native_plan_is_offline_deterministic_and_keeps_two_hundred_fixed_identities()
             "system:post:export"
         ])
     );
-    assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
+    assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 3);
     let mut changed = plan.clone();
     changed["groups"][0]["count"] = json!(99);
     assert!(native_plan::validate(&changed).is_err());
@@ -272,14 +275,11 @@ fn native_plan_rejects_invalid_tenant_targets_permissions_and_source_drift() {
         ("/tenants/1/tenant_id", json!("fixture-1")),
         ("/tenants/1/admin/client_address", json!("198.18.30.1")),
         ("/quota/system_max_users", json!(100)),
-        ("/passwords/system_env", json!("raw-secret")),
+        ("/passwords/system", json!("")),
         ("/api_url", json!("https://example.test/")),
         ("/api_url", json!("http://private:secret@127.0.0.1/")),
         ("/database/control/database", json!("unsafe;drop")),
-        (
-            "/database/targets/0/connection/password_env",
-            json!("UNBOUND_PASSWORD"),
-        ),
+        ("/database/targets/0/connection/password", json!("")),
         ("/database/targets/0/mode", json!("dedicated")),
         (
             "/pacing/contract/operation_intervals_ms/post_auth_login",
@@ -289,10 +289,7 @@ fn native_plan_rejects_invalid_tenant_targets_permissions_and_source_drift() {
     ] {
         let mut changed = environment.clone();
         *changed.pointer_mut(pointer).unwrap() = replacement;
-        assert!(
-            native_plan::create(&changed, &root_dir()).is_err(),
-            "{pointer}"
-        );
+        assert!(create_plan(&changed, &fixture).is_err(), "{pointer}");
     }
     fs::write(
         environment["environment_document"]["path"]
@@ -302,7 +299,7 @@ fn native_plan_rejects_invalid_tenant_targets_permissions_and_source_drift() {
     )
     .unwrap();
     assert!(
-        native_plan::create(&environment, &root_dir())
+        create_plan(&environment, &fixture)
             .unwrap_err()
             .to_string()
             .contains("SHA-256")
@@ -392,7 +389,7 @@ fn complete_state(plan: &Value) -> Value {
 #[test]
 fn native_identity_ledger_requires_all_six_hundred_twenty_two_confirmed_writes() {
     let fixture = Fixture::new();
-    let plan = native_plan::create(&environment_fixture(&fixture), &root_dir()).unwrap();
+    let plan = create_plan(&environment_fixture(&fixture), &fixture).unwrap();
     let state = complete_state(&plan);
     assert_eq!(state["entries"].as_array().unwrap().len(), 622);
     assert_eq!(state["roles"].as_object().unwrap().len(), 11);
@@ -433,7 +430,7 @@ fn native_identity_ledger_requires_all_six_hundred_twenty_two_confirmed_writes()
 #[test]
 fn native_ledger_checks_prefix_recovery_and_unique_reset_requests() {
     let fixture = Fixture::new();
-    let plan = native_plan::create(&environment_fixture(&fixture), &root_dir()).unwrap();
+    let plan = create_plan(&environment_fixture(&fixture), &fixture).unwrap();
     let mut prefix = complete_state(&plan);
     prefix["status"] = json!("applying");
     prefix["entries"].as_array_mut().unwrap().truncate(2);

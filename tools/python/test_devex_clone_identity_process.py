@@ -3,6 +3,8 @@ import copy
 import json
 import os
 import shutil
+import sys
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -17,6 +19,29 @@ from restore_build import file_digest
 
 
 class IdentityProducerTests(unittest.TestCase):
+    def test_runtime_proof_binds_process_listener_and_hides_private_protocol_errors(self):
+        request = {"backend": str(self.backend), "directory": str(self.directory),
+                   "scope_id": "fixture-scope", "api_url": "http://127.0.0.1:18999/"}
+        contract = {"scope_id": "fixture-scope", "artifacts": {"api": {"path": str(self.node)}}}
+        with patch.dict(os.environ, {"APP_ENV": "test"}), \
+                patch("full_stack_runtime.verify_runtime", return_value=contract), \
+                patch("full_stack_process.read_process", return_value=self.identity), \
+                patch.object(process, "process_identity", return_value=self.identity), \
+                patch("process_sockets.verify_listener") as listener:
+            self.assertEqual(process.runtime_proof(request), {"runtime": contract, "api_process": self.identity})
+            listener.assert_called_once_with(self.identity["pid"], request["api_url"])
+            with self.assertRaises(ValueError):
+                process.runtime_proof({**request, "scope_id": "other"})
+        for content in (b'{"backend":1,"back\\u0065nd":2}', b'\xff', b' ' * 32769,
+                        b'{"password":"Runtime-Secret!123","reset_token":"Reset-Secret!123"}'):
+            result = subprocess.run([sys.executable, str(Path(process.__file__)), "--runtime-proof"],
+                input=content, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(json.loads(result.stdout), {"ok": False, "receipt": None})
+            for stream in (result.stdout, result.stderr):
+                self.assertNotIn(b"Runtime-Secret!123", stream)
+                self.assertNotIn(b"Reset-Secret!123", stream)
+
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
         temporary = WorkspaceDirectory(dir=self.backend / '.local-tests/tmp', prefix='identity-producer-')
@@ -24,14 +49,11 @@ class IdentityProducerTests(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'kind': 'isolated-producer-fixture'})
         initialize_state(self.directory)
-        node = shutil.which('node')
-        if node is None:
-            self.skipTest('Node.js 不在 CI PATH 中')
-        self.node = Path(node).resolve()
+        self.node = Path(sys.executable).resolve()
         self.plan_sha256 = 'a' * 64
         write_json(self.directory / 'identity-plan.json', {
             'kind': 'fixture-plan', 'plan_sha256': self.plan_sha256})
-        self.request = {'node': {'path': str(self.node), 'sha256': file_digest(self.node)['sha256']},
+        self.request = {'identity_tool': {'path': str(self.node), 'sha256': file_digest(self.node)['sha256']},
                         'identity_plan': binding(self.directory / 'identity-plan.json'),
                         'identity_state': str(self.directory / 'seed-runtime/identities')}
         write_json(self.directory / 'seed-runtime.json', self.request)
@@ -53,7 +75,7 @@ class IdentityProducerTests(unittest.TestCase):
         self.intent = {'format_version': 1, 'kind': 'devex-post-producer-launch',
             'run_manifest': binding(self.directory / 'manifest.json'), 'registration': binding(self.directory / 'seed-runtime.json'),
             'controller': binding(self.directory / 'controller-0001.json'), 'attempt': 1, 'producer_kind': 'identity-apply',
-            'command': self.command, 'node': self.request['node'], 'script': binding(Path(self.command[1]))}
+            'command': self.command, 'tool': self.request['identity_tool'], 'source': binding(process.producer_source(self.backend, 'identity-apply'))}
         write_json(self.output / 'session-launch.json', self.intent)
         self.value = {'format_version': 1, 'kind': 'devex-post-producer',
                       'launch': binding(self.output / 'session-launch.json'), 'identity': self.identity,
@@ -73,7 +95,7 @@ class IdentityProducerTests(unittest.TestCase):
                  'plan_sha256': self.plan_sha256, 'owner_token': self.lock_owner}
         value.update(updates)
         path = root / 'lock'
-        path.write_bytes((json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode())
+        path.write_bytes((json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + '\n').encode())
         return path
 
     def test_commands_bind_both_modes_plan_and_state_without_private_values(self):
@@ -81,7 +103,7 @@ class IdentityProducerTests(unittest.TestCase):
             command = process.producer_command(self.backend, self.request, self.directory, 1, 'identity-' + mode, self.output)
             self.assertEqual(command[2:], ['--run-dir', str(self.directory), '--attempt', '1',
                 '--identity-plan', self.request['identity_plan']['path'], '--identity-state', self.request['identity_state'],
-                '--identity-mode', mode])
+                '--identity-mode', mode, '--identity-plan-sha256', self.request['identity_plan']['sha256']])
         with self.assertRaises(ValueError):
             process.producer_command(self.backend, self.request, self.directory, 1, 'unknown', self.output)
 
@@ -111,16 +133,14 @@ class IdentityProducerTests(unittest.TestCase):
                 patch.object(process, 'actual_argv', return_value=self.command), self.assertRaisesRegex(ValueError, '旧 Node'):
             process.require_quiet(self.backend, self.directory, number)
 
-    def test_stopped_identity_receipt_before_lock_owner_recording_remains_observable(self):
+    def test_native_identity_receipt_requires_lock_owner(self):
         self.record()
-        historical = copy.deepcopy(self.value)
-        historical.pop('identity_lock_owner')
-        write_receipt(self.output / 'session-process.json', historical)
+        invalid = copy.deepcopy(self.value)
+        invalid.pop('identity_lock_owner')
+        write_receipt(self.output / 'session-process.json', invalid)
         attempt = load_state(self.directory)['attempts'][0]
-        with patch.object(process, 'process_identity', return_value=None):
-            observed = process.inspect_producer(self.backend, self.directory, attempt)
-        self.assertFalse(observed['alive'])
-        self.assertNotIn('identity_lock_owner', observed['value'])
+        with patch.object(process, 'process_identity', return_value=None), self.assertRaisesRegex(ValueError, '锁 owner'):
+            process.inspect_producer(self.backend, self.directory, attempt)
 
     def test_identity_receipt_without_owner_never_cleans_a_remaining_lock(self):
         self.record()
@@ -133,7 +153,7 @@ class IdentityProducerTests(unittest.TestCase):
         actual = process.process_identity
         with patch.object(process, 'process_identity',
                           side_effect=lambda pid: actual(pid) if pid == os.getpid() else None), \
-                self.assertRaisesRegex(ValueError, '未记录锁 owner'):
+                self.assertRaisesRegex(ValueError, '锁 owner'):
             self.recovery(descriptor)
         self.assertEqual(lock.read_bytes(), before)
 

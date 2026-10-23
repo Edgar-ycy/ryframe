@@ -18,6 +18,8 @@ from devex_clone_post_process import (
     PHASES,
     historical_producer_request,
     producer_command,
+    producer_source,
+    producer_tool,
 )
 from devex_clone_run_state import STAGES, binding, load_state
 from restore_build import file_digest
@@ -361,13 +363,16 @@ def _node(backend: Path, run: Path, registered: dict) -> dict | None:
             or owner["format_version"] != 1 or owner["directory"] != str(run)
             or owner["manifest_sha256"] != manifest["sha256"]):
         raise ValueError("Node controller 与 attempt 不一致")
-    exact(launch, {"format_version", "kind", "run_manifest", "registration", "controller", "attempt",
-                   "producer_kind", "command", "node", "script"})
     kind = launch["producer_kind"]
     identity_producer = kind in {"identity-apply", "identity-verify"}
+    tool_key, source_key = ("tool", "source") if identity_producer else ("node", "script")
+    exact(launch, {"format_version", "kind", "run_manifest", "registration", "controller", "attempt",
+                   "producer_kind", "command", tool_key, source_key})
     identity_owner_recorded = "identity_lock_owner" in process
     if identity_owner_recorded and not identity_producer:
         raise ValueError("非身份 Node 收据不能登记 identity lock owner")
+    if identity_producer and not identity_owner_recorded:
+        raise ValueError("原生身份生产者收据必须记录锁 owner")
     exact(process, {"format_version", "kind", "launch", "identity"}
           | ({"identity_lock_owner"} if identity_owner_recorded else set()))
     if (identity_owner_recorded
@@ -383,24 +388,24 @@ def _node(backend: Path, run: Path, registered: dict) -> dict | None:
         raise ValueError("Node launch/process 不属于固定 attempt")
     registration_path = _binding_path(launch["registration"], "Node registration")
     registration = _bound(registration_path, run, "Node registration", launch["registration"])
-    exact(launch["node"], {"path", "sha256"})
-    if not isinstance(launch["node"]["path"], str):
+    exact(launch[tool_key], {"path", "sha256"})
+    if not isinstance(launch[tool_key]["path"], str):
         raise ValueError("Node 工具路径无效")
-    node_path = Path(launch["node"]["path"])
+    node_path = Path(launch[tool_key]["path"])
     if (not node_path.is_absolute() or _linked(node_path) or not node_path.is_file()
-            or file_digest(node_path)["sha256"] != digest(launch["node"]["sha256"])):
+            or file_digest(node_path)["sha256"] != digest(launch[tool_key]["sha256"])):
         raise ValueError("Node 工具路径或摘要已变化")
-    script_path = _binding_path(launch["script"], "Node 历史脚本")
-    digest(launch["script"]["sha256"])
-    expected_script = backend / "tools" / "js" / KINDS[kind]
-    if (script_path != expected_script or type(launch["script"]["bytes"]) is not int
-            or launch["script"]["bytes"] <= 0):
+    script_path = _binding_path(launch[source_key], "生产者来源")
+    digest(launch[source_key]["sha256"])
+    expected_script = producer_source(backend, kind)
+    if (script_path != expected_script or type(launch[source_key]["bytes"]) is not int
+            or launch[source_key]["bytes"] <= 0):
         raise ValueError("Node 历史脚本绑定无效")
     _regular(script_path, backend, "Node 历史脚本")
-    _script_source(attempt, backend, script_path, launch["script"])
+    _script_source(attempt, backend, script_path, launch[source_key])
     request = historical_producer_request(backend, run, stage, launch["registration"])
     command = producer_command(backend, request, run, number, kind, output)
-    if (launch["node"] != request["node"] or launch["command"] != command
+    if (launch[tool_key] != producer_tool(request, kind) or launch["command"] != command
             or any(not isinstance(item, str) or not item or "\0" in item for item in command)):
         raise ValueError("Node 命令未绑定明确 run 和 attempt")
     identity = _identity(process["identity"], "Node 生产者", executable=node_path)

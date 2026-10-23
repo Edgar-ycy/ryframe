@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import sys
 from types import SimpleNamespace
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -45,7 +46,7 @@ class SeedTests(unittest.TestCase):
         self.stage("post-copy", "register", {"status": "post_copy_registered", "registration": binding(self.directory / "post-copy.json")})
         post_verified = self.stage("post-copy", "verify", {"status": "post_copy_existing_data_verified",
             "registration": binding(self.directory / "post-copy.json"), "worker_must_remain_stopped": True})
-        write_json(self.old / "runtime.json", {"scope_id": self.scope})
+        write_json(self.old / "runtime.json", {"scope_id": self.scope, "api_config_dir": str(self.old / "config")})
         write_json(self.old / "api.json", {"format_version": 1, "scope_id": self.scope, "role": "api", "identity": self.identity})
         write_json(self.old / "handoff.json", {"api_url": "http://127.0.0.1:18210"})
         document = self.file("environment-document", {"machine": "fixture"})
@@ -53,7 +54,7 @@ class SeedTests(unittest.TestCase):
         for index in range(11):
             slot = "system" if index == 0 else f"tenant-{index:02d}"
             users = [{"user_slot": f"{slot}-{n:03d}", "username": f"user-{n:03d}",
-                      "password_env": "RYFRAME_USERS", "client_address": f"198.18.{index + 40}.{n + 1}"}
+                      "credential_slot": "system" if index == 0 else "tenant", "client_address": f"198.18.{index + 40}.{n + 1}"}
                      for n in range(100 if index == 0 else 10)]
             permissions = (["monitor:schedule:add", "monitor:schedule:run", "system:message:publish",
                             "system:post:export"] if index == 0 else
@@ -62,20 +63,30 @@ class SeedTests(unittest.TestCase):
             groups.append({"slot": slot, "kind": "system" if index == 0 else "tenant",
                 "tenant_id": slot, "role_code": "devex-system" if index == 0 else "devex-tenant",
                 "permissions": permissions,
-                "users": users, "admin": {"password_env": "RYFRAME_ADMIN"}})
+                "users": users, "admin": {"tenant_id": slot, "username": "admin", "client_address": f"198.18.30.{index+1}"}})
         self.plan = {"format_version": 1, "kind": "devex-identities", "groups": groups, "environment": {
             "scope_id": self.scope, "backend_dir": str(self.backend), "frontend_dir": self.post["frontend_root"],
             "api_url": "http://127.0.0.1:18210", "frontend_url": "http://127.0.0.1:4190",
             "runtime": {"directory": str(self.old), "receipt_sha256": binding(self.old / "runtime.json")["sha256"],
                         "api_process_sha256": binding(self.old / "api.json")["sha256"]},
             "environment_document": {key: document[key] for key in ("path", "sha256")},
-            "passwords": {"system_env": "RYFRAME_USERS", "tenant_env": "RYFRAME_USERS"}}}
+            "system_admin": groups[0]["admin"], "tenants": [{"slot": g["slot"], "tenant_id": g["tenant_id"], "target_key": "shared", "admin": g["admin"]} for g in groups[1:]], "database": {"control": {"host": "127.0.0.1", "port": 3306, "database": "identity_control", "username": "fixture", "tls_mode": "required"}, "targets": []}}}
+        self.private = copy.deepcopy(self.plan["environment"])
+        self.private["passwords"] = {"system": "private-users", "tenant": "private-users"}
+        self.private["system_admin"]["password"] = "private-admin"
+        for tenant in self.private["tenants"]:
+            tenant["admin"]["password"] = "private-admin"
+        self.private["database"]["control"]["password"] = "private-database"
+        self.plan["configuration"] = self.file("identity-private", self.private)
         self.plan["plan_sha256"] = plan_hash(self.plan)
+        self.api_table = {"scope_id": self.scope, "cors": {"allow_origins": ["http://127.0.0.1:4190"]}, "database": {"primary": self.private["database"]["control"]}}
+        self.addCleanup(patch.stopall)
+        patch("rate_limit_client.load_app_table", return_value=self.api_table).start()
         self.request = {"format_version": 1, "kind": "devex-clone-seed-runtime",
             "run_manifest": binding(self.directory / "manifest.json"), "post_copy": binding(self.directory / "post-copy.json"),
             "post_verify": post_verified, "node": self.post["node"], "identity_plan": self.file("identity-plan", self.plan),
             "identity_state": str(self.directory / "seed-runtime/identities"),
-            "identity_environment": self.file("identity-environment", {"environment": {**self.api, "RYFRAME_USERS": "private-users"}}),
+            "identity_tool": {"path": str(Path(sys.executable).resolve()), "sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()},
             "api_process": binding(self.old / "api.json")}
 
     def file(self, name, value):
@@ -126,7 +137,7 @@ class SeedTests(unittest.TestCase):
                 next_request += 1
                 identities.append({"tenant_slot": group["slot"], "user_slot": user["user_slot"],
                     "tenant_id": group["tenant_id"], "username": user["username"],
-                    "client_address": user["client_address"], "password_env": user["password_env"],
+                    "client_address": user["client_address"], "credential_slot": user["credential_slot"],
                     "user_id": user_id, "roles_sha256": plan_hash([group["role_code"]]),
                     "permissions_sha256": plan_hash(sorted(group["permissions"]))})
         templates = []
@@ -210,7 +221,7 @@ class SeedTests(unittest.TestCase):
     def test_identity_inputs_use_the_bound_post_amendment_runtime(self):
         runtime = self.directory / "post-copy/runtime-0001"
         runtime.mkdir(parents=True)
-        write_json(runtime / "runtime.json", {"scope_id": self.scope})
+        write_json(runtime / "runtime.json", {"scope_id": self.scope, "api_config_dir": str(runtime / "config")})
         write_json(runtime / "api.json", {"format_version": 1, "scope_id": self.scope,
                                            "role": "api", "identity": self.identity})
         write_json(runtime / "handoff.json", {"api_url": "http://127.0.0.1:18210"})
@@ -219,6 +230,9 @@ class SeedTests(unittest.TestCase):
         plan["environment"]["runtime"] = {"directory": str(runtime),
             "receipt_sha256": binding(runtime / "runtime.json")["sha256"],
             "api_process_sha256": binding(runtime / "api.json")["sha256"]}
+        private_config = copy.deepcopy(self.private)
+        private_config["runtime"] = plan["environment"]["runtime"]
+        plan["configuration"] = self.file("amended-private", private_config)
         plan["plan_sha256"] = plan_hash({key: value for key, value in plan.items() if key != "plan_sha256"})
         request = {**self.request, "post_copy": amendment, "identity_plan": self.file("amended-plan", plan),
                    "api_process": binding(runtime / "api.json")}
@@ -226,7 +240,7 @@ class SeedTests(unittest.TestCase):
         with patch.object(seed, "post_registration", return_value=active):
             observed, private = seed.identity_inputs(self.backend, self.directory, request, self.post)
         self.assertEqual(observed, plan)
-        self.assertEqual(private["APP_CORS_ALLOW_ORIGINS"], "http://127.0.0.1:4190")
+        self.assertEqual(private, {"APP_ENV": "test"})
 
     def test_later_failed_copy_or_post_does_not_select_old_success(self):
         for stage, mode in (("copy", "reconcile"), ("post-copy", "verify")):
@@ -235,13 +249,16 @@ class SeedTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     seed.history(self.backend, self.directory, self.request)
 
-    def test_identity_private_environment_allows_only_explicit_secrets(self):
-        for update in ({"APP_SCOPE_ID": "other"}, {"PATH_EXTRA": "unbound"}, {"RYFRAME_USERS": ""},
-                       {"APP_UNKNOWN": "new"}, {"RYFRAME_ADMIN": "changed"}):
-            private = {**self.api, "RYFRAME_USERS": "private-users", **update}
-            request = {**self.request, "identity_environment": self.file("wrong-private", {"environment": private})}
-            with self.subTest(update=list(update)), self.assertRaises(ValueError):
-                seed.identity_inputs(self.backend, self.directory, request, self.post)
+    def test_identity_private_file_drift_is_rejected_without_leaking_secrets(self):
+        original = Path(self.plan["configuration"]["path"]).read_bytes()
+        for key in ("scope_id", "passwords", "database"):
+            changed = copy.deepcopy(self.private)
+            changed[key] = "untrusted-secret"
+            Path(self.plan["configuration"]["path"]).write_text(json.dumps(changed), encoding="utf-8")
+            with self.subTest(key=key), self.assertRaises(ValueError) as failure:
+                seed.private_configuration(self.backend, self.plan)
+            self.assertNotIn("untrusted-secret", str(failure.exception))
+            Path(self.plan["configuration"]["path"]).write_bytes(original)
 
     def test_unknown_identity_writes_or_stale_receipt_block_worker(self):
         self.evidence()

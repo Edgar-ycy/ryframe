@@ -135,7 +135,7 @@ class DepartmentTests(unittest.TestCase):
         for index, group in enumerate(self.plan["groups"]):
             slot = group["slot"]
             admin = {"tenant_id": group["tenant_id"], "username": "admin",
-                     "password_env": "RYFRAME_ADMIN", "client_address": f"198.18.70.{index + 1}"}
+                     "client_address": f"198.18.70.{index + 1}"}
             permissions = (["monitor:schedule:add"] if index == 0 else
                            ["system:post:list", model.TEMPLATE_PERMISSION])
             group.update(kind="system" if index == 0 else "tenant", admin=admin,
@@ -145,6 +145,13 @@ class DepartmentTests(unittest.TestCase):
                                 "target_key": "shared", "admin": admin})
         self.plan["environment"].update(plan_id="fixture", system_admin=self.plan["groups"][0]["admin"],
                                         tenants=tenants)
+        self.private = copy.deepcopy(self.plan["environment"])
+        self.private["passwords"] = {"system": "private-users", "tenant": "private-users"}
+        self.private["system_admin"]["password"] = "private-admin"
+        self.private["database"]["control"]["password"] = "private-database"
+        for tenant in self.private["tenants"]:
+            tenant["admin"]["password"] = "private-admin"
+        self.plan["configuration"] = self.file("identity-private", self.private)
         self.plan["plan_sha256"] = plan_hash(
             {key: value for key, value in self.plan.items() if key != "plan_sha256"})
         plan_path = Path(self.request["identity_plan"]["path"])
@@ -538,7 +545,7 @@ class DepartmentTests(unittest.TestCase):
             self.assertNotIn("RYFRAME_ADMIN", command)
 
     def test_department_producer_uses_only_bound_identity_environment_for_fixed_users(self):
-        identity_environment = {"APP_SCOPE_ID": "seed-scope", "RYFRAME_USERS": "private-users"}
+        identity_environment = {"APP_ENV": "test"}
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, output=self.directory,
                                   request=self.post, private={"target_api": {"APP_SCOPE_ID": "seed-scope"}})
         bridge = Mock()
