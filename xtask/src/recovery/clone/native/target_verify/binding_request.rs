@@ -81,7 +81,7 @@ pub(super) fn binaries(backend: &Path, value: &Value) -> Result<Value> {
         build["kind"] == "devex-clone-tool-build",
         "fresh 目标维护构建缺少完整二进制",
     )?;
-    let artifacts = json_io::exact(
+    json_io::exact(
         &build["artifacts"],
         &["reset", "migrate", "tenant-data"],
         "维护构建二进制",
@@ -90,7 +90,10 @@ pub(super) fn binaries(backend: &Path, value: &Value) -> Result<Value> {
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    for artifact in artifacts.values() {
+    // 后续恢复证据会按冻结 build.json 的原始字段顺序复核这组绑定；
+    // 这里必须消费同一原始字节，不能采用 serde_json::Map 的排序结果。
+    let build_bytes = std::fs::read(&path)?;
+    for artifact in super::resume_model::artifact_bindings(&build_bytes)? {
         // 实际文件保护仍由调用方统一持有，原生读取不启动任何维护程序。
         json_io::text(&artifact["executable"], "维护二进制路径")?;
         input::digest_shape(&artifact["sha256"])?;
