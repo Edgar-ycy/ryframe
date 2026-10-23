@@ -122,6 +122,7 @@ bin-migrate = [
 ]
 bin-tenant-data = [
     "runtime-database",
+    "ryframe-config/tools",
     "dep:ryframe-sdk",
     "ryframe-sdk/runtime",
     "ryframe-db/repositories",

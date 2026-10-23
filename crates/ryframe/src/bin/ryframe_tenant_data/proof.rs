@@ -242,13 +242,12 @@ fn clean_git_source(root: &Path, label: &str) -> AppResult<GitSource> {
 }
 
 fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
-    let configured = std::env::var_os("RYFRAME_PYTHON").filter(|value| !value.is_empty());
-    let path = if let Some(value) = configured {
-        let path = PathBuf::from(value);
-        if !path.is_absolute() {
-            return Err(validation("RYFRAME_PYTHON 必须是绝对解释器路径"));
-        }
-        path
+    let configured = ryframe_config::ToolSettings::load(backend)
+        .map_err(|error| validation(format!("无法读取恢复证明工具配置：{error}")))?
+        .verification
+        .python_program;
+    let path = if let Some(path) = configured {
+        resolve_tool_path(backend, &path)?
     } else {
         let mut command = Command::new("python");
         command
@@ -291,6 +290,29 @@ fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
         return Err(validation("Python 解释器在环境核验期间发生变化"));
     }
     Ok(before)
+}
+
+fn resolve_tool_path(backend: &Path, configured: &Path) -> AppResult<PathBuf> {
+    if configured.as_os_str().is_empty()
+        || configured.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+        || configured.to_string_lossy().chars().any(char::is_control)
+    {
+        return Err(validation(
+            "verification.python_program 必须是无控制字符且不含父目录跳转的路径",
+        ));
+    }
+    let path = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        backend.join(configured)
+    };
+    std::path::absolute(path)
+        .map_err(|error| validation(format!("无法解析 verification.python_program：{error}")))
 }
 
 fn artifact_source(path: &Path, label: &str) -> AppResult<ArtifactSource> {
