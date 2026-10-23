@@ -1,5 +1,3 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
-
 use serde_json::{Value, json};
 
 use super::super::{
@@ -10,10 +8,7 @@ use super::super::{
     },
     input::{TargetContext, request_physical},
 };
-use crate::{
-    Result,
-    local_test_path::{LocalTestPathKind, validate_absolute_path},
-};
+use crate::Result;
 
 pub(super) fn capture(context: &TargetContext) -> Result<Value> {
     let execution = context.execution_backend()?;
@@ -94,64 +89,13 @@ pub(super) fn capture(context: &TargetContext) -> Result<Value> {
 
 pub(super) fn configuration(context: &TargetContext) -> Result<Value> {
     let execution = context.execution_backend()?;
-    let directory = match context.request.get("configuration_directory") {
-        Some(value) => PathBuf::from(request_physical::strict_text(value)?),
-        None => execution.join("config"),
-    };
-    let directory = if directory.is_absolute() {
-        directory
-    } else {
-        execution.join(directory)
-    };
-    validate_absolute_path(&directory, LocalTestPathKind::ExistingDirectory)
-        .map_err(|_| "库存配置目录不能经过链接")?;
-    let resolved = fs::canonicalize(&directory)?;
-    if !resolved.starts_with(fs::canonicalize(&execution)?)
-        && !resolved.starts_with(fs::canonicalize(&context.backend)?)
-    {
-        return Err("库存配置必须位于执行后端或协调后端".into());
-    }
-    let app_env = context
-        .environment
-        .get("APP_ENV")
-        .filter(|value| matches!(value.as_str(), "dev" | "test" | "prod"))
-        .ok_or("库存 APP_ENV 必须明确选择 dev、test 或 prod")?;
-    validate_absolute_path(
-        &directory.join(format!("app.{app_env}.toml")),
-        LocalTestPathKind::ExistingFile,
-    )
-    .map_err(|_| "库存配置缺少无链接的已选环境文件")?;
-    let mut files = BTreeMap::new();
-    for entry in fs::read_dir(&directory)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| {
-                if cfg!(windows) {
-                    value.eq_ignore_ascii_case("toml")
-                } else {
-                    value == "toml"
-                }
-            })
-        {
-            files.insert(
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| "配置文件名必须为 UTF-8")?,
-                super::evidence::descriptor(&path)?,
-            );
-        }
-    }
-    if files.is_empty() {
-        return Err("库存配置目录没有 TOML 文件".into());
-    }
-    let path = resolved.to_str().ok_or("配置目录必须为 UTF-8")?;
-    #[cfg(windows)]
-    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+    let (directory, files) = super::super::input::request_configuration::fresh_files(
+        &execution,
+        &context.environment,
+        &context.request,
+    )?;
     Ok(
-        json!({"directory": path, "files": files, "environment_sha256": digest::plan_hash(&json!({"APP_ENV": app_env}))?}),
+        json!({"directory": manifest::path_text(&directory, "config_dir")?, "files": files,
+        "environment_sha256": digest::plan_hash(&json!({"APP_ENV": "test"}))?}),
     )
 }

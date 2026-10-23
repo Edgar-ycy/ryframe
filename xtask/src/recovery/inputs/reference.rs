@@ -37,6 +37,9 @@ pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<V
                 .ok_or_else(|| format!("审阅单侧资源缺少 {field}"))?,
         );
     }
+    let configuration = super::reference_configuration::Projection::load(backend, &arm)?;
+    let source = configuration.source.source.clone();
+    target.insert("s3".into(), configuration.target.target["s3"].clone());
     let directory = new_path(backend, &options.work_dir, "参考计划 work_dir")?;
     independent_work_dir(
         &directory,
@@ -50,17 +53,18 @@ pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<V
         "id": options.id,
         "target_side": options.side.as_str(),
         "work_dir": directory.to_string_lossy(),
-        "tools": source_request.get("tools").ok_or("共享源请求缺少 tools")?,
-        "source": source_request.get("source").ok_or("共享源请求缺少 source")?,
+        "tools": configuration.source.tools,
+        "source": source,
         "target": Value::Object(target),
     });
     validate_plan(&plan, backend)?;
     if request_target.get("scope_id") != plan["target"].get("scope_id")
-        || request_target.get("s3") != plan["target"].get("s3")
         || request_target.get("databases") != plan["target"].get("databases")
     {
         return Err("参考计划没有绑定当前 source-generation 或 fresh 物理目标".into());
     }
+    configuration.assert_unchanged(backend, &arm)?;
+    arm.target.document.assert_unchanged()?;
     arm.result.assert_unchanged()?;
     arm.request.assert_unchanged()?;
     arm.manifest.assert_unchanged()?;

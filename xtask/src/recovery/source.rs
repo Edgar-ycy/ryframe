@@ -6,10 +6,8 @@ use crate::{
     Result,
     cli::{SOURCE_USAGE, SourceCommand, SourceComparisonCaptureOptions, is_source_runtime_output},
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
-    process::run_with_env_removed,
+    process::{protocol_stdin, run_with_stdin},
 };
-
-use super::{RUNTIME_PROTOCOL_ENV, SOURCE_PROTOCOL_ENV as PROTOCOL_KEY};
 
 const SCRIPT: &str = "tools/python/restore_source.py";
 const MAX_PROTOCOL_BYTES: usize = 16 * 1024;
@@ -33,12 +31,11 @@ pub(super) fn run(command: &SourceCommand, root: &Path) -> Result<()> {
         return Ok(());
     }
     let invocation = private_invocation_at(command, root)?;
-    run_with_env_removed(
+    run_with_stdin(
         root,
         "python",
-        &["-B", invocation.script],
-        &[(PROTOCOL_KEY, invocation.protocol.as_str())],
-        &[PROTOCOL_KEY, RUNTIME_PROTOCOL_ENV],
+        &["-E", "-B", invocation.script, "--private-stdin"],
+        protocol_stdin(Some(invocation.protocol.as_bytes()))?,
     )
 }
 

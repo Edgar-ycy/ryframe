@@ -292,36 +292,12 @@ fn runtime_configuration(
     runtime: &Value,
     role: &str,
 ) -> Result<(Value, BTreeMap<String, Value>)> {
-    if context.environment != BTreeMap::from([("APP_ENV".into(), "test".into())]) {
-        return Err("源导出只允许 APP_ENV=test；其他配置必须绑定 TOML 文件".into());
-    }
-    let declared = runtime
-        .get(format!("{role}_config_dir"))
-        .ok_or("源运行收据缺少角色配置目录")?;
-    let (directory, files) =
-        super::super::target_verify::input::request_configuration::configuration_files(
-            &context.execution_backend,
-            &context.environment,
-            Some(declared),
-        )?;
-    let sha = super::super::target_verify::input::request_configuration::configuration_identity(
-        &directory, &files,
-    )?;
-    if runtime[format!("{role}_configuration_sha256")].as_str() != Some(sha.as_str()) {
-        return Err("源 TOML 配置与运行收据摘要不同；请核对绑定文件".into());
-    }
-    let table =
-        crate::rate_limit::load_app_table(&context.execution_backend, Some(&directory), "test")
-            .map_err(|_| "源 TOML 配置无法加载；请检查所选环境文件与字段类型")?;
-    if super::super::target_verify::input::request_configuration::configuration_files(
+    super::super::s3::app_configuration::runtime_configuration(
         &context.execution_backend,
         &context.environment,
-        Some(declared),
-    )? != (directory, files.clone())
-    {
-        return Err("源 TOML 配置在读取期间变化".into());
-    }
-    Ok((serde_json::to_value(table)?, files))
+        runtime,
+        role,
+    )
 }
 
 fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {

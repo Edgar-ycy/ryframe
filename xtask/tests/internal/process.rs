@@ -511,29 +511,118 @@ fn python_output_runner_applies_the_same_utf8_policy() {
     );
 }
 
+const STDIN_CAPTURE_HELPER: &str = "process_tests::stdin_capture_fixture_helper";
+const STDIN_CAPTURE_PREFIX: &str = "RYFRAME_STDIN_CAPTURE_RESPONSE:";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "operation", rename_all = "kebab-case", deny_unknown_fields)]
+enum StdinCaptureRequest {
+    Echo { value: String },
+    Fail { marker: std::path::PathBuf },
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StdinCaptureResponse {
+    value: String,
+    raw_in_environment: bool,
+}
+
+#[test]
+#[ignore = "仅由 stdin 捕获父测试作为受控 Rust 子进程调用，非独立场景"]
+fn stdin_capture_fixture_helper() {
+    use super::local_test_path::{LocalTestPathKind, validate_local_test_path};
+    use std::io::Write;
+
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(16 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .unwrap();
+    assert!(!bytes.is_empty() && bytes.len() <= 16 * 1024);
+    let raw = std::str::from_utf8(&bytes).expect("辅助请求必须是 UTF-8");
+    let request: StdinCaptureRequest = serde_json::from_str(raw).expect("辅助请求必须是严格枚举");
+    match request {
+        StdinCaptureRequest::Echo { value } => {
+            let response = StdinCaptureResponse {
+                value,
+                raw_in_environment: std::env::vars_os()
+                    .any(|(_, value)| value.as_os_str() == std::ffi::OsStr::new(raw)),
+            };
+            println!(
+                "\n{STDIN_CAPTURE_PREFIX}{}",
+                serde_json::to_string(&response).unwrap()
+            );
+        }
+        StdinCaptureRequest::Fail { marker } => {
+            let kind = match fs::symlink_metadata(&marker) {
+                Ok(_) => LocalTestPathKind::ExistingFile,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    LocalTestPathKind::OutputFile
+                }
+                Err(error) => panic!("无法核验受控 marker：{error}"),
+            };
+            validate_local_test_path(&marker, &super::workspace::root_dir(), kind).unwrap();
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(marker)
+                .unwrap();
+            file.write_all(b"x").unwrap();
+            drop(file);
+            std::process::exit(7);
+        }
+    }
+}
+
 #[test]
 fn stdin_capture_transports_utf8_once_without_environment_and_preserves_failure() {
-    let request = "{\"kind\":\"私有请求\",\"format_version\":1}";
-    let script = "import json,os,sys; raw=sys.stdin.buffer.read(); print(json.dumps([raw.decode('utf-8'), raw.decode('utf-8') in os.environ.values(),sys.argv[1:]]))";
+    let executable = std::env::current_exe().unwrap();
+    assert!(executable.is_absolute());
+    let args = [
+        "--exact",
+        STDIN_CAPTURE_HELPER,
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+    ];
+    let value = "私有请求：原始 UTF-8 值";
+    let request = serde_json::to_vec(&StdinCaptureRequest::Echo {
+        value: value.into(),
+    })
+    .unwrap();
     let output = super::process::command_output_with_input(
         Path::new("."),
-        "python",
-        &["-c", script],
-        request.as_bytes(),
+        executable.to_str().unwrap(),
+        &args,
+        &request,
     )
     .unwrap();
+    let responses: Vec<_> = output
+        .lines()
+        .filter_map(|line| line.strip_prefix(STDIN_CAPTURE_PREFIX))
+        .collect();
+    assert_eq!(responses.len(), 1, "辅助进程必须只发布一行响应");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(output.trim()).unwrap(),
-        serde_json::json!([request, false, []])
+        serde_json::from_str::<StdinCaptureResponse>(responses[0]).unwrap(),
+        StdinCaptureResponse {
+            value: value.into(),
+            raw_in_environment: false
+        }
     );
+
     let directory = tool_program_directory();
     let marker = directory.path().join("once.txt");
-    let script = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_bytes(p.read_bytes()+b'x' if p.exists() else b'x'); sys.stdin.buffer.read(); sys.exit(7)";
+    let request = serde_json::to_vec(&StdinCaptureRequest::Fail {
+        marker: marker.clone(),
+    })
+    .unwrap();
     let error = super::process::command_output_with_input(
         Path::new("."),
-        "python",
-        &["-c", script, marker.to_str().unwrap()],
-        b"request",
+        executable.to_str().unwrap(),
+        &args,
+        &request,
     )
     .unwrap_err();
     assert_eq!(failure_exit_code(error.as_ref()), Some(7));

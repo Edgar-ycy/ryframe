@@ -89,7 +89,7 @@ impl Fixture {
                 "access_key":"fixture-access","secret_key":"fixture-secret"}},
             "reset":{"legacy_ownership":{"mysql_exclusive":true,"redis_exclusive":true,"object_storage_exclusive":true},
                 "credential_version":"fixture-v1","sentinel_key":format!("ryframe:devex-fresh:{SCOPE}:sentinel"),"sentinel_value":"devex-fresh:target-verify-fixture"},"storage":null});
-        self.request["configuration_directory"] = json!(self.local.join("config"));
+        self.request["config_dir"] = json!(self.local.join("config"));
         let services = storage::files(self);
         let review = review(self, &services);
         write(&self.local.join("review.json"), &review);
@@ -123,7 +123,7 @@ impl Fixture {
         let (directory, files) = request_configuration::configuration_files(
             &self.backend,
             &self.environment,
-            self.request.get("configuration_directory"),
+            self.request.get("config_dir"),
         )
         .unwrap();
         self.request["configuration_sha256"] =

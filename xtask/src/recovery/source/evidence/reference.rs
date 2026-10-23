@@ -6,7 +6,7 @@ use std::{
 };
 
 use regex::Regex;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::super::super::{clone::native, inputs};
 use crate::Result;
@@ -123,46 +123,11 @@ fn dataset_timeout(args: &Value) -> Result<Value> {
     Ok(Value::from(timeout))
 }
 
-fn digest_file(path: &Path) -> Result<Value> {
-    let digest = native::digest::file(path)?;
-    Ok(json!({"bytes":digest.bytes,"sha256":digest.sha256}))
-}
-
-fn configuration_value(backend: &Path, directory: &Path, app_env: &str) -> Result<Value> {
-    if !matches!(app_env, "dev" | "test") {
-        return Err("参考配置环境只允许dev或test".into());
-    }
-    let backend = fs::canonicalize(backend)?;
-    let directory = fs::canonicalize(directory)?;
-    let local = backend.join(".local-tests");
-    if !directory.is_dir()
-        || linked(&directory)?
-        || directory != backend.join("config") && !directory.starts_with(local)
-    {
-        return Err("参考配置目录必须是项目config或后端受管.local-tests目录".into());
-    }
-    let environment = format!("app.{app_env}.toml");
-    let mut files = Map::new();
-    for (index, name) in ["app.toml", environment.as_str()].iter().enumerate() {
-        let file = directory.join(name);
-        if index == 0 && !file.exists() {
-            continue;
-        }
-        if !file.is_file() || linked(&file)? {
-            return Err("参考配置文件缺失或经过链接".into());
-        }
-        files.insert((*name).to_owned(), digest_file(&file)?);
-    }
-    let value = json!({"app_env":app_env,"directory":directory,"files":files});
-    let sha = native::digest::plan_hash(&value)?;
-    Ok(json!({"app_env":app_env,"directory":directory,"files":value["files"],"sha256":sha}))
-}
-
 fn configuration_binding(args: &Value) -> Result<Value> {
     exact(args, &["backend", "binding", "directory", "app_env"])?;
     let backend = Path::new(text(&args["backend"], "后端目录")?);
     let value = if !args["directory"].is_null() {
-        configuration_value(
+        native::s3::app_configuration::configuration_value(
             backend,
             Path::new(text(&args["directory"], "配置目录")?),
             text(&args["app_env"], "APP_ENV")?,
@@ -172,7 +137,7 @@ fn configuration_binding(args: &Value) -> Result<Value> {
             &args["binding"],
             &["app_env", "directory", "files", "sha256"],
         )?;
-        let expected = configuration_value(
+        let expected = native::s3::app_configuration::configuration_value(
             backend,
             Path::new(text(&binding["directory"], "配置目录")?),
             text(&binding["app_env"], "APP_ENV")?,

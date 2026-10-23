@@ -344,7 +344,7 @@ fn load_environment(backend: &Path, descriptor: &Value) -> Result<BTreeMap<Strin
         .collect()
 }
 
-fn execution_backend(backend: &Path, request: &Value) -> Result<PathBuf> {
+pub(crate) fn execution_backend(backend: &Path, request: &Value) -> Result<PathBuf> {
     let path = manifest::bound_file(backend, request.get("runtime").unwrap(), "运行收据", true)?;
     let value = json_io::read(&path)?;
     let root = PathBuf::from(

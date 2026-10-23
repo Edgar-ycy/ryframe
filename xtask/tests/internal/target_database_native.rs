@@ -62,7 +62,7 @@ impl Fixture {
             "mode": if key.starts_with("dedicated-") { "dedicated" } else { "shared" }, "server_uuid": UUID,
             "database": format!("physical_{}", key.replace('-', "_")), "defaults_file": defaults, "defaults_sha256": digest::file(&defaults).unwrap().sha256})).collect::<Vec<_>>();
         let target = json!({"scope_id": SCOPE, "databases": databases, "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1", "access_key": "access-fixture", "secret_key": "secret-fixture"}});
-        let config = root.join("config");
+        let config = execution.join("config");
         fs::create_dir(&config).unwrap();
         fs::write(config.join("app.toml"), config_text(&databases)).unwrap();
         fs::write(config.join("app.test.toml"), "# 明确选择测试环境\n").unwrap();
@@ -85,7 +85,7 @@ impl Fixture {
         let build = root.join("build.json");
         json_io::write_new(&build, &maintenance).unwrap();
         let request = json!({"target": target, "side": "seed", "review": review_binding, "maintenance_build": bound(&build),
-            "execution_backend": {"path": execution}, "configuration_directory": config,
+            "execution_backend": {"path": execution}, "config_dir": config,
             "tools": {"mysql": {"path": tool, "sha256": digest::file(&tool).unwrap().sha256}}});
         let environment = BTreeMap::from([
             ("APP_ENV".into(), "test".into()),
@@ -202,12 +202,9 @@ impl<'a> Fake<'a> {
             fs::write(spec.work_dir.join("before-target-shared.json"), "{}")?;
         }
         if self.effect == "binding" && count == 1 {
-            let config = PathBuf::from(
-                self.fixture.context.request["configuration_directory"]
-                    .as_str()
-                    .unwrap(),
-            )
-            .join("app.toml");
+            let config =
+                PathBuf::from(self.fixture.context.request["config_dir"].as_str().unwrap())
+                    .join("app.toml");
             let mut content = fs::read_to_string(&config)?;
             content.push_str("\n# 采集期间配置变化\n");
             fs::write(config, content)?;
@@ -393,6 +390,60 @@ fn two_rounds_eight_raw_outputs_and_physical_images() {
                 assert!(!value.contains(secret), "命令收据必须脱敏所有文件凭据");
             }
         }
+    }
+}
+
+#[test]
+fn invalid_fresh_config_paths_and_toml_fail_before_any_resource_command() {
+    for case in [
+        "missing",
+        "retired",
+        "relative",
+        "coordinator",
+        "malformed",
+        "selected-missing",
+    ] {
+        let mut fixture = Fixture::new();
+        let request = &mut fixture.context.request;
+        let directory = PathBuf::from(request["config_dir"].as_str().unwrap());
+        match case {
+            "missing" => {
+                request.as_object_mut().unwrap().remove("config_dir");
+            }
+            "retired" => {
+                let value = request
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("config_dir")
+                    .unwrap();
+                request["configuration_directory"] = value;
+            }
+            "relative" => request["config_dir"] = json!("config"),
+            "coordinator" => {
+                let config = fixture._directory.path().join("config");
+                fs::create_dir(&config).unwrap();
+                for name in ["app.toml", "app.test.toml"] {
+                    fs::copy(directory.join(name), config.join(name)).unwrap();
+                }
+                request["config_dir"] = json!(config);
+            }
+            "malformed" => {
+                fs::write(directory.join("app.test.toml"), "[invalid\n").unwrap();
+            }
+            "selected-missing" => {
+                fs::remove_file(directory.join("app.test.toml")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let fake = Fake::new(&fixture, "none");
+        assert!(
+            database::capture_with(&fixture.context, &fake, &|| Ok(())).is_err(),
+            "{case}"
+        );
+        assert_eq!(fake.inventories.get(), 0, "{case}");
+        assert_eq!(fake.identities.get(), 0, "{case}");
+        assert_eq!(fake.owners.get(), 0, "{case}");
+        assert!(fake.order.borrow().is_empty(), "{case}");
     }
 }
 

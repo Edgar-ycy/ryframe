@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, path::Path};
 use serde_json::{Value, json};
 
 use super::super::json as json_io;
-use super::{binding, evidence_model::check, input::request};
+use super::{evidence_model::check, input::request};
 use crate::Result;
 
 const CONFIGURATION_CHANGED: &str =
@@ -20,7 +20,7 @@ pub(super) fn validate(backend: &Path, args: &Value, reset: bool) -> Result<Valu
     let request = &args["request"];
     let selected = &args["selected"];
     let environment = json_io::text(&args["app_env"], "APP_ENV")?;
-    let directory = binding::config_directory(backend, request)?;
+    let directory = request::config_directory(backend, request)?;
     let path = Path::new(json_io::text(&directory["path"], "config_dir")?);
     let selected_environment = BTreeMap::from([("APP_ENV".into(), environment.to_owned())]);
     let (canonical_directory, files) = super::input::request_configuration::configuration_files(

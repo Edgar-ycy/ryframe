@@ -10,9 +10,6 @@ use crate::{
     workspace::root_dir,
 };
 
-const RUNTIME_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_RUNTIME_PROTOCOL";
-const SOURCE_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_SOURCE_PROTOCOL";
-
 #[path = "recovery/clone.rs"]
 pub(crate) mod clone;
 

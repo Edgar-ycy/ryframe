@@ -25,23 +25,12 @@ pub(crate) struct TargetRequest {
 }
 
 pub(crate) fn validate(backend: &Path, request: Document, side: &str) -> Result<TargetRequest> {
-    let mut fields = vec![
-        "format_version",
-        "kind",
-        "id",
-        "review",
-        "side",
-        "target",
-        "maintenance_build",
-        "configuration_sha256",
-        "tools",
-        "storage",
-        "reset",
-    ];
-    if request.value.get("execution_backend").is_some() {
-        fields.push("execution_backend");
-    }
+    let fields = super::super::clone::native::target_verify::input::request::fields(&request.value);
     let object = exact(&request.value, &fields, "新目标请求")?;
+    super::super::clone::native::target_verify::input::request::config_directory(
+        backend,
+        &request.value,
+    )?;
     if object.get("format_version") != Some(&Value::from(1))
         || object.get("kind").and_then(Value::as_str) != Some("devex-clone-fresh-target")
     {

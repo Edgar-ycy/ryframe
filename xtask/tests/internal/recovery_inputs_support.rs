@@ -119,3 +119,16 @@ pub(crate) fn capture_target_plan(
     let product = super::recovery::inputs::document::read(product, root, "产品恢复计划")?;
     super::recovery::inputs::target_plan::capture(root, &chain, &product)
 }
+
+// 与正式运行收据共用配置身份算法，测试只创建明确绑定的私有文件。
+pub(crate) fn object_configuration(directory: &Path, side: &str) -> String {
+    fs::create_dir_all(directory).unwrap();
+    fs::write(directory.join("app.test.toml"), format!(
+        "[object_storage]\nendpoint = 'http://127.0.0.1:19000'\nregion = 'us-east-1'\naccess_key = '{side}-access'\nsecret_key = '{side}-secret'\n"
+    )).unwrap();
+    let environment = std::collections::BTreeMap::from([("APP_ENV".into(), "test".into())]);
+    let root = super::workspace::root_dir();
+    let configuration = &super::recovery::clone::native::target_verify::input::request_configuration::configuration_files;
+    let (directory, files) = configuration(&root, &environment, Some(&json!(directory))).unwrap();
+    super::recovery::clone::native::target_verify::input::request_configuration::configuration_identity(&directory, &files).unwrap()
+}

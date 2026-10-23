@@ -22,6 +22,9 @@ use super::configuration_fixture;
 
 const UUID: &str = "11111111-1111-1111-1111-111111111111";
 
+#[path = "target_config_contract.rs"]
+mod config_contract;
+
 struct Fixture {
     backend: PathBuf,
     local: PathBuf,
@@ -54,6 +57,7 @@ impl Fixture {
         );
         let databases = request::KEYS.into_iter().map(|(key, kind, mode)| json!({"key": key, "kind": kind, "mode": mode, "database": database_name("seed", key), "server_uuid": UUID, "defaults_file": defaults, "defaults_sha256": digest::file(&defaults).unwrap().sha256})).collect::<Vec<_>>();
         let mut request = json!({"format_version": 1, "kind": "devex-clone-fresh-target", "id": "fresh-request", "review": null, "side": "seed", "target": {"scope_id": "seed-scope", "s3": {"endpoint": "http://127.0.0.1:29000", "region": "test-region", "access_key": "fixture-access", "secret_key": "fixture-secret"}, "databases": databases}, "maintenance_build": bound(&local.join("build.json")), "configuration_sha256": "a".repeat(64), "tools": tools, "storage": {"rustfs": {}, "redis": {"port": 26379}}, "reset": {"legacy_ownership": {"mysql_exclusive": true, "redis_exclusive": true, "object_storage_exclusive": true}, "credential_version": "fixture-v1", "sentinel_key": "ryframe:devex-fresh:seed-scope:sentinel", "sentinel_value": "devex-fresh:fresh-request"}});
+        request["config_dir"] = json!(backend.join("config"));
         request["review"] = review_binding(&local.join("review.json"), &review);
         let mut fixture = Self {
             backend,
@@ -114,7 +118,7 @@ impl Fixture {
         let (directory, files) = request_configuration::configuration_files(
             &self.backend,
             &self.environment,
-            self.request.get("configuration_directory"),
+            self.request.get("config_dir"),
         )
         .unwrap();
         self.request["configuration_sha256"] =
@@ -379,6 +383,8 @@ fn request_fixture_requires_ready_receipt_exact_root_and_observed_snapshot() {
         &json!({"format_version": 1, "fixture": "business", "status": "ready", "paths": {"backend": root}, "generated": {"backend": snapshot}}),
     );
     fixture.request["execution_backend"] = json!({"fixture": bound(&receipt), "path": root});
+    fs::create_dir(root.join("config")).unwrap();
+    fixture.request["config_dir"] = json!(root.join("config"));
     request::validate_with(&fixture.backend, &fixture.request, &Snapshot(snapshot)).unwrap();
     assert!(
         request::validate_with(
@@ -511,11 +517,12 @@ fn selected_test_file_is_required_and_common_defaults_are_optional() {
 }
 
 #[test]
-fn explicit_configuration_directory_is_bound_and_must_remain_in_execution_backend() {
+fn explicit_config_dir_is_bound_and_must_remain_in_execution_backend() {
     let mut fixture = Fixture::new();
-    let directory = fixture.local.join("配置 custom");
+    let directory = fixture.local.join("配置 custom").join("config");
+    fs::create_dir(directory.parent().unwrap()).unwrap();
     fs::rename(fixture.backend.join("config"), &directory).unwrap();
-    fixture.request["configuration_directory"] = json!(directory);
+    fixture.request["config_dir"] = json!(directory);
     fixture.seal_configuration();
     let generation = fixture.generation();
     assert_eq!(generation["configuration"]["directory"], json!(directory));
@@ -524,15 +531,8 @@ fn explicit_configuration_directory_is_bound_and_must_remain_in_execution_backen
         json!(""),
         json!(fixture.backend.parent().unwrap()),
     ] {
-        fixture.request["configuration_directory"] = value;
-        assert!(
-            request_configuration::configuration_files(
-                &fixture.backend,
-                &fixture.environment,
-                fixture.request.get("configuration_directory")
-            )
-            .is_err()
-        );
+        fixture.request["config_dir"] = value;
+        assert!(fixture.validate().is_err());
     }
 }
 
@@ -809,7 +809,7 @@ fn old_all_toml_application_digest_is_rejected_without_compatibility_fallback() 
     let (directory, files) = request_configuration::configuration_files(
         &fixture.backend,
         &fixture.environment,
-        fixture.request.get("configuration_directory"),
+        fixture.request.get("config_dir"),
     )
     .unwrap();
     let all = files

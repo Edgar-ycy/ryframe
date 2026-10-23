@@ -12,24 +12,8 @@ use super::{
 use crate::Result;
 
 pub(super) fn validate(backend: &Path, value: &Value, predecessor: &Value) -> Result<Value> {
-    let mut fields = vec![
-        "format_version",
-        "kind",
-        "id",
-        "review",
-        "side",
-        "target",
-        "maintenance_build",
-        "configuration_sha256",
-        "config_dir",
-        "tools",
-        "storage",
-        "reset",
-    ];
-    if value.get("execution_backend").is_some() {
-        fields.push("execution_backend");
-    }
-    json_io::exact(value, &fields, "新目标请求")?;
+    json_io::exact(value, &request::fields(value), "新目标请求")?;
+    request::config_directory(backend, value)?;
     check(
         value["format_version"].as_u64() == Some(1) && value["kind"] == "devex-clone-fresh-target",
         "新目标请求类型错误",
