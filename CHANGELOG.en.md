@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Move restore lifecycle generation models, first-directory intents, complete process-tree bindings, and successful-start receipts into the bound Rust tool and remove the Python generation implementation. Preserve existing controller locks and supervision orchestration, frozen preimages, exclusive publication, cancellation, and rejection of replay after unknown outcomes.
+
 - Move restore-runtime readiness probes and complete frontend resource response verification to Rust. Managed requests bind the current coordinator tool, preserving strict readiness, empty Worker responses, size/redirect rejection, per-file digests, and cancellation/failure semantics. Lifecycle registration, supervision, and recovery orchestration retain their existing entry points.
 - Move cache-recovery request structure, frozen receipts, read-only Redis authentication/configuration validation, and exact process calls to the bound Rust tool; retain full directory-identity observations, startup authorization, and Linux supervision primitives, with no automatic replay of unknown results.
 - Moved seed-generation frozen-request checks, paired API/Worker and maintenance-build equivalence, complete ordinary-recovery image checks, and C69 receipt scalar/directory-digest validation to native Rust. Reused formal artifact validation and removed the corresponding Python rules, retaining declared reboot writes and existing lifecycle orchestration.

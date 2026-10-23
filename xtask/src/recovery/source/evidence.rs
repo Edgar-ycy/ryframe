@@ -74,12 +74,15 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         &["operation", "arguments", "write"],
         "来源证据请求",
     )?;
-    if request["write"].as_bool()
-        != Some(matches!(
+    let writes = if request["operation"] == "runtime-generation" {
+        crate::recovery::runtime::generation::writes(&request["arguments"])
+    } else {
+        matches!(
             request["operation"].as_str(),
             Some("staging-create" | "database-configuration")
-        ))
-    {
+        )
+    };
+    if request["write"].as_bool() != Some(writes) {
         return Err("来源证据写入授权与操作不一致".into());
     }
     let args = &request["arguments"];
@@ -104,6 +107,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("runtime-cache-receipt") => cache::receipt(args),
         Some("runtime-cache-resume") => cache::resume(args),
         Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
+        Some("runtime-generation") => crate::recovery::runtime::generation::request(args),
         _ => Err("来源证据操作无效".into()),
     }
 }

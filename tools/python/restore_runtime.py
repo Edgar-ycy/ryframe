@@ -58,7 +58,7 @@ def _descriptor(document: JsonDocument) -> dict:
 
 def validate_launch(value: object, generation: Path) -> dict:
     """延迟加载私有生命周期模型，避免恢复来源工具的导入环。"""
-    from restore_runtime_generation import validate_launch as validate
+    from restore_runtime_state import validate_launch as validate
 
     return validate(value, generation)
 
@@ -304,7 +304,7 @@ def bind(
 
 def _bind_control_inputs(coordinator: Path, launch_path: Path):
     """把 bind 精确绑定到同一 registration、target plan 与运行中代次。"""
-    from restore_runtime_generation import state_document, validate_state
+    from restore_runtime_state import state_document, validate_state
     from restore_runtime_registration import registration_binding
 
     launch_document = read_json_document(launch_path)

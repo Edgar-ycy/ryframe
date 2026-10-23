@@ -12,6 +12,8 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
 
+#[path = "runtime/generation/mod.rs"]
+pub(crate) mod generation;
 #[path = "runtime/probes.rs"]
 pub(crate) mod probes;
 #[path = "runtime/process.rs"]

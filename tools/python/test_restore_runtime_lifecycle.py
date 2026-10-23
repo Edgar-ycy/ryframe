@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import restore_runtime_generation as generation_model
+import restore_runtime_state as generation_model
 import restore_runtime_evidence as evidence_model
 import restore_runtime_lifecycle as lifecycle
 import restore_runtime_launch as launch_model
@@ -224,6 +224,26 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
                 lifecycle.stop(self.args(), self.coordinator)
             unknown.unlink()
             self.assertEqual(lifecycle.stop(self.args(), self.coordinator)["status"], "stopped")
+
+    def test_cancelled_start_reclaims_trees_and_preserves_failed_generation_without_launch(self):
+        with self.patched(self.commands()), patch.object(lifecycle, "_wait_ready", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
+        with self.patched(self.commands()):
+            result = lifecycle.status(self.args(), self.coordinator)
+        self.assertEqual(result["status"], "start_failed")
+        self.assertNotIn("running", {item["state"] for item in result["processes"].values()})
+        self.assertIsNone(result["launch"])
+        self.assertFalse((self.runtime / "generation-0001/runtime-launch.json").exists())
+
+    def test_generation_without_tool_binding_fails_before_process_or_file_write(self):
+        with patch.object(generation_model, "tool_binding", return_value=None), patch.object(
+            generation_model.subprocess, "run"
+        ) as runner, self.assertRaisesRegex(ValueError, "缺少协调器工具绑定"):
+            generation_model.create_intent(self.runtime, self.binding, self.request)
+        runner.assert_not_called()
+        self.assertFalse(generation_model.creation_path(self.runtime).exists())
+        self.assertFalse(self.runtime.exists())
 
     def test_stop_recovers_a_generation_interrupted_after_launch_publication(self):
         with self.patched(self.commands()):
