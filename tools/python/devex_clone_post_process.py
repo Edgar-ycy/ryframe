@@ -125,9 +125,21 @@ def producer_command(backend, request, directory, number, kind, output, *, tool_
 
 
 def inspect_producer(backend, directory, attempt):
-    request, descriptor = producer_registration(backend, directory, attempt["stage"], cleanup=True)
+    request, descriptor = attempt_registration(backend, directory, attempt)
     return _native({"backend": str(backend), "run_dir": str(directory), "attempt": attempt,
                     "registration": request, "registration_binding": descriptor}, "inspect")
+
+
+def attempt_registration(backend, directory, attempt):
+    launch = directory / attempt["stage"] / f"attempt-{attempt['number']:04d}" / "session-launch.json"
+    if not launch.exists():
+        return producer_registration(backend, directory, attempt["stage"], cleanup=True)
+    before = binding(launch)
+    descriptor = read_json(launch)["registration"]
+    request = historical_producer_request(backend, directory, attempt["stage"], descriptor)
+    if binding(launch) != before:
+        raise ValueError("历史生产者启动收据在读取期间变化")
+    return request, descriptor
 
 
 def require_quiet(backend, directory, current_number=None):
@@ -157,7 +169,7 @@ def recover_session(backend, directory, number, descriptor):
     if len(candidates) != 1:
         raise ValueError("只能恢复明确绑定的历史阶段生产者")
     attempt = candidates[0]
-    request, registration_binding = producer_registration(backend, directory, attempt["stage"], cleanup=True)
+    request, registration_binding = attempt_registration(backend, directory, attempt)
     process = read_json(Path(descriptor["path"]))
     identity_lock = None
     if attempt["mode"].startswith("identities-") and "identity_lock_owner" in process:

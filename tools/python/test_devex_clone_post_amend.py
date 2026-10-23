@@ -212,21 +212,62 @@ class AmendmentTests(unittest.TestCase):
 
     def test_node_producer_accepts_active_descriptor_and_rejects_base(self):
         active = self.publish()
+        configuration = self.local / "application"
+        configuration.mkdir()
+        (configuration / "app.test.toml").write_text('[app]\nhost="127.0.0.1"\nport=4190\n', encoding="utf-8")
+        active.runtime.mkdir(parents=True)
+        self.write(active.runtime / "runtime.json", {"api_config_dir": str(configuration)})
+        source = self.backend / "xtask/src/recovery/dataset_prepare/existing_native.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text("// 离线生产者来源 fixture\n", encoding="utf-8")
+        original = process.subprocess.Popen
+
+        def launch(command, *args, **kwargs):
+            # 私有校验协议仍实际运行；只截住业务生产者，避免真实数据库调用。
+            if len(command) > 1 and command[1] == "__recovery-existing-clone":
+                raise RuntimeError("active reached spawn")
+            return original(command, *args, **kwargs)
+
         with run_lock(self.directory) as owner:
             number = begin(self.directory, "post-copy", "verify", {})
             bind_controller_attempt(self.directory, number, owner)
             output = self.directory / "post-copy" / f"attempt-{number:04d}"
             output.mkdir()
             common = {"backend": self.backend, "directory_root": self.directory, "output": output,
-                      "private": {"target_api": self.api}}
+                      "runtime": active.runtime, "private": {"target_api": self.api}}
             old = SimpleNamespace(**common, request=self.request, request_binding=self.base)
-            with patch.object(process, "producer_command") as command, self.assertRaises(ValueError):
+            with patch.object(process.subprocess, "Popen", side_effect=launch), self.assertRaises(ValueError):
                 process.Producer(old, "existing")
-            command.assert_not_called()
+            self.assertFalse((output / "session-launch.json").exists())
+            finish(self.directory, number, error=ValueError("旧登记被拒绝"))
+            number = begin(self.directory, "post-copy", "verify", {})
+            bind_controller_attempt(self.directory, number, owner)
+            output = self.directory / "post-copy" / f"attempt-{number:04d}"
+            output.mkdir()
+            common["output"] = output
             context = SimpleNamespace(**common, request=self.corrected, request_binding=active.descriptor)
-            with patch.object(process, "producer_command", side_effect=RuntimeError("active reached command")), \
-                    self.assertRaisesRegex(RuntimeError, "active reached command"):
+            with patch.object(process.subprocess, "Popen", side_effect=launch), \
+                    self.assertRaisesRegex(RuntimeError, "active reached spawn"):
                 process.Producer(context, "existing")
+            receipt = read_json(output / "session-launch.json")
+            self.assertEqual(receipt["registration"], active.descriptor)
+            self.assertEqual(receipt["attempt"], number)
+
+    def test_amended_registration_inspection_preserves_abnormal_log_rejection(self):
+        active = self.publish()
+        number = begin(self.directory, "post-copy", "verify", {})
+        attempt = load_state(self.directory)["attempts"][-1]
+        payload = {"backend": str(self.backend), "run_dir": str(self.directory),
+            "attempt": attempt, "registration": active.request,
+            "registration_binding": active.descriptor}
+        self.assertIsNone(process._native(payload, "inspect"))
+        output = self.directory / "post-copy" / f"attempt-{number:04d}"
+        output.mkdir()
+        (output / "session.stderr.log").write_text("unknown outcome", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            process._native(payload, "inspect")
+        with self.assertRaises(ValueError):
+            process.require_quiet(self.backend, self.directory)
 
 
 if __name__ == "__main__":

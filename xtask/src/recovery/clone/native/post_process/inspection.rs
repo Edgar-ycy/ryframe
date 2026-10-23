@@ -11,7 +11,7 @@ use super::{
         lifecycle::{manifest, state},
         resources::common,
     },
-    command,
+    command, registration,
 };
 use crate::Result;
 
@@ -39,10 +39,14 @@ pub(super) fn inspect(request: &Value) -> Result<Value> {
         return Err("原生生产者历史不属于明确阶段".into());
     }
     let output = run_dir.join(stage).join(format!("attempt-{number:04}"));
-    let registration_path =
-        common::bound_file(&backend, &root["registration_binding"], "生产者阶段登记")?;
-    if !registration_path.starts_with(&run_dir)
-        || json_io::read(&registration_path)? != root["registration"]
+    if registration::resolve(
+        &backend,
+        &run_dir,
+        stage,
+        &root["registration_binding"],
+        Some(number),
+        true,
+    )? != root["registration"]
     {
         return Err("生产者登记内容或绑定已经变化".into());
     }
@@ -150,6 +154,7 @@ pub(super) fn quiet(request: &Value) -> Result<Value> {
         "生产者静默请求",
     )?;
     let run = path(&root["run_dir"], "运行目录")?;
+    let backend = path(&root["backend"], "后端目录")?;
     let current = root["current_attempt"].as_u64();
     let state_value = state::load(&run, false)?;
     let attempts = state::attempts(&state_value)?;
@@ -166,15 +171,35 @@ pub(super) fn quiet(request: &Value) -> Result<Value> {
         {
             continue;
         }
-        let registration = registrations
+        let supplied = registrations
             .get(&number.to_string())
             .ok_or("生产者静默核验缺少历史登记")?;
+        let stage = json_io::text(&attempt["stage"], "生产者阶段")?;
+        let launch_path = run
+            .join(stage)
+            .join(format!("attempt-{number:04}/session-launch.json"));
+        let registration = if launch_path.exists() {
+            let before = common::binding(&launch_path)?;
+            let launch = common::read_bound(&backend, &before, "历史生产者启动收据")?;
+            let descriptor = &launch["registration"];
+            let request =
+                registration::resolve(&backend, &run, stage, descriptor, Some(number), true)?;
+            if common::binding(&launch_path)? != before {
+                return Err("历史生产者启动收据在读取期间变化".into());
+            }
+            json!({"request":request,"binding":descriptor})
+        } else {
+            supplied.clone()
+        };
         let observed = inspect(
             &json!({"backend":root["backend"],"run_dir":root["run_dir"],"attempt":attempt,"registration":registration["request"],"registration_binding":registration["binding"]}),
         )?;
         if observed.get("alive").and_then(Value::as_bool) == Some(true) {
             return Err("旧原生生产者仍在运行，先显式 recover-session，再核对未知意图".into());
         }
+    }
+    if state::load(&run, false)? != state_value {
+        return Err("生产者历史在静默核验期间变化".into());
     }
     Ok(json!({"quiet":true}))
 }

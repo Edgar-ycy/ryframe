@@ -3,6 +3,7 @@
 mod command;
 mod inspection;
 mod lock;
+mod registration;
 pub(crate) mod protocol;
 mod runtime;
 

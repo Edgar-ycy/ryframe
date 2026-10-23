@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::{
     super::{json as json_io, lifecycle::state, resources::common},
-    command, inspection, lock, runtime,
+    command, inspection, lock, registration, runtime,
 };
 use crate::Result;
 
@@ -184,10 +184,14 @@ fn prepare_launch(request: &Value) -> Result<Value> {
     }
     verify_controller(&run, &root["controller_identity"])?;
     let backend = path(&root["backend"], "后端目录")?;
-    let registration_path =
-        common::bound_file(&backend, &root["registration_binding"], "生产者阶段登记")?;
-    if !registration_path.starts_with(&run)
-        || json_io::read(&registration_path)? != root["registration"]
+    if registration::resolve(
+        &backend,
+        &run,
+        json_io::text(&attempt["stage"], "生产者阶段")?,
+        &root["registration_binding"],
+        Some(number),
+        false,
+    )? != root["registration"]
     {
         return Err("生产者请求不同于当前绑定登记".into());
     }
