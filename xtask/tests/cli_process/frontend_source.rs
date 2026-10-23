@@ -85,17 +85,24 @@ fn frontend_source_validates_all_inputs_before_execution() {
 
 #[test]
 fn frontend_source_push_runs_the_native_implementation() {
-    let result = invoke(&[
-        "check",
-        "ci",
-        "frontend-source",
-        "--event-name",
-        "push",
-        "--base-sha",
-        "",
-        "--release-ref",
-        "refs/heads/main",
-    ]);
+    let directory = frontend_repository_workspace();
+    let result = xtask_command()
+        .current_dir(directory.path())
+        .args([
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--base-sha",
+            "",
+            "--release-ref",
+            "refs/heads/main",
+        ])
+        .env("GITHUB_REPOSITORY_OWNER", "ExampleOwner")
+        .env_remove("GITHUB_OUTPUT")
+        .output()
+        .unwrap();
     assert!(
         result.status.success(),
         "{}",
@@ -108,14 +115,19 @@ fn frontend_source_push_runs_the_native_implementation() {
     );
     assert!(stdout.contains("ref=main"), "{stdout}");
     assert!(stdout.contains("changed=false"), "{stdout}");
+    assert!(
+        stdout.contains("repository=ExampleOwner/ryframe-vue3"),
+        "{stdout}"
+    );
 }
 
 #[test]
 fn frontend_source_appends_the_github_output_contract() {
-    let directory =
-        tempfile::tempdir_in(std::env::current_dir().unwrap().join(".local-tests")).unwrap();
+    let directory = frontend_repository_workspace();
     let output_path = directory.path().join("github-output.txt");
+    std::fs::write(&output_path, "previous=kept\n").unwrap();
     let result = xtask_command()
+        .current_dir(directory.path())
         .args([
             "check",
             "ci",
@@ -126,6 +138,7 @@ fn frontend_source_appends_the_github_output_contract() {
             "refs/heads/main",
         ])
         .env("GITHUB_OUTPUT", &output_path)
+        .env("GITHUB_REPOSITORY_OWNER", "ExampleOwner")
         .output()
         .unwrap();
     assert!(
@@ -135,7 +148,7 @@ fn frontend_source_appends_the_github_output_contract() {
     );
     assert_eq!(
         std::fs::read_to_string(output_path).unwrap(),
-        "ref=main\nchanged=false\n"
+        "previous=kept\nref=main\nchanged=false\nrepository=ExampleOwner/ryframe-vue3\n"
     );
 }
 
@@ -171,18 +184,31 @@ fn frontend_source_plan_uses_the_registered_graph_without_reading_runtime_inputs
         .join("target/不存在的前端来源 event.json")
         .to_string_lossy()
         .into_owned();
-    let result = invoke(&[
-        "check",
-        "ci",
-        "frontend-source",
-        "--event-name",
-        "pull_request",
-        "--event",
-        &event,
-        "--base-sha",
-        "0123456789abcdef0123456789abcdef01234567",
-        "--plan",
-    ]);
+    let directory = frontend_repository_workspace();
+    std::fs::write(
+        directory.path().join("config/tools.toml"),
+        "[workspace]\nfrontend_repository=''\n",
+    )
+    .unwrap();
+    let output_path = directory.path().join("job-output.txt");
+    let result = xtask_command()
+        .current_dir(directory.path())
+        .args([
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "pull_request",
+            "--event",
+            &event,
+            "--base-sha",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--plan",
+        ])
+        .env_remove("GITHUB_REPOSITORY_OWNER")
+        .env("GITHUB_OUTPUT", &output_path)
+        .output()
+        .unwrap();
     assert!(
         result.status.success(),
         "{}",
@@ -191,5 +217,36 @@ fn frontend_source_plan_uses_the_registered_graph_without_reading_runtime_inputs
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(stdout.contains("ci.frontend-source"), "{stdout}");
     assert!(!stdout.contains("开始 CI 原子任务"), "{stdout}");
+    assert!(!output_path.exists());
     assert!(!stdout.contains("→ python"), "{stdout}");
+}
+
+fn frontend_repository_workspace() -> tempfile::TempDir {
+    let base = std::env::current_dir().unwrap().join(".local-tests");
+    std::fs::create_dir_all(&base).unwrap();
+    let directory = tempfile::tempdir_in(base).unwrap();
+    std::fs::create_dir(directory.path().join("xtask")).unwrap();
+    std::fs::create_dir(directory.path().join("config")).unwrap();
+    std::fs::write(directory.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+    directory
+}
+
+#[test]
+fn frontend_source_missing_owner_does_not_use_legacy_repository_environment_or_write_output() {
+    let directory = frontend_repository_workspace();
+    let output_path = directory.path().join("job-output.txt");
+    let result = xtask_command()
+        .current_dir(directory.path())
+        .args(["check", "ci", "frontend-source", "--event-name", "push"])
+        .env_remove("GITHUB_REPOSITORY_OWNER")
+        .env("FRONTEND_REPOSITORY", "legacy/frontend")
+        .env("RYFRAME_FRONTEND_REPOSITORY", "legacy/override")
+        .env("GITHUB_OUTPUT", &output_path)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.contains("workspace.frontend_repository"), "{stderr}");
+    assert!(stderr.contains("config/tools.toml"), "{stderr}");
+    assert!(!output_path.exists());
 }

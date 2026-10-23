@@ -134,12 +134,15 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 前端改名或移动后在 `config/tools.toml` 设置路径，本机覆盖放在忽略的 `.local-tests/tools.toml`。以下集中展示工具文件各节；工具文件可登记租户迁移验证目标；环境数组整体替换。其中 `[development]` 字段只影响开发监督器，不能代替显式的数据库初始化。`cargo xtask dev --measure-once --case config-only --output .local-tests/dev-save.json` 选择保存测量场景；`--case` 和 `--output` 仅允许与 `--measure-once` 一起使用，默认场景为 `shared-runtime`，不改变历史测量结果合同。
 
+CI 配套前端仓库可在工具文件的 `[workspace].frontend_repository` 中显式设置为完整 `owner/repository`，本机 `.local-tests/tools.toml` 覆盖公共 `config/tools.toml`。省略该字段时，仅使用 GitHub 标准身份 `GITHUB_REPOSITORY_OWNER` 选择 `<owner>/ryframe-vue3`；本地没有该身份时必须配置此字段。空值、非法仓库名或换行会报错，不回退到环境覆盖；旧 `RYFRAME_FRONTEND_REPOSITORY` 和 `FRONTEND_REPOSITORY` 均不再作为配置入口。`cargo xtask check ci frontend-source` 同次输出 `ref`、`changed` 和 `repository`，各工作流使用该结果检出配套源码；`--plan` 只展示任务图，不解析 GitHub owner 或写入 job 输出。
+
 ```toml
 [development]
 config_dir = ".local-tests/dev-config"
 verify_tenant_targets = ["shared-control"]
 [workspace]
 frontend_dir = "../web"
+frontend_repository = "your-owner/ryframe-vue3"
 [generator]
 config_dir = "config"
 [verification]

@@ -134,12 +134,15 @@ Rust xtask owns reference fixture service history validation and execution of th
 
 Set frontend paths after renaming or moving it in `config/tools.toml`, with local-only overrides in ignored `.local-tests/tools.toml`. The following example groups the tool-file sections. Tool files can register tenant migration verification targets; overlay arrays replace the complete array. The `[development]` fields affect only the development supervisor and do not replace explicit database initialization. `cargo xtask dev --measure-once --case config-only --output .local-tests/dev-save.json` selects a save measurement case. `--case` and `--output` require `--measure-once`, the default case is `shared-runtime`, and historical measurement result contracts remain unchanged.
 
+Set the optional `[workspace].frontend_repository` tool-file field to a complete `owner/repository` for the paired frontend. Local `.local-tests/tools.toml` overrides common `config/tools.toml`. If omitted, only the standard GitHub identity `GITHUB_REPOSITORY_OWNER` selects `<owner>/ryframe-vue3`; local runs without that identity must configure this field. Empty values, invalid repository names, and newlines fail without falling back to environment overrides. The former `RYFRAME_FRONTEND_REPOSITORY` and `FRONTEND_REPOSITORY` configuration entries are no longer read. `cargo xtask check ci frontend-source` emits `ref`, `changed`, and `repository` together for workflow checkouts. `--plan` only displays the task graph, without resolving the GitHub owner or writing job outputs.
+
 ```toml
 [development]
 config_dir = ".local-tests/dev-config"
 verify_tenant_targets = ["shared-control"]
 [workspace]
 frontend_dir = "../web"
+frontend_repository = "your-owner/ryframe-vue3"
 [generator]
 config_dir = "config"
 [verification]

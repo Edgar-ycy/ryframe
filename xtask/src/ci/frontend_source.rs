@@ -10,7 +10,7 @@ use crate::{
     Result,
     check::{TaskExecutor, TaskPlan},
     cli::{
-        FrontendSourceEvent, FrontendSourceOptions, valid_frontend_source_ref,
+        FrontendSourceEvent, FrontendSourceOptions, RepositorySlug, valid_frontend_source_ref,
         valid_frontend_source_sha,
     },
     process,
@@ -43,8 +43,33 @@ pub(super) fn run(options: &FrontendSourceOptions, task_plan: &TaskPlan) -> Resu
         .canonicalize()
         .map_err(|error| format!("无法规范化当前后端工作树：{error}"))?;
     println!("开始 CI 原子任务：{}", task_plan.tasks[0].id);
+    let repository =
+        select_frontend_repository(&root, || env::var("GITHUB_REPOSITORY_OWNER").ok())?;
     let (reference, changed) = select_ci_frontend_ref(options, &root)?;
-    write_outputs(&reference, changed)
+    write_outputs(&reference, changed, &repository)
+}
+
+/// 文件值优先；标准 GitHub owner 只在字段缺省时参与选择，不读取项目环境覆盖。
+pub(crate) fn select_frontend_repository(
+    root: &Path,
+    github_owner: impl FnOnce() -> Option<String>,
+) -> Result<String> {
+    const REPAIR: &str = "请在 config/tools.toml 或 .local-tests/tools.toml 的 [workspace] 设置 frontend_repository='owner/repository'；本机文件优先。";
+    let settings = ryframe_config::ToolSettings::load(root)?;
+    if let Some(repository) = settings.workspace.frontend_repository {
+        return RepositorySlug::parse(&repository, "workspace.frontend_repository")
+            .map(|slug| slug.as_str().to_owned())
+            .map_err(|_| {
+                format!("工具配置 workspace.frontend_repository 为空或不是有效仓库标识；{REPAIR}")
+                    .into()
+            });
+    }
+    let owner = github_owner().ok_or_else(|| {
+        format!("未配置 workspace.frontend_repository，且 GitHub 标准身份 GITHUB_REPOSITORY_OWNER 缺失或不是 UTF-8；{REPAIR}")
+    })?;
+    RepositorySlug::parse(&format!("{owner}/ryframe-vue3"), "GITHUB_REPOSITORY_OWNER")
+        .map(|slug| slug.as_str().to_owned())
+        .map_err(|_| format!("GitHub 标准身份 GITHUB_REPOSITORY_OWNER 无效；{REPAIR}").into())
 }
 
 fn validate_options(options: &FrontendSourceOptions) -> Result<()> {
@@ -321,8 +346,8 @@ fn pull_request_body(event_path: &Path) -> Result<String> {
     }
 }
 
-fn write_outputs(reference: &str, changed: bool) -> Result<()> {
-    let text = format!("ref={reference}\nchanged={}\n", changed);
+fn write_outputs(reference: &str, changed: bool, repository: &str) -> Result<()> {
+    let text = format!("ref={reference}\nchanged={changed}\nrepository={repository}\n");
     if let Some(output) = env::var_os("GITHUB_OUTPUT") {
         use std::io::Write;
         let mut file = fs::OpenOptions::new()

@@ -48,7 +48,6 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
-  FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 jobs:
   devex-cgroup:
@@ -203,7 +202,7 @@ jobs:
       - name: 检出配套前端
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: ${{ env.FRONTEND_REPOSITORY }}
+          repository: ${{ steps.frontend-ref.outputs.repository }}
           ref: ${{ steps.frontend-ref.outputs.ref }}
           path: frontend
 

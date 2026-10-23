@@ -21,7 +21,6 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
-  FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 permissions:
   actions: read
@@ -57,10 +56,20 @@ jobs:
           }
           [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" == "$(git rev-parse HEAD)" ]]
 
+      - name: 安装发布核验 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 选择发布配套前端仓库
+        id: frontend-source
+        run: >-
+          cargo xtask check ci frontend-source
+          --event-name "${{ github.event_name }}"
+          --release-ref "refs/tags/$RELEASE_TAG"
+
       - name: Check out matching frontend tag
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: ${{ env.FRONTEND_REPOSITORY }}
+          repository: ${{ steps.frontend-source.outputs.repository }}
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
           path: frontend
@@ -76,9 +85,6 @@ jobs:
             exit 1
           }
 
-      - name: 安装发布核验 Rust 工具链
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
       - name: Validate release inputs
         shell: bash
         env:
@@ -92,7 +98,7 @@ jobs:
             --frontend-dir "$GITHUB_WORKSPACE/frontend" \
             --backend-repository "$BACKEND_REPOSITORY" \
             --backend-commit "$backend_commit" \
-            --frontend-repository "$FRONTEND_REPOSITORY" \
+            --frontend-repository "${{ steps.frontend-source.outputs.repository }}" \
             --frontend-commit "$frontend_commit" \
             --manifest-path "$RUNNER_TEMP/release-validation.json"
 
@@ -107,7 +113,7 @@ jobs:
             echo "backend_commit=$(git rev-parse "$RELEASE_TAG^{commit}")"
             echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$RELEASE_TAG")"
             echo "frontend_commit=$(git -C frontend rev-parse "$RELEASE_TAG^{commit}")"
-            echo "frontend_repository=$FRONTEND_REPOSITORY"
+            echo "frontend_repository=${{ steps.frontend-source.outputs.repository }}"
           } >> "$GITHUB_OUTPUT"
 
       - name: 验证精确源码的日常与扩展 CI
@@ -119,7 +125,7 @@ jobs:
         run: >-
           cargo xtask check release ci
           --backend-repository "$GITHUB_REPOSITORY"
-          --frontend-repository "$FRONTEND_REPOSITORY"
+          --frontend-repository "${{ steps.release.outputs.frontend_repository }}"
           --backend-sha "$BACKEND_SHA"
           --frontend-sha "$FRONTEND_SHA"
           --tag "$RELEASE_TAG"
@@ -219,7 +225,7 @@ jobs:
         run: >-
           cargo xtask check release ci
           --backend-repository "$GITHUB_REPOSITORY"
-          --frontend-repository "$FRONTEND_REPOSITORY"
+          --frontend-repository "${{ needs.validate-release.outputs.frontend_repository }}"
           --backend-sha "$BACKEND_SHA"
           --frontend-sha "$FRONTEND_SHA"
           --backend-tag-oid "$BACKEND_TAG_OID"

@@ -35,6 +35,8 @@ pub struct DevelopmentSettings {
 #[serde(default, deny_unknown_fields)]
 pub struct WorkspaceSettings {
     pub frontend_dir: Option<PathBuf>,
+    /// CI 配套前端仓库；省略时由 GitHub 标准 owner 身份选择 ryframe-vue3。
+    pub frontend_repository: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -133,6 +135,7 @@ mod tests {
     fn development_defaults_and_unknown_fields_remain_strict() {
         let settings: ToolSettings = toml::from_str("").unwrap();
         assert!(settings.development.config_dir.is_none());
+        assert!(settings.workspace.frontend_repository.is_none());
         assert!(settings.development.verify_tenant_targets.is_empty());
         assert!(toml::from_str::<ToolSettings>("[development]\nconfig_directory='x'").is_err());
         assert!(
@@ -143,11 +146,11 @@ mod tests {
 
     #[test]
     fn local_values_override_selected_fields_and_replace_arrays() {
-        let mut base: toml::Value = toml::from_str("[workspace]\nfrontend_dir='../web'\n[generator]\nconfig_dir='public-config'\npackage='order-business'\ntables=['old']\nsync_frontend=true").unwrap();
+        let mut base: toml::Value = toml::from_str("[workspace]\nfrontend_dir='../web'\nfrontend_repository='public/frontend'\n[generator]\nconfig_dir='public-config'\npackage='order-business'\ntables=['old']\nsync_frontend=true").unwrap();
         merge(
             &mut base,
             toml::from_str(
-                "[generator]\nconfig_dir='本机 配置'\ntables=['a','b']\nsync_frontend=false",
+                "[workspace]\nfrontend_repository='local/frontend'\n[generator]\nconfig_dir='本机 配置'\ntables=['a','b']\nsync_frontend=false",
             )
             .unwrap(),
         );
@@ -163,6 +166,10 @@ mod tests {
             Some(PathBuf::from("本机 配置"))
         );
         assert_eq!(
+            settings.workspace.frontend_repository.as_deref(),
+            Some("local/frontend")
+        );
+        assert_eq!(
             settings.frontend_dir(Path::new("backend")),
             PathBuf::from("backend/../web")
         );
@@ -173,6 +180,7 @@ mod tests {
         assert!(
             toml::from_str::<ToolSettings>("[workspace]\nfrontend_directory='../web'").is_err()
         );
+        assert!(toml::from_str::<ToolSettings>("[workspace]\nfrontend_repository=42").is_err());
         assert!(toml::from_str::<ToolSettings>("[generator]\nsync_frontend='yes'").is_err());
         assert!(
             toml::from_str::<ToolSettings>("[generator]\nconfig_directory='wrong-key'").is_err()

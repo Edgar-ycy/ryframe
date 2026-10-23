@@ -80,3 +80,87 @@ fn replaced_release_python_implementations_are_deleted() {
         assert!(!Path::new(&root_dir()).join(path).exists(), "{path} 仍存在");
     }
 }
+
+#[test]
+fn frontend_checkouts_share_repository_and_ref_selection_without_project_environment() {
+    for (file, selections) in [
+        (
+            "ci.yml",
+            vec![
+                "steps.preflight-frontend-ref.outputs",
+                "steps.frontend-ref.outputs",
+                "steps.windows-frontend-ref.outputs",
+            ],
+        ),
+        ("extended-ci.yml", vec!["steps.frontend-ref.outputs"]),
+    ] {
+        let workflow = read(&format!(".github/workflows/{file}"));
+        assert!(!workflow.contains("FRONTEND_REPOSITORY"));
+        for selection in selections {
+            assert!(workflow.contains(&format!("repository: ${{{{ {selection}.repository }}}}")));
+            assert!(workflow.contains(&format!("ref: ${{{{ {selection}.ref }}}}")));
+        }
+    }
+    let ci = read(".github/workflows/ci.yml");
+    for field in ["repository", "ref"] {
+        assert!(ci.contains(&format!("{field}: ${{{{ steps.contract-frontend-ref.outputs.{field} || steps.resource-frontend-ref.outputs.{field} }}}}")));
+    }
+}
+
+#[test]
+fn release_repository_identity_is_selected_before_checkout_and_frozen_for_publication() {
+    let release = read(".github/workflows/release.yml");
+    assert!(!release.contains("FRONTEND_REPOSITORY"));
+    let (validate, publish) = release.split_once("  publish-release:").unwrap();
+    assert!(
+        validate.find("安装发布核验 Rust 工具链").unwrap()
+            < validate
+                .find("cargo xtask check ci frontend-source")
+                .unwrap()
+    );
+    assert!(
+        validate
+            .find("cargo xtask check ci frontend-source")
+            .unwrap()
+            < validate.find("Check out matching frontend tag").unwrap()
+    );
+    assert_eq!(
+        validate
+            .matches("cargo xtask check ci frontend-source")
+            .count(),
+        1
+    );
+    let checkout = validate
+        .split_once("Check out matching frontend tag")
+        .unwrap()
+        .1
+        .split("      - name:")
+        .next()
+        .unwrap();
+    assert!(checkout.contains("repository: ${{ steps.frontend-source.outputs.repository }}"));
+    assert!(checkout.contains("ref: ${{ inputs.tag || github.ref_name }}"));
+    assert!(
+        validate
+            .contains("--frontend-repository \"${{ steps.frontend-source.outputs.repository }}\"")
+    );
+    assert!(
+        validate.contains(
+            "echo \"frontend_repository=${{ steps.frontend-source.outputs.repository }}\""
+        )
+    );
+    assert!(
+        validate.contains("frontend_repository: ${{ steps.release.outputs.frontend_repository }}")
+    );
+    assert!(
+        validate
+            .contains("--frontend-repository \"${{ steps.release.outputs.frontend_repository }}\"")
+    );
+    assert!(
+        publish.contains("repository: ${{ needs.validate-release.outputs.frontend_repository }}")
+    );
+    assert!(publish.contains(
+        "--frontend-repository \"${{ needs.validate-release.outputs.frontend_repository }}\""
+    ));
+    assert!(!publish.contains("frontend-source"));
+    assert!(!release.contains("steps.frontend-source.outputs.ref"));
+}

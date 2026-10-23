@@ -476,3 +476,64 @@ fn release_refs_accept_only_stable_version_tags() {
         ("main".to_owned(), false)
     );
 }
+
+#[test]
+fn frontend_repository_uses_files_before_github_identity_and_rejects_invalid_values() {
+    use ci::frontend_source::select_frontend_repository as select;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir(root.join("config")).unwrap();
+    fs::create_dir(root.join(".local-tests")).unwrap();
+    assert_eq!(
+        select(root, || Some("Example-Owner".into())).unwrap(),
+        "Example-Owner/ryframe-vue3"
+    );
+    let error = select(root, || None).unwrap_err().to_string();
+    assert!(error.contains("GITHUB_REPOSITORY_OWNER"));
+    assert!(error.contains("workspace.frontend_repository"));
+    assert!(error.contains("config/tools.toml"));
+    for owner in ["", "bad/owner", "owner\nother", "$(unsafe)"] {
+        assert!(select(root, || Some(owner.into())).is_err());
+    }
+    fs::write(
+        root.join("config/tools.toml"),
+        "[workspace]\nfrontend_repository='PublicOwner/frontend'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        select(root, || panic!("显式文件值不能读取 owner")).unwrap(),
+        "PublicOwner/frontend"
+    );
+    fs::write(
+        root.join(".local-tests/tools.toml"),
+        "[workspace]\nfrontend_repository='LocalOwner/frontend'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        select(root, || panic!("本机文件必须优先")).unwrap(),
+        "LocalOwner/frontend"
+    );
+    for invalid in [
+        "",
+        "owner",
+        "owner/repo/extra",
+        "owner/repo\nrepository=other",
+        "https://github.com/owner/repo",
+        "$(unsafe)/repo",
+    ] {
+        let value = serde_json::json!({"workspace": {"frontend_repository": invalid}});
+        fs::write(
+            root.join(".local-tests/tools.toml"),
+            toml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        let error = select(root, || panic!("非法文件值不能回退到 owner"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("workspace.frontend_repository"));
+        assert!(error.contains("config/tools.toml"));
+        assert!(error.contains(".local-tests/tools.toml"));
+        assert!(!error.contains("$(unsafe)"));
+    }
+}

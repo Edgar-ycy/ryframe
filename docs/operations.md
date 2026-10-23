@@ -219,6 +219,8 @@ scrape_configs:
 
 协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与业务 crate 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；业务 crate 产物另附从干净源码生成隔离工作树的收据。Release 通过 `cargo xtask check release source` 核对双端 tag、版本与契约来源，通过 `cargo xtask check release ci` 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。两个入口直接由 Rust xtask 执行，不依赖 Python，并支持 `--plan` 只查看实际任务图。
 
+Release 在检出配套前端前通过 Rust `frontend-source` 从工具文件或标准 GitHub owner 身份选择仓库，配置方式见[开发指南](development.md)。校验阶段冻结该仓库、双方精确提交及 tag 对象，发布阶段复用冻结结果，不重新读取仓库选择。前端仍按显式发布 tag 检出，仓库配置不会改变双方 tag 必须匹配及精确来源核验。
+
 检查 Release 保存的 `release-ci-evidence.json` 与 `release-final-evidence.json`，按其中 run ID 和 attempt 定位失败。默认总等待上限为 5400 秒，GitHub API 分页和单次调用共享截止时间。修复后对同一目标源码重跑相应 CI，再重新运行 Release；不移动已有 tag，也不以其他提交的成功结果替代。发布资产仍为 GitHub 源码归档。
 
 ## TLS 证书
