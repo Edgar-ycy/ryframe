@@ -104,9 +104,12 @@ class ProviderRejectionTests(unittest.TestCase):
             self.assertIn(expected, str(caught.exception))
         return caught.exception
 
-    def reject(self, expected=None, *, effect=None):
+    def reject(self, expected=None, *, effect=None, source_effect=None):
         # 仅模拟拒绝/漂移，不把伪程序或伪响应作为真实成功证据。
-        with patch.object(tool, "protect_binary_invocation", return_value=nullcontext()) as guard:
+        token = {"format_version": 1, "kind": "frontend-origin-source-snapshot",
+                 "source_count": len(SOURCES), "sha256": "0" * 64}
+        with patch.object(tool, "protect_binary_invocation", return_value=nullcontext()) as guard, \
+                patch.object(tool, "_source_snapshot", side_effect=source_effect, return_value=token):
             with patch.object(
                 tool,
                 "_exchange",
@@ -159,30 +162,7 @@ class ProviderRejectionTests(unittest.TestCase):
             exchange, _ = self.reject("绑定 UTF8/JSON")
             exchange.assert_not_called()
 
-    def test_source_set_rejects_additions_and_omitted_compiled_files(self):
-        policy_file = self.root / tool.POLICY
-        policy_file.write_bytes(encoded({"format_version":1,"files":["Cargo.lock",tool.POLICY],"trees":["xtask/src"],"excluded_directories":[]}))
-        self.assertEqual(tool._source_paths(), list(SOURCES))
-        extra = self.root / "xtask/src/new_worker.rs"
-        extra.write_text("new worker", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            tool._verify_source_set(self.metadata)
-        extra.unlink()
-        omitted = copy.deepcopy(self.metadata)
-        omitted["sources"].pop()
-        with self.assertRaises(ValueError):
-            tool._verify_source_set(omitted)
 
-    def test_source_policy_rejects_exclusions_and_tracks_nested_target(self):
-        policy_file = self.root / tool.POLICY
-        policy_file.write_bytes(encoded({"format_version":1,"files":["Cargo.lock",tool.POLICY],"trees":["xtask/src"],"excluded_directories":["target"]}))
-        with self.assertRaisesRegex(ValueError, "不得按目录名排除"):
-            tool._source_paths()
-        policy_file.write_bytes(encoded({"format_version":1,"files":["Cargo.lock",tool.POLICY],"trees":["xtask/src"],"excluded_directories":[]}))
-        nested = self.root / "xtask/src/target"
-        nested.mkdir()
-        (nested / "cache").write_text("cache", encoding="utf-8")
-        self.assertIn("xtask/src/target/cache", tool._source_paths())
 
     def test_executable_relative_parentdir_wrong_type_and_non_native_paths_are_rejected(self):
         bad = [
@@ -281,23 +261,10 @@ class ProviderRejectionTests(unittest.TestCase):
             self.reject("同一文件", effect=change_alias)
         self.assertEqual(self.binding.read_bytes(), before)
 
-    def test_all_five_current_source_hashes_are_required_before_invocation(self):
-        for name in SOURCES:
-            path = self.root / name
-            before = path.read_bytes()
-            path.write_bytes(before + b" changed")
-            with self.subTest(source=name):
-                exchange, _ = self.reject(name.replace("/", os.sep))
-                exchange.assert_not_called()
-            path.write_bytes(before)
 
-    def test_program_hash_drift_and_missing_source_block_invocation(self):
+    def test_program_hash_drift_blocks_invocation(self):
         self.executable.write_bytes(b"different native program")
         exchange, _ = self.reject("程序身份或 SHA-256")
-        exchange.assert_not_called()
-        self.executable.write_bytes(b"MZ fixture never executed")
-        (self.root / SOURCES[0]).unlink()
-        exchange, _ = self.reject(SOURCES[0])
         exchange.assert_not_called()
 
     def reject_link(self, path):
@@ -315,8 +282,6 @@ class ProviderRejectionTests(unittest.TestCase):
     def test_linked_program_is_rejected_with_known_link_cleanup(self):
         self.reject_link(self.executable)
 
-    def test_linked_source_is_rejected_with_known_link_cleanup(self):
-        self.reject_link(self.root / SOURCES[0])
 
     def test_unknown_reparse_attribute_is_rejected(self):
         original = os.lstat
@@ -341,8 +306,8 @@ class ProviderRejectionTests(unittest.TestCase):
         exchange, _ = self.reject("绑定 UTF8/JSON")
         exchange.assert_not_called()
 
-    def test_binding_source_and_program_changes_during_call_fail_closed(self):
-        for path in (self.binding, self.root / SOURCES[0], self.executable):
+    def test_binding_and_program_changes_during_call_fail_closed(self):
+        for path in (self.binding, self.executable):
             before = path.read_bytes()
 
             def changed(_path, _request):
@@ -352,18 +317,63 @@ class ProviderRejectionTests(unittest.TestCase):
             self.reject("漂移" if path != self.executable else "SHA-256", effect=changed)
             path.write_bytes(before)
 
-    def test_source_drift_is_checked_even_after_invocation_timeout(self):
-        source = self.root / SOURCES[0]
+    def test_source_token_drift_is_checked_even_after_invocation_timeout(self):
+        token = {"format_version": 1, "kind": "frontend-origin-source-snapshot",
+                 "source_count": len(SOURCES), "sha256": "0" * 64}
+        changed = {**token, "sha256": "1" * 64}
+        self.reject("漂移", effect=subprocess.TimeoutExpired(SECRET, 10),
+                    source_effect=[token, token, changed])
 
-        def changed_then_timeout(_path, _request):
-            source.write_bytes(b"changed")
-            raise subprocess.TimeoutExpired(SECRET, 10, output=SECRET, stderr=SECRET)
+    def test_source_token_drift_before_yield_prevents_url_invocation(self):
+        token = {"format_version": 1, "kind": "frontend-origin-source-snapshot",
+                 "source_count": len(SOURCES), "sha256": "0" * 64}
+        changed = {**token, "sha256": "1" * 64}
+        exchange, _ = self.reject("漂移", source_effect=[token, changed, changed])
+        exchange.assert_not_called()
 
-        self.reject("漂移", effect=changed_then_timeout)
+    def test_all_three_source_phases_use_same_guarded_tool_and_compare_exact_token(self):
+        phases = []
+        protected = False
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def guard(_binding):
+            nonlocal protected
+            protected = True
+            try:
+                yield
+            finally:
+                protected = False
+
+        def snapshot(path, metadata):
+            self.assertTrue(protected)
+            self.assertEqual(path, self.executable)
+            self.assertEqual(metadata, self.metadata)
+            phases.append(path)
+            return {"format_version": 1, "kind": "frontend-origin-source-snapshot",
+                    "source_count": len(SOURCES), "sha256": "0" * 64}
+
+        with patch.object(tool, "protect_binary_invocation", side_effect=guard), \
+                patch.object(tool, "_source_snapshot", side_effect=snapshot):
+            with tool._verified_tool() as path:
+                self.assertEqual(path, self.executable)
+                self.assertEqual(len(phases), 2)
+        self.assertEqual(len(phases), 3)
+
+    def test_cancelled_initial_probe_still_checks_binding_without_launching_another_probe(self):
+        with patch.object(tool, "protect_binary_invocation", return_value=nullcontext()), \
+                patch.object(tool, "_source_snapshot", side_effect=KeyboardInterrupt()) as probe, \
+                patch.object(tool, "_snapshot", wraps=tool._snapshot) as snapshot:
+            with self.assertRaises(KeyboardInterrupt):
+                with tool._verified_tool():
+                    self.fail("取消后不得发布工具")
+        self.assertEqual(probe.call_count, 1)
+        self.assertEqual([call.args for call in snapshot.call_args_list], [(self.binding,), (self.binding,)])
 
     def test_identical_bytes_with_changed_file_identity_still_fail_closed(self):
         original = tool._state
-        for selected in (self.binding, self.root / SOURCES[0], self.executable):
+        for selected in (self.binding, self.executable):
             changed = False
 
             def state(path):
@@ -400,6 +410,49 @@ class ProviderRejectionTests(unittest.TestCase):
             self.reject("失败", effect=error)
         with patch.object(tool, "protect_binary_invocation", side_effect=ValueError(SECRET)):
             self.failure(lambda: tool.normalize_origin(SECRET, allow_empty=True), "保护")
+
+
+class SourceSnapshotProtocolTests(unittest.TestCase):
+    def setUp(self):
+        self.sources = [{"path": name, "sha256": "0" * 64} for name in SOURCES]
+        self.metadata = {"sources": self.sources}
+        self.token = {"format_version": 1, "kind": "frontend-origin-source-snapshot",
+                      "source_count": len(SOURCES), "sha256": "a" * 64}
+        self.path = ROOT / ".local-tests/unit-protocol.exe"
+
+    def test_source_request_is_bounded_exact_and_never_contains_file_content(self):
+        with patch.object(tool, "_exchange", return_value=(0, encoded(self.token))) as exchange:
+            self.assertEqual(tool._source_snapshot(self.path, self.metadata), self.token)
+        path, request = exchange.call_args.args
+        self.assertEqual(path, self.path)
+        self.assertEqual(json.loads(request), {"format_version": 1, "root": str(tool.ROOT), "sources": self.sources})
+        self.assertEqual(exchange.call_args.kwargs, {"operation": "verify-sources", "response_limit": tool.STDERR_LIMIT, "timeout": None})
+        with patch.object(tool, "METADATA_LIMIT", 10), patch.object(tool, "_exchange") as exchange:
+            with self.assertRaisesRegex(ValueError, "4 MiB"):
+                tool._source_snapshot(self.path, self.metadata)
+        exchange.assert_not_called()
+
+    def test_source_response_rejects_unknown_duplicate_fields_types_counts_and_unsafe_errors(self):
+        values = [(0, {**self.token, "source_count": True}), (0, {**self.token, "sha256": SECRET}),
+                  (0, {**self.token, "format_version": True}), (0, {**self.token, "source_count": 0}),
+                  (0, {**self.token, "extra": SECRET}), (1, self.token), (False, self.token),
+                  (0, b'{"format_version":1,"format_version":1}'),
+                  (2, {"format_version": 1, "kind": "frontend-origin-source-error", "category": SECRET, "path": SECRET}),
+                  (2, {"format_version": 1, "kind": "frontend-origin-source-error", "category": "digest", "path": SECRET})]
+        for code, value in values:
+            raw = value if isinstance(value, bytes) else encoded(value)
+            with patch.object(tool, "_exchange", return_value=(code, raw)), self.assertRaises(ValueError) as caught:
+                tool._source_snapshot(self.path, self.metadata)
+            self.assertNotIn(SECRET, str(caught.exception))
+
+    def test_source_failure_keeps_known_source_path_fixed_category_and_repair_advice(self):
+        path = str(ROOT / "Cargo.lock")
+        response = {"format_version": 1, "kind": "frontend-origin-source-error", "category": "identity", "path": path}
+        with patch.object(tool, "_exchange", return_value=(2, encoded(response))), self.assertRaises(ValueError) as caught:
+            tool._source_snapshot(self.path, self.metadata)
+        self.assertIn(path, str(caught.exception))
+        self.assertIn("identity", str(caught.exception))
+        self.assertIn("重新编译", str(caught.exception))
 
 
 class ResponseProtocolTests(unittest.TestCase):
@@ -490,6 +543,16 @@ class PipeFailureTests(unittest.TestCase):
         self.assertEqual(launch.call_args.args[0], [str(Path("D:/fixture.exe")), "__frontend-origin", "check"])
         if os.name == "nt":
             self.assertEqual(launch.call_args.kwargs["creationflags"], subprocess.CREATE_NO_WINDOW)
+
+    def test_source_probe_has_no_new_total_deadline_and_cancellation_reaps_without_retry(self):
+        process = self.process()
+        process.wait.side_effect = [KeyboardInterrupt(), 0]
+        with patch.object(tool.subprocess, "Popen", return_value=process) as launch:
+            with self.assertRaises(KeyboardInterrupt):
+                tool._exchange(ROOT / "fixture.exe", b"{}", operation="verify-sources", timeout=None)
+        self.assertEqual(process.wait.call_args_list[0].kwargs, {"timeout": None})
+        self.assertEqual(launch.call_count, 1)
+        process.kill.assert_called_once()
 
     def test_stdout_and_stderr_limits_terminate_without_exposing_contents(self):
         for stream in ("stdout", "stderr"):

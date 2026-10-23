@@ -118,44 +118,47 @@ def _metadata(raw: bytes, label: str) -> dict:
         raise _error(label, "绑定 UTF8/JSON、精确字段、版本、来源顺序或摘要无效") from None
 
 
-def _source_paths() -> list[str]:
-    policy = exact(json_object(_snapshot(ROOT / POLICY)[1], POLICY), {"format_version", "files", "trees", "excluded_directories"}, POLICY)
-    if type(policy["format_version"]) is not int or policy["format_version"] != 1:
-        raise ValueError("来源规则版本无效")
-    for key in ("files", "trees", "excluded_directories"):
-        if not isinstance(policy[key], list) or any(not isinstance(name, str) or not name or any(c in name for c in "\\:\0\r\n") or any(p in ("", ".", "..") for p in name.split("/")) for name in policy[key]):
-            raise ValueError("来源规则路径无效")
-    if policy["excluded_directories"]:
-        raise ValueError("来源规则不得按目录名排除文件")
-    paths = set()
-    def walk(relative):
-        file = ROOT / relative
-        info = file.lstat()
-        if file.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
-            raise ValueError("来源链接无效")
-        if file.is_dir():
-            for child in file.iterdir():
-                walk(relative + "/" + child.name)
-        else:
-            _path(str(file), relative)
-            paths.add(relative)
-    for name in policy["files"] + policy["trees"]:
-        walk(name)
-    return sorted(paths)
-
-
-def _verify_source_set(value):
+def _source_snapshot(path: Path, value: dict) -> dict:
+    """完整来源集合、内容与身份统一由同一受保护程序核验。"""
+    label = str(ROOT / POLICY)
+    request = json.dumps({"format_version": 1, "root": str(ROOT), "sources": value["sources"]},
+                         ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(request) > METADATA_LIMIT:
+        raise _error(label, "来源核验请求超过 4 MiB") from None
+    code, raw = _exchange(path, request, operation="verify-sources", response_limit=STDERR_LIMIT, timeout=None)
     try:
-        if _source_paths() != [item["path"] for item in value["sources"]]:
+        if type(code) is not int or len(raw) > STDERR_LIMIT:
             raise ValueError
-    except (OSError, ValueError, TypeError, KeyError):
-        raise _error(str(ROOT / POLICY), "完整来源文件集合漂移") from None
-
-
-def _unchanged(inputs: list) -> None:
-    for path, before in inputs:
-        if _snapshot(path) != before:
-            raise _error(str(path), "绑定或源码输入发生身份或内容漂移") from None
+        response = json_object(raw, label)
+        if code == 2:
+            exact(response, {"format_version", "kind", "category", "path"}, label)
+            categories = {"input", "request", "compiled_snapshot", "binding", "source_set",
+                          "path", "link", "read", "identity", "drift", "digest", "size", "platform"}
+            if (type(response["format_version"]) is not int or response["format_version"] != 1
+                or response["kind"] != "frontend-origin-source-error"
+                or response["category"] not in categories or not isinstance(response["path"], str)):
+                raise ValueError
+            reported = response["path"]
+            if os.name == "nt" and reported.startswith("\\\\?\\"):
+                reported = reported[4:]
+            if reported in {"verify-sources", POLICY}:
+                reported = label
+            elif (not Path(reported).is_absolute()
+                  or not Path(reported).is_relative_to(ROOT) and Path(reported) not in ROOT.parents):
+                raise ValueError
+            raise _error(reported, "来源核验失败（" + response["category"] + "），完整来源发生漂移") from None
+        exact(response, {"format_version", "kind", "source_count", "sha256"}, label)
+        if (type(code) is not int or code != 0
+            or type(response["format_version"]) is not int or response["format_version"] != 1
+            or response["kind"] != "frontend-origin-source-snapshot"
+            or type(response["source_count"]) is not int or response["source_count"] != len(value["sources"])
+            or not hex_value(response["sha256"], 64)):
+            raise ValueError
+        return response
+    except _ToolFailure:
+        raise
+    except (ValueError, TypeError, KeyError):
+        raise _error(label, "来源核验响应的固定 schema、状态或聚合 token 无效") from None
 
 
 def _binary(path: Path, expected: str) -> tuple:
@@ -205,43 +208,51 @@ def _verified_tool():
     binding = ROOT / BINDING
     observed = _snapshot(binding)
     value = _metadata(observed[1], str(binding))
-    inputs = [(binding, observed)]
-    for item in value["sources"]:
-        path = ROOT / item["path"]
-        source = _snapshot(path)
-        if source[2] != item["sha256"]:
-            raise _error(str(path), "源码 SHA-256 与编译来源不符，二进制已过时") from None
-        inputs.append((path, source))
-    _verify_source_set(value)
     executable = value["executable"]
     path, alias = _executable_paths(executable["path"], str(binding))
     before = _program_state(path, alias, executable["sha256"])
     protected = {"path": str(path), "sha256": executable["sha256"]}
     try:
         with protect_binary_invocation(protected):
+            sources, cancelled = None, False
             try:
-                _unchanged(inputs)
-                _verify_source_set(value)
+                sources = _source_snapshot(path, value)
+                current = _source_snapshot(path, value)
+                if _snapshot(binding) != observed or current != sources:
+                    raise _error(str(binding), "绑定或源码输入发生身份或内容漂移") from None
                 if _program_state(path, alias, executable["sha256"]) != before:
                     raise _error(str(path), "获取保护期间程序发生漂移") from None
                 yield path
+            except (KeyboardInterrupt, SystemExit):
+                # 取消只回收当前只读 probe；不得在收尾中再启动同一来源扫描。
+                cancelled = True
+                raise
             finally:
-                _unchanged(inputs)
-                _verify_source_set(value)
-                if _program_state(path, alias, executable["sha256"]) != before:
-                    raise _error(str(path), "调用期间程序发生身份或内容漂移") from None
+                try:
+                    current = _source_snapshot(path, value) if sources is not None and not cancelled else sources
+                    if current != sources:
+                        raise _error(str(binding), "源码输入发生身份或内容漂移") from None
+                finally:
+                    try:
+                        if _snapshot(binding) != observed:
+                            raise _error(str(binding), "绑定发生身份或内容漂移") from None
+                    finally:
+                        if _program_state(path, alias, executable["sha256"]) != before:
+                            raise _error(str(path), "调用期间程序发生身份或内容漂移") from None
     except _ToolFailure:
         raise
     except (OSError, ValueError):
         raise _error(str(path), "普通 PE 程序保护或收尾身份复核失败") from None
 
 
-def _exchange(path: Path, request: bytes) -> tuple[int, bytes]:
-    """并发排空有界管道；stdin 写入也受进程总超时控制。"""
+def _exchange(path: Path, request: bytes, *, operation="check", response_limit=None,
+              timeout=TIMEOUT) -> tuple[int, bytes]:
+    """复用有界管道与取消回收；URL 有总超时，完整来源核验可显式不设总期限。"""
     output, failed, oversized = bytearray(), threading.Event(), threading.Event()
+    response_limit = RESPONSE_LIMIT if response_limit is None else response_limit
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     with subprocess.Popen(
-        [str(path), "__frontend-origin", "check"],
+        [str(path), "__frontend-origin", operation],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -272,7 +283,7 @@ def _exchange(path: Path, request: bytes) -> tuple[int, bytes]:
         threads = [
             threading.Thread(target=send, daemon=True),
             threading.Thread(
-                target=receive, args=(process.stdout,), kwargs={"retain": True, "limit": RESPONSE_LIMIT}, daemon=True
+                target=receive, args=(process.stdout,), kwargs={"retain": True, "limit": response_limit}, daemon=True
             ),
             threading.Thread(
                 target=receive, args=(process.stderr,), kwargs={"retain": False, "limit": STDERR_LIMIT}, daemon=True
@@ -282,7 +293,7 @@ def _exchange(path: Path, request: bytes) -> tuple[int, bytes]:
             for thread in threads:
                 thread.start()
             try:
-                code = process.wait(timeout=TIMEOUT)
+                code = process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 raise _error(str(path), "调用超时，已终止工具") from None
         finally:

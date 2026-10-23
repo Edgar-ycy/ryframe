@@ -282,6 +282,79 @@ fn describe_binds_real_executable_and_all_compiled_source_bytes() {
 }
 
 #[test]
+fn verify_sources_uses_compiled_root_and_snapshot_without_writing_checkout() {
+    let fixture = Fixture::new();
+    let description = fixture.invoke(&["__frontend-origin", "describe"], &[], 0);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let request = json!({"format_version":1,"root":root,"sources":description["sources"]});
+    let raw = serde_json::to_vec(&request).unwrap();
+    let first = fixture.invoke(&["__frontend-origin", "verify-sources"], &raw, 0);
+    assert_eq!(first.as_object().unwrap().len(), 4);
+    assert_eq!(first["kind"], "frontend-origin-source-snapshot");
+    assert_eq!(
+        first["source_count"],
+        description["sources"].as_array().unwrap().len()
+    );
+    assert_eq!(first["sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(
+        first,
+        fixture.invoke(&["__frontend-origin", "verify-sources"], &raw, 0)
+    );
+    let mut wrong_root = request.clone();
+    // 同名同字节 fixture 也不得冒充编译根；不修改正在验证的真实 checkout。
+    for source in description["sources"].as_array().unwrap() {
+        let relative = source["path"].as_str().unwrap();
+        let destination = fixture.0.path().join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::copy(root.join(relative), destination).unwrap();
+    }
+    wrong_root["root"] = json!(fixture.0.path());
+    let error = fixture.invoke(
+        &["__frontend-origin", "verify-sources"],
+        &serde_json::to_vec(&wrong_root).unwrap(),
+        2,
+    );
+    assert_eq!(error["category"], "binding");
+}
+
+#[test]
+fn verify_sources_rejects_strict_protocol_errors_at_metadata_boundary() {
+    let fixture = Fixture::new();
+    let description = fixture.invoke(&["__frontend-origin", "describe"], &[], 0);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let request = json!({"format_version":1,"root":root,"sources":description["sources"]});
+    let raw = serde_json::to_string(&request).unwrap();
+    for bytes in [
+        raw.replacen('{', "{\"format_version\":1,", 1).into_bytes(),
+        raw.replace("\"format_version\":1", "\"format_version\":true")
+            .into_bytes(),
+        raw.replace("\"root\"", "\"unknown\"").into_bytes(),
+        vec![b' '; 4 * 1024 * 1024 + 1],
+        b"[]".to_vec(),
+        vec![0xff],
+    ] {
+        let value = fixture.invoke(&["__frontend-origin", "verify-sources"], &bytes, 2);
+        assert_eq!(value["kind"], "frontend-origin-source-error");
+        assert_eq!(value["category"], "request");
+        assert!(!value.to_string().contains(SENTINEL));
+    }
+}
+
+#[test]
+fn verify_sources_closed_stdout_exits_nonzero_without_retry() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["__frontend-origin", "verify-sources"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    child.stdin.take().unwrap().write_all(b"{}").unwrap();
+    assert_eq!(child.wait().unwrap().code(), Some(2));
+}
+
+#[test]
 fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watches() {
     let package = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read(package.join("build.rs")).unwrap();

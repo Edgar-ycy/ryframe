@@ -11,9 +11,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
+mod source_guard;
+
 const INPUT_LIMIT: usize = 64 * 1024 * 1024;
 const INVALID_ARGUMENTS: &str =
-    "参数无效：仅接受 __frontend-origin check 或 __frontend-origin describe，请移除额外参数。";
+    "参数无效：仅接受 __frontend-origin check、describe 或 verify-sources，请移除额外参数。";
 const INVALID_REQUEST: &str = "请求格式无效：请通过标准输入提供唯一的 JSON 对象，仅包含 format_version、value 和 allow_empty，核对字段类型并移除重复或未知字段。";
 const INVALID_VERSION: &str = "请求版本无效：请使用 format_version 为整数 1 的请求。";
 const INPUT_TOO_LARGE: &str = "请求过大：标准输入不得超过 64 MiB，请缩小请求后重试。";
@@ -47,6 +49,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     } else {
         match operation.as_deref().and_then(std::ffi::OsStr::to_str) {
             Some("check") => run_check(),
+            Some("verify-sources") => source_guard::run(),
             Some("describe") => match describe() {
                 Ok(value) => (value, 0),
                 Err(reason) => {
@@ -214,8 +217,11 @@ fn failure(error: &'static str) -> Value {
 }
 
 fn emit(value: &Value) -> std::io::Result<()> {
+    emit_to(&mut std::io::stdout().lock(), value)
+}
+
+fn emit_to(output: &mut impl Write, value: &Value) -> std::io::Result<()> {
     let encoded = serde_json::to_vec(value)?;
-    let mut output = std::io::stdout().lock();
     output.write_all(&encoded)?;
     output.write_all(b"\n")?;
     output.flush()
