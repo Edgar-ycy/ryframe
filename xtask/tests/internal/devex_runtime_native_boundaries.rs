@@ -140,7 +140,7 @@ fn task_client_uses_managed_plaintext_options_without_password_argv_or_environme
         .get_args()
         .map(|value| value.to_string_lossy())
         .collect::<Vec<_>>();
-    assert!(arguments[0].starts_with("--defaults-file="));
+    assert!(arguments[0].starts_with("--defaults-extra-file="));
     assert!(arguments.iter().all(|value| !value.contains("file-secret")));
     assert!(command.get_envs().all(|(_, value)| {
         value.is_none_or(|value| !value.to_string_lossy().contains("file-secret"))

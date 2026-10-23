@@ -1,20 +1,15 @@
 //! 只读任务观察的文件凭据连接，复用原有 SQL/终态模型。
-use super::{artifacts, process::Cancellation};
+use super::process::Cancellation;
 use crate::devex::job_evidence::{
     mysql::{
         invocation,
         io::{self, Line, Response},
+        options::OptionFile,
     },
     protocol::{EvidenceResult, Session},
 };
 use serde_json::Value;
-use std::{
-    collections::BTreeMap,
-    ffi::OsString,
-    io::Write,
-    process::{Command, Stdio},
-    time::Duration,
-};
+use std::{process::Command, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub(crate) struct Mysql {
@@ -22,7 +17,7 @@ pub(crate) struct Mysql {
     child: tokio::process::Child,
     input: Option<tokio::process::ChildStdin>,
     output: BufReader<tokio::process::ChildStdout>,
-    _options: tempfile::NamedTempFile,
+    _options: CredentialFile,
     cancel: Cancellation,
     timeout: Duration,
     failed: bool,
@@ -31,6 +26,25 @@ pub(crate) struct Mysql {
     #[cfg(unix)]
     group: u32,
 }
+
+enum CredentialFile {
+    Managed(OptionFile),
+    Temporary(tempfile::NamedTempFile),
+}
+
+impl CredentialFile {
+    fn verify(&self) -> EvidenceResult<()> {
+        match self {
+            Self::Managed(options) => options.verify(),
+            Self::Temporary(options) => options
+                .as_file()
+                .metadata()
+                .map(|_| ())
+                .map_err(|_| "mysql-options"),
+        }
+    }
+}
+
 impl Mysql {
     pub(crate) fn open(
         binding: &Value,
@@ -38,7 +52,13 @@ impl Mysql {
         timeout: Duration,
     ) -> EvidenceResult<Self> {
         let (command, options) = command(binding)?;
-        Self::open_command(command, options, &[], cancel, timeout)
+        Self::open_with_credential(
+            command,
+            CredentialFile::Managed(options),
+            &[],
+            cancel,
+            timeout,
+        )
     }
 
     pub(crate) fn open_command(
@@ -48,6 +68,23 @@ impl Mysql {
         cancel: Cancellation,
         timeout: Duration,
     ) -> EvidenceResult<Self> {
+        Self::open_with_credential(
+            command,
+            CredentialFile::Temporary(options),
+            prefix,
+            cancel,
+            timeout,
+        )
+    }
+
+    fn open_with_credential(
+        command: Command,
+        options: CredentialFile,
+        prefix: &[u8],
+        cancel: Cancellation,
+        timeout: Duration,
+    ) -> EvidenceResult<Self> {
+        options.verify()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -198,68 +235,10 @@ impl Drop for Mysql {
     }
 }
 
-pub(crate) fn command(binding: &Value) -> EvidenceResult<(Command, tempfile::NamedTempFile)> {
-    let fields = binding["control"]
-        .as_object()
-        .ok_or("invalid_control_binding")?;
-    if fields.len() != 6 || !fields.contains_key("password") || fields.contains_key("password_env")
-    {
-        return Err("invalid_control_binding");
-    }
-    let password = fields["password"]
-        .as_str()
-        .filter(|value| !value.contains('\0'))
-        .ok_or("invalid_control_binding")?;
-    let mut projected = binding.clone();
-    projected["control"]
-        .as_object_mut()
-        .ok_or("invalid_control_binding")?
-        .remove("password");
-    projected["control"]["password_env"] = Value::String("BOUND_FILE_PASSWORD".into());
-    // 仅复用现有客户端路径、二进制与连接字段校验；不执行含环境凭据的命令。
-    let validation = invocation::command(
-        &projected,
-        &BTreeMap::from([(
-            OsString::from("BOUND_FILE_PASSWORD"),
-            OsString::from("validation-only"),
-        )]),
-    )?;
-    let root = crate::workspace::root_dir().join(".local-tests/devex/mysql-options");
-    artifacts::directory(&root).map_err(|_| "mysql-options")?;
-    let mut options = tempfile::NamedTempFile::new_in(root).map_err(|_| "mysql-options")?;
-    let escaped = password
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    write!(options, "[client]\npassword=\"{escaped}\"\n")
-        .and_then(|()| options.as_file().sync_all())
-        .map_err(|_| "mysql-options")?;
-    let mut command = Command::new(validation.get_program());
-    command.arg(format!("--defaults-file={}", options.path().display()));
-    command.args(validation.get_args().skip(1));
-    for (name, _) in std::env::vars_os() {
-        let key = name.to_string_lossy().to_ascii_uppercase();
-        if super::entry::private_environment(&key)
-            || matches!(
-                key.as_str(),
-                "MYSQL_PWD" | "MYSQL_TEST_LOGIN_FILE" | "MYSQL_HOME"
-            )
-        {
-            command.env_remove(name);
-        }
-    }
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    Ok((command, options))
+pub(crate) fn command(binding: &Value) -> EvidenceResult<(Command, OptionFile)> {
+    let environment = std::env::vars_os().collect();
+    let invocation = invocation::command(binding, &environment)?;
+    Ok((invocation.command, invocation.options))
 }
 
 async fn line(
