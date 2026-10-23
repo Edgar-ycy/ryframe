@@ -263,10 +263,14 @@ fn side<'a>(
     scope_identifier(scope)?;
     let s3 = exact(
         side.get("s3").unwrap(),
-        &["endpoint", "region", "access_key", "secret_key"],
+        &["endpoint", "region", "configuration"],
         "对象存储定义",
     )?;
     endpoint(s3.get("endpoint").unwrap(), "对象存储端点", None)?;
+    crate::recovery::clone::native::s3::Configuration::read_app_binding(
+        backend,
+        side.get("s3").unwrap(),
+    )?;
     endpoint(side.get("api_url").unwrap(), "API 端点", None)?;
     if name == "target" {
         endpoint(side.get("worker_ready_url").unwrap(), "Worker 端点", None)?;
@@ -286,12 +290,6 @@ fn side<'a>(
     )?;
     if !Regex::new(r"^[a-z0-9-]+$")?.is_match(text(s3.get("region").unwrap(), "S3 region")?) {
         return Err("S3 region 无效".into());
-    }
-    for field in ["access_key", "secret_key"] {
-        let credential = text(s3.get(field).unwrap(), "对象存储凭据")?;
-        if credential.is_empty() || credential.chars().any(char::is_control) {
-            return Err("对象存储凭据必须在绑定文件中直接提供且不能为空".into());
-        }
     }
     let databases = databases(side.get("databases").unwrap(), backend)?;
     Ok(SideIdentity {
@@ -372,7 +370,7 @@ fn databases<'a>(value: &'a Value, backend: &Path) -> Result<Databases<'a>> {
 }
 
 fn validate_tools(value: &Value) -> Result<()> {
-    let tools = exact(value, &["mysql", "mysqldump", "node"], "参考工具")?;
+    let tools = exact(value, &["mysql", "mysqldump"], "参考工具")?;
     for tool in tools.values() {
         let tool = exact(tool, &["path", "sha256"], "参考工具")?;
         let path = PathBuf::from(text(tool.get("path").unwrap(), "工具路径")?);

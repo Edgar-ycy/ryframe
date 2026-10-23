@@ -137,7 +137,9 @@ class CloneObjectTests(unittest.TestCase):
         self.assertIn("__s3-put-if-absent", command)
         self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
         private = json.loads(kwargs["input"].decode("utf-8"))
-        self.assertEqual(private["configuration"], self.plan["target"]["s3"])
+        self.assertEqual(
+            private["configuration_binding"], self.plan["target"]["s3"]["configuration"]
+        )
         self.assertNotIn("access-fixture", command)
         self.assertNotIn("secret-fixture", command)
         self.assertEqual(self.store.objects["uploads", "target/system/file.txt"], (b"fixture-data", copy_object_metadata(metadata())))

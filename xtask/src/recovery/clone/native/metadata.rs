@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, SecondsFormat};
+use chrono::{DateTime, SecondsFormat, Utc};
 use regex::Regex;
 use serde_json::{Map, Value};
 
@@ -79,7 +79,11 @@ pub(crate) fn copy(value: &Value) -> Result<Value> {
             .map_err(|_| "复制对象 Expires 必须是带时区且精确到秒的 RFC3339")?;
         result.insert(
             "Expires".into(),
-            Value::String(instant.to_rfc3339_opts(SecondsFormat::Secs, false)),
+            Value::String(
+                instant
+                    .with_timezone(&Utc)
+                    .to_rfc3339_opts(SecondsFormat::Secs, false),
+            ),
         );
     }
     let custom = object

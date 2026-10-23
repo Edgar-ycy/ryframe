@@ -46,6 +46,62 @@ fn malformed_secret_bearing_requests_have_sanitized_failure_and_no_retry_permiss
     assert!(!invoke(b"{}", &["--unexpected"]).status.success());
 }
 
+#[test]
+fn reference_operations_are_strict_read_only_or_explicit_local_writes() {
+    let hash = invoke(
+        &serde_json::to_vec(&json!({
+            "operation":"reference-plan-hash","write":false,
+            "arguments":{"value":{"中文":"值","a":1}}
+        }))
+        .unwrap(),
+        &[],
+    );
+    assert!(hash.status.success());
+    let response: Value = serde_json::from_slice(&hash.stdout).unwrap();
+    let expected = hex::encode(Sha256::digest(
+        serde_json::to_vec(&json!({"中文": "值", "a": 1})).expect("规范 JSON 应可序列化"),
+    ));
+    assert_eq!(response["result"]["value"], expected);
+
+    let directory = tempfile::tempdir().unwrap();
+    let raw = directory.path().join("raw.sql");
+    let output = directory.path().join("normalized.sql");
+    fs::write(
+        &raw,
+        "/*!40101 SET @OLD=1 */;\nINSERT INTO `sys_post` (`id`) VALUES (1);\n",
+    )
+    .unwrap();
+    let request = json!({
+        "operation":"reference-sql-normalize","write":true,
+        "arguments":{"raw":raw,"output":output,"tables":["sys_post"]}
+    });
+    let normalized = invoke(&serde_json::to_vec(&request).unwrap(), &[]);
+    assert!(normalized.status.success());
+    assert_eq!(
+        fs::read_to_string(&output).unwrap(),
+        "-- ryframe-reference-data-v1\nINSERT INTO `sys_post` (`id`) VALUES (1);\n"
+    );
+    let mut wrong_write = request;
+    wrong_write["write"] = Value::Bool(false);
+    assert!(
+        !invoke(&serde_json::to_vec(&wrong_write).unwrap(), &[])
+            .status
+            .success()
+    );
+    assert!(
+        !invoke(
+            &serde_json::to_vec(&json!({
+                "operation":"reference-plan-hash","write":false,
+                "arguments":{"value":{},"unknown":true}
+            }))
+            .unwrap(),
+            &[],
+        )
+        .status
+        .success()
+    );
+}
+
 fn git(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")

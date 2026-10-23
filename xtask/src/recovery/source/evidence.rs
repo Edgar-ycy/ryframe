@@ -18,6 +18,8 @@ mod lineage;
 mod model;
 #[path = "runtime/ready.rs"]
 mod ready;
+#[path = "evidence/reference.rs"]
+mod reference;
 #[path = "evidence/staging.rs"]
 mod staging;
 #[cfg(test)]
@@ -79,7 +81,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     } else {
         matches!(
             request["operation"].as_str(),
-            Some("staging-create" | "database-configuration")
+            Some("staging-create" | "database-configuration" | "reference-sql-normalize")
         )
     };
     if request["write"].as_bool() != Some(writes) {
@@ -108,6 +110,9 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("runtime-cache-resume") => cache::resume(args),
         Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
         Some("runtime-generation") => crate::recovery::runtime::generation::request(args),
+        Some(operation) if operation.starts_with("reference-") => {
+            reference::request(operation, args)
+        }
         _ => Err("来源证据操作无效".into()),
     }
 }

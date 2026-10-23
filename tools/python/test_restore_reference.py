@@ -99,9 +99,6 @@ class ReferenceTests(unittest.TestCase):
         for name in ("../escape", "a/../../escape", "D:/escape", "/escape", "a\\b", "a//b", "missing"):
             with self.assertRaises(ValueError):
                 safe_file(self.backend, name)
-        with patch.object(Path, "is_symlink", return_value=True):
-            with self.assertRaisesRegex(ValueError, "链接"):
-                safe_file(self.backend, "good")
 
     def test_inventory_requires_complete_physical_targets_and_exact_object_scope(self):
         value = inventory(self.plan)

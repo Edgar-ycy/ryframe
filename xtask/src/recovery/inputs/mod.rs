@@ -12,7 +12,7 @@ mod comparison;
 pub(crate) mod document;
 pub(in crate::recovery) mod domain;
 mod fresh;
-mod inventory;
+pub(in crate::recovery) mod inventory;
 pub(crate) mod product;
 pub(crate) mod publish;
 pub(crate) mod reference;

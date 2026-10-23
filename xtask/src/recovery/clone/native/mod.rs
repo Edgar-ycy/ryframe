@@ -19,7 +19,7 @@ pub(crate) mod input;
 pub(crate) mod json;
 pub(crate) mod lifecycle;
 pub(crate) mod maintenance;
-mod metadata;
+pub(crate) mod metadata;
 mod physical;
 mod plan;
 pub(crate) mod resources;

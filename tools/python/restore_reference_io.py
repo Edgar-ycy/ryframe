@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import configparser
-import datetime as dt
 import hashlib
 import json
 import os
@@ -23,46 +22,11 @@ from restore_reference_plan import BUCKETS, identifier, safe_file
 DATA_HEADER = "-- ryframe-reference-data-v1\n"
 COPY_METADATA_FIELDS = {"ContentType", "CacheControl", "ContentDisposition", "ContentEncoding",
                         "ContentLanguage", "Expires", "WebsiteRedirectLocation", "Metadata"}
-HEADER_TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
-MIME_PARAMETER = rf"; *({HEADER_TOKEN})=(?:{HEADER_TOKEN}|\"(?:[ !#-\[\]-~]|\\[ -~])*\")"
-MIME_TYPE = re.compile(rf"({HEADER_TOKEN})/({HEADER_TOKEN})(?:{MIME_PARAMETER})*")
-
-
 def copy_object_metadata(value: dict) -> dict:
-    """显式保留业务响应头和自定义元数据；缺失与空值不能混为默认值。"""
-    if not isinstance(value, dict) or set(value) != COPY_METADATA_FIELDS:
-        raise ValueError("复制对象必须完整声明 ContentType、业务响应头和 Metadata")
-    result = dict(value)
-    for field in COPY_METADATA_FIELDS - {"Metadata"}:
-        text = value[field]
-        if text is None and field != "ContentType":
-            continue
-        if (not isinstance(text, str) or not text or text.strip() != text
-                or any(ord(char) < 32 or ord(char) > 126 for char in text)):
-            raise ValueError("复制对象响应头必须是明确的可打印 ASCII 值，禁止控制字符")
-    match = MIME_TYPE.fullmatch(value["ContentType"])
-    if not match or "*" in match[1] or "*" in match[2]:
-        raise ValueError("复制对象 ContentType 必须是完整媒体类型")
-    parameters = [match[1].lower() for match in re.finditer(MIME_PARAMETER, value["ContentType"])]
-    if len(parameters) != len(set(parameters)):
-        raise ValueError("复制对象 ContentType 参数重复，不能猜测其含义")
-    if value["Expires"] is not None:
-        text = value["Expires"]
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", text):
-            raise ValueError("复制对象 Expires 必须是带时区且精确到秒的 RFC3339")
-        instant = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
-        result["Expires"] = instant.astimezone(dt.timezone.utc).isoformat()
-    custom = value["Metadata"]
-    if not isinstance(custom, dict):
-        raise ValueError("复制对象 Metadata 必须显式为空字典或完整键值字典")
-    for key, text in custom.items():
-        if (not isinstance(key, str) or not re.fullmatch(HEADER_TOKEN, key) or key != key.lower()
-                or not isinstance(text, str) or any(ord(char) < 32 or ord(char) > 126 for char in text)):
-            raise ValueError("复制对象 Metadata 必须使用唯一小写头名称和可打印 ASCII 值")
-    if sum(len(key) + len(text) for key, text in custom.items()) > 2048:
-        raise ValueError("复制对象自定义 Metadata 超过 2 KiB")
-    result["Metadata"] = dict(sorted(custom.items()))
-    return result
+    return native_response(*native_invoke(
+        "__source-evidence", {"operation": "reference-copy-metadata", "write": False,
+            "arguments": {"metadata": value}}, subprocess.run, may_write=False,
+    ))[0]["value"]
 
 
 class ObjectCreateError(RuntimeError):
@@ -405,7 +369,7 @@ class ExternalTools:
             self.before_execute()
         response, _ = native_s3_read({
             "format_version": 1, "kind": "ryframe-native-s3-read", "scope_id": scope,
-            **{("configuration_binding" if "configuration" in self.plan[side]["s3"] else "configuration"): self.plan[side]["s3"]}, "bucket": bucket,
+            "configuration_binding": self.plan[side]["s3"]["configuration"], "bucket": bucket,
             "operation": "get-object", "key": key, "if_match": None, "version": None,
             "destination": str(destination), "max_bytes": max_bytes,
         }, self.run)
@@ -455,7 +419,8 @@ class ExternalTools:
                     self.before_execute()
                 response, invocation = native_put_if_absent({
                     "format_version": 1, "kind": "ryframe-native-s3-put-if-absent",
-                    "scope_id": scope, **{("configuration_binding" if "configuration" in config else "configuration"): config}, "bucket": bucket, "key": key,
+                    "scope_id": scope, "configuration_binding": config["configuration"],
+                    "bucket": bucket, "key": key,
                     "source": str(source), "expected": expected, "metadata": metadata,
                 }, self.run)
                 outcome = response["status"]
@@ -510,57 +475,32 @@ class ExternalTools:
 
 
 def validate_insert(line: str, tables: set[str]) -> None:
-    match = re.match(r"INSERT INTO `([a-z0-9_-]+)` \((?:`[a-z0-9_]+`(?:, )?)+\) VALUES \(", line)
-    if not match or match[1] not in tables or not line.endswith(");"):
-        raise ValueError("备份 SQL 只能向清单中的表插入显式列和值")
-    quoted, escaped = False, False
-    plain = []
-    for character in line[match.end():-2]:
-        if quoted:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == "'":
-                quoted = False
-        elif character == "'":
-            quoted = True
-        else:
-            plain.append(character)
-    if quoted or re.sub(r"(?:NULL|_binary|0x[0-9A-Fa-f]*|[0-9eE+.,\s-])+", "", "".join(plain)):
-        raise ValueError("备份 SQL 包含表达式、多语句或无效字符串")
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "reference-sql-line", "write": False,
+            "arguments": {"line": line, "tables": sorted(tables)}},
+        subprocess.run, may_write=False,
+    ))
 
 
 def normalize_dump(raw: Path, output: Path, tables: set[str]) -> None:
-    with raw.open(encoding="utf-8") as source, output.open("x", encoding="utf-8", newline="\n") as target:
-        target.write(DATA_HEADER)
-        for line in source:
-            line = line.rstrip("\r\n")
-            if not line or re.fullmatch(r"/\*!\d+ SET .* \*/;", line):
-                continue
-            validate_insert(line, tables)
-            target.write(line + "\n")
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "reference-sql-normalize", "write": True,
+            "arguments": {"raw": str(raw), "output": str(output), "tables": sorted(tables)}},
+        subprocess.run, may_write=False,
+    ))
 
 
 def validate_dump(path: Path, tables: set[str]) -> None:
-    with path.open(encoding="utf-8") as source:
-        if source.readline() != DATA_HEADER:
-            raise ValueError("SQL 产物不是已验证的参考数据转储")
-        for line in source:
-            validate_insert(line.rstrip("\r\n"), tables)
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "reference-sql-dump", "write": False,
+            "arguments": {"path": str(path), "tables": sorted(tables)}},
+        subprocess.run, may_write=False,
+    ))
 
 
 def object_index(root: Path, objects: dict, artifacts: list[dict]) -> dict:
-    name = f"objects/{objects['bucket']}/index.json"
-    index = json.loads(safe_file(root, name).read_text(encoding="utf-8"))
-    expected = {entry["key"]: entry for entry in objects["entries"]}
-    if len(index["entries"]) != len(expected) or {entry["key"] for entry in index["entries"]} != set(expected):
-        raise ValueError("对象产物索引没有完整对应备份清单")
-    declared = {artifact["relative_path"]: artifact for artifact in artifacts}
-    for entry in index["entries"]:
-        if (entry["file"] not in declared or declared[entry["file"]]["resource"] != f"objects:{objects['bucket']}"
-                or any(entry[key] != expected[entry["key"]][key] for key in ("bytes", "sha256"))):
-            raise ValueError("对象产物索引与原对象或文件摘要不一致")
-        if any(file_digest(safe_file(root, entry["file"]))[key] != entry[key] for key in ("bytes", "sha256")):
-            raise ValueError("对象数据文件被篡改")
-    return index
+    return native_response(*native_invoke(
+        "__source-evidence", {"operation": "reference-object-index", "write": False,
+            "arguments": {"root": str(root), "objects": objects, "artifacts": artifacts}},
+        subprocess.run, may_write=False,
+    ))[0]["value"]
