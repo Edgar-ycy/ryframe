@@ -193,3 +193,86 @@ fn cancelled_generation_protocol_without_eof_creates_no_evidence_or_success_rece
     assert!(!fixture.run.join("intent.json").exists());
     assert!(!fixture.run.join("results/0002.json").exists());
 }
+
+#[test]
+fn generation_process_preserves_frozen_evidence_for_every_drift_class() {
+    let fixture = Fixture::new();
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let before = json!({"rows":["original"],"storage":{"rustfs":{"generation":1},
+        "redis":{"configuration":{"sha256":"fixed"},"pid":1,"started":"old","run_id":"old"}}});
+    let mut segment = json!({"storage":{"storage":{"generation":2}},
+        "cache":{"redis":before["storage"]["redis"]},"replay":null});
+    segment["cache"]["redis"]["pid"] = 2.into();
+    let mut resumed = before.clone();
+    resumed["storage"] = json!({"rustfs":segment["storage"]["storage"],
+        "redis":segment["cache"]["redis"]});
+    let mut changed = before.clone();
+    changed["rows"] = json!(["unknown-write"]);
+    let mut replay = segment.clone();
+    replay["replay"] = json!({"image":changed});
+    let mut cache = segment.clone();
+    cache["cache"]["redis"]["configuration"]["sha256"] = "different".into();
+    for (after, segment, reason) in [
+        (changed, Value::Null, "baseline_drift"),
+        (resumed.clone(), replay, "replay_image_drift"),
+        (resumed, cache, "redis_generation_changed"),
+    ] {
+        fixture.write(
+            "parameters.json",
+            &json!({"operation":"archived-image",
+            "arguments":{"before":before,"after":after,"segment":segment}}),
+        );
+        let frozen = ["state.json", "parameters.json", "results/0001.json"]
+            .map(|name| (name, fs::read(fixture.run.join(name)).unwrap()));
+        let output = invoke(
+            &fixture.request(
+                "generation-guard",
+                json!({
+            "backend_root":backend,"parameters":fixture.binding("parameters.json")}),
+            ),
+            &[],
+        );
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            response,
+            json!({"ok":true,"result":{"verified":false,"reason":reason,
+            "remote_writes":0,"automatic_retry_permitted":false}})
+        );
+        for (name, bytes) in frozen {
+            assert_eq!(bytes, fs::read(fixture.run.join(name)).unwrap());
+        }
+        assert!(!fixture.run.join("intent.json").exists());
+        assert!(!fixture.run.join("results/0002.json").exists());
+        assert!(!fixture.run.join("run.lock").exists());
+    }
+}
+
+#[test]
+fn generation_process_rejects_invalid_lineage_receipt_without_leaking_or_rewriting_it() {
+    let fixture = Fixture::new();
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    fixture.write("lineage.json", &json!({"password":"secret-credential"}));
+    fixture.write(
+        "parameters.json",
+        &json!({"operation":"lineage-receipt",
+        "arguments":{"receipt":fixture.binding("lineage.json")}}),
+    );
+    let frozen = ["state.json", "lineage.json", "parameters.json"]
+        .map(|name| (name, fs::read(fixture.run.join(name)).unwrap()));
+    rejected(&invoke(
+        &fixture.request(
+            "generation-guard",
+            json!({
+        "backend_root":backend,"parameters":fixture.binding("parameters.json")}),
+        ),
+        &[],
+    ));
+    for (name, bytes) in frozen {
+        assert_eq!(bytes, fs::read(fixture.run.join(name)).unwrap());
+    }
+    assert!(!fixture.run.join("intent.json").exists());
+    assert!(!fixture.run.join("results/0002.json").exists());
+    assert!(!fixture.run.join("run.lock").exists());
+}
