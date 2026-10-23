@@ -397,9 +397,10 @@ fn execute_step(
         GateStep::FullIntegration => {
             super::execute_ci_command(&crate::cli::CiCommand::Integration, frontend_dir)?
         }
-        GateStep::FullConsumerContract => {
-            super::execute_ci_command(&crate::cli::CiCommand::ConsumerContract, frontend_dir)?
-        }
+        GateStep::FullConsumerContract => super::execute_ci_command(
+            &crate::cli::CiCommand::ConsumerContract(nested_consumer_contract_options()),
+            frontend_dir,
+        )?,
         GateStep::ResourceDrift => {
             run_owned(
                 root,
@@ -429,11 +430,21 @@ fn execute_step(
         GateStep::MigrationContract => {
             run_migration_contract(root, base)?;
         }
-        GateStep::OpenApiAndFrontendConsumer => {
-            super::execute_ci_command(&crate::cli::CiCommand::ConsumerContract, frontend_dir)?
-        }
+        GateStep::OpenApiAndFrontendConsumer => super::execute_ci_command(
+            &crate::cli::CiCommand::ConsumerContract(nested_consumer_contract_options()),
+            frontend_dir,
+        )?,
     }
     Ok(())
+}
+
+fn nested_consumer_contract_options() -> crate::cli::ConsumerContractOptions {
+    crate::cli::ConsumerContractOptions {
+        frontend_ref: env::var("RYFRAME_CI_FRONTEND_REF")
+            .ok()
+            .filter(|value| !value.trim().is_empty()),
+        ..Default::default()
+    }
 }
 
 fn run_migration_contract(root: &Path, base: Option<&str>) -> Result<()> {

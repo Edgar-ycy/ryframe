@@ -8,8 +8,7 @@ use super::{
     },
     ci::{
         CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for,
-        ci_selection_for_paths, integration_test_args_for_target, parse_changed_paths,
-        plan_outputs,
+        ci_selection_for_paths, integration_test_args_for_target, plan_outputs,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
         resource_gate_required_for_ci_range, verify_frontend_checkout_ref, windows_check_args,
         windows_process_test_args,
@@ -226,7 +225,7 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
         ),
         (CiCommand::Integration, &[TaskExecutor::CiIntegration][..]),
         (
-            CiCommand::ConsumerContract,
+            CiCommand::ConsumerContract(Default::default()),
             &[
                 TaskExecutor::CiFrontendCheckout,
                 TaskExecutor::CiContractSource,
@@ -333,14 +332,6 @@ fn invalid_pull_request_range_schedules_command_level_full_fallback() {
         "workflow_dispatch",
         false
     ));
-}
-
-#[test]
-fn changed_paths_are_normalized_deduplicated_and_sorted() {
-    assert_eq!(
-        parse_changed_paths("crates\\db\\src.rs\nREADME.md\r\ncrates/db/src.rs\n"),
-        ["README.md", "crates/db/src.rs"]
-    );
 }
 
 #[test]

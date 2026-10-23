@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 use serde::Deserialize;
 
 use super::super::model::{
-    CiCommand, CliError, DeploymentOptions, DeploymentPhase, RequiredAction, RequiredEvent,
-    RequiredJobResult, RequiredNeed, RequiredOptions, ResourceGateReplayOptions, SecurityCommand,
-    SecurityReportKind, SecurityReportOptions,
+    CiCommand, CliError, ConsumerContractOptions, DeploymentOptions, DeploymentPhase,
+    RequiredAction, RequiredEvent, RequiredJobResult, RequiredNeed, RequiredOptions,
+    ResourceGateReplayOptions, SecurityCommand, SecurityReportKind, SecurityReportOptions,
 };
 
 #[path = "ci/frontend_source.rs"]
@@ -26,7 +26,9 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
             parse_base_sha(rest).map(CiCommand::ResourceGate)
         }
         [command] if command == "integration" => Ok(CiCommand::Integration),
-        [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
+        [command, rest @ ..] if command == "consumer-contract" => {
+            parse_consumer_contract(rest).map(CiCommand::ConsumerContract)
+        }
         [command, rest @ ..] if command == "frontend-source" => {
             parse_frontend_source(rest).map(CiCommand::FrontendSource)
         }
@@ -49,9 +51,75 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
                 .map(CiCommand::Security)
         }
         _ => Err(CliError::new(
-            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|frontend-source|required|security>；前端来源使用 frontend-source --event-name <事件> [--event <绝对文件>] [--base-sha <SHA>] [--prefer-marker] [--candidate-openapi <绝对文件>] [--release-ref <ref>] [--fallback-main-on-invalid-base]；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放由 Rust 执行：resource-gate replay --manifest <文件> --work-dir <.local-tests/resource-gate-replay 内目录> --report <同一目录内新文件> [--activation-gate]",
+            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|frontend-source|required|security>；正式消费契约使用 consumer-contract [--frontend-ref <SHA>] [--backend-head <SHA> --backend-repository <owner/repo> --candidate-openapi <绝对文件>]；前端来源使用 frontend-source --event-name <事件> [--event <绝对文件>] [--base-sha <SHA>] [--prefer-marker] [--candidate-openapi <绝对文件>] [--release-ref <ref>] [--fallback-main-on-invalid-base]；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放由 Rust 执行：resource-gate replay --manifest <文件> --work-dir <.local-tests/resource-gate-replay 内目录> --report <同一目录内新文件> [--activation-gate]",
         )),
     }
+}
+
+fn parse_consumer_contract(args: &[String]) -> Result<ConsumerContractOptions, CliError> {
+    let mut options = ConsumerContractOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        let (slot, name) = match args[index].as_str() {
+            "--frontend-ref" => (&mut options.frontend_ref, "--frontend-ref"),
+            "--backend-head" => (&mut options.backend_head, "--backend-head"),
+            "--backend-repository" => (&mut options.backend_repository, "--backend-repository"),
+            "--candidate-openapi" => {
+                let value = required_argument(args.get(index + 1), "--candidate-openapi")?;
+                if options
+                    .candidate_openapi
+                    .replace(PathBuf::from(value))
+                    .is_some()
+                {
+                    return Err(CliError::new("--candidate-openapi 不能重复"));
+                }
+                index += 2;
+                continue;
+            }
+            unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
+        };
+        let value = required_argument(args.get(index + 1), name)?;
+        if slot.replace(value.to_owned()).is_some() {
+            return Err(CliError::new(format!("{name} 不能重复")));
+        }
+        index += 2;
+    }
+
+    if let Some(head) = options.backend_head.as_deref() {
+        if !valid_git_sha(head) {
+            return Err(CliError::new(
+                "--backend-head 必须是非零的 40 位十六进制提交 SHA",
+            ));
+        }
+        options.backend_head = Some(head.to_ascii_lowercase());
+    }
+    if let Some(frontend_ref) = options.frontend_ref.as_deref() {
+        if !valid_git_sha(frontend_ref) {
+            return Err(CliError::new(
+                "--frontend-ref 必须是非零的 40 位十六进制提交 SHA",
+            ));
+        }
+        options.frontend_ref = Some(frontend_ref.to_ascii_lowercase());
+    }
+    if options
+        .candidate_openapi
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err(CliError::new("--candidate-openapi 必须是绝对路径"));
+    }
+    let source_fields = [
+        options.backend_head.is_some(),
+        options.backend_repository.is_some(),
+        options.candidate_openapi.is_some(),
+    ];
+    if source_fields.iter().any(|present| *present) && !source_fields.iter().all(|present| *present)
+    {
+        return Err(CliError::new(
+            "正式消费契约来源校验必须同时提供 --backend-head、--backend-repository 和 --candidate-openapi",
+        ));
+    }
+    Ok(options)
 }
 
 fn parse_base_sha(args: &[String]) -> Result<Option<String>, CliError> {
@@ -61,10 +129,7 @@ fn parse_base_sha(args: &[String]) -> Result<Option<String>, CliError> {
             if value.is_empty() {
                 return Ok(None);
             }
-            if value.len() != 40
-                || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || value.bytes().all(|byte| byte == b'0')
-            {
+            if !valid_git_sha(value) {
                 return Err(CliError::new(
                     "--base-sha 必须是非零的 40 位十六进制提交 SHA；无基准事件应传空值或省略参数",
                 ));
@@ -75,6 +140,12 @@ fn parse_base_sha(args: &[String]) -> Result<Option<String>, CliError> {
             "此 CI 子命令只接受可选参数 --base-sha <SHA>，不得重复指定",
         )),
     }
+}
+
+fn valid_git_sha(value: &str) -> bool {
+    value.len() == 40
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !value.bytes().all(|byte| byte == b'0')
 }
 
 fn parse_security_report(kind: &str, args: &[String]) -> Result<SecurityReportOptions, CliError> {

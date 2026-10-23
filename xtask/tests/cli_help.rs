@@ -137,6 +137,11 @@ fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
     // 传入实际存在的目录，确保测试验证的是仓库身份预检，而不是平台相关的路径错误。
     let frontend_dir = std::env::current_dir().unwrap();
     let frontend_dir = frontend_dir.to_string_lossy().into_owned();
+    let candidate_openapi = std::env::current_dir()
+        .unwrap()
+        .join("openapi/openapi.json")
+        .to_string_lossy()
+        .into_owned();
     let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args([
             "check",
@@ -144,20 +149,13 @@ fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
             "consumer-contract",
             "--frontend-dir",
             frontend_dir.as_str(),
-        ])
-        .env(
-            "RYFRAME_CI_BACKEND_HEAD",
+            "--backend-head",
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        )
-        .env("RYFRAME_CI_BACKEND_REPOSITORY", "invalid")
-        .env(
-            "RYFRAME_CI_CANDIDATE_OPENAPI",
-            std::env::current_dir()
-                .unwrap()
-                .join("openapi/openapi.json")
-                .to_string_lossy()
-                .into_owned(),
-        )
+            "--backend-repository",
+            "invalid",
+            "--candidate-openapi",
+            candidate_openapi.as_str(),
+        ])
         .env_remove("GITHUB_OUTPUT")
         .output()
         .unwrap();

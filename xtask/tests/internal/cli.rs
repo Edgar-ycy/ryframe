@@ -170,13 +170,53 @@ fn parses_check_task_graph_and_internal_groups() {
         ("rust-gate", CiCommand::RustGate),
         ("resource-gate", CiCommand::ResourceGate(None)),
         ("integration", CiCommand::Integration),
-        ("consumer-contract", CiCommand::ConsumerContract),
+        (
+            "consumer-contract",
+            CiCommand::ConsumerContract(Default::default()),
+        ),
     ] {
         assert_eq!(
             parse_command(&["check", "ci", name]).unwrap(),
             Command::Check(CheckCommand::Ci(operation))
         );
     }
+    let candidate = std::env::current_dir()
+        .unwrap()
+        .join("candidate-openapi.json");
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "consumer-contract",
+            "--frontend-ref",
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            "--backend-head",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "--backend-repository",
+            "owner/backend",
+            "--candidate-openapi",
+            candidate.to_str().unwrap(),
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::ConsumerContract(
+            crate::cli::ConsumerContractOptions {
+                frontend_ref: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned()),
+                backend_head: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+                backend_repository: Some("owner/backend".to_owned()),
+                candidate_openapi: Some(candidate),
+            }
+        )))
+    );
+    assert!(
+        parse_command(&[
+            "check",
+            "ci",
+            "consumer-contract",
+            "--backend-head",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ])
+        .is_err()
+    );
     assert!(parse_command(&["check", "ci"]).is_err());
     assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
     assert!(

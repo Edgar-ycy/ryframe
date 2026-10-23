@@ -404,12 +404,12 @@ jobs:
       - name: 校验正式前端消费契约
         if: ${{ needs.plan.outputs.consumer_contract == 'true' }}
         working-directory: backend
-        env:
-          RYFRAME_CI_BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
-          RYFRAME_CI_BACKEND_REPOSITORY: ${{ github.repository }}
-          RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
-          RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref }}
-        run: cargo xtask check ci consumer-contract --frontend-dir ../frontend
+        run: >-
+          cargo xtask check ci consumer-contract --frontend-dir ../frontend
+          --frontend-ref "${{ steps.contract-frontend-ref.outputs.ref }}"
+          --backend-head "${{ github.event.pull_request.head.sha }}"
+          --backend-repository "${{ github.repository }}"
+          --candidate-openapi "${{ runner.temp }}/candidate-openapi.json"
 
   # ============================================================
   # MySQL、Redis 与 AWS-LC TLS 真实出站协议

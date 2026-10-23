@@ -382,10 +382,15 @@ class CiWorkflowTests(unittest.TestCase):
         )[0]
         self.assertIn("cargo xtask check ci frontend-source", consumer)
         self.assertIn("--candidate-openapi", consumer)
-        self.assertIn("RYFRAME_CI_BACKEND_HEAD", consumer)
-        self.assertIn("RYFRAME_CI_CANDIDATE_OPENAPI", consumer)
-        self.assertIn("RYFRAME_CI_FRONTEND_REF", consumer)
         self.assertIn("cargo xtask check ci consumer-contract --frontend-dir ../frontend", consumer)
+        self.assertIn('--frontend-ref "${{ steps.contract-frontend-ref.outputs.ref }}"', consumer)
+        self.assertIn('--backend-head "${{ github.event.pull_request.head.sha }}"', consumer)
+        self.assertIn('--backend-repository "${{ github.repository }}"', consumer)
+        self.assertIn(
+            '--candidate-openapi "${{ runner.temp }}/candidate-openapi.json"', consumer
+        )
+        self.assertNotIn("RYFRAME_CI_BACKEND_HEAD", consumer)
+        self.assertNotIn("RYFRAME_CI_CANDIDATE_OPENAPI", consumer)
         self.assertNotIn("pnpm consumer:check --", consumer)
         self.assertNotIn("cargo run --locked", consumer)
         self.assertNotIn("cmp --silent", consumer)

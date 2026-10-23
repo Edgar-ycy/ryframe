@@ -251,10 +251,18 @@ pub(crate) enum CiCommand {
     ResourceGate(Option<String>),
     ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
-    ConsumerContract,
+    ConsumerContract(ConsumerContractOptions),
     FrontendSource(FrontendSourceOptions),
     Required(RequiredOptions),
     Security(SecurityCommand),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ConsumerContractOptions {
+    pub(crate) frontend_ref: Option<String>,
+    pub(crate) backend_head: Option<String>,
+    pub(crate) backend_repository: Option<String>,
+    pub(crate) candidate_openapi: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

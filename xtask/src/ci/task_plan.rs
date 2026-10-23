@@ -250,7 +250,7 @@ pub(super) fn execute_ci_job(
     let mut state = CheckExecutionState::default();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
-        execute_ci_task(task.executor, &context, &mut state)?;
+        execute_ci_task(task.executor, command, &context, &mut state)?;
     }
     Ok(())
 }
@@ -268,15 +268,24 @@ fn execute_required_plan(options: &crate::cli::RequiredOptions, plan: &TaskPlan)
 
 fn execute_ci_task(
     executor: TaskExecutor,
+    command: &CiCommand,
     context: &VerifyExecutionContext,
     state: &mut CheckExecutionState,
 ) -> Result<()> {
     match executor {
         TaskExecutor::CiFrontendCheckout => {
-            super::verify_frontend_checkout_from_environment(&context.frontend_dir)
+            let requested_ref = match command {
+                CiCommand::ConsumerContract(options) => options.frontend_ref.clone(),
+                CiCommand::RustGate => std::env::var("RYFRAME_CI_FRONTEND_REF").ok(),
+                _ => None,
+            };
+            super::verify_frontend_checkout(&context.frontend_dir, requested_ref.as_deref())
         }
         TaskExecutor::CiContractSource => {
-            super::verify_formal_contract_source_from_environment(&context.frontend_dir)
+            let CiCommand::ConsumerContract(options) = command else {
+                return Err("正式消费契约来源任务只能由 consumer-contract 执行".into());
+            };
+            super::verify_formal_contract_source(&context.frontend_dir, options)
         }
         TaskExecutor::CiWindowsSmoke => super::windows_smoke(&context.frontend_dir),
         TaskExecutor::CiResourceGate => {
@@ -293,7 +302,7 @@ fn job_for_command(command: &CiCommand) -> Result<CiJob> {
         CiCommand::RustGate => Ok(CiJob::RustGate),
         CiCommand::ResourceGate(_) => Ok(CiJob::ResourceGate),
         CiCommand::Integration => Ok(CiJob::Integration),
-        CiCommand::ConsumerContract => Ok(CiJob::ConsumerContract),
+        CiCommand::ConsumerContract(_) => Ok(CiJob::ConsumerContract),
         CiCommand::Plan(_)
         | CiCommand::ResourceGateReplay(_)
         | CiCommand::FrontendSource(_)

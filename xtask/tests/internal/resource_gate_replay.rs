@@ -417,7 +417,6 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
             "RYFRAME_CI_RUST_GATE_PROFILE".to_owned(),
             "windows-smoke".into(),
         ),
-        ("RYFRAME_CI_BACKEND_HEAD".to_owned(), "stale".into()),
         ("RUSTFLAGS".to_owned(), "-Ctarget-cpu=native".into()),
         ("CARGO_INCREMENTAL".to_owned(), "1".into()),
         ("SCCACHE_GHA_ENABLED".to_owned(), "true".into()),
@@ -444,7 +443,6 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
         controlled.get("RYFRAME_RESOURCE_GATE_TEST_JOBS").unwrap(),
         "8"
     );
-    assert!(!controlled.contains_key("RYFRAME_CI_BACKEND_HEAD"));
     assert!(!controlled.contains_key("RUSTFLAGS"));
     assert!(!controlled.contains_key("SCCACHE_GHA_ENABLED"));
     assert!(!controlled.contains_key("CMAKE_CXX_COMPILER_LAUNCHER"));

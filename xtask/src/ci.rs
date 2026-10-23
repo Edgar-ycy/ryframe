@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     env,
     fs::OpenOptions,
     io::Write,
@@ -137,12 +136,6 @@ fn action_label(action: &str) -> String {
 }
 
 fn ci_changed_paths(root: &Path, event: &str, base: Option<&str>) -> Result<(Vec<String>, bool)> {
-    if let Ok(configured) = env::var("RYFRAME_CI_CHANGED_PATHS") {
-        return Ok((
-            parse_changed_paths(&configured),
-            configured_ci_range_valid(base),
-        ));
-    }
     if FULL_CI_EVENTS.contains(&event) {
         // 定时、手动和主分支构建必须完整执行，具体文件列表不影响计划。
         return Ok((Vec::new(), configured_ci_range_valid(base)));
@@ -172,17 +165,6 @@ fn configured_ci_range_valid(base: Option<&str>) -> bool {
         (base, head.as_deref()),
         (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head)
     )
-}
-
-pub(crate) fn parse_changed_paths(value: &str) -> Vec<String> {
-    value
-        .split(['\n', '\r'])
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(|path| path.replace('\\', "/"))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 fn valid_git_sha(value: &str) -> bool {
@@ -257,15 +239,12 @@ pub(crate) fn windows_process_test_args(jobs: usize) -> Vec<String> {
     .collect()
 }
 
-fn verify_frontend_checkout_from_environment(frontend_dir: &Path) -> Result<()> {
-    let Some(requested_ref) = env::var("RYFRAME_CI_FRONTEND_REF")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
+fn verify_frontend_checkout(frontend_dir: &Path, requested_ref: Option<&str>) -> Result<()> {
+    let Some(requested_ref) = requested_ref.filter(|value| !value.trim().is_empty()) else {
         return Ok(());
     };
     let resolved = command_output(frontend_dir, "git", &["rev-parse", "--verify", "HEAD"])?;
-    verify_frontend_checkout_ref(&requested_ref, resolved.trim())?;
+    verify_frontend_checkout_ref(requested_ref, resolved.trim())?;
     println!("前端 Workspace 固定为 {}。", resolved.trim());
     Ok(())
 }
@@ -283,26 +262,29 @@ pub(crate) fn verify_frontend_checkout_ref(requested_ref: &str, resolved: &str) 
     Ok(())
 }
 
-fn verify_formal_contract_source_from_environment(frontend_dir: &Path) -> Result<()> {
-    let Some(backend_head) = env::var("RYFRAME_CI_BACKEND_HEAD")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
+fn verify_formal_contract_source(
+    frontend_dir: &Path,
+    options: &crate::cli::ConsumerContractOptions,
+) -> Result<()> {
+    let Some(backend_head) = options.backend_head.as_deref() else {
         return Ok(());
     };
-    let repository = env::var("RYFRAME_CI_BACKEND_REPOSITORY")
-        .unwrap_or_else(|_| "Edgar-ycy/ryframe".to_owned());
-    let candidate = env::var_os("RYFRAME_CI_CANDIDATE_OPENAPI")
-        .map(PathBuf::from)
-        .ok_or("消费契约来源检查缺少 RYFRAME_CI_CANDIDATE_OPENAPI")?;
+    let repository = options
+        .backend_repository
+        .as_deref()
+        .ok_or("消费契约来源检查缺少 --backend-repository")?;
+    let candidate = options
+        .candidate_openapi
+        .as_deref()
+        .ok_or("消费契约来源检查缺少 --candidate-openapi")?;
     let root = root_dir();
     let commit = verify_contract_source(
         &root,
-        &backend_head,
-        &repository,
+        backend_head,
+        repository,
         &frontend_dir.join("openapi/source.json"),
         &frontend_dir.join("openapi/openapi.json"),
-        &candidate,
+        candidate,
     )?;
     println!("{commit}");
     Ok(())
