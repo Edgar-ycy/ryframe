@@ -217,7 +217,7 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     let root = super::super::super::portable_path(temporary.path());
     let review = ready(review(&root));
     let execution = root.join("fixture/backend");
-    let reference = execution.join(".local-tests/reference-fixture");
+    let reference = execution.join(".local-tests").join("reference-fixture");
     std::fs::create_dir_all(&reference).unwrap();
     let fixture = json!({"format_version":1,"fixture":"business","status":"ready","sources":{"backend":{"head":"abc"}},
         "paths":{"backend":execution,"frontend":root.join("fixture/frontend")}});
@@ -321,7 +321,7 @@ fn environment_output_belongs_to_both_coordinator_and_execution_without_writes()
     std::fs::create_dir_all(&parent).unwrap();
     let temporary = tempfile::tempdir_in(&parent).unwrap();
     let execution = temporary.path().join("fixture/backend");
-    let reference = execution.join(".local-tests/reference-fixture");
+    let reference = execution.join(".local-tests").join("reference-fixture");
     std::fs::create_dir_all(&reference).unwrap();
     let fixture = json!({"format_version":1,"fixture":"business","status":"ready",
         "sources":{"backend":{"head":"abc"}},"paths":{"backend":execution,"frontend":temporary.path().join("fixture/frontend")}});
