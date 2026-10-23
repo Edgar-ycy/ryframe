@@ -99,10 +99,8 @@ fn private_recovery_scripts_exist_in_checkout() {
     assert!(root.join("tools/python/devex_clone.py").is_file());
     assert!(root.join("tools/python/restore_runtime.py").is_file());
     assert!(root.join("tools/python/restore_source.py").is_file());
-    assert!(
-        root.join("tools/js/restore_reference_dataset.mjs")
-            .is_file()
-    );
+    assert!(!root.join("tools/js/restore_reference_dataset.mjs").exists());
+    assert!(root.join("xtask/src/recovery/dataset_prepare.rs").is_file());
     assert!(
         root.join("tools/python/prepare_full_stack_fixture.py")
             .is_file()

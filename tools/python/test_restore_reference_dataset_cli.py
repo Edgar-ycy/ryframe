@@ -1,81 +1,41 @@
-"""真实 Node 参数入口；ownership 替身在任何网络访问前返回确定结果。"""
-
-import hashlib
+"""原生数据集的直接调用协议；请求与凭据不进入 argv 或项目环境。"""
+import contextlib
+import io
 import json
-import os
 from pathlib import Path
-import subprocess
+import sys
 import unittest
+from unittest.mock import patch
 
-from workspace_directory import WorkspaceDirectory
-
-
-BACKEND = Path(__file__).resolve().parents[2]
-SCRIPT = BACKEND / "tools/js/restore_reference_dataset.mjs"
+import restore_reference as reference
 
 
 class DatasetCliTests(unittest.TestCase):
-    def setUp(self):
-        temporary = WorkspaceDirectory(BACKEND / ".local-tests/t", prefix="dc-")
-        self.addCleanup(temporary.cleanup)
-        self.root = temporary.path
-        self.environment = os.environ.copy()
+    def test_dataset_protocol_has_exact_modes_and_no_inline_credentials(self):
+        root = Path(__file__).resolve().parents[2]
+        payload = json.loads(reference.dataset_protocol(
+            root, root / ".local-tests/plan.json", root / ".local-tests/preflight.json"))
+        self.assertEqual(set(payload), {"backend_dir", "format_version", "kind", "plan",
+                                        "preflight", "side", "verify_existing", "write"})
+        self.assertTrue(payload["write"])
+        self.assertEqual(payload["side"], "source")
+        self.assertIsNone(payload["verify_existing"])
 
-    def invoke(self, *arguments, environment=None):
-        return subprocess.run(
-            ["node", str(SCRIPT), *arguments], cwd=self.root,
-            env=environment or self.environment,
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
-        )
-
-    def test_direct_cli_rejects_arguments_without_reading_or_writing(self):
-        for flag in ("--help", "-h"):
-            result = self.invoke("--plan", "missing.json", "--backend-dir", "missing", flag)
-            self.assertEqual(result.returncode, 2, result.stderr)
-            self.assertIn("dataset_prepare_protocol_error", result.stderr)
-            self.assertEqual(result.stdout, "")
-            self.assertEqual(list(self.root.iterdir()), [])
-
-    def test_existing_side_reaches_dataset_validation_after_exact_ownership_check(self):
-        plan = {"source": {"scope_id": "source"}, "target": {"scope_id": "target"}}
-        encoded = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
-        plan_path = self.root / "plan.json"
-        plan_path.write_bytes(encoded)
-        dataset = self.root / "dataset.json"
-        dataset.write_text("{}", encoding="utf-8")
-        tools_python = self.root / "tools" / "python"
-        tools_python.mkdir(parents=True)
-        (tools_python / "restore_reference.py").write_text(
-            "import json, os, sys\n"
-            "assert sys.argv[1:] == []\n"
-            "request = json.loads(os.environ.pop('RYFRAME_XTASK_RECOVERY_REFERENCE'))['request']\n"
-            "side = request['side']\n"
-            f"print(json.dumps({{'plan_sha256': {hashlib.sha256(encoded).hexdigest()!r}, "
-            "'side': side, 'scope_id': side}))\n", encoding="utf-8",
-        )
-        for side in (None, "source", "target"):
-            with self.subTest(side=side):
-                protocol = {
-                    "backend_dir": str(self.root),
-                    "format_version": 1,
-                    "kind": "ryframe-xtask-recovery-dataset-prepare",
-                    "plan": str(plan_path),
-                    "preflight": None,
-                    "side": side or "target",
-                    "verify_existing": str(dataset),
-                    "write": True,
-                }
-                environment = {
-                    **self.environment,
-                    "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE": json.dumps(protocol),
-                }
-                result = self.invoke(environment=environment)
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("旧数据收据没有绑定本次参考环境计划", result.stderr)
-                self.assertNotIn("ReferenceError", result.stderr)
-                self.assertEqual(result.stdout, "")
-        self.assertEqual(plan_path.read_bytes(), encoded)
-        self.assertEqual(dataset.read_text(encoding="utf-8"), "{}")
+    def test_reference_stdin_is_exact_and_does_not_consume_environment_protocol(self):
+        root = Path(__file__).resolve().parents[2]
+        value = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference", "request": {
+            "backend_dir": str(root), "format_version": 1, "operation": "check-existing",
+            "plan": str(root / ".local-tests/plan.json"), "side": "source", "write": False}}
+        environment = {reference.PROTOCOL_KEY: "untrusted"}
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(value).encode()))))
+            request = reference.private_protocol_request(["--stdin"], environment)
+        self.assertEqual(request.command, "check-existing")
+        self.assertEqual(request.side, "source")
+        self.assertEqual(environment[reference.PROTOCOL_KEY], "untrusted")
+        for raw in (b'{"write":true,"write":false}', b'\xff', b'x' * 65537):
+            with patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw))), self.assertRaises(reference.ReferenceProtocolError):
+                reference.private_protocol_request(["--stdin"], {})
 
 
 if __name__ == "__main__":

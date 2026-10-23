@@ -398,7 +398,7 @@ class ExternalTools:
             self.before_execute()
         response, _ = native_s3_read({
             "format_version": 1, "kind": "ryframe-native-s3-read", "scope_id": scope,
-            "configuration": self.plan[side]["s3"], "bucket": bucket,
+            "configuration_binding": self.plan[side]["s3"], "bucket": bucket,
             "operation": "get-object", "key": key, "if_match": None, "version": None,
             "destination": str(destination), "max_bytes": max_bytes,
         }, self.run)
@@ -448,7 +448,7 @@ class ExternalTools:
                     self.before_execute()
                 response, invocation = native_put_if_absent({
                     "format_version": 1, "kind": "ryframe-native-s3-put-if-absent",
-                    "scope_id": scope, "configuration": config, "bucket": bucket, "key": key,
+                    "scope_id": scope, "configuration_binding": config, "bucket": bucket, "key": key,
                     "source": str(source), "expected": expected, "metadata": metadata,
                 }, self.run)
                 outcome = response["status"]

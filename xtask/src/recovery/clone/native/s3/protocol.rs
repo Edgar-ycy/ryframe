@@ -70,7 +70,7 @@ pub(super) fn execute_create_bucket_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            "configuration",
+            configuration_field(&value),
             "bucket",
         ],
         "原生对象桶创建请求",
@@ -86,10 +86,8 @@ pub(super) fn execute_create_bucket_request(value: Value) -> Result<Value> {
     if !super::super::input::BUCKETS.contains(&bucket) {
         return Err("原生对象桶创建只能访问已登记的业务对象桶".into());
     }
-    super::create_bucket(
-        Configuration::read(request.get("configuration").ok_or("创建桶缺少对象配置")?)?,
-        bucket.to_owned(),
-    )
+    let result = super::create_bucket(configuration(&value)?, bucket.to_owned());
+    finish_bound(&value, result, true)
 }
 
 fn read_request() -> Result<Value> {
@@ -111,7 +109,7 @@ pub(super) fn execute_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            "configuration",
+            configuration_field(&value),
             "bucket",
             "key",
             "source",
@@ -133,8 +131,7 @@ pub(super) fn execute_request(value: Value) -> Result<Value> {
     }
     let key = required_text(request.get("key"), "目标 key")?;
     validate_key(scope, key, false)?;
-    let configuration =
-        Configuration::read(request.get("configuration").ok_or("条件创建缺少对象配置")?)?;
+    let configuration = configuration(&value)?;
     let source = required_text(request.get("source"), "来源文件")?;
     let source = crate::local_test_path::validate_local_test_path(
         std::path::Path::new(source),
@@ -164,7 +161,7 @@ pub(super) fn execute_request(value: Value) -> Result<Value> {
             .ok_or("条件创建缺少对象元数据")?
             .clone(),
     })?;
-    Ok(result)
+    finish_bound(&value, Ok(result), true)
 }
 
 pub(super) fn execute_read_request(value: Value) -> Result<Value> {
@@ -174,7 +171,7 @@ pub(super) fn execute_read_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            "configuration",
+            configuration_field(&value),
             "bucket",
             "operation",
             "key",
@@ -240,13 +237,12 @@ pub(super) fn execute_read_request(value: Value) -> Result<Value> {
         }
         _ => return Err("原生对象读取操作、输出或字节上限不匹配".into()),
     };
-    super::execute(Request {
-        configuration: Configuration::read(
-            request.get("configuration").ok_or("读取请求缺少对象配置")?,
-        )?,
+    let result = super::execute(Request {
+        configuration: configuration(&value)?,
         bucket: bucket.to_owned(),
         operation,
-    })
+    });
+    finish_bound(&value, result, false)
 }
 
 pub(super) fn execute_inspect_request(value: Value) -> Result<Value> {
@@ -256,7 +252,7 @@ pub(super) fn execute_inspect_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            "configuration",
+            configuration_field(&value),
             "bucket",
             "operation",
             "prefix",
@@ -301,13 +297,42 @@ pub(super) fn execute_inspect_request(value: Value) -> Result<Value> {
         }
         _ => return Err("原生对象范围观察操作与参数不匹配".into()),
     };
-    super::execute(Request {
-        configuration: Configuration::read(
-            request.get("configuration").ok_or("观察请求缺少对象配置")?,
-        )?,
+    let result = super::execute(Request {
+        configuration: configuration(&value)?,
         bucket: bucket.to_owned(),
         operation,
-    })
+    });
+    finish_bound(&value, result, false)
+}
+
+fn configuration_field(value: &Value) -> &'static str {
+    if value.get("configuration_binding").is_some() {
+        "configuration_binding"
+    } else {
+        "configuration"
+    }
+}
+fn finish_bound(value: &Value, result: Result<Value>, may_write: bool) -> Result<Value> {
+    if let Some(binding) = value.get("configuration_binding")
+        && Configuration::read_app_binding(&crate::workspace::root_dir(), binding).is_err()
+    {
+        if may_write {
+            return Ok(
+                json!({"status":"needs_reconciliation","reason":"configuration_binding_changed","remote_write_may_have_occurred":true,"automatic_retry_permitted":false}),
+            );
+        }
+        return Err("对象读取期间绑定配置发生变化；保留证据，不发布成功".into());
+    }
+    result
+}
+fn configuration(value: &Value) -> Result<Configuration> {
+    match configuration_field(value) {
+        "configuration_binding" => Configuration::read_app_binding(
+            &crate::workspace::root_dir(),
+            &value["configuration_binding"],
+        ),
+        _ => Configuration::read(&value["configuration"]),
+    }
 }
 
 fn required_text<'a>(value: Option<&'a Value>, label: &str) -> Result<&'a str> {

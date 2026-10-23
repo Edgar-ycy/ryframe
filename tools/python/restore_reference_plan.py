@@ -60,7 +60,30 @@ def dataset_timeout_seconds(plan: dict) -> int:
     return value
 
 
+def validate_configuration_binding(binding: dict, backend: Path) -> None:
+    from restore_runtime_evidence import reject_link_or_reparse
+    if (not isinstance(binding, dict) or set(binding) != {"app_env", "directory", "files", "sha256"}
+            or binding["app_env"] not in {"dev", "test"}):
+        raise ValueError("参考配置必须是明确环境和目录的无凭据文件绑定")
+    directory = Path(binding["directory"])
+    if (not directory.is_absolute() or not directory.resolve().is_relative_to((backend / ".local-tests").resolve())
+            or not directory.is_dir()):
+        raise ValueError("参考配置目录必须位于后端受管.local-tests目录")
+    reject_link_or_reparse(directory)
+    files = {}
+    for name in ("app.toml", f"app.{binding['app_env']}.toml"):
+        file = directory / name
+        if name == "app.toml" and not file.exists():
+            continue
+        reject_link_or_reparse(file)
+        files[name] = file_digest(file)
+    expected = {"app_env": binding["app_env"], "directory": str(directory), "files": files}
+    if binding["files"] != files or binding["sha256"] != plan_hash(expected):
+        raise ValueError("参考配置绑定的文件或摘要发生变化")
+
+
 def validate_plan(plan: dict, backend: Path) -> None:
+    _reject_credentials(plan)
     if plan.get("format_version") != 1:
         raise ValueError("参考演练计划版本无效")
     identifier(plan["id"])
@@ -87,10 +110,9 @@ def validate_plan(plan: dict, backend: Path) -> None:
             raise ValueError("运行进程收据必须显式保存在当前 .local-tests")
         if not re.fullmatch(r"[a-z0-9-]+", side["s3"]["region"]):
             raise ValueError("S3 region 无效")
-        for key in ("access_key", "secret_key"):
-            value = side["s3"].get(key)
-            if not isinstance(value, str) or not value or any(ord(char) < 32 for char in value):
-                raise ValueError("对象存储凭据必须在绑定文件中直接提供且不能为空")
+        if set(side["s3"]) != {"endpoint", "region", "configuration"}:
+            raise ValueError("参考计划禁止内联access_key、secret_key或session token，只允许对象配置绑定")
+        validate_configuration_binding(side["s3"]["configuration"], backend)
         keys, databases = set(), set()
         for db in side["databases"]:
             key = identifier(db["key"])
@@ -117,11 +139,24 @@ def validate_plan(plan: dict, backend: Path) -> None:
     target_modes = {db["key"]: (db["kind"], db["mode"]) for db in plan["target"]["databases"]}
     if any(target_modes[db["key"]] != (db["kind"], db["mode"]) for db in plan["source"]["databases"]):
         raise ValueError("源与恢复目标的逻辑类型和共享模式必须相同")
-    for name in ("mysql", "mysqldump", "node"):
+    for name in ("mysql", "mysqldump"):
         tool = plan["tools"][name]
         path = Path(tool["path"])
         if not path.is_absolute() or file_digest(path)["sha256"] != tool["sha256"]:
             raise ValueError("外部工具文件不存在或与计划摘要不一致")
+
+
+def _reject_credentials(value) -> None:
+    if isinstance(value, dict):
+        forbidden = {"password", "admin_password", "owner_password", "access_key", "secret_key",
+                     "session_token", "security_token", "access_token", "refresh_token", "jwt_secret"}
+        if forbidden.intersection(value):
+            raise ValueError("参考计划禁止包含凭据或会话令牌，只允许受管配置绑定")
+        for item in value.values():
+            _reject_credentials(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_credentials(item)
 
 
 def validate_inventory(plan: dict, inventory: dict) -> None:

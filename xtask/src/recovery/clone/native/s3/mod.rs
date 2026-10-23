@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::Result;
 
+pub(crate) mod app_configuration;
 mod client;
 pub(crate) mod protocol;
 mod response;

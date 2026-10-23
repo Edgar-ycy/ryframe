@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -21,18 +19,16 @@ PROTOCOL_SCHEMAS = {
 
 def _load_business_dependencies() -> None:
     """直接执行时只在私有协议被移除后加载会读取运行环境的业务模块。"""
-    global Environments, KEYS, _bootstrap, _output, _runtime_environment
+    global KEYS, _bootstrap, _output
     global file_digest, linked, local_path, plan_hash, read_json
     global redact_object_diagnostic, validate_plan, validate_review, verify_runtime, write_json
 
     from devex_clone_capture import read_json, write_json
     from devex_clone_model import linked, local_path
     from devex_clone_target_binding import KEYS, validate_review
-    from process_environment import Environments
     from reference_fixture_runtime import (
         _bootstrap,
         _output,
-        _runtime_environment,
         verify as verify_runtime,
     )
     from restore_build import file_digest
@@ -56,23 +52,12 @@ def _read(backend: Path, value: Path) -> tuple[Path, dict]:
     return path, read_json(path)
 
 
-def _node() -> dict:
-    value = shutil.which("node")
-    if value is None:
-        raise ValueError("本机缺少已登记的 Node 运行时")
-    path = Path(value).resolve(strict=True)
-    if linked(path) or not path.is_file():
-        raise ValueError("Node 运行时不是受控普通文件")
-    return {"path": str(path), "sha256": file_digest(path)["sha256"]}
-
-
-def _side(scope: dict, credentials: dict) -> dict:
+def _side(scope: dict, configuration: dict) -> dict:
     required = {"scope_id", "runtime_dir", "api_url", "frontend_url", "objects", "databases"}
     if not required.issubset(scope) or set(item.get("key") for item in scope["databases"]) != set(KEYS):
         raise ValueError("夹具审阅侧缺少完整运行与数据库描述")
-    if any(not isinstance(credentials.get(key), str) or not credentials[key]
-           for key in ("access_key", "secret_key")):
-        raise ValueError("夹具参考数据缺少直接配置的 S3 凭据")
+    if set(configuration) != {"app_env", "directory", "files", "sha256"}:
+        raise ValueError("夹具参考数据S3配置必须使用受管文件绑定")
     databases = []
     for key in sorted(KEYS):
         item = next(value for value in scope["databases"] if value["key"] == key)
@@ -96,8 +81,7 @@ def _side(scope: dict, credentials: dict) -> dict:
         "s3": {
             "endpoint": scope["objects"]["endpoint"],
             "region": scope["objects"]["region"],
-            "access_key": credentials["access_key"],
-            "secret_key": credentials["secret_key"],
+            "configuration": configuration,
         },
         "databases": databases,
     }
@@ -112,7 +96,27 @@ def _plan_file(execution: Path, runtime: Path, value: Path, *, new: bool) -> Pat
     return path
 
 
-def _dataset(review: dict) -> dict:
+def _configuration(execution: Path, runtime: Path, verified: dict) -> dict:
+    receipt = runtime / "runtime.json"
+    if _bound(receipt) != verified["runtime"]:
+        raise ValueError("参考数据运行收据与已验证绑定不一致")
+    value = read_json(receipt)
+    directory = local_path(execution, value.get("api_config_dir", ""))
+    if linked(directory) or not directory.is_dir():
+        raise ValueError("参考数据配置必须是已登记的受管目录")
+    files = {}
+    for name in ("app.toml", "app.test.toml"):
+        path = directory / name
+        if name == "app.toml" and not path.exists():
+            continue
+        if linked(path) or not path.is_file():
+            raise ValueError("参考数据配置文件缺失或经过链接")
+        files[name] = file_digest(path)
+    result = {"app_env": "test", "directory": str(directory), "files": files}
+    return {**result, "sha256": plan_hash(result)}
+
+
+def _dataset(review: dict, configuration: dict) -> dict:
     approved = review["dataset"]
     return {
         "timeout_seconds": 43_200,
@@ -126,9 +130,8 @@ def _dataset(review: dict) -> dict:
         "admin": {
             "tenant_id": "system",
             "username": "admin",
-            "password_env": "RYFRAME_RESET_ADMIN_PASSWORD",
         },
-        "owner_password_env": "RYFRAME_RESET_ADMIN_PASSWORD",
+        "configuration": configuration,
     }
 
 
@@ -145,7 +148,7 @@ def _write_prepare_failure(runtime: Path, plan_file: Path, error: subprocess.Cal
         "returncode": error.returncode,
         "stdout": redact_object_diagnostic(error.stdout, values),
         "stderr": redact_object_diagnostic(error.stderr, values),
-        "fatal_report_directory": str(report_directory),
+        "report_directory": str(report_directory),
     })
     return output
 
@@ -159,7 +162,6 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     runtime = _output(execution, runtime_path, new=False)
     verified = verify_runtime(backend, environment_path, runtime)
     pair_file, pair = _read(backend, runtime / "source-pair.json")
-    values = _runtime_environment(private, pair)
     review_binding = read_json(bootstrap_file).get("plan", {}).get("review")
     if not isinstance(review_binding, dict):
         raise ValueError("夹具私有环境缺少审阅计划绑定")
@@ -167,9 +169,10 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     if _bound(review_file) != {key: review_binding.get(key) for key in ("path", "bytes", "sha256")}:
         raise ValueError("夹具审阅计划摘要已变化")
     validate_review(review)
-    source = _side(review["scopes"]["seed"], private)
+    configuration = _configuration(execution, runtime, verified)
+    source = _side(review["scopes"]["seed"], configuration)
     target_scope = review["scopes"][side]
-    target = _side(target_scope, private)
+    target = _side(target_scope, configuration)
     target["worker_ready_url"] = target_scope["worker_ready_url"]
     source["runtime_dir"] = str(runtime)
     if source["scope_id"] != verified["scope_id"]:
@@ -189,8 +192,8 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
         "tools": {
             name: {key: tools[name][key] for key in ("path", "sha256")}
             for name in ("mysql", "mysqldump")
-        } | {"node": _node()},
-        "dataset": _dataset(review),
+        },
+        "dataset": _dataset(review, configuration),
         "fixture_bindings": {
             "bootstrap": _bound(bootstrap_file),
             "runtime": verified["runtime"],
@@ -225,32 +228,24 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
     expected = build_plan(backend, environment_path, runtime, Path(plan.get("work_dir", "")), side)
     if plan != expected:
         raise ValueError("参考数据计划与当前夹具来源、工具或运行时不一致")
-    pair = read_json(runtime / "source-pair.json")
-    values = _runtime_environment(private, pair)
-    reports = runtime / (plan_file.stem + ".node-reports")
+    reports = runtime / (plan_file.stem + ".native-reports")
     if reports.exists():
-        raise ValueError("参考数据准备 Node fatal report 目录已存在，禁止覆盖或重放")
+        raise ValueError("参考数据准备证据目录已存在，禁止覆盖或重放")
     reports.mkdir()
-    node_options = " ".join(item for item in (os.environ.get("NODE_OPTIONS", ""), "--report-on-fatalerror",
-                                                 f'--report-directory="{reports}"') if item)
     # 产品夹具保持冻结；维护工具来自当前控制器，不把工具修复写进已有产物来源。
     runner = Path(__file__).resolve().with_name("restore_reference.py")
-    command = [sys.executable, "-X", "utf8", str(runner)]
+    command = [sys.executable, "-X", "utf8", "-B", str(runner), "--stdin"]
     protocol = json.dumps({"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
                            "request": {"backend_dir": str(execution), "format_version": 1,
                                        "operation": "dataset", "plan": str(plan_file),
                                        "write": True}}, separators=(",", ":"))
     try:
-        stage_environment = {**values, "NODE_OPTIONS": node_options}
-        with Environments(stage_environment, stage_environment).use("source"):
-            child_environment = {key: value for key, value in os.environ.items()
-                                 if not key.startswith("RYFRAME_XTASK_RECOVERY_")}
-            child_environment["RYFRAME_XTASK_RECOVERY_REFERENCE"] = protocol
-            subprocess.run(command, cwd=execution, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           text=True, encoding="utf-8", check=True, env=child_environment,
-                           creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+        from process_environment import configured
+        subprocess.run(command, cwd=execution, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       input=protocol, text=True, encoding="utf-8", check=True, env=configured({}),
+                       creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
     except subprocess.CalledProcessError as error:
-        diagnostic = _write_prepare_failure(runtime, plan_file, error, values, reports)
+        diagnostic = _write_prepare_failure(runtime, plan_file, error, private, reports)
         raise RuntimeError(f"参考数据准备子进程失败；已保存脱敏诊断：{diagnostic}") from error
     return {"status": "reference_fixture_dataset_prepared", "plan": _bound(plan_file),
             "work_dir": plan["work_dir"], "dataset": _bound(Path(plan["work_dir"]) / "dataset/result.json"),

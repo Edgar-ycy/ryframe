@@ -38,14 +38,18 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.review.write_text(json.dumps(self._review()), encoding="utf-8")
         self.bootstrap.write_text(json.dumps({"plan": {"review": dataset._bound(self.review)}}), encoding="utf-8")
         (self.runtime / "source-pair.json").write_text(json.dumps({"sources": {"backend": {"head": "a" * 40}}}), encoding="utf-8")
-        self.private = {"APP_ENV": "test", "access_key": "fixture-access", "secret_key": "fixture-secret"}
+        self.private = {"APP_ENV": "test", "access_key": "fixture-access", "secret_key": "fixture-secret", "admin_password":"fixture-admin-password"}
+        config=self.runtime / "config"
+        config.mkdir()
+        (config / "app.test.toml").write_text('[bootstrap]\nadmin_password="fixture-admin-password"\n[object_storage]\naccess_key="fixture-access"\nsecret_key="fixture-secret"\n',encoding="utf-8")
+        dataset.write_json(self.runtime / "runtime.json", {"api_config_dir":str(config)})
+        self.verified={"scope_id":"fixture-seed-r1","runtime":dataset._bound(self.runtime / "runtime.json")}
+        self.configuration=dataset._configuration(self.execution,self.runtime,self.verified)
         self.patches = [
             patch.object(dataset, "_bootstrap", return_value=(self.bootstrap, self.execution, self.private)),
             patch.object(dataset, "_output", side_effect=lambda _execution, value, **_kwargs: Path(value)),
-            patch.object(dataset, "verify_runtime", return_value={"scope_id": "fixture-seed-r1", "runtime": dataset._bound(self.runtime / "source-pair.json")}),
-            patch.object(dataset, "_runtime_environment", return_value={"APP_ENV": "test"}),
+            patch.object(dataset, "verify_runtime", return_value=self.verified),
             patch.object(dataset, "validate_review"),
-            patch.object(dataset, "_node", return_value={"path": str(self.tool), "sha256": dataset.file_digest(self.tool)["sha256"]}),
         ]
         for value in self.patches:
             value.start()
@@ -77,6 +81,8 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
 
     def test_build_plan_binds_current_runtime_and_required_dataset_scale(self):
         value = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+        from restore_reference_target import _plan
+        _plan(value, self.execution)
         self.assertEqual(value["source"]["runtime_dir"], str(self.runtime))
         self.assertEqual(value["source"]["scope_id"], "fixture-seed-r1")
         self.assertEqual(value["target"]["scope_id"], "fixture-base-r1")
@@ -85,23 +91,30 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertEqual(value["dataset"]["records"], 100_000)
         self.assertEqual(value["dataset"]["object_count"] * value["dataset"]["object_bytes"], 1024**3)
         self.assertEqual(value["dataset"]["tenant_targets"], self._review()["dataset"]["tenant_targets"])
-        self.assertEqual(set(value["tools"]), {"mysql", "mysqldump", "node"})
+        self.assertEqual(set(value["tools"]), {"mysql", "mysqldump"})
+        self.assertEqual(value["dataset"]["configuration"], self.configuration)
+        self.assertNotIn(self.private["admin_password"], json.dumps(value))
+        self.assertNotIn(self.private["access_key"], json.dumps(value))
+        self.assertNotIn(self.private["secret_key"], json.dumps(value))
+        self.assertNotIn("password", value["dataset"]["admin"])
+        self.assertNotIn("owner_password", value["dataset"])
+        self.assertNotIn("password_env", value["dataset"]["admin"])
 
-    def test_side_uses_direct_credentials_and_rejects_missing_values(self):
+    def test_side_uses_only_config_binding_and_rejects_inline_credentials(self):
         ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
                    "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
         with patch.dict(os.environ, ambient):
-            side = dataset._side(self._scope("seed"), self.private)
+            side = dataset._side(self._scope("seed"), self.configuration)
             self.assertEqual(side["s3"], {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1",
-                                          "access_key": "fixture-access", "secret_key": "fixture-secret"})
+                                          "configuration": self.configuration})
             for key in ("access_key", "secret_key"):
                 for invalid in (None, "", 123):
-                    with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "直接配置"):
-                        dataset._side(self._scope("seed"), {**self.private, key: invalid})
+                    with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "文件绑定"):
+                        dataset._side(self._scope("seed"), {**self.configuration, key: invalid})
                 missing = {name: value for name, value in self.private.items() if name != key}
-                with self.assertRaisesRegex(ValueError, "直接配置"):
+                with self.assertRaisesRegex(ValueError, "文件绑定"):
                     dataset._side(self._scope("seed"), missing)
-            with self.assertRaisesRegex(ValueError, "直接配置"):
+            with self.assertRaisesRegex(ValueError, "文件绑定"):
                 dataset._side(self._scope("seed"), {
                     "access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY",
                 })
@@ -111,7 +124,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         review["dataset"].update({"tenant_targets": ["shared"] * 8 + ["dedicated-a", "dedicated-b"],
                                   "records": 200_000, "object_count": 512,
                                   "object_bytes": 2 * 1024 * 1024, "request_interval_ms": 1500})
-        result = dataset._dataset(review)
+        result = dataset._dataset(review, self.configuration)
         for key, expected in review["dataset"].items():
             self.assertEqual(result[key], expected)
         result["tenant_targets"].append("shared")
@@ -123,7 +136,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
                 review = self._review()
                 del review["dataset"][key]
                 with self.assertRaises(KeyError):
-                    dataset._dataset(review)
+                    dataset._dataset(review, self.configuration)
 
     def test_build_plan_rejects_overlapping_api_and_worker_probe(self):
         review = self._review()
@@ -140,7 +153,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
             )
 
     def test_build_plan_rejects_runtime_scope_mismatch(self):
-        with patch.object(dataset, "verify_runtime", return_value={"scope_id": "other", "runtime": {}}):
+        with patch.object(dataset, "verify_runtime", return_value={**self.verified,"scope_id": "other"}):
             with self.assertRaisesRegex(ValueError, "同一代次"):
                 dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
 
@@ -250,3 +263,47 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertIn("[REDACTED]", value["stdout"] + value["stderr"])
         with self.assertRaisesRegex(ValueError, "禁止覆盖"):
             dataset._write_prepare_failure(self.runtime, self.runtime / "dataset-plan.json", error, {}, self.runtime / "other")
+
+    def test_prepare_uses_stdin_and_safe_environment_and_refuses_replay(self):
+        plan = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+        plan_file = self.runtime / "dataset-plan.json"
+        dataset.write_json(plan_file, plan)
+        result_path = self.work / "dataset/result.json"
+
+        def run(command, **options):
+            self.assertEqual(command[-1], "--stdin")
+            self.assertNotIn(str(plan_file), command)
+            self.assertNotIn(self.private["admin_password"], str(command))
+            request = json.loads(options["input"])
+            self.assertEqual(request["request"]["operation"], "dataset")
+            self.assertEqual(request["request"]["plan"], str(plan_file))
+            self.assertTrue(request["request"]["write"])
+            self.assertFalse(any(key.startswith(("APP_", "RYFRAME_", "AWS_")) for key in options["env"]))
+            result_path.parent.mkdir(parents=True)
+            dataset.write_json(result_path, {"format_version": 1, "records": 100000})
+            return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+        with patch.object(dataset.subprocess, "run", side_effect=run) as execute:
+            result = dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
+        self.assertEqual(result["status"], "reference_fixture_dataset_prepared")
+        self.assertEqual(result["dataset"], dataset._bound(result_path))
+        self.assertEqual(execute.call_count, 1)
+        with patch.object(dataset.subprocess, "run") as execute, self.assertRaises(ValueError):
+            dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
+        execute.assert_not_called()
+
+    def test_prepare_preserves_unknown_write_failure_and_never_reexecutes(self):
+        plan = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+        plan_file = self.runtime / "dataset-plan.json"
+        dataset.write_json(plan_file, plan)
+        error = subprocess.CalledProcessError(1, ["xtask"], output=self.private["admin_password"], stderr=self.private["secret_key"])
+        with patch.object(dataset.subprocess, "run", side_effect=error) as execute, self.assertRaisesRegex(RuntimeError, "脱敏诊断"):
+            dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
+        self.assertEqual(execute.call_count, 1)
+        failure = dataset.read_json(self.runtime / "dataset-plan.prepare-failed.json")
+        self.assertEqual(failure["status"], "failed_unknown_writes")
+        self.assertNotIn(self.private["admin_password"], failure["stdout"])
+        self.assertNotIn(self.private["secret_key"], failure["stderr"])
+        with patch.object(dataset.subprocess, "run") as execute, self.assertRaisesRegex(ValueError, "禁止覆盖或重放"):
+            dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
+        execute.assert_not_called()

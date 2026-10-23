@@ -41,15 +41,16 @@ def _product_execution(arm: dict) -> dict:
 
 def _plan(plan: dict, backend: Path) -> None:
     exact(plan, {"format_version", "id", "target_side", "work_dir", "tools", "source", "target"}
-          | ({"dataset"} if "dataset" in plan else set()))
+          | ({"dataset"} if "dataset" in plan else set())
+          | ({"fixture_bindings"} if "fixture_bindings" in plan else set()))
     if type(plan["format_version"]) is not int:
         raise ValueError("参考计划版本必须是整数")
     if "dataset" in plan:
         exact(plan["dataset"], {"timeout_seconds", "request_interval_ms", "api_validation_posts",
                                "post_batch_rows", "tenant_targets", "records", "object_count",
-                               "object_bytes", "admin", "owner_password_env"})
-        exact(plan["dataset"]["admin"], {"tenant_id", "username", "password_env"})
-    exact(plan["tools"], {"mysql", "mysqldump", "node"})
+                               "object_bytes", "admin", "configuration"})
+        exact(plan["dataset"]["admin"], {"tenant_id", "username"})
+    exact(plan["tools"], {"mysql", "mysqldump"})
     for tool in plan["tools"].values():
         exact(tool, {"path", "sha256"})
         reject_link_or_reparse(Path(tool["path"]))
@@ -58,8 +59,10 @@ def _plan(plan: dict, backend: Path) -> None:
         fields = {"scope_id", "runtime_dir", "api_url", "s3", "databases"}
         if name == "target":
             fields |= {"worker_ready_url", "frontend_url"}
+        elif "frontend_url" in side:
+            fields.add("frontend_url")
         exact(side, fields)
-        exact(side["s3"], {"endpoint", "region", "access_key", "secret_key"})
+        exact(side["s3"], {"endpoint", "region", "configuration"})
         local_path(backend, side["runtime_dir"])
         for database in side["databases"]:
             exact(database, {"key", "kind", "mode", "database", "server_uuid", "defaults_file", "defaults_sha256"})

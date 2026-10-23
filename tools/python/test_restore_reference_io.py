@@ -114,7 +114,9 @@ class ReferenceIoTests(unittest.TestCase):
             self.assertNotIn("access-fixture", command)
             self.assertNotIn("secret-fixture", command)
             self.assertNotIn("AWS_PROFILE", options["env"])
-            self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
+            self.assertEqual(request["configuration_binding"], self.plan["source"]["s3"])
+            self.assertNotIn("access-fixture", json.dumps(request))
+            self.assertNotIn("secret-fixture", json.dumps(request))
             for bucket, key, maximum in (("unknown", "source/file", 4),
                                          ("uploads", "other/file", 4),
                                          ("uploads", "source/file", 0)):

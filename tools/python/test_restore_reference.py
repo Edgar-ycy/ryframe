@@ -59,6 +59,18 @@ class ReferenceTests(unittest.TestCase):
             with self.assertRaises((ValueError, OSError)):
                 validate_plan(plan, self.backend)
 
+    def test_plan_rejects_inline_s3_credentials_and_session_tokens_without_echoing(self):
+        validate_plan(self.plan, self.backend)
+        for field in ("access_key", "secret_key", "session_token", "security_token"):
+            plan=copy.deepcopy(self.plan)
+            plan["source"]["s3"][field]="private-plan-value"
+            with self.assertRaises(ValueError) as error:
+                validate_plan(plan,self.backend)
+            self.assertNotIn("private-plan-value",str(error.exception))
+        encoded=json.dumps(self.plan)
+        self.assertNotIn("access-fixture",encoded)
+        self.assertNotIn("secret-fixture",encoded)
+
     def test_plan_ids_and_scopes_use_the_formal_identifier_boundaries(self):
         for identifier in ("a", "a" + "_" * 63):
             candidate = copy.deepcopy(self.plan)
@@ -291,8 +303,7 @@ class ReferenceTests(unittest.TestCase):
         self.plan["dataset"] = {"timeout_seconds": 21600}
         work = reference.work_directory(self.plan)
         tools = Mock()
-        tools.command.return_value = ["node"]
-        tools.execute.side_effect = subprocess.TimeoutExpired(["node"], 21600)
+        tools.execute.side_effect = subprocess.TimeoutExpired(["xtask", "__recovery-dataset"], 21600)
         args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
         with patch.object(reference, "source_snapshot", return_value={"head": "a" * 40, "clean": False}), \
                 patch.object(reference, "check_api"), patch.object(reference, "require_empty_source"):
@@ -300,14 +311,14 @@ class ReferenceTests(unittest.TestCase):
                 reference.execute(args, self.plan, self.backend, tools, work)
         self.assertEqual(tools.execute.call_args.kwargs["timeout"], 21600)
         command = tools.execute.call_args.args[0]
-        self.assertEqual(len(command), 2)
-        self.assertEqual(Path(command[1]), Path(reference.__file__).resolve().parents[1]
-                         / "js/restore_reference_dataset.mjs")
+        self.assertEqual(command[-1], "__recovery-dataset")
+        self.assertNotIn("node", command)
+        self.assertNotIn(str(args.plan), command)
         recorded = reference.read_json(work / "dataset-tools.json")
         self.assertEqual(recorded["kind"], "restore-reference-dataset-tools")
         self.assertIn("tools", recorded["sources"])
         protocol = json.loads(
-            tools.execute.call_args.kwargs["env"][reference.DATASET_PROTOCOL_ENV]
+            tools.execute.call_args.kwargs["data"].decode("utf-8")
         )
         self.assertEqual(protocol["kind"], reference.DATASET_PROTOCOL_KIND)
         self.assertTrue(protocol["write"])
@@ -324,7 +335,6 @@ class ReferenceTests(unittest.TestCase):
         (work / "dataset").mkdir()
         reference.write_json(work / "dataset/result.json", {"records": 100000})
         tools = Mock()
-        tools.command.return_value = ["node"]
         args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
         with (
             patch.object(reference, "source_snapshot", return_value={"head": "a" * 40}),

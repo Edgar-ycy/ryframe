@@ -1,0 +1,367 @@
+use super::super::{
+    prepare,
+    session::{Client, Pacer},
+};
+use serde_json::{Value, json};
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
+type CapturedRequests = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+struct Server {
+    url: String,
+    requests: CapturedRequests,
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+impl Server {
+    fn new(handler: impl Fn(&str, &[u8]) -> (u16, Vec<u8>) + Send + 'static) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let shutdown = stop.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let observed = requests.clone();
+        let thread = thread::spawn(move || {
+            while !shutdown.load(Ordering::SeqCst) {
+                let (mut socket, _) = match listener.accept() {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0; 8192];
+                let end = loop {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                    if let Some(i) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                };
+                let headers = String::from_utf8(bytes[..end].to_vec()).unwrap();
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':')
+                            .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .map(|(_, v)| v.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                while bytes.len() < end + length {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                }
+                let body = bytes[end..end + length].to_vec();
+                observed
+                    .lock()
+                    .unwrap()
+                    .push((headers.clone(), body.clone()));
+                let (status, body) = handler(&headers, &body);
+                write!(socket,"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nSet-Cookie: ryframe_csrf=csrf; Path=/\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+                socket.write_all(&body).unwrap();
+            }
+        });
+        Self {
+            url,
+            requests,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let result = self.thread.take().unwrap().join();
+        if !thread::panicking() {
+            result.unwrap();
+        }
+    }
+}
+fn catalog() -> std::collections::BTreeMap<String, Value> {
+    [
+        ("get_auth_csrf", "GET", "/csrf"),
+        ("post_auth_login", "POST", "/login"),
+        ("post_auth_refresh", "POST", "/refresh"),
+        ("post_auth_logout", "POST", "/logout"),
+        ("post_system_posts", "POST", "/posts"),
+        ("get_system_posts", "GET", "/posts"),
+        ("post_common_upload", "POST", "/upload"),
+        ("get_common_file_download", "GET", "/download"),
+        ("get_platform_capabilities", "GET", "/capabilities"),
+        ("post_platform_product_plans", "POST", "/plans"),
+        (
+            "post_platform_product_plans_by_plan_id_versions",
+            "POST",
+            "/plans/{plan_id}/versions",
+        ),
+        (
+            "post_platform_product_plans_by_plan_id_versions_by_version_publish",
+            "POST",
+            "/plans/{plan_id}/versions/{version}/publish",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, method, path)| (id.into(), json!({"method":method,"path":path})))
+    .collect()
+}
+fn create_client(server: &Server) -> Client {
+    let mut plan = super::plan();
+    plan["source"]["api_url"] = json!(server.url);
+    let mut client =
+        Client::new(&plan, "source", 0, &catalog(), "fixture-memory-password").unwrap();
+    client.pacer = Pacer::new(0);
+    client
+}
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn dataset_http_records_each_post_refreshes_and_checks_exact_count() {
+    let server = Server::new(|headers, body| {
+        let response = if headers.starts_with("POST /posts ") {
+            let value: Value = serde_json::from_slice(body).unwrap();
+            assert!(value["sort"].as_u64().unwrap() <= 999);
+            json!({"code":200,"data":{"id":(value["code"].as_str().unwrap().rsplit('-').next().unwrap().parse::<u64>().unwrap()+1).to_string(),"code":value["code"],"name":value["name"]}})
+        } else if headers.starts_with("GET /posts?") {
+            json!({"code":200,"data":{"total":1001}})
+        } else {
+            json!({"code":200,"data":{"access_token":"fixture-token"}})
+        };
+        (200, serde_json::to_vec(&response).unwrap())
+    });
+    let temp = super::directory();
+    let mut client = create_client(&server);
+    runtime().block_on(async {
+        client.login().await.unwrap();
+        let samples = prepare::seed_posts(
+            &mut client,
+            "restore-case",
+            "system",
+            1001,
+            temp.path(),
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(samples.len(), 3);
+        assert_eq!(samples[2]["code"], "restore-case-1000");
+    });
+    let records = std::fs::read_to_string(temp.path().join("created.ndjson")).unwrap();
+    assert_eq!(records.lines().count(), 1001);
+    let calls = server.requests.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(h, _)| h.starts_with("POST /refresh "))
+            .count(),
+        10
+    );
+    assert!(
+        calls
+            .last()
+            .unwrap()
+            .0
+            .starts_with("GET /posts?code=restore-case&page=1&page_size=1 ")
+    );
+    assert!(calls.iter().all(|(headers, _)| {
+        headers
+            .to_ascii_lowercase()
+            .contains("x-forwarded-for: 198.18.20.1")
+    }));
+}
+#[test]
+fn dataset_http_upload_and_download_preserve_exact_bytes_and_no_retry() {
+    let content = prepare::sample_content("fixture", 1, 1024);
+    let expected = content.clone();
+    let server = Server::new(move |headers, body| {
+        if headers.starts_with("POST /upload ") {
+            assert!(body.windows(expected.len()).any(|v| v == expected));
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fixture-token")
+            );
+            return (
+                200,
+                serde_json::to_vec(
+                    &json!({"code":200,"data":[{"file_id":"1","file_path":"source/file"}]}),
+                )
+                .unwrap(),
+            );
+        }
+        if headers.starts_with("GET /download?") {
+            return (200, expected.clone());
+        }
+        (
+            200,
+            serde_json::to_vec(&json!({"code":200,"data":{"access_token":"fixture-token"}}))
+                .unwrap(),
+        )
+    });
+    let mut client = create_client(&server);
+    runtime().block_on(async {
+        client.login().await.unwrap();
+        client
+            .upload("fixture.txt".into(), content.clone())
+            .await
+            .unwrap();
+        let file =
+            json!({"file_path":"source/file","bytes":1024,"sha256":super::model::sha(&content)});
+        client.download(&file).await.unwrap();
+        let mut invalid = file;
+        invalid["sha256"] = json!("0".repeat(64));
+        assert!(client.download(&invalid).await.is_err());
+    });
+    let rejected = Server::new(|_, _| (429, b"{}".to_vec()));
+    let mut client = create_client(&rejected);
+    runtime().block_on(async {
+        assert!(client.login().await.is_err());
+    });
+    assert_eq!(rejected.requests.lock().unwrap().len(), 1);
+}
+#[test]
+fn pacing_covers_every_request_and_invalid_post_result_never_publishes_record() {
+    let server = Server::new(|headers, _| {
+        let value = if headers.starts_with("POST /posts ") {
+            json!({"data":{"id":"1","code":"wrong"}})
+        } else {
+            json!({"data":{"access_token":"token"}})
+        };
+        (200, serde_json::to_vec(&value).unwrap())
+    });
+    let mut client = create_client(&server);
+    let temp = super::directory();
+    runtime().block_on(async {
+        client.login().await.unwrap();
+        assert!(
+            prepare::seed_posts(
+                &mut client,
+                "case",
+                "system",
+                1,
+                temp.path(),
+                &AtomicBool::new(false)
+            )
+            .await
+            .is_err()
+        );
+        let mut pacer = Pacer::new(15);
+        let began = tokio::time::Instant::now();
+        pacer.wait().await;
+        pacer.wait().await;
+        assert!(began.elapsed() >= Duration::from_millis(15));
+    });
+    assert!(!temp.path().join("created.ndjson").exists());
+}
+
+#[test]
+fn empty_capability_version_accepts_optional_catalog_and_rejects_invalid_before_writes() {
+    for capabilities in [
+        json!([]),
+        json!([{"key":"system.notice"}]),
+        Value::Null,
+        json!({}),
+        json!("[]"),
+    ] {
+        let valid = capabilities.is_array();
+        let server = Server::new(move |headers, _| {
+            let data = if headers.starts_with("GET /capabilities ") {
+                capabilities.clone()
+            } else if headers.starts_with("POST /plans ") {
+                json!({"id":"12"})
+            } else if headers.starts_with("POST /plans/12/versions ") {
+                json!({"id":"13","version":1})
+            } else {
+                json!({"access_token":"token"})
+            };
+            (
+                200,
+                serde_json::to_vec(&json!({"code":200,"data":data})).unwrap(),
+            )
+        });
+        let mut client = create_client(&server);
+        let result = runtime().block_on(async {
+            client.login().await.unwrap();
+            prepare::plan_version(&mut client, &super::plan()).await
+        });
+        assert_eq!(result.is_ok(), valid);
+        let calls = server.requests.lock().unwrap();
+        if valid {
+            assert_eq!(calls.len(), 6);
+            let body: Value = serde_json::from_slice(&calls[4].1).unwrap();
+            assert_eq!(body["capabilities"], json!([]));
+            assert!(calls[5].0.starts_with("POST /plans/12/versions/1/publish "));
+        } else {
+            assert_eq!(calls.len(), 3);
+            assert!(
+                !calls
+                    .iter()
+                    .any(|(headers, _)| headers.starts_with("POST /plans"))
+            );
+        }
+    }
+}
+
+#[test]
+fn exact_post_count_mismatch_keeps_creation_evidence_without_success() {
+    let server = Server::new(|headers, _| {
+        let data = if headers.starts_with("POST /posts ") {
+            json!({"id":"1","code":"case-0","name":"恢复样本0"})
+        } else if headers.starts_with("GET /posts?") {
+            json!({"total":99})
+        } else {
+            json!({"access_token":"token"})
+        };
+        (
+            200,
+            serde_json::to_vec(&json!({"code":200,"data":data})).unwrap(),
+        )
+    });
+    let temp = super::directory();
+    let mut client = create_client(&server);
+    runtime().block_on(async {
+        client.login().await.unwrap();
+        let error = prepare::seed_posts(
+            &mut client,
+            "case",
+            "system",
+            1,
+            temp.path(),
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("数量"));
+    });
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("created.ndjson"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert!(!temp.path().join("result.json").exists());
+}

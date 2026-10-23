@@ -31,7 +31,6 @@ from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target import execute_plan
 from source_inventory import build_source_domains, capture_inventory
 
-DATASET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE"
 DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"
 
 
@@ -364,6 +363,15 @@ def _operation_fields(request: dict, operation: str) -> set[str]:
 def private_protocol_request(argv: list[str] | None = None,
                              environment: dict[str, str] | None = None) -> ReferenceRequest:
     arguments = sys.argv[1:] if argv is None else argv
+    if arguments == ["--stdin"]:
+        raw = sys.stdin.buffer.read(65_537)
+        if len(raw) > 65_536:
+            raise ReferenceProtocolError("reference 私有协议超过64KiB")
+        try:
+            protocol = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_protocol_object)
+        except (ValueError, UnicodeError) as error:
+            raise ReferenceProtocolError("reference stdin私有协议无效") from error
+        return _request_from_protocol(protocol)
     values = os.environ if environment is None else environment
     raw = values.pop(PROTOCOL_KEY, None)
     if arguments:
@@ -495,7 +503,7 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             source = source_snapshot(backend)
             tool_root = Path(__file__).resolve().parents[2]
             tool_inventory = capture_inventory(tool_root)
-            runner = tool_root / "tools/js/restore_reference_dataset.mjs"
+            runner = tool_root / "xtask/src/recovery/dataset_prepare.rs"
             write_json(work / "dataset-tools.json", {
                 "format_version": 1, "kind": "restore-reference-dataset-tools",
                 "root": str(tool_root),
@@ -514,15 +522,17 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             }
             preflight_path = work / "dataset-preflight.json"
             write_json(preflight_path, preflight)
-            environment = {key: value for key, value in os.environ.items()
-                           if key != DATASET_PROTOCOL_ENV}
-            environment[DATASET_PROTOCOL_ENV] = dataset_protocol(
-                backend, args.plan.resolve(), preflight_path.resolve())
-            tools.execute(
-                [*tools.command("node"), str(runner)],
-                env=environment,
-                timeout=timeout,
-            )
+            from rate_limit_tool import tool_binding, verified_tool
+            from process_environment import configured
+            with verified_tool(tool_binding()) as executable:
+                command = ([executable, "__recovery-dataset"] if executable else [
+                    shutil.which("cargo") or "cargo", "run", "--quiet", "--locked", "--manifest-path",
+                    str(tool_root / "Cargo.toml"), "-p", "xtask", "--",
+                    "__recovery-dataset",
+                ])
+                tools.execute(command, data=dataset_protocol(
+                    backend, args.plan.resolve(), preflight_path.resolve()).encode("utf-8"),
+                    env=configured({}), timeout=timeout)
             result = read_json(work / "dataset/result.json")
             if read_json(preflight_path) != preflight:
                 raise ValueError("数据准备预检收据在执行期间发生变化")

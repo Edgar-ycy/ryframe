@@ -6,7 +6,7 @@ from workspace_directory import WorkspaceDirectory
 from restore_build import file_digest
 from restore_reference import artifact, now, write_json
 from restore_reference_io import DATA_HEADER
-from restore_reference_plan import BUCKETS
+from restore_reference_plan import BUCKETS, plan_hash
 
 
 def environment(test):
@@ -20,15 +20,21 @@ def environment(test):
     config.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=test\npassword=fixture\n")
     executable = backend / "tool.exe"
     executable.write_bytes(b"unit-test-tool")
+    configuration = backend / ".local-tests/config"
+    configuration.mkdir()
+    settings = configuration / "app.test.toml"
+    settings.write_text('[object_storage]\naccess_key="access-fixture"\nsecret_key="secret-fixture"\n', encoding="utf-8")
+    binding = {"app_env":"test", "directory":str(configuration), "files":{"app.test.toml":file_digest(settings)}}
+    binding["sha256"] = plan_hash(binding)
     plan = {"format_version": 1, "id": "restore-case", "target_side": "base",
             "work_dir": str(config.parent / "reference"),
             "tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]}
-                      for name in ("mysql", "mysqldump", "node")}}
+                      for name in ("mysql", "mysqldump")}}
     for side in ("source", "target"):
         plan[side] = {"scope_id": side, "runtime_dir": str(config.parent / side),
                       "api_url": "http://127.0.0.1:3000",
                       "s3": {"endpoint": "http://127.0.0.1:9000", "region": "us-east-1",
-                             "access_key": "access-fixture", "secret_key": "secret-fixture"},
+                             "configuration": binding},
                       "databases": [{"key": key, "kind": kind, "mode": mode,
                                      "database": f"{side}_{key}", "server_uuid": "uuid-1", "defaults_file": str(config),
                                      "defaults_sha256": file_digest(config)["sha256"]}
