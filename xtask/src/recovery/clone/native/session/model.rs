@@ -239,6 +239,9 @@ pub(crate) fn bindings(value: &Value) -> Result<(), &'static str> {
 
 pub(crate) fn authorization(response: &Value, identity: &Value) -> Result<Value, &'static str> {
     let auth = &response["data"];
+    if auth["password_change_required"].as_bool() != Some(false) {
+        return Err("SessionPasswordChangeRequired");
+    }
     for (name, field) in [
         ("subject_id", "id"),
         ("tenant_id", "tenant_id"),

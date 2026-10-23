@@ -13,7 +13,7 @@ fn identity() -> Value {
 fn authorization_requires_exact_identity_and_actual_schedule_permissions() {
     let identity = identity();
     let mut response = json!({"data": {"user":{"id":"100", "tenant_id":"system", "username":"operator"},
-        "is_super_admin":false, "permissions":["monitor:schedule:list","monitor:schedule:edit"]}});
+        "password_change_required":false, "is_super_admin":false, "permissions":["monitor:schedule:list","monitor:schedule:edit"]}});
     assert!(model::authorization(&response, &identity).is_ok());
     response["data"]["permissions"] = json!(["monitor:schedule:list"]);
     assert!(model::authorization(&response, &identity).is_err());
@@ -111,7 +111,7 @@ fn public_identity_is_valid_and_authorization_never_contains_credentials() {
     assert!(model::identity(&selected).is_ok());
     let response = json!({"data": {
         "user":{"id":"100", "tenant_id":"system", "username":"operator"},
-        "is_super_admin":false, "permissions":["*"]
+        "password_change_required":false, "is_super_admin":false, "permissions":["*"]
     }});
     let authorization = model::authorization(&response, &selected).unwrap();
     assert!(authorization.get("password").is_none());
@@ -181,4 +181,29 @@ fn bindings_allow_optional_literal_configuration_directory_and_reject_old_or_unk
         bindings.as_object_mut().unwrap().remove(field);
         assert_eq!(model::bindings(&bindings), Err("InvalidSessionRequest"));
     }
+}
+
+#[test]
+fn current_credentials_require_authoritative_password_change_completion() {
+    let selected = identity();
+    let base = json!({"data":{"user":{"id":"100","tenant_id":"system","username":"operator"},
+        "password_change_required":false,"is_super_admin":true,"permissions":["*"]}});
+    assert!(model::authorization(&base, &selected).is_ok());
+    for value in [Value::Null, json!(true), json!("false"), json!(0)] {
+        let mut response = base.clone();
+        response["data"]["password_change_required"] = value;
+        assert_eq!(
+            model::authorization(&response, &selected),
+            Err("SessionPasswordChangeRequired")
+        );
+    }
+    let mut missing = base;
+    missing["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("password_change_required");
+    assert_eq!(
+        model::authorization(&missing, &selected),
+        Err("SessionPasswordChangeRequired")
+    );
 }
