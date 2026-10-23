@@ -268,6 +268,9 @@ const DIAGNOSTICS: &[&str] = &[
 fn safe_message(error: &dyn std::error::Error) -> &str {
     // 只公开固定诊断，解析错误、文件路径与任意输入值均不进入协议输出。
     let reason = error.to_string();
+    if let Some(message) = super::resume::diagnostic(&reason) {
+        return message;
+    }
     if let Some(message) = super::binding::diagnostic(&reason) {
         return message;
     }
@@ -283,6 +286,9 @@ fn safe_message(error: &dyn std::error::Error) -> &str {
 pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
     if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
         return Err("目标证据请求为空或超过 1 MiB".into());
+    }
+    if let Some(result) = super::resume::execute(bytes) {
+        return result;
     }
     let value = json_io::parse_fragment(std::str::from_utf8(bytes)?, "目标证据请求")?;
     let operation = json_io::text(&value["operation"], "目标证据操作")?;

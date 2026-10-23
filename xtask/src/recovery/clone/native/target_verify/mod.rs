@@ -24,6 +24,7 @@ pub(crate) mod proof;
 pub(crate) mod publication;
 pub(crate) mod redis;
 pub(crate) mod reset;
+mod resume;
 mod resume_baseline;
 mod resume_confirmed;
 mod resume_model;

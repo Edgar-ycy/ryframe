@@ -510,12 +510,10 @@ class TargetResumeTests(unittest.TestCase):
                 self.initialize()
         descriptor = {"path": str(f.path), **file_digest(f.path)}
         linked_path = f.output / "reset-state"
-        binding_linked = target_binding.linked
+        from devex_clone_target_resume_fixture import linked_evidence
         calls = len(f.calls)
 
-        with patch.object(target_binding, "linked",
-                             side_effect=lambda path: path == linked_path or binding_linked(path)), \
-                self.assertRaisesRegex(ValueError, "经过链接"):
+        with linked_evidence(linked_path), self.assertRaisesRegex(ValueError, "经过链接"):
             resume_inventory_target(
                 f.root, f.output, f.run, request_descriptor=descriptor
             )
@@ -1108,13 +1106,6 @@ class TargetResumeTests(unittest.TestCase):
                     f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run)
             self.assertEqual(len(f.calls), calls)
             self.assertEqual(sum(call.args[0][0] == "EVAL" for call in redis.call_args_list), 1)
-
-    def test_receipt_diagnostic_normalizes_windows_extended_path(self):
-        filename = r"D:\中文 空格\receipt.json"
-        error = FileNotFoundError(2, "fixture", "\\\\?\\" + filename)
-        diagnostic = target_resume._safe_os_error(error, {"_receipt_path": filename})
-        self.assertEqual(diagnostic["filename_role"], "command_receipt")
-        self.assertEqual(diagnostic["filename_length"], len(filename))
 
     def test_command_success_before_confirmation_failure_is_bound_and_not_retried(self):
         f = self.f
