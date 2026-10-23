@@ -15,7 +15,7 @@ import devex_clone_source_proof as proof
 from restore_build import ROLES, build_command, file_digest
 from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, configuration_binding, plan_hash
 
 
 class SourceFixture:
@@ -40,6 +40,8 @@ class SourceFixture:
             source["databases"].append({**{key: row[key] for key in ("key", "kind", "mode", "server_uuid", "database")},
                                         "defaults_file": str(client), "defaults_sha256": file_digest(client)["sha256"]})
         self.write_config(source)
+        source["s3"] = {"endpoint": source["s3"]["endpoint"], "region": source["s3"]["region"],
+                        "configuration": configuration_binding(self.backend, self.backend / "config")}
         tool = self.local / "external.exe"
         tool.write_bytes(b"fixed-external-fixture")
         source_inventory = {
@@ -219,7 +221,7 @@ class SourceFixture:
         self.native_requests.append(copy.deepcopy(request))
         assert request["format_version"] == 1
         assert request["scope_id"] == self.scope
-        assert request["configuration"] == self.request["source"]["s3"]
+        assert request["configuration_binding"] == self.request["source"]["s3"]["configuration"]
         assert request["bucket"] in BUCKETS
         assert not any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"])
         if "__s3-inspect" in command:
