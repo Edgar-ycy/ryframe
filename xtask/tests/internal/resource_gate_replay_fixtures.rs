@@ -8,7 +8,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::ci::resource_gate::replay::{
-    ProcessEnvironment, ToolExecutables, execute_configured, write_report,
+    ProcessEnvironment, ReplayRun, ToolExecutables, execute_configured, write_report,
 };
 
 const CATEGORIES: [&str; 7] = [
@@ -27,17 +27,66 @@ struct FixtureOutput {
     work_dir: PathBuf,
     tool_log: PathBuf,
     document: Value,
+    run: Option<ReplayRun>,
 }
 
 #[test]
 fn resource_gate_replay_executes_twenty_cases_with_zero_divergence() {
-    let output = run_twenty_case_fixture();
+    let output = run_twenty_case_fixture(false);
     assert_report(&output.document);
     assert_cases(&output.document);
     assert_cleanup(&output);
+    assert_eq!(
+        output.document["evidence"]["environment"]["mysqlIntegration"],
+        "1"
+    );
+    assert_eq!(
+        output.document["evidence"]["environment"]["mysqlTlsIntegration"],
+        "1"
+    );
+    assert_eq!(
+        output.document["evidence"]["environment"]["redisIntegration"],
+        "1"
+    );
+    assert!(
+        !output
+            .document
+            .to_string()
+            .contains(crate::ci::integration_configuration::test_fixture::SECRET)
+    );
+    fs::write(
+        output
+            .backend
+            .join(".local-tests/mysql/config/app.test.toml"),
+        "drift",
+    )
+    .unwrap();
+    let report = output
+        .backend
+        .join(".local-tests/resource-gate-replay/after-drift.json");
+    assert!(write_report(&report, output.run.as_ref().unwrap(), false).is_err());
+    assert!(!report.exists());
 }
 
-fn run_twenty_case_fixture() -> FixtureOutput {
+#[test]
+fn replay_detects_case_configuration_drift_and_preserves_scene() {
+    let output = run_twenty_case_fixture(true);
+    assert!(
+        output.document["error"]
+            .as_str()
+            .unwrap()
+            .contains("replay现场保留")
+    );
+    assert!(
+        !output
+            .backend
+            .join(".local-tests/resource-gate-replay/report.json")
+            .exists()
+    );
+    assert!(fs::read_dir(&output.work_dir).unwrap().next().is_some());
+}
+
+fn run_twenty_case_fixture(drift: bool) -> FixtureOutput {
     let fixture = tempfile::tempdir().unwrap();
     let backend = fixture.path().join("repository with space");
     let frontend = fixture.path().join("前端 repository");
@@ -47,6 +96,7 @@ fn run_twenty_case_fixture() -> FixtureOutput {
     fs::create_dir(&tools).unwrap();
     initialize_repository(&backend, &frontend);
     let cases = create_cases(&backend, &frontend);
+    write_role_configurations(&backend, drift);
     let tool_log = fixture.path().join("tool.log");
     let executables = create_fake_tools(&tools, &tool_log);
     let manifest = fixture.path().join("manifest.json");
@@ -63,20 +113,20 @@ fn run_twenty_case_fixture() -> FixtureOutput {
         &current_exe,
         "resource_gate_replay_fixtures::full_fixture",
     );
-    fs::write(
-        &manifest,
-        serde_json::to_vec_pretty(&json!({
-            "formatVersion": 2,
-            "targetedCommand": [targeted_wrapper],
-            "fullCommand": [full_wrapper],
-            "cases": cases,
-        }))
-        .unwrap(),
-    )
-    .unwrap();
+    write_fixture_manifest(&manifest, cases, targeted_wrapper, full_wrapper);
     let work_dir = backend.join(".local-tests/resource-gate-replay/tests");
     let report = backend.join(".local-tests/resource-gate-replay/report.json");
-    let environment = base_environment();
+    let mut environment = base_environment();
+    for key in [
+        "RYFRAME_MYSQL_INTEGRATION",
+        "RYFRAME_MYSQL_TLS_INTEGRATION",
+        "RYFRAME_REDIS_INTEGRATION",
+        "RYFRAME_MYSQL_HOST",
+        "RYFRAME_REDIS_HOST",
+        "RYFRAME_REDIS_DATABASE",
+    ] {
+        environment.insert(key.into(), "0".into());
+    }
     let run = execute_configured(
         backend.clone(),
         frontend,
@@ -86,18 +136,68 @@ fn run_twenty_case_fixture() -> FixtureOutput {
         false,
         &environment,
         &executables,
-    )
-    .unwrap();
-    write_report(&report, &run, false).unwrap();
-
-    let document = serde_json::from_slice::<Value>(&fs::read(&report).unwrap()).unwrap();
+    );
+    let (document, run) = match run {
+        Ok(run) => {
+            write_report(&report, &run, false).unwrap();
+            (
+                serde_json::from_slice::<Value>(&fs::read(&report).unwrap()).unwrap(),
+                Some(run),
+            )
+        }
+        Err(error) if drift => (json!({"error":error}), None),
+        Err(error) => panic!("{error}"),
+    };
     FixtureOutput {
         _root: fixture,
         backend,
         work_dir,
         tool_log,
         document,
+        run,
     }
+}
+
+fn write_role_configurations(backend: &Path, drift: bool) {
+    for role in [
+        ".local-tests/mysql/config",
+        ".local-tests/service-tests/redis/config",
+    ] {
+        let directory = backend.join(role);
+        fs::create_dir_all(&directory).unwrap();
+        let marker = if drift {
+            "\n# drift-on-first-case\n"
+        } else {
+            ""
+        };
+        fs::write(
+            directory.join("app.test.toml"),
+            format!(
+                "{}{marker}",
+                crate::ci::integration_configuration::test_fixture::BASE
+            ),
+        )
+        .unwrap();
+    }
+}
+
+fn write_fixture_manifest(
+    manifest: &Path,
+    cases: Vec<Value>,
+    targeted_wrapper: PathBuf,
+    full_wrapper: PathBuf,
+) {
+    fs::write(
+        manifest,
+        serde_json::to_vec_pretty(&json!({
+            "formatVersion": 2,
+            "targetedCommand": [targeted_wrapper],
+            "fullCommand": [full_wrapper],
+            "cases": cases,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }
 
 fn assert_report(document: &Value) {
@@ -226,6 +326,7 @@ fn full_fixture() {
 fn run_driver(mode: &str) {
     let request = read_driver_request(std::io::stdin().lock()).unwrap();
     let cwd = env::current_dir().unwrap();
+    verify_case_configuration(&cwd);
     let arguments = fs::read_to_string("fixture-arguments.txt").unwrap();
     assert!(
         arguments.trim().is_empty(),
@@ -277,6 +378,30 @@ fn run_driver(mode: &str) {
     )
     .unwrap();
     assert_eq!(status.trim(), "pass", "fixture 预期失败");
+}
+
+fn verify_case_configuration(cwd: &Path) {
+    for key in [
+        "RYFRAME_MYSQL_INTEGRATION",
+        "RYFRAME_MYSQL_TLS_INTEGRATION",
+        "RYFRAME_REDIS_INTEGRATION",
+        "RYFRAME_MYSQL_HOST",
+        "RYFRAME_REDIS_HOST",
+        "RYFRAME_REDIS_DATABASE",
+    ] {
+        assert!(env::var_os(key).is_none(), "旧控制环境不得传入真实case");
+    }
+    for role in [
+        ".local-tests/mysql/config",
+        ".local-tests/service-tests/redis/config",
+    ] {
+        let selected = cwd.join(role).join("app.test.toml");
+        let text = fs::read_to_string(&selected).unwrap();
+        assert!(text.starts_with(crate::ci::integration_configuration::test_fixture::BASE));
+        if text.contains("# drift-on-first-case") {
+            fs::write(selected, "case mutated configuration").unwrap();
+        }
+    }
 }
 
 fn initialize_repository(backend: &Path, frontend: &Path) {

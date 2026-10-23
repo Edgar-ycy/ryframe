@@ -219,7 +219,9 @@ fn mismatch_decisions_preserve_exit_code_one() {
     result.matches = false;
     let run = ReplayRun {
         results: vec![result],
+        activation: None,
         evidence: ReplayEvidence {
+            integration_files: json!({}),
             manifest_fingerprint: "sha256:manifest".to_owned(),
             runner_fingerprint: "sha256:runner".to_owned(),
             runner_commit: "a".repeat(40),
@@ -435,6 +437,12 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
         "RYFRAME_RESOURCE_GATE_DECISION_FILE",
         "RYFRAME_RESOURCE_GATE_TEST_JOBS",
         "RYFRAME_VERIFY_JOBS",
+        "RYFRAME_MYSQL_INTEGRATION",
+        "RYFRAME_MYSQL_TLS_INTEGRATION",
+        "RYFRAME_MYSQL_HOST",
+        "RYFRAME_REDIS_INTEGRATION",
+        "RYFRAME_REDIS_HOST",
+        "RYFRAME_REDIS_DATABASE",
     ] {
         environment.insert(name.to_owned(), "stale-value".into());
     }
@@ -443,7 +451,6 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
         std::mem::take(&mut environment),
         Path::new("sccache"),
         cache,
-        false,
     )
     .unwrap();
     assert!(!controlled.contains_key("RYFRAME_CI_RUST_GATE_PROFILE"));
@@ -458,6 +465,12 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
         "RYFRAME_RESOURCE_GATE_DECISION_FILE",
         "RYFRAME_RESOURCE_GATE_TEST_JOBS",
         "RYFRAME_VERIFY_JOBS",
+        "RYFRAME_MYSQL_INTEGRATION",
+        "RYFRAME_MYSQL_TLS_INTEGRATION",
+        "RYFRAME_MYSQL_HOST",
+        "RYFRAME_REDIS_INTEGRATION",
+        "RYFRAME_REDIS_HOST",
+        "RYFRAME_REDIS_DATABASE",
     ] {
         assert!(!controlled.contains_key(name));
         assert!(
@@ -469,27 +482,6 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
     assert!(!controlled.contains_key("RUSTFLAGS"));
     assert!(!controlled.contains_key("SCCACHE_GHA_ENABLED"));
     assert!(!controlled.contains_key("CMAKE_CXX_COMPILER_LAUNCHER"));
-    let mut missing = ProcessEnvironment::new();
-    assert!(
-        controlled_environment(missing.clone(), Path::new("sccache"), cache, true)
-            .unwrap_err()
-            .contains("RYFRAME_MYSQL_INTEGRATION")
-    );
-    for (key, value) in [
-        ("RYFRAME_MYSQL_INTEGRATION", "1"),
-        ("RYFRAME_MYSQL_TLS_INTEGRATION", "1"),
-        ("RYFRAME_MYSQL_HOST", "127.0.0.1"),
-        ("RYFRAME_REDIS_INTEGRATION", "1"),
-        ("RYFRAME_REDIS_HOST", "localhost"),
-        ("RYFRAME_REDIS_DATABASE", "15"),
-    ] {
-        missing.insert(key.to_owned(), value.into());
-    }
-    let activation =
-        controlled_environment(missing, Path::new("D:/tools/sccache.exe"), cache, true).unwrap();
-    let recorded = recorded_environment(&activation, true).unwrap();
-    assert_eq!(recorded["mysqlTlsIntegration"], "1");
-    assert!(!recorded.contains_key("SCCACHE_BASEDIRS_FINGERPRINT"));
     let stats = json!({
         "stats": {
             "cache_errors": {"counts": {"Disk": 2}},

@@ -11,6 +11,15 @@ use serde_json::Value;
 
 use super::{path::normalized_path, sha256_json};
 
+const LEGACY_ACTIVATION_KEYS: [&str; 6] = [
+    "RYFRAME_MYSQL_INTEGRATION",
+    "RYFRAME_MYSQL_TLS_INTEGRATION",
+    "RYFRAME_REDIS_INTEGRATION",
+    "RYFRAME_MYSQL_HOST",
+    "RYFRAME_REDIS_HOST",
+    "RYFRAME_REDIS_DATABASE",
+];
+
 const RUST_ENVIRONMENT_KEYS: [&str; 18] = [
     "CARGO_BUILD_JOBS",
     "CARGO_BUILD_TARGET",
@@ -120,34 +129,12 @@ pub(crate) fn controlled_environment(
     mut environment: ProcessEnvironment,
     sccache: &Path,
     cache: &Path,
-    activation_gate: bool,
 ) -> Result<ProcessEnvironment, String> {
-    if activation_gate {
-        for name in [
-            "RYFRAME_MYSQL_INTEGRATION",
-            "RYFRAME_MYSQL_TLS_INTEGRATION",
-            "RYFRAME_REDIS_INTEGRATION",
-        ] {
-            if text_value(&environment, name) != Some("1") {
-                return Err(format!("activation replay 要求 {name}=1 并准备隔离服务"));
-            }
-        }
-        for name in ["RYFRAME_MYSQL_HOST", "RYFRAME_REDIS_HOST"] {
-            if !matches!(
-                text_value(&environment, name),
-                Some("127.0.0.1" | "localhost" | "::1")
-            ) {
-                return Err(format!("activation replay 要求 {name} 显式使用回环地址"));
-            }
-        }
-        if text_value(&environment, "RYFRAME_REDIS_DATABASE") != Some("15") {
-            return Err("activation replay 要求 RYFRAME_REDIS_DATABASE=15".to_owned());
-        }
-    }
     let remove = environment
         .keys()
         .filter(|key| {
-            key.starts_with("RYFRAME_REPLAY_")
+            LEGACY_ACTIVATION_KEYS.contains(&key.to_ascii_uppercase().as_str())
+                || key.starts_with("RYFRAME_REPLAY_")
                 || key.starts_with("RYFRAME_DEVEX_")
                 || key.starts_with("RYFRAME_INTEGRATION_")
                 || key.starts_with("RYFRAME_CI_")
@@ -195,24 +182,6 @@ pub(crate) fn recorded_environment(
     recorded.insert(
         "frontendInstall".to_owned(),
         "corepack pnpm install --offline --frozen-lockfile".to_owned(),
-    );
-    recorded.insert(
-        "mysqlIntegration".to_owned(),
-        text_value(environment, "RYFRAME_MYSQL_INTEGRATION")
-            .unwrap_or("0")
-            .to_owned(),
-    );
-    recorded.insert(
-        "mysqlTlsIntegration".to_owned(),
-        text_value(environment, "RYFRAME_MYSQL_TLS_INTEGRATION")
-            .unwrap_or("0")
-            .to_owned(),
-    );
-    recorded.insert(
-        "redisIntegration".to_owned(),
-        text_value(environment, "RYFRAME_REDIS_INTEGRATION")
-            .unwrap_or("0")
-            .to_owned(),
     );
     if let Some(value) = text_value(environment, "SCCACHE_BASEDIRS") {
         let basedirs = env::split_paths(OsStr::new(value))
@@ -430,8 +399,7 @@ mod tests {
             environment.insert(format!("{prefix}LEGACY"), "ignored".into());
         }
         let controlled =
-            controlled_environment(environment, Path::new("sccache"), Path::new("cache"), false)
-                .unwrap();
+            controlled_environment(environment, Path::new("sccache"), Path::new("cache")).unwrap();
         assert_eq!(text_value(&controlled, "PATH"), Some("system-path"));
         assert_eq!(text_value(&controlled, "TEMP"), Some("system-temp"));
         assert_eq!(text_value(&controlled, "CARGO_INCREMENTAL"), Some("0"));

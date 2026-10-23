@@ -14,6 +14,7 @@ use crate::{
     Result, cli::ResourceGateReplayOptions, process::PreservedFailure, workspace::root_dir,
 };
 
+mod activation;
 mod decision;
 mod environment;
 mod frontend;
@@ -21,6 +22,8 @@ mod manifest;
 mod path;
 mod report;
 mod runner;
+mod session;
+use session::{cleanup_replay, prepare_workspace};
 mod workspace;
 
 #[allow(unused_imports)]
@@ -94,6 +97,19 @@ struct ReplayContext<'a> {
     environment: &'a ProcessEnvironment,
     tools: &'a ReplayTools,
     runner_manifest: &'a Path,
+    activation: &'a std::sync::Arc<activation::Activation>,
+    published: std::cell::RefCell<Option<activation::Published>>,
+    preserve_scene: std::cell::Cell<bool>,
+}
+
+impl ReplayContext<'_> {
+    fn verify_inputs(&self) -> ReplayStep<()> {
+        self.activation.verify()?;
+        if let Some(published) = self.published.borrow().as_ref() {
+            published.verify()?;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn run(options: &ResourceGateReplayOptions, frontend_dir: &Path) -> Result<()> {
@@ -162,6 +178,10 @@ pub(crate) fn finish(run: &ReplayRun, activation_gate: bool) -> Result<()> {
 }
 
 fn execute(request: &ReplayRequest, runtime: ReplayRuntime<'_>) -> ReplayStep<ReplayRun> {
+    let activation = std::sync::Arc::new(activation::Activation::load(
+        &request.backend,
+        request.activation_gate,
+    )?);
     let manifest = load_manifest(&request.manifest)?;
     if request.activation_gate {
         validate_activation_commands(&manifest)?;
@@ -194,9 +214,10 @@ fn execute(request: &ReplayRequest, runtime: ReplayRuntime<'_>) -> ReplayStep<Re
         runtime.base_environment.clone(),
         &resolved_tools.sccache,
         &cache,
-        request.activation_gate,
     )?;
+    activation.verify()?;
     let tools = collect_tools(&backend.root, &frontend.root, resolved_tools, &environment)?;
+    activation.verify()?;
     run_replay(
         &backend,
         &frontend,
@@ -208,6 +229,7 @@ fn execute(request: &ReplayRequest, runtime: ReplayRuntime<'_>) -> ReplayStep<Re
         environment,
         tools,
         session_name,
+        activation,
     )
 }
 
@@ -251,7 +273,9 @@ fn run_replay(
     environment: ProcessEnvironment,
     tools: ReplayTools,
     session_name: String,
+    activation: std::sync::Arc<activation::Activation>,
 ) -> ReplayStep<ReplayRun> {
+    activation.verify()?;
     let workspace = prepare_workspace(work_root, &session_name)?;
     let runner_manifest = backend.root.join("Cargo.toml");
     let context = ReplayContext {
@@ -262,13 +286,37 @@ fn run_replay(
         environment: &environment,
         tools: &tools,
         runner_manifest: &runner_manifest,
+        activation: &activation,
+        published: std::cell::RefCell::new(None),
+        preserve_scene: std::cell::Cell::new(false),
     };
     let mut sccache_started = false;
     let result = (|| {
+        context.verify_inputs()?;
         ensure_sccache_server(&tools.executables.sccache, &environment)?;
         sccache_started = true;
         run_replay_work(&context, manifest_fingerprint, activation_gate)
     })();
+    let verification = context.verify_inputs();
+    if context.preserve_scene.get() || verification.is_err() {
+        let stop_error = sccache_started
+            .then(|| stop_sccache(&tools.executables.sccache, &environment))
+            .flatten();
+        return Err(format!(
+            "{}；{}；replay现场保留{}",
+            result
+                .as_ref()
+                .err()
+                .map(String::as_str)
+                .unwrap_or("来源漂移"),
+            verification
+                .err()
+                .unwrap_or_else(|| "配置发布未完成".into()),
+            stop_error
+                .map(|error| format!("；sccache停止失败：{error}"))
+                .unwrap_or_default()
+        ));
+    }
     let cleanup_errors = cleanup_replay(&context, allowed, sccache_started);
     fail_on_cleanup(
         result.as_ref().err().map(String::as_str),
@@ -276,48 +324,6 @@ fn run_replay(
         &cleanup_errors,
     )?;
     result
-}
-
-fn prepare_workspace(work_root: &Path, session_name: &str) -> ReplayStep<ReplayWorkspace> {
-    let session = work_root.join(session_name);
-    if session.exists() {
-        return Err(format!("replay session 已存在：{}", session.display()));
-    }
-    fs::create_dir(&session)
-        .map_err(|error| format!("无法创建 replay session {}：{error}", session.display()))?;
-    let cache = work_root.join("cache").join(session_name);
-    if cache.exists() {
-        let _ = fs::remove_dir(&session);
-        return Err(format!(
-            "replay sccache 目录已存在，拒绝复用：{}",
-            cache.display()
-        ));
-    }
-    if let Err(error) = fs::create_dir_all(&cache) {
-        let _ = fs::remove_dir(&session);
-        return Err(format!(
-            "无法创建 replay sccache 目录 {}：{error}",
-            cache.display()
-        ));
-    }
-    let shared_target = session.join("target");
-    let shared_worktree = session.join("worktree");
-    for directory in [&shared_target, &shared_target.join("runner")] {
-        if let Err(error) = fs::create_dir_all(directory) {
-            let _ = fs::remove_dir_all(&cache);
-            let _ = fs::remove_dir(&session);
-            return Err(format!(
-                "无法创建 replay Cargo target {}：{error}",
-                directory.display()
-            ));
-        }
-    }
-    Ok(ReplayWorkspace {
-        session,
-        cache,
-        shared_target,
-        shared_worktree,
-    })
 }
 
 fn run_replay_work(
@@ -335,6 +341,13 @@ fn run_replay_work(
         &context.workspace.shared_worktree,
         &first.case,
     )?;
+    context.preserve_scene.set(true);
+    *context.published.borrow_mut() = Some(
+        context
+            .activation
+            .publish(&context.workspace.shared_worktree.join("b"))?,
+    );
+    context.preserve_scene.set(false);
     let prime_results = run_prime_cases(context, &primes)?;
     reset_sccache_stats(&context.tools.executables.sccache, context.environment)?;
     let before = sccache_stats(&context.tools.executables.sccache, context.environment)?;
@@ -348,7 +361,11 @@ fn run_replay_work(
         before,
         after,
     )?;
-    Ok(ReplayRun { results, evidence })
+    Ok(ReplayRun {
+        results,
+        evidence,
+        activation: Some(context.activation.clone()),
+    })
 }
 
 fn run_prime_cases(
@@ -356,7 +373,9 @@ fn run_prime_cases(
     primes: &[runner::PrimeSelection],
 ) -> ReplayStep<Vec<ReplayPrime>> {
     let mut results = Vec::new();
+    let verify = || context.verify_inputs();
     for (index, prime) in primes.iter().enumerate() {
+        context.verify_inputs()?;
         verify_case_ranges(context.backend, context.frontend, &prime.case)?;
         let result = execute_in_worktree(CaseExecution {
             worktree: &context.workspace.shared_worktree,
@@ -369,7 +388,10 @@ fn run_prime_cases(
             runner_manifest: context.runner_manifest,
             targeted: true,
             order: index as i64 - primes.len() as i64 + 1,
-        })?;
+            verify_inputs: &verify,
+        });
+        context.verify_inputs()?;
+        let result = result?;
         require_arm(&prime.case, &result, true, true)?;
         results.push(prime_result(prime, result));
     }
@@ -378,11 +400,13 @@ fn run_prime_cases(
 
 fn run_replay_cases(context: &ReplayContext<'_>) -> ReplayStep<Vec<ReplayResult>> {
     let mut results = Vec::new();
+    let verify = || context.verify_inputs();
     let mut order = 0_i64;
     for (index, case) in context.manifest.cases.iter().enumerate() {
         verify_case_ranges(context.backend, context.frontend, case)?;
         let mut arms = std::collections::BTreeMap::new();
         for targeted in [arm_order(index + 1).0, arm_order(index + 1).1] {
+            context.verify_inputs()?;
             order += 1;
             let command = if targeted {
                 &context.manifest.targeted_command
@@ -400,7 +424,10 @@ fn run_replay_cases(context: &ReplayContext<'_>) -> ReplayStep<Vec<ReplayResult>
                 runner_manifest: context.runner_manifest,
                 targeted,
                 order,
-            })?;
+                verify_inputs: &verify,
+            });
+            context.verify_inputs()?;
+            let result = result?;
             require_arm(case, &result, targeted, false)?;
             arms.insert(targeted, result);
         }
@@ -423,12 +450,15 @@ fn build_evidence(
     before: serde_json::Value,
     after: serde_json::Value,
 ) -> ReplayStep<ReplayEvidence> {
-    let environment = recorded_environment(context.environment, activation_gate)?;
+    context.verify_inputs()?;
+    let mut environment = recorded_environment(context.environment, activation_gate)?;
+    let integration_files = context.activation.record(&mut environment)?;
     let repositories = std::collections::BTreeMap::from([
         ("backend".to_owned(), repository_record(context.backend)),
         ("frontend".to_owned(), repository_record(context.frontend)),
     ]);
     Ok(ReplayEvidence {
+        integration_files,
         manifest_fingerprint,
         runner_fingerprint: sha256_file(
             &std::env::current_exe()
@@ -444,58 +474,6 @@ fn build_evidence(
         sccache_before: before,
         sccache_after: after,
     })
-}
-
-fn cleanup_replay(
-    context: &ReplayContext<'_>,
-    allowed: &Path,
-    sccache_started: bool,
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    if sccache_started
-        && let Some(error) = stop_sccache(&context.tools.executables.sccache, context.environment)
-    {
-        errors.push(error);
-    }
-    errors.extend(cleanup_created_worktrees(
-        &[
-            (
-                context.workspace.shared_worktree.join("f").exists(),
-                context.frontend.root.clone(),
-                context.workspace.shared_worktree.join("f"),
-                "前端",
-            ),
-            (
-                context.workspace.shared_worktree.join("b").exists(),
-                context.backend.root.clone(),
-                context.workspace.shared_worktree.join("b"),
-                "后端",
-            ),
-        ],
-        &context.workspace.shared_worktree,
-    ));
-    errors.extend(prune_worktrees(&[
-        &context.backend.root,
-        &context.frontend.root,
-    ]));
-    errors.extend(remove_isolated_tree(&context.workspace.cache, allowed));
-    errors.extend(remove_isolated_tree(
-        &context.workspace.shared_target,
-        allowed,
-    ));
-    errors.extend(remove_isolated_tree(
-        &context.workspace.shared_worktree,
-        allowed,
-    ));
-    if context.workspace.session.is_dir()
-        && let Err(error) = fs::remove_dir(&context.workspace.session)
-    {
-        errors.push(format!(
-            "replay 临时目录未完全回收：{}：{error}",
-            context.workspace.session.display()
-        ));
-    }
-    errors
 }
 
 fn unique_session_name() -> String {

@@ -43,6 +43,7 @@ pub(crate) struct CaseExecution<'a> {
     pub(crate) runner_manifest: &'a Path,
     pub(crate) targeted: bool,
     pub(crate) order: i64,
+    pub(crate) verify_inputs: &'a dyn Fn() -> Result<(), String>,
 }
 
 pub(crate) fn prime_cases(
@@ -225,17 +226,21 @@ pub(crate) fn arm_order(index: usize) -> (bool, bool) {
 }
 
 pub(crate) fn execute_in_worktree(execution: CaseExecution<'_>) -> Result<CommandResult, String> {
+    (execution.verify_inputs)()?;
     let backend_worktree = execution.worktree.join("b");
     let frontend_worktree = execution.worktree.join("f");
     let decision_path = execution.worktree.join("decision.json");
     let command_log = execution.worktree.join("command.log");
-    match run_case_command(
+    let result = run_case_command(
         &execution,
         &backend_worktree,
         &frontend_worktree,
         &decision_path,
         &command_log,
-    ) {
+    );
+    // 漂移时保留命令日志、decision和配置现场，不能先清理再由外层发现。
+    (execution.verify_inputs)()?;
+    match result {
         Ok(result) => {
             cleanup_case_artifacts(&decision_path, &command_log)?;
             Ok(result)

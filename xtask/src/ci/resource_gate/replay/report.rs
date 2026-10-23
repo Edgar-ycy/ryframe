@@ -99,6 +99,7 @@ pub(crate) struct RepositoryRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ReplayEvidence {
+    pub(crate) integration_files: Value,
     pub(crate) manifest_fingerprint: String,
     pub(crate) runner_fingerprint: String,
     pub(crate) runner_commit: String,
@@ -112,10 +113,20 @@ pub(crate) struct ReplayEvidence {
     pub(crate) sccache_after: Value,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct ReplayRun {
     pub(crate) results: Vec<ReplayResult>,
     pub(crate) evidence: ReplayEvidence,
+    pub(crate) activation: Option<std::sync::Arc<super::activation::Activation>>,
+}
+
+impl std::fmt::Debug for ReplayRun {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReplayRun")
+            .field("results", &self.results)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Serialize)]
@@ -166,6 +177,9 @@ pub(crate) fn write_report(
     run: &ReplayRun,
     activation_gate: bool,
 ) -> Result<(), String> {
+    if let Some(activation) = &run.activation {
+        activation.verify()?;
+    }
     let successful = successful_targeted_runs(&run.results);
     let zero_divergence =
         !run.results.is_empty() && run.results.iter().all(|result| result.matches);
@@ -209,6 +223,9 @@ pub(crate) fn write_report(
     let mut body = serde_json::to_vec_pretty(&report)
         .map_err(|error| format!("无法序列化 replay report：{error}"))?;
     body.push(b'\n');
+    if let Some(activation) = &run.activation {
+        activation.verify()?;
+    }
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -217,7 +234,11 @@ pub(crate) fn write_report(
     output
         .write_all(&body)
         .and_then(|()| output.sync_all())
-        .map_err(|error| format!("无法写入 replay report {}：{error}", path.display()))
+        .map_err(|error| format!("无法写入 replay report {}：{error}", path.display()))?;
+    if let Some(activation) = &run.activation {
+        activation.verify()?;
+    }
+    Ok(())
 }
 
 pub(crate) fn percentile_nearest_rank(samples: &[u64], percentile: usize) -> Option<u64> {
