@@ -459,6 +459,34 @@ class SourceRuntimeTests(unittest.TestCase):
                     )
         self.assertEqual(called, [])
 
+    def test_cancelled_or_timed_out_producer_reclaims_only_registered_identity_without_completion(self):
+        for index, error in enumerate((KeyboardInterrupt(), subprocess.TimeoutExpired("producer", 1))):
+            directory = self.copy_run / f"interrupted-{index}/verification"
+            directory.mkdir(parents=True)
+            self.process_state = {"alive": True}
+
+            class InterruptedProcess(FakeProcess):
+                def communicate(self, *, input, timeout):
+                    self.state["authorization"] = json.loads(input)
+                    raise error
+
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(producer, "process_identity", side_effect=self.identity), \
+                    patch.object(producer, "terminate_owned_process", side_effect=lambda *_a, **_k: self.process_state.update(alive=False)) as stop, \
+                    self.assertRaises(type(error)):
+                producer.run_source_producer(
+                    self.backend, self.backend, directory, "d" * 32,
+                    Path(sys.executable).resolve(), self.start, self.lineage, {"APP_ENV": "test"},
+                    coordinator_source=self.coordinator_source, execution_sha=self.execution_sha,
+                    popen=lambda argv, **_kwargs: InterruptedProcess(self.process_state, self.node_result, argv),
+                )
+            stop.assert_called_once_with(self.process_identity, crash=True)
+            self.assertFalse(self.process_state["alive"])
+            self.assertTrue((directory / producer.PROCESS).is_file())
+            self.assertTrue((directory / producer.READY).is_file())
+            self.assertFalse((directory / producer.COMPLETION).exists())
+            self.assertFalse((directory / producer.STDOUT).exists())
+
     def test_failed_node_preserves_bounded_stderr_and_registered_identity(self):
         directory = self.copy_run / "failure/verification"
         directory.mkdir(parents=True)

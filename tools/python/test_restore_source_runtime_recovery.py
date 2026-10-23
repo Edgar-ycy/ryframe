@@ -148,11 +148,6 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
             runtime._cache_observation(self.resources, self.namespace, self.fixture.subjects)
         self.assertEqual(len(self.resources.eval_calls), 1)
 
-    def test_receipt_rejects_live_hash_counted_as_expired(self):
-        observation, _ = runtime._cache_observation(self.resources, self.namespace, self.fixture.subjects)
-        with self.assertRaisesRegex(ValueError, "键或版本"):
-            runtime._validate_cache_before(observation["before"], self.plan, [self.plan[0]["keys"]["snapshot"]])
-
     def test_cas_rechecks_state_after_observation_and_never_cleans_changed_keys(self):
         observation, comparisons = runtime._cache_observation(self.resources, self.namespace, self.fixture.subjects)
         self.resources.before_eval = lambda: self.resources.expired.add(self.plan[0]["keys"]["snapshot"])

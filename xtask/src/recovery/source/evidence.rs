@@ -8,10 +8,16 @@ use crate::Result;
 
 #[path = "evidence/binding.rs"]
 mod binding;
+#[path = "runtime/cache.rs"]
+mod cache;
+#[path = "runtime/inventory.rs"]
+mod inventory;
 #[path = "evidence/lineage.rs"]
 mod lineage;
 #[path = "evidence/model.rs"]
 mod model;
+#[path = "runtime/ready.rs"]
+mod ready;
 #[path = "evidence/staging.rs"]
 mod staging;
 #[cfg(test)]
@@ -90,6 +96,13 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("write-effects") => model::write_effects(args),
         Some("staging-create") => staging::create(args),
         Some("staging-verify") => staging::verify(args),
+        Some("runtime-manifest") => inventory::request(args, false),
+        Some("producer-inputs") => inventory::request(args, true),
+        Some("producer-files") => inventory::files_request(args),
+        Some("producer-ready") => ready::verify(args),
+        Some("runtime-cache-observation") => cache::observation(args),
+        Some("runtime-cache-receipt") => cache::receipt(args),
+        Some("runtime-cache-resume") => cache::resume(args),
         _ => Err("来源证据操作无效".into()),
     }
 }

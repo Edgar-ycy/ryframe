@@ -371,27 +371,20 @@ def _clean_authorization_cache(resources, namespace: str, subjects: list[dict], 
     return _execute_cache_cleanup(resources, observation, comparisons, output)
 
 
+def _evidence_backend(directory: Path) -> Path:
+    for parent in directory.parents:
+        if parent.name == ".local-tests":
+            return parent.parent
+    raise ValueError("来源验收证据必须位于后端忽略目录")
+
+
 def _manifest(root: Path) -> list[dict]:
-    rows = []
-    if not root.is_dir() or linked(root):
-        raise ValueError("来源验收证据目录不是普通目录")
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        if linked(path):
-            raise ValueError("来源验收证据包含链接或重解析点")
-        if path.is_dir():
-            try:
-                next(path.iterdir())
-            except StopIteration as error:
-                raise ValueError("来源验收证据包含空目录") from error
-            continue
-        if not path.is_file():
-            raise ValueError("来源验收证据包含非普通文件")
-        snapshot = artifact_snapshot(path)
-        rows.append({"path": path.relative_to(root).as_posix(), "bytes": snapshot.bytes,
-                     "sha256": snapshot.sha256})
-    if not rows:
-        raise ValueError("来源验收证据目录不能为空")
-    return rows
+    return native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": "runtime-manifest", "write": False,
+            "arguments": {"backend": str(_evidence_backend(root)), "directory": str(root)},
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
 
 
 def _resources(backend: Path, facts: dict, output: Path, run):
@@ -770,18 +763,14 @@ def _resume_or_execute_cache_cleanup(resources, intent: dict, output: Path, *, c
     frozen = intent["authorization_cache"]
     keys = _cache_keys(frozen["plan"])
     types = [resources._redis(["TYPE", key]) for key in keys]
-    if all(kind == "none" for kind in types):
-        expired = [item["snapshot"]["key"] for item in frozen["before"]
-                   if item["snapshot"]["type"] == "none"]
-        return _publish_cache_cleanup(
-            resources, frozen, output, None, expired,
-            "reconciled_unknown_lua_result",
-        )
-    observed, comparisons = _cache_observation(
+    observed, comparisons = (None, None) if all(kind == "none" for kind in types) else _cache_observation(
         resources, frozen["namespace"], frozen["subjects"]
     )
-    if observed != frozen:
-        raise ValueError("来源验收恢复 intent 后授权缓存出现混合状态或漂移")
+    decision = _cache_policy("runtime-cache-resume", frozen=frozen, types=types, observed=observed)
+    if decision["action"] == "reconcile":
+        return _publish_cache_cleanup(
+            resources, frozen, output, None, decision["expired"], "reconciled_unknown_lua_result",
+        )
     return _execute_cache_cleanup(resources, frozen, comparisons, output, checkpoint=checkpoint)
 
 
@@ -926,129 +915,23 @@ def _read_login_audit(backend: Path, directory: Path, descriptor: dict) -> dict:
     return value
 
 
-def _validate_cache_before(before: object, plan: list[dict], expired: list[str]) -> None:
-    if not isinstance(before, list) or len(before) != len(plan):
-        raise ValueError("来源授权缓存前像没有完整主体集合")
-    for actual, expected in zip(before, plan, strict=True):
-        exact_fields(
-            actual,
-            {
-                "tenant_id", "user_id", "user_authorization_version", "tenant_epoch",
-                "user_version", "snapshot",
-            },
-            "来源授权缓存清理前像",
-        )
-        if any(actual[key] != expected[key] for key in ("tenant_id", "user_id", "user_authorization_version")):
-            raise ValueError("来源授权缓存清理主体不同")
-        keys = expected["keys"]
-        tenant_epoch = exact_fields(
-            actual["tenant_epoch"], {"key", "value"}, "来源授权缓存 tenant epoch"
-        )
-        user_version = exact_fields(
-            actual["user_version"], {"key", "value"}, "来源授权缓存用户版本"
-        )
-        snapshot = actual["snapshot"]
-        if not isinstance(snapshot, dict) or snapshot.get("type") not in {"hash", "none"}:
-            raise ValueError("来源授权缓存快照类型不同")
-        fields = ({"key", "type", "field", "bytes", "sha256"}
-                  if snapshot["type"] == "hash" else {"key", "type"})
-        exact_fields(snapshot, fields, "来源授权缓存快照")
-        if (
-            tenant_epoch["key"] != keys["tenant_epoch"]
-            or not isinstance(tenant_epoch["value"], str)
-            or re.fullmatch(r"[1-9][0-9]{0,9}", tenant_epoch["value"]) is None
-            or user_version != {
-                "key": keys["user_version"],
-                "value": str(expected["user_authorization_version"]),
-            }
-            or snapshot["key"] != keys["snapshot"]
-        ):
-            raise ValueError("来源授权缓存清理键或版本不同")
-        if snapshot["type"] == "none":
-            if snapshot["key"] not in expired:
-                raise ValueError("来源授权缓存过期快照没有计入原子清理")
-        elif (
-            snapshot["key"] in expired
-            or snapshot["field"] != f"{tenant_epoch['value']}:{user_version['value']}"
-            or type(snapshot["bytes"]) is not int
-            or snapshot["bytes"] <= 0
-            or not isinstance(snapshot["sha256"], str)
-            or re.fullmatch(r"[a-f0-9]{64}", snapshot["sha256"]) is None
-        ):
-            raise ValueError("来源授权缓存清理键或版本不同")
+def _cache_policy(operation: str, **arguments):
+    return native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": operation, "write": False, "arguments": arguments,
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
 
 
 def _validate_cache_observation(value: object, subjects: list[dict]) -> dict:
-    cache = exact_fields(value, {"namespace", "subjects", "plan", "before"}, "恢复授权缓存前像")
-    plan = native_response(*native_invoke(
-        "__source-evidence", {
-            "operation": 'cache-plan',
-            "write": False,
-            "arguments": {
-                'namespace': cache["namespace"],
-                'subjects': subjects,
-            },
-        }, subprocess.run, may_write=False,
-    ))[0]["value"]
-    if cache["subjects"] != subjects or cache["plan"] != plan:
-        raise ValueError("来源验收恢复 intent 的授权缓存计划不同")
-    before = cache["before"]
-    if not isinstance(before, list) or any(not isinstance(item, dict) for item in before):
-        raise ValueError("来源验收恢复缺少完整授权缓存前像")
-    expired = [item["snapshot"]["key"] for item in before
-               if isinstance(item.get("snapshot"), dict) and item["snapshot"].get("type") == "none"]
-    _validate_cache_before(before, plan, expired)
-    return cache
+    return _cache_policy("runtime-cache-observation", value=value, subjects=subjects)
 
 
 def _verify_cache_receipt(backend: Path, directory: Path, descriptor: dict, subjects: list[dict]) -> dict:
     path = bound_file(backend, descriptor)
     if path != directory / "cache-cleanup.json":
         raise ValueError("来源授权缓存清理不属于同一 verification 目录")
-    value = read_json(path)
-    exact_fields(value, {"format_version", "kind", "status", "namespace", "before", "deleted",
-                         "expired_snapshot_keys", "after", "execution", "cleaned_at"},
-                 "来源授权缓存清理")
-    plan = native_response(*native_invoke(
-        "__source-evidence", {
-            "operation": 'cache-plan',
-            "write": False,
-            "arguments": {
-                'namespace': value["namespace"],
-                'subjects': subjects,
-            },
-        }, subprocess.run, may_write=False,
-    ))[0]["value"]
-    expected_keys = _cache_keys(plan)
-    expected_snapshots = [item["keys"]["snapshot"] for item in plan]
-    expired = value["expired_snapshot_keys"]
-    if (
-        type(value["format_version"]) is not int
-        or value["format_version"] != 2
-        or value["kind"] != "restore-source-authorization-cache-cleanup"
-        or value["status"] != "cleaned"
-        or value["execution"] not in {"confirmed_lua_result", "reconciled_unknown_lua_result"}
-        or (value["execution"] == "confirmed_lua_result"
-            and (type(value["deleted"]) is not int or not 22 <= value["deleted"] <= 33))
-        or (value["execution"] == "reconciled_unknown_lua_result" and value["deleted"] is not None)
-        or not isinstance(expired, list)
-        or any(not isinstance(key, str) for key in expired)
-        or len(set(expired)) != len(expired)
-        or expired != [key for key in expected_snapshots if key in set(expired)]
-        or (value["execution"] == "confirmed_lua_result" and value["deleted"] + len(expired) != 33)
-        or not isinstance(value["before"], list)
-        or not isinstance(value["after"], list)
-        or len(value["before"]) != 11
-        or len(value["after"]) != 33
-    ):
-        raise ValueError("来源授权缓存清理身份或结果无效")
-    for actual, key in zip(value["after"], expected_keys, strict=True):
-        exact_fields(actual, {"key", "type"}, "来源授权缓存清理后像")
-        if actual != {"key": key, "type": "none"}:
-            raise ValueError("来源授权缓存清理后像不同")
-    _validate_cache_before(value["before"], plan, expired)
-    timestamp(value["cleaned_at"], "来源授权缓存清理时间")
-    return value
+    return _cache_policy("runtime-cache-receipt", value=read_json(path), subjects=subjects)
 
 
 def _verify_recovery_chain(
