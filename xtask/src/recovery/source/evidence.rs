@@ -125,7 +125,10 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("runtime-cache-resume") => cache::resume(args),
         Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
         Some("runtime-generation") => crate::recovery::runtime::generation::request(args),
-        Some(operation) if operation.starts_with("reference-") => {
+        Some(operation)
+            if operation.starts_with("reference-")
+                || operation == "source-reference-projection" =>
+        {
             if reference_workflow::handles(operation) {
                 reference_workflow::request(operation, args)
             } else {

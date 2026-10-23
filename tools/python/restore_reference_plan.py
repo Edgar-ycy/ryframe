@@ -56,6 +56,11 @@ def configuration_binding(backend: Path, directory: Path, app_env: str = "test")
     })
 
 
+def source_reference_projection(backend: Path, request: dict) -> dict:
+    """从原始私有请求绑定取得对象端口的公开来源与工具投影。"""
+    return _native("source-reference-projection", {"backend": str(backend), "request": request})
+
+
 def validate_plan(plan: dict, backend: Path) -> None:
     _native("reference-plan-validate", {"plan": plan, "backend": str(backend)})
 

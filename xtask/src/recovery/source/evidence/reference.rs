@@ -24,6 +24,13 @@ pub(super) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-safe-file" => safe_file_request(args),
         "reference-dataset-timeout" => dataset_timeout(args),
         "reference-configuration-binding" => configuration_binding(args),
+        "source-reference-projection" => {
+            exact(args, &["backend", "request"])?;
+            inputs::reference::source_projection(
+                Path::new(text(&args["backend"], "后端目录")?),
+                &args["request"],
+            )
+        }
         "reference-plan-validate" => validate_plan(args),
         "reference-inventory-validate" => validate_inventory(args),
         "reference-artifacts-verify" => verify_artifacts(args),

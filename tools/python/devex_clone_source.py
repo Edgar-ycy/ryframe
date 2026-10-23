@@ -16,7 +16,7 @@ from devex_clone_model import local_path
 from devex_clone_source_proof import execution_backend, public_request, verify_generation
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
-from restore_reference_plan import plan_hash
+from restore_reference_plan import plan_hash, source_reference_projection
 
 
 def now() -> str:
@@ -54,7 +54,8 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         before = verify_generation(backend, request, run, control_environment=control_environment)
         execution = execution_backend(backend, request)
         write_json(output / "generation-before.json", before)
-        tools = ExternalTools({"source": request["source"], "tools": request["tools"]}, output, run)
+        projection = source_reference_projection(backend, {"path": str(request_path), **request_digest})
+        tools = ExternalTools(projection, output, run)
         stage = "source_identity_and_schema"
         tools.verify_databases("source")
         tools.verify_objects("source")

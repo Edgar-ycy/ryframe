@@ -195,6 +195,15 @@ fn source_evidence_protocol_rejects_duplicates_unknown_fields_and_nonstandard_va
     ] {
         assert!(execute(bytes).is_err());
     }
+    for arguments in [
+        json!({"backend":"unused","request":{},"extra":true}),
+        json!({"backend":7,"request":{}}),
+        json!({"backend":"unused"}),
+    ] {
+        let request = json!({"operation":"source-reference-projection", "write":false,
+            "arguments":arguments});
+        assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    }
 }
 
 #[test]
@@ -213,6 +222,7 @@ fn source_evidence_protocol_requires_exact_write_authorization_before_dispatch()
         ("cache-plan", json!(true)),
         ("staging-create", json!(false)),
         ("staging-create", json!(1)),
+        ("source-reference-projection", json!(true)),
     ] {
         let request = json!({"operation":operation,"write":write,"arguments":{}});
         assert!(

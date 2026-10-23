@@ -14,6 +14,7 @@ import devex_clone_export as export
 import devex_clone_source_proof as proof
 from restore_build import ROLES, build_command, file_digest
 from rate_limit_client import load_app_table
+from full_stack_runtime import configuration_digest
 from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
 from restore_reference_plan import BUCKETS, configuration_binding, plan_hash
@@ -68,9 +69,14 @@ class SourceFixture:
                 "command": ["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features", "--features", feature,
                             "--bin", executable, "--message-format=json"]}
             identities[role] = {"pid": number, "started": "12345", "executable": str(path)}
+        with patch.dict(os.environ, {"APP_ENV": "test"}):
+            api_configuration = configuration_digest(self.backend, self.backend / "config")
         self.runtime = {"backend_root": str(self.backend), "scope_id": self.scope, "worker_ready_url": "http://127.0.0.1:19210/readyz",
+                        "api_config_dir": str(self.backend / "config"),
+                        "api_configuration_sha256": api_configuration,
                         "artifacts": {role: {"path": item["executable"], "sha256": item["sha256"]} for role, item in self.build["artifacts"].items()}}
-        self.maintenance = {"source": {"snapshot": self.snapshot, "worktree_fingerprint": self.fingerprint}, "artifacts": {}}
+        self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build",
+                            "source": {"snapshot": self.snapshot, "worktree_fingerprint": self.fingerprint}, "artifacts": {}}
         for role in ("reset", "migrate", "tenant-data"):
             path = self.local / ("ryframe-" + role + ".exe")
             path.write_bytes(role.encode())

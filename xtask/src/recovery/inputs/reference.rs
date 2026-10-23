@@ -12,6 +12,13 @@ use super::{
 };
 use crate::{Result, cli::ReferenceInputOptions};
 
+pub(crate) fn source_projection(backend: &Path, descriptor: &Value) -> Result<Value> {
+    let request = super::source::load(backend, descriptor)?;
+    let projection = super::reference_configuration::SourceProjection::load(backend, &request)?;
+    projection.assert_unchanged(backend, &request)?;
+    Ok(json!({"source": projection.source, "tools": projection.tools}))
+}
+
 pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<Value> {
     identifier(&options.id)?;
     let (arm, _fresh) = arm::load(

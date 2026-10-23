@@ -36,6 +36,17 @@ fn reference_product_and_bindings_native_chains_succeed() {
         );
     }
     let source_request = read_json(&fixture.root.join("source-request.json"));
+    let path = fixture.root.join("source-request.json");
+    let before = fs::read(&path).unwrap();
+    let descriptor =
+        document::binding(&document::read(&path, &fixture.backend, "私有源请求").unwrap());
+    let projected = reference::source_projection(&fixture.backend, &descriptor).unwrap();
+    assert_eq!(projected.as_object().unwrap().len(), 2);
+    assert_eq!(projected["source"], reference["source"]);
+    assert_eq!(projected["tools"], reference["tools"]);
+    assert_eq!(source_request["source"]["s3"].as_object().unwrap().len(), 4);
+    assert_eq!(projected["source"]["s3"].as_object().unwrap().len(), 3);
+    assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(source_request["tools"].as_object().unwrap().len(), 3);
     assert!(source_request["tools"].get("node").is_some());
     assert_eq!(reference["tools"].as_object().unwrap().len(), 2);
@@ -273,4 +284,49 @@ fn reference_configuration_drift_rejects_before_publication() {
         fs::write(path, original).unwrap();
     }
     reference::build(&fixture.backend, &options).unwrap();
+}
+
+#[test]
+fn source_reference_projection_rejects_binding_runtime_and_configuration_drift() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("source-request.json");
+    let request = document::read(&path, &fixture.backend, "私有源请求").unwrap();
+    let descriptor = document::binding(&request);
+    let mut bad = descriptor.clone();
+    bad["sha256"] = Value::String("0".repeat(64));
+    assert!(reference::source_projection(&fixture.backend, &bad).is_err());
+    bad = descriptor.clone();
+    bad["unexpected"] = Value::Bool(true);
+    assert!(reference::source_projection(&fixture.backend, &bad).is_err());
+
+    let runtime = std::path::Path::new(request.value["runtime"]["path"].as_str().unwrap());
+    let runtime_before = fs::read(runtime).unwrap();
+    fs::write(runtime, b"{}").unwrap();
+    assert!(reference::source_projection(&fixture.backend, &descriptor).is_err());
+    fs::write(runtime, &runtime_before).unwrap();
+
+    let config = fixture.root.join("source-runtime/config/app.test.toml");
+    let config_before = fs::read(&config).unwrap();
+    let mut changed = config_before.clone();
+    changed.push(b'\n');
+    fs::write(&config, changed).unwrap();
+    assert!(reference::source_projection(&fixture.backend, &descriptor).is_err());
+    fs::write(&config, &config_before).unwrap();
+
+    let mut wrong = request.value.clone();
+    wrong["source"]["s3"]["secret_key"] = Value::String("changed-private-value".into());
+    fs::write(&path, serde_json::to_vec(&wrong).unwrap()).unwrap();
+    assert!(reference::source_projection(&fixture.backend, &descriptor).is_err());
+    let rebound =
+        document::binding(&document::read(&path, &fixture.backend, "私有源请求").unwrap());
+    let error = reference::source_projection(&fixture.backend, &rebound)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("与绑定私有请求不一致"));
+    assert!(!error.contains("changed-private-value"));
+    fs::write(&path, &request.raw).unwrap();
+    reference::source_projection(&fixture.backend, &descriptor).unwrap();
+    assert_eq!(fs::read(runtime).unwrap(), runtime_before);
+    assert_eq!(fs::read(config).unwrap(), config_before);
+    assert_eq!(fs::read(path).unwrap(), request.raw);
 }

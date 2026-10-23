@@ -14,6 +14,8 @@ import devex_clone_source as source
 import devex_clone_source_proof as proof
 import devex_provenance
 import restore_build
+from full_stack_runtime import configuration_digest
+from restore_reference_plan import configuration_binding
 from devex_clone_export import schema_snapshot
 from devex_clone_model import schema_fingerprints
 from devex_clone_source_fixture import SourceFixture
@@ -142,6 +144,15 @@ class SourceExportTests(unittest.TestCase):
         self.assertTrue(uploads["entries"][0]["get_header_consistent"])
         self.assertEqual((self.fixture.output / uploads["entries"][0]["artifact"]["file"]).read_bytes(), b"data")
         self.assertNotEqual(control["artifact"]["sha256"], result["logical_inventory_sha256"])
+        private = self.fixture.request["source"]["s3"]
+        self.assertEqual(set(private), {"endpoint", "region", "access_key", "secret_key"})
+        self.assertEqual(source.read_json(self.fixture.request_path)["source"]["s3"], private)
+        published = source.read_json(self.fixture.output / "request.json")["source"]["s3"]
+        self.assertEqual(published, {field: private[field] for field in ("endpoint", "region")})
+        for filename in ("request.json", "export.json"):
+            raw = (self.fixture.output / filename).read_text(encoding="utf-8")
+            for field in ("access_key", "secret_key"):
+                self.assertNotIn(private[field], raw)
 
     def test_registered_unused_target_is_exported_from_actual_target_inventory(self):
         item = self.fixture
@@ -152,6 +163,11 @@ class SourceExportTests(unittest.TestCase):
         item.case.add(empty["key"], "biz_tenant_target_slot", slot_id=1)
         item.case.refresh()
         item.write_config(item.request["source"])
+        item.runtime["api_configuration_sha256"] = configuration_digest(item.backend, item.backend / "config")
+        item.request["runtime"] = item.bind(item.runtime_dir / "runtime.json", item.runtime)
+        item.registry["runtime_sha256"] = item.request["runtime"]["sha256"]
+        item.request["producers_registry"] = item.bind(item.local / "producers.json", item.registry)
+        item.object_configuration = configuration_binding(item.backend, item.backend / "config")
         item.save_request()
         item.backup_omits_empty = True
         result = self.export()
