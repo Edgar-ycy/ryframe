@@ -25,7 +25,7 @@ pub(crate) mod reference_workflow;
 #[path = "evidence/staging.rs"]
 mod staging;
 #[cfg(test)]
-#[path = "evidence/tests.rs"]
+#[path = "../../../tests/unit/recovery/source/evidence/tests.rs"]
 mod tests;
 
 pub(crate) const MARKER: &str = "__source-evidence";

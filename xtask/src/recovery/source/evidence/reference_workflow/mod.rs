@@ -15,6 +15,7 @@ mod proof;
 mod protocol;
 mod receipts;
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/source/evidence/reference_workflow/tests.rs"]
 mod tests;
 
 pub(crate) fn run_local(raw: &str) -> Result<Option<Value>> {

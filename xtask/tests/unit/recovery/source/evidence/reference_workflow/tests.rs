@@ -469,7 +469,7 @@ fn public_local_summary_copy_and_damage_use_the_native_lifecycle() {
     );
 }
 
-#[path = "../../../../../tests/unit/recovery/dataset_prepare/reference_schema.rs"]
+#[path = "../../../dataset_prepare/reference_schema.rs"]
 mod reference_dataset_schema;
 
 #[test]

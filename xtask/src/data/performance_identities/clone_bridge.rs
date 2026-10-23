@@ -15,7 +15,7 @@ mod model;
 #[path = "clone_bridge/quota.rs"]
 mod quota;
 #[cfg(test)]
-#[path = "clone_bridge/tests.rs"]
+#[path = "../../../tests/unit/data/performance_identities/clone_bridge/tests.rs"]
 mod tests;
 
 enum Controller {

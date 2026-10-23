@@ -8,7 +8,7 @@ use super::{documents, model};
 use crate::Result;
 
 #[cfg(test)]
-#[path = "cache/tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/runtime/cache/tests.rs"]
 mod tests;
 
 pub(super) fn keys(plan: &Value) -> Result<Vec<Value>> {

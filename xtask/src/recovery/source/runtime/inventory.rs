@@ -17,7 +17,7 @@ use crate::{
 #[path = "inventory/dynamic.rs"]
 mod dynamic;
 #[cfg(test)]
-#[path = "inventory/tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/runtime/inventory/tests.rs"]
 mod tests;
 
 const PRODUCER_FILES: &[&str] = &[

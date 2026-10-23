@@ -2,10 +2,10 @@ use serde_json::{Value, json};
 
 use super::{execute, model};
 
-#[path = "tests/staging.rs"]
+#[path = "../../../../../src/recovery/source/evidence/tests/staging.rs"]
 mod staging;
 
-#[path = "tests/source_inventory.rs"]
+#[path = "../../../../../src/recovery/source/evidence/tests/source_inventory.rs"]
 mod source_inventory;
 
 fn subjects() -> Value {

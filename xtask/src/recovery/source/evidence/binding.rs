@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[cfg(test)]
-#[path = "binding/tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/evidence/binding/tests.rs"]
 mod tests;
 
 pub(super) fn physical(args: &Value) -> Result<Value> {

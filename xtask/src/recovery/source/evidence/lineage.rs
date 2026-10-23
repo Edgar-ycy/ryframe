@@ -17,7 +17,7 @@ mod fields;
 #[path = "lineage/projection.rs"]
 mod projection;
 #[cfg(test)]
-#[path = "lineage/tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/evidence/lineage/tests.rs"]
 mod tests;
 
 struct Context {

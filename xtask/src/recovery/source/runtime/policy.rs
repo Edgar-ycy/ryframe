@@ -7,7 +7,7 @@ mod audit;
 #[path = "policy/cache_io.rs"]
 mod cache_io;
 #[cfg(test)]
-#[path = "policy/evidence_tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/runtime/policy/evidence_tests.rs"]
 mod evidence_tests;
 #[path = "policy/flow.rs"]
 mod flow;
@@ -16,7 +16,7 @@ mod model;
 #[path = "policy/operations.rs"]
 mod operations;
 #[cfg(test)]
-#[path = "policy/operations_tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/runtime/policy/operations_tests.rs"]
 mod operations_tests;
 #[path = "policy/producer.rs"]
 mod producer;
@@ -27,7 +27,7 @@ mod recovery;
 #[path = "policy/recovery_create.rs"]
 mod recovery_create;
 #[cfg(test)]
-#[path = "policy/tests.rs"]
+#[path = "../../../../tests/unit/recovery/source/runtime/policy/tests.rs"]
 mod tests;
 
 pub(super) fn request(args: &Value) -> Result<Value> {
