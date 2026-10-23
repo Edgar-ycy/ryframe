@@ -22,6 +22,7 @@ pub(crate) mod maintenance;
 pub(crate) mod metadata;
 mod physical;
 mod plan;
+pub(crate) mod post_process;
 pub(crate) mod resources;
 pub(crate) mod s3;
 pub(crate) mod schedule;

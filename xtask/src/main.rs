@@ -47,6 +47,9 @@ fn main() {
     if let Some(code) = recovery::clone::native::cache::run_hidden_if_requested() {
         std::process::exit(code);
     }
+    if let Some(code) = recovery::clone::native::post_process::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::fixture_runtime::protocol::run_hidden_if_requested() {
         std::process::exit(code);
     }

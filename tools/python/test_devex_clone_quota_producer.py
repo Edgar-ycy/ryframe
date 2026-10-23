@@ -1,6 +1,7 @@
 """配额 bridge 的固定参数与原 post 会话初始化兼容职责，不执行 HTTP。"""
 from pathlib import Path
 from types import SimpleNamespace
+import os
 import unittest
 from unittest.mock import Mock
 
@@ -9,9 +10,18 @@ from devex_clone_post_process import KINDS, PHASES, producer_command
 
 
 class QuotaProducerContractTests(unittest.TestCase):
+    def setUp(self):
+        root = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
+        tool = root / 'target/debug' / ('xtask.exe' if os.name == 'nt' else 'xtask')
+        from restore_build import file_digest
+        digest = file_digest(tool)
+        previous = __import__('devex_clone_post_process')._TEST_TOOL
+        __import__('devex_clone_post_process')._TEST_TOOL = {"path": str(tool), **digest}
+        self.addCleanup(setattr, __import__('devex_clone_post_process'), '_TEST_TOOL', previous)
     def test_quota_kinds_bind_only_seed_modes_identity_plan_and_sha(self):
-        root = Path.cwd()
-        request = {'identity_tool': {'path': str(root / 'xtask'), 'sha256': 'b' * 64},
+        root = Path(__file__).resolve().parents[2]
+        native = __import__('devex_clone_post_process')._TEST_TOOL
+        request = {'identity_tool': {'path': native['path'], 'sha256': native['sha256']},
                    'identity_plan': {'path': str(root / 'plan.json'), 'sha256': 'a' * 64}}
         for mode in ('plan', 'apply', 'reconcile'):
             kind = 'quota-' + mode

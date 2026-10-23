@@ -53,6 +53,10 @@ class ProducerLineageTests(unittest.TestCase):
         binding_patch = patch("rate_limit_client.tool_binding", return_value=native)
         binding_patch.start()
         self.addCleanup(binding_patch.stop)
+        process = __import__("devex_clone_post_process")
+        previous = process._TEST_TOOL
+        process._TEST_TOOL = native
+        self.addCleanup(setattr, process, "_TEST_TOOL", previous)
         temporary_root = self.backend / ".local-tests" / "python-unit"
         temporary_root.mkdir(parents=True, exist_ok=True)
         temporary = WorkspaceDirectory(dir=temporary_root)

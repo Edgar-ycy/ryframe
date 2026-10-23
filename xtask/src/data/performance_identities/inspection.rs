@@ -1,8 +1,5 @@
 //! 复用共享运行来源核验；身份数据库检查全部使用原生只读连接。
-use super::{
-    evidence,
-    plan::{self, array, text},
-};
+use super::plan::{self, array, text};
 use crate::{
     Result,
     devex::{
@@ -85,31 +82,7 @@ fn runtime_proof(environment: &Value) -> Result<Value> {
         "scope_id": environment["scope_id"],
         "api_url": environment["api_url"]
     });
-    let script = backend.join("tools/python/devex_clone_post_process.py");
-    let before = crate::recovery::clone::native::digest::file(&script)?;
-    let output = crate::process::command_output_with_input_timeout(
-        backend,
-        text(&environment["database"], "python")?,
-        &[
-            script.to_str().ok_or("运行核验器路径不是 UTF-8")?,
-            "--runtime-proof",
-        ],
-        &[("APP_ENV", "test")],
-        Some(&serde_json::to_vec(&request)?),
-        Duration::from_secs(60),
-    )?;
-    if !output.status.success()
-        || output.stdout.len() > 1024 * 1024
-        || crate::recovery::clone::native::digest::file(&script)? != before
-    {
-        return Err("共享运行来源核验失败或工具字节变化".into());
-    }
-    let value = evidence::parse(&output.stdout)?;
-    crate::recovery::clone::native::json::exact(&value, &["ok", "receipt"], "运行来源核验响应")?;
-    if value["ok"] != true {
-        return Err("共享运行来源核验未通过".into());
-    }
-    Ok(value["receipt"].clone())
+    crate::recovery::clone::native::post_process::runtime_proof(&request)
 }
 fn open(database: &Value, control: &Value) -> Result<Mysql> {
     let mut session = Mysql::open(

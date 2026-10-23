@@ -1,5 +1,6 @@
 """原业务数据集到当前复制目标的边界核验；Node 输出为纯 mock。"""
 import json
+import os
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import sys
@@ -21,6 +22,14 @@ from restore_reference_plan import plan_hash
 
 class ExistingTests(unittest.TestCase):
     def setUp(self):
+        process = __import__("devex_clone_post_process")
+        tool = Path(__file__).resolve().parents[2] / "target" / "debug" / (
+            "xtask.exe" if os.name == "nt" else "xtask"
+        )
+        from restore_build import file_digest
+        previous = process._TEST_TOOL
+        process._TEST_TOOL = {"path": str(tool), **file_digest(tool)}
+        self.addCleanup(setattr, process, "_TEST_TOOL", previous)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         backend = Path(temporary.name).resolve()

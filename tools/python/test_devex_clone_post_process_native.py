@@ -26,6 +26,9 @@ class NativeProducerTests(unittest.TestCase):
             self.skipTest("定向 Rust 测试尚未生成 xtask 二进制")
         digest = file_digest(self.tool)
         self.binding = {"path": str(self.tool), "sha256": digest["sha256"]}
+        previous = process._TEST_TOOL
+        process._TEST_TOOL = {**self.binding, "bytes": digest["bytes"]}
+        self.addCleanup(setattr, process, "_TEST_TOOL", previous)
 
     def test_existing_native_command_uses_explicit_public_configuration_binding(self):
         with WorkspaceDirectory(

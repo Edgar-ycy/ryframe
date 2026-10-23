@@ -1,6 +1,7 @@
 """调度三个动作的部分成功、未知写入、显式核对及故障窗口；无真实服务。"""
 import copy
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -48,6 +49,14 @@ class FakeBridge:
 
 class ActionsTests(unittest.TestCase):
     def setUp(self):
+        process = __import__("devex_clone_post_process")
+        tool = Path(__file__).resolve().parents[2] / "target" / "debug" / (
+            "xtask.exe" if os.name == "nt" else "xtask"
+        )
+        from restore_build import file_digest
+        previous = process._TEST_TOOL
+        process._TEST_TOOL = {"path": str(tool), **file_digest(tool)}
+        self.addCleanup(setattr, process, "_TEST_TOOL", previous)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()

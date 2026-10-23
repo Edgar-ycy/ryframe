@@ -13,7 +13,6 @@ from devex_clone_capture import read_json
 from devex_clone_model import digest, exact, linked
 from devex_clone_post import registration as post_registration
 from devex_clone_post_process import (
-    IDENTITY_RELEASE_ID,
     KINDS,
     PHASES,
     historical_producer_request,
@@ -31,6 +30,9 @@ ATTEMPT_FIELDS = {
 }
 IDENTITY_FIELDS = {"pid", "started", "executable"}
 ROLES = {"api", "worker"}
+UUID_V4 = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", re.IGNORECASE
+)
 
 
 def _linked(path: Path) -> bool:
@@ -376,7 +378,7 @@ def _node(backend: Path, run: Path, registered: dict) -> dict | None:
           | ({owner_key} if owner_recorded else set()))
     if (owner_recorded
             and (not isinstance(process[owner_key], str)
-                 or IDENTITY_RELEASE_ID.fullmatch(process[owner_key]) is None)):
+                 or UUID_V4.fullmatch(process[owner_key]) is None)):
         raise ValueError("原生生产者 owner 格式无效")
     if (kind not in PHASES or PHASES[kind][0] != stage or attempt["mode"] not in PHASES[kind][1]
             or KINDS.get(kind) is None or launch["format_version"] != 1
