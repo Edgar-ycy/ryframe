@@ -110,6 +110,7 @@ pub(crate) fn seed_source_protocol_at(options: &SeedSourceOptions, root: &Path) 
     let protocol = serde_json::json!({
         "format_version": 1,
         "kind": "ryframe-xtask-recovery-seed-source",
+        "native_tool": clone::native_tool_binding()?,
         "request": {
             "backend_dir": path_argument(root, "后端目录")?,
             "operation": options.operation.as_str(),
@@ -153,6 +154,7 @@ pub(crate) fn fresh_target_protocol(options: &FreshTargetOptions) -> Result<Stri
     Ok(serde_json::to_string(&serde_json::json!({
         "format_version": 1,
         "kind": "ryframe-xtask-recovery-fresh-target",
+        "native_tool": clone::native_tool_binding()?,
         "request": {
             "backend_dir": path(&root_dir())?,
             "operation": options.operation.as_str(),

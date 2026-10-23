@@ -4,12 +4,14 @@ from contextlib import nullcontext
 import copy
 import json
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
 import devex_clone_run_cli as cli
 import devex_clone_target as target
 from devex_clone_run_state import binding
+from restore_build import file_digest
 import test_devex_clone_factory_context as history_fixture
 
 
@@ -22,7 +24,10 @@ class AuthorityProtocolTests(unittest.TestCase):
             "attempt": None, "write": False,
         }
         request.update(changes)
-        return json.dumps({"format_version": 1, "kind": cli.STAGE_PROTOCOL_KIND, "request": request})
+        return json.dumps({"format_version": 1, "kind": cli.STAGE_PROTOCOL_KIND, "request": request,
+                           "native_tool": {"format_version": 1, "kind": "ryframe-native-rate-limit-tool",
+                                           "path": str(Path(sys.executable).resolve()),
+                                           **file_digest(Path(sys.executable).resolve())}})
 
     def test_authority_is_readonly_and_has_no_attempt(self):
         root, arguments = cli.decode_clone_stage_protocol(self.payload())

@@ -172,7 +172,10 @@ def _run_private_protocol(protocol, actual_argv, decoder, protocol_error, label,
         return 2
     try:
         backend, args = decoder(protocol)
-    except (protocol_error, UnicodeError, RecursionError) as error:
+        from rate_limit_tool import install_binding
+
+        install_binding(json.dumps(args.native_tool, ensure_ascii=False))
+    except (protocol_error, ValueError, UnicodeError, RecursionError) as error:
         print(f"{label} 私有协议无效：{error}", file=sys.stderr)
         return 2
     try:
@@ -213,9 +216,6 @@ def main(argv=None) -> int:
         print(f"开发复制私有协议无效：{type(error).__name__}", file=sys.stderr)
         return 2
     def clone_dispatch(args, backend):
-        from rate_limit_tool import install_binding
-
-        install_binding(json.dumps(args.native_tool, ensure_ascii=False))
         if args.command == "plan":
             result = write_plan(backend, args.input, args.output)
         elif args.command == "verify":

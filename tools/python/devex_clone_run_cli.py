@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from rate_limit_tool import parse_binding
+
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
 from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
@@ -73,11 +75,15 @@ def decode_fresh_target_protocol(source: str):
         value = json.loads(source, object_pairs_hook=_strict_object)
     except (json.JSONDecodeError, TypeError) as error:
         raise FreshTargetProtocolError("fresh-target 私有协议不是有效 JSON") from error
-    _exact_keys(value, {"format_version", "kind", "request"}, "根")
+    _exact_keys(value, {"format_version", "kind", "native_tool", "request"}, "根")
     if (type(value["format_version"]) is not int or value["format_version"] != 1
             or not isinstance(value["kind"], str)
             or value["kind"] != FRESH_TARGET_PROTOCOL_KIND):
         raise FreshTargetProtocolError("fresh-target 私有协议版本或类型不受支持")
+    try:
+        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
+    except (ValueError, TypeError):
+        raise FreshTargetProtocolError("fresh-target 私有协议 native_tool 无效") from None
     request = value["request"]
     fields = {
         "backend_dir", "operation", "workspace", "request", "environment",
@@ -92,6 +98,7 @@ def decode_fresh_target_protocol(source: str):
     backend = _protocol_path(request["backend_dir"], "backend_dir")
     arguments = SimpleNamespace(
         command="fresh-target",
+        native_tool=native_tool,
         operation=operation,
         workspace=_protocol_path(request["workspace"], "workspace"),
         request=_protocol_path(request["request"], "request", optional=True),
@@ -139,10 +146,14 @@ def decode_seed_source_protocol(source: str):
         value = json.loads(source, object_pairs_hook=_seed_strict_object)
     except (json.JSONDecodeError, TypeError) as error:
         raise SeedSourceProtocolError("seed source 私有协议不是有效 JSON") from error
-    _seed_exact_keys(value, {"format_version", "kind", "request"}, "根")
+    _seed_exact_keys(value, {"format_version", "kind", "native_tool", "request"}, "根")
     if (type(value["format_version"]) is not int or value["format_version"] != 1
             or value["kind"] != SEED_SOURCE_PROTOCOL_KIND):
         raise SeedSourceProtocolError("seed source 私有协议版本或类型不受支持")
+    try:
+        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
+    except (ValueError, TypeError):
+        raise SeedSourceProtocolError("seed source 私有协议 native_tool 无效") from None
     request = value["request"]
     _seed_exact_keys(
         request,
@@ -163,6 +174,7 @@ def decode_seed_source_protocol(source: str):
     backend = _seed_protocol_path(request["backend_dir"], "backend_dir")
     arguments = SimpleNamespace(
         command="seed-runtime",
+        native_tool=native_tool,
         operation=operation,
         run_dir=_seed_protocol_path(request["run_dir"], "run_dir"),
         request=_seed_protocol_path(request["request"], "request", optional=True),
@@ -205,10 +217,14 @@ def decode_clone_stage_protocol(source: str):
         value = json.loads(source, object_pairs_hook=_stage_strict_object)
     except (json.JSONDecodeError, TypeError) as error:
         raise StageProtocolError("clone stage 私有协议不是有效 JSON") from error
-    _stage_exact(value, {"format_version", "kind", "request"}, "根")
+    _stage_exact(value, {"format_version", "kind", "native_tool", "request"}, "根")
     if (type(value["format_version"]) is not int or value["format_version"] != 1
             or value["kind"] != STAGE_PROTOCOL_KIND):
         raise StageProtocolError("clone stage 私有协议版本或类型不受支持")
+    try:
+        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
+    except (ValueError, TypeError):
+        raise StageProtocolError("clone stage 私有协议 native_tool 无效") from None
     request = value["request"]
     _stage_exact(
         request,
@@ -238,6 +254,7 @@ def decode_clone_stage_protocol(source: str):
         raise StageProtocolError("clone stage 私有协议 backend_dir 不是当前后端")
     return backend, SimpleNamespace(
         command="stage-operation",
+        native_tool=native_tool,
         run_dir=_stage_path(request["run_dir"], "run_dir"),
         stage=request["stage"],
         mode=request["mode"],

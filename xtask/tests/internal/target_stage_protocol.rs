@@ -21,6 +21,11 @@ fn authority_protocol_never_claims_a_writing_attempt() {
         serde_json::from_str(&stage::protocol(&request(&root), "target-authority").unwrap())
             .unwrap();
     assert_eq!(value["request"]["operation"], "target-authority");
+    assert_eq!(value.as_object().unwrap().len(), 4);
+    assert_eq!(
+        value["native_tool"],
+        crate::recovery::clone::native_tool_binding().unwrap()
+    );
     assert_eq!(value["request"]["write"], false);
     assert!(value["request"]["attempt"].is_null());
 }

@@ -229,15 +229,19 @@ class CloneProtocolTests(unittest.TestCase):
 
     def test_stage_kind_uses_existing_decoder_and_dispatch_once(self):
         value = {"format_version": 1, "kind": cli.STAGE_PROTOCOL_KIND,
+                 "native_tool": self.native_tool,
                  "request": {"backend_dir": str(self.backend), "run_dir": str(self.run),
                              "stage": "copy", "mode": "run", "operation": "run",
                              "attempt": 7, "write": True}}
         source = json.dumps(value).encode()
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source))), \
+                patch("rate_limit_tool.install_binding") as install, \
                 patch.object(cli, "dispatch_stage_operation", return_value={"status": "fixture"}) as dispatch, \
                 patch.object(cli, "dispatch") as ordinary, redirect_stdout(StringIO()):
             self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         dispatch.assert_called_once()
+        install.assert_called_once_with(json.dumps(self.native_tool, ensure_ascii=False))
+        self.assertEqual(dispatch.call_args.args[0].native_tool, self.native_tool)
         self.assertEqual(dispatch.call_args.args[0].attempt, 7)
         self.assertTrue(dispatch.call_args.args[0].write)
         ordinary.assert_not_called()
@@ -248,6 +252,42 @@ class CloneProtocolTests(unittest.TestCase):
                     patch.object(cli, "dispatch_stage_operation") as dispatch, redirect_stderr(StringIO()):
                 self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
             dispatch.assert_not_called()
+
+    def test_all_private_kinds_require_valid_native_binding_before_dispatch(self):
+        requests = [
+            self.payload("status", {"run_dir": str(self.run)}, False),
+            {"format_version": 1, "kind": cli.FRESH_TARGET_PROTOCOL_KIND,
+             "request": {"backend_dir": str(self.backend), "workspace": str(self.new_run),
+                         "operation": "status", "request": None, "environment": None,
+                         "storage_run": None, "observation_dir": None, "write": False}},
+            {"format_version": 1, "kind": cli.SEED_SOURCE_PROTOCOL_KIND,
+             "request": {"backend_dir": str(self.backend), "run_dir": str(self.run),
+                         "operation": "source-generation-status", "request": None, "write": False}},
+            {"format_version": 1, "kind": cli.STAGE_PROTOCOL_KIND,
+             "request": {"backend_dir": str(self.backend), "run_dir": str(self.run),
+                         "stage": "copy", "mode": "run", "operation": "preflight",
+                         "attempt": None, "write": False}},
+        ]
+        before = {p: p.read_bytes() for p in self.directory.rglob("*") if p.is_file()}
+        for request in requests:
+            for binding in [None, {}, {**self.native_tool, "bytes": True},
+                            {**self.native_tool, "path": "relative"},
+                            {**self.native_tool, "sha256": "invalid"}]:
+                value = {**request, "native_tool": binding}
+                if binding is None:
+                    del value["native_tool"]
+                raw = json.dumps(value).encode("utf-8")
+                with self.subTest(kind=value["kind"], binding=binding), \
+                        patch("sys.stdin", SimpleNamespace(buffer=BytesIO(raw))), \
+                        patch("rate_limit_tool.install_binding") as install, \
+                        patch.object(cli, "dispatch") as ordinary, \
+                        patch.object(cli, "dispatch_stage_operation") as stage, \
+                        redirect_stderr(StringIO()):
+                    self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
+                install.assert_not_called()
+                ordinary.assert_not_called()
+                stage.assert_not_called()
+        self.assertEqual(before, {p: p.read_bytes() for p in self.directory.rglob("*") if p.is_file()})
 
     def test_cancelled_or_exited_dispatch_is_not_retried(self):
         source = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False)).encode()

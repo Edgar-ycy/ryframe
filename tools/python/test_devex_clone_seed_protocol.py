@@ -16,12 +16,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import devex_clone
 import devex_clone_run_cli as cli
+import rate_limit_tool
+from restore_build import file_digest
 
 READ_ONLY_OPERATIONS = {"source-generation-status", "source-generation-reboot-status"}
 
 
 class SeedSourceProtocolTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("rate_limit_tool._COORDINATOR_BINDING", None))
         self.backend = Path(__file__).resolve().parents[2]
         self.run_dir = self.backend / ".local-tests/seed source protocol"
         self.request = self.run_dir / "generation 请求.json"
@@ -30,6 +33,9 @@ class SeedSourceProtocolTests(unittest.TestCase):
         return {
             "format_version": 1,
             "kind": cli.SEED_SOURCE_PROTOCOL_KIND,
+            "native_tool": {"format_version": 1, "kind": "ryframe-native-rate-limit-tool",
+                            "path": str(Path(sys.executable).resolve()),
+                            **file_digest(Path(sys.executable).resolve())},
             "request": {
                 "backend_dir": str(self.backend),
                 "operation": operation,
@@ -56,6 +62,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
                     self.request if operation in cli.SEED_SOURCE_REQUEST_OPERATIONS else None,
                 )
                 self.assertIsNone(request.producer_binding)
+                self.assertEqual(request.native_tool, self.payload()["native_tool"])
 
     def test_decoder_rejects_unknown_duplicate_bad_types_and_cross_operation_fields(self):
         unknown = json.loads(self.encoded())
@@ -94,13 +101,16 @@ class SeedSourceProtocolTests(unittest.TestCase):
             return {"status": request.operation}
 
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
+                patch("rate_limit_tool.install_binding", wraps=rate_limit_tool.install_binding) as install, \
                 patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, \
                 redirect_stdout(output):
             self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         dispatch.assert_called_once()
+        install.assert_called_once_with(json.dumps(self.payload()["native_tool"], ensure_ascii=False))
         self.assertEqual(json.loads(output.getvalue())["status"], "source-generation-status")
 
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
+                patch("rate_limit_tool._COORDINATOR_BINDING", None), \
                 patch.object(cli, "dispatch", side_effect=ValueError("domain")), \
                 redirect_stderr(StringIO()):
             self.assertEqual(devex_clone.main(["--private-stdin"]), 1)

@@ -314,6 +314,7 @@ pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<St
     let value = json!({
         "format_version": 1,
         "kind": "ryframe-xtask-recovery-clone-stage",
+        "native_tool": crate::recovery::clone::native_tool_binding()?,
         "request": {
             "backend_dir": path_text(request.backend, "后端目录")?,
             "run_dir": path_text(request.run_dir, "运行目录")?,

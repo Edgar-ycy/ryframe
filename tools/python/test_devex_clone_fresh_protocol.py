@@ -15,14 +15,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import devex_clone
 import devex_clone_run_cli as cli
+import rate_limit_tool
+from restore_build import file_digest
 
 
 class FreshTargetProtocolTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("rate_limit_tool._COORDINATOR_BINDING", None))
+
     def payload(self):
         backend = Path(__file__).resolve().parents[2]
         return {
             "format_version": 1,
             "kind": cli.FRESH_TARGET_PROTOCOL_KIND,
+            "native_tool": {"format_version": 1, "kind": "ryframe-native-rate-limit-tool",
+                            "path": str(Path(sys.executable).resolve()),
+                            **file_digest(Path(sys.executable).resolve())},
             "request": {
                 "backend_dir": str(backend),
                 "operation": "status",
@@ -43,6 +51,7 @@ class FreshTargetProtocolTests(unittest.TestCase):
         self.assertTrue(request.workspace.is_absolute())
         self.assertFalse(request.write)
         self.assertIsNone(request.request)
+        self.assertEqual(request.native_tool, self.payload()["native_tool"])
 
     def test_decoder_rejects_unknown_duplicate_and_invalid_typed_fields(self):
         unknown = self.payload()
@@ -74,13 +83,16 @@ class FreshTargetProtocolTests(unittest.TestCase):
             return {"status": "fresh_target_unregistered"}
 
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
+                patch("rate_limit_tool.install_binding", wraps=rate_limit_tool.install_binding) as install, \
                 patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, \
                 redirect_stdout(output):
             self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         dispatch.assert_called_once()
+        install.assert_called_once_with(json.dumps(self.payload()["native_tool"], ensure_ascii=False))
         self.assertEqual(json.loads(output.getvalue())["status"], "fresh_target_unregistered")
 
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
+                patch("rate_limit_tool._COORDINATOR_BINDING", None), \
                 patch.object(cli, "dispatch", side_effect=ValueError("domain")), \
                 redirect_stderr(StringIO()):
             self.assertEqual(devex_clone.main(["--private-stdin"]), 1)

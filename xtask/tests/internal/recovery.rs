@@ -44,6 +44,11 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
         serde_json::from_str(&fresh_target_protocol(&options).unwrap()).unwrap();
     assert_eq!(document["format_version"], 1);
     assert_eq!(document["kind"], "ryframe-xtask-recovery-fresh-target");
+    assert_eq!(document.as_object().unwrap().len(), 4);
+    assert_eq!(
+        document["native_tool"],
+        super::recovery::clone::native_tool_binding().unwrap()
+    );
     assert_eq!(document["request"]["operation"], "status");
     assert_eq!(document["request"]["write"], false);
     assert_eq!(
