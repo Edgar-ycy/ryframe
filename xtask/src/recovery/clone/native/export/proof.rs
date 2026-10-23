@@ -103,7 +103,11 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
         processes.insert(role.to_owned(), receipt["identity"].clone());
     }
     let producers = producers(context, &processes)?;
-    if context.environment.get("APP_JOBS_MODE").map(String::as_str) != Some("external") {
+    let (api_configuration, api_files) = runtime_configuration(context, &runtime, "api")?;
+    let (worker_configuration, worker_files) = runtime_configuration(context, &runtime, "worker")?;
+    if api_configuration["jobs"]["mode"].as_str() != Some("external")
+        || worker_configuration["jobs"]["mode"].as_str() != Some("external")
+    {
         return Err("源必须明确使用 external Worker，scheduler/consumer 由 Worker 承载".into());
     }
     let api = context
@@ -115,9 +119,15 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
         .get("worker_ready_url")
         .and_then(Value::as_str)
         .ok_or("源 runtime 缺少 Worker 就绪地址")?;
-    verify_api_address(&context.execution_backend, api, &context.environment)?;
+    verify_api_address(api, &api_configuration)?;
+    verify_worker_address(worker, &worker_configuration)?;
     common::require_closed_port(api)?;
     common::require_closed_port(worker)?;
+    if runtime_configuration(context, &runtime, "api")?.1 != api_files
+        || runtime_configuration(context, &runtime, "worker")?.1 != worker_files
+    {
+        return Err("源运行配置在导出证明核验期间变化".into());
+    }
     Ok(json!({
         "source": expected["snapshot"],
         "worktree_fingerprint": context.request["worktree_fingerprint"],
@@ -277,74 +287,160 @@ fn physical_binding(context: &Context) -> Result<Value> {
     }))
 }
 
-fn verify_api_address(
-    backend: &Path,
-    url: &str,
-    environment: &BTreeMap<String, String>,
-) -> Result<()> {
-    if environment.contains_key("APP_APP_HOST_FILE")
-        || environment.contains_key("APP_APP_PORT_FILE")
+fn runtime_configuration(
+    context: &Context,
+    runtime: &Value,
+    role: &str,
+) -> Result<(Value, BTreeMap<String, Value>)> {
+    if context.environment != BTreeMap::from([("APP_ENV".into(), "test".into())]) {
+        return Err("源导出只允许 APP_ENV=test；其他配置必须绑定 TOML 文件".into());
+    }
+    let declared = runtime
+        .get(format!("{role}_config_dir"))
+        .ok_or("源运行收据缺少角色配置目录")?;
+    let (directory, files) =
+        super::super::target_verify::input::request_configuration::configuration_files(
+            &context.execution_backend,
+            &context.environment,
+            Some(declared),
+        )?;
+    // runtime_contract 的摘要只绑定实际加载的公共文件与已选环境文件；
+    // files 仍保留目录中全部 TOML，用于本次核验前后像，而非扩大生产者摘要口径。
+    let selected = files
+        .iter()
+        .filter(|(key, _)| matches!(key.as_str(), "app.toml" | "app.test.toml"))
+        .map(|(key, value)| (key.clone(), value["sha256"].clone()))
+        .collect::<BTreeMap<_, _>>();
+    let payload = json!({"environment": {"APP_ENV": "test"},
+        "config_directory": directory, "files": selected});
+    let sha = super::super::target_verify::input::request_configuration::python_configuration_hash(
+        &payload,
+    )?;
+    if runtime[format!("{role}_configuration_sha256")].as_str() != Some(sha.as_str()) {
+        return Err("源 TOML 配置与运行收据摘要不同；请核对绑定文件".into());
+    }
+    let table =
+        crate::rate_limit::load_app_table(&context.execution_backend, Some(&directory), "test")
+            .map_err(|_| "源 TOML 配置无法加载；请检查所选环境文件与字段类型")?;
+    if super::super::target_verify::input::request_configuration::configuration_files(
+        &context.execution_backend,
+        &context.environment,
+        Some(declared),
+    )? != (directory, files.clone())
     {
-        return Err("源 API 地址文件覆盖未被运行收据绑定".into());
+        return Err("源 TOML 配置在读取期间变化".into());
     }
-    let env = environment
-        .get("APP_ENV")
-        .map(String::as_str)
-        .unwrap_or("dev");
-    let mut app = load_app_table(&backend.join("config/app.toml"))?;
-    let overrides = backend.join(format!("config/app.{env}.toml"));
-    if overrides.is_file() {
-        for (key, value) in load_app_table(&overrides)? {
-            app.insert(key, value);
-        }
-    }
-    let host = environment
-        .get("APP_APP_HOST")
-        .cloned()
-        .or_else(|| app.get("host").cloned())
-        .ok_or("应用配置缺少 host")?;
-    let port = environment
-        .get("APP_APP_PORT")
-        .and_then(|value| value.parse::<u16>().ok())
-        .or_else(|| app.get("port").and_then(|value| value.parse::<u16>().ok()))
-        .ok_or("应用配置缺少有效 port")?;
-    let rest = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .ok_or("源 API 地址无效")?;
-    let authority = rest.split('/').next().unwrap_or_default();
-    let (url_host, url_port) = authority.rsplit_once(':').ok_or("源 API 地址缺少端口")?;
-    let expected_hosts = match url_host {
-        "127.0.0.1" => ["127.0.0.1", "0.0.0.0"],
-        "[::1]" => ["::1", "::"],
+    Ok((serde_json::to_value(table)?, files))
+}
+
+fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
+    let host = configuration["app"]["host"]
+        .as_str()
+        .ok_or("源 TOML 配置缺少 app.host")?;
+    let port = configuration["app"]["port"]
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or("源 TOML 配置缺少有效 app.port")?;
+    let parsed = url::Url::parse(url).map_err(|_| "源 API 地址无效")?;
+    let expected_hosts = match parsed.host_str() {
+        Some("127.0.0.1") => ["127.0.0.1", "0.0.0.0"],
+        Some("[::1]") => ["::1", "::"],
         _ => return Err("源 API 地址必须为本机 loopback".into()),
     };
-    if !expected_hosts.contains(&host.as_str())
-        || url_port.parse::<u16>().ok() != Some(port)
-        || rest.ends_with('/') && rest[rest.find('/').unwrap_or(rest.len())..].len() > 1
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !expected_hosts.contains(&host)
+        || parsed.port_or_known_default() != Some(port)
+        || !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
     {
-        return Err("源 API 精确端口未绑定实际 APP 配置".into());
+        return Err("源 API 精确端口未绑定实际 TOML 配置".into());
     }
     Ok(())
 }
 
-fn load_app_table(path: &Path) -> Result<BTreeMap<String, String>> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("无法读取应用配置 {}：{error}", path.display()))?;
-    let value: toml::Value = toml::from_str(&content)
-        .map_err(|error| format!("无法解析应用配置 {}：{error}", path.display()))?;
-    let app = value
-        .get("app")
-        .and_then(toml::Value::as_table)
-        .ok_or("应用配置缺少 app")?;
-    app.iter()
-        .map(|(key, value)| {
-            let value = match value {
-                toml::Value::String(value) => value.clone(),
-                toml::Value::Integer(value) => value.to_string(),
-                _ => return Err(format!("应用配置 app.{key} 类型无效").into()),
-            };
-            Ok((key.clone(), value))
-        })
-        .collect()
+fn verify_worker_address(url: &str, configuration: &Value) -> Result<()> {
+    let jobs = &configuration["jobs"];
+    let port = jobs["health_port"]
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or("源 TOML 配置缺少有效 jobs.health_port")?;
+    if jobs["health_host"].as_str() != Some("127.0.0.1")
+        || url != format!("http://127.0.0.1:{port}/readyz")
+    {
+        return Err("源 Worker 就绪地址未绑定实际 TOML 配置".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn addresses_only_use_toml_fields_and_reject_ambiguous_urls() {
+        let config = json!({"app":{"host":"0.0.0.0","port":18210},
+            "jobs":{"health_host":"127.0.0.1","health_port":18211}});
+        assert!(verify_api_address("http://127.0.0.1:18210", &config).is_ok());
+        for url in [
+            "http://127.0.0.1:18212",
+            "http://127.0.0.1:18210/path",
+            "http://127.0.0.1:18210?secret=x",
+            "http://user@127.0.0.1:18210",
+            "http://localhost:18210",
+        ] {
+            assert!(verify_api_address(url, &config).is_err());
+        }
+        assert!(verify_worker_address("http://127.0.0.1:18211/readyz", &config).is_ok());
+        assert!(verify_worker_address("http://127.0.0.1:18212/readyz", &config).is_err());
+        let ipv6 = json!({"app":{"host":"::","port":18210}});
+        assert!(verify_api_address("http://[::1]:18210", &ipv6).is_ok());
+    }
+    #[test]
+    fn runtime_digest_matches_selected_files_and_observes_all_toml_changes() {
+        let temporary = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
+        let root = temporary.path().to_path_buf();
+        let directory = root.join("config");
+        std::fs::create_dir(&directory).unwrap();
+        let selected = directory.join("app.test.toml");
+        std::fs::write(&selected, "[app]\nhost='127.0.0.1'\nport=18210\n").unwrap();
+        let extra = directory.join("app.dev.toml");
+        std::fs::write(&extra, "unused=true\n").unwrap();
+        let canonical = std::fs::canonicalize(&directory).unwrap();
+        let canonical = canonical.to_str().unwrap();
+        let canonical = canonical.strip_prefix(r"\\?\").unwrap_or(canonical);
+        let selected_sha = digest::file(&selected).unwrap().sha256;
+        let payload = json!({"environment":{"APP_ENV":"test"},
+            "config_directory":canonical,"files":{"app.test.toml":selected_sha}});
+        let sha = super::super::super::target_verify::input::request_configuration::python_configuration_hash(&payload).unwrap();
+        let runtime = json!({"api_config_dir":directory,"api_configuration_sha256":sha});
+        let context = Context {
+            backend: root.clone(),
+            run_dir: root.clone(),
+            mode: "run".into(),
+            attempt: 1,
+            manifest: Value::Null,
+            request: Value::Null,
+            request_path: root.join("request.json"),
+            environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),
+            execution_backend: root,
+        };
+        let (table, before) = runtime_configuration(&context, &runtime, "api").unwrap();
+        assert_eq!(table["app"]["port"], 18210);
+        assert_eq!(before.len(), 2);
+        std::fs::write(&extra, "unused=false\n").unwrap();
+        let (_, after) = runtime_configuration(&context, &runtime, "api").unwrap();
+        assert_ne!(before, after);
+        std::fs::write(&selected, "[app]\nhost='127.0.0.1'\nport=18212\n").unwrap();
+        assert!(runtime_configuration(&context, &runtime, "api").is_err());
+        let mut overridden = context;
+        overridden
+            .environment
+            .insert("APP_APP_PORT".into(), "18210".into());
+        assert!(runtime_configuration(&overridden, &runtime, "api").is_err());
+    }
 }

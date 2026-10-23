@@ -89,11 +89,54 @@ impl Client {
             .and_then(|port| u16::try_from(port).ok())
             .filter(|port| *port > 0)
             .ok_or("目标 Redis 端口无效")?;
-        let password = context
-            .environment
-            .get("APP_REDIS_PASSWORD")
+        let root = context.execution_backend()?;
+        let declared = context.request.get("configuration_directory");
+        let (directory, files) = super::input::request_configuration::configuration_files(
+            &root,
+            &context.environment,
+            declared,
+        )?;
+        let configuration = serde_json::json!({
+            "environment": {"APP_ENV": "test"}, "config_directory": directory,
+            "files": files.iter().map(|(key, value)| (key.clone(), value["sha256"].clone()))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        });
+        if super::input::request_configuration::python_configuration_hash(&configuration)?
+            != context.request["configuration_sha256"]
+                .as_str()
+                .unwrap_or_default()
+        {
+            return Err("目标 Redis 配置文件与登记摘要不同；请重新审阅请求".into());
+        }
+        let table = crate::rate_limit::load_app_table(&root, Some(&directory), "test")
+            .map_err(|_| "目标 Redis 配置无法加载；请检查所选 TOML 文件")?;
+        let redis_config = table
+            .get("redis")
+            .and_then(toml::Value::as_table)
+            .ok_or("目标配置缺少 redis 表")?;
+        if redis_config.get("host").and_then(toml::Value::as_str) != Some("127.0.0.1")
+            || redis_config.get("port").and_then(toml::Value::as_integer) != Some(i64::from(port))
+            || redis_config
+                .get("database")
+                .and_then(toml::Value::as_integer)
+                != Some(0)
+            || redis_config.get("tls").and_then(toml::Value::as_bool) != Some(false)
+        {
+            return Err("目标 redis.host/port/database/tls 与登记端点不同；请检查绑定 TOML".into());
+        }
+        let password = redis_config
+            .get("password")
+            .and_then(toml::Value::as_str)
             .filter(|value| !value.is_empty())
-            .ok_or("目标 Redis 缺少显式密码")?;
+            .ok_or("目标 TOML 缺少 redis.password；请显式配置密码")?;
+        if super::input::request_configuration::configuration_files(
+            &root,
+            &context.environment,
+            declared,
+        )? != (directory, files)
+        {
+            return Err("目标 Redis 配置读取期间变化".into());
+        }
         let mut client = Self::connect(port)?;
         auth(&mut client, password)?;
         Ok(client)
