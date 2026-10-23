@@ -102,8 +102,11 @@ pub(crate) fn execute(backend: &Path, bytes: &[u8]) -> Result<Value> {
             Ok(json!({"post":post.request,"identity_plan":plan}))
         }
         Some("identity-evidence") => {
-            document::exact(args, &[], "seed 身份发布参数")?;
+            document::exact(args, &["request"], "seed 身份发布参数")?;
             let proof = Registration::load(backend, run, false)?;
+            if proof.value != args["request"] {
+                return Err("seed 身份发布请求不同于当前已登记请求".into());
+            }
             let plan = common::read_bound(backend, &proof.value["identity_plan"], "seed 身份计划")?;
             let root = Path::new(document::text(
                 &proof.value["identity_state"],

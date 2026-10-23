@@ -1,13 +1,10 @@
 """同一复制 run 的身份准备与新 seed 运行登记；历史数据证明不要求目标永远静止。"""
-import hashlib
 import json
 from pathlib import Path
-import re
 
 from devex_clone_capture import read_json
-from devex_clone_model import exact, linked, local_path
+from devex_clone_model import exact, local_path
 from devex_clone_post import registration as post_registration
-from devex_clone_post_model import exact_directory
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file
 from restore_reference_plan import plan_hash
@@ -135,163 +132,38 @@ def private_configuration(backend, plan):
     return private
 
 
-def _publication_names(plan_sha256, root):
-    seed = list(hashlib.sha256(
-        plan_sha256.encode("utf-8") + b"\0" + str(root.resolve()).encode("utf-8")).hexdigest()[:32])
-    seed[12], seed[16] = "5", "8"
-    identifier = "-".join(("".join(seed[:8]), "".join(seed[8:12]), "".join(seed[12:16]),
-                           "".join(seed[16:20]), "".join(seed[20:])))
-    return f"identity-publication-{identifier}.json", f"verified-{identifier}.json"
-
-
-def _encoded_sha256(value):
-    content = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, separators=(",", ": ")) + "\n"
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _expected_identities(plan, ledger):
-    from devex_clone_department_model import snowflake
-
-    identities = []
-    for group in plan["groups"]:
-        permissions = group.get("permissions")
-        if (not isinstance(group.get("role_code"), str) or not group["role_code"]
-                or not isinstance(permissions, list)
-                or any(not isinstance(item, str) or not item for item in permissions)
-                or len(set(permissions)) != len(permissions)):
-            raise ValueError("身份计划角色或权限不能形成固定验证投影")
-        for user in group["users"]:
-            exact(user, {"user_slot", "username", "credential_slot", "client_address"})
-            identities.append({"tenant_slot": group["slot"], "user_slot": user["user_slot"],
-                "tenant_id": group["tenant_id"], "username": user["username"],
-                "client_address": user["client_address"], "credential_slot": user["credential_slot"],
-                "user_id": snowflake(ledger["users"][user["user_slot"]]),
-                "roles_sha256": plan_hash([group["role_code"]]),
-                "permissions_sha256": plan_hash(sorted(permissions))})
-    if len(identities) != 200:
-        raise ValueError("身份验证投影不是固定 200 个用户")
-    return identities
-
-
-def _expected_pools(identities):
-    system = [item for item in identities if item["tenant_slot"] == "system"]
-    tenants = sorted((item for item in identities if item["tenant_slot"] != "system"),
-                     key=lambda item: (item["user_slot"][-3:], item["tenant_slot"]))
-    contract, bindings = {}, {}
-    for name, selected in (("system", system), ("tenants", tenants)):
-        if (len(selected) != 100 or len({item["roles_sha256"] for item in selected}) != 1
-                or len({item["permissions_sha256"] for item in selected}) != 1):
-            raise ValueError("身份准备池数量或授权摘要不一致")
-        selections = {}
-        for count in (10, 50, 100):
-            distribution = {}
-            for item in selected[:count]:
-                slot = item["tenant_slot"]
-                distribution[slot] = distribution.get(slot, 0) + 1
-            selections[str(count)] = distribution
-        contract[name] = {"roles_sha256": selected[0]["roles_sha256"],
-            "permissions_sha256": selected[0]["permissions_sha256"],
-            "client_address_model": "fixed-benchmark-per-user",
-            "slots": [{key: item[key] for key in ("tenant_slot", "user_slot", "client_address")}
-                      for item in selected], "selections": selections}
-        bindings[name] = [{key: item[key] for key in ("tenant_id", "username", "credential_slot")}
-                          for item in selected]
-    return {"contract": contract, "bindings": bindings}
-
-
-def _verified_receipt(backend, root, plan, ledger, receipt):
-    fields = {"format_version", "plan_sha256", "scope_id", "status", "identities",
-              "identity_pools", "templates", "message_audience", "audience_sha256",
-              "homepage_user_slots"}
-    exact(receipt, fields)
-    identities = _expected_identities(plan, ledger)
-    for item in receipt["identities"] if isinstance(receipt["identities"], list) else ():
-        exact(item, {"tenant_slot", "user_slot", "tenant_id", "username", "client_address",
-                     "credential_slot", "user_id", "roles_sha256", "permissions_sha256"})
-    audience = [{"kind": "user", "target_id": item["user_id"]}
-                for item in identities if item["tenant_slot"] == "system"][:10]
-    homepage = [item["user_slot"] for item in identities
-                if item["tenant_slot"] != "system" and item["user_slot"].endswith("-001")]
-    if (receipt["format_version"] != 1 or receipt["plan_sha256"] != plan["plan_sha256"]
-            or receipt["scope_id"] != plan["environment"]["scope_id"]
-            or receipt["status"] != "verified" or receipt["identities"] != identities
-            or receipt["identity_pools"] != _expected_pools(identities)
-            or receipt["message_audience"] != audience
-            or receipt["audience_sha256"] != plan_hash(audience)
-            or receipt["homepage_user_slots"] != homepage):
-        raise ValueError("身份验证收据投影与完整计划和账本不一致")
-    groups = [group for group in plan["groups"] if group.get("kind") == "tenant"]
-    if len(groups) != 10 or not isinstance(receipt["templates"], list) or len(receipt["templates"]) != 10:
-        raise ValueError("身份验证收据缺少十租户模板")
-    templates, paths, departments = [], set(), set()
-    for group, item in zip(groups, receipt["templates"]):
-        exact(item, {"tenant_slot", "path", "template_sha256", "department_path",
-                     "department_sha256"})
-        path = local_path(backend, item["path"])
-        name = re.fullmatch(
-            rf"template-{re.escape(group['slot'])}-[0-9a-f]{{8}}-[0-9a-f]{{4}}-4[0-9a-f]{{3}}-"
-            rf"[89ab][0-9a-f]{{3}}-[0-9a-f]{{12}}\.xlsx", path.name)
-        department = item["department_path"]
-        if (item["tenant_slot"] != group["slot"] or str(path.resolve()) != item["path"]
-                or path.parent != root or name is None or not isinstance(department, str) or not department
-                or item["department_sha256"] != hashlib.sha256(department.encode("utf-8")).hexdigest()
-                or binding(path)["sha256"] != item["template_sha256"]):
-            raise ValueError("身份模板未绑定当前根目录、租户、部门路径或实物摘要")
-        paths.add(item["path"])
-        departments.add(department)
-        templates.append(binding(path))
-    if len(paths) != 10 or len(departments) != 1:
-        raise ValueError("身份模板路径或完整部门路径不唯一")
-    return templates
-
-
 def identity_evidence(backend, directory, request):
-    from devex_clone_department_model import identity_plan, identity_projection
+    """只读委托当前绑定的 seed 原生协议；不重签、不重试、不临时编译。"""
+    import os
+    import subprocess
+    from devex_clone_capture import unique_object
+    from rate_limit_client import _child_environment
+    from rate_limit_tool import tool_binding, verified_tool
 
-    plan = identity_plan(backend, request)
-    root = local_path(backend, request["identity_state"])
-    exact_directory(root)
-    projection = identity_projection(backend, request, allow_absent=False)
-    if (projection != {**projection, "state": "verified", "identity_state": str(root),
-                       "plan_sha256": plan["plan_sha256"], "entries": 622, "roles": 11,
-                       "users": 200}):
-        raise ValueError("身份账本不是严格有序的完整 622 项 verified 投影")
-    ledger_binding = projection["ledger"]
-    ledger = read_json(bound_file(backend, ledger_binding))
-    intent_name, receipt_name = _publication_names(plan["plan_sha256"], root)
-    publication = sorted(item.name for item in root.iterdir()
-                         if item.name.lower().startswith("identity-publication-")
-                         or item.name.lower().startswith("verified-"))
-    if publication != sorted((intent_name, receipt_name)) or ledger["verified_receipt"] != receipt_name:
-        raise ValueError("身份发布必须只有确定性 intent 和 verified 收据且不能残留 pending")
-    intent_path, receipt_path = root / intent_name, root / receipt_name
-    if linked(intent_path) or linked(receipt_path):
-        raise ValueError("身份 publication 证据不能是链接")
-    intent_binding, receipt_binding = binding(intent_path), binding(receipt_path)
-    intent, receipt = read_json(intent_path), read_json(receipt_path)
-    exact(intent, {"format_version", "kind", "plan_sha256", "identity_state", "publication_nonce",
-                   "ledger_sha256", "receipt_file", "receipt_sha256", "receipt"})
-    prepared = {"format_version": ledger["format_version"], "plan_sha256": ledger["plan_sha256"],
-                "status": "prepared", "entries": ledger["entries"], "roles": ledger["roles"],
-                "users": ledger["users"]}
-    if (intent["format_version"] != 1 or intent["kind"] != "devex-identity-verification-publication"
-            or intent["plan_sha256"] != plan["plan_sha256"]
-            or intent["identity_state"] != str(root.resolve())
-            or intent["publication_nonce"] != ledger["publication_nonce"]
-            or intent["ledger_sha256"] != _encoded_sha256(prepared)
-            or intent["receipt_file"] != receipt_name
-            or intent["receipt_sha256"] != receipt_binding["sha256"] or intent["receipt"] != receipt):
-        raise ValueError("身份 publication intent 未完整绑定计划、根目录、账本和收据")
-    templates = _verified_receipt(backend, root, plan, ledger, receipt)
-    if (binding(root / "ledger.json") != ledger_binding or binding(intent_path) != intent_binding
-            or binding(receipt_path) != receipt_binding
-            or publication != sorted(item.name for item in root.iterdir()
-                                     if item.name.lower().startswith("identity-publication-")
-                                     or item.name.lower().startswith("verified-"))
-            or templates != [binding(local_path(backend, item["path"])) for item in receipt["templates"]]):
-        raise ValueError("身份账本、publication 或模板在读取期间变化")
-    return {"ledger": ledger_binding, "publication_intent": intent_binding,
-            "verified": receipt_binding, "templates": templates}
+    payload = json.dumps({"format_version": 1, "kind": "ryframe-seed-evidence",
+                          "run_dir": str(directory), "operation": "identity-evidence",
+                          "arguments": {"request": request}},
+                         ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(payload) > 65536:
+        raise ValueError("seed 身份只读请求超过 64 KiB")
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    try:
+        with verified_tool(tool_binding()) as executable:
+            if executable is None:
+                raise ValueError("seed 身份核验缺少当前原生工具绑定，禁止临时编译")
+            process = subprocess.run([executable, "__seed-evidence"], cwd=backend,
+                env=_child_environment(), input=payload, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=180, check=False, **options)
+        if len(process.stdout) > 1024 * 1024:
+            raise ValueError("seed 身份只读响应超过 1 MiB")
+        response = json.loads(process.stdout.decode("utf-8"), object_pairs_hook=unique_object)
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+        raise ValueError("seed 身份只读核验未完成；保留现场，核对当前绑定工具，禁止自动重放") from None
+    if (process.returncode != 0 or not isinstance(response, dict)
+            or set(response) != {"ok", "result"} or response["ok"] is not True
+            or not isinstance(response["result"], dict)):
+        raise ValueError("seed 身份发布证据无效；保留原始文件与阶段，禁止自动重放")
+    return response["result"]
 
 
 def verified_identity_stage(backend, directory, request, *, current=None):

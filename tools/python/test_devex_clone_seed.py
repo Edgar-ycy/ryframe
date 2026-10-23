@@ -1,10 +1,11 @@
 """身份和新运行登记的离线边界；不连接实际资源。"""
 import copy
+from contextlib import nullcontext
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sys
+import subprocess
 from types import SimpleNamespace
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -112,90 +113,15 @@ class SeedTests(unittest.TestCase):
         return result
 
     def evidence(self):
-        root = Path(self.request["identity_state"])
-        root.mkdir(parents=True, exist_ok=True)
-        ledger = {"format_version": 1, "plan_sha256": self.plan["plan_sha256"], "status": "verified",
-                  "entries": [], "roles": {}, "users": {},
-                  "publication_nonce": "10000000-0000-4000-8000-000000000001"}
-        identities = []
-        next_id = 1000
-        next_request = 10000
-        for group in self.plan["groups"]:
-            role_id = str(next_id)
-            next_id += 1
-            ledger["roles"][group["slot"]] = role_id
-            ledger["entries"].extend((
-                {"operation": "post_system_roles", "slot": group["slot"], "phase": "confirmed", "id": role_id},
-                {"operation": "put_system_roles_by_id_permissions", "slot": group["slot"],
-                 "phase": "confirmed", "id": role_id}))
-            for user in group["users"]:
-                user_id = str(next_id)
-                next_id += 1
-                ledger["users"][user["user_slot"]] = user_id
-                ledger["entries"].extend((
-                    {"operation": "post_system_users", "slot": user["user_slot"],
-                     "phase": "confirmed", "id": user_id},
-                    {"operation": "post_system_users_by_id_password_reset_requests", "slot": user["user_slot"],
-                     "phase": "confirmed", "id": user_id, "request_id": str(next_request)},
-                    {"operation": "post_auth_password_reset_complete", "slot": user["user_slot"],
-                     "phase": "confirmed", "id": user_id}))
-                next_request += 1
-                identities.append({"tenant_slot": group["slot"], "user_slot": user["user_slot"],
-                    "tenant_id": group["tenant_id"], "username": user["username"],
-                    "client_address": user["client_address"], "credential_slot": user["credential_slot"],
-                    "user_id": user_id, "roles_sha256": plan_hash([group["role_code"]]),
-                    "permissions_sha256": plan_hash(sorted(group["permissions"]))})
-        templates = []
-        department_path = "0/基准部门"
-        for index, group in enumerate(self.plan["groups"][1:], 1):
-            path = root / f"template-{group['slot']}-00000000-0000-4000-8000-{index:012x}.xlsx"
-            path.write_bytes(f"fixture-template-{index}".encode())
-            templates.append({"tenant_slot": group["slot"], "path": str(path.resolve()),
-                "template_sha256": binding(path)["sha256"], "department_path": department_path,
-                "department_sha256": hashlib.sha256(department_path.encode()).hexdigest()})
-        audience = [{"kind": "user", "target_id": item["user_id"]}
-                    for item in identities if item["tenant_slot"] == "system"][:10]
-        receipt = {"format_version": 1, "plan_sha256": self.plan["plan_sha256"], "scope_id": self.scope,
-                   "status": "verified", "identities": identities,
-                   "identity_pools": seed._expected_pools(identities), "templates": templates,
-                   "message_audience": audience, "audience_sha256": plan_hash(audience),
-                   "homepage_user_slots": [item["user_slot"] for item in identities
-                       if item["tenant_slot"] != "system" and item["user_slot"].endswith("-001")]}
-        intent_name, receipt_name = seed._publication_names(self.plan["plan_sha256"], root)
-        ledger["verified_receipt"] = receipt_name
-        write_json(root / "ledger.json", ledger)
-        write_json(root / receipt_name, receipt)
-        stored = read_json(root / "ledger.json")
-        prepared = {"format_version": stored["format_version"], "plan_sha256": stored["plan_sha256"],
-                    "status": "prepared", "entries": stored["entries"], "roles": stored["roles"],
-                    "users": stored["users"]}
-        write_json(root / intent_name, {"format_version": 1,
-            "kind": "devex-identity-verification-publication", "plan_sha256": self.plan["plan_sha256"],
-            "identity_state": str(root.resolve()), "publication_nonce": ledger["publication_nonce"],
-            "ledger_sha256": seed._encoded_sha256(prepared),
-            "receipt_file": receipt_name, "receipt_sha256": binding(root / receipt_name)["sha256"],
-            "receipt": receipt})
-        return seed.identity_evidence(self.backend, self.directory, self.request)
+        # runtime 外层状态测试仍复用此端口夹具；完整身份数据由 Rust verifier 测试覆盖。
+        value = {"ledger": {"fixture": "ledger"}, "publication_intent": {"fixture": "intent"},
+                 "verified": {"fixture": "receipt"}, "templates": []}
+        for module in (seed, runtime):
+            mocked = patch.object(module, "identity_evidence", return_value=value)
+            mocked.start()
+            self.addCleanup(mocked.stop)
+        return value
 
-    def publication(self):
-        root = Path(self.request["identity_state"])
-        ledger = read_json(root / "ledger.json")
-        receipt = root / ledger["verified_receipt"]
-        intent = root / seed._publication_names(self.plan["plan_sha256"], root)[0]
-        return root, ledger, intent, receipt
-
-    @staticmethod
-    def replace_json(path, value):
-        path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-
-    def replace_receipt_and_intent(self, change):
-        _, _, intent_path, receipt_path = self.publication()
-        receipt = read_json(receipt_path)
-        change(receipt)
-        self.replace_json(receipt_path, receipt)
-        intent = read_json(intent_path)
-        intent["receipt"], intent["receipt_sha256"] = receipt, binding(receipt_path)["sha256"]
-        self.replace_json(intent_path, intent)
 
     def test_history_allows_legitimate_identity_and_outbox_data_evolution(self):
         self.register()
@@ -257,103 +183,17 @@ class SeedTests(unittest.TestCase):
             self.assertNotIn("untrusted-secret", str(failure.exception))
             Path(self.plan["configuration"]["path"]).write_bytes(original)
 
-    def test_unknown_identity_writes_or_stale_receipt_block_worker(self):
-        self.evidence()
-        root = Path(self.request["identity_state"])
-        ledger = read_json(root / "ledger.json")
-        for update in ({"status": "needs-reconciliation"}, {"entries": [{"phase": "started"}]},
-                       {"verified_receipt": "../verified.json"}, {"plan_sha256": "a" * 64}):
-            (root / "ledger.json").write_text(json.dumps({**ledger, **update}), encoding="utf-8")
-            with self.subTest(update=update), self.assertRaises(ValueError):
-                seed.identity_evidence(self.backend, self.directory, self.request)
-        (root / "ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
-        (root / "lock").write_bytes(b"unreleased")
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, self.request)
-
-    def test_verified_ledger_requires_ordered_622_projection_and_publication_nonce(self):
-        self.evidence()
-        root, ledger, _, _ = self.publication()
-        cases = []
-        empty = copy.deepcopy(ledger)
-        empty["entries"] = []
-        cases.append(empty)
-        reordered = copy.deepcopy(ledger)
-        reordered["entries"][0], reordered["entries"][1] = reordered["entries"][1], reordered["entries"][0]
-        cases.append(reordered)
-        missing_nonce = copy.deepcopy(ledger)
-        missing_nonce.pop("publication_nonce")
-        cases.append(missing_nonce)
-        for value in cases:
-            with self.subTest(entries=len(value["entries"]), nonce="publication_nonce" in value):
-                self.replace_json(root / "ledger.json", value)
-                with self.assertRaises(ValueError):
-                    seed.identity_evidence(self.backend, self.directory, self.request)
-        self.replace_json(root / "ledger.json", ledger)
-        self.assertEqual(seed.identity_evidence(self.backend, self.directory, self.request)["ledger"],
-                         binding(root / "ledger.json"))
-
-    def test_publication_requires_one_intent_receipt_and_no_pending_or_replacement(self):
-        self.evidence()
-        root, _, intent, receipt = self.publication()
-        intent_bytes, receipt_bytes = intent.read_bytes(), receipt.read_bytes()
-        intent.unlink()
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, self.request)
-        intent.write_bytes(intent_bytes)
-        pending = root / (intent.name + ".pending")
-        pending.write_bytes(intent_bytes)
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, self.request)
-        pending.unlink()
-        extra = root / "verified-00000000-0000-5000-8000-000000000000.json"
-        extra.write_text("{}\n", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, self.request)
-        extra.unlink()
-        receipt.write_text('{"replacement":true}\n', encoding="utf-8")
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, self.request)
-        receipt.write_bytes(receipt_bytes)
-        self.assertIn("publication_intent", seed.identity_evidence(
-            self.backend, self.directory, self.request))
-
-    def test_receipt_full_semantics_are_checked_after_matching_intent_digest(self):
-        self.evidence()
-        _, _, intent, receipt = self.publication()
-        original_intent, original_receipt = intent.read_bytes(), receipt.read_bytes()
-        changes = (
-            lambda value: value["identities"].reverse(),
-            lambda value: value.update(identity_pools={}),
-            lambda value: value.update(message_audience=[], audience_sha256=plan_hash([])),
-            lambda value: value.update(homepage_user_slots=[]),
-            lambda value: value["templates"][0].update(department_sha256="0" * 64),
-        )
-        for index, change in enumerate(changes):
-            with self.subTest(index=index):
-                self.replace_receipt_and_intent(change)
-                with self.assertRaises(ValueError):
-                    seed.identity_evidence(self.backend, self.directory, self.request)
-                receipt.write_bytes(original_receipt)
-                intent.write_bytes(original_intent)
-
-    def test_publication_copied_to_another_identity_root_is_rejected(self):
-        self.evidence()
-        root, _, _, _ = self.publication()
-        copied = self.backend / ".local-tests/run/seed-runtime/copied-identities"
-        shutil.copytree(root, copied)
-        request = {**self.request, "identity_state": str(copied.resolve())}
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, request)
 
     def test_identity_outer_failure_requires_explicit_verify_same_ledger(self):
         self.register()
-        evidence = self.evidence()
+        evidence = {"ledger": {"fixture": "ledger"}, "publication_intent": {"fixture": "intent"},
+                    "verified": {"fixture": "receipt"}, "templates": []}
         departments = {"fixture_departments": True}
         producer = self.file("producer", {"identity": self.identity})
         result = {"status": "seed_identities_prepared", "registration": binding(self.directory / "seed-runtime.json"),
                   "identity": {"state": "prepared"}, "producer": producer}
-        with patch("devex_clone_department_model.department_evidence", return_value=departments):
+        with patch.object(seed, "identity_evidence", return_value=evidence), \
+                patch("devex_clone_department_model.department_evidence", return_value=departments):
             self.stage("seed-runtime", "identities-apply", result, ValueError("outer failure"))
             with self.assertRaises(ValueError):
                 seed.verified_identity_stage(self.backend, self.directory, self.request)
@@ -411,13 +251,54 @@ class SeedTests(unittest.TestCase):
             runtime.start(context, self.request, 999)
         control.assert_not_called()
 
-    def test_stale_templates_or_user_receipt_rejected(self):
-        self.evidence()
-        root = Path(self.request["identity_state"])
-        receipt = read_json(root / read_json(root / "ledger.json")["verified_receipt"])
-        Path(receipt["templates"][0]["path"]).write_bytes(b"changed")
-        with self.assertRaises(ValueError):
-            seed.identity_evidence(self.backend, self.directory, self.request)
+
+class IdentityEvidenceAdapterTests(unittest.TestCase):
+    def invoke(self, response, *, code=0):
+        runner = Mock(return_value=SimpleNamespace(returncode=code, stdout=response))
+        with patch("rate_limit_tool.tool_binding", return_value={"fixture": True}), \
+                patch("rate_limit_tool.verified_tool", return_value=nullcontext("bound-tool.exe")), \
+                patch("subprocess.run", runner):
+            result = seed.identity_evidence(Path("D:/backend"), Path("D:/backend/.local-tests/run"),
+                                            {"registered": "current"})
+        return result, runner
+
+    def test_identity_evidence_delegates_once_using_only_bound_seed_stdin(self):
+        evidence = {"ledger": {"fixture": "native-verifier"}}
+        result, runner = self.invoke(json.dumps({"ok": True, "result": evidence}).encode())
+        self.assertEqual(result, evidence)
+        runner.assert_called_once()
+        self.assertEqual(runner.call_args.args[0], ["bound-tool.exe", "__seed-evidence"])
+        payload = json.loads(runner.call_args.kwargs["input"])
+        self.assertEqual(payload, {"format_version": 1, "kind": "ryframe-seed-evidence",
+            "run_dir": str(Path("D:/backend/.local-tests/run")), "operation": "identity-evidence",
+            "arguments": {"request": {"registered": "current"}}})
+        self.assertFalse(runner.call_args.kwargs["check"])
+        self.assertEqual(runner.call_args.kwargs["stderr"], subprocess.DEVNULL)
+
+    def test_missing_binding_or_oversized_request_never_starts_a_process(self):
+        for request in ({"request": "current"}, {"request": "界" * 22000}):
+            with patch("rate_limit_tool.tool_binding", return_value=None), \
+                    patch("rate_limit_tool.verified_tool", return_value=nullcontext(None)), \
+                    patch("subprocess.run") as runner, self.assertRaises(ValueError):
+                seed.identity_evidence(Path("D:/backend"), Path("D:/backend/.local-tests/run"), request)
+            runner.assert_not_called()
+
+    def test_rejected_malformed_or_interrupted_native_results_do_not_retry(self):
+        for raw, code in [(b"not-json", 0), (b'{"ok":true,"ok":false}', 0),
+                          (b'{"ok":false,"error":{"message":"fixture-secret"}}', 1),
+                          (b'{"ok":true,"result":[]}', 0),
+                          (b'{"ok":true,"result":{}}', 1), (b"x" * (1024 * 1024 + 1), 0)]:
+            with self.subTest(code=code, size=len(raw)), self.assertRaises(ValueError) as failure:
+                self.invoke(raw, code=code)
+            self.assertNotIn("fixture-secret", str(failure.exception))
+        for error in (subprocess.TimeoutExpired("bound-tool", 180), KeyboardInterrupt()):
+            runner = Mock(side_effect=error)
+            with patch("rate_limit_tool.tool_binding", return_value={"fixture": True}), \
+                    patch("rate_limit_tool.verified_tool", return_value=nullcontext("bound-tool.exe")), \
+                    patch("subprocess.run", runner), \
+                    self.assertRaises(KeyboardInterrupt if isinstance(error, KeyboardInterrupt) else ValueError):
+                seed.identity_evidence(Path("D:/backend"), Path("D:/backend/.local-tests/run"), {})
+            runner.assert_called_once()
 
 
 if __name__ == "__main__":

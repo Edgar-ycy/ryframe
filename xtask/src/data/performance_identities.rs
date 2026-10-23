@@ -25,7 +25,7 @@ mod execution_tests;
 #[path = "performance_identities/tests/producer.rs"]
 mod producer_tests;
 #[cfg(test)]
-#[path = "performance_identities/tests/seed_evidence.rs"]
+#[path = "../../tests/unit/data/performance_identities/seed_evidence.rs"]
 mod seed_evidence_tests;
 
 #[path = "performance_identities/clone_bridge.rs"]
