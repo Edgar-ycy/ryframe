@@ -657,9 +657,11 @@ fn target_request(
         &json!({"kind": "devex-clone-tool-build"}),
     );
     let maintenance_binding = binding(&maintenance);
+    fs::create_dir_all(root.join("config")).unwrap();
     json!({
         "format_version": 1,
         "kind": "devex-clone-fresh-target",
+        "config_dir": root.join("config"),
         "id": "target-request-a",
         "review": review_binding,
         "side": "base",

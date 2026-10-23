@@ -63,11 +63,8 @@ pub(crate) fn validate(backend: &Path, value: &Value) -> Result<Binding> {
     validate_with(backend, value, &SystemSourceObserver)
 }
 
-pub(crate) fn validate_with(
-    backend: &Path,
-    value: &Value,
-    observer: &dyn SourceObserver,
-) -> Result<Binding> {
+/// fresh 请求字段由正式绑定与目标验证共同消费，不接受旧目录键或隐式配置。
+pub(crate) fn fields(value: &Value) -> Vec<&'static str> {
     let mut fields = vec![
         "format_version",
         "kind",
@@ -77,6 +74,7 @@ pub(crate) fn validate_with(
         "target",
         "maintenance_build",
         "configuration_sha256",
+        "config_dir",
         "tools",
         "storage",
         "reset",
@@ -84,11 +82,39 @@ pub(crate) fn validate_with(
     if value.get("execution_backend").is_some() {
         fields.push("execution_backend");
     }
-    if let Some(directory) = value.get("configuration_directory") {
-        request_physical::strict_text(directory)?;
-        fields.push("configuration_directory");
+    fields
+}
+
+const CONFIG_DIR_ERROR: &str =
+    "目标 config_dir 必须是已绑定执行树内的无链接配置目录；请修正请求 config_dir";
+
+pub(crate) fn config_directory(backend: &Path, request: &Value) -> Result<Value> {
+    let execution = match request.get("execution_backend") {
+        Some(value) => Path::new(value["path"].as_str().ok_or(CONFIG_DIR_ERROR)?),
+        None => backend,
+    };
+    validate_absolute_path(execution, LocalTestPathKind::ExistingDirectory)
+        .map_err(|_| CONFIG_DIR_ERROR)?;
+    let path = PathBuf::from(request["config_dir"].as_str().ok_or(CONFIG_DIR_ERROR)?);
+    validate_absolute_path(&path, LocalTestPathKind::ExistingDirectory)
+        .map_err(|_| CONFIG_DIR_ERROR)?;
+    if !(path.is_absolute()
+        && execution.starts_with(backend)
+        && path.starts_with(execution)
+        && path.file_name().is_some_and(|name| name == "config"))
+    {
+        return Err(CONFIG_DIR_ERROR.into());
     }
-    let root = exact(value, &fields, "目标请求")?;
+    Ok(json!({"path":path}))
+}
+
+pub(crate) fn validate_with(
+    backend: &Path,
+    value: &Value,
+    observer: &dyn SourceObserver,
+) -> Result<Binding> {
+    let root = exact(value, &fields(value), "目标请求")?;
+    config_directory(backend, value)?;
     if root["format_version"].as_u64() != Some(1)
         || root["kind"].as_str() != Some("devex-clone-fresh-target")
     {

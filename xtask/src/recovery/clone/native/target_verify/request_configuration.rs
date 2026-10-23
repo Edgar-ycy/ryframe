@@ -24,8 +24,7 @@ pub(crate) fn validate(
     environment: &BTreeMap<String, String>,
 ) -> Result<Value> {
     let root = &binding.execution_backend;
-    let declared = request.get("configuration_directory");
-    let (directory, files) = configuration_files(root, environment, declared)?;
+    let (directory, files) = fresh_files(root, environment, request)?;
     let app_environment = BTreeMap::from([("APP_ENV", "test")]);
     let configuration_hash = configuration_identity(&directory, &files)?;
     if request["configuration_sha256"].as_str() != Some(configuration_hash.as_str()) {
@@ -54,7 +53,7 @@ pub(crate) fn validate(
     let password = request_physical::strict_text(&table["bootstrap"]["admin_password"])
         .map_err(|_| "所选配置文件缺少 bootstrap.admin_password；请显式配置初始化管理员密码")?;
     let secrets = json!({"bootstrap.admin_password": password});
-    if configuration_files(root, environment, declared)? != (directory, files) {
+    if fresh_files(root, environment, request)? != (directory, files) {
         return Err("目标配置在静态绑定核验期间变化".into());
     }
     // 生产者从未启动与端口关闭事实由主线显式观察器核验。
@@ -63,6 +62,15 @@ pub(crate) fn validate(
         "configuration_sha256": configuration_hash, "seed_credentials_sha256": digest::plan_hash(&secrets)?,
         "request_sha256": digest::plan_hash(request)?, "review_sha256": request["review"]["sha256"], "selected": binding.selected}),
     )
+}
+
+pub(crate) fn fresh_files(
+    root: &Path,
+    environment: &BTreeMap<String, String>,
+    request: &Value,
+) -> Result<(PathBuf, BTreeMap<String, Value>)> {
+    let directory = super::request::config_directory(root, request)?;
+    configuration_files(root, environment, Some(&directory["path"]))
 }
 
 pub(crate) fn configuration_files(
@@ -83,7 +91,7 @@ pub(crate) fn configuration_files(
         root.join(path)
     };
     validate_absolute_path(&path, LocalTestPathKind::ExistingDirectory)
-        .map_err(|_| "目标配置目录必须存在且不能经过链接；请检查 configuration_directory")?;
+        .map_err(|_| "目标配置目录必须存在且不能经过链接；请检查 config_dir")?;
     let directory = canonical_path(&path)?;
     if !directory.starts_with(canonical_path(root)?) {
         return Err("目标配置必须位于明确执行后端内".into());

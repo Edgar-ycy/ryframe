@@ -1,10 +1,6 @@
 //! fresh CLI 的只读绑定协议；敏感值仅由已绑定文件读取，错误只公开固定说明。
 
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use serde_json::{Value, json};
 
@@ -101,7 +97,7 @@ fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
         }
         "config-directory" => {
             json_io::exact(args, &["request"], "目标配置目录绑定")?;
-            config_directory(backend, &args["request"])
+            super::input::request::config_directory(backend, &args["request"])
         }
         "never-started" => {
             json_io::exact(args, &["selected"], "目标运行历史绑定")?;
@@ -163,19 +159,6 @@ fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
     .map_err(|_| DIAGNOSTICS[2])?;
     check(binding(backend, &path)? == *descriptor, DIAGNOSTICS[3])?;
     Ok(json!({"path":path,"environment":private}))
-}
-
-pub(super) fn config_directory(backend: &Path, request: &Value) -> Result<Value> {
-    let path = PathBuf::from(request["config_dir"].as_str().ok_or(DIAGNOSTICS[6])?);
-    validate_absolute_path(&path, LocalTestPathKind::ExistingDirectory)
-        .map_err(|_| DIAGNOSTICS[6])?;
-    check(
-        path.is_absolute()
-            && path.starts_with(backend)
-            && path.file_name().is_some_and(|name| name == "config"),
-        DIAGNOSTICS[6],
-    )?;
-    Ok(json!({"path":path}))
 }
 
 fn never_started(backend: &Path, selected: &Value) -> Result<()> {

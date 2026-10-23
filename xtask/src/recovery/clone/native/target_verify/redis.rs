@@ -90,11 +90,10 @@ impl Client {
             .filter(|port| *port > 0)
             .ok_or("目标 Redis 端口无效")?;
         let root = context.execution_backend()?;
-        let declared = context.request.get("configuration_directory");
-        let (directory, files) = super::input::request_configuration::configuration_files(
+        let (directory, files) = super::input::request_configuration::fresh_files(
             &root,
             &context.environment,
-            declared,
+            &context.request,
         )?;
         if super::input::request_configuration::configuration_identity(&directory, &files)?
             != context.request["configuration_sha256"]
@@ -124,10 +123,10 @@ impl Client {
             .and_then(toml::Value::as_str)
             .filter(|value| !value.is_empty())
             .ok_or("目标 TOML 缺少 redis.password；请显式配置密码")?;
-        if super::input::request_configuration::configuration_files(
+        if super::input::request_configuration::fresh_files(
             &root,
             &context.environment,
-            declared,
+            &context.request,
         )? != (directory, files)
         {
             return Err("目标 Redis 配置读取期间变化".into());
