@@ -1,6 +1,7 @@
 import json
 import os
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,12 @@ class RateLimitClientTests(unittest.TestCase):
         coordinator = mock.patch.object(rate_limit_tool, "_COORDINATOR_BINDING", None)
         coordinator.start()
         self.addCleanup(coordinator.stop)
+        self.binding = {"path": str(ROOT / ".local-tests/managed-tool.exe")}
+        self.enterContext(mock.patch.object(rate_limit_client, "tool_binding", return_value=self.binding))
+        self.enterContext(mock.patch.object(
+            rate_limit_client, "verified_tool",
+            side_effect=lambda value: nullcontext(None if value is None else value["path"]),
+        ))
 
     def invoke(self, operation, environment, *, config_dir=None):
         if operation == "login-budget":
@@ -56,7 +63,7 @@ class RateLimitClientTests(unittest.TestCase):
             )
         return value, run.call_args
 
-    def test_success_uses_the_cargo_hidden_entry_without_a_shell(self):
+    def test_success_uses_the_bound_hidden_entry_without_a_shell(self):
         value, call = self.call(
             {"ok": True, "result": {"app": {"host": "127.0.0.1"}}}, config_dir="fixture"
         )
@@ -65,13 +72,7 @@ class RateLimitClientTests(unittest.TestCase):
         self.assertEqual(
             argv,
             [
-                "cargo-fixture",
-                "run",
-                "--quiet",
-                "--locked",
-                "-p",
-                "xtask",
-                "--",
+                self.binding["path"],
                 "__rate-limit",
                 "load-table",
             ],
@@ -99,25 +100,18 @@ class RateLimitClientTests(unittest.TestCase):
             },
         )
 
-    def test_host_toolchain_locator_survives_environment_clear(self):
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=b'{"ok":true,"result":{}}', stderr=b""
-        )
-        with (
-            mock.patch.dict(os.environ, {"APP_ENV": "test"}, clear=True),
-            mock.patch.object(
-                rate_limit_client.subprocess, "run", return_value=completed
-            ) as run,
-        ):
-            self.assertEqual(
-                rate_limit_client.load_app_table(ROOT, {"APP_ENV": "test"}), {}
-            )
-        self.assertEqual(run.call_args.args[0][0], rate_limit_client._CARGO_EXECUTABLE)
-        if rate_limit_client._HOST_PROCESS_ENVIRONMENT:
-            self.assertTrue(
-                set(rate_limit_client._HOST_PROCESS_ENVIRONMENT)
-                & set(run.call_args.kwargs["env"])
-            )
+    def test_missing_binding_rejects_without_cargo_or_path_fallback(self):
+        for operation in sorted(rate_limit_client.OPERATIONS):
+            with (
+                self.subTest(operation=operation),
+                mock.patch.dict(os.environ, {"CARGO": "untrusted-cargo", "PATH": "untrusted-path"}),
+                mock.patch.object(rate_limit_client, "tool_binding", return_value=None),
+                mock.patch.object(rate_limit_client.subprocess, "run") as run,
+                self.assertRaisesRegex(ValueError, "正式 xtask 或 run_checks.py") as raised,
+            ):
+                self.invoke(operation, {"APP_ENV": "test"})
+            run.assert_not_called()
+            self.assertNotIn("untrusted", str(raised.exception))
 
     def test_login_budget_uses_file_request_and_returns_exact_fields(self):
         response = {

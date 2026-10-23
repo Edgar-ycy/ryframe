@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -334,11 +333,9 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             from rate_limit_tool import tool_binding, verified_tool
             from process_environment import configured
             with verified_tool(tool_binding()) as executable:
-                command = ([executable, "__recovery-dataset"] if executable else [
-                    shutil.which("cargo") or "cargo", "run", "--quiet", "--locked", "--manifest-path",
-                    str(tool_root / "Cargo.toml"), "-p", "xtask", "--",
-                    "__recovery-dataset",
-                ])
+                if executable is None:
+                    raise ValueError("参考数据准备缺少受管原生工具绑定；请通过正式 xtask 或 run_checks.py 绑定当前工具后执行，禁止临时编译回退")
+                command = [executable, "__recovery-dataset"]
                 tools.execute(command, data=dataset_protocol(
                     backend, args.plan.resolve(), preflight_path.resolve()).encode("utf-8"),
                     env=configured({}), timeout=timeout)

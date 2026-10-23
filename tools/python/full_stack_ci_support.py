@@ -18,7 +18,6 @@ def instance_text(text: str, worker_id: int) -> str:
 def _configuration(operation: str, request: dict) -> dict:
     """仅传输已有 Rust 文件操作，不复制目录权限或配置改写规则。"""
     import os
-    import shutil
     import subprocess
     from process_environment import configured
     from rate_limit_tool import tool_binding, verified_tool
@@ -28,9 +27,9 @@ def _configuration(operation: str, request: dict) -> dict:
     root = Path(__file__).resolve().parents[2]
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     with verified_tool(tool_binding()) as executable:
-        command = ([executable] if executable is not None else
-                   [os.environ.get("CARGO") or shutil.which("cargo") or "cargo",
-                    "run", "--quiet", "--locked", "-p", "xtask", "--"])
+        if executable is None:
+            raise ValueError("文件操作缺少受管原生工具绑定；请通过正式 xtask 或 run_checks.py 绑定当前工具后执行，禁止临时编译回退")
+        command = [executable]
         result = subprocess.run([*command, "__ci-databases", operation], cwd=root,
                                 env=configured({}), input=payload, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, timeout=180, check=False, **options)

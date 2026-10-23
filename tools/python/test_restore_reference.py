@@ -266,6 +266,26 @@ class ReferenceTests(unittest.TestCase):
                 reference.execute(args, self.plan, self.backend, tools, work)
         self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")
 
+    def test_dataset_missing_binding_starts_no_resource_runner(self):
+        tools = Mock()
+        args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
+        with patch.object(reference, "_coordinate", return_value={}), \
+                patch.object(reference, "dataset_timeout_seconds", return_value=21600), \
+                patch.object(reference, "source_snapshot", return_value={}), \
+                patch.object(reference, "capture_inventory", return_value={}), \
+                patch.object(reference, "build_source_domains", return_value={}), \
+                patch.object(reference, "write_json"), \
+                patch.object(reference, "check_api") as api, \
+                patch.object(reference, "require_empty_source") as empty, \
+                patch("rate_limit_tool.tool_binding", return_value=None), \
+                patch.object(reference.subprocess, "run") as run, \
+                self.assertRaisesRegex(ValueError, "正式 xtask 或 run_checks.py"):
+            reference.execute(args, self.plan, self.backend, tools, Path(self.plan["work_dir"]))
+        tools.execute.assert_not_called()
+        run.assert_not_called()
+        api.assert_called_once_with(self.plan, tools, "source")
+        empty.assert_called_once_with(self.plan, tools)
+
     def test_called_process_failure_records_redacted_output(self):
         error = subprocess.CalledProcessError(1, ["node"], output="normal", stderr="password=private")
         with patch.dict(reference.os.environ, {"APP_PASSWORD": "private"}, clear=True):

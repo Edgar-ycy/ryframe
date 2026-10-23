@@ -42,7 +42,7 @@ class SupportTests(unittest.TestCase):
 
     def test_file_transport_keeps_plaintext_in_stdin_only_and_checks_exit_status(self):
         response=Mock(returncode=0,stdout=b'{"ok":true,"result":{"text":"rendered"}}')
-        with patch('rate_limit_tool.tool_binding',return_value=None), \
+        with patch('rate_limit_tool.tool_binding',return_value={'path':'/native-tool'}), \
                 patch('rate_limit_tool.verified_tool',return_value=nullcontext('/native-tool')), \
                 patch('subprocess.run',return_value=response) as run:
             self.assertEqual(support.instance_text("password='private-password'",2),'rendered')
@@ -55,8 +55,21 @@ class SupportTests(unittest.TestCase):
                         Mock(returncode=0,stdout=b'{"ok":false,"error":"private-password"}'),
                         Mock(returncode=0,stdout=b'{"ok":true,"ok":true,"result":{}}'),
                         Mock(returncode=0,stdout=b'invalid')]:
-            with patch('rate_limit_tool.tool_binding',return_value=None), \
+            with patch('rate_limit_tool.tool_binding',return_value={'path':'/native-tool'}), \
                     patch('rate_limit_tool.verified_tool',return_value=nullcontext('/native-tool')), \
                     patch('subprocess.run',return_value=changed),self.assertRaises(RuntimeError) as raised:
                 support.instance_text("password='private-password'",2)
             self.assertNotIn('private-password',str(raised.exception))
+
+    def test_missing_file_tool_binding_never_starts_a_runner(self):
+        for operation, request in (
+            ('private-directory', {'path': str(Path.cwd() / 'private')}),
+            ('instance-text', {'text': 'private-password', 'worker_id': 2}),
+        ):
+            with self.subTest(operation=operation), \
+                    patch('rate_limit_tool.tool_binding', return_value=None), \
+                    patch('subprocess.run') as run, \
+                    self.assertRaisesRegex(ValueError, '正式 xtask 或 run_checks.py') as raised:
+                support._configuration(operation, request)
+            run.assert_not_called()
+            self.assertNotIn('private-password', str(raised.exception))

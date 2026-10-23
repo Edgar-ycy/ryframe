@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 from typing import Mapping
 
@@ -39,7 +38,6 @@ _HOST_PROCESS_ENVIRONMENT = {
     if key.upper() in _HOST_PROCESS_NAMES
     or key.upper().startswith(("CARGO_", "RUSTUP_"))
 }
-_CARGO_EXECUTABLE = os.environ.get("CARGO") or shutil.which("cargo") or "cargo"
 
 
 def load_app_table(
@@ -131,20 +129,9 @@ def _invoke(operation: str, request: dict) -> dict:
         options["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         with verified_tool(tool_binding()) as executable:
-            if executable is not None:
-                argv = [executable, "__rate-limit", operation]
-            else:
-                argv = [
-                    os.environ.get("CARGO") or _CARGO_EXECUTABLE,
-                    "run",
-                    "--quiet",
-                    "--locked",
-                    "-p",
-                    "xtask",
-                    "--",
-                    "__rate-limit",
-                    operation,
-                ]
+            if executable is None:
+                raise ValueError("限流配置缺少受管原生工具绑定；请通过正式 xtask 或 run_checks.py 绑定当前工具后执行，禁止临时编译回退")
+            argv = [executable, "__rate-limit", operation]
             result = subprocess.run(
                 argv,
                 cwd=ROOT,
