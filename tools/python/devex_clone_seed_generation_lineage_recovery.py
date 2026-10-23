@@ -7,7 +7,6 @@ import copy
 import hashlib
 import os
 from pathlib import Path
-import re
 import subprocess
 
 from devex_clone_capture import read_json, write_json
@@ -40,12 +39,6 @@ FAILED_FRAMES = [
     )
 ]
 STATUS = "seed_source_generation_replay_authorized"
-FIELDS = {
-    "status", "request", "failed_start", "failure_proof", "history_length", "history_sha256",
-    "coordinator_source", "source_registration", "source_rebind", "review_successor", "current_storage",
-    "runtime", "before", "after", "evidence_manifest", "source_generation_published", "replay_allowed",
-    "remote_writes", "restore_qualified",
-}
 _TAIL = (
     (61, "cache-target", "stop", "passed", None),
     (62, "storage-target", "stop", "failed", "ValueError"),
@@ -545,21 +538,12 @@ def replay_authority(backend: Path, directory: Path, attempts: list, *, run=subp
     if path != directory / "results/0069.json":
         raise ValueError("C69 谱系恢复结果不属于固定相邻阶段")
     receipt = read_json(path)
-    exact(receipt, FIELDS)
-    if (type(receipt["failed_start"]) is not int
-            or type(receipt["history_length"]) is not int
-            or type(receipt["source_generation_published"]) is not bool
-            or type(receipt["replay_allowed"]) is not bool
-            or type(receipt["remote_writes"]) is not int
-            or type(receipt["restore_qualified"]) is not bool):
-        raise ValueError("C69 谱系恢复结果的计数或布尔字段类型无效")
-    manifest = receipt["evidence_manifest"]
-    if (not isinstance(manifest, dict) or set(manifest) != {"files", "bytes", "sha256"}
-            or type(manifest["files"]) is not int or manifest["files"] < 1
-            or type(manifest["bytes"]) is not int or manifest["bytes"] < 1
-            or not isinstance(manifest["sha256"], str)
-            or re.fullmatch(r"[a-f0-9]{64}", manifest["sha256"]) is None):
-        raise ValueError("C69 谱系恢复完整目录摘要无效")
+    from devex_clone_seed_generation import _generation_evidence
+
+    try:
+        _generation_evidence(backend, "lineage-receipt", {"receipt": record["result"]})
+    except ValueError:
+        raise ValueError("C69 谱系恢复结果的字段类型或完整目录摘要无效；保留现场，禁止重放") from None
     prefix = [row for row in attempts if row["number"] < RECOVERY_ATTEMPT]
     facts = lineage_failure(
         backend, directory, attempts, request_path=Path(receipt["request"]["path"]),

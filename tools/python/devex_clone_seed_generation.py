@@ -345,107 +345,64 @@ def registered_historical_running_source(backend: Path, start_descriptor: dict):
             active = False
 
 
+def _generation_evidence(backend: Path, operation: str, arguments: dict) -> None:
+    """只发布受管的只读请求快照；正式账本、意图和运行证据保持原样。"""
+    from workspace_directory import WorkspaceDirectory
+
+    with WorkspaceDirectory(dir=backend / ".local-tests/t", prefix="generation-guard-") as temporary:
+        directory = Path(temporary)
+        path = directory / "parameters.json"
+        write_json(path, {"operation": operation, "arguments": arguments})
+        try:
+            process, response = native_invoke("__seed-evidence", {
+                "format_version": 1, "kind": "ryframe-seed-evidence", "run_dir": str(directory),
+                "operation": "generation-guard", "arguments": {
+                    "backend_root": str(backend), "parameters": binding(path)}},
+                subprocess.run, may_write=False)
+        except RuntimeError:
+            raise ValueError("生成冻结证据核验未完成；保留阶段现场，禁止自动重放") from None
+        result = response.get("result") if isinstance(response, dict) else None
+        if (process.returncode == 0 and isinstance(response, dict) and set(response) == {"ok", "result"}
+                and response["ok"] is True and isinstance(result, dict)
+                and set(result) == {"verified", "reason", "remote_writes", "automatic_retry_permitted"}
+                and result["verified"] is False and type(result["remote_writes"]) is int
+                and result["remote_writes"] == 0 and result["automatic_retry_permitted"] is False):
+            messages = {
+                "baseline_drift": "未启动恢复的新完整逻辑基线之后存在未知写入；禁止启动",
+                "replay_image_drift": "C69 授权后完整逻辑像发生变化；禁止执行 C70 启动",
+                "redis_generation_changed": "分段缓存重启改变了配置、端点、二进制或物理目标"}
+            if isinstance(result["reason"], str) and result["reason"] in messages:
+                raise ValueError(messages[result["reason"]])
+        if (process.returncode != 0 or not isinstance(response, dict)
+                or set(response) != {"ok", "result"} or response["ok"] is not True
+                or not isinstance(result, dict) or set(result) != {
+                    "verified", "remote_writes", "automatic_retry_permitted"}
+                or result["verified"] is not True or type(result["remote_writes"]) is not int
+                or result["remote_writes"] != 0 or result["automatic_retry_permitted"] is not False):
+            raise ValueError("生成冻结请求、成对构建或完整前像无效；保留阶段现场，禁止自动重放")
+
+
 def _archived_request(backend: Path, archive: dict, request: dict, segment: dict | None) -> None:
-    previous = read_json(bound_file(backend, archive["receipt"]["request"]))
-    expected = copy.deepcopy(previous)
-    if segment is not None:
-        if segment["phase"] != "ready" or segment["storage"] is None or segment["cache"] is None:
-            raise ValueError("分段资源尚未全部恢复，不能执行实际 START")
-        expected["current_storage"] = segment["storage"]
-        changed = tuple(request[field] != previous[field]
-                        for field in ("backend_build", "maintenance_build"))
-        if changed[0] != changed[1]:
-            raise ValueError("运行与维护构建收据必须成对重新登记")
-        if changed[0]:
-            _reregistered_builds(backend, previous, request)
-            expected.update(backend_build=request["backend_build"],
-                            maintenance_build=request["maintenance_build"])
-    if request != expected:
-        raise ValueError("后续实际启动只允许更新当前存储及等价的成对构建收据")
+    selected = None if segment is None else {
+        key: segment[key] for key in ("phase", "storage", "cache")}
+    _generation_evidence(backend, "archived-request", {
+        "previous": archive["receipt"]["request"], "request": request, "segment": selected})
 
 
 def _reregistered_builds(backend: Path, previous: dict, request: dict) -> None:
-    from restore_build import validate_build_context, verify_build_artifacts
-    from source_inventory import validate_build_source_domains
-
-    old_runtime_path = bound_file(backend, previous["backend_build"])
-    new_runtime_path = bound_file(backend, request["backend_build"])
-    old_runtime, new_runtime = (copy.deepcopy(read_json(path))
-                                for path in (old_runtime_path, new_runtime_path))
-    for value in (old_runtime, new_runtime):
-        sources = validate_build_source_domains(value.get("sources"), "backend")
-        snapshot = sources["full"]["source"]["snapshot"]
-        if (snapshot.get("head") != request["expected_backend_sha"]
-                or snapshot.get("clean") is not True or snapshot.get("files")):
-            raise ValueError("重新登记的 API/Worker 构建不是同一干净后端来源")
-        validate_build_context(value.get("build"))
-        verify_build_artifacts(value)
-        environment = value["build"]["environment"]
-        exact(environment, {"variables", "sha256"})
-        environment["sha256"] = "<current-environment>"
-    if old_runtime != new_runtime:
-        raise ValueError("重新登记的 API/Worker 构建改变了源码、命令、工具链或产物")
-    if (binding(old_runtime_path) != previous["backend_build"]
-            or binding(new_runtime_path) != request["backend_build"]):
-        raise ValueError("重新登记的 API/Worker 构建收据在核验期间变化")
-
-    execution = local_path(backend, request["execution_backend"])
-    old_maintenance_path = bound_file(execution, previous["maintenance_build"])
-    new_maintenance_path = bound_file(execution, request["maintenance_build"])
-    from devex_clone_tools import verify_evidence
-
-    old_maintenance = _stable_maintenance(
-        verify_evidence(execution, old_maintenance_path), old_maintenance_path)
-    new_maintenance = _stable_maintenance(
-        verify_evidence(execution, new_maintenance_path), new_maintenance_path)
-    for value in (old_maintenance, new_maintenance):
-        snapshot = value["source"]["snapshot"]
-        if (value.get("backend_root") != str(execution)
-                or value.get("source_inventory") != old_runtime["sources"]["full"]
-                or value.get("source") != old_runtime["sources"]["full"]["source"]
-                or snapshot.get("head") != request["expected_backend_sha"]
-                or snapshot.get("clean") is not True or snapshot.get("files")):
-            raise ValueError("重新登记的维护构建不是同一干净后端来源")
-    if old_maintenance != new_maintenance:
-        raise ValueError("重新登记的维护构建改变了源码、命令、工具链或产物")
-    if (binding(old_maintenance_path) != previous["maintenance_build"]
-            or binding(new_maintenance_path) != request["maintenance_build"]):
-        raise ValueError("重新登记的维护构建收据在核验期间变化")
+    _generation_evidence(backend, "builds", {"previous": previous, "request": request})
 
 
-def _stable_maintenance(value: dict, receipt: Path) -> dict:
-    stable = copy.deepcopy(value)
-    exact(stable["artifacts"], {"reset", "migrate", "tenant-data"})
-    for artifact in stable["artifacts"].values():
-        executable = Path(artifact["executable"])
-        if executable.parent != receipt.parent:
-            raise ValueError("维护构建产物不属于自身收据目录")
-        artifact["executable"] = executable.name
-        for field in ("cargo_output", "cargo_log"):
-            evidence = artifact[field]
-            exact(evidence, {"file", "bytes", "sha256"})
-            artifact[field] = {"file": evidence["file"]}
-    return stable
-
-
-def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:
+def _archived_image(archive: dict, current: dict, segment: dict | None, *, backend: Path) -> None:
     if segment is not None and segment.get("reboot") is not None:
         _reboot_image(archive, current, segment)
         return
-    expected = copy.deepcopy(archive["image"])
-    if segment is not None:
-        rustfs = segment["storage"]["storage"]
-        redis = segment["cache"]["redis"]
-        old_redis = expected["storage"]["redis"]
-        mutable = {"pid", "started", "run_id"}
-        if (set(redis) != set(old_redis) or any(redis[key] != value for key, value in old_redis.items()
-                                               if key not in mutable)):
-            raise ValueError("分段缓存重启改变了配置、端点、二进制或物理目标")
-        expected["storage"] = {"rustfs": copy.deepcopy(rustfs), "redis": copy.deepcopy(redis)}
-    if current != expected:
-        raise ValueError("未启动恢复的新完整逻辑基线之后存在未知写入；禁止启动")
-    if segment is not None and segment.get("replay") is not None and current != segment["replay"]["image"]:
-        raise ValueError("C69 授权后完整逻辑像发生变化；禁止执行 C70 启动")
+    selected = None if segment is None else {
+        "storage": {"storage": segment["storage"]["storage"]},
+        "cache": {"redis": segment["cache"]["redis"]},
+        "replay": None if segment.get("replay") is None else {"image": segment["replay"]["image"]}}
+    _generation_evidence(backend, "archived-image", {
+        "before": archive["image"], "after": current, "segment": selected})
 
 
 def _reboot_image(archive: dict, current: dict, segment: dict) -> None:
@@ -504,7 +461,7 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
         before = capture_image(backend, runtime.execution, runtime.selected, request, source,
                                environment, output / "before", run, control_environment=runtime.control_environment)
         if archive is not None:
-            _archived_image(archive, read_json(Path(before["path"]))["image"], segment)
+            _archived_image(archive, read_json(Path(before["path"]))["image"], segment, backend=backend)
         from devex_clone_post_registration import resolve_post_registration
         from devex_clone_run import require_target_copy
         from devex_clone_post import _validate_business_lineage

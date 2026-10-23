@@ -131,3 +131,65 @@ fn real_process_rejects_duplicate_oversize_extra_argv_and_unowned_registration_w
     );
     assert!(!fixture.run.join("run.lock").exists());
 }
+
+#[test]
+fn generation_guard_reads_bound_snapshot_and_never_publishes_or_replays() {
+    let fixture = Fixture::new();
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    fixture.write(
+        "previous.json",
+        &json!({"frozen":"same","backend_build":{},"maintenance_build":{}}),
+    );
+    fixture.write("parameters.json", &json!({"operation":"archived-request","arguments":{
+        "previous":fixture.binding("previous.json"),"request":{"frozen":"same","backend_build":{},"maintenance_build":{}},
+        "segment":null}}));
+    let request = fixture.request(
+        "generation-guard",
+        json!({"backend_root":backend,
+        "parameters":fixture.binding("parameters.json")}),
+    );
+    let before = fs::read(fixture.run.join("state.json")).unwrap();
+    let output = invoke(&request, &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        response["result"],
+        json!({"verified":true,"remote_writes":0,"automatic_retry_permitted":false})
+    );
+    fixture.write("previous.json", &json!({"password":"secret-credential"}));
+    rejected(&invoke(&request, &[]));
+    assert_eq!(before, fs::read(fixture.run.join("state.json")).unwrap());
+    assert!(!fixture.run.join("intent.json").exists());
+    assert!(!fixture.run.join("run.lock").exists());
+}
+
+#[test]
+fn cancelled_generation_protocol_without_eof_creates_no_evidence_or_success_receipt() {
+    let fixture = Fixture::new();
+    let before = fs::read(fixture.run.join("state.json")).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("__seed-evidence")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    input
+        .write_all(b"{\"format_version\":1,\"kind\":\"ryframe-seed-evidence\"")
+        .unwrap();
+    input.flush().unwrap();
+    assert!(child.try_wait().unwrap().is_none());
+    child.kill().unwrap();
+    let result = child.wait_with_output().unwrap();
+    drop(input);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    assert_eq!(before, fs::read(fixture.run.join("state.json")).unwrap());
+    assert!(!fixture.run.join("intent.json").exists());
+    assert!(!fixture.run.join("results/0002.json").exists());
+}
