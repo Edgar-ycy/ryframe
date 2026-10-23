@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import re
 
-from devex_clone_capture import read_json, write_json
+from devex_clone_capture import read_json
 from devex_clone_model import exact, linked, local_path
 from devex_clone_post import registration as post_registration
 from devex_clone_post_model import exact_directory
@@ -133,24 +133,6 @@ def private_configuration(backend, plan):
     if public != plan["environment"] or binding(path) != descriptor:
         raise ValueError("身份私有配置文件或非敏感绑定变化")
     return private
-
-
-def register(backend, directory, request_file):
-    path = local_path(backend, str(request_file))
-    before = binding(path)
-    request = read_json(path)
-    post = history(backend, directory, request)
-    identity_inputs(backend, directory, request, post)
-    if binding(path) != before:
-        raise ValueError("seed 请求在核验期间变化")
-    destination = directory / "seed-runtime.json"
-    if destination.exists() or linked(destination):
-        if linked(destination) or read_json(destination) != request:
-            raise ValueError("已有 seed 登记不同，不能覆盖")
-    else:
-        write_json(destination, request)
-    return {"status": "seed_runtime_registered", "registration": binding(destination),
-            "worker_authorized": False, "remote_writes": 0, "restore_qualified": False}
 
 
 def _publication_names(plan_sha256, root):

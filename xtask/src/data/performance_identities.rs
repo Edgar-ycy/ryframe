@@ -15,11 +15,18 @@ use crate::{
 const MAX_PROTOCOL_BYTES: usize = 32 * 1024;
 
 #[cfg(test)]
+#[path = "performance_identities/tests/fixture.rs"]
+pub(crate) mod test_fixture;
+
+#[cfg(test)]
 #[path = "performance_identities/tests/execution.rs"]
 mod execution_tests;
 #[cfg(test)]
 #[path = "performance_identities/tests/producer.rs"]
 mod producer_tests;
+#[cfg(test)]
+#[path = "performance_identities/tests/seed_evidence.rs"]
+mod seed_evidence_tests;
 
 #[path = "performance_identities/clone_bridge.rs"]
 mod clone_bridge;
@@ -43,6 +50,8 @@ pub(crate) mod producer_authorization;
 mod receipt;
 #[path = "performance_identities/run_lock.rs"]
 mod run_lock;
+#[path = "performance_identities/seed_evidence.rs"]
+pub(crate) mod seed_evidence;
 #[path = "performance_identities/state.rs"]
 pub(crate) mod state;
 

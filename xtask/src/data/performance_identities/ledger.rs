@@ -171,27 +171,7 @@ impl Ledger {
         Ok(())
     }
     pub(super) fn names(&self) -> (String, String) {
-        let value = evidence::hash(format!(
-            "{}\0{}",
-            self.plan["plan_sha256"].as_str().unwrap_or(""),
-            self.root.display()
-        ));
-        let mut chars = value.as_bytes()[..32].to_vec();
-        chars[12] = b'5';
-        chars[16] = b'8';
-        let raw = String::from_utf8(chars).expect("SHA-256 只包含 ASCII");
-        let id = format!(
-            "{}-{}-{}-{}-{}",
-            &raw[..8],
-            &raw[8..12],
-            &raw[12..16],
-            &raw[16..20],
-            &raw[20..]
-        );
-        (
-            format!("identity-publication-{id}.json"),
-            format!("verified-{id}.json"),
-        )
+        super::seed_evidence::names(self.plan["plan_sha256"].as_str().unwrap_or(""), &self.root)
     }
     fn inventory(&self) -> Result<(bool, bool, bool)> {
         let (intent, receipt) = self.names();

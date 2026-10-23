@@ -100,9 +100,12 @@ class SeedTests(unittest.TestCase):
         return load_state(self.directory)["attempts"][-1]["result"]
 
     def register(self):
-        request_file = self.file("seed-request", self.request)
+        self.file("seed-request", self.request)
         number = begin(self.directory, "seed-runtime", "register", {})
-        result = seed.register(self.backend, self.directory, Path(request_file["path"]))
+        # 其余部门/close/source 测试复用已发布登记夹具；真实登记写入在 Rust publication_tests 覆盖。
+        write_json(self.directory / "seed-runtime.json", self.request)
+        result = {"status": "seed_runtime_registered", "registration": binding(self.directory / "seed-runtime.json"),
+                  "worker_authorized": False, "remote_writes": 0, "restore_qualified": False}
         finish(self.directory, number, result=result)
         return result
 
@@ -191,14 +194,6 @@ class SeedTests(unittest.TestCase):
         intent = read_json(intent_path)
         intent["receipt"], intent["receipt_sha256"] = receipt, binding(receipt_path)["sha256"]
         self.replace_json(intent_path, intent)
-
-    def test_register_preserves_old_api_and_does_not_authorize_worker(self):
-        old = binding(self.old / "api.json")
-        result = self.register()
-        self.assertFalse(result["worker_authorized"])
-        self.assertEqual(old, binding(self.old / "api.json"))
-        self.assertEqual(seed.registered(self.backend, self.directory), self.request)
-        self.assertFalse((self.directory / "seed-runtime/runtime").exists())
 
     def test_history_allows_legitimate_identity_and_outbox_data_evolution(self):
         self.register()

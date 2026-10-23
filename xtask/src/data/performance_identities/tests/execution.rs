@@ -1,10 +1,8 @@
+use super::test_fixture::Fixture;
 use super::{evidence, execution, ledger::Ledger, run_lock::RunLock};
 use crate::Result;
 use serde_json::json;
 use std::fs;
-#[path = "fixture.rs"]
-mod fixture;
-use fixture::Fixture;
 
 fn execute(
     fixture: &mut Fixture,

@@ -1,5 +1,7 @@
 """身份 CLI 及新 seed API/Worker 的窄交接；不改变身份业务、配额或正常任务状态。"""
 import json
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +13,7 @@ from devex_clone_post_context import Context, absent, execution_root
 from devex_clone_post_model import exact_directory
 from devex_clone_post_process import Producer, require_quiet, recover_session, cleanup_failure, inspect_producer
 from devex_clone_run_state import binding, load_state
-from devex_clone_seed import (registered, register, history, identity_inputs, identity_evidence,
+from devex_clone_seed import (registered, history, identity_inputs, identity_evidence,
                               verified_identity_stage, latest)
 from devex_clone_quota_model import capacity_evidence
 from devex_clone_source_proof import bound_file, require_closed_port, verify_api_address
@@ -367,7 +369,29 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
         if mode == "register":
             if request_file is None:
                 raise ValueError("seed 登记需要明确 --request")
-            return register(backend, directory, request_file)
+            from rate_limit_tool import tool_binding, verified_tool
+            from rate_limit_client import _child_environment
+
+            payload = {"format_version": 1, "kind": "ryframe-seed-evidence", "run_dir": str(directory),
+                "operation": "register", "arguments": {"request": str(request_file), "attempt": number,
+                    "controller": binding(directory / f"controller-{number:04d}.json"),
+                    "target_lock_inode": owned_lock_identity}}
+            # 外层继续持有原 run/target 锁；登记模型和不可覆盖发布由绑定 Rust 工具执行。
+            with verified_tool(tool_binding()) as executable:
+                if executable is None:
+                    raise ValueError("seed 登记缺少当前协调器的原生工具绑定")
+                options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+                observed = subprocess.run([executable, "__seed-evidence"], cwd=backend,
+                    env=_child_environment(), input=json.dumps(payload).encode("utf-8"),
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=180, check=False, **options)
+            if len(observed.stdout) > 1024 * 1024:
+                raise ValueError("seed 登记响应过长；保留登记、阶段和锁证据，禁止自动重放")
+            response = json.loads(observed.stdout)
+            if (observed.returncode != 0 or not isinstance(response, dict)
+                    or set(response) != {"ok", "result"} or response["ok"] is not True
+                    or not isinstance(response["result"], dict)):
+                raise ValueError("seed 原生登记未完成；核对当前 attempt、控制器、目标锁和绑定配置，禁止自动重放")
+            return response["result"]
         if mode == "source-register":
             from devex_clone_seed_source import register_source
 

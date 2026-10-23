@@ -354,6 +354,49 @@ class RuntimeTests(unittest.TestCase):
                 runtime.start(self.context, self.request, number)
         control.assert_not_called()
 
+    def test_register_calls_bound_native_writer_with_current_controller_and_lock(self):
+        from contextlib import nullcontext
+        import subprocess
+
+        number = begin(self.directory, "seed-runtime", "register", {})
+        write_json(self.directory / f"controller-{number:04d}.json", {"fixture": True})
+        request = self.directory / "seed-native-request.json"
+        write_json(request, self.request)
+        expected = {"status": "seed_runtime_registered", "remote_writes": 0, "worker_authorized": False}
+        response = subprocess.CompletedProcess([], 0, json.dumps({"ok": True, "result": expected}).encode())
+        with patch.object(runtime, "require_quiet"), \
+                patch.object(runtime, "target_lock", return_value=nullcontext(123)), \
+                patch("rate_limit_tool.verified_tool", return_value=nullcontext("D:/native/xtask.exe")), \
+                patch.object(runtime.subprocess, "run", return_value=response) as execute:
+            self.assertEqual(runtime.execute_seed(self.backend, self.directory, {}, "register", number, request), expected)
+        call = execute.call_args
+        self.assertEqual(call.args[0], ["D:/native/xtask.exe", "__seed-evidence"])
+        payload = json.loads(call.kwargs["input"])
+        self.assertEqual(payload["arguments"]["attempt"], number)
+        self.assertEqual(payload["arguments"]["target_lock_inode"], 123)
+        self.assertEqual(payload["arguments"]["controller"], binding(self.directory / f"controller-{number:04d}.json"))
+        self.assertFalse(any(key.startswith(("APP_", "RYFRAME_")) for key in call.kwargs["env"]))
+        self.assertNotIn("private-admin", str(call))
+
+    def test_register_never_retries_unknown_native_result_or_runs_without_tool_binding(self):
+        from contextlib import nullcontext
+        import subprocess
+
+        number = begin(self.directory, "seed-runtime", "register", {})
+        write_json(self.directory / f"controller-{number:04d}.json", {"fixture": True})
+        request = self.directory / "seed-native-request.json"
+        write_json(request, self.request)
+        for executable, output in [(None, b"{}"), ("D:/native/xtask.exe", b"broken"),
+                                   ("D:/native/xtask.exe", b'{"ok": false, "error": {}}')]:
+            with self.subTest(executable=executable, output=output), \
+                    patch.object(runtime, "require_quiet"), \
+                    patch.object(runtime, "target_lock", return_value=nullcontext(123)), \
+                    patch("rate_limit_tool.verified_tool", return_value=nullcontext(executable)), \
+                    patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, output)) as execute:
+                with self.assertRaises(ValueError):
+                    runtime.execute_seed(self.backend, self.directory, {}, "register", number, request)
+                self.assertEqual(execute.call_count, 0 if executable is None else 1)
+
     def test_registered_identity_source_cannot_restart_and_overwrite_old_api(self):
         import devex_clone_run as run
 

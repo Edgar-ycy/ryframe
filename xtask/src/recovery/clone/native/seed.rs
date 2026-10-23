@@ -1,4 +1,4 @@
-//! seed 登记的只读证据边界；失败阶段不能回退到历史成功。
+//! seed 登记的文件证据边界；发布不覆盖，失败阶段不能回退到历史成功。
 
 use std::path::{Path, PathBuf};
 
@@ -9,6 +9,54 @@ use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
+
+#[path = "seed/history.rs"]
+pub(crate) mod history;
+#[path = "seed/identity.rs"]
+pub(crate) mod identity;
+#[path = "seed/protocol.rs"]
+pub(crate) mod protocol;
+#[path = "seed/runtime_model.rs"]
+pub(crate) mod runtime_model;
+
+pub(crate) fn publish(backend: &Path, run: &Path, request_path: &Path) -> Result<Value> {
+    validate_local_test_path(request_path, backend, LocalTestPathKind::ExistingFile)?;
+    let before = common::binding(request_path)?;
+    let request = json::read(request_path)?;
+    let post = history::validate(backend, run, &request)?;
+    identity::inputs(backend, run, &request, &post)?;
+    if common::binding(request_path)? != before {
+        return Err("seed 请求在核验期间变化".into());
+    }
+    let path = run.join("seed-runtime.json");
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {
+            validate_local_test_path(&path, backend, LocalTestPathKind::ExistingFile)?;
+            if json::read(&path)? != request {
+                return Err("已有 seed 登记不同，不能覆盖".into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            json::write_new(&path, &request)?
+        }
+        Err(_) => return Err("已有 seed 登记无法读取；保留现场，不能覆盖".into()),
+    }
+    if common::binding(request_path)? != before || json::read(&path)? != request {
+        return Err("seed 请求或发布文件在登记期间变化；保留现场，禁止自动重放".into());
+    }
+    let current = history::validate(backend, run, &request)?;
+    if current.request != post.request
+        || current.descriptor != post.descriptor
+        || current.runtime != post.runtime
+    {
+        return Err("seed 发布期间 post-copy 登记代次变化；保留已写文件，禁止自动重放".into());
+    }
+    identity::inputs(backend, run, &request, &current)?;
+    Ok(
+        serde_json::json!({"status":"seed_runtime_registered","registration":common::binding(&path)?,
+        "worker_authorized":false,"remote_writes":0,"restore_qualified":false}),
+    )
+}
 
 const FIELDS: &[&str] = &[
     "format_version",
@@ -106,6 +154,18 @@ pub(crate) fn latest<'a>(
     Ok(record)
 }
 
+#[cfg(test)]
+#[path = "seed/fixture.rs"]
+mod fixture;
+#[cfg(test)]
+#[path = "seed/history_tests.rs"]
+mod history_tests;
+#[cfg(test)]
+#[path = "seed/publication_tests.rs"]
+mod publication_tests;
+#[cfg(test)]
+#[path = "seed/runtime_tests.rs"]
+mod runtime_tests;
 #[cfg(test)]
 #[path = "seed/tests.rs"]
 mod tests;

@@ -58,6 +58,9 @@ fn main() {
     {
         std::process::exit(code);
     }
+    if let Some(code) = recovery::clone::native::seed::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::dataset_prepare::run_hidden_if_requested() {
         std::process::exit(code);
     }

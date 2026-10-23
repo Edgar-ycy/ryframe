@@ -1,4 +1,4 @@
-use super::super::{
+use super::{
     evidence,
     execution::{Context, IdentityFuture, IdentitySession},
     plan,
@@ -13,13 +13,13 @@ use std::{
     rc::Rc,
 };
 
-pub(super) struct Fixture {
-    pub(super) directory: PathBuf,
-    pub(super) plan: Value,
-    pub(super) context: FakeContext,
+pub(crate) struct Fixture {
+    pub(crate) directory: PathBuf,
+    pub(crate) plan: Value,
+    pub(crate) context: FakeContext,
 }
 impl Fixture {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let backend = crate::workspace::root_dir();
         let directory = backend
             .join(".local-tests")
@@ -49,10 +49,10 @@ impl Fixture {
             context,
         }
     }
-    pub(super) fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         self.directory.join("state")
     }
-    pub(super) fn ledger(&self) -> Value {
+    pub(crate) fn ledger(&self) -> Value {
         evidence::parse(&fs::read(self.root().join("ledger.json")).unwrap()).unwrap()
     }
 }
@@ -63,26 +63,26 @@ impl Drop for Fixture {
 }
 
 #[derive(Default)]
-pub(super) struct FakeData {
-    pub(super) roles: BTreeMap<String, Value>,
-    pub(super) users: BTreeMap<String, Value>,
-    pub(super) permissions: BTreeMap<String, Value>,
-    pub(super) resets: BTreeMap<String, String>,
-    pub(super) writes: usize,
-    pub(super) sessions: usize,
-    pub(super) closed: usize,
-    pub(super) inspections: usize,
-    pub(super) fail_inspection: Option<usize>,
-    pub(super) drift_inspection: Option<usize>,
-    pub(super) fail_operation: Option<String>,
-    pub(super) fail_close_at: Option<usize>,
-    pub(super) bad_fragment: bool,
-    pub(super) bad_ordinary: bool,
-    pub(super) different_template: bool,
+pub(crate) struct FakeData {
+    pub(crate) roles: BTreeMap<String, Value>,
+    pub(crate) users: BTreeMap<String, Value>,
+    pub(crate) permissions: BTreeMap<String, Value>,
+    pub(crate) resets: BTreeMap<String, String>,
+    pub(crate) writes: usize,
+    pub(crate) sessions: usize,
+    pub(crate) closed: usize,
+    pub(crate) inspections: usize,
+    pub(crate) fail_inspection: Option<usize>,
+    pub(crate) drift_inspection: Option<usize>,
+    pub(crate) fail_operation: Option<String>,
+    pub(crate) fail_close_at: Option<usize>,
+    pub(crate) bad_fragment: bool,
+    pub(crate) bad_ordinary: bool,
+    pub(crate) different_template: bool,
 }
-pub(super) struct FakeContext {
-    pub(super) data: Rc<RefCell<FakeData>>,
-    pub(super) plan: Value,
+pub(crate) struct FakeContext {
+    pub(crate) data: Rc<RefCell<FakeData>>,
+    pub(crate) plan: Value,
 }
 impl Context for FakeContext {
     fn password<'a>(&'a mut self, slot: &'a str) -> IdentityFuture<'a, String> {
