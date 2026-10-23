@@ -1,13 +1,18 @@
 //! 缓存恢复的请求、收据与有界控制调用；不接管外层锁或重放写入。
 mod evidence;
 mod facts;
+mod history;
+mod markers;
 mod model;
 mod process;
+mod request;
+mod session;
+mod stage;
 
 use super::json as document;
 use crate::Result;
 use serde_json::{Value, json};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -19,10 +24,28 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
             return Err("缓存控制只接受有界标准输入".into());
         }
         let mut bytes = Vec::new();
-        std::io::stdin()
-            .take(1024 * 1024 + 1)
-            .read_to_end(&mut bytes)?;
-        execute(&crate::workspace::root_dir(), &bytes)
+        let stdin = std::io::stdin();
+        let mut input = stdin.lock();
+        std::io::Read::take(&mut input, 1024 * 1024 + 1).read_until(b'\n', &mut bytes)?;
+        if bytes.is_empty() || bytes.len() > 1024 * 1024 {
+            return Err("缓存控制输入为空或超限".into());
+        }
+        let backend = crate::workspace::root_dir();
+        let first = document::parse_fragment(std::str::from_utf8(&bytes)?, "缓存控制");
+        if !first
+            .as_ref()
+            .is_ok_and(|value| value["operation"] == "stage")
+        {
+            let remaining = (1024 * 1024 + 1_usize).saturating_sub(bytes.len());
+            std::io::Read::take(&mut input, remaining as u64).read_to_end(&mut bytes)?;
+            return execute(&backend, &bytes);
+        }
+        let value = first?;
+        if value["operation"] == "stage" {
+            session::execute(&backend, &value, &mut input, &mut std::io::stdout().lock())
+        } else {
+            execute(&backend, &bytes)
+        }
     })();
     let (code, response) = match result {
         Ok(value) => (0, json!({"ok":true,"result":value})),
@@ -44,7 +67,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
             (
                 1,
                 json!({"ok":false,"error":category,"exit_code":error.downcast_ref::<process::ControlFailure>().and_then(|failure| failure.0),
-                "message":"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。"}),
+                "message":error.downcast_ref::<PolicyFailure>().map_or_else(||"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。".to_string(),|failure|format!("{}；保留意图与完整前后像，核对固定请求和已登记代次后显式恢复，禁止自动重放。",failure.0))}),
             )
         }
     };
@@ -72,6 +95,15 @@ pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> 
     }
     let args = &value["arguments"];
     match value["operation"].as_str() {
+        Some(
+            operation @ ("environment-select" | "environment-model" | "request-head"
+            | "request-model" | "process-model" | "successor-model" | "pending-target"),
+        ) => request::run(operation, args),
+        Some("images") => {
+            document::exact(args, &["markers"], "缓存标记前后像")?;
+            let (before, after) = markers::images(&args["markers"]);
+            Ok(json!([before, after]))
+        }
         Some("validate") => {
             document::exact(args, &["request", "files"], "缓存请求校验")?;
             model::validate(
@@ -129,3 +161,18 @@ pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> 
 mod process_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod stage_tests;
+
+#[derive(Debug)]
+struct PolicyFailure(&'static str);
+impl std::fmt::Display for PolicyFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+impl std::error::Error for PolicyFailure {}
+fn rejected(message: &'static str) -> Box<dyn std::error::Error> {
+    Box::new(PolicyFailure(message))
+}

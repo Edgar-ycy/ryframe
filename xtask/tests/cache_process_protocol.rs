@@ -98,3 +98,56 @@ fn facts_guard_requires_exact_configuration_and_run_generation() {
     arguments["facts"]["configuration_sha256"] = json!("private-secret-marker");
     rejected(invoke(&request("check-facts", arguments), &[]));
 }
+
+#[test]
+fn legacy_single_call_accepts_pretty_json_and_rejects_trailing_documents() {
+    let value = json!({"format_version":1,"kind":"ryframe-cache-process","operation":"password","arguments":{"value":"private-secret-marker"}});
+    let pretty = serde_json::to_vec_pretty(&value).unwrap();
+    assert!(invoke(&pretty, &[]).status.success());
+    let mut trailing = serde_json::to_vec(&value).unwrap();
+    trailing.extend_from_slice(b"\n{}\n");
+    rejected(invoke(&trailing, &[]));
+}
+
+#[test]
+fn stage_status_uses_same_dispatch_and_never_creates_runtime_or_registration() {
+    use sha2::{Digest, Sha256};
+    let backend = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let parent = backend.join(".local-tests/tmp");
+    std::fs::create_dir_all(&parent).unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("cache-status-protocol-")
+        .tempdir_in(parent)
+        .unwrap();
+    let directory = temporary.path();
+    let manifest = directory.join("manifest.json");
+    let raw = b"{\"fixture\":true}\n";
+    std::fs::write(&manifest, raw).unwrap();
+    let manifest_text = manifest.to_str().unwrap().to_string();
+    #[cfg(windows)]
+    let manifest_text = manifest_text.replace('/', "\\");
+    let state = json!({"format_version":1,"manifest":{"path":manifest_text,"bytes":raw.len(),"sha256":hex::encode(Sha256::digest(raw))},"attempts":[]});
+    std::fs::write(
+        directory.join("state.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    let raw = request(
+        "stage",
+        json!({"action":"status","directory":directory,"caller":std::process::id(),"parameters":{"allow_close_attempt":false}}),
+    );
+    let output = invoke(&raw, &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"],
+        json!({"status":"cache_unregistered","copy_usable":false,"processes":[]})
+    );
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), 2);
+}

@@ -55,3 +55,93 @@ def invoke(operation, **arguments):
             or set(response) != {"ok", "result"} or response["ok"] is not True):
         raise RuntimeError("缓存原生响应无效；保留现场，不自动重放或清理")
     return response["result"]
+
+
+def _wire(value):
+    from pathlib import Path
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _wire(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_wire(item) for item in value]
+    return value
+
+
+def stage_session(action, directory, parameters, port):
+    """复用缓存协议，在原锁存续期间按 Rust 请求执行单次 I/O。"""
+    import queue
+    import threading
+    payload = {"format_version": 1, "kind": "ryframe-cache-process", "operation": "stage",
+               "arguments": {"action": action, "directory": str(directory), "caller": os.getpid(),
+                             "parameters": parameters}}
+    def send(child, value):
+        data = json.dumps(_wire(value), ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        if len(data) > 1024 * 1024:
+            raise ValueError("缓存阶段消息超过 1 MiB")
+        child.stdin.write(data)
+        child.stdin.flush()
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    with verified_tool(tool_binding()) as executable:
+        if executable is None:
+            raise ValueError("缓存阶段必须使用正式入口绑定的原生工具")
+        child = subprocess.Popen([executable, "__cache-process"], cwd=ROOT,
+            env=configured({}, inherited=_child_environment()), stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **options)
+        messages = queue.Queue(maxsize=1)
+        def receive():
+            try:
+                while True:
+                    line = child.stdout.readline(1024 * 1024 + 1)
+                    messages.put(line)
+                    if not line:
+                        return
+            except OSError:
+                messages.put(b"")
+        reader = threading.Thread(target=receive, daemon=True)
+        reader.start()
+        pending = None
+        sequence = 0
+        try:
+            send(child, payload)
+            while True:
+                try:
+                    line = messages.get(timeout=30)
+                except queue.Empty:
+                    raise TimeoutError("缓存阶段无响应；保留意图、锁及未知写入，禁止重放") from None
+                if not line or len(line) > 1024 * 1024:
+                    raise RuntimeError("缓存阶段响应缺失或超限；保留现场")
+                response = json.loads(line.decode("utf-8"), object_pairs_hook=unique_object)
+                if isinstance(response, dict) and set(response) == {"port", "arguments", "sequence"}:
+                    sequence += 1
+                    if type(response["sequence"]) is not int or response["sequence"] != sequence or pending is not None:
+                        raise RuntimeError("缓存阶段端口失序或失败后仍请求执行")
+                    try:
+                        result = port(response["port"], response["arguments"])
+                    except BaseException as error:
+                        pending = error
+                        send(child, {"sequence": sequence, "ok": False, "result": None})
+                    else:
+                        send(child, {"sequence": sequence, "ok": True, "result": result})
+                    continue
+                child.stdin.close()
+                code = child.wait(timeout=5)
+                if pending is not None:
+                    raise pending
+                if code == 0 and isinstance(response, dict) and set(response) == {"ok", "result"} and response["ok"] is True:
+                    return response["result"]
+                if code == 1 and isinstance(response, dict) and set(response) == {"ok", "error", "message", "exit_code"} and response["ok"] is False and response["error"] == "CacheProcessRejected" and response["exit_code"] is None:
+                    raise ValueError(response["message"])
+                raise RuntimeError("缓存阶段响应或退出状态无效；禁止重放")
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+            if not child.stdin.closed:
+                child.stdin.close()
+            child.stdout.close()
+            reader.join(timeout=1)
+
+
+def images(markers):
+    return tuple(invoke('images', markers=markers))
