@@ -30,6 +30,13 @@ mod source_edit;
 mod watch;
 mod workspace;
 
+#[cfg(test)]
+#[path = "../tests/internal/recovery_inputs_fixture.rs"]
+mod recovery_inputs_fixture;
+#[cfg(test)]
+#[path = "../tests/internal/recovery_inputs_support.rs"]
+mod recovery_inputs_support;
+
 use std::{env, error::Error};
 
 use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};

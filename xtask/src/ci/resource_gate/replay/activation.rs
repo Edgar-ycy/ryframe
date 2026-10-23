@@ -287,7 +287,7 @@ fn loopback(path: &Path, field: &str, host: &str) -> Result<(), String> {
 fn binding(path: &Path, image: Option<&Image>) -> Value {
     match image {
         Some(image) => {
-            json!({"path":path,"present":true,"bytes":image.bytes.len(),"sha256":format!("{:x}", Sha256::digest(&image.bytes))})
+            json!({"path":path,"present":true,"bytes":image.bytes.len(),"sha256":hex::encode(Sha256::digest(&image.bytes))})
         }
         None => json!({"path":path,"present":false}),
     }

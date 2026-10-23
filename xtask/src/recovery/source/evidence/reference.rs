@@ -341,6 +341,7 @@ pub(super) fn object_index(args: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn identifiers_hash_and_timeout_are_strict() {
