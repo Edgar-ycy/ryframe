@@ -37,11 +37,15 @@ pub(crate) fn execute(bytes: &[u8]) -> (i32, Value) {
         Ok(value) if value.to_string().len() <= LIMIT => (0, json!({"ok":true,"result":value})),
         Ok(_) => failure("夹具环境响应过长；保留现场，禁止自动重放"),
         Err(error) => {
-            let message = error.downcast_ref::<GuardError>().map_or(
-                "夹具环境请求未完成；核对字段、路径、来源摘要和正式工具绑定；保留现场，禁止自动重放",
-                |error| error.0,
-            );
-            failure(message)
+            let message = if let Some(error) = error.downcast_ref::<super::output::OutputError>() {
+                error.to_string()
+            } else {
+                error.downcast_ref::<GuardError>().map_or(
+                    "夹具环境请求未完成；核对字段、路径、来源摘要和正式工具绑定；保留现场，禁止自动重放",
+                    |error| error.0,
+                ).to_owned()
+            };
+            failure(&message)
         }
     }
 }
@@ -105,6 +109,7 @@ fn dispatch(bytes: &[u8]) -> Result<Value> {
         "administrator-credentials" => super::configuration::administrator(args),
         "plan" => super::plan::create(args),
         "planned-inputs" => super::plan::inputs(args),
+        "prepare-output" => super::output::request(args),
         _ => Err(Box::new(GuardError("未知夹具环境操作"))),
     }
 }

@@ -14,6 +14,8 @@ use super::{insert_optional_path, insert_path, output_value, path_value};
 mod configuration;
 #[path = "environment/guards.rs"]
 mod guards;
+#[path = "environment/output.rs"]
+mod output;
 #[path = "environment/plan.rs"]
 mod plan;
 #[path = "environment/protocol.rs"]
@@ -33,15 +35,21 @@ pub(super) fn fields(
             secrets_dir,
         } => {
             insert_inputs(&mut fields, inputs, root)?;
-            fields.insert(
-                "output".to_owned(),
-                path_value(
-                    output,
-                    root,
-                    LocalTestPathKind::NewDirectory,
-                    "环境输出目录",
-                )?,
-            );
+            let fixture = crate::recovery::clone::native::json::read(Path::new(
+                fields["fixture"].as_str().ok_or("夹具输入路径缺失")?,
+            ))?;
+            let output = path_value(
+                output,
+                root,
+                LocalTestPathKind::NewDirectory,
+                "环境输出目录",
+            )?;
+            output::validate(
+                root,
+                &fixture,
+                Path::new(output.as_str().ok_or("环境输出路径缺失")?),
+            )?;
+            fields.insert("output".to_owned(), output);
             insert_optional_path(
                 &mut fields,
                 "secrets_dir",

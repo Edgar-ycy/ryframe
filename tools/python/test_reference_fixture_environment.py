@@ -348,7 +348,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             environment.revalidate(self.backend, pending, ready)
         fixture = self.write("prepare-fixture.json", self.fixture)
         maintenance = self.write("prepare-build.json", self.maintenance)
-        output = self.root / "prepared"
+        reference = Path(self.fixture["paths"]["backend"]) / ".local-tests/reference-fixture"
+        reference.mkdir(parents=True)
+        output = reference / "prepared"
 
         def configuration(_execution, _config_dir):
             changed = copy.deepcopy(self.fixture)
@@ -365,6 +367,56 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             environment.prepare(self.backend, ready, fixture, maintenance, output)
         self.assertTrue((output / "failed.json").is_file())
         self.assertFalse((output / "bootstrap.json").exists())
+
+    def _prepared_path_inputs(self):
+        self.review["ready_for_execution"] = False
+        pending = self.write("output-pending.json", self.review)
+        ready = self.root / "output-ready.json"
+        with patch.object(environment, "_preflight", return_value=self.observed_tools()):
+            environment.revalidate(self.backend, pending, ready)
+        fixture = self.write("output-fixture.json", self.fixture)
+        maintenance = self.write("output-build.json", self.maintenance)
+        execution = Path(self.fixture["paths"]["backend"])
+        reference = execution / ".local-tests/reference-fixture"
+        reference.mkdir(parents=True)
+        return ready, fixture, maintenance, execution, reference
+
+    def test_prepare_rejects_coordinator_only_output_before_any_file_or_configuration_write(self):
+        ready, fixture, maintenance, execution, reference = self._prepared_path_inputs()
+        wrong = self.root / "coordinator-only-environment"
+        before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
+        with patch.object(environment, "_environment") as configuration:
+            with self.assertRaises(ValueError) as raised:
+                environment.prepare(self.backend, ready, fixture, maintenance, wrong)
+            configuration.assert_not_called()
+        self.assertIn(str(reference / "environment-seed-r1"), str(raised.exception))
+        self.assertNotEqual(self.backend, execution)
+        self.assertFalse(wrong.exists())
+        self.assertEqual(sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*")), before)
+
+    def test_prepare_publishes_config_and_current_credentials_inside_distinct_execution_root(self):
+        ready, fixture, maintenance, execution, reference = self._prepared_path_inputs()
+        output = reference / "environment-seed-r1"
+
+        def files(_backend, _review, _fixture, selected, _side, _secrets):
+            self.assertEqual(selected, output)
+            selected.mkdir()
+            (selected / "config").mkdir()
+            (selected / "config/app.test.toml").write_text("[bootstrap]\nadmin_password='Initial!Only123'\n", encoding="utf-8")
+            (selected / "administrator.toml").write_text("[administrator]\ntenant_id='system'\nusername='admin'\npassword='Current!Changed123'\n", encoding="utf-8")
+            return {"APP_ENV": "test"}, {}
+
+        with (patch.object(environment, "_environment", side_effect=files),
+              patch.object(environment, "configuration_digest", return_value="c" * 64),
+              patch.object(environment, "verify_tools", return_value={"source": {}})):
+            result = environment.prepare(self.backend, ready, fixture, maintenance, output)
+        self.assertNotEqual(self.backend, execution)
+        self.assertEqual(result["execution_backend"], str(execution))
+        self.assertEqual(result["config_dir"], str(output / "config"))
+        self.assertEqual(result["administrator_credentials"], environment.bound(output / "administrator.toml"))
+        self.assertTrue((output / "bootstrap.json").is_file())
+        self.assertNotIn("Initial!Only123", json.dumps(result))
+        self.assertNotIn("Current!Changed123", json.dumps(result))
 
     def test_service_run_rejects_roots_outside_the_business_fixture(self):
         self.assertEqual(

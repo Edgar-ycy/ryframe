@@ -445,6 +445,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
     inputs = _planned_inputs(backend, result)
     _, review, _, fixture, maintenance_file, _ = inputs
     execution = Path(fixture["paths"]["backend"])
+    output = Path(environment_native("prepare-output", {"backend": str(backend), "plan": result, "output": str(output)})["output"])
     environment, secrets = _environment(backend, review, fixture, output, side, secret_directory)
     # 测试配置目录随环境一起生成，因此输出目录可能已经存在。
     output.mkdir(exist_ok=True)
