@@ -7,17 +7,14 @@
 生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在受控的忽略目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <directory>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<digest>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过：
 
 镜像构建使用 Docker 的 `SOURCE_COMMIT` 构建参数绑定 40 位小写提交 SHA。Dockerfile 校验后将它写入构建容器内的受管 `.local-tests/build/source-commit`，Rust 构建脚本只读取该文件；它不属于应用环境变量，也不会进入运行镜像。仓库内正式维护构建和恢复构建由 Rust/Python 协调器独占创建同一受管文件，完成后核对内容再清理；并发、漂移或未知清理结果会失败并保留现场。直接运行普通开发构建且没有该文件时，版本信息明确为 `development`，不能用于正式恢复证明。
-
 ```powershell
 $sourceCommit = git rev-parse HEAD
 docker build --build-arg "SOURCE_COMMIT=$sourceCommit" -f deploy/Dockerfile .
 ```
-
 ```powershell
 docker compose -f deploy/compose.prod.yml config
 docker compose -f deploy/compose.prod.yml up -d
 ```
-
 四角色部署顺序是先更新控制库与租户库，再启动 Worker 和 API；模板结构检查不替代真实环境的启动和升级验收。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；SQL 导入后仍须 `control verify`，并为实际租户目标运行 `tenant-data up/verify`。 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
 当前版本只接受全新生产库。已有真实生产旧库需要先设计并演练非破坏升级方案，不能使用 reset 代替升级。 生产 API 还必须通过 TOML 的 `app.locales_dir` 提供完整 `zh-CN.toml` 与 `en-US.toml`；默认目录为 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`。缺失或加载失败会严格拒绝生产启动；开发环境的内嵌回退不能替代生产资源部署。
@@ -93,12 +90,10 @@ docker compose -f deploy/compose.prod.yml up -d
 ### 采集和登记
 
 在 Windows 维护机通过 `cargo xtask data` 执行备份和恢复登记；配置和密钥放在受控的忽略目录。该维护能力不包含在生产运行镜像中。
-
 ```powershell
 cargo xtask data --help
 cargo xtask data backup inventory --output <absolute-new-file-in-backend-workspace/.local-tests> --source-sha <exact-backend-sha> --quiesced-at <writes-quiesced-at-rfc3339>
 ```
-
 `backup inventory` 与 `target inventory` 都是显式选择的只读库存操作，只在当前后端 `.local-tests` 内以 create-new 语义原子创建新证据文件，不修改数据库、对象或登记状态，因此不使用 `--write`；输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<logical-target-key>` 与 `objects:<bucket>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。
 
 需要检查尚未分配租户的目标或初始化前后状态时，使用 `cargo xtask data target inventory --target <configured-target-key> --output <absolute-new-file-in-backend-workspace/.local-tests>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
@@ -107,7 +102,6 @@ cargo xtask data backup inventory --output <absolute-new-file-in-backend-workspa
 cargo xtask data backup register --manifest <absolute-manifest-in-backend-workspace/.local-tests> --backup-root <registered-external-absolute-backup-directory> --write
 cargo xtask data backup status
 ```
-
 登记会重新读取文件验证大小及 SHA-256，缺失或损坏会登记为无效并返回失败。同一备份 ID 只允许重复验证相同清单，不允许替换数据。登记成功表示已校验备份文件，尚不能表示恢复成功。状态查询只读取控制库，不依赖对象存储当前是否可连接。
 
 ### 隔离恢复与验收
@@ -215,7 +209,6 @@ scrape_configs:
     static_configs:
       - targets: [ryframe-worker.internal.example:443]
 ```
-
 沿用现有 `alerting.alertmanagers` 配置，并将 `service=ryframe` 的 warning/critical 告警路由到运维通知渠道。先执行 `promtool check config /etc/prometheus/prometheus.yml` 与 `promtool check rules /etc/prometheus/rules/ryframe-alerts.yml`，通过后按现有平台的配置重载方式生效；Prometheus 支持 `SIGHUP`，也支持在启用生命周期接口后通过 `POST /-/reload` 重载。[配置与重载方式](https://prometheus.io/docs/prometheus/latest/configuration/configuration/)
 
 重载后在 Targets 中确认两个抓取目标均为 UP，在 Rules 中确认 `ryframe.application` 规则组加载且健康，并查询 `ryframe_backup_collector_up`、`ryframe_backup_resources` 和 `ryframe_backup_last_success_timestamp_seconds` 检查实际采集结果。API 与 Worker 各暴露一份部署汇总，按 Prometheus 的 `job`、`instance` 区分采集进程，不能将两份计数相加。最后通过隔离演练产生真实失败状态，核对告警进入 Alertmanager 并送达通知渠道；仅通过配置检查不作为通知送达证据。正式恢复的隔离演练统一使用 `cargo xtask check recovery monitoring`：先创建只含权限已收紧 `metrics-token.txt` 的新 run 目录，以 `bind --help` 核对参数，再用 `bind ... --write` 绑定同一次正式恢复的 `runtime.json`、目标计划、唯一 run ID、Prometheus/promtool 3.5.0、Alertmanager/amtool 0.34.0、四个工具绝对路径及三个互异的非特权回环端口，生成不可覆盖的 `binding.json` 和当前干净提交的不可变 staging；token 必须与运行中的 API、Worker 指标凭据一致，内容不得进入命令行或收据。监控绑定、输入 staging、回环 HTTP、webhook、Prometheus/Alertmanager 进程树、观测和关闭由 Rust xtask 执行；`status` 与 `result` 原生读取阶段证据，不启动 Python。`bind|start|observe|close` 仍通过固定只读协议复用现有 Python 核验器，主动检查正式恢复的静态来源和三端存活代次，不能用 JSON 字段匹配代替。绑定同时记录当前 xtask 可执行文件摘要；阶段执行期间保留凭据、工具、规则和协调程序的文件句柄，并在结束时复核身份与摘要。Windows 凭据要求受保护的显式 DACL，仅允许当前用户、System 和 Administrators；Unix 要求当前用户拥有且其他用户无访问权限。权限无法核验时失败关闭，不自动放宽。后续只对该绑定依次执行只读的 `status --binding <absolute-path>`，以及显式写入的 `start|observe|close|result --binding <absolute-path> --write`，每次只执行 `status` 返回的 `next_action`，失败、中断、未知发布结果或 `*-failure.json` 必须保留并转入其指示的关闭或人工核对，禁止删除证据后重放。start 管理回环 webhook、Alertmanager、Prometheus 三棵进程树；observe 核对 API/Worker bearer 拒绝与成功响应、targets、固定规则、精确 firing/resolved probe 及 promtool 23/24 小时边界，receiver 只允许 `ryframe-local-webhook` 且外部联系数必须为零；close 等待全部后代退出和端口释放；result 只在 start、observation、close 均成功后排他发布并重验全部摘要，遗留 pending 时先核对文件身份和内容，不能用重跑猜测结果。

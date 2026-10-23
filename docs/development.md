@@ -17,7 +17,6 @@ if (Test-Path -LiteralPath .local-tests/dev-config) { throw "Configuration direc
 New-Item -ItemType Directory -Path .local-tests/dev-config -ErrorAction Stop | Out-Null
 Copy-Item -LiteralPath config/app.toml,config/app.dev.toml -Destination .local-tests/dev-config -ErrorAction Stop
 ```
-
 在编辑器中打开 `.local-tests/dev-config/app.dev.toml`，填写真实数据库、JWT、Redis、存储及 `[bootstrap] admin_password`，不修改受版本控制的原始样例，也不把密码放入命令参数。先设置 `$env:APP_ENV = "dev"`，并确保已创建空 MySQL database；若另选配置目录，须同步替换后续绑定 `.local-tests/dev-config` 的路径。从后端根目录依次运行 `cargo migrate -- --config-dir .local-tests/dev-config control up`、`cargo migrate -- --config-dir .local-tests/dev-config control verify`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target shared-control`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data verify --target shared-control`、`cargo serve -- --config-dir .local-tests/dev-config`。`control verify` 只校验，不能初始化新空库；控制库和默认 `shared-control` 租户数据面有不同账本，两者都要完成初始化和校验。API/Worker 启动只做结构校验，不自动执行 DDL。完整步骤、SQL 导入和多目标说明见[数据指南](data.md#全新环境初始化)。
 
 非生产默认 `jobs.mode="embedded"`，`cargo serve -- --config-dir .local-tests/dev-config` 已消费后台任务。独立 API／Worker 必须使用两份实例配置；以下示例从后端根目录开始，要求两个目录都是全新目录，任一目录存在就停止，不覆盖用户真实配置。从刚才已填写真实值的 `.local-tests/dev-config` 复制公共配置和 dev 配置，不再复制受版本控制的空样例：
