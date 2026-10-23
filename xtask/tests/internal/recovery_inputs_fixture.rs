@@ -729,6 +729,7 @@ fn source_request(
         "tools": {
             "mysql": tool,
             "mysqldump": tool,
+            "node": tool,
         },
         "backend_build": backend_build,
         "maintenance_build": maintenance_build,
