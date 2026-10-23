@@ -41,6 +41,7 @@ impl Protocol {
             .iter()
             .map(|(key, value)| (key.clone(), Value::String(value.clone())))
             .collect::<Map<_, _>>();
+        super::config::validate_environment(&self.environment)?;
         Ok(serde_json::to_string(&json!({
             "command": self.command,
             "cwd": self.cwd.to_string_lossy(),
@@ -106,6 +107,7 @@ impl Protocol {
                     .ok_or_else(|| "监控 supervisor 环境值必须是字符串".into())
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
+        super::config::validate_environment(&environment)?;
         Ok(Self {
             runtime_directory,
             role,
@@ -479,22 +481,10 @@ fn validate_protocol(protocol: &Protocol) -> Result<()> {
         || !protocol.runtime_directory.is_dir()
         || !protocol.cwd.is_absolute()
         || !protocol.log.starts_with(&protocol.runtime_directory)
-        || protocol
-            .environment
-            .contains_key("APP_MONITOR_METRICS_BEARER_TOKEN")
     {
         return Err("监控 supervisor 私有协议路径或环境越界".into());
     }
-    for name in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
-        if protocol
-            .environment
-            .keys()
-            .any(|key| key.eq_ignore_ascii_case(name))
-        {
-            return Err("监控 supervisor 环境不能继承代理".into());
-        }
-    }
-    Ok(())
+    super::config::validate_environment(&protocol.environment)
 }
 
 fn ready_path(protocol: &Protocol) -> PathBuf {

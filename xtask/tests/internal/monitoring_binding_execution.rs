@@ -100,7 +100,7 @@ impl Setup {
         let environment = fixture.backend.join(".local-tests/environment.json");
         write_json(
             &environment,
-            &json!({"environment": {"APP_SCOPE_ID": "restore-scope", "APP_MONITOR_METRICS_BEARER_TOKEN": "secret"}}),
+            &json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret"}),
         );
         let mut authority = fixture.value["authority"].clone();
         authority["environment"] = descriptor(&environment);
@@ -245,4 +245,57 @@ fn credential_and_execution_guard_reject_drift_and_unknown_binding_fields() {
     let mut unknown = value;
     unknown["unknown"] = json!(true);
     assert!(contract::validate_binding(&unknown).is_err());
+}
+
+#[test]
+fn monitoring_private_settings_reject_old_wrappers_keys_types_scope_and_secret_drift() {
+    let valid = json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret"});
+    let mut invalid = vec![
+        json!({"environment": valid}),
+        json!({"scope_id": "other-scope", "metrics_bearer_token": "secret"}),
+        json!({"scope_id": "restore-scope", "metrics_bearer_token": "private-wrong-token"}),
+        json!({"scope_id": "restore-scope", "metrics_bearer_token": false}),
+        json!({"scope_id": 1, "metrics_bearer_token": "secret"}),
+        json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret\0"}),
+        json!({"scope_id": "restore-scope", "metrics_bearer_token": " secret "}),
+        json!({"scope_id": "restore-scope"}),
+    ];
+    for key in crate::monitoring_security_tests::RETIRED_MONITORING_KEYS {
+        for key in [key.to_owned(), key.to_ascii_lowercase()] {
+            let mut extra = valid.clone();
+            extra[&key] = json!("private-old-value");
+            invalid.push(extra);
+            let mut replaced = valid.clone();
+            replaced
+                .as_object_mut()
+                .unwrap()
+                .remove("metrics_bearer_token");
+            replaced[&key] = json!("secret");
+            invalid.push(replaced);
+        }
+    }
+    for value in invalid {
+        let mut setup = Setup::new();
+        let path = setup.fixture.backend.join(".local-tests/environment.json");
+        write_json(&path, &value);
+        setup.verifier.value["environment"] = descriptor(&path);
+        let error = setup.bind().unwrap_err().to_string();
+        for secret in ["secret", "private-wrong-token", "private-old-value"] {
+            assert!(!error.contains(secret), "错误不得泄漏配置值");
+        }
+        assert!(!setup.options.output.exists());
+        assert!(!setup.fixture.run.join(contract::STAGING_DIRECTORY).exists());
+    }
+}
+
+#[test]
+fn monitoring_settings_descriptor_and_final_scope_are_checked_before_publication() {
+    let mut setup = Setup::new();
+    setup.verifier.value["environment"]["sha256"] = json!("0".repeat(64));
+    assert!(setup.bind().is_err());
+    assert!(!setup.options.output.exists());
+    let mut setup = Setup::new();
+    setup.verifier.value["restore"]["scope_id"] = json!("other-scope");
+    assert!(setup.bind().is_err());
+    assert!(!setup.options.output.exists());
 }

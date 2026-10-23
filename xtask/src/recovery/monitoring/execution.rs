@@ -69,6 +69,7 @@ impl ProtectedInputs {
         let value = crate::recovery::clone::native::json::read(&manifest)?;
         let mut paths = vec![
             credential,
+            required_path(&binding["environment"])?,
             manifest.clone(),
             required_path(&binding["coordinator"]["executable"])?,
         ];

@@ -106,6 +106,10 @@ foreach ($ace in $raw.DiscretionaryAcl) {
             .join("powershell.exe"),
     )
     .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+    .env_clear()
+    .envs(super::config::safe_environment(
+        path.parent().ok_or("监控凭据缺少父目录")?,
+    )?)
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())

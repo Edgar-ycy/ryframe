@@ -238,3 +238,14 @@ Inspect isolated reference fixture services read-only through `cargo xtask check
 A dead controller is recovered explicitly through the same entry point's `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write`. It only removes the verified local control lock and appends to the ledger; it does not stop services or replay unfinished operations. PID reuse, changed provenance, or unknown startup or closure outcomes require retaining the state and verifying complete before/after-images. Closed generations cannot issue fresh-target requests again; registered targets only accept strictly verified completed lifecycle append operations.
 
 Record the timeline, affected tenants, request or task IDs, root cause, handling, and verification results. Configuration structures remain the authority for configuration fields, and deployment assets for metrics and alerts; this document does not maintain duplicate inventories.
+
+In monitoring bindings, `environment` remains a descriptor of the formal launch's private configuration file. The file must contain plaintext `metrics_bearer_token` and `scope_id` fields directly, for example:
+
+```json
+{
+  "metrics_bearer_token": "<plaintext metrics token matching the running API and Worker>",
+  "scope_id": "<scope of this formal recovery>"
+}
+```
+
+The file accepts only these two string fields. Old environment-variable keys, the old `environment` wrapper, extra fields, non-string values, and mismatching scopes or tokens are rejected, with no fallback to the parent process environment. Its path, digest, and contents remain bound to the original formal launch; do not create or replace the file solely for monitoring. Prometheus continues to read the same token through protected `metrics-token.txt` and `credentials_file`. Scope, role, and runtime paths use fixed arguments or the supervisor stdin protocol. Every monitoring subprocess clears project and credential environment variables, retaining only an OS allowlist and fixed loopback proxy settings. The managed preflight stdin file is created under the backend `.local-tests` and deleted after exit; preflight failures do not forward raw subprocess diagnostics.

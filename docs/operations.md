@@ -236,3 +236,14 @@ fixture 启动后，执行器独占创建三个 TLS 角色配置目录。Redis �
 死亡控制器通过同一入口的 `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。
 
 记录时间线、影响租户、请求或任务 ID、根因、处置和验证结果。配置字段以配置结构为准，指标和告警以部署资产为准，不在本文维护重复清单。
+
+监控绑定中的 `environment` 保留为正式启动私有配置文件的描述符，文件内容必须直接写明文 `metrics_bearer_token` 和 `scope_id`，例如：
+
+```json
+{
+  "metrics_bearer_token": "<与运行中 API、Worker 一致的明文指标令牌>",
+  "scope_id": "<本次正式恢复的 scope>"
+}
+```
+
+该文件只接受这两个字符串字段；旧环境变量键、旧 `environment` 包装、额外字段、非字符串、scope 或令牌不匹配均被拒绝，不读取父进程环境作为回退。文件路径、摘要和内容持续绑定原正式启动来源，不能仅为监控另建或替换该文件。Prometheus 继续通过受保护的 `metrics-token.txt` 和 `credentials_file` 读取同一令牌；scope、角色及运行路径通过固定参数或 supervisor 标准输入协议传递。所有监控子进程清空项目与凭据环境，仅白名单保留操作系统变量和固定的回环代理设置；预检 stdin 的受管文件位于后端 `.local-tests`，退出后自动删除，预检错误不透传子进程原始诊断。

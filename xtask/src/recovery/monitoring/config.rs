@@ -278,46 +278,68 @@ pub(crate) fn safe_environment_from(
     run: &Path,
     inherited: impl IntoIterator<Item = (String, String)>,
 ) -> Result<BTreeMap<String, String>> {
-    const SYSTEM: &[&str] = &[
-        "APPDATA",
-        "COMMONPROGRAMFILES",
-        "COMMONPROGRAMFILES(X86)",
-        "COMMONPROGRAMW6432",
-        "COMSPEC",
-        "HOME",
-        "HOMEDRIVE",
-        "HOMEPATH",
-        "LANG",
-        "LOCALAPPDATA",
-        "NUMBER_OF_PROCESSORS",
-        "OS",
-        "PATH",
-        "PATHEXT",
-        "PROGRAMDATA",
-        "PROGRAMFILES",
-        "PROGRAMFILES(X86)",
-        "PROGRAMW6432",
-        "SHELL",
-        "SYSTEMDRIVE",
-        "SYSTEMROOT",
-        "TMPDIR",
-        "USER",
-        "USERPROFILE",
-        "WINDIR",
-    ];
     let mut environment = inherited
         .into_iter()
-        .filter(|(key, _)| {
-            let key = key.to_ascii_uppercase();
-            SYSTEM.contains(&key.as_str())
-                || key.starts_with("PROCESSOR_")
-                || key.starts_with("LC_")
-        })
+        .filter(|(key, _)| system_environment_key(key))
         .collect::<BTreeMap<_, _>>();
     environment.insert("NO_PROXY".into(), "127.0.0.1,localhost,::1".into());
     environment.insert("TEMP".into(), path_text(run, "监控运行目录")?);
     environment.insert("TMP".into(), path_text(run, "监控运行目录")?);
+    validate_environment(&environment)?;
     Ok(environment)
+}
+
+const SYSTEM: &[&str] = &[
+    "APPDATA",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "COMSPEC",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LANG",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "SHELL",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TMPDIR",
+    "USER",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+];
+
+fn system_environment_key(name: &str) -> bool {
+    let key = name.to_ascii_uppercase();
+    SYSTEM.contains(&key.as_str()) || key.starts_with("PROCESSOR_") || key.starts_with("LC_")
+}
+
+/// supervisor 只接受 OS 和固定回环代理设置，项目配置必须经文件、参数或 stdin 传递。
+pub(crate) fn validate_environment(environment: &BTreeMap<String, String>) -> Result<()> {
+    for (key, value) in environment {
+        let upper = key.to_ascii_uppercase();
+        let allowed =
+            system_environment_key(key) || matches!(upper.as_str(), "TEMP" | "TMP" | "NO_PROXY");
+        if !allowed
+            || key.contains(['\0', '='])
+            || value.contains('\0')
+            || (upper == "NO_PROXY" && value != "127.0.0.1,localhost,::1")
+        {
+            return Err(
+                "监控子进程环境只允许操作系统变量，项目配置须使用文件、参数或标准输入".into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn run_logged(
@@ -327,6 +349,7 @@ pub(crate) fn run_logged(
     log: &Path,
     timeout: Duration,
 ) -> Result<()> {
+    validate_environment(environment)?;
     let output = OpenOptions::new().write(true).create_new(true).open(log)?;
     let mut process = Command::new(&command[0]);
     process

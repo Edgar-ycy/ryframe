@@ -64,9 +64,12 @@ pub(crate) fn run_with(
     let (rules, rule_documents) = repository::bind_rules(backend)?;
     let credential = verifier.credential(&options.metrics_token_file)?;
     let authority = verifier.authority(backend, &options.runtime_receipt, &options.target_plan)?;
-    if load_secret(&authority, &credential)? != credential.secret {
-        return Err("监控凭据与正式运行环境不同".into());
-    }
+    let (_settings, settings_guard) = load_private_settings(
+        backend,
+        &authority["environment"],
+        &authority["restore"]["scope_id"],
+        &credential,
+    )?;
     check_monitoring_ports(&authority, options)?;
     let tool_paths = tools::paths(options, backend)?;
     let source_guard = super::execution::ProtectedInputs::open(tool_paths.values().cloned())?;
@@ -110,6 +113,7 @@ pub(crate) fn run_with(
     for document in rule_documents {
         document.assert_unchanged()?;
     }
+    settings_guard.assert_unchanged()?;
     token_guard.assert_unchanged()?;
     source_guard.assert_unchanged()?;
     staged_guard.assert_unchanged()?;
@@ -198,11 +202,15 @@ pub(crate) fn verify_current_with(
             .as_str()
             .ok_or("监控绑定缺少凭据路径")?,
     ))?;
-    if credential.absolute != binding["credential"]
-        || load_secret(&binding["authority"], &credential)? != credential.secret
-    {
+    if credential.absolute != binding["credential"] {
         return Err("监控凭据文件在绑定后发生变化".into());
     }
+    load_private_settings(
+        backend,
+        &binding["environment"],
+        &binding["scope_id"],
+        &credential,
+    )?;
     let run = Path::new(
         binding["staging"]["path"]
             .as_str()
@@ -240,67 +248,64 @@ pub(crate) fn verify_current_with(
     Ok(())
 }
 
-pub(crate) fn load_environment(
+pub(crate) fn load_settings(
     backend: &Path,
     binding: &Value,
 ) -> Result<(String, crate::recovery::monitoring::contract::Document)> {
-    let descriptor = binding.get("environment").ok_or("监控绑定缺少环境")?;
-    let path = PathBuf::from(
-        descriptor
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or("监控运行环境路径无效")?,
-    );
-    validate_local_test_path(&path, backend, LocalTestPathKind::ExistingFile)?;
-    let document = read_document(&path, "监控运行环境")?;
-    if &document.descriptor() != descriptor {
-        return Err("监控运行环境与正式启动绑定不同".into());
-    }
-    let object = exact(&document.value, &["environment"], "监控私有环境")?;
-    let environment = object
-        .get("environment")
-        .and_then(Value::as_object)
-        .ok_or("监控私有环境必须是固定文本映射")?;
-    if environment.values().any(|value| !value.is_string()) {
-        return Err("监控私有环境值必须是字符串".into());
-    }
     let credential = staging::read_credential(Path::new(
         binding["credential"]["path"]
             .as_str()
             .ok_or("监控凭据路径无效")?,
     ))?;
-    if credential.absolute != binding["credential"]
-        || environment
-            .get("APP_MONITOR_METRICS_BEARER_TOKEN")
-            .and_then(Value::as_str)
-            != Some(credential.secret.as_str())
-        || environment.get("APP_SCOPE_ID").and_then(Value::as_str) != binding["scope_id"].as_str()
-    {
-        return Err("监控指标凭据与正式运行环境不同".into());
+    if credential.absolute != binding["credential"] {
+        return Err("监控凭据文件在绑定后发生变化".into());
     }
-    document.assert_unchanged()?;
+    let (document, _guard) = load_private_settings(
+        backend,
+        &binding["environment"],
+        &binding["scope_id"],
+        &credential,
+    )?;
     Ok((credential.secret, document))
 }
 
-fn load_secret(authority: &Value, credential: &Credential) -> Result<String> {
-    let path = PathBuf::from(
-        authority
-            .pointer("/environment/path")
-            .and_then(Value::as_str)
-            .ok_or("监控权威缺少环境路径")?,
-    );
-    let document = read_document(&path, "监控运行环境")?;
-    let secret = document
-        .value
-        .pointer("/environment/APP_MONITOR_METRICS_BEARER_TOKEN")
-        .and_then(Value::as_str)
-        .ok_or("监控运行环境缺少指标凭据")?
-        .to_owned();
-    if secret != credential.secret {
-        return Err("监控指标凭据与正式运行环境不同".into());
+fn load_private_settings(
+    backend: &Path,
+    descriptor: &Value,
+    scope: &Value,
+    credential: &Credential,
+) -> Result<(
+    crate::recovery::monitoring::contract::Document,
+    super::execution::ProtectedInputs,
+)> {
+    let path = PathBuf::from(descriptor["path"].as_str().ok_or("监控私有配置路径无效")?);
+    validate_local_test_path(&path, backend, LocalTestPathKind::ExistingFile)?;
+    let guard = super::execution::ProtectedInputs::open([path.clone()])?;
+    let document = read_document(&path, "监控私有配置")?;
+    if document.descriptor() != *descriptor {
+        return Err("监控私有配置与正式启动绑定不同".into());
+    }
+    let object = exact(
+        &document.value,
+        &["metrics_bearer_token", "scope_id"],
+        "监控私有配置",
+    )?;
+    let token = object["metrics_bearer_token"]
+        .as_str()
+        .ok_or("监控指标凭据必须是明文字符串")?;
+    let configured_scope = object["scope_id"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or("监控 scope_id 必须是非空字符串")?;
+    if token.is_empty() || token.chars().any(char::is_control) || token != token.trim() {
+        return Err("监控指标凭据为空或包含无效字符".into());
+    }
+    if token != credential.secret || scope.as_str() != Some(configured_scope) {
+        return Err("监控指标凭据或 scope_id 与正式运行绑定不同".into());
     }
     document.assert_unchanged()?;
-    Ok(secret)
+    guard.assert_unchanged()?;
+    Ok((document, guard))
 }
 
 fn check_monitoring_ports(authority: &Value, options: &MonitoringBindOptions) -> Result<()> {

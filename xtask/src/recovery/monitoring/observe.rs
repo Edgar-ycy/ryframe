@@ -64,7 +64,7 @@ pub(crate) fn observe_runtime(
         super::contract::validate_runtime_layout(run, operations, false)?;
         assert_running(run, &binding.value, start, operations)?;
         let (secret, _) =
-            crate::recovery::monitoring::bind::load_environment(backend, &binding.value)?;
+            crate::recovery::monitoring::bind::load_settings(backend, &binding.value)?;
         let evidence = run.join("evidence");
         let metrics = verify_metrics(backend, &binding.value, &secret, &evidence)?;
         let prometheus = verify_prometheus(backend, &binding.value, &evidence)?;
