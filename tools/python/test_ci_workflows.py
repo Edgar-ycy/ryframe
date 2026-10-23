@@ -77,6 +77,18 @@ class CiWorkflowTests(unittest.TestCase):
                    for command in ("plan", "preflight", "resource-gate --frontend-dir"))
         ]
         self.assertEqual(len(baseline_steps), 3)
+        plan_steps = workflow["jobs"]["plan"]["steps"]
+        backend_checkout = next(
+            step for step in plan_steps
+            if step.get("uses", "").startswith("actions/checkout@")
+            and step.get("with", {}).get("path") == "backend"
+        )
+        self.assertEqual(backend_checkout["with"]["fetch-depth"], 0)
+        self.assertLess(
+            plan_steps.index(backend_checkout),
+            next(index for index, step in enumerate(plan_steps)
+                 if "cargo xtask check ci preflight" in step.get("run", "")),
+        )
         for step in baseline_steps:
             if "resource-gate --frontend-dir" in step["run"]:
                 self.assertIn(f'base="{expression}"', step["run"])
@@ -441,16 +453,6 @@ class CiWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(requirement, requirements)
         self.assertEqual(requirements.count("--hash=sha256:"), 11)
-
-    def test_preflight_passes_the_fetched_trusted_base_to_xtask(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        preflight = workflow.split("\n  plan:\n", 1)[1].split(
-            "\n  rust-gate:\n", 1
-        )[0]
-        self.assertIn("fetch-depth: 0", preflight)
-        self.assertIn("github.event.pull_request.base.sha", preflight)
-        self.assertIn("github.event.before", preflight)
-        self.assertIn("cargo xtask check ci preflight", preflight)
 
     def test_preflight_checks_the_exact_frontend_source(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
