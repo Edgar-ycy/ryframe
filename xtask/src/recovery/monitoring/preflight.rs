@@ -45,6 +45,7 @@ pub(crate) fn verify(backend: &Path, runtime_path: &Path, target_path: &Path) ->
     let protocol = serde_json::to_vec(&json!({
         "format_version": 1,
         "kind": "monitoring-preflight",
+        "native_tool": crate::check::python_suite::native_tool_binding()?,
         "backend": backend,
         "runtime": runtime_path,
         "target": target_path,

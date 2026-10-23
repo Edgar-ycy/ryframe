@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{Result, process::run as run_process, recovery::clone::native::digest};
 
@@ -46,7 +46,7 @@ pub(crate) fn arguments(binding: Option<&str>) -> Vec<String> {
 pub(crate) fn binding(executable: &Path) -> Result<Option<String>> {
     let path = executable.to_str().ok_or("当前检查工具路径不是 UTF-8")?;
     let path = path.strip_prefix(r"\\?\").unwrap_or(path);
-    // 既有 Windows 二进制保护仅支持本机盘符；其他布局继续使用原 Cargo 入口。
+    // 既有 Windows 二进制保护仅支持本机盘符；正式入口由必需构造器拒绝其他布局。
     if cfg!(windows) && (path.starts_with("UNC\\") || path.starts_with(r"\\")) {
         return Ok(None);
     }
@@ -64,4 +64,11 @@ pub(crate) fn binding(executable: &Path) -> Result<Option<String>> {
         "bytes": observed.bytes,
         "sha256": observed.sha256,
     }))?))
+}
+
+pub(crate) fn native_tool_binding() -> Result<Value> {
+    let executable = std::env::current_exe()?;
+    let binding = crate::check::python_suite::binding(&executable)?
+        .ok_or("Python 原生调用要求显式绑定无链接的本机当前 xtask 工具")?;
+    Ok(serde_json::from_str(&binding)?)
 }

@@ -23,6 +23,7 @@ pub(super) struct Options {
 
 pub(super) fn ownership(inputs: &Inputs) -> Result<()> {
     let request = json!({"format_version":1,"kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":inputs.root,"format_version":1,"operation":"check-existing","plan":inputs.plan_path,"side":inputs.side,"write":false}});
+    let native_tool = serde_json::to_string(&crate::check::python_suite::native_tool_binding()?)?;
     let program = python::selected_program(&inputs.root)?;
     let command = python::command(
         &inputs.root,
@@ -32,6 +33,8 @@ pub(super) fn ownership(inputs: &Inputs) -> Result<()> {
             "utf8",
             "-B",
             "tools/python/restore_reference.py",
+            "--native-tool",
+            &native_tool,
             "--stdin",
         ],
     );

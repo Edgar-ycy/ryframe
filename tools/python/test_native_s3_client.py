@@ -69,6 +69,25 @@ def create_bucket_request():
     }
 
 
+class MissingBindingTests(unittest.TestCase):
+    def test_missing_binding_never_starts_child_or_reports_unknown_write(self):
+        with patch.object(client, "tool_binding", return_value=None), patch.object(client.subprocess, "run") as run:
+            for may_write in (False, True):
+                with self.subTest(may_write=may_write), self.assertRaises(client.NativeS3InvocationError) as error:
+                    client._invoke("__source-evidence", {"operation":"read-only"}, run, may_write=may_write)
+                self.assertFalse(error.exception.remote_write_may_have_occurred)
+            run.assert_not_called()
+
+    def test_wrong_binding_digest_never_starts_child(self):
+        binding = client.tool_binding()
+        self.assertIsNotNone(binding, "本测试须由正式 run_checks 绑定工具")
+        changed = {**binding, "sha256": "0" * 64}
+        with patch.object(client, "tool_binding", return_value=changed), patch.object(client.subprocess, "run") as run:
+            with self.assertRaises(ValueError):
+                client._invoke("__source-evidence", {}, run, may_write=True)
+            run.assert_not_called()
+
+
 class NativeS3ClientTests(unittest.TestCase):
     def result(self, outcome, returncode=0):
         return subprocess.CompletedProcess(

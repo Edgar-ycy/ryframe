@@ -99,6 +99,8 @@ fn source_descriptors_and_runner_identity_are_mandatory_before_any_process() {
     config["bindings"]["provenance"] = json!({"python":temp.path().join("python.exe"),"runtime_receipt":descriptor,"target_plan":descriptor,
         "runtime_registration":descriptor,"runtime_launch":descriptor,"environment_document":temp.path().join("environment.json")});
     assert!(provenance::specification(&config, &input).is_ok());
+    let (_, specification) = provenance::specification(&config, &input).unwrap();
+    assert!(specification.get("native_tool").is_none());
     for field in [
         "runtime_receipt",
         "target_plan",

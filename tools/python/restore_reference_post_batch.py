@@ -105,11 +105,16 @@ def prepare(plan: dict, input_path: Path) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument("--native-tool", required=True)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--input", type=Path, required=True)
+    if sum(value.partition("=")[0] == "--native-tool" for value in sys.argv[1:]) > 1:
+        parser.error("原生工具绑定参数不能重复")
     args = parser.parse_args()
+    from rate_limit_tool import install_verified_binding
+    install_verified_binding(args.native_tool)
     backend = args.backend_dir.resolve()
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
     validate_plan(plan, backend)

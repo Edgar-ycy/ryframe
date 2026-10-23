@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::{fs::OpenOptions, io::Write, path::Path, time::Duration};
 
 pub(super) fn run(inputs: &Inputs, directory: &Path) -> Result<Value> {
+    let native_tool = serde_json::to_string(&crate::check::python_suite::native_tool_binding()?)?;
     let settings = &inputs.plan["dataset"];
     let records = settings["records"].as_u64().ok_or("记录数缺失")?;
     let api = settings["api_validation_posts"]
@@ -45,6 +46,8 @@ pub(super) fn run(inputs: &Inputs, directory: &Path) -> Result<Value> {
             "utf8",
             "-B",
             "tools/python/restore_reference_post_batch.py",
+            "--native-tool",
+            &native_tool,
             "--backend-dir",
             inputs.root.to_str().ok_or("后端路径不是UTF-8")?,
             "--plan",

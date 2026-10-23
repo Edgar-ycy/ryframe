@@ -1,3 +1,4 @@
+from rate_limit_tool import tool_binding
 import json
 import io
 import os
@@ -68,6 +69,8 @@ class FixtureControlProtocolTests(unittest.TestCase):
         self.root = str(Path(__file__).resolve().parents[2])
 
     def protocol(self, domain, operation, write, **fields):
+        if domain in {"dataset", "environment", "request", "services", "successor"}:
+            fields.setdefault("native_tool", json.dumps(tool_binding()))
         return json.dumps({
             "backend_dir": self.root,
             "domain": domain,

@@ -47,6 +47,23 @@ class DescriptorTests(unittest.TestCase):
         tool.install_binding(json.dumps(self.value))
         self.assertEqual(tool.tool_binding(), self.value)
 
+    def test_verified_install_reuses_same_binding_and_rejects_replacement_before_install(self):
+        raw = json.dumps(self.value)
+        with mock.patch.object(tool, "verified_tool") as verified:
+            self.assertEqual(tool.install_verified_binding(raw), self.value)
+            self.assertEqual(tool.install_verified_binding(raw), self.value)
+            self.assertEqual(verified.call_count, 2)
+            with self.assertRaisesRegex(ValueError, "禁止替换"):
+                tool.install_verified_binding(json.dumps({**self.value, "bytes": 333}))
+            self.assertEqual(verified.call_count, 2)
+        self.assertEqual(tool.tool_binding(), self.value)
+
+    def test_failed_file_verification_never_installs_binding(self):
+        with mock.patch.object(tool, "verified_tool", side_effect=ValueError("file drift")):
+            with self.assertRaises(ValueError):
+                tool.install_verified_binding(json.dumps(self.value))
+        self.assertIsNone(tool.tool_binding())
+
     def test_duplicate_extra_and_missing_fields_are_rejected(self):
         encoded = json.dumps(self.value)
         for field, item in self.value.items():

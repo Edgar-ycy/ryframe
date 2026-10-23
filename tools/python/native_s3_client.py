@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 from rate_limit_tool import tool_binding, verified_tool
@@ -119,15 +118,15 @@ def _invoke(command_name: str, request: dict, runner, *, may_write: bool):
     limit = 16 * MAX_PROTOCOL_BYTES if command_name == "__source-evidence" else MAX_PROTOCOL_BYTES
     if not payload or len(payload) > limit:
         raise ValueError(f"原生私有协议请求为空或超过 {limit // MAX_PROTOCOL_BYTES} MiB")
+    binding = tool_binding()
+    if binding is None:
+        raise NativeS3InvocationError("native_tool_unavailable", returncode=None,
+            error_type="MissingNativeToolBinding", remote_write_may_have_occurred=False)
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     result = None
     try:
-        with verified_tool(tool_binding()) as executable:
-            command = ([executable, command_name] if executable is not None else [
-                os.environ.get("CARGO") or shutil.which("cargo") or "cargo",
-                "run", "--quiet", "--locked", "-p", "xtask", "--",
-                command_name,
-            ])
+        with verified_tool(binding) as executable:
+            command = [executable, command_name]
             result = runner(
                 command,
                 cwd=ROOT,

@@ -276,6 +276,7 @@ fn private_invocation_has_no_path_arguments_and_an_exact_read_only_protocol() {
             "backend_dir",
             "environment",
             "format_version",
+            "native_tool",
             "operation",
             "output",
             "write"

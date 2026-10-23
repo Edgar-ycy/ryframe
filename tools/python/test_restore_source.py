@@ -1,4 +1,5 @@
 """当前来源和比较业务派发；私有协议与公开参数由专门测试覆盖。"""
+from rate_limit_tool import tool_binding
 import json
 import hashlib
 from pathlib import Path
@@ -78,7 +79,7 @@ class SourceDispatchTests(unittest.TestCase):
             "source_generation": start,
             "output": output,
             "write": True,
-        })
+        }, native_tool=tool_binding())
         result = {"output": str(output), "status": "source_runtime_verified"}
         with patch.object(
                 source, "execute_source_verification", return_value=result) as verify, \
@@ -95,7 +96,7 @@ class SourceDispatchTests(unittest.TestCase):
             "source_generation": start,
             "output": output,
             "write": True,
-        })
+        }, native_tool=tool_binding())
         failure = subprocess.CalledProcessError(1, ["node"], stderr=b"preserved protocol failure")
         with patch.object(
                 source, "execute_source_verification", side_effect=failure
@@ -110,7 +111,7 @@ class SourceDispatchTests(unittest.TestCase):
         request = source.SourceRequest("verify-recover", {
             "backend_dir": self.backend, "source_generation": start,
             "output": output, "write": True,
-        })
+        }, native_tool=tool_binding())
         result = {"output": str(output), "status": "source_runtime_verified"}
         with patch.object(source, "execute_source_verification_recovery", return_value=result) as recover, \
                 patch.object(source, "execute_source_verification") as ordinary:
@@ -222,7 +223,7 @@ class SourceDispatchTests(unittest.TestCase):
             "output": output,
             "write": True,
         })
-        request = source.SourceRequest("comparison-capture", values)
+        request = source.SourceRequest("comparison-capture", values, native_tool=tool_binding())
         receipt = {"format_version": 1, "kind": "restore-comparison-sources"}
         with patch.object(
             source, "validate_new_output", return_value=output
@@ -247,7 +248,7 @@ class SourceDispatchTests(unittest.TestCase):
             "backend_dir": self.backend,
             "receipt": receipt,
             "write": False,
-        })
+        }, native_tool=tool_binding())
         with patch.object(source, "verify_comparison_sources", return_value=result) as verify, \
                 patch.object(source, "write_new") as write, patch("builtins.print"):
             source.main(request)

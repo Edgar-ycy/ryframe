@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rate_limit_tool import tool_binding
 import copy
 from contextlib import redirect_stderr
 import io
@@ -359,7 +360,7 @@ class SuccessorTests(unittest.TestCase):
             redirect_stderr(io.StringIO()),
             self.assertRaises(SystemExit) as raised,
         ):
-            successor.main(arguments[1:])
+            successor.main([*arguments[1:], "--native-tool", json.dumps(tool_binding())])
         self.assertEqual(raised.exception.code, 2)
 
     def test_published_source_uses_pending_validator_and_rechecks_relationship(self):

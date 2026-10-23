@@ -58,11 +58,15 @@ impl Guard {
                 "utf8".into(),
                 self.script.to_string_lossy().into_owned(),
             ];
+            // 工具身份只在传输时添加，不参与业务规格、产品输入或指纹。
+            let mut transport = self.request.clone();
+            transport["native_tool"] = crate::check::python_suite::native_tool_binding()
+                .map_err(|_| Failure::new("native_tool_binding"))?;
             let result = process::json(
                 &self.python,
                 &arguments,
                 &self.cwd,
-                &self.request,
+                &transport,
                 Duration::from_secs(180),
                 4 * 1024 * 1024,
                 cancel,

@@ -477,11 +477,11 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
 
 
 PROTOCOL_SCHEMAS = {
-    "plan": (("review", "fixture", "maintenance_build", "side"), ("native_tool",), False),
-    "prepare": (("review", "fixture", "maintenance_build", "side", "output"), ("secrets_dir", "native_tool"), True),
-    "review": (("review", "output"), ("native_tool",), True),
-    "rotate-secrets": (("fixture", "output"), ("native_tool",), True),
-    "bootstrap-secrets": (("source_fixture", "source_secrets", "fixture"), ("native_tool",), True),
+    "plan": (("review", "fixture", "maintenance_build", "side", "native_tool"), (), False),
+    "prepare": (("review", "fixture", "maintenance_build", "side", "output", "native_tool"), ("secrets_dir",), True),
+    "review": (("review", "output", "native_tool"), (), True),
+    "rotate-secrets": (("fixture", "output", "native_tool"), (), True),
+    "bootstrap-secrets": (("source_fixture", "source_secrets", "fixture", "native_tool"), (), True),
 }
 
 
@@ -497,12 +497,11 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--secrets-dir", type=Path)
     parser.add_argument("--side", choices=("seed", "base", "candidate"), default="seed")
-    parser.add_argument("--native-tool")
+    parser.add_argument("--native-tool", required=True)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
-    if args.native_tool is not None:
-        from rate_limit_tool import install_binding
-        install_binding(args.native_tool)
+    from rate_limit_tool import install_verified_binding
+    install_verified_binding(args.native_tool)
     if args.operation in ("plan", "prepare") and (args.review is None or args.fixture is None or args.maintenance_build is None):
         parser.error(f"{args.operation} 需要 --review、--fixture 与 --maintenance-build")
     if args.operation == "plan":

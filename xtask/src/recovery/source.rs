@@ -83,6 +83,7 @@ fn base_protocol(operation: &str, root: &Path, write: bool) -> Result<Map<String
         "backend_dir": path_text(root, "后端目录")?,
         "format_version": 1,
         "kind": "ryframe-xtask-restore-source",
+        "native_tool": crate::check::python_suite::native_tool_binding()?,
         "operation": operation,
         "write": write,
     }) else {

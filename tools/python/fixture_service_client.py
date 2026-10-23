@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 from rate_limit_tool import tool_binding, verified_tool
@@ -39,15 +38,16 @@ def _path_json(value):
 def _request(marker: str, payload: bytes, timeout: int, error_code: str):
     if len(payload) > MAX_BYTES:
         raise ValueError("夹具原生请求超过 4 MiB")
+    binding = tool_binding()
+    if binding is None:
+        raise ValueError("夹具操作缺少必需原生工具绑定；未启动子进程、未执行资源写入")
     environment = configured({})
     environment.update({key: value for key, value in os.environ.items()
                         if key.upper().startswith(("CARGO_", "RUSTUP_"))})
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     try:
-        with verified_tool(tool_binding()) as executable:
-            command = ([executable] if executable is not None else
-                       [os.environ.get("CARGO") or shutil.which("cargo") or "cargo",
-                        "run", "--quiet", "--locked", "-p", "xtask", "--"])
+        with verified_tool(binding) as executable:
+            command = [executable]
             result = subprocess.run([*command, marker], cwd=ROOT,
                                     env=environment, input=payload, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, timeout=timeout, check=False, **options)

@@ -22,9 +22,11 @@ MAX_PROTOCOL_BYTES = 16 * 1024
 
 
 def preflight_protocol(value: dict) -> dict:
-    value = exact_fields(value, {"format_version", "kind", "backend", "runtime", "target"}, "监控预检协议")
+    value = exact_fields(value, {"format_version", "kind", "backend", "runtime", "target", "native_tool"}, "监控预检协议")
     if type(value["format_version"]) is not int or value["format_version"] != 1 or value["kind"] != "monitoring-preflight":
         raise ValueError("监控预检协议版本或类型无效")
+    from rate_limit_tool import install_verified_binding
+    install_verified_binding(json.dumps(value["native_tool"], ensure_ascii=False))
     for name in ("backend", "runtime", "target"):
         if not isinstance(value[name], str) or not Path(value[name]).is_absolute():
             raise ValueError("监控预检协议只接受明确绝对路径")

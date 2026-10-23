@@ -1,3 +1,4 @@
+from rate_limit_tool import tool_binding
 import contextlib
 import copy
 import io
@@ -225,7 +226,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         ]
         with contextlib.redirect_stderr(io.StringIO()), \
                 patch.object(dataset, "write_plan") as write, self.assertRaises(SystemExit) as error:
-            dataset.main(arguments)
+            dataset.main([*arguments, "--native-tool", json.dumps(tool_binding())])
         self.assertEqual(error.exception.code, 2)
         write.assert_not_called()
 

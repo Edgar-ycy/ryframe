@@ -36,6 +36,19 @@ def install_binding(raw: str) -> None:
     _COORDINATOR_BINDING = raw
 
 
+def install_verified_binding(raw: str) -> dict:
+    """正式子进程先核验文件再安装；仅允许复用同一不可变工具。"""
+    value = parse_binding(raw)
+    existing = tool_binding()
+    if existing is not None and existing != value:
+        raise ValueError("原生工具绑定与已安装工具不同，禁止替换")
+    with verified_tool(value):
+        pass
+    if existing is None:
+        install_binding(raw)
+    return value
+
+
 def tool_binding() -> dict | None:
     raw = _COORDINATOR_BINDING
     return None if raw is None else parse_binding(raw)

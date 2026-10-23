@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rate_limit_tool import tool_binding
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
             "backend_dir": str(root),
             "environment": str(root / ".local-tests/business/bootstrap.json"),
             "format_version": 1,
+            "native_tool": tool_binding(),
             "operation": "verify",
             "output": str(self.runtime),
             "write": False,

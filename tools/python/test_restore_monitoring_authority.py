@@ -1,5 +1,6 @@
 """监控预检复用正式来源与存活代次核验，私有桥接只接受固定只读输入。"""
 from __future__ import annotations
+from rate_limit_tool import tool_binding
 import json
 from pathlib import Path
 import sys
@@ -24,6 +25,7 @@ class MonitoringAuthorityTests(unittest.TestCase):
     def test_private_protocol_rejects_unknown_fields_relative_paths_and_wrong_types(self):
         value = {
             "format_version": 1, "kind": "monitoring-preflight",
+            "native_tool": tool_binding(),
             "backend": str(Path(__file__).resolve().parents[2]),
             "runtime": str(Path(__file__).resolve()),
             "target": str(Path(__file__).resolve()),

@@ -459,11 +459,11 @@ def publish(
 
 PROTOCOL_SCHEMAS = {
     "relationship": (("source_result", "predecessor_review", "predecessor_request", "successor_review",
-                      "seed_request", "base_request", "candidate_request", "id", "output"), (), True),
+                      "seed_request", "base_request", "candidate_request", "id", "output", "native_tool"), (), True),
     "generation-request": (("successor", "source_backend", "expected_head", "backend_build",
-                            "maintenance_build", "source_environment", "id"),
-                           ("adapter_contract", "product_backend", "output"), "output"),
-    "arm-request": (("successor", "source_export_result", "workspace", "id", "side", "copy_directory"),
+                            "maintenance_build", "source_environment", "id", "native_tool"),
+                           ("adapter_contract", "product_backend", "output",), "output"),
+    "arm-request": (("successor", "source_export_result", "workspace", "id", "side", "copy_directory", "native_tool"),
                     ("output",), "output"),
 }
 
@@ -477,6 +477,7 @@ def main(argv: list[str]) -> None:
     relationship.add_argument("--predecessor-review", type=Path, required=True)
     relationship.add_argument("--predecessor-request", type=Path, required=True)
     relationship.add_argument("--successor-review", type=Path, required=True)
+    relationship.add_argument("--native-tool", required=True)
     for side in SIDES:
         relationship.add_argument(f"--{side}-request", type=Path, required=True)
     relationship.add_argument("--id", required=True)
@@ -484,8 +485,11 @@ def main(argv: list[str]) -> None:
     relationship.add_argument("--write", action="store_true")
     from reference_fixture_successor_generation import arguments as generation_arguments
 
-    generation_arguments(operations.add_parser("generation-request", allow_abbrev=False))
+    generation = operations.add_parser("generation-request", allow_abbrev=False)
+    generation_arguments(generation)
+    generation.add_argument("--native-tool", required=True)
     arm = operations.add_parser("arm-request")
+    arm.add_argument("--native-tool", required=True)
     arm.add_argument("--backend-dir", type=Path, required=True)
     arm.add_argument("--successor", type=Path, required=True)
     arm.add_argument("--source-export-result", type=Path, required=True)
@@ -496,6 +500,8 @@ def main(argv: list[str]) -> None:
     arm.add_argument("--output", type=Path)
     arm.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
+    from rate_limit_tool import install_verified_binding
+    install_verified_binding(args.native_tool)
     if args.operation == "generation-request":
         from reference_fixture_successor_generation import execute
 

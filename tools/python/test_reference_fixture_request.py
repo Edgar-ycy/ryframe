@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rate_limit_tool import tool_binding
 import json
 import os
 from pathlib import Path
@@ -418,7 +419,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 self.subTest(arguments=missing),
                 self.assertRaises(SystemExit) as raised,
             ):
-                request.main([*common[1:], *missing])
+                request.main([*common[1:], *missing, "--native-tool", json.dumps(tool_binding())])
             self.assertEqual(raised.exception.code, 2)
 
 

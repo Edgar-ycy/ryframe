@@ -47,7 +47,7 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
     assert_eq!(document.as_object().unwrap().len(), 4);
     assert_eq!(
         document["native_tool"],
-        super::recovery::clone::native_tool_binding().unwrap()
+        super::check::python_suite::native_tool_binding().unwrap()
     );
     assert_eq!(document["request"]["operation"], "status");
     assert_eq!(document["request"]["write"], false);

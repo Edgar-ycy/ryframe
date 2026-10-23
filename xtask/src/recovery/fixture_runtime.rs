@@ -60,6 +60,7 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         println!("{FIXTURE_RUNTIME_USAGE}");
         return Ok(());
     }
+    let _native_tool = crate::check::python_suite::native_tool_binding()?;
     let credentials = if matches!(command, FixtureRuntimeCommand::Browser(_)) {
         Some(browser::CredentialBroker::start(
             &command
@@ -78,7 +79,12 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         None => private_invocation_at(command, root)?,
     };
     if ["bind", "browser", "browser-verify", "browser-close"].contains(&command.operation()) {
-        let request: Value = serde_json::from_str(&invocation.protocol)?;
+        let mut request: Value = serde_json::from_str(&invocation.protocol)?;
+        // 工具绑定只属于 Python 传输协议；原生浏览器协议保持原有字段。
+        request
+            .as_object_mut()
+            .ok_or("夹具运行时请求必须是对象")?
+            .remove("native_tool");
         let mut api = dependency::Python::new(root)?;
         let result = execution::execute(&mut api, &request);
         if let Some(credentials) = credentials {
@@ -131,6 +137,7 @@ fn private_invocation_with_endpoint(
         "backend_dir": path_text(root, "后端目录")?,
         "environment": path_text(&runtime.environment, "环境收据")?,
         "format_version": 1,
+        "native_tool": crate::check::python_suite::native_tool_binding()?,
         "operation": command.operation(),
         "output": path_text(&runtime.output, "运行目录")?,
         "write": command.writes(),

@@ -1,6 +1,7 @@
 """业务 crate 夹具运行时只能使用已绑定的私有环境与构建来源。"""
 from __future__ import annotations
 
+from rate_limit_tool import tool_binding
 import json
 import os
 from pathlib import Path
@@ -163,7 +164,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             operation="browser-close", backend_dir=self.backend,
             environment=self.bootstrap, output=self.reference / "runtime-r1", write=False,
             browser_binding=self.reference / "runtime-r1/binding.json",
-        )
+            native_tool=tool_binding())
         with patch.object(runtime, "_native_browser", return_value=result) as verify:
             self.assertEqual(runtime.execute(request), result)
         self.assertEqual(verify.call_args.args[0].operation, "browser-close")
@@ -172,7 +173,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
     def test_browser_private_protocol_requires_only_a_non_secret_loopback_endpoint(self):
         binding = self.reference / "runtime-r1/binding.json"
         request = {
-            "backend_dir": str(self.backend),
+            "native_tool": tool_binding(), "backend_dir": str(self.backend),
             "environment": str(self.bootstrap),
             "format_version": 1,
             "operation": "browser",
@@ -202,7 +203,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             operation="browser", backend_dir=self.backend, environment=self.bootstrap,
             output=binding.parent, write=True, browser_binding=binding,
             credential_endpoint="http://127.0.0.1:49152/v1/credentials",
-        )
+            native_tool=tool_binding())
         with patch("fixture_service_client._request", return_value={"value": {"status": "passed"}}) as invoke:
             self.assertEqual(runtime._native_browser(request), {"status": "passed"})
         marker, payload, timeout, error_code = invoke.call_args.args

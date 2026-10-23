@@ -176,9 +176,13 @@ pub(crate) fn private_invocation_at(
             | FixtureControlCommand::Dataset(_)
             | FixtureControlCommand::Request(_)
             | FixtureControlCommand::Environment(_)
-    ) && let Some(binding) = crate::check::python_suite::binding(&std::env::current_exe()?)?
-    {
-        protocol.insert("native_tool".to_owned(), Value::String(binding));
+            | FixtureControlCommand::Successor(_)
+    ) {
+        let binding = crate::check::python_suite::native_tool_binding()?;
+        protocol.insert(
+            "native_tool".to_owned(),
+            Value::String(serde_json::to_string(&binding)?),
+        );
     }
     Ok(PrivateFixtureControlInvocation {
         script,

@@ -203,6 +203,7 @@ class RuntimeRequest:
     environment: Path
     output: Path
     write: bool
+    native_tool: dict
     browser_binding: Path | None = None
     run_id: str | None = None
     server: str | None = None
@@ -257,7 +258,7 @@ def _request_from_protocol(protocol: object) -> RuntimeRequest:
     operation = protocol.get("operation")
     if not isinstance(operation, str) or operation not in OPERATIONS:
         raise RuntimeProtocolError("夹具运行时私有协议操作无效")
-    fields = {"backend_dir", "environment", "format_version", "operation", "output", "write"}
+    fields = {"backend_dir", "environment", "format_version", "operation", "output", "write", "native_tool"}
     if operation == "bind":
         fields.update({"browser_binding", "run_id", "server"})
     elif operation in BROWSER_CONSUMERS:
@@ -268,7 +269,13 @@ def _request_from_protocol(protocol: object) -> RuntimeRequest:
     write = values["write"]
     if type(write) is not bool or write != (operation in WRITING_OPERATIONS):
         raise RuntimeProtocolError("夹具运行时私有协议的写入授权与操作不一致")
+    from rate_limit_tool import parse_binding
+    try:
+        native_tool = parse_binding(json.dumps(values["native_tool"], ensure_ascii=False))
+    except (TypeError, ValueError) as error:
+        raise RuntimeProtocolError("夹具运行时原生工具绑定无效") from error
     request = RuntimeRequest(
+        native_tool=native_tool,
         operation=operation,
         backend_dir=_protocol_path(values["backend_dir"], "后端目录"),
         environment=_protocol_path(values["environment"], "环境收据"),
@@ -312,6 +319,11 @@ def _validate_browser_request(request: RuntimeRequest) -> None:
 
 
 def execute(request: RuntimeRequest) -> dict:
+    from rate_limit_tool import install_verified_binding
+    try:
+        install_verified_binding(json.dumps(request.native_tool, ensure_ascii=False))
+    except (OSError, TypeError, ValueError) as failure:
+        raise RuntimeProtocolError("夹具运行时原生工具绑定无效") from failure
     backend = request.backend_dir.resolve(strict=True)
     if request.operation == "build":
         return build(backend, request.environment, request.output)
@@ -328,6 +340,7 @@ def _native_browser(request: RuntimeRequest) -> dict:
 
     arguments = {key: str(value) if isinstance(value, Path) else value
                  for key, value in asdict(request).items() if value is not None}
+    arguments.pop("native_tool")
     arguments["format_version"] = 1
     result = _request("__fixture-browser", json.dumps({
         "operation": "execute", "arguments": arguments, "write": request.write,

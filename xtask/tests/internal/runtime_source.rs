@@ -275,6 +275,10 @@ fn parses_source_operations_and_emits_the_fixed_private_protocol() {
     assert_eq!(invocation.script, "tools/python/restore_source.py");
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["kind"], "ryframe-xtask-restore-source");
+    assert_eq!(
+        protocol["native_tool"],
+        crate::check::python_suite::native_tool_binding().unwrap()
+    );
     assert_eq!(protocol["operation"], "verify");
     assert_eq!(protocol["write"], true);
 

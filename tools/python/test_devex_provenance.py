@@ -1,5 +1,6 @@
 """DevEx 性能来源只读消费正式恢复 v3 运行代次。"""
 
+from rate_limit_tool import tool_binding
 import copy
 import hashlib
 import json
@@ -27,6 +28,13 @@ SNAPSHOT = {"head": SHA, "patch_sha256": "d" * 64, "files": [], "clean": True}
 
 
 class ProvenanceTests(unittest.TestCase):
+    def test_transport_binding_is_consumed_without_changing_business_specification(self):
+        specification = self.request
+        transport = {**specification, "native_tool": tool_binding()}
+        self.assertEqual(provenance.private_request(json.dumps(transport).encode()), specification)
+        with self.assertRaises(KeyError):
+            provenance.private_request(json.dumps(specification).encode())
+
     def setUp(self):
         temporary = WorkspaceDirectory(ROOT / ".local-tests/python-unit", "devex-v3-")
         self.addCleanup(temporary.cleanup)

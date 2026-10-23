@@ -90,6 +90,7 @@ def source_protocol(operation: str) -> dict:
         "backend_dir": root,
         "format_version": 1,
         "kind": restore_source.PROTOCOL_KIND,
+        "native_tool": tool_binding(),
         "operation": operation,
         "write": operation in restore_source.WRITING_OPERATIONS,
     }
@@ -373,6 +374,100 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 )
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("Traceback", result.stderr)
+
+
+class NativeBindingEntrypointProcesses(unittest.TestCase):
+    DRIVER = """
+import atexit,json,runpy,sys
+from pathlib import Path
+calls=[]
+def audit(event,args):
+    if event == 'subprocess.Popen':
+        calls.append(event)
+        raise RuntimeError('unexpected nested subprocess before binding validation')
+sys.addaudithook(audit)
+atexit.register(lambda: print('NATIVE_BINDING_AUDIT='+json.dumps({'subprocesses':len(calls)}),file=sys.stderr))
+sys.argv=sys.argv[1:]
+sys.path.insert(0,str(Path(sys.argv[0]).parent))
+from rate_limit_tool import tool_binding
+assert tool_binding() is None
+runpy.run_path(sys.argv[0],run_name='__main__')
+"""
+
+    def test_seven_formal_entries_reject_missing_or_bad_tools_before_children_and_writes(self):
+        registered = tool_binding()
+        self.assertIsNotNone(registered, "本测试须由正式 run_checks 绑定工具")
+        with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
+            root = Path(directory)
+            evidence = root / "input.json"
+            evidence.write_text("{}", encoding="utf-8")
+            bad = {**registered, "sha256": "0" * 64}
+            source = source_protocol("comparison-verify")
+            source["receipt"] = str(evidence)
+            runtime = {"format_version":1,"operation":"verify","backend_dir":str(ROOT),
+                       "environment":str(evidence),"output":str(root),"write":False}
+            monitoring = {"format_version":1,"kind":"monitoring-preflight","backend":str(ROOT),
+                          "runtime":str(evidence),"target":str(evidence)}
+            for binding in (None, bad):
+                def envelope(value):
+                    result = {key:item for key,item in value.items() if key != "native_tool"}
+                    if binding is not None:
+                        result["native_tool"] = json.dumps(binding) if "domain" in result else binding
+                    return json.dumps(result)
+                tool_args = [] if binding is None else ["--native-tool", json.dumps(binding)]
+                cases = [
+                    ("restore_source.py", ["--private-stdin"], envelope(source)),
+                    ("restore_reference.py", [*tool_args,"--stdin"], json.dumps({"format_version":1,
+                        "kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":str(ROOT),
+                        "format_version":1,"operation":"check-existing","plan":str(evidence),"side":"source","write":False}})),
+                    ("restore_reference_post_batch.py", [*tool_args,"--backend-dir",str(ROOT),"--plan",str(evidence),"--input",str(evidence)], ""),
+                    ("reference_fixture_runtime.py", ["--protocol-json",envelope(runtime)], ""),
+                    ("reference_fixture_successor.py", [], envelope({"format_version":1,
+                        "kind":"ryframe-reference-fixture-control","domain":"successor","operation":"relationship",
+                        "backend_dir":str(ROOT),"write":True,"source_result":str(evidence),
+                        "predecessor_review":str(evidence),"predecessor_request":str(evidence),
+                        "successor_review":str(evidence),"seed_request":str(evidence),"base_request":str(evidence),
+                        "candidate_request":str(evidence),"id":"binding-test","output":str(root / "output.json")})),
+                    ("restore_monitoring_authority.py", [], envelope(monitoring)),
+                    ("devex_provenance.py", [], envelope({})),
+                ]
+                for script, arguments, payload in cases:
+                    with self.subTest(script=script, missing=binding is None):
+                        before = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
+                        result = subprocess.run([sys.executable,"-X","utf8","-B","-c",self.DRIVER,
+                            str(ROOT / "tools/python" / script),*arguments], input=payload,
+                            cwd=ROOT, env=private_environment(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", timeout=60, check=False)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('NATIVE_BINDING_AUDIT={"subprocesses": 0}', result.stderr)
+                        after = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
+                        self.assertEqual(before, after)
+                        self.assertFalse((root / "output.json").exists())
+
+    def test_fresh_process_uses_only_explicit_binding_for_a_real_readonly_native_request(self):
+        registered = tool_binding()
+        self.assertIsNotNone(registered, "本测试须由正式 run_checks 绑定工具")
+        program = """
+import json,sys
+from pathlib import Path
+sys.path.insert(0,str(Path.cwd()/'tools/python'))
+from rate_limit_tool import tool_binding,install_verified_binding
+from native_s3_client import _invoke,_read_response
+import subprocess
+assert tool_binding() is None
+install_verified_binding(sys.stdin.read())
+value,_=_read_response(*_invoke('__source-evidence',{'operation':'reference-plan-hash','arguments':{'value':{'read_only':True}},'write':False},subprocess.run,may_write=False))
+print(json.dumps({'value':value['value']}))
+"""
+        environment = private_environment()
+        environment["RYFRAME_RATE_LIMIT_TOOL_BINDING"] = "ignored inherited binding"
+        result = subprocess.run([sys.executable,"-X","utf8","-B","-c",program],
+            input=json.dumps(registered), cwd=ROOT, env=environment, text=True, encoding="utf-8",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import hashlib
+        expected = hashlib.sha256(b'{"read_only":true}').hexdigest()
+        self.assertEqual(json.loads(result.stdout), {"value":expected})
 
 
 if __name__ == "__main__":

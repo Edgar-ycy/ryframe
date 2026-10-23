@@ -1,5 +1,6 @@
 """原生历史调用桥只传协议，不继承服务凭据或解释生命周期。"""
 from contextlib import nullcontext
+from rate_limit_tool import tool_binding
 import io
 import json
 import os
@@ -12,6 +13,20 @@ import fixture_service_client as client
 
 
 class FixtureServiceClientTests(unittest.TestCase):
+    def test_missing_binding_refuses_before_any_child_or_resource_write(self):
+        with patch.object(client, "tool_binding", return_value=None), patch.object(client.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "缺少必需原生工具绑定"):
+                client.lifecycle(client.ROOT, "close", Path("review"), Path("environment"), None, write=True)
+            run.assert_not_called()
+
+    def test_wrong_binding_digest_never_starts_child(self):
+        binding = client.tool_binding()
+        self.assertIsNotNone(binding, "本测试须由正式 run_checks 绑定工具")
+        with patch.object(client, "tool_binding", return_value={**binding, "sha256": "0" * 64}), patch.object(client.subprocess, "run") as run:
+            with self.assertRaises(ValueError):
+                client.lifecycle(client.ROOT, "close", Path("review"), Path("environment"), None, write=True)
+            run.assert_not_called()
+
     def invoke(self, stdout, code=0):
         with (patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
               patch.object(client.subprocess, "run", return_value=subprocess.CompletedProcess(
@@ -76,7 +91,7 @@ class FixtureServiceClientTests(unittest.TestCase):
         import reference_fixture_services as services
         arguments = ["status", "--backend-dir", str(client.ROOT), "--review", "review.json",
                      "--environment", "bootstrap.json", "--native-tool", "bound-tool"]
-        with (patch("rate_limit_tool.install_binding") as install,
+        with (patch("rate_limit_tool.install_verified_binding") as install,
               patch("reference_fixture_service_context.status", return_value={"status": "service_status"}) as status,
               patch("sys.stdout", io.StringIO())):
             services.main(arguments)
@@ -88,7 +103,7 @@ class FixtureServiceClientTests(unittest.TestCase):
         arguments = ["--backend-dir", str(client.ROOT), "--environment", "bootstrap.json",
                      "--service-run", "run", "--id", "fixture-request", "--side", "seed",
                      "--output", "request.json", "--write", "--native-tool", "bound-tool"]
-        with (patch("rate_limit_tool.install_binding") as install,
+        with (patch("rate_limit_tool.install_verified_binding") as install,
               patch.object(request, "publish", return_value={}) as publish,
               patch("sys.stdout", io.StringIO())):
             request.main(arguments)

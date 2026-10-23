@@ -63,7 +63,7 @@ PROTOCOL_KIND = "ryframe-xtask-restore-source"
 PROTOCOL_MAX_BYTES = 16 * 1024
 OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture", "comparison-verify"})
 WRITING_OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture"})
-BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write"}
+BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write", "native_tool"}
 OPERATION_FIELDS = {
     "verify": {"source_generation", "output"},
     "verify-recover": {"source_generation", "output"},
@@ -84,6 +84,7 @@ class SourceProtocolError(ValueError):
 class SourceRequest:
     operation: str
     values: dict
+    native_tool: dict
 
     def namespace(self) -> SimpleNamespace:
         return SimpleNamespace(command=self.operation, **self.values)
@@ -165,13 +166,23 @@ def decode_request(raw: str) -> SourceRequest:
     decoded = {
         name: _protocol_path(value, name)
         for name, value in protocol.items()
-        if name not in {"format_version", "kind", "operation", "write"}
+        if name not in {"format_version", "kind", "operation", "write", "native_tool"}
     }
     decoded["write"] = write
-    return SourceRequest(operation, decoded)
+    from rate_limit_tool import parse_binding
+    try:
+        native_tool = parse_binding(json.dumps(protocol["native_tool"], ensure_ascii=False))
+    except (TypeError, ValueError) as error:
+        raise SourceProtocolError("恢复来源原生工具绑定无效") from error
+    return SourceRequest(operation, decoded, native_tool)
 
 
 def execute(request: SourceRequest) -> dict:
+    from rate_limit_tool import install_verified_binding
+    try:
+        install_verified_binding(json.dumps(request.native_tool, ensure_ascii=False))
+    except (OSError, TypeError, ValueError) as failure:
+        raise SourceProtocolError("恢复来源原生工具绑定无效") from failure
     args = request.namespace()
     backend = args.backend_dir.resolve()
     if args.command == "comparison-capture":
