@@ -94,6 +94,23 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                                 self.write("base-build.json", self.maintenance), "base")
         self.assertEqual((base["side"], base["scope_id"]), ("base", "fixture-base"))
 
+    def test_public_plan_receives_the_exact_native_binding_and_writes_nothing(self):
+        from rate_limit_tool import tool_binding, verified_tool
+        import subprocess
+        review = self.write("cli-review.json", self.review)
+        fixture = self.write("cli-fixture.json", self.fixture)
+        maintenance = self.write("cli-build.json", self.maintenance)
+        before = {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()}
+        with verified_tool(tool_binding()) as executable:
+            completed = subprocess.run([executable, "check", "recovery", "fixture", "environment", "plan",
+                "--review", str(review), "--fixture", str(fixture), "--maintenance-build", str(maintenance),
+                "--side", "base"], cwd=self.backend, capture_output=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8", errors="replace"))
+        lines = [line for line in completed.stdout.decode("utf-8").splitlines() if line.startswith("{")]
+        self.assertEqual(len(lines), 1, completed.stdout.decode("utf-8", errors="replace"))
+        self.assertEqual(json.loads(lines[0]), {"status": "planned", "services_started": False, "remote_writes": 0})
+        self.assertEqual(before, {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()})
+
     def test_plan_rejects_historical_source_database(self):
         self.review["reference"]["source"]["databases"] = [{"database": "old"}]
         with self.assertRaisesRegex(ValueError, "历史来源"):
@@ -516,6 +533,30 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             with self.assertRaisesRegex(ValueError, "所选侧 业务 crate"):
                 environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
+
+
+class NativeEnvironmentAdapterTests(unittest.TestCase):
+    def test_missing_binding_fails_before_any_process(self):
+        import reference_fixture_environment_native as native
+        with patch.object(native, "tool_binding", return_value=None), patch.object(native.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "正式原生工具绑定"):
+                native.invoke("fixture", {})
+        run.assert_not_called()
+
+    def test_unknown_process_outcomes_do_not_retry_or_echo_input(self):
+        import reference_fixture_environment_native as native
+        import subprocess
+        for error in (OSError("credential-marker"), subprocess.TimeoutExpired("credential-marker", 1)):
+            with patch.object(native, "tool_binding", return_value={}), patch.object(native, "_run", side_effect=error) as run:
+                with self.assertRaisesRegex(ValueError, "不自动重放") as raised:
+                    native.invoke("reset-password", {"admin_password": "credential-marker"})
+            self.assertNotIn("credential-marker", str(raised.exception))
+            self.assertEqual(run.call_count, 1)
+
+    def test_duplicate_response_keys_are_rejected(self):
+        import reference_fixture_environment_native as native
+        with self.assertRaisesRegex(ValueError, "重复字段"):
+            json.loads('{"ok":true,"ok":false}', object_pairs_hook=native._unique_object)
 
 
 if __name__ == "__main__":

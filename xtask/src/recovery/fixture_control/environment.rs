@@ -10,6 +10,15 @@ use crate::{
 
 use super::{insert_optional_path, insert_path, output_value, path_value};
 
+#[path = "environment/configuration.rs"]
+mod configuration;
+#[path = "environment/guards.rs"]
+mod guards;
+#[path = "environment/plan.rs"]
+mod plan;
+#[path = "environment/protocol.rs"]
+pub(crate) mod protocol;
+
 pub(super) fn fields(
     command: &FixtureEnvironmentCommand,
     root: &Path,

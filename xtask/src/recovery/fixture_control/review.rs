@@ -131,7 +131,7 @@ fn validate_ports(options: &FixtureReviewOptions) -> Result<()> {
     Ok(())
 }
 
-fn validate_review(review: &Value) -> Result<()> {
+pub(super) fn validate_review(review: &Value) -> Result<()> {
     let root = review.as_object().ok_or("审阅计划结构无效")?;
     if !root.get("reference").is_some_and(Value::is_object)
         || root.get("kind").and_then(Value::as_str)

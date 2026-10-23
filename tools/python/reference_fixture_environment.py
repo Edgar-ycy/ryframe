@@ -11,12 +11,11 @@ import re
 import secrets
 import shutil
 import subprocess
-from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
 from process_environment import Environments, configured
 from devex_clone_model import linked, local_path
-from devex_clone_target_binding import KEYS, REVIEW_FILE_TOOLS, REVIEW_TOOLS, validate_review
+from devex_clone_target_binding import REVIEW_FILE_TOOLS, REVIEW_TOOLS, validate_review
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
 from reference_fixture_service_context import load_prepared_environment, service_run
@@ -25,6 +24,7 @@ from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from source_inventory import snapshot
+from reference_fixture_environment_native import invoke as environment_native
 
 
 SECRET_FILES = ("mysql-client.cnf", "rustfs-access-key.txt", "rustfs-secret-key.txt", "redis-password.txt",
@@ -52,12 +52,7 @@ def prepared_environment(backend: Path, value: Path) -> tuple[Path, Path, dict, 
 
 
 def _fixture(value: dict) -> None:
-    if (value.get("format_version") != 1 or value.get("fixture") != "business"
-            or value.get("status") != "ready" or not isinstance(value.get("sources"), dict)
-            or set(value.get("paths", {})) != {"backend", "frontend"}
-            or not all(isinstance(item, dict) and isinstance(item.get("head"), str)
-                       for item in value["sources"].values())):
-        raise ValueError("业务 crate 隔离工作树收据不完整或尚未就绪")
+    environment_native("fixture", value)
 
 
 TEST_CONFIG_DIRECTORY = "config"
@@ -83,21 +78,11 @@ def _test_configuration(execution: Path, output: Path, targets: list[dict], sett
     configuration_directory(directory)
     shutil.copyfile(source, directory / "app.toml")
     (directory / "app.toml").chmod(0o600)
-    sections = ["\n".join(f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in settings.items() if not isinstance(value, dict))]
-    for name, table in settings.items():
-        if isinstance(table, dict):
-            sections.append(f"[{name}]\n" + "\n".join(f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in table.items()))
-    for target in targets:
-        fields = {"key": target["key"], "display_name": f"夹具 {target['key']}", "kind": target["kind"],
-                  "mode": target["mode"], "host": target["host"], "port": target["port"],
-                  "database": target["database"], "tls_mode": target["tls_mode"],
-                  "max_connections": 8}
-        sections.append("[[tenant_data.targets]]\n" + "\n".join(
-            f"{key} = {json.dumps(value)}" for key, value in fields.items()))
+    text = environment_native("configuration-text", {"settings": settings, "targets": targets})["text"]
     native_response(*native_invoke(
         "__source-evidence", {"operation": "database-configuration", "write": True,
             "arguments": {**database_credentials, "output": str(directory / "app.test.toml"),
-                          "text": "\n\n".join(sections) + "\n"}},
+                          "text": text}},
         subprocess.run, may_write=True,
     ))
     (directory / "app.test.toml").chmod(0o600)
@@ -105,16 +90,7 @@ def _test_configuration(execution: Path, output: Path, targets: list[dict], sett
 
 
 def _maintenance(value: dict) -> None:
-    artifacts = value.get("artifacts")
-    if (value.get("format_version") != 1 or value.get("kind") != "devex-clone-tool-build"
-            or value.get("resources_modified") is not False
-            or not isinstance(artifacts, dict)
-            or not {"reset", "migrate", "tenant-data"}.issubset(artifacts)):
-        raise ValueError("维护构建收据不完整")
-    for name in ("reset", "migrate", "tenant-data"):
-        item = artifacts[name]
-        if not isinstance(item, dict) or not isinstance(item.get("executable"), str):
-            raise ValueError("维护构建产物描述无效")
+    environment_native("maintenance", value)
 
 
 def _command(run, arguments: list[str]) -> str:
@@ -172,18 +148,7 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
 
 
 def _preflight_binding(review: dict) -> None:
-    value, tools = review.get("preflight"), review.get("tools")
-    if not isinstance(tools, dict) or not set(REVIEW_TOOLS).issubset(tools):
-        raise ValueError("夹具审阅计划缺少当前工具预检收据")
-    expected = {name: tools[name] for name in REVIEW_TOOLS}
-    seed, run, rustfs = review["scopes"]["seed"], service_run(review), review["services"]["rustfs"]
-    if (not isinstance(value, dict) or set(value) != {"format_version", "kind", "status", "supersedes", "tools"}
-            or not isinstance(value.get("supersedes"), dict) or set(value["supersedes"]) != {"path", "bytes", "sha256"}
-            or value.get("format_version") != 1 or value.get("kind") != "reference-fixture-tool-preflight"
-            or value.get("status") != "verified" or value.get("tools") != expected
-            or rustfs.get("scope_id") != "services-" + seed["scope_id"]
-            or rustfs.get("process_receipt") != str(run / "rustfs/process.json")):
-        raise ValueError("夹具审阅计划缺少当前工具预检收据")
+    environment_native("preflight-binding", review)
 
 
 def validate_current_review_tools(review: dict, run=subprocess.run) -> dict:
@@ -202,42 +167,8 @@ def validated_recorded_review_tools(review: dict) -> dict:
     return copy.deepcopy({name: review["tools"][name] for name in REVIEW_TOOLS})
 
 
-def _review_semantics(review: dict) -> dict:
-    """只排除每次预检都会重新核验的七项工具。"""
-    result = copy.deepcopy(review)
-    result.pop("ready_for_execution", None)
-    tools = result.get("tools")
-    if not isinstance(tools, dict):
-        raise ValueError("夹具审阅计划工具定义无效")
-    for name in REVIEW_TOOLS:
-        tools.pop(name, None)
-    return result
-
-
 def validate_preflight_successor(previous: dict, review: dict) -> None:
-    """核验 ready 审阅只增加了当前预检允许产生的字段。"""
-    pending = previous.get("ready_for_execution") is False and "preflight" not in previous
-    ready = previous.get("ready_for_execution") is True and "preflight" in previous
-    if not pending and not ready:
-        raise ValueError("preflight predecessor 必须是 pending 或已验证 ready 审阅")
-    if ready:
-        _preflight_binding(previous)
-    structural = copy.deepcopy(previous)
-    structural["ready_for_execution"] = True
-    validate_review(structural)
-    validate_review(review)
-    _preflight_binding(review)
-
-    expected = _review_semantics(previous)
-    observed = _review_semantics(review)
-    expected.pop("preflight", None)
-    observed.pop("preflight")
-    if pending:
-        rustfs = observed["services"]["rustfs"]
-        rustfs.pop("scope_id")
-        rustfs.pop("process_receipt")
-    if observed != expected:
-        raise ValueError("ready 审阅与其 preflight predecessor 语义不同")
+    environment_native("preflight-successor", {"previous": previous, "review": review})
 
 
 def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.run) -> dict:
@@ -434,15 +365,7 @@ def _database_credentials(backend: Path, source: Path, destination: Path) -> dic
 
 
 def _validate_reset_password(values: dict) -> None:
-    """在创建任何 fresh 资源前复现后端 reset 的管理员密码复杂度门槛。"""
-    key = "admin_password"
-    value = values.get(key)
-    if (not isinstance(value, str) or not re.fullmatch(r"[!-~]{8,72}", value)
-            or not any(char.isascii() and char.isupper() for char in value)
-            or not any(char.isascii() and char.islower() for char in value)
-            or not any(char.isascii() and char.isdigit() for char in value)
-            or not any(char.isascii() and not char.isalnum() for char in value)):
-        raise ValueError(f"{key} 不满足 reset 管理员密码复杂度策略")
+    environment_native("reset-password", {"admin_password": values.get("admin_password")})
 
 
 def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed",
@@ -475,7 +398,6 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         ))[0]["value"]
     except ValueError as error:
         raise ValueError("MySQL 凭据格式无效") from error
-    tls_mode = client["tls_mode"]
     values, files = {}, {"mysql-client.cnf": mysql_descriptor}
     for key, filename in (("access_key", "rustfs-access-key.txt"),
                           ("secret_key", "rustfs-secret-key.txt"),
@@ -486,108 +408,23 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         value, descriptor = _secret(secrets, filename)
         values[key], files[filename] = value, descriptor
     _validate_reset_password(values)
-    targets = []
-    for key in ("shared", "dedicated-a", "dedicated-b"):
-        item = database[key]
-        targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
-                        "port": item["port"], "database": item["database"], "tls_mode": tls_mode})
-    scope = selected["scope_id"]
-    api = urlsplit(selected["api_url"])
-    worker = urlsplit(selected["worker_ready_url"])
-    frontend = urlsplit(selected["frontend_url"])
-    if (api.hostname not in ("127.0.0.1", "::1") or api.port is None
-            or worker.hostname not in ("127.0.0.1", "::1") or worker.port is None
-            or frontend.scheme not in ("http", "https") or frontend.hostname not in ("127.0.0.1", "::1")
-            or frontend.port is None or frontend.path not in ("", "/") or frontend.query or frontend.fragment):
-        raise ValueError("夹具 API、Worker 或前端地址必须是明确本机端口")
-    frontend_origin = f"{frontend.scheme}://{frontend.netloc}"
-    config = output / TEST_CONFIG_DIRECTORY
+    configuration = environment_native("configuration-settings", {
+        "selected": selected, "client": client, "values": values, "side": side})
+    targets, settings = configuration["targets"], configuration["settings"]
     environment = {"APP_ENV": "test", "TEMP": str(output / "tmp"), "TMP": str(output / "tmp")}
-    settings = {
-        "scope_id": scope, "snowflake_worker_id": 3,
-        "app": {"host": api.hostname, "port": api.port},
-        "multi_tenancy": {"enabled": True}, "api_docs": {"enabled": False},
-        "bootstrap": {"admin_password": values["admin_password"]},
-        "cors": {"allow_origins": [frontend_origin]},
-        "database.primary": {"host": client["host"], "port": int(client["port"]),
-                             "database": database["shared-control"]["database"], "tls_mode": tls_mode},
-        "object_storage": {"backend": "rustfs", "endpoint": selected["objects"]["endpoint"],
-                           "region": selected["objects"]["region"], "use_ssl": False,
-                           "access_key": values["access_key"], "secret_key": values["secret_key"]},
-        "redis": {"mode": "required", "host": "127.0.0.1", "port": urlsplit(selected["redis"]["url"]).port or 16390,
-                  "database": 0, "tls": False, "password": values["redis_password"]},
-        "auth": {"jwt_secret": values["jwt_secret"]},
-        "monitor": {"metrics_bearer_token": values["metrics_token"]},
-        "jobs": {"mode": "external", "health_host": worker.hostname, "health_port": worker.port, "scheduler_enabled": side == "seed"},
-        "rate_limit": {"capacity": FIXTURE_REQUEST_RATE_LIMIT_CAPACITY},
-        "reset": {"credential_version": "fixture-v1", "legacy_mysql_exclusive": True, "legacy_redis_exclusive": True,
-                  "legacy_object_storage_exclusive": True, "redis_outside_sentinel_key": f"ryframe:devex-fresh:{scope}:sentinel"},
-    }
     _test_configuration(execution, output, targets, settings, database_credentials)
     return environment, files
 
 
 def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, side: str = "seed") -> dict:
-    """验证 C52 无关的输入，并返回后续显式创建阶段应消费的不可变描述。"""
-    backend = backend.resolve(strict=True)
-    review_file, review = _read(backend, review_path)
-    fixture_file, fixture = _read(backend, fixture_path)
-    maintenance_file, maintenance = _read(backend, maintenance_path)
-    validate_review(review)
-    _fixture(fixture)
-    _maintenance(maintenance)
-    reference = review["reference"]
-    if any(reference[side]["databases"] for side in ("source", "protected_target")):
-        raise ValueError("新的隔离参考夹具不得读取或复用历史来源数据库")
-    if side not in review["scopes"]:
-        raise ValueError("夹具环境必须选择已审阅侧")
-    selected = review["scopes"][side]
-    databases = {item["key"]: item for item in selected["databases"]}
-    if set(databases) != set(KEYS):
-        raise ValueError("夹具侧必须精确声明四个数据库")
-    names = [entry["database"].lower() for side in review["scopes"].values()
-             for entry in side["databases"]]
-    if len(names) != 12 or len(set(names)) != len(names):
-        raise ValueError("三侧夹具数据库名称不得重叠")
-    result = {
-        "format_version": 1,
-        "kind": "reference-fixture-environment-plan",
-        "review": {**bound(review_file), "canonical_sha256": plan_hash(review)},
-        "fixture": bound(fixture_file),
-        "maintenance_build": bound(maintenance_file),
-        "side": side,
-        "scope_id": selected["scope_id"],
-        "databases": [{"key": key, "database": databases[key]["database"],
-                       "mode": KEYS[key][1]} for key in sorted(databases)],
-        "object_endpoint": selected["objects"]["endpoint"],
-        "redis_url": selected["redis"]["url"],
-        "historical_data_used": False,
-        "remote_writes": 0,
-    }
-    return {**result, "sha256": plan_hash(result)}
-
-
-def _planned_document(backend: Path, descriptor: dict, label: str, *, canonical: bool = False) -> tuple[Path, dict]:
-    keys = {"path", "bytes", "sha256"}
-    if canonical:
-        keys.add("canonical_sha256")
-    if not isinstance(descriptor, dict) or set(descriptor) != keys:
-        raise ValueError(f"夹具环境计划中的 {label} 描述无效")
-    path, value = _read(backend, Path(descriptor["path"]))
-    expected = {key: descriptor[key] for key in ("path", "bytes", "sha256")}
-    if bound(path) != expected or canonical and plan_hash(value) != descriptor["canonical_sha256"]:
-        raise ValueError(f"夹具环境计划中的 {label} 已变化")
-    return path, value
+    return environment_native("plan", {"backend": str(backend.resolve(strict=True)),
+        "review": str(review_path), "fixture": str(fixture_path),
+        "maintenance_build": str(maintenance_path), "side": side})
 
 
 def _planned_inputs(backend: Path, result: dict) -> tuple[Path, dict, Path, dict, Path, dict]:
-    review_file, review = _planned_document(backend, result["review"], "审阅收据", canonical=True)
-    fixture_file, fixture = _planned_document(backend, result["fixture"], "业务 crate 收据")
-    maintenance_file, maintenance = _planned_document(backend, result["maintenance_build"], "维护构建收据")
-    _preflight_binding(review)
-    _fixture(fixture)
-    _maintenance(maintenance)
-    return review_file, review, fixture_file, fixture, maintenance_file, maintenance
+    values = environment_native("planned-inputs", {"backend": str(backend), "plan": result})["inputs"]
+    return tuple(Path(value) if index % 2 == 0 else value for index, value in enumerate(values))
 
 
 def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path,
@@ -631,11 +468,11 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
 
 
 PROTOCOL_SCHEMAS = {
-    "plan": (("review", "fixture", "maintenance_build", "side"), (), False),
-    "prepare": (("review", "fixture", "maintenance_build", "side", "output"), ("secrets_dir",), True),
-    "review": (("review", "output"), (), True),
-    "rotate-secrets": (("fixture", "output"), (), True),
-    "bootstrap-secrets": (("source_fixture", "source_secrets", "fixture"), (), True),
+    "plan": (("review", "fixture", "maintenance_build", "side"), ("native_tool",), False),
+    "prepare": (("review", "fixture", "maintenance_build", "side", "output"), ("secrets_dir", "native_tool"), True),
+    "review": (("review", "output"), ("native_tool",), True),
+    "rotate-secrets": (("fixture", "output"), ("native_tool",), True),
+    "bootstrap-secrets": (("source_fixture", "source_secrets", "fixture"), ("native_tool",), True),
 }
 
 
@@ -651,8 +488,12 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--secrets-dir", type=Path)
     parser.add_argument("--side", choices=("seed", "base", "candidate"), default="seed")
+    parser.add_argument("--native-tool")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
+    if args.native_tool is not None:
+        from rate_limit_tool import install_binding
+        install_binding(args.native_tool)
     if args.operation in ("plan", "prepare") and (args.review is None or args.fixture is None or args.maintenance_build is None):
         parser.error(f"{args.operation} 需要 --review、--fixture 与 --maintenance-build")
     if args.operation == "plan":

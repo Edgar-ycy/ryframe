@@ -55,7 +55,8 @@ pub(super) fn load(backend: &Path, selected: &Path, names: &Value) -> Result<Val
     for name in names {
         let name = name.as_str().ok_or("秘密文件名必须为字符串")?;
         let descriptor = &secrets[name];
-        let path = manifest::bound_file(backend, descriptor, "夹具秘密文件", true)?;
+        let path = manifest::bound_file(backend, descriptor, "夹具秘密文件", true)
+            .map_err(|_| model::error("夹具秘密文件与 bootstrap 绑定不一致"))?;
         check(
             path.file_name().is_some_and(|file| file == name) && binding(&path)? == *descriptor,
             "夹具秘密文件与 bootstrap 绑定不一致",

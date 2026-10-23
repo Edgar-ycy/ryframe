@@ -40,6 +40,10 @@ fn main() {
     if let Some(code) = recovery::full_stack::worker::run_hidden_if_requested() {
         std::process::exit(code);
     }
+    if let Some(code) = recovery::fixture_control::environment::protocol::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::clone::native::cache::run_hidden_if_requested() {
         std::process::exit(code);
     }

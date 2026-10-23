@@ -24,7 +24,7 @@ mod artifact;
 #[path = "fixture_control/dataset.rs"]
 mod dataset;
 #[path = "fixture_control/environment.rs"]
-mod environment;
+pub(crate) mod environment;
 #[path = "fixture_control/request.rs"]
 mod request;
 #[path = "fixture_control/retention.rs"]
@@ -167,7 +167,9 @@ pub(crate) fn private_invocation_at(
     }
     if matches!(
         command,
-        FixtureControlCommand::Services(_) | FixtureControlCommand::Request(_)
+        FixtureControlCommand::Services(_)
+            | FixtureControlCommand::Request(_)
+            | FixtureControlCommand::Environment(_)
     ) && let Some(binding) = crate::check::python_suite::binding(&std::env::current_exe()?)?
     {
         protocol.insert("native_tool".to_owned(), Value::String(binding));
