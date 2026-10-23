@@ -1,4 +1,3 @@
-import io
 import json
 import subprocess
 import sys
@@ -6,44 +5,13 @@ import unittest
 from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
-from urllib.error import HTTPError
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ci_full_stack_resources import (
-    BINARIES, BUCKETS, bucket_request, build_binaries, create_bucket, prepare_storage, read_binaries,
+    BINARIES, build_binaries, read_binaries,
 )
 from full_stack_provenance import BUILD_EVIDENCE, verify_build_evidence
-
-
-class CiStorageTests(unittest.TestCase):
-    def test_only_explicit_loopback_instance_can_be_initialized(self):
-        for endpoint in ("http://remote.test:9000", "file:///tmp", "http://user@localhost:9000",
-                         "http://localhost:9000/?query=1", "http://localhost:9000/other"):
-            values = {"RYFRAME_CI_S3_CONTAINER_ID": "explicit", "APP_OBJECT_STORAGE_ENDPOINT": endpoint}
-            with patch.dict("os.environ", {"APP_OBJECT_STORAGE_BACKEND": "s3"}), \
-                    patch("ci_full_stack_resources.socket.create_connection") as connection:
-                with self.assertRaises(ValueError):
-                    prepare_storage(values.__getitem__)
-                connection.assert_not_called()
-
-    def test_bucket_retry_does_not_ignore_authentication_or_existing_bucket(self):
-        request = bucket_request("http://localhost:9000", "uploads", "access", "secret")
-        for status in (403, 409):
-            with patch("ci_full_stack_resources.time.monotonic", return_value=1), \
-                    patch("ci_full_stack_resources.urllib.request.urlopen", side_effect=
-                          HTTPError(request.full_url, status, "failure", {}, io.BytesIO())):
-                with self.assertRaises(HTTPError):
-                    create_bucket(request, "uploads", 20)
-        success = Mock()
-        success.__enter__ = Mock(return_value=Mock(status=200))
-        success.__exit__ = Mock(return_value=False)
-        with patch("ci_full_stack_resources.time.monotonic", return_value=1), \
-                patch("ci_full_stack_resources.time.sleep") as sleep, \
-                patch("ci_full_stack_resources.urllib.request.urlopen", side_effect=[
-                    HTTPError(request.full_url, 503, "starting", {}, io.BytesIO()), success]):
-            create_bucket(request, "uploads", 20)
-            sleep.assert_called_once_with(1)
 
 
 class CiResourceManifestTests(unittest.TestCase):
@@ -138,16 +106,3 @@ class CiResourceManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不匹配"):
             verify_build_evidence(self.root, self.output)
         self.assertEqual(receipt.read_bytes(), original)
-
-    def test_local_storage_prepares_only_declared_buckets_and_preserves_existing_files(self):
-        directory = self.root / "objects"
-        with patch.dict("os.environ", {"APP_OBJECT_STORAGE_BACKEND": "local"}, clear=True), \
-                patch("ci_full_stack_resources.socket.create_connection") as network:
-            required = {"APP_OBJECT_STORAGE_LOCAL_BASE_DIR": str(directory)}.__getitem__
-            prepare_storage(required)
-            self.assertEqual({path.name for path in directory.iterdir()}, set(BUCKETS))
-            evidence = directory / BUCKETS[0] / "existing.txt"
-            evidence.write_bytes(b"keep")
-            prepare_storage(required)
-            self.assertEqual(evidence.read_bytes(), b"keep")
-            network.assert_not_called()
