@@ -18,7 +18,7 @@ from devex_clone_target_storage import actual_windows_argv
 from full_stack_process import process_identity, terminate_owned_process
 from restore_reference_plan import plan_hash
 
-KINDS = {"session": "xtask/src/recovery/clone/native/session.rs", "existing": "devex_clone_existing.mjs",
+KINDS = {"session": "xtask/src/recovery/clone/native/session.rs", "existing": "xtask/src/recovery/dataset_prepare/existing_native.rs",
          "identity-apply": "xtask/src/data/performance_identities/producer.rs",
          "identity-verify": "xtask/src/data/performance_identities/producer.rs",
          "quota-plan": "xtask/src/data/performance_identities/clone_bridge.rs",
@@ -91,21 +91,28 @@ def original_attempt(attempt):
 
 
 def native_kind(kind):
-    return kind != "existing"
+    return kind in KINDS
 
 
-def producer_command(backend, request, directory, number, kind, output, *, tool_override=None):
+def producer_command(backend, request, directory, number, kind, output, *, tool_override=None,
+                     configuration=None):
     if kind not in KINDS:
         raise ValueError("Node 生产者类型未登记")
     native = native_kind(kind)
     script = producer_source(backend, kind)
     tool = producer_tool(request, kind) if tool_override is None else tool_override
-    hidden = "__copy-session" if kind == "session" else "__identity-producer" if kind.startswith("identity-") else "__identity-bridge"
+    hidden = ("__copy-session" if kind == "session" else
+              "__recovery-existing-clone" if kind == "existing" else
+              "__identity-producer" if kind.startswith("identity-") else
+              "__identity-bridge")
     command = [tool["path"], hidden if native else str(script),
                "--run-dir", str(directory), "--attempt", str(number)]
     if kind == "existing":
+        if configuration is None:
+            raise ValueError("原生已有数据生产者缺少配置绑定")
         command.extend(["--backend-dir", str(backend), "--plan", request["reference_plan"]["path"],
-                        "--dataset", request["dataset"]["path"], "--target-binding", str(output / "business-target.json"), "--write"])
+                        "--dataset", request["dataset"]["path"], "--target-binding", str(output / "business-target.json"),
+                        "--configuration", str(configuration), "--write"])
     elif kind in {"identity-apply", "identity-verify"}:
         command.extend(["--identity-plan", request["identity_plan"]["path"],
                         "--identity-state", request["identity_state"], "--identity-mode", kind.removeprefix("identity-"),
@@ -128,12 +135,13 @@ def producer_source(backend, kind):
 
 
 def producer_tool(request, kind):
-    if kind == "session":
+    if kind in {"session", "existing"}:
         from rate_limit_tool import tool_binding
 
         value = tool_binding()
         if value is None:
-            raise ValueError("原生复制会话缺少协调器工具绑定")
+            label = "复制会话" if kind == "session" else "已有数据生产者"
+            raise ValueError(f"原生{label}缺少协调器工具绑定")
         return {key: value[key] for key in ("path", "sha256")}
     return request["identity_tool" if native_kind(kind) else "node"]
 
@@ -157,9 +165,13 @@ def inspect_producer(backend, directory, attempt):
     kind = intent["producer_kind"]
     native = native_kind(kind)
     tool_key, source_key = ("tool", "source") if native else ("node", "script")
-    exact(intent, {"format_version", "kind", "run_manifest", "registration", "controller", "attempt", "producer_kind", "command", tool_key, source_key})
+    intent_fields = {"format_version", "kind", "run_manifest", "registration", "controller", "attempt", "producer_kind", "command", tool_key, source_key}
+    if kind == "existing":
+        intent_fields.add("configuration")
+    exact(intent, intent_fields)
     owner_key = "identity_lock_owner" if kind.startswith("identity-") else "producer_owner"
-    owner_recorded = native and owner_key in value
+    owner_required = native and kind != "existing"
+    owner_recorded = owner_required and owner_key in value
     exact(value, {"format_version", "kind", "launch", "identity"}
           | ({owner_key} if owner_recorded else set()))
     request = historical_producer_request(backend, directory, stage, intent["registration"])
@@ -178,10 +190,18 @@ def inspect_producer(backend, directory, attempt):
             or controller["owner"]["directory"] != str(directory)
             or controller["owner"]["manifest_sha256"] != intent["run_manifest"]["sha256"]):
         raise ValueError("Node 生产者控制器不属于原始阶段")
+    configuration = None
+    if kind == "existing":
+        configuration = bound_file(backend, intent["configuration"])
+        from restore_reference_plan import validate_configuration_binding
+        validate_configuration_binding(read_json(configuration), backend)
+        if configuration != output / "existing-configuration.json":
+            raise ValueError("原生已有数据配置绑定不属于当前 attempt")
     command = producer_command(
         backend, request, directory, number, kind, output,
-        tool_override=intent[tool_key] if native else None)
-    persisted_tool = kind != "session"
+        tool_override=intent[tool_key] if native else None,
+        configuration=configuration)
+    persisted_tool = kind not in {"session", "existing"}
     if (intent["command"] != command
             or (persisted_tool and intent[tool_key] != producer_tool(request, kind))
             or intent[source_key]["path"] != str(producer_source(backend, kind))):
@@ -199,7 +219,7 @@ def inspect_producer(backend, directory, attempt):
                  or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
                                      value[owner_key]))):
         raise ValueError("原生生产者收据缺少固定 owner")
-    if native and not owner_recorded:
+    if owner_required and not owner_recorded:
         raise ValueError("原生生产者收据必须记录 owner")
     if Path(value["identity"]["executable"]).resolve() != Path(intent[tool_key]["path"]).resolve():
         raise ValueError("Node 内核 executable 与登记工具不同")
@@ -496,21 +516,38 @@ class Producer:
                 or controller["owner"]["identity"] != process_identity(os.getpid())
                 or read_json(context.directory_root / "run.lock/owner.json") != controller["owner"]):
             raise ValueError("Node 启动控制器未持当前 run 锁")
-        command = producer_command(context.backend, context.request, context.directory_root, number, kind, context.output)
         native = native_kind(kind)
         tool = producer_tool(context.request, kind)
         external_file(tool)
         tool_key, source_key = ("tool", "source") if native else ("node", "script")
+        configuration = None
+        configuration_descriptor = None
+        if kind == "existing":
+            from restore_reference_plan import configuration_binding
+
+            contract = read_json(context.runtime / "runtime.json")
+            configuration = context.output / "existing-configuration.json"
+            write_json(configuration, configuration_binding(
+                context.backend, Path(contract["api_config_dir"]), "test"
+            ))
+            configuration_descriptor = binding(configuration)
+        command = producer_command(
+            context.backend, context.request, context.directory_root, number, kind,
+            context.output, tool_override=tool, configuration=configuration)
         intent = {"format_version": 1, "kind": "devex-post-producer-launch", "run_manifest": binding(context.directory_root / "manifest.json"),
                   "registration": context.request_binding, "controller": binding(controller_path), "attempt": number,
                   "producer_kind": kind, "command": command, tool_key: tool,
                   source_key: binding(producer_source(context.backend, kind))}
+        if configuration_descriptor is not None:
+            intent["configuration"] = configuration_descriptor
         write_json(context.output / "session-launch.json", intent)
         self.log = (context.output / "session.stderr.log").open("xb")
         self.child = None
         self.identity = None
         self.identity_lock_owner = str(uuid.uuid4()) if kind.startswith("identity-") else None
-        self.producer_owner = str(uuid.uuid4()) if native and self.identity_lock_owner is None else None
+        self.producer_owner = (str(uuid.uuid4())
+                               if native and kind != "existing" and self.identity_lock_owner is None
+                               else None)
         self.tool_guard = None
         try:
             environment = context.private["target_api"]

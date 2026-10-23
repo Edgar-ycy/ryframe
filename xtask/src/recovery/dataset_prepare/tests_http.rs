@@ -1,5 +1,5 @@
 use super::super::{
-    prepare,
+    existing, prepare,
     session::{Client, Pacer},
 };
 use serde_json::{Value, json};
@@ -104,6 +104,7 @@ fn catalog() -> std::collections::BTreeMap<String, Value> {
         ("post_auth_logout", "POST", "/logout"),
         ("post_system_posts", "POST", "/posts"),
         ("get_system_posts", "GET", "/posts"),
+        ("get_system_posts_by_id", "GET", "/posts/{id}"),
         ("post_common_upload", "POST", "/upload"),
         ("get_common_file_download", "GET", "/download"),
         ("get_platform_capabilities", "GET", "/capabilities"),
@@ -122,6 +123,79 @@ fn catalog() -> std::collections::BTreeMap<String, Value> {
     .into_iter()
     .map(|(id, method, path)| (id.into(), json!({"method":method,"path":path})))
     .collect()
+}
+
+#[test]
+fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_for_logout() {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let server = Server::new(move |headers, _| {
+        let tenant = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("x-tenant-id"))
+            })
+            .map(|(_, value)| value.trim())
+            .unwrap_or("system");
+        if headers.starts_with("POST /logout ") {
+            assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+        }
+        let data = if headers.starts_with("POST /login ") {
+            let claims = json!({"sub":"9007199254740993","tenant_id":tenant,"username":if tenant == "system" {"admin"} else {"owner"},"token_type":"access","user_authorization_version":7});
+            let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+            json!({"access_token":format!("header.{payload}.signature")})
+        } else if headers.starts_with("GET /posts/1 ") {
+            json!({"code":"sample","name":"恢复样本"})
+        } else {
+            json!({})
+        };
+        (
+            200,
+            serde_json::to_vec(&json!({"code":200,"data":data})).unwrap(),
+        )
+    });
+    let target =
+        json!({"scope_id":"current-source","api_url":server.url,"frontend_url":server.url});
+    let identities = (0..11).map(|index| {
+        json!({"tenant_id":if index == 0 {"system".into()} else {format!("origin-{index:02}")},"username":if index == 0 {"admin"} else {"owner"},"posts":[{"id":"1","code":"sample","name":"恢复样本"}],"files":[]})
+    }).collect::<Vec<_>>();
+    let counts = runtime()
+        .block_on(existing::verify_at(
+            &target,
+            &identities,
+            &catalog(),
+            "memory-only-password",
+            existing::Options {
+                network: 18,
+                request_interval_ms: 0,
+                collect_subjects: true,
+            },
+            || Ok(()),
+        ))
+        .unwrap();
+    assert_eq!((counts.tenants, counts.posts, counts.files), (11, 11, 0));
+    assert_eq!(counts.subjects.len(), 11);
+    assert!(
+        counts
+            .subjects
+            .iter()
+            .all(|subject| subject["user_authorization_version"] == 7)
+    );
+    let calls = server.requests.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(headers, _)| headers.starts_with("POST /login "))
+            .count(),
+        11
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(headers, _)| headers.starts_with("POST /logout "))
+            .count(),
+        11
+    );
 }
 fn create_client(server: &Server) -> Client {
     let mut plan = super::plan();

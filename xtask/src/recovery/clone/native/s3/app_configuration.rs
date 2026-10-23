@@ -11,6 +11,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
+fn linked(path: &Path) -> Result<bool> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(true);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & REPARSE_POINT != 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn load(
     root: &Path,
     binding: &Value,
@@ -30,7 +46,15 @@ pub(crate) fn load(
         .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
         .map(PathBuf::from)
         .ok_or("应用配置绑定缺少目录")?;
-    validate_local_test_path(&directory, root, LocalTestPathKind::ExistingDirectory)?;
+    let project_config = root.join("config");
+    if directory == project_config {
+        let metadata = fs::symlink_metadata(&directory)?;
+        if !metadata.is_dir() || linked(&directory)? {
+            return Err("应用配置目录必须是项目config或受管.local-tests普通目录".into());
+        }
+    } else {
+        validate_local_test_path(&directory, root, LocalTestPathKind::ExistingDirectory)?;
+    }
     let environment = format!("app.{app_env}.toml");
     let mut files = serde_json::Map::new();
     for (index, name) in ["app.toml", environment.as_str()].iter().enumerate() {
@@ -38,7 +62,14 @@ pub(crate) fn load(
         if index == 0 && !file.exists() {
             continue;
         }
-        validate_local_test_path(&file, root, LocalTestPathKind::ExistingFile)?;
+        if directory == project_config {
+            let metadata = fs::symlink_metadata(&file)?;
+            if !metadata.is_file() || linked(&file)? {
+                return Err("应用配置文件必须是普通文件".into());
+            }
+        } else {
+            validate_local_test_path(&file, root, LocalTestPathKind::ExistingFile)?;
+        }
         let bytes = fs::read(&file).map_err(|_| "无法读取绑定的应用配置文件")?;
         if bytes.len() > 1024 * 1024 {
             return Err("应用配置文件超过1MiB".into());

@@ -136,6 +136,23 @@ fn private_stdin_rejects_oversize_duplicates_extra_argv_and_never_writes() {
 }
 
 #[test]
+fn existing_private_entries_reject_unbound_arguments_without_echo_or_write() {
+    let fixture = Fixture::new();
+    for marker in ["__recovery-existing-clone", "__recovery-existing-source"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args([marker, "private-command-secret"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(!diagnostic.contains("private-command-secret"));
+        assert!(diagnostic.contains("禁止自动重放"), "{diagnostic}");
+        assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 0);
+    }
+}
+
+#[test]
 fn bound_s3_configuration_errors_never_expose_file_credentials() {
     use serde_json::json;
     use sha2::{Digest, Sha256};

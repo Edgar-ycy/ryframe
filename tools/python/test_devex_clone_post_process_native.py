@@ -27,6 +27,37 @@ class NativeProducerTests(unittest.TestCase):
         digest = file_digest(self.tool)
         self.binding = {"path": str(self.tool), "sha256": digest["sha256"]}
 
+    def test_existing_native_command_uses_explicit_public_configuration_binding(self):
+        with WorkspaceDirectory(
+            dir=self.root / ".local-tests/tmp", prefix="post-existing-command-"
+        ) as temporary:
+            directory = Path(temporary).resolve()
+            output = directory / "post-copy/attempt-0001"
+            output.mkdir(parents=True)
+            configuration = output / "existing-configuration.json"
+            configuration.write_text("{}\n", encoding="utf-8")
+            request = {
+                "reference_plan": {"path": str(directory / "plan.json")},
+                "dataset": {"path": str(directory / "dataset.json")},
+            }
+            command = process.producer_command(
+                self.root,
+                request,
+                directory,
+                1,
+                "existing",
+                output,
+                tool_override=self.binding,
+                configuration=configuration,
+            )
+            self.assertEqual(command[1], "__recovery-existing-clone")
+            self.assertEqual(
+                command[command.index("--configuration") + 1], str(configuration)
+            )
+            serialized = json.dumps(command, ensure_ascii=False)
+            for secret in ("admin_password", "access_key", "secret_key", "session_token"):
+                self.assertNotIn(secret, serialized)
+
     def request(self, plan):
         return {
             "identity_tool": self.binding,

@@ -43,9 +43,9 @@ class FakeProcess:
         self.returncode = None
         self.state = state
         self.result = result
-        script = Path(argv[1])
-        staging = script.parents[2]
-        manifest = read_json(staging / "manifest.json")
+        manifest_path = Path(argv[argv.index("--staging-manifest") + 1])
+        staging = manifest_path.parent
+        manifest = read_json(manifest_path)
         contract = next(row for row in manifest["files"] if row["path"] == manifest["contract"])
         value = {
             "format_version": 1,
@@ -54,11 +54,7 @@ class FakeProcess:
             "source_generation_sha256": argv[argv.index("--source-generation-sha256") + 1],
             "staging_manifest_sha256": binding(staging / "manifest.json")["sha256"],
             "runtime_files_sha256": plan_hash(
-                [
-                    {"path": row["path"], "bytes": row["bytes"], "sha256": row["sha256"]}
-                    for row in manifest["files"]
-                    if row["path"] in manifest["runtime_modules"]
-                ]
+                manifest["runtime_modules"]
             ),
             "contract_file_sha256": contract["sha256"],
             "lineage_file_sha256": binding(Path(argv[argv.index("--lineage") + 1]))["sha256"],
@@ -203,6 +199,9 @@ class SourceRuntimeTests(unittest.TestCase):
         tools["source"]["snapshot"]["head"] = self.execution_sha
         self.coordinator_source = source_fingerprints.execution_source(tools)
         self.enterContext(patch.object(source_fingerprints, "current_execution_source", return_value=self.coordinator_source))
+        self.enterContext(
+            patch.object(producer, "native_tool", return_value=Path(sys.executable).resolve())
+        )
         repository = Path(__file__).resolve().parents[2]
         temporary = WorkspaceDirectory(
             dir=repository / ".local-tests/python-unit", prefix="source-runtime-"
@@ -271,7 +270,7 @@ class SourceRuntimeTests(unittest.TestCase):
             "selected": {"scope_id": "perf-seed-unit"},
             "running": {"image": self.before_image},
             "lineage": self.lineage_value,
-            "environment": {"environment": {}},
+            "environment": {"environment": {"APP_ENV": "test"}},
         }
         self.resources = FakeResources(self.lineage_value, self.subjects)
         self.process_state = {"alive": True}
@@ -465,7 +464,7 @@ class SourceRuntimeTests(unittest.TestCase):
         directory.mkdir(parents=True)
         self.process_state["alive"] = True
         with patch.object(producer, "process_identity", side_effect=self.identity), \
-                self.assertRaisesRegex(ValueError, "Node 失败"):
+                self.assertRaisesRegex(ValueError, "原生生产者失败"):
             producer.run_source_producer(
                 self.backend,
                 self.backend,
@@ -474,7 +473,7 @@ class SourceRuntimeTests(unittest.TestCase):
                 Path(sys.executable).resolve(),
                 self.start,
                 self.lineage,
-                {},
+                {"APP_ENV": "test"},
                 coordinator_source=self.coordinator_source,
                 execution_sha=self.execution_sha,
                 popen=lambda argv, **_kwargs: FailedProcess(
@@ -507,7 +506,7 @@ class SourceRuntimeTests(unittest.TestCase):
                 Path(sys.executable).resolve(),
                 self.start,
                 self.lineage,
-                {},
+                {"APP_ENV": "test"},
                 coordinator_source=self.coordinator_source,
                 execution_sha=self.execution_sha,
                 popen=lambda argv, **_kwargs: InvalidReadyProcess(
@@ -534,7 +533,7 @@ class SourceRuntimeTests(unittest.TestCase):
                     patch.object(self, "fake_popen", wraps=self.fake_popen) as spawn, \
                     self.assertRaisesRegex(ValueError, "test_tools"):
                 producer.run_source_producer(self.backend, self.backend, directory, "b" * 32,
-                    Path(sys.executable).resolve(), self.start, self.lineage, {},
+                    Path(sys.executable).resolve(), self.start, self.lineage, {"APP_ENV": "test"},
                     coordinator_source=self.coordinator_source,
                     execution_sha=self.execution_sha, popen=spawn)
             if boundary == 0:
@@ -556,9 +555,9 @@ class SourceRuntimeTests(unittest.TestCase):
         before = descriptor_file(directory / "before/image.json", {"image": self.before_image})
         descriptor_file(directory / "audit/login-before.tsv", {"fixture": "original audit"})
         with patch.object(producer, "process_identity", side_effect=self.identity), \
-                self.assertRaisesRegex(ValueError, "Node 失败"):
+                self.assertRaisesRegex(ValueError, "原生生产者失败"):
             producer.run_source_producer(self.backend, self.backend, directory, "c" * 32,
-                Path(sys.executable).resolve(), self.start, self.lineage, configured({}),
+                Path(sys.executable).resolve(), self.start, self.lineage, configured({"APP_ENV": "test"}),
                 coordinator_source=self.coordinator_source, execution_sha=self.execution_sha,
                 popen=lambda argv, **_kw: FailedProcess(self.process_state, self.node_result, argv))
         descriptor_file(directory / "failed.json", {"status": "failed", "error": "ValueError"})

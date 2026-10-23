@@ -4,8 +4,22 @@ use super::{
     session::{self, Client},
 };
 use crate::{Result, check::consumer_context::python};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use std::time::Duration;
+
+pub(super) struct Counts {
+    pub tenants: u64,
+    pub posts: u64,
+    pub files: u64,
+    pub subjects: Vec<Value>,
+}
+
+pub(super) struct Options {
+    pub network: u8,
+    pub request_interval_ms: u64,
+    pub collect_subjects: bool,
+}
 
 pub(super) fn ownership(inputs: &Inputs) -> Result<()> {
     let request = json!({"format_version":1,"kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":inputs.root,"format_version":1,"operation":"check-existing","plan":inputs.plan_path,"side":inputs.side,"write":false}});
@@ -49,35 +63,107 @@ pub(super) async fn run(inputs: &Inputs) -> Result<Value> {
     {
         return Err("旧岗位验收必须使用只读查询契约".into());
     }
-    let mut posts = 0u64;
-    let mut files = 0u64;
-    for identity in dataset["tenants"].as_array().ok_or("租户样本缺失")? {
-        inputs.unchanged()?;
-        let index = (0..11)
-            .find(|i| identity["tenant_id"] == model::tenant(&inputs.plan, *i))
-            .ok_or("租户归属不符")?;
-        let mut client = Client::new(
-            &inputs.plan,
-            &inputs.side,
+    let counts = verify_at(
+        &inputs.plan[&inputs.side],
+        dataset["tenants"].as_array().ok_or("租户样本缺失")?,
+        &catalog,
+        &inputs.password,
+        Options {
+            network: if inputs.side == "source" { 18 } else { 19 },
+            request_interval_ms: inputs.plan["dataset"]["request_interval_ms"]
+                .as_u64()
+                .ok_or("请求节奏缺失")?,
+            collect_subjects: false,
+        },
+        || inputs.unchanged(),
+    )
+    .await?;
+    Ok(
+        json!({"format_version":1,"status":"existing_data_verified","side":inputs.side,"scope_id":inputs.plan[&inputs.side]["scope_id"],"plan_sha256":model::hash(&inputs.plan)?,"source_scope_id":dataset["source_scope_id"],"dataset_sha256":inputs.dataset_sha()?,"actions":{"business":"read_only","objects":"read_only","session":"login_logout"},"restore_success":false,"tenants":counts.tenants,"posts":counts.posts,"files":counts.files}),
+    )
+}
+
+pub(super) async fn verify_at(
+    target: &Value,
+    identities: &[Value],
+    catalog: &std::collections::BTreeMap<String, Value>,
+    password: &str,
+    options: Options,
+    mut checkpoint: impl FnMut() -> Result<()>,
+) -> Result<Counts> {
+    if identities.len() != 11
+        || catalog
+            .get("get_system_posts_by_id")
+            .is_none_or(|value| value["method"] != "GET")
+    {
+        return Err("已有数据必须绑定十一租户及只读岗位查询契约".into());
+    }
+    let mut result = Counts {
+        tenants: 0,
+        posts: 0,
+        files: 0,
+        subjects: Vec::new(),
+    };
+    for (index, identity) in identities.iter().enumerate() {
+        checkpoint()?;
+        let mut client = Client::at(
+            target,
+            json!({"tenant_id":identity["tenant_id"],"username":identity["username"]}),
+            options.network,
             index,
-            &catalog,
-            &inputs.password,
+            catalog,
+            password,
+            options.request_interval_ms,
         )?;
         client.login().await?;
-        let result = verify_identity(&mut client, identity).await;
+        if options.collect_subjects {
+            result
+                .subjects
+                .push(access_subject(client.token()?, identity)?);
+            client.clear_bearer();
+        }
+        let verified = verify_identity(&mut client, identity).await;
         let logout = client
             .request(&json!({"operation":"post_auth_logout"}))
             .await;
-        let counts = match (result, logout) {
+        let counts = match (verified, logout) {
             (Ok(counts), Ok(_)) => counts,
             (Err(_), Err(_)) => return Err("已有数据验证及注销均失败；不发布验证成功".into()),
             (Err(error), _) | (_, Err(error)) => return Err(error),
         };
-        posts += counts.0;
-        files += counts.1;
+        result.tenants += 1;
+        result.posts += counts.0;
+        result.files += counts.1;
+    }
+    Ok(result)
+}
+
+fn access_subject(token: &str, identity: &Value) -> Result<Value> {
+    let encoded = token
+        .split('.')
+        .nth(1)
+        .filter(|_| token.split('.').count() == 3)
+        .ok_or("来源验收访问令牌声明无效")?;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| "来源验收访问令牌声明无效")?;
+    let claims: Value = serde_json::from_slice(&bytes).map_err(|_| "来源验收访问令牌声明无效")?;
+    let user = claims["sub"]
+        .as_str()
+        .filter(|value| model::positive_id(&json!(value)).is_ok())
+        .ok_or("来源验收访问令牌没有绑定当前租户用户")?;
+    let version = claims["user_authorization_version"]
+        .as_u64()
+        .filter(|value| *value <= i32::MAX as u64)
+        .ok_or("来源验收访问令牌没有绑定当前租户用户")?;
+    if claims["token_type"] != "access"
+        || claims["tenant_id"] != identity["tenant_id"]
+        || claims["username"] != identity["username"]
+    {
+        return Err("来源验收访问令牌没有绑定当前租户用户".into());
     }
     Ok(
-        json!({"format_version":1,"status":"existing_data_verified","side":inputs.side,"scope_id":inputs.plan[&inputs.side]["scope_id"],"plan_sha256":model::hash(&inputs.plan)?,"source_scope_id":dataset["source_scope_id"],"dataset_sha256":inputs.dataset_sha()?,"actions":{"business":"read_only","objects":"read_only","session":"login_logout"},"restore_success":false,"tenants":11,"posts":posts,"files":files}),
+        json!({"tenant_id":identity["tenant_id"],"user_id":user,"user_authorization_version":version}),
     )
 }
 async fn verify_identity(client: &mut Client, identity: &Value) -> Result<(u64, u64)> {

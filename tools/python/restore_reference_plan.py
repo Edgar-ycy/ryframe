@@ -66,9 +66,11 @@ def validate_configuration_binding(binding: dict, backend: Path) -> None:
             or binding["app_env"] not in {"dev", "test"}):
         raise ValueError("参考配置必须是明确环境和目录的无凭据文件绑定")
     directory = Path(binding["directory"])
-    if (not directory.is_absolute() or not directory.resolve().is_relative_to((backend / ".local-tests").resolve())
+    managed = directory.resolve().is_relative_to((backend / ".local-tests").resolve())
+    project = directory.resolve() == (backend / "config").resolve()
+    if (not directory.is_absolute() or not (managed or project)
             or not directory.is_dir()):
-        raise ValueError("参考配置目录必须位于后端受管.local-tests目录")
+        raise ValueError("参考配置目录必须是项目config或后端受管.local-tests目录")
     reject_link_or_reparse(directory)
     files = {}
     for name in ("app.toml", f"app.{binding['app_env']}.toml"):
@@ -80,6 +82,21 @@ def validate_configuration_binding(binding: dict, backend: Path) -> None:
     expected = {"app_env": binding["app_env"], "directory": str(directory), "files": files}
     if binding["files"] != files or binding["sha256"] != plan_hash(expected):
         raise ValueError("参考配置绑定的文件或摘要发生变化")
+
+
+def configuration_binding(backend: Path, directory: Path, app_env: str = "test") -> dict:
+    """构造不含凭据值的应用配置文件绑定。"""
+    directory = directory.resolve(strict=True)
+    files = {}
+    for name in ("app.toml", f"app.{app_env}.toml"):
+        path = directory / name
+        if name == "app.toml" and not path.exists():
+            continue
+        files[name] = file_digest(path)
+    value = {"app_env": app_env, "directory": str(directory), "files": files}
+    result = {**value, "sha256": plan_hash(value)}
+    validate_configuration_binding(result, backend.resolve(strict=True))
+    return result
 
 
 def validate_plan(plan: dict, backend: Path) -> None:

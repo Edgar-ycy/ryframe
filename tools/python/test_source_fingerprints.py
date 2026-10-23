@@ -71,7 +71,7 @@ class SourceFingerprintsTests(unittest.TestCase):
 
     def test_indirect_and_dynamic_node_imports_belong_to_complete_tool_domain(self):
         value = inventory()
-        helpers = ["tools/js/request.mjs", "tools/js/restore_reference_existing.mjs"]
+        helpers = ["tools/js/request.mjs"]
         value["files"] = sorted(value["files"] + [{"path": path, "sha256": "a" * 64} for path in helpers], key=lambda item: item["path"])
         original = sources.fingerprints(value)
         for path in helpers:

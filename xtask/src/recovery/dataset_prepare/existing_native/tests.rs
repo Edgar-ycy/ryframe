@@ -1,0 +1,135 @@
+use super::{clone, common, source};
+use serde_json::{Value, json};
+use std::{ffi::OsString, path::Path};
+
+fn descriptor(root: &Path, name: &str) -> Value {
+    json!({"path":root.join(name),"bytes":1,"sha256":"a".repeat(64)})
+}
+
+fn lineage() -> Value {
+    let root = crate::workspace::root_dir().join(".local-tests/existing-native-model");
+    let mut next_file = 1u64;
+    let tenants = (0..11)
+        .map(|index| {
+            let count = 256 / 11 + usize::from(index < 256 % 11);
+            let tenant = if index == 0 { "system".into() } else { format!("origin-{index:02}") };
+            let files = (0..count).map(|_| {
+                let id = next_file;
+                next_file += 1;
+                json!({"file_id":id.to_string(),"file_name":format!("{id}.bin"),"file_path":format!("{tenant}/{id}.bin"),"file_url":format!("/files/{id}"),"bytes":4194304,"sha256":"b".repeat(64)})
+            }).collect::<Vec<_>>();
+            json!({"tenant_id":tenant,"database":"shared","username":if index == 0 {"admin"} else {"owner"},"records":if index == 0 {9090} else {9091},"posts":[{"id":"1","code":"one","name":"一"},{"id":"2","code":"two","name":"二"},{"id":"3","code":"three","name":"三"}],"files":files})
+        })
+        .collect::<Vec<_>>();
+    let mut value = json!({
+        "format_version":1,"kind":"restore-source-derived-dataset-lineage","status":"derived_dataset_verified",
+        "scopes":{"origin_tenant_scope_id":"origin","current_source_scope_id":"current","current_object_scope_id":"current"},
+        "scale":{"records":100000,"current_post_rows":100000,"tenants":11,"post_samples":33,"business_objects":256,"verified_objects":257,"object_bytes":1073741824u64},
+        "tenants":tenants,
+        "objects":{"business_objects":256,"business_bytes":1073741824u64,"mapping_sha256":"c".repeat(64),"verified_objects":257,"probe":{"bucket":"uploads","source_key":"origin/probe","target_key":"current/probe","bytes":1,"sha256":"d".repeat(64),"metadata":{}}},
+        "verification":{"scope_id":"current","api_url":"http://127.0.0.1:3100","frontend_url":"http://127.0.0.1:4100","request_interval_ms":1000},
+        "restore_qualified":false,
+    });
+    for field in super::source::DESCRIPTORS {
+        value[*field] = descriptor(&root, field);
+    }
+    value
+}
+
+#[test]
+fn source_lineage_preserves_full_scale_and_rejects_scope_or_aggregate_drift() {
+    let valid = lineage();
+    source::validate_lineage(&valid).unwrap();
+    let mutations: [fn(&mut Value); 4] = [
+        |value: &mut Value| value["scopes"]["current_source_scope_id"] = json!("other"),
+        |value: &mut Value| value["scale"]["records"] = json!(99_999),
+        |value: &mut Value| value["tenants"][1]["tenant_id"] = json!("current-01"),
+        |value: &mut Value| value["objects"]["probe"]["target_key"] = json!("other/probe"),
+    ];
+    for mutation in mutations {
+        let mut invalid = valid.clone();
+        mutation(&mut invalid);
+        assert!(source::validate_lineage(&invalid).is_err());
+    }
+    let mut invalid = valid;
+    invalid["tenants"][0]["secret_key"] = json!("must-not-leak");
+    let error = source::validate_lineage(&invalid).unwrap_err().to_string();
+    assert!(!error.contains("must-not-leak"));
+}
+
+#[test]
+fn clone_target_requires_original_plan_and_complete_copy_evidence() {
+    let plan = json!({"source":{"scope_id":"origin"}});
+    let valid = json!({
+        "format_version":1,"kind":"devex-copy-business-target",
+        "source_plan_sha256":super::super::model::hash(&plan).unwrap(),"source_scope_id":"origin",
+        "target":{"scope_id":"seed-copy","api_url":"http://127.0.0.1:3200","frontend_url":"http://127.0.0.1:4200"},
+        "copy":{"plan_sha256":"a".repeat(64),"generation_sha256":"b".repeat(64),"source_export_sha256":"c".repeat(64),"fresh_target_sha256":"d".repeat(64),"stage_receipt_sha256":"e".repeat(64),"ledger_head_sha256":"f".repeat(64)},
+    });
+    clone::validate_target(&plan, &valid).unwrap();
+    for field in ["generation_sha256", "ledger_head_sha256"] {
+        let mut invalid = valid.clone();
+        invalid["copy"][field] = json!("invalid");
+        assert!(clone::validate_target(&plan, &invalid).is_err());
+    }
+    let mut invalid = valid;
+    invalid["target"]["api_url"] = json!("https://example.com");
+    assert!(clone::validate_target(&plan, &invalid).is_err());
+}
+
+#[test]
+fn private_arguments_require_unique_complete_non_secret_values() {
+    let required = ["--backend-dir", "--run-dir"];
+    let valid = [
+        "--backend-dir",
+        "D:/backend",
+        "--run-dir",
+        "D:/backend/.local-tests/run",
+        "--write",
+    ]
+    .map(OsString::from);
+    assert!(common::arguments(&valid, &required, "--write").is_ok());
+    for invalid in [
+        vec!["--backend-dir", "D:/backend", "--write"],
+        vec![
+            "--backend-dir",
+            "D:/backend",
+            "--backend-dir",
+            "D:/other",
+            "--run-dir",
+            "D:/run",
+            "--write",
+        ],
+        vec![
+            "--backend-dir",
+            "private-password",
+            "--run-dir",
+            "D:/run",
+            "--unknown",
+        ],
+    ] {
+        let args = invalid.into_iter().map(OsString::from).collect::<Vec<_>>();
+        let error = common::arguments(&args, &required, "--write")
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("private-password"));
+    }
+}
+
+#[test]
+fn start_gate_accepts_only_one_exact_authorization_and_never_echoes_input() {
+    let expected = json!({"operation":"start","run_dir":"D:/run","attempt":7});
+    common::read_start(serde_json::to_vec(&expected).unwrap().as_slice(), &expected).unwrap();
+    for invalid in [
+        Vec::new(),
+        b"{}".to_vec(),
+        b"{\"operation\":\"start\"}\n{}".to_vec(),
+        vec![b'x'; 4097],
+        b"private-start-secret".to_vec(),
+    ] {
+        let error = common::read_start(invalid.as_slice(), &expected)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("private-start-secret"));
+    }
+}

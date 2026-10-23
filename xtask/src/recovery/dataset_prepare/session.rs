@@ -53,15 +53,40 @@ impl Client {
         catalog: &BTreeMap<String, Value>,
         password: &str,
     ) -> Result<Self> {
-        let api = model::endpoint(&plan[side]["api_url"])?;
-        let frontend = model::endpoint(&plan[side]["frontend_url"])?;
-        let mut identity = model::identity(plan, index);
-        identity["password"] = json!(password);
-        let address = format!(
-            "198.{}.20.{}",
+        Self::at(
+            &plan[side],
+            model::identity(plan, index),
             if side == "source" { 18 } else { 19 },
-            index + 1
-        );
+            index,
+            catalog,
+            password,
+            plan["dataset"]["request_interval_ms"]
+                .as_u64()
+                .ok_or("请求节奏缺失")?,
+        )
+    }
+
+    pub fn at(
+        target: &Value,
+        mut identity: Value,
+        network: u8,
+        index: usize,
+        catalog: &BTreeMap<String, Value>,
+        password: &str,
+        request_interval_ms: u64,
+    ) -> Result<Self> {
+        if index > 10 || !matches!(network, 18 | 19) {
+            return Err("参考身份序号或网络无效".into());
+        }
+        let api = model::endpoint(&target["api_url"])?;
+        let frontend = model::endpoint(&target["frontend_url"])?;
+        if identity["tenant_id"].as_str().is_none_or(str::is_empty)
+            || identity["username"].as_str().is_none_or(str::is_empty)
+        {
+            return Err("参考身份缺少租户或用户名".into());
+        }
+        identity["password"] = json!(password);
+        let address = format!("198.{network}.20.{}", index + 1);
         identity["client_address"] = json!(address);
         let config = json!({"bindings":{"api_url":api.as_str(),"frontend_url":frontend.as_str()},"contract":{"timeout_ms":120_000}});
         let session = Session::new(&config, catalog.clone(), &identity)?;
@@ -75,11 +100,7 @@ impl Client {
             .map_err(|_| "无法创建数据集HTTP客户端")?;
         Ok(Self {
             session,
-            pacer: Pacer::new(
-                plan["dataset"]["request_interval_ms"]
-                    .as_u64()
-                    .ok_or("请求节奏缺失")?,
-            ),
+            pacer: Pacer::new(request_interval_ms),
             http,
             api,
             origin: frontend.origin().ascii_serialization(),
@@ -99,6 +120,14 @@ impl Client {
             .request(step, &mut self.pacer)
             .await
             .map_err(Into::into)
+    }
+    pub fn token(&self) -> Result<&str> {
+        self.session
+            .token()
+            .ok_or_else(|| "数据集会话未认证".into())
+    }
+    pub fn clear_bearer(&mut self) {
+        self.session.clear_access_token();
     }
     fn request_for(&self, operation: &str, method: &str) -> Result<reqwest::RequestBuilder> {
         let entry = self

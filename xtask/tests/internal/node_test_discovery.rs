@@ -24,7 +24,7 @@ fn discovery_covers_every_tracked_test_once() {
     let mut expected = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
-        .filter(|path| path.ends_with(".test.mjs"))
+        .filter(|path| path.ends_with(".test.mjs") && root.join(path).is_file())
         .map(str::to_owned)
         .collect::<Vec<_>>();
     expected.sort();
@@ -34,7 +34,11 @@ fn discovery_covers_every_tracked_test_once() {
         discovered.iter().collect::<BTreeSet<_>>().len(),
         discovered.len()
     );
-    assert!(discovered.contains(&"tools/js/devex_clone_existing.test.mjs".into()));
+    assert!(
+        !discovered
+            .iter()
+            .any(|path| path.contains("clone_existing"))
+    );
     assert!(!discovered.iter().any(|path| path.ends_with("_fixture.mjs")));
 }
 

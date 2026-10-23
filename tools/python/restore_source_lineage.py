@@ -330,7 +330,6 @@ def _tenant_projection(plan: dict, dataset: dict, image: dict) -> list[dict]:
             "tenant_id": tenant_id,
             "database": expected[tenant_id],
             "username": tenant["username"],
-            "password_env": tenant["password_env"],
             "records": tenant["records"],
             "posts": [dict(item) for item in tenant["posts"]],
             "files": [dict(item) for item in tenant["files"]],

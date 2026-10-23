@@ -129,6 +129,10 @@ impl Session {
         self.access_token.as_deref()
     }
 
+    pub(crate) fn clear_access_token(&mut self) {
+        self.access_token = None;
+    }
+
     async fn perform(
         &mut self,
         plan: Plan,

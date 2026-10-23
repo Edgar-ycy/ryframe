@@ -354,7 +354,7 @@ class SourceDatasetLineageTests(unittest.TestCase):
         )
         self.assertEqual(result["tenants"][1]["tenant_id"], f"{self.origin}-01")
         self.assertEqual(result["tenants"][1]["username"], "user-1")
-        self.assertEqual(result["tenants"][1]["password_env"], "PASSWORD_1")
+        self.assertNotIn("password_env", result["tenants"][1])
         self.assertEqual(result["tenants"][1]["records"], 9_091)
         self.assertEqual(len(result["tenants"][1]["posts"]), 3)
         self.assertTrue(result["tenants"][1]["files"])

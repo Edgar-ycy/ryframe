@@ -28,6 +28,7 @@ from restore_source_runtime_model import (
 )
 from restore_source_runtime_producer import (
     COMPLETION,
+    CONFIGURATION,
     INTENT,
     PROCESS,
     READY,
@@ -50,7 +51,7 @@ RECOVERED_RECEIPT_FIELDS = RECEIPT_FIELDS | {"recovery"}
 PRODUCER_BINDING_FIELDS = {"intent", "process", "ready", "stdout", "stderr", "completion"}
 ROOT_ENTRIES = {
     "before", "after", "audit", STAGING_DIRECTORY, INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
-    "cache-cleanup.json", "source-runtime.json",
+    CONFIGURATION, "cache-cleanup.json", "source-runtime.json",
 }
 RECOVERY_INTENT = "source-verification-recovery-intent.json"
 RECOVERY_RECEIPT = "source-verification-recovery.json"
@@ -58,7 +59,7 @@ RECOVERY_AUDIT = "recovery-audit"
 RECOVERED_ROOT_ENTRIES = ROOT_ENTRIES | {"failed.json", RECOVERY_INTENT, RECOVERY_RECEIPT, RECOVERY_AUDIT}
 FAILED_ROOT_ENTRIES = {
     "before", "audit", STAGING_DIRECTORY, INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
-    "failed.json",
+    CONFIGURATION, "failed.json",
 }
 RECOVERY_INTENT_FIELDS = {
     "format_version", "kind", "status", "source_generation", "dataset_lineage", "failure",
@@ -540,10 +541,8 @@ def execute_source_verification(
                 if before_value["image"] != facts["running"]["image"]:
                     raise ValueError("来源验收开始前完整像与同一运行 start 不同")
                 checkpoint()
-                node = Path(
-                    ExternalTools(facts["source"]["request"], expected_directory)
-                    .command("node")[0]
-                ).resolve(strict=True)
+                from restore_source_runtime_producer import native_tool
+                node = native_tool()
                 operation = uuid.uuid4().hex
                 node_result, _ = run_source_producer(
                     backend, facts["execution"], expected_directory, operation, node, start,
@@ -627,7 +626,8 @@ def _verify_recovery_prefix(backend: Path, directory: Path, facts: dict) -> dict
     if failure != {"status": "failed", "error": "ValueError"}:
         raise ValueError("来源验收恢复只接受缓存阶段 ValueError 失败记录")
     environment = configured(facts["environment"]["environment"])
-    node = Path(ExternalTools(facts["source"]["request"], directory).command("node")[0]).resolve(strict=True)
+    from restore_source_runtime_producer import native_tool
+    node = native_tool()
     producer, stdout = verify_source_producer(
         backend, facts["execution"], directory, facts["start_descriptor"],
         facts["receipt"]["dataset_lineage"], environment, node,
@@ -1103,7 +1103,8 @@ def verify_source_runtime(backend: Path, descriptor: dict, *, live: bool) -> dic
     ):
         raise ValueError("来源运行收据没有绑定同一 generation 与数据血缘")
     environment = configured(facts["environment"]["environment"])
-    node = Path(ExternalTools(facts["source"]["request"], directory).command("node")[0]).resolve(strict=True)
+    from restore_source_runtime_producer import native_tool
+    node = native_tool()
     producer, stdout = verify_source_producer(
         backend, facts["execution"], directory, receipt["source_generation"],
         receipt["dataset_lineage"], environment, node,

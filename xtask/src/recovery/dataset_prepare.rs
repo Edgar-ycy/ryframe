@@ -13,6 +13,8 @@ mod batch;
 mod configuration;
 #[path = "dataset_prepare/existing.rs"]
 mod existing;
+#[path = "dataset_prepare/existing_native.rs"]
+mod existing_native;
 #[path = "dataset_prepare/model.rs"]
 mod model;
 #[path = "dataset_prepare/prepare.rs"]
@@ -58,6 +60,11 @@ pub(crate) fn private_invocation_at(
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|arg| {
+        arg == existing_native::CLONE_MARKER || arg == existing_native::SOURCE_MARKER
+    }) {
+        return Some(existing_native::run(&args));
+    }
     if args.first().is_none_or(|arg| arg != MARKER) {
         return None;
     }
