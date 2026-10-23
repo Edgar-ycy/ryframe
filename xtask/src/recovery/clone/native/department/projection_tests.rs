@@ -3,15 +3,15 @@ use crate::recovery::clone::native::{digest, json as document, resources::common
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
-struct Fixture {
-    backend: PathBuf,
-    run: PathBuf,
-    root: PathBuf,
-    plan: Value,
-    ledger: Value,
+pub(super) struct Fixture {
+    pub(super) backend: PathBuf,
+    pub(super) run: PathBuf,
+    pub(super) root: PathBuf,
+    pub(super) plan: Value,
+    pub(super) ledger: Value,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let backend = crate::workspace::root_dir();
         let run = backend
             .join(".local-tests")

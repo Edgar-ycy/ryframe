@@ -8,8 +8,18 @@ use crate::Result;
 
 #[path = "department/artifacts.rs"]
 mod artifacts;
+#[path = "department/evidence.rs"]
+mod evidence;
+#[path = "department/history.rs"]
+mod history;
+#[path = "department/model.rs"]
+mod model;
+#[path = "department/plan.rs"]
+mod plan;
 #[path = "department/receipts.rs"]
 mod receipts;
+#[path = "department/workbook.rs"]
+mod workbook;
 
 pub(crate) fn dispatch(backend: &Path, run: &Path, args: &Value) -> Result<Value> {
     document::exact(args, &["backend_root", "parameters"], "部门证据工作区绑定")?;
@@ -22,6 +32,9 @@ pub(crate) fn dispatch(backend: &Path, run: &Path, args: &Value) -> Result<Value
 }
 
 pub(crate) fn execute(backend: &Path, run: &Path, args: &Value) -> Result<Value> {
+    if args["operation"] == "model" {
+        return model::dispatch(backend, run, args);
+    }
     if args["operation"] == "identity-projection" {
         return projection(backend, run, args);
     }
@@ -138,6 +151,15 @@ fn inspect(backend: &Path, output: &Path, target: &Value, attempt: u64) -> Resul
     Ok(descriptor)
 }
 
+#[cfg(test)]
+#[path = "department/history_tests.rs"]
+mod history_tests;
+#[cfg(test)]
+#[path = "department/model_tests.rs"]
+mod model_tests;
+#[cfg(test)]
+#[path = "department/plan_tests.rs"]
+mod plan_tests;
 #[cfg(test)]
 #[path = "department/projection_tests.rs"]
 mod projection_tests;

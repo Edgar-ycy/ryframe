@@ -19,6 +19,7 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import begin, binding, finish, load_state
 from restore_reference_plan import plan_hash
 import test_devex_clone_seed as fixtures
+from xlsx_workbook import SPREADSHEET_NS
 
 
 class FakeBridge:
@@ -70,7 +71,7 @@ class FakeBridge:
             f'<row r="{index}"><c r="A{index}" t="inlineStr"><is><t>{value}</t></is></c></row>'
             for index, value in enumerate(paths, 2))
         sheet = (f'<?xml version="1.0" encoding="UTF-8"?>'
-                 f'<worksheet xmlns="{model.SHEET_NS}"><sheetData>{cells}</sheetData></worksheet>').encode()
+                 f'<worksheet xmlns="{SPREADSHEET_NS}"><sheetData>{cells}</sheetData></worksheet>').encode()
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("xl/worksheets/sheet2.xml", sheet)
@@ -430,27 +431,27 @@ class DepartmentTests(unittest.TestCase):
         page = self.bridge.page([])
         page["data"]["total_pages"] = 1
         with self.assertRaises(ValueError):
-            model.page_data(page)
+            model.page_data(page, directory=self.directory)
 
-    def test_department_template_reuses_restricted_xlsx_reader(self):
-        sheet = (
-            f'<worksheet xmlns="{model.SHEET_NS}"><sheetData><row r="2">'
-            '<c r="A2" t="s"><v>1</v></c></row></sheetData></worksheet>'
-        )
-        strings = f'<sst xmlns="{model.SHEET_NS}"><si><t>唯一字符串</t></si></sst>'
-        invalid_index = io.BytesIO()
-        with zipfile.ZipFile(invalid_index, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("xl/worksheets/sheet2.xml", sheet)
-            archive.writestr("xl/sharedStrings.xml", strings)
-        with self.assertRaisesRegex(ValueError, "受限且可解析"):
-            model._workbook_paths(invalid_index.getvalue())
+    def test_model_input_cleanup_on_failure_or_cancel_preserves_unknown_write_evidence(self):
+        marker = self.directory / "unknown-write.json"
+        marker.write_bytes(b'{"state":"unknown"}')
+        for error in (TimeoutError, KeyboardInterrupt):
+            captured = []
 
-        traversal = io.BytesIO()
-        with zipfile.ZipFile(traversal, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("xl/worksheets/sheet2.xml", sheet)
-            archive.writestr("../outside", b"escape")
-        with self.assertRaisesRegex(ValueError, "受限且可解析"):
-            model._workbook_paths(traversal.getvalue())
+            def rejected(_backend, _directory, arguments):
+                path = Path(arguments["input"]["path"])
+                captured.append(path)
+                self.assertEqual(read_json(path), {"payload": "x" * 100000})
+                raise error()
+
+            with patch.object(model, "native_evidence", side_effect=rejected), self.assertRaises(error):
+                model._native_model("page-data", {"payload": "x" * 100000},
+                                    backend=self.backend, directory=self.directory)
+            self.assertEqual(len(captured), 1)
+            self.assertFalse(captured[0].parent.exists())
+            self.assertEqual(marker.read_bytes(), b'{"state":"unknown"}')
+
 
     def test_existing_unrelated_departments_are_preserved_and_fixed_root_is_added(self):
         tenant = self.targets[0]["tenant_id"]
@@ -496,18 +497,18 @@ class DepartmentTests(unittest.TestCase):
                     "username": target["admin"]["username"], "is_super_admin": False,
                     "permissions": ["*"]}
         with self.assertRaises(ValueError):
-            model.authorization(target, wildcard, write=True)
+            model.authorization(target, wildcard, write=True, directory=self.directory)
         wildcard.update(is_super_admin=True, permissions=["*", "system:dept:list", "system:dept:add"])
         with self.assertRaises(ValueError):
-            model.authorization(target, wildcard, write=True)
+            model.authorization(target, wildcard, write=True, directory=self.directory)
         template_identity = model.template_identities(self.backend, self.request)[0]
         expected = model.principal(template_identity)
         template_auth = {**expected, "is_super_admin": False,
                          "permissions": [model.TEMPLATE_PERMISSION]}
-        self.assertEqual(model.template_authorization(target, template_auth, expected), expected)
+        self.assertEqual(model.template_authorization(target, template_auth, expected, directory=self.directory), expected)
         for permissions in ([], ["*", model.TEMPLATE_PERMISSION]):
             with self.assertRaises(ValueError):
-                model.template_authorization(target, {**template_auth, "permissions": permissions}, expected)
+                model.template_authorization(target, {**template_auth, "permissions": permissions}, expected, directory=self.directory)
         self.prepared_identity()
         root = Path(self.request["identity_state"])
         ledger = read_json(root / "ledger.json")

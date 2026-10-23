@@ -44,6 +44,12 @@ impl Fixture {
         child.stdin.take().unwrap().write_all(payload).unwrap();
         child.wait_with_output().unwrap()
     }
+
+    fn model_payload(&self, method: &str, descriptor: Value) -> Vec<u8> {
+        serde_json::to_vec(&json!({"format_version":1,"kind":"ryframe-seed-evidence","run_dir":self.run,
+            "operation":"department-guard","arguments":{"backend_root":self.run.parent().unwrap().parent().unwrap(),
+                "parameters":{"operation":"model","method":method,"input":descriptor}}})).unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -116,6 +122,87 @@ fn cancelling_real_protocol_while_waiting_for_input_preserves_unpublished_eviden
     child.kill().unwrap();
     let status = child.wait().unwrap();
     assert!(!status.success());
+    assert!(!fixture.output.join("adoption-guard.json").exists());
+    assert_eq!(fs::read_dir(&fixture.output).unwrap().count(), 1);
+}
+
+fn input_binding(path: &std::path::Path) -> Value {
+    use sha2::{Digest, Sha256};
+    let content = fs::read(path).unwrap();
+    json!({"path":path,"bytes":content.len(),"sha256":hex::encode(Sha256::digest(&content))})
+}
+
+#[test]
+fn model_protocol_reads_large_bound_input_without_extending_stdin_limit_or_writing_receipts() {
+    let fixture = Fixture::new();
+    let path = fixture.run.join("model-input.json");
+    let page = json!({"response":{"code":200,"ignored": "x".repeat(100000),"data":{
+        "items":[],"page":1,"page_size":100,"max_page_size":100,"total":0,"total_pages":0}}});
+    fs::write(&path, serde_json::to_vec(&page).unwrap()).unwrap();
+    let payload = fixture.model_payload("page-data", input_binding(&path));
+    assert!(payload.len() < 65536);
+    let before = fs::read(&path).unwrap();
+    let output = fixture.invoke(&payload);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["result"], page["response"]["data"]);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(fs::read_dir(&fixture.run).unwrap().count(), 2);
+    fs::write(&path, b"{\"private-password\":\"must-not-appear\"}").unwrap();
+    let rejected = fixture.invoke(&payload);
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&rejected.stdout).contains("must-not-appear"));
+    assert!(rejected.stderr.is_empty());
+}
+
+#[test]
+fn model_protocol_refuses_duplicate_unknown_fields_and_path_escape_without_retry() {
+    let fixture = Fixture::new();
+    let path = fixture.run.join("model-input.json");
+    for content in [
+        b"{\"response\":{},\"response\":{}}".as_slice(),
+        b"{\"response\":{},\"unknown\":true}".as_slice(),
+    ] {
+        fs::write(&path, content).unwrap();
+        let output = fixture.invoke(&fixture.model_payload("page-data", input_binding(&path)));
+        assert_eq!(output.status.code(), Some(1));
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["error"]["automatic_retry_permitted"], false);
+    }
+    let mut binding = input_binding(&path);
+    binding["path"] = json!(fixture.run.join("../model-input.json"));
+    let output = fixture.invoke(&fixture.model_payload("page-data", binding));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read_dir(&fixture.output).unwrap().count(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn model_protocol_detects_hardlinked_input_drift_without_publishing_completion() {
+    let fixture = Fixture::new();
+    let path = fixture.run.join("model-input.json");
+    let mut request = json!({"response":{"code":200,"tag":"original","data":{
+        "items":[],"page":1,"page_size":100,"max_page_size":100,"total":0,"total_pages":0}}});
+    fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let payload = fixture.model_payload("page-data", input_binding(&path));
+    let alias = fixture.run.join("model-input-alias.json");
+    fs::hard_link(&path, &alias).unwrap();
+    request["response"]["tag"] = json!("changed");
+    fs::write(&alias, serde_json::to_vec(&request).unwrap()).unwrap();
+    let expected = fs::read(&path).unwrap();
+    let output = fixture.invoke(&payload);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read(&path).unwrap(), expected);
+    assert!(
+        fixture
+            .invoke(&fixture.model_payload("page-data", input_binding(&path)))
+            .status
+            .success()
+    );
     assert!(!fixture.output.join("adoption-guard.json").exists());
     assert_eq!(fs::read_dir(&fixture.output).unwrap().count(), 1);
 }

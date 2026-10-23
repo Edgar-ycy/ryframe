@@ -39,10 +39,10 @@ def guard(context, request, prerequisite=None, *, quick=False):
         require_prerequisite(context.backend, context.directory_root, request, prerequisite)
 
 
-def observe(bridge, action, target):
+def observe(context, bridge, action, target):
     listed = bridge.call("list", tenant_id=target["tenant_id"], name=action["body"]["name"])
-    authorization(target, listed["authorization"])
-    data = page_data(listed["response"])
+    authorization(target, listed["authorization"], directory=context.directory_root)
+    data = page_data(listed["response"], directory=context.directory_root)
     detail = None
     desired = [item for item in data["items"] if item.get("name") == action["body"]["name"]]
     if len(desired) == 1:
@@ -50,7 +50,7 @@ def observe(bridge, action, target):
         detail = bridge.call("detail", tenant_id=target["tenant_id"], department_id=identifier)
     template = bridge.call("template", tenant_id=target["tenant_id"])
     observed = {"list": listed, "detail": detail, "template": template}
-    image(action, observed, target)
+    image(action, observed, target, directory=context.directory_root)
     return observed
 
 
@@ -82,10 +82,10 @@ def create_plan(context, request, bridge):
                   "before": None, "before_evidence": None, "before_template_paths": None,
                   "principal": None, "template_principal": principal(template_identity)}
         guard(context, request, prior)
-        observed = observe(bridge, action, target)
+        observed = observe(context, bridge, action, target)
         filename = context.output / (target["slot"] + "-before.json")
         write_json(filename, observed)
-        current = image(action, observed, target)
+        current = image(action, observed, target, directory=context.directory_root)
         if (current["department"] is not None
                 or action["body"]["name"] in current["template"]["paths"]):
             raise ValueError("固定 seed 部门名称已经存在或模板状态矛盾")
@@ -112,16 +112,16 @@ def create_plan(context, request, bridge):
             "worker_authorized": False, "restore_qualified": False}
 
 
-def close_timeout(plan):
+def close_timeout():
     """为十个 owner、十个模板会话及 pacing 关闭保留有限预算。"""
-    return SESSION_CLOSE_SECONDS * (2 * len(targets(plan)) + 1) + CLOSE_MARGIN_SECONDS
+    return SESSION_CLOSE_SECONDS * 21 + CLOSE_MARGIN_SECONDS
 
 
-def _close_rpc_timeout(plan, deadline):
+def _close_rpc_timeout(deadline):
     remaining = deadline - time.monotonic() - CLOSE_MARGIN_SECONDS
     if remaining <= 0:
         raise TimeoutError("部门会话关闭已没有安全回收预算")
-    return min(SESSION_CLOSE_SECONDS * (2 * len(targets(plan)) + 1), remaining)
+    return min(SESSION_CLOSE_SECONDS * 21, remaining)
 
 
 def _fingerprints(attempt):
@@ -457,7 +457,7 @@ def save_observed(context, attempt, observed):
 
 
 def save_confirmation(context, plan, action, target, attempt, observed, evidence, *, response_proven):
-    if classify(action, observed, target) != "after":
+    if classify(action, observed, target, directory=context.directory_root) != "after":
         raise ValueError("部门完整后像不符")
     write_json(attempt / "confirmed.json", {"plan": binding(plan_path(context.directory_root)),
         "target": action["target"], "observed": observed, "post_attempted": True,
@@ -482,7 +482,7 @@ def apply_one(context, request, prerequisite, plan, action, target, bridge):
     idempotency_key = str(uuid4())
     if previous and (previous[-1] / "confirmed.json").exists():
         confirmation(context.backend, context.directory_root, plan, action, target, previous[-1])
-        if classify(action, observe(bridge, action, target), target) != "after":
+        if classify(action, observe(context, bridge, action, target), target, directory=context.directory_root) != "after":
             raise ValueError("已确认部门发生变化")
         return False
     if previous and (previous[-1] / "intent.json").exists():
@@ -495,9 +495,9 @@ def apply_one(context, request, prerequisite, plan, action, target, bridge):
     attempt = root / f"{len(previous) + 1:04d}"
     attempt.mkdir()
     guard(context, request, prerequisite, quick=True)
-    before = observe(bridge, action, target)
+    before = observe(context, bridge, action, target)
     write_json(attempt / "before.json", before)
-    if classify(action, before, target) != "before":
+    if classify(action, before, target, directory=context.directory_root) != "before":
         raise ValueError("POST 前租户部门目录不再为空")
     guard(context, request, prerequisite, quick=True)
     write_json(attempt / "intent.json", {"plan": binding(plan_path(context.directory_root)),
@@ -506,10 +506,10 @@ def apply_one(context, request, prerequisite, plan, action, target, bridge):
     response = bridge.call("create", tenant_id=target["tenant_id"], body=action["body"],
                            idempotency_key=idempotency_key)
     write_json(attempt / "api-response.json", response)
-    created = created_response(action, target, response)
-    observed = observe(bridge, action, target)
-    current = image(action, observed, target)
-    if current["department"] != created or classify(action, observed, target) != "after":
+    created = created_response(action, target, response, directory=context.directory_root)
+    observed = observe(context, bridge, action, target)
+    current = image(action, observed, target, directory=context.directory_root)
+    if current["department"] != created or classify(action, observed, target, directory=context.directory_root) != "after":
         raise ValueError("创建响应与随后完整目录及导入模板不同")
     descriptor = save_observed(context, attempt, observed)
     guard(context, request, prerequisite, quick=True)
@@ -526,19 +526,19 @@ def reconcile_one(context, request, prerequisite, plan, action, target, bridge):
     attempt = attempts[-1]
     if (attempt / "confirmed.json").exists():
         confirmation(context.backend, context.directory_root, plan, action, target, attempt)
-        if classify(action, observe(bridge, action, target), target) != "after":
+        if classify(action, observe(context, bridge, action, target), target, directory=context.directory_root) != "after":
             raise ValueError("已确认部门后像漂移")
         return "after"
     if not (attempt / "intent.json").exists():
         return None
     intent(context.backend, context.directory_root, plan, action, attempt)
-    observed = observe(bridge, action, target)
+    observed = observe(context, bridge, action, target)
     descriptor = save_observed(context, attempt, observed)
-    state = classify(action, observed, target)
+    state = classify(action, observed, target, directory=context.directory_root)
     response = attempt / "api-response.json"
     if response.exists():
-        created = created_response(action, target, read_json(response))
-        if state != "after" or image(action, observed, target)["department"] != created:
+        created = created_response(action, target, read_json(response), directory=context.directory_root)
+        if state != "after" or image(action, observed, target, directory=context.directory_root)["department"] != created:
             raise ValueError("已有部门成功响应与当前完整后像矛盾")
         guard(context, request, prerequisite, quick=True)
         save_confirmation(context, plan, action, target, attempt, observed,
@@ -566,8 +566,8 @@ def verify_all(context, request, prerequisite, plan, source_targets, bridge):
             raise ValueError("部门尚未覆盖全部普通租户")
         confirmation(context.backend, context.directory_root, plan, action, target, attempts[-1])
         guard(context, request, prerequisite, quick=True)
-        value = observe(bridge, action, target)
-        if classify(action, value, target) != "after":
+        value = observe(context, bridge, action, target)
+        if classify(action, value, target, directory=context.directory_root) != "after":
             raise ValueError("部门最终只读验证发现完整后像变化")
         filename = context.output / (target["slot"] + "-observed.json")
         write_json(filename, value)
@@ -640,7 +640,7 @@ def execute_departments(context, request, mode):
         if adopted is not None:
             return adopted
     source, private = identity_inputs(context.backend, context.directory_root, request, context.request)
-    timeout = close_timeout(source)
+    timeout = close_timeout()
     producer_context = SimpleNamespace(**{**vars(context), "request": request,
         "request_binding": binding(context.directory_root / "seed-runtime.json"),
         "private": {**context.private, "target_api": private}})
@@ -650,7 +650,7 @@ def execute_departments(context, request, mode):
     def request_close():
         nonlocal close_requested
         close_requested = True
-        return bridge.call("close", timeout=_close_rpc_timeout(source, deadline))
+        return bridge.call("close", timeout=_close_rpc_timeout(deadline))
 
     def close_producer():
         nonlocal producer_close_requested
