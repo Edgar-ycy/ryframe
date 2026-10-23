@@ -518,12 +518,12 @@ fn context_fixture_uses_the_published_session_context_and_user_schemas() {
             .as_object()
             .unwrap()
             .keys()
-            .collect::<Vec<_>>(),
+            .collect::<std::collections::BTreeSet<_>>(),
         user["properties"]
             .as_object()
             .unwrap()
             .keys()
-            .collect::<Vec<_>>()
+            .collect::<std::collections::BTreeSet<_>>()
     );
     assert!(
         !user["properties"]
