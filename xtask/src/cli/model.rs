@@ -248,7 +248,7 @@ pub(crate) enum CiCommand {
     Plan(Option<String>),
     Preflight(Option<String>),
     RustGate(RustGateOptions),
-    ResourceGate(Option<String>),
+    ResourceGate(ResourceGateOptions),
     ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
     ConsumerContract(ConsumerContractOptions),
@@ -421,6 +421,17 @@ pub(crate) struct RequiredOptions {
     pub(crate) event: RequiredEvent,
     pub(crate) action: Option<RequiredAction>,
     pub(crate) needs: BTreeMap<String, RequiredNeed>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ResourceGateOptions {
+    pub(crate) base_sha: Option<String>,
+    pub(crate) head_sha: Option<String>,
+    pub(crate) frontend_ref: Option<String>,
+    pub(crate) targeted: bool,
+    pub(crate) decision_file: Option<PathBuf>,
+    pub(crate) jobs: Option<usize>,
+    pub(crate) test_jobs: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

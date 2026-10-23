@@ -12,6 +12,8 @@ use super::super::model::{
 #[path = "ci/frontend_source.rs"]
 mod frontend_source;
 use frontend_source::parse_frontend_source;
+#[path = "ci/resource_gate.rs"]
+mod resource_gate;
 
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
     match args {
@@ -26,7 +28,7 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
             parse_resource_gate_replay(rest).map(CiCommand::ResourceGateReplay)
         }
         [command, rest @ ..] if command == "resource-gate" => {
-            parse_base_sha(rest).map(CiCommand::ResourceGate)
+            resource_gate::parse(rest).map(CiCommand::ResourceGate)
         }
         [command] if command == "integration" => Ok(CiCommand::Integration),
         [command, rest @ ..] if command == "consumer-contract" => {

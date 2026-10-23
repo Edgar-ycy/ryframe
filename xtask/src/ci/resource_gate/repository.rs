@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env,
     path::Path,
 };
 
@@ -44,13 +43,24 @@ struct OwnershipEntryWire {
     content_hash: String,
 }
 
-pub(crate) fn load(root: &Path, base: Option<&str>) -> Result<LoadedRepository, String> {
-    let base_ref =
-        base.ok_or_else(|| "缺少 --base-sha；无法确定资源差异，执行完整门禁".to_owned())?;
-    let head_ref = configured_head_ref().unwrap_or_else(|| "HEAD".to_owned());
+pub(crate) fn load(
+    root: &Path,
+    options: &crate::cli::ResourceGateOptions,
+) -> Result<LoadedRepository, String> {
+    let base_ref = options
+        .base_sha
+        .as_deref()
+        .ok_or_else(|| "缺少 --base-sha；无法确定资源差异，执行完整门禁".to_owned())?;
+    let head_ref = options
+        .head_sha
+        .as_deref()
+        .ok_or_else(|| "缺少 --head-sha；执行完整门禁".to_owned())?;
+    if options.frontend_ref.is_none() {
+        return Err("缺少 --frontend-ref；执行完整门禁".to_owned());
+    }
     let base = resolve_commit(root, base_ref)
         .map_err(|reason| format!("base ref 无效（{base_ref}）：{reason}"))?;
-    let head = resolve_commit(root, &head_ref)
+    let head = resolve_commit(root, head_ref)
         .map_err(|reason| format!("head ref 无效（{head_ref}）：{reason}"))?;
     let changes = load_changes(root, &base, &head)?;
     let base_resources = load_resources(root, &base)?;
@@ -70,23 +80,6 @@ pub(crate) fn load(root: &Path, base: Option<&str>) -> Result<LoadedRepository, 
             workspace_graph,
         },
     })
-}
-
-fn configured_head_ref() -> Option<String> {
-    preferred_nonempty_ref(
-        env::var("RYFRAME_CI_HEAD_SHA").ok().as_deref(),
-        env::var("GITHUB_SHA").ok().as_deref(),
-    )
-}
-
-pub(crate) fn preferred_nonempty_ref(
-    primary: Option<&str>,
-    fallback: Option<&str>,
-) -> Option<String> {
-    primary
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| fallback.filter(|value| !value.trim().is_empty()))
-        .map(str::to_owned)
 }
 
 fn resolve_commit(root: &Path, reference: &str) -> Result<String, String> {

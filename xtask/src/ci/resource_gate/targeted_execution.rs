@@ -23,7 +23,7 @@ pub(crate) fn targeted_test_jobs_from(
             .parse::<usize>()
             .ok()
             .filter(|jobs| (1..=64).contains(jobs))
-            .ok_or("RYFRAME_RESOURCE_GATE_TEST_JOBS 必须是 1 到 64 的整数")?,
+            .ok_or("--test-jobs 必须是 1 到 64 的整数")?,
         None => backend_budget.max(1),
     };
     Ok(jobs.min(backend_budget.max(1)))

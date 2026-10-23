@@ -146,14 +146,24 @@ fn ci_plan_selects_resource_and_full_fallback_surfaces_only() {
 }
 
 #[test]
-fn configured_ci_ref_prefers_explicit_range_and_ignores_empty_values() {
-    assert_eq!(
-        preferred_nonempty_ref(Some("head"), Some("github")),
-        Some("head".to_owned())
+fn resource_gate_requires_explicit_baseline_head_and_frontend_before_reading_git() {
+    let root = tempfile::tempdir().unwrap();
+    let mut options = crate::cli::ResourceGateOptions::default();
+    assert!(
+        load_repository(root.path(), &options)
+            .unwrap_err()
+            .contains("--base-sha")
     );
-    assert_eq!(
-        preferred_nonempty_ref(Some("  "), Some("github")),
-        Some("github".to_owned())
+    options.base_sha = Some("1".repeat(40));
+    assert!(
+        load_repository(root.path(), &options)
+            .unwrap_err()
+            .contains("--head-sha")
     );
-    assert_eq!(preferred_nonempty_ref(None, Some("")), None);
+    options.head_sha = Some("2".repeat(40));
+    assert!(
+        load_repository(root.path(), &options)
+            .unwrap_err()
+            .contains("--frontend-ref")
+    );
 }

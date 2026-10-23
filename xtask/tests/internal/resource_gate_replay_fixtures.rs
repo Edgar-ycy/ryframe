@@ -213,8 +213,12 @@ fn run_driver(mode: &str) {
         return;
     }
     let cwd = env::current_dir().unwrap();
-    let frontend =
-        PathBuf::from(env::var_os("RYFRAME_REPLAY_FIXTURE_FRONTEND").expect("fixture 缺少前端"));
+    let arguments = fs::read_to_string("fixture-arguments.txt").unwrap();
+    assert!(
+        arguments.trim().is_empty(),
+        "外部夹具不得被追加资源门禁参数"
+    );
+    let frontend = cwd.parent().unwrap().join("f");
     assert!(frontend.is_absolute());
     assert!(frontend.join("node_modules").is_dir());
     assert_eq!(
@@ -230,15 +234,12 @@ fn run_driver(mode: &str) {
     );
     let runner_target = PathBuf::from(env::var_os("CARGO_TARGET_DIR").unwrap());
     assert_eq!(runner_target, target.join("runner"));
-    let activation = env::var("RYFRAME_RESOURCE_GATE_TARGETED").ok();
     let actual_mode = if mode == "targeted" {
-        assert_eq!(activation.as_deref(), Some("replay-verified-v1"));
         fs::read_to_string("targeted-mode.txt")
             .unwrap()
             .trim()
             .to_owned()
     } else {
-        assert!(activation.is_none());
         "full".to_owned()
     };
     let status = fs::read_to_string("status.txt").unwrap();
@@ -258,7 +259,7 @@ fn run_driver(mode: &str) {
         }
     });
     fs::write(
-        PathBuf::from(env::var_os("RYFRAME_RESOURCE_GATE_DECISION_FILE").unwrap()),
+        cwd.parent().unwrap().join("decision.json"),
         serde_json::to_vec(&decision).unwrap(),
     )
     .unwrap();
@@ -428,7 +429,7 @@ fn create_fixture_wrapper(directory: &Path, label: &str, executable: &Path, test
         fs::write(
             &path,
             format!(
-                "@echo off\r\nsetlocal\r\nset \"FRONTEND=\"\r\n:parse\r\nif \"%~1\"==\"\" goto run\r\nif \"%~1\"==\"--frontend-dir\" (\r\n  set \"FRONTEND=%~2\"\r\n  shift\r\n)\r\nshift\r\ngoto parse\r\n:run\r\nset \"RYFRAME_REPLAY_FIXTURE_FRONTEND=%FRONTEND%\"\r\n\"{}\" --exact {} --nocapture\r\nexit /b %ERRORLEVEL%\r\n",
+                "@echo off\r\nsetlocal\r\ntype nul > fixture-arguments.txt\r\n:parse\r\nif \"%~1\"==\"\" goto run\r\n>>fixture-arguments.txt echo %~1\r\nshift\r\ngoto parse\r\n:run\r\n\"{}\" --exact {} --nocapture\r\nexit /b %ERRORLEVEL%\r\n",
                 executable.display(),
                 test
             ),
@@ -444,7 +445,7 @@ fn create_fixture_wrapper(directory: &Path, label: &str, executable: &Path, test
         fs::write(
             &path,
             format!(
-                "#!/bin/sh\nfrontend=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--frontend-dir\" ]; then frontend=\"$2\"; shift 2; else shift; fi\ndone\nRYFRAME_REPLAY_FIXTURE_FRONTEND=\"$frontend\" exec '{}' --exact {} --nocapture\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > fixture-arguments.txt\nexec '{}' --exact {} --nocapture\n",
                 executable.display(),
                 test
             ),

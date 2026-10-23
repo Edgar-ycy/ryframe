@@ -132,14 +132,20 @@ fn ci_baseline_is_explicit_and_validated_for_each_consumer() {
         ("preflight", CiCommand::Preflight(Some(sha.to_owned()))),
         (
             "resource-gate",
-            CiCommand::ResourceGate(Some(sha.to_owned())),
+            CiCommand::ResourceGate(crate::cli::ResourceGateOptions {
+                base_sha: Some(sha.to_owned()),
+                ..Default::default()
+            }),
         ),
     ] {
         assert_eq!(
             parse_command(&["check", "ci", name, "--base-sha", sha]).unwrap(),
             Command::Check(CheckCommand::Ci(expected))
         );
-        assert!(parse_command(&["check", "ci", name, "--base-sha", ""]).is_ok());
+        assert_eq!(
+            parse_command(&["check", "ci", name, "--base-sha", ""]).is_ok(),
+            name != "resource-gate"
+        );
         for invalid in ["HEAD", "123", "0000000000000000000000000000000000000000"] {
             assert!(parse_command(&["check", "ci", name, "--base-sha", invalid]).is_err());
         }
@@ -168,7 +174,7 @@ fn parses_check_task_graph_and_internal_groups() {
         ("plan", CiCommand::Plan(None)),
         ("preflight", CiCommand::Preflight(None)),
         ("rust-gate", CiCommand::RustGate(Default::default())),
-        ("resource-gate", CiCommand::ResourceGate(None)),
+        ("resource-gate", CiCommand::ResourceGate(Default::default())),
         ("integration", CiCommand::Integration),
         (
             "consumer-contract",
@@ -953,3 +959,6 @@ fn rejects_ambiguous_global_or_value_arguments() {
         .is_err()
     );
 }
+
+#[path = "cli_resource_gate.rs"]
+mod resource_gate_options;

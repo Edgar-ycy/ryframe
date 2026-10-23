@@ -47,10 +47,6 @@ const ENVIRONMENT_WHITELIST: &[&str] = &[
     "RUSTFLAGS",
     "RYFRAME_DEVEX_TARGET_ROOT",
     "RYFRAME_FAST_CHECK_CACHE_ROOT",
-    "RYFRAME_CI_FRONTEND_REF",
-    "RYFRAME_CI_HEAD_SHA",
-    "RYFRAME_RESOURCE_GATE_TEST_JOBS",
-    "RYFRAME_VERIFY_JOBS",
     "GITHUB_SHA",
     "SCCACHE_BASEDIRS",
     "SCCACHE_CACHE_SIZE",
@@ -529,11 +525,11 @@ fn default_jobs() -> usize {
 }
 
 fn effective_jobs(suite: DevexSuite, environment: &BTreeMap<String, String>) -> usize {
+    if suite == DevexSuite::ResourceGate {
+        return 12;
+    }
     if suite == DevexSuite::RustGate {
-        return environment
-            .get("RYFRAME_VERIFY_JOBS")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or_else(|| default_jobs().saturating_sub(2).clamp(4, 12));
+        return default_jobs().saturating_sub(2).clamp(4, 12);
     }
     environment
         .get("CARGO_BUILD_JOBS")

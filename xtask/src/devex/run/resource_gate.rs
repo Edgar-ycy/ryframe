@@ -48,10 +48,15 @@ pub(crate) fn read_resource_gate_decision(
 }
 
 fn validate(artifact: &ResourceGateDecisionArtifact) -> Result<()> {
+    let valid_mode =
+        (artifact.recognized && artifact.mode == "targeted" && artifact.fallback.is_none())
+            || (artifact.mode == "full"
+                && artifact
+                    .fallback
+                    .as_ref()
+                    .is_some_and(|reason| !reason.trim().is_empty()));
     if artifact.format_version == 1
-        && artifact.recognized
-        && artifact.mode == "targeted"
-        && artifact.fallback.is_none()
+        && valid_mode
         && !artifact.steps.is_empty()
         && artifact.steps.iter().all(|step| !step.trim().is_empty())
     {

@@ -79,7 +79,7 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
 
 fn execute_ci_command(command: &CiCommand, frontend_dir: &Path) -> Result<()> {
     let plan = ci_execution_plan_for(command)?;
-    task_plan::execute_ci_job(command, &plan, frontend_dir)
+    task_plan::execute_ci_job(command, &plan, frontend_dir, None)
 }
 
 fn plan(base: Option<&str>) -> Result<()> {
@@ -140,9 +140,7 @@ fn ci_changed_paths(root: &Path, event: &str, base: Option<&str>) -> Result<(Vec
         // 定时、手动和主分支构建必须完整执行，具体文件列表不影响计划。
         return Ok((Vec::new(), configured_ci_range_valid(base)));
     }
-    let head = env::var("RYFRAME_CI_HEAD_SHA")
-        .or_else(|_| env::var("GITHUB_SHA"))
-        .ok();
+    let head = env::var("GITHUB_SHA").ok();
     match (base, head.as_deref()) {
         (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head) => {
             match changed_paths_between(root, base, head) {
@@ -158,9 +156,7 @@ fn ci_changed_paths(root: &Path, event: &str, base: Option<&str>) -> Result<(Vec
 }
 
 fn configured_ci_range_valid(base: Option<&str>) -> bool {
-    let head = env::var("RYFRAME_CI_HEAD_SHA")
-        .or_else(|_| env::var("GITHUB_SHA"))
-        .ok();
+    let head = env::var("GITHUB_SHA").ok();
     matches!(
         (base, head.as_deref()),
         (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head)

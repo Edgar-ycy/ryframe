@@ -5,11 +5,10 @@ use super::{
     ci::resource_gate::{
         ChangeStatus, ChangedFile, GateStep, OwnershipEntry, OwnershipManifest, ResourceChangeSet,
         ResourceDefinition, ResourceGateInput, ResourceGateMode, affected_package_args_for_target,
-        analyze, decision_for, enforce_targeted_activation, parse_name_status, parse_ownership,
-        parse_resource_definition, plan_steps, preferred_nonempty_ref,
-        resource_check_args_for_target, should_run_for_paths, targeted_activation_from,
-        targeted_contract_steps, targeted_test_executables_from_messages, targeted_test_jobs_from,
-        targeted_test_names_from_args, write_decision_artifact,
+        analyze, decision_for, enforce_targeted_activation, load_repository, parse_name_status,
+        parse_ownership, parse_resource_definition, plan_steps, resource_check_args_for_target,
+        should_run_for_paths, targeted_contract_steps, targeted_test_executables_from_messages,
+        targeted_test_jobs_from, targeted_test_names_from_args, write_decision_artifact,
     },
 };
 
@@ -275,9 +274,6 @@ fn targeted_execution_stays_fail_closed_until_replay_activation() {
         enforce_targeted_activation(targeted.clone(), true),
         targeted
     );
-    assert!(!targeted_activation_from(None));
-    assert!(!targeted_activation_from(Some("1")));
-    assert!(targeted_activation_from(Some("replay-verified-v1")));
 }
 
 #[test]

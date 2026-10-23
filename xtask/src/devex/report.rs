@@ -57,6 +57,19 @@ pub(crate) struct ResourceGateDecisionEvidence {
 }
 
 impl ResourceGateDecisionEvidence {
+    pub(crate) fn is_valid(&self) -> bool {
+        self.is_targeted()
+            || (self.format_version == 1
+                && self.mode == "full"
+                && self
+                    .fallback
+                    .as_ref()
+                    .is_some_and(|reason| !reason.trim().is_empty())
+                && !self.steps.is_empty()
+                && self.steps.iter().all(|step| !step.trim().is_empty())
+                && valid_sha256(&self.artifact_sha256))
+    }
+
     pub(crate) fn is_targeted(&self) -> bool {
         self.format_version == 1
             && self.recognized
@@ -231,7 +244,12 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
         sccache: sccache::read_delta(run_dir, metadata.suite.uses_sccache())?,
         resource_gate_targeted_decisions: measurements
             .iter()
-            .filter(|sample| sample.resource_gate_decision.is_some())
+            .filter(|sample| {
+                sample
+                    .resource_gate_decision
+                    .as_ref()
+                    .is_some_and(ResourceGateDecisionEvidence::is_targeted)
+            })
             .count(),
         pairing,
         source_fingerprints,

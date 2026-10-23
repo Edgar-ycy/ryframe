@@ -220,6 +220,7 @@ pub(super) fn execute_ci_job(
     command: &CiCommand,
     plan: &TaskPlan,
     frontend_dir: &Path,
+    job_budget: Option<crate::check::VerifyJobBudget>,
 ) -> Result<()> {
     if let CiCommand::Required(options) = command {
         println!("开始 CI job：required（cargo xtask check ci required）");
@@ -246,8 +247,12 @@ pub(super) fn execute_ci_job(
         job.definition().command_name
     );
     let mut context = VerifyExecutionContext::new_ci(frontend_dir)?;
+    if let Some(jobs) = job_budget {
+        context.jobs = jobs;
+    }
     context.base_sha = match command {
-        CiCommand::Preflight(base) | CiCommand::ResourceGate(base) => base.clone(),
+        CiCommand::Preflight(base) => base.clone(),
+        CiCommand::ResourceGate(options) => options.base_sha.clone(),
         _ => None,
     };
     context.test_jobs = match command {
@@ -298,7 +303,10 @@ fn execute_ci_task(
             super::windows_smoke(&context.frontend_dir, context.test_jobs)
         }
         TaskExecutor::CiResourceGate => {
-            super::resource_gate::run(&context.frontend_dir, context.base_sha.as_deref())
+            let CiCommand::ResourceGate(options) = command else {
+                return Err("资源门禁任务需要 ResourceGateOptions".into());
+            };
+            super::resource_gate::run(&context.frontend_dir, options)
         }
         TaskExecutor::CiIntegration => super::integration(),
         executor => execute_registered_task(executor, TaskExecutionMode::Ci, context, state),

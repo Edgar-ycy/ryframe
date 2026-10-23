@@ -3,10 +3,7 @@ use std::collections::BTreeSet;
 use crate::Result;
 
 use super::{
-    super::{
-        metadata::RunMetadata,
-        model::{DevexSuite, RESOURCE_GATE_TARGETED_ACTIVATION, RESOURCE_GATE_TARGETED_ENV},
-    },
+    super::{metadata::RunMetadata, model::DevexSuite},
     SampleKind, SampleRecord, SampleStatus,
 };
 
@@ -37,13 +34,12 @@ pub(super) fn validate_execution_contract(metadata: &RunMetadata) -> Result<()> 
         _ => return Err("运行时 metadata 契约与 suite 不一致".into()),
     }
     if metadata.suite == DevexSuite::ResourceGate
-        && metadata
-            .environment
-            .get(RESOURCE_GATE_TARGETED_ENV)
-            .map(String::as_str)
-            != Some(RESOURCE_GATE_TARGETED_ACTIVATION)
+        && !metadata
+            .commands
+            .iter()
+            .any(|command| command.args.iter().any(|arg| arg == "--targeted"))
     {
-        return Err("resource-gate metadata 缺少 replay-verified targeted 激活值".into());
+        return Err("resource-gate metadata 缺少显式 --targeted 参数".into());
     }
     Ok(())
 }
@@ -109,13 +105,11 @@ fn validate_sample(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> 
 
 fn validate_decision(suite: DevexSuite, sample: &SampleRecord) -> Result<()> {
     match (suite, sample.status, sample.resource_gate_decision.as_ref()) {
-        (DevexSuite::ResourceGate, SampleStatus::Passed, Some(decision))
-            if decision.is_targeted() =>
-        {
+        (DevexSuite::ResourceGate, SampleStatus::Passed, Some(decision)) if decision.is_valid() => {
             Ok(())
         }
         (DevexSuite::ResourceGate, SampleStatus::Passed, _) => Err(format!(
-            "resource-gate 样本 {} 缺少有效 targeted decision 证据",
+            "resource-gate 样本 {} 缺少有效 decision 证据",
             sample.sequence
         )
         .into()),

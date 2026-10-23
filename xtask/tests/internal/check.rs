@@ -347,7 +347,9 @@ fn verify_job_budget_reserves_capacity_for_both_cargo_branches() {
             resource: 3,
         }
     );
-    assert!(verify_job_budget_from(Some("3"), 22).is_err());
+    assert_eq!(verify_job_budget_from(Some("1"), 22).unwrap().backend, 1);
+    assert_eq!(verify_job_budget_from(Some("3"), 22).unwrap().total, 3);
+    assert!(verify_job_budget_from(Some("0"), 22).is_err());
     assert!(verify_job_budget_from(Some("invalid"), 22).is_err());
 }
 

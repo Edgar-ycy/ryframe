@@ -68,7 +68,12 @@ class CiWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(baseline_steps), 3)
         for step in baseline_steps:
-            self.assertIn(f'--base-sha "{expression}"', step["run"])
+            if "resource-gate --frontend-dir" in step["run"]:
+                self.assertIn(f'base="{expression}"', step["run"])
+                self.assertIn('if [ -n "$base" ]; then base_args=(--base-sha "$base"); fi', step["run"])
+                self.assertIn('"${base_args[@]}"', step["run"])
+            else:
+                self.assertIn(f'--base-sha "{expression}"', step["run"])
         deployment_bases = [
             step["env"]["DEPLOYMENT_BASE_SHA"]
             for job in workflow["jobs"].values() for step in job["steps"]
@@ -131,18 +136,17 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("uses: ./frontend/.github/actions/setup-pnpm", block)
         self.assertIn("corepack pnpm install --frozen-lockfile", block)
         self.assertIn(
-            '--base-sha "'
-            "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}\"",
+            'base="${{ github.event.pull_request.base.sha || '
+            "(github.ref_type == 'branch' && github.event.before) || '' }}\"",
             block,
         )
         self.assertIn(
-            "RYFRAME_CI_HEAD_SHA: "
-            "${{ github.event.pull_request.head.sha || github.sha }}",
+            '--head-sha "${{ github.event.pull_request.head.sha || github.sha }}"',
             block,
         )
         self.assertIn(
-            "RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || "
-            "steps.resource-frontend-ref.outputs.ref }}",
+            '--frontend-ref "${{ steps.contract-frontend-ref.outputs.ref || '
+            'steps.resource-frontend-ref.outputs.ref }}"',
             block,
         )
         self.assertIn("working-directory: backend", block)
@@ -157,9 +161,15 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("tools/python/resource_gate_replay.py", block)
         self.assertNotIn("RYFRAME_CI_CHANGED_PATHS", block)
         self.assertIn(
-            "RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1",
+            "--targeted --jobs 12 --test-jobs 8",
             block,
         )
+        for name in (
+            "RYFRAME_CI_HEAD_SHA", "RYFRAME_CI_FRONTEND_REF",
+            "RYFRAME_RESOURCE_GATE_TARGETED", "RYFRAME_RESOURCE_GATE_DECISION_FILE",
+            "RYFRAME_RESOURCE_GATE_TEST_JOBS", "RYFRAME_VERIFY_JOBS",
+        ):
+            self.assertNotIn(name, workflow)
         self.assertNotIn("--resource", block)
         required = workflow.split("\n  required:\n", 1)[1]
         self.assertIn("- resource-gate", required)

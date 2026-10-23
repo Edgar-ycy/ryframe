@@ -330,7 +330,10 @@ fn command_normalization_keeps_frontend_absolute_and_expands_xtask() {
         frontend,
         target,
         runner,
-        "1111111111111111111111111111111111111111",
+        &crate::cli::ResourceGateOptions {
+            base_sha: Some("1111111111111111111111111111111111111111".to_owned()),
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(
@@ -384,7 +387,10 @@ fn command_expansion_preserves_option_and_unicode_path_argument_boundaries() {
         frontend,
         target,
         runner,
-        "1111111111111111111111111111111111111111",
+        &crate::cli::ResourceGateOptions {
+            base_sha: Some("1111111111111111111111111111111111111111".to_owned()),
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(
@@ -422,6 +428,16 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
             "stale-launcher".into(),
         ),
     ]);
+    for name in [
+        "RYFRAME_CI_HEAD_SHA",
+        "RYFRAME_CI_FRONTEND_REF",
+        "RYFRAME_RESOURCE_GATE_TARGETED",
+        "RYFRAME_RESOURCE_GATE_DECISION_FILE",
+        "RYFRAME_RESOURCE_GATE_TEST_JOBS",
+        "RYFRAME_VERIFY_JOBS",
+    ] {
+        environment.insert(name.to_owned(), "stale-value".into());
+    }
     let cache = Path::new("D:/cache");
     let controlled = controlled_environment(
         std::mem::take(&mut environment),
@@ -433,11 +449,23 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
     assert!(!controlled.contains_key("RYFRAME_CI_RUST_GATE_PROFILE"));
     assert!(!controlled.contains_key("RYFRAME_CI_TEST_JOBS"));
     assert_eq!(controlled.get("CARGO_INCREMENTAL").unwrap(), "0");
-    assert_eq!(controlled.get("RYFRAME_VERIFY_JOBS").unwrap(), "12");
-    assert_eq!(
-        controlled.get("RYFRAME_RESOURCE_GATE_TEST_JOBS").unwrap(),
-        "8"
-    );
+    assert!(!controlled.contains_key("RYFRAME_VERIFY_JOBS"));
+    assert!(!controlled.contains_key("RYFRAME_RESOURCE_GATE_TEST_JOBS"));
+    for name in [
+        "RYFRAME_CI_HEAD_SHA",
+        "RYFRAME_CI_FRONTEND_REF",
+        "RYFRAME_RESOURCE_GATE_TARGETED",
+        "RYFRAME_RESOURCE_GATE_DECISION_FILE",
+        "RYFRAME_RESOURCE_GATE_TEST_JOBS",
+        "RYFRAME_VERIFY_JOBS",
+    ] {
+        assert!(!controlled.contains_key(name));
+        assert!(
+            !recorded_environment(&controlled, false)
+                .unwrap()
+                .contains_key(name)
+        );
+    }
     assert!(!controlled.contains_key("RUSTFLAGS"));
     assert!(!controlled.contains_key("SCCACHE_GHA_ENABLED"));
     assert!(!controlled.contains_key("CMAKE_CXX_COMPILER_LAUNCHER"));
@@ -705,4 +733,107 @@ fn git_output(repository: &Path, arguments: &[&str]) -> String {
         .unwrap();
     assert!(output.status.success());
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[test]
+fn replay_case_protocol_uses_arguments_for_range_activation_and_budgets() {
+    let path = std::env::temp_dir().join("case 中文 decision.json");
+    let mut options = crate::cli::ResourceGateOptions {
+        base_sha: Some("1".repeat(40)),
+        head_sha: Some("2".repeat(40)),
+        frontend_ref: Some("3".repeat(40)),
+        targeted: true,
+        decision_file: Some(path.clone()),
+        jobs: Some(12),
+        test_jobs: Some(8),
+    };
+    let command = ["cargo", "xtask", "check", "ci", "resource-gate"].map(str::to_owned);
+    let expand = |options: &crate::cli::ResourceGateOptions| {
+        command_for_replay(
+            &command,
+            Path::new("D:/前端 worktree"),
+            Path::new("D:/target"),
+            Path::new("D:/runner/Cargo.toml"),
+            options,
+        )
+        .unwrap()
+    };
+    let expanded = expand(&options);
+    for (name, value) in [
+        ("--base-sha", "1".repeat(40)),
+        ("--head-sha", "2".repeat(40)),
+        ("--frontend-ref", "3".repeat(40)),
+        ("--decision-file", path.to_str().unwrap().to_owned()),
+        ("--jobs", "12".to_owned()),
+        ("--test-jobs", "8".to_owned()),
+    ] {
+        assert_eq!(expanded.iter().filter(|arg| *arg == name).count(), 1);
+        assert!(
+            expanded
+                .windows(2)
+                .any(|pair| pair == [name, value.as_str()])
+        );
+    }
+    assert_eq!(
+        expanded.iter().filter(|arg| *arg == "--targeted").count(),
+        1
+    );
+    options.targeted = false;
+    assert!(!expand(&options).iter().any(|arg| arg == "--targeted"));
+}
+
+#[test]
+fn replay_does_not_append_gate_protocol_to_external_or_other_xtask_commands() {
+    let options = crate::cli::ResourceGateOptions {
+        base_sha: Some("1".repeat(40)),
+        head_sha: Some("2".repeat(40)),
+        frontend_ref: Some("3".repeat(40)),
+        targeted: true,
+        decision_file: Some(std::env::temp_dir().join("decision.json")),
+        jobs: Some(12),
+        test_jobs: Some(8),
+    };
+    let expand = |command: &[String]| {
+        command_for_replay(
+            command,
+            Path::new("D:/frontend"),
+            Path::new("D:/target"),
+            Path::new("D:/runner/Cargo.toml"),
+            &options,
+        )
+        .unwrap()
+    };
+    for command in [
+        vec!["external-driver", "--mode", "check"],
+        vec!["cargo", "test", "--test", "resource-gate"],
+        vec!["external-driver", "--frontend-dir", "unchanged"],
+    ] {
+        let command = command.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(expand(&command), command);
+    }
+    for operation in ["plan", "preflight"] {
+        let command = ["cargo", "xtask", "check", "ci", operation].map(str::to_owned);
+        let expanded = expand(&command);
+        assert!(
+            expanded
+                .windows(3)
+                .any(|args| args == ["check", "ci", operation])
+        );
+        for flag in [
+            "--base-sha",
+            "--head-sha",
+            "--frontend-ref",
+            "--targeted",
+            "--decision-file",
+            "--jobs",
+            "--test-jobs",
+        ] {
+            assert!(
+                !expanded.iter().any(|arg| arg == flag),
+                "{operation}: {flag}"
+            );
+        }
+    }
+    let command = ["cargo", "xtask", "other", "ci", "resource-gate"].map(str::to_owned);
+    assert!(!expand(&command).iter().any(|arg| arg == "--targeted"));
 }

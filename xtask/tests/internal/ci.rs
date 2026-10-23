@@ -220,7 +220,7 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
             ][..],
         ),
         (
-            CiCommand::ResourceGate(None),
+            CiCommand::ResourceGate(Default::default()),
             &[TaskExecutor::CiResourceGate][..],
         ),
         (CiCommand::Integration, &[TaskExecutor::CiIntegration][..]),

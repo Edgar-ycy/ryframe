@@ -20,8 +20,6 @@ use super::{
     },
 };
 
-const TARGETED_ACTIVATION: &str = "replay-verified-v1";
-
 #[derive(Debug, Clone)]
 pub(crate) struct PrimeSelection {
     pub(crate) case: ReplayCase,
@@ -149,11 +147,25 @@ pub(crate) fn command_for_replay(
     frontend: &Path,
     runner_target: &Path,
     runner_manifest: &Path,
-    base_sha: &str,
+    options: &crate::cli::ResourceGateOptions,
 ) -> Result<Vec<String>, String> {
-    let normalized = command_for_frontend(command, frontend)?;
-    if !normalized.starts_with(&["cargo".to_owned(), "xtask".to_owned()]) {
-        return Ok(normalized);
+    if !command
+        .iter()
+        .take(2)
+        .map(String::as_str)
+        .eq(["cargo", "xtask"])
+    {
+        return Ok(command.to_vec());
+    }
+    let mut normalized = command_for_frontend(command, frontend)?;
+    if command.iter().take(5).map(String::as_str).eq([
+        "cargo",
+        "xtask",
+        "check",
+        "ci",
+        "resource-gate",
+    ]) {
+        append_gate_arguments(&mut normalized, options)?;
     }
     let mut expanded = vec![
         "cargo".to_owned(),
@@ -168,14 +180,34 @@ pub(crate) fn command_for_replay(
         "--".to_owned(),
     ];
     expanded.extend_from_slice(&normalized[2..]);
-    if normalized.get(2..5).is_some_and(|args| {
-        args[0] == "check"
-            && args[1] == "ci"
-            && matches!(args[2].as_str(), "plan" | "preflight" | "resource-gate")
-    }) {
-        expanded.extend(["--base-sha".to_owned(), base_sha.to_owned()]);
-    }
     Ok(expanded)
+}
+
+fn append_gate_arguments(
+    command: &mut Vec<String>,
+    options: &crate::cli::ResourceGateOptions,
+) -> Result<(), String> {
+    for (name, value) in [
+        ("--base-sha", options.base_sha.as_deref()),
+        ("--head-sha", options.head_sha.as_deref()),
+        ("--frontend-ref", options.frontend_ref.as_deref()),
+    ] {
+        if let Some(value) = value {
+            command.extend([name.to_owned(), value.to_owned()]);
+        }
+    }
+    if options.targeted {
+        command.push("--targeted".to_owned());
+    }
+    if let Some(path) = &options.decision_file {
+        command.extend(["--decision-file".to_owned(), path_text(path)?]);
+    }
+    for (name, value) in [("--jobs", options.jobs), ("--test-jobs", options.test_jobs)] {
+        if let Some(value) = value {
+            command.extend([name.to_owned(), value.to_string()]);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn arm_order(index: usize) -> (bool, bool) {
@@ -236,7 +268,15 @@ fn run_case_command(
         frontend_worktree,
         &target_root.join("runner"),
         execution.runner_manifest,
-        &execution.case.base,
+        &crate::cli::ResourceGateOptions {
+            base_sha: Some(execution.case.base.clone()),
+            head_sha: Some(execution.case.head.clone()),
+            frontend_ref: Some(execution.case.frontend_head.clone()),
+            targeted: execution.targeted,
+            decision_file: Some(decision_path.to_path_buf()),
+            jobs: Some(12),
+            test_jobs: Some(8),
+        },
     )?;
     let (status, duration_ms) =
         run_logged_command(&command, backend_worktree, &environment, command_log)?;
@@ -262,15 +302,6 @@ fn case_environment(execution: &CaseExecution<'_>) -> Result<ProcessEnvironment,
         .map_err(|error| format!("无法解析 replay Cargo target：{error}"))?;
     validate_inside(&target_root, execution.session, "replay Cargo target")?;
     let mut environment = execution.base_environment.clone();
-    for (key, value) in [
-        ("RYFRAME_CI_HEAD_SHA", execution.case.head.as_str()),
-        (
-            "RYFRAME_CI_FRONTEND_REF",
-            execution.case.frontend_head.as_str(),
-        ),
-    ] {
-        environment.insert(key.to_owned(), value.into());
-    }
     let integration_id = format!(
         "resource-replay-{}",
         execution
@@ -291,22 +322,6 @@ fn case_environment(execution: &CaseExecution<'_>) -> Result<ProcessEnvironment,
         "CARGO_TARGET_DIR".to_owned(),
         target_root.join("runner").as_os_str().to_owned(),
     );
-    environment.insert(
-        "RYFRAME_RESOURCE_GATE_DECISION_FILE".to_owned(),
-        canonical_path(execution.worktree)
-            .map_err(|error| format!("无法解析 replay 案例目录：{error}"))?
-            .join("decision.json")
-            .as_os_str()
-            .to_owned(),
-    );
-    if execution.targeted {
-        environment.insert(
-            "RYFRAME_RESOURCE_GATE_TARGETED".to_owned(),
-            TARGETED_ACTIVATION.into(),
-        );
-    } else {
-        environment.remove("RYFRAME_RESOURCE_GATE_TARGETED");
-    }
     Ok(environment)
 }
 

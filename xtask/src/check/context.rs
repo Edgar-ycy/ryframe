@@ -161,20 +161,23 @@ pub(crate) fn verify_job_budget_from(
         Some(value) => value
             .parse::<usize>()
             .ok()
-            .filter(|value| (4..=64).contains(value))
-            .ok_or("RYFRAME_VERIFY_JOBS 必须是 4 到 64 的整数")?,
+            .filter(|value| (1..=64).contains(value))
+            .ok_or("--jobs 必须是 1 到 64 的整数")?,
         None => available_parallelism.saturating_sub(2).clamp(4, 12),
     };
-    let backend = ((total * 2).div_ceil(3)).clamp(2, total - 2);
+    let backend = if total < 4 {
+        1
+    } else {
+        ((total * 2).div_ceil(3)).clamp(2, total - 2)
+    };
     Ok(VerifyJobBudget {
         total,
         backend,
-        resource: total - backend,
+        resource: (total - backend).max(1),
     })
 }
 
 pub(super) fn verify_job_budget() -> Result<VerifyJobBudget> {
     let available = thread::available_parallelism().map_or(4, usize::from);
-    let configured = env::var("RYFRAME_VERIFY_JOBS").ok();
-    verify_job_budget_from(configured.as_deref(), available)
+    verify_job_budget_from(None, available)
 }

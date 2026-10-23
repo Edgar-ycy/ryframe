@@ -54,7 +54,6 @@ jobs:
         id: plan
         env:
           GITHUB_EVENT_ACTION: ${{ github.event.action }}
-          RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: >-
           cargo xtask check ci plan
           --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
@@ -395,13 +394,15 @@ jobs:
       - name: 执行资源影响闭包与消费者门禁
         if: ${{ needs.plan.outputs.resource_gate == 'true' }}
         working-directory: backend
-        env:
-          RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
-          RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
-        run: >-
-          cargo xtask check ci resource-gate --frontend-dir ../frontend
-          --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
+        run: |
+          base="${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
+          base_args=()
+          if [ -n "$base" ]; then base_args=(--base-sha "$base"); fi
+          cargo xtask check ci resource-gate --frontend-dir ../frontend \
+            "${base_args[@]}" \
+            --head-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --frontend-ref "${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}" \
+            --targeted --jobs 12 --test-jobs 8
 
       - name: 校验正式前端消费契约
         if: ${{ needs.plan.outputs.consumer_contract == 'true' }}

@@ -1,8 +1,7 @@
 use std::{
-    env,
     fs::{self, OpenOptions},
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
     process,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -46,7 +45,7 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use repository::{
-    parse_name_status, parse_ownership, parse_resource_definition, preferred_nonempty_ref,
+    load as load_repository, parse_name_status, parse_ownership, parse_resource_definition,
 };
 use targeted_execution::execute_targeted_compile_contracts;
 #[allow(unused_imports)]
@@ -55,7 +54,6 @@ pub(crate) use targeted_execution::{
 };
 
 const DECISION_FORMAT_VERSION: u16 = 1;
-const DECISION_FILE_ENV: &str = "RYFRAME_RESOURCE_GATE_DECISION_FILE";
 static NEXT_DECISION_ARTIFACT: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -75,33 +73,32 @@ pub(crate) struct ResourceGateDecision {
     pub(crate) steps: Vec<String>,
 }
 
-pub(crate) fn run(frontend_dir: &Path, base: Option<&str>) -> Result<()> {
+pub(crate) fn run(frontend_dir: &Path, options: &crate::cli::ResourceGateOptions) -> Result<()> {
     let root = root_dir();
-    let recognized =
-        targeted_activation_from(env::var("RYFRAME_RESOURCE_GATE_TARGETED").ok().as_deref());
-    let loaded = match repository::load(&root, base) {
+    let recognized = options.targeted;
+    let loaded = match repository::load(&root, options) {
         Ok(loaded) => loaded,
         Err(reason) => {
             let change_set = ResourceChangeSet {
                 ambiguous_reason: Some(reason),
                 ..ResourceChangeSet::default()
             };
-            write_decision_from_environment(&decision_for(&change_set, recognized))?;
+            write_decision(options, &decision_for(&change_set, recognized))?;
             print_change_set(&change_set)?;
-            return execute_plan(&root, frontend_dir, None, &change_set);
+            return execute_plan(&root, frontend_dir, None, &change_set, options);
         }
     };
     let change_set = enforce_targeted_activation(analyze(&loaded.input), recognized);
-    write_decision_from_environment(&decision_for(&change_set, recognized))?;
+    write_decision(options, &decision_for(&change_set, recognized))?;
     println!("resource gate Git 范围：{}..{}", loaded.base, loaded.head);
     print_change_set(&change_set)?;
-    execute_plan(&root, frontend_dir, Some(&loaded.base), &change_set)
-}
-
-const TARGETED_ACTIVATION: &str = "replay-verified-v1";
-
-pub(crate) fn targeted_activation_from(value: Option<&str>) -> bool {
-    value.is_some_and(|value| value.trim() == TARGETED_ACTIVATION)
+    execute_plan(
+        &root,
+        frontend_dir,
+        Some(&loaded.base),
+        &change_set,
+        options,
+    )
 }
 
 pub(crate) fn enforce_targeted_activation(
@@ -159,17 +156,17 @@ fn package_step(label: &str, packages: &std::collections::BTreeSet<String>) -> S
     )
 }
 
-fn write_decision_from_environment(decision: &ResourceGateDecision) -> Result<()> {
-    let Some(path) = env::var_os(DECISION_FILE_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    else {
-        return Ok(());
-    };
-    if !path.is_absolute() {
-        return Err(format!("{DECISION_FILE_ENV} 必须是绝对路径").into());
+fn write_decision(
+    options: &crate::cli::ResourceGateOptions,
+    decision: &ResourceGateDecision,
+) -> Result<()> {
+    if let Some(path) = &options.decision_file {
+        if !path.is_absolute() {
+            return Err("--decision-file 必须是绝对路径".into());
+        }
+        write_decision_artifact(path, decision)?;
     }
-    write_decision_artifact(&path, decision)
+    Ok(())
 }
 
 pub(crate) fn write_decision_artifact(path: &Path, decision: &ResourceGateDecision) -> Result<()> {
@@ -234,39 +231,45 @@ fn execute_plan(
     frontend_dir: &Path,
     base: Option<&str>,
     change_set: &ResourceChangeSet,
+    options: &crate::cli::ResourceGateOptions,
 ) -> Result<()> {
     let available = std::thread::available_parallelism().map_or(4, usize::from);
-    let budget =
-        verify_job_budget_from(env::var("RYFRAME_VERIFY_JOBS").ok().as_deref(), available)?;
-    let configured_test_jobs = env::var("RYFRAME_RESOURCE_GATE_TEST_JOBS").ok();
+    let budget = verify_job_budget_from(
+        options.jobs.map(|value| value.to_string()).as_deref(),
+        available,
+    )?;
+    let configured_test_jobs = options.test_jobs.map(|value| value.to_string());
     let test_jobs = targeted_test_jobs_from(configured_test_jobs.as_deref(), budget.backend)?;
     let targets = ci_target_policy()?;
+    let execution = GateExecution {
+        budget,
+        test_jobs,
+        targets: &targets,
+        options,
+    };
     if change_set.ambiguous_reason.is_none() {
-        return execute_targeted_plan(
-            root,
-            frontend_dir,
-            base,
-            change_set,
-            budget,
-            test_jobs,
-            &targets,
-        );
+        return execute_targeted_plan(root, frontend_dir, base, change_set, execution);
     }
     for step in plan_steps(change_set) {
-        execute_step(root, frontend_dir, base, &step, budget, test_jobs, &targets)?;
+        execute_step(root, frontend_dir, base, &step, execution)?;
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+struct GateExecution<'a> {
+    budget: crate::check::VerifyJobBudget,
+    test_jobs: usize,
+    targets: &'a crate::check::VerifyTargetPolicy,
+    options: &'a crate::cli::ResourceGateOptions,
+}
+
 fn execute_targeted_plan(
     root: &Path,
     frontend_dir: &Path,
     base: Option<&str>,
     change_set: &ResourceChangeSet,
-    budget: crate::check::VerifyJobBudget,
-    test_jobs: usize,
-    targets: &crate::check::VerifyTargetPolicy,
+    execution: GateExecution<'_>,
 ) -> Result<()> {
     let packages = change_set.affected_crates.clone();
     let profiles = [BackendSnapshotProfile::OpenApiContract]
@@ -274,6 +277,7 @@ fn execute_targeted_plan(
         .collect();
     let snapshots = prepare_backend_snapshots(root, &profiles)?;
     run_parallel_tasks(
+        execution.budget.total > 1,
         root,
         "resource-gate-workspace",
         || {
@@ -282,29 +286,17 @@ fn execute_targeted_plan(
                 frontend_dir,
                 base,
                 &GateStep::ResourceDrift,
-                budget,
-                test_jobs,
-                targets,
+                execution,
             )?;
             targeted_resource_workspace_compilation(
                 root,
                 frontend_dir,
-                &targets.resource,
-                budget.resource,
+                &execution.targets.resource,
+                execution.budget.resource,
             )
         },
         "resource-gate-contracts",
-        || {
-            execute_targeted_contracts(
-                root,
-                frontend_dir,
-                base,
-                packages,
-                test_jobs,
-                targets,
-                &snapshots,
-            )
-        },
+        || execute_targeted_contracts(root, frontend_dir, base, packages, &snapshots, execution),
     )?;
     verify_backend_snapshots(root, &snapshots)
 }
@@ -314,9 +306,8 @@ fn execute_targeted_contracts(
     frontend_dir: &Path,
     base: Option<&str>,
     packages: std::collections::BTreeSet<String>,
-    test_jobs: usize,
-    targets: &crate::check::VerifyTargetPolicy,
     snapshots: &BackendSnapshots,
+    execution: GateExecution<'_>,
 ) -> Result<()> {
     let mut steps = targeted_contract_steps(packages).into_iter();
     let clippy = steps
@@ -326,11 +317,21 @@ fn execute_targeted_contracts(
         .next()
         .ok_or("resource gate 缺少 affected test 步骤")?;
     run_parallel_tasks(
+        execution.options.jobs != Some(1),
         root,
         "resource-gate-compile-contracts",
-        || execute_targeted_compile_contracts(root, &clippy, &test, test_jobs, targets, snapshots),
+        || {
+            execute_targeted_compile_contracts(
+                root,
+                &clippy,
+                &test,
+                execution.test_jobs,
+                execution.targets,
+                snapshots,
+            )
+        },
         "resource-gate-cross-contracts",
-        || execute_targeted_cross_contracts(root, frontend_dir, base, steps),
+        || execute_targeted_cross_contracts(root, frontend_dir, base, steps, execution.options),
     )
 }
 
@@ -339,6 +340,7 @@ fn execute_targeted_cross_contracts(
     frontend_dir: &Path,
     base: Option<&str>,
     steps: impl Iterator<Item = GateStep>,
+    options: &crate::cli::ResourceGateOptions,
 ) -> Result<()> {
     for step in steps {
         match step {
@@ -360,6 +362,7 @@ fn execute_targeted_cross_contracts(
                 run_migration_contract(root, base)?;
             }
             GateStep::OpenApiAndFrontendConsumer => {
+                super::verify_frontend_checkout(frontend_dir, options.frontend_ref.as_deref())?;
                 ci_consumer_contract_against_committed_snapshot(root, frontend_dir)?;
             }
             _ => return Err("resource gate 交叉契约步骤包含未知编译动作".into()),
@@ -380,70 +383,95 @@ pub(crate) fn targeted_contract_steps(
     ]
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_step(
     root: &Path,
     frontend_dir: &Path,
     base: Option<&str>,
     step: &GateStep,
-    budget: crate::check::VerifyJobBudget,
-    test_jobs: usize,
-    targets: &crate::check::VerifyTargetPolicy,
+    execution: GateExecution<'_>,
 ) -> Result<()> {
     match step {
-        GateStep::FullRustGate => super::execute_ci_command(
-            &crate::cli::CiCommand::RustGate(Default::default()),
+        GateStep::FullRustGate => execute_nested(
+            &crate::cli::CiCommand::RustGate(crate::cli::RustGateOptions {
+                frontend_ref: execution.options.frontend_ref.clone(),
+                test_jobs: Some(execution.test_jobs),
+                ..Default::default()
+            }),
             frontend_dir,
+            execution.budget,
         )?,
         GateStep::FullIntegration => {
             super::execute_ci_command(&crate::cli::CiCommand::Integration, frontend_dir)?
         }
-        GateStep::FullConsumerContract => super::execute_ci_command(
-            &crate::cli::CiCommand::ConsumerContract(nested_consumer_contract_options()),
+        GateStep::FullConsumerContract => execute_nested(
+            &crate::cli::CiCommand::ConsumerContract(nested_consumer_contract_options(
+                execution.options,
+            )),
             frontend_dir,
+            execution.budget,
         )?,
         GateStep::ResourceDrift => {
             run_owned(
                 root,
                 "cargo",
-                &resource_check_args_for_target(frontend_dir, &targets.resource),
+                &resource_check_args_for_target(frontend_dir, &execution.targets.resource),
             )?;
         }
-        GateStep::ResourceWorkspace => {
-            resource_workspace_compilation(root, frontend_dir, &targets.resource, budget.resource)?
-        }
+        GateStep::ResourceWorkspace => resource_workspace_compilation(
+            root,
+            frontend_dir,
+            &execution.targets.resource,
+            execution.budget.resource,
+        )?,
         GateStep::AffectedClippy(packages) => run_owned(
             root,
             "cargo",
             &affected_package_args_for_target(
                 "clippy",
                 packages,
-                &targets.backend,
-                budget.backend,
+                &execution.targets.backend,
+                execution.budget.backend,
             )?,
         )?,
         GateStep::AffectedTest(packages) => run_owned(
             root,
             "cargo",
-            &affected_package_args_for_target("test", packages, &targets.backend, test_jobs)?,
+            &affected_package_args_for_target(
+                "test",
+                packages,
+                &execution.targets.backend,
+                execution.test_jobs,
+            )?,
         )?,
         GateStep::PermissionContract => crate::check::permission_routes::run(root)?,
         GateStep::MigrationContract => {
             run_migration_contract(root, base)?;
         }
-        GateStep::OpenApiAndFrontendConsumer => super::execute_ci_command(
-            &crate::cli::CiCommand::ConsumerContract(nested_consumer_contract_options()),
+        GateStep::OpenApiAndFrontendConsumer => execute_nested(
+            &crate::cli::CiCommand::ConsumerContract(nested_consumer_contract_options(
+                execution.options,
+            )),
             frontend_dir,
+            execution.budget,
         )?,
     }
     Ok(())
 }
 
-fn nested_consumer_contract_options() -> crate::cli::ConsumerContractOptions {
+fn execute_nested(
+    command: &crate::cli::CiCommand,
+    frontend: &Path,
+    budget: crate::check::VerifyJobBudget,
+) -> Result<()> {
+    let plan = super::ci_execution_plan_for(command)?;
+    super::task_plan::execute_ci_job(command, &plan, frontend, Some(budget))
+}
+
+fn nested_consumer_contract_options(
+    options: &crate::cli::ResourceGateOptions,
+) -> crate::cli::ConsumerContractOptions {
     crate::cli::ConsumerContractOptions {
-        frontend_ref: env::var("RYFRAME_CI_FRONTEND_REF")
-            .ok()
-            .filter(|value| !value.trim().is_empty()),
+        frontend_ref: options.frontend_ref.clone(),
         ..Default::default()
     }
 }

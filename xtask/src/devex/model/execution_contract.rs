@@ -1,8 +1,6 @@
 use super::{CacheState, DevexSuite};
 
-pub(crate) const RESOURCE_GATE_TARGETED_ENV: &str = "RYFRAME_RESOURCE_GATE_TARGETED";
 pub(crate) const RESOURCE_GATE_TARGETED_ACTIVATION: &str = "replay-verified-v1";
-pub(crate) const RESOURCE_GATE_DECISION_ENV: &str = "RYFRAME_RESOURCE_GATE_DECISION_FILE";
 pub(crate) const RESOURCE_GATE_DECISION_TEMPLATE: &str =
     "{target}/resource-gate-decision-{label}.json";
 

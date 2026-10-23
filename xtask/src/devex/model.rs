@@ -14,8 +14,7 @@ use steps::*;
 
 pub(crate) use baseline::{BaselineContract, BaselineProvenance, PairedWorkloadContract};
 pub(crate) use execution_contract::{
-    RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
-    RESOURCE_GATE_TARGETED_ENV,
+    RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,14 +119,7 @@ impl DevexSuite {
             Self::ResourceGate => Ok(SuiteDefinition {
                 steps: exact_variant(variant, "auto", RESOURCE_GATE, self)?,
                 features: &["resource"],
-                environment: &[
-                    ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
-                    (
-                        RESOURCE_GATE_TARGETED_ENV,
-                        RESOURCE_GATE_TARGETED_ACTIVATION,
-                    ),
-                    (RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE),
-                ],
+                environment: &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}")],
                 remove_environment: &[],
                 requirement: SuiteRequirement::FrontendFiles,
                 requires_frontend: true,

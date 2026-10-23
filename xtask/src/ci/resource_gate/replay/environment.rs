@@ -11,8 +11,6 @@ use serde_json::Value;
 
 use super::{path::normalized_path, sha256_json};
 
-pub(super) const FIXED_VERIFY_JOBS: &str = "12";
-pub(super) const FIXED_RESOURCE_GATE_TEST_JOBS: &str = "8";
 const RUST_ENVIRONMENT_KEYS: [&str; 18] = [
     "CARGO_BUILD_JOBS",
     "CARGO_BUILD_TARGET",
@@ -33,12 +31,8 @@ const RUST_ENVIRONMENT_KEYS: [&str; 18] = [
     "RUSTFLAGS",
     "RUSTUP_TOOLCHAIN",
 ];
-const REMOVED_ENVIRONMENT_KEYS: [&str; 7] = [
+const REMOVED_ENVIRONMENT_KEYS: [&str; 3] = [
     "RYFRAME_DEVEX_TARGET_ROOT",
-    "RYFRAME_RESOURCE_GATE_DECISION_FILE",
-    "RYFRAME_RESOURCE_GATE_TEST_JOBS",
-    "RYFRAME_RESOURCE_GATE_TARGETED",
-    "RYFRAME_VERIFY_JOBS",
     "CMAKE_C_COMPILER_LAUNCHER",
     "CMAKE_CXX_COMPILER_LAUNCHER",
 ];
@@ -157,6 +151,8 @@ pub(crate) fn controlled_environment(
         .keys()
         .filter(|key| {
             key.starts_with("RYFRAME_CI_")
+                || key.starts_with("RYFRAME_RESOURCE_GATE_")
+                || key.starts_with("RYFRAME_VERIFY_")
                 || key.starts_with("SCCACHE_")
                 || RUST_ENVIRONMENT_KEYS.contains(&key.as_str())
                 || REMOVED_ENVIRONMENT_KEYS.contains(&key.as_str())
@@ -170,11 +166,6 @@ pub(crate) fn controlled_environment(
         ("CI", "1"),
         ("CARGO_INCREMENTAL", "0"),
         ("CARGO_TERM_COLOR", "never"),
-        (
-            "RYFRAME_RESOURCE_GATE_TEST_JOBS",
-            FIXED_RESOURCE_GATE_TEST_JOBS,
-        ),
-        ("RYFRAME_VERIFY_JOBS", FIXED_VERIFY_JOBS),
     ] {
         environment.insert(key.to_owned(), OsString::from(value));
     }
@@ -192,13 +183,7 @@ pub(crate) fn recorded_environment(
     activation_gate: bool,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut recorded = BTreeMap::new();
-    for key in [
-        "CI",
-        "CARGO_INCREMENTAL",
-        "CARGO_TERM_COLOR",
-        "RYFRAME_RESOURCE_GATE_TEST_JOBS",
-        "RYFRAME_VERIFY_JOBS",
-    ] {
+    for key in ["CI", "CARGO_INCREMENTAL", "CARGO_TERM_COLOR"] {
         recorded.insert(
             key.to_owned(),
             required_text_value(environment, key)?.to_owned(),

@@ -3,6 +3,7 @@ use std::{path::Path, thread};
 use crate::{Result, process::with_process_log};
 
 pub(super) fn run_parallel_tasks<Left, Right>(
+    parallel: bool,
     root: &Path,
     left_label: &str,
     left: Left,
@@ -13,6 +14,10 @@ where
     Left: FnOnce() -> Result<()> + Send,
     Right: FnOnce() -> Result<()> + Send,
 {
+    if !parallel {
+        left()?;
+        return right();
+    }
     let logs = root.join("target/verify/logs");
     let (left_result, right_result) = thread::scope(|scope| {
         let left_log = logs.join(format!("{left_label}.log"));

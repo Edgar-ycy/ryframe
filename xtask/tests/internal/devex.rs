@@ -114,6 +114,11 @@ fn resource_gate_decision_artifact_must_prove_targeted_mode() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("未证明") && error.contains("targeted"));
+    fs::write(target.join("resource-gate-decision-sample-003.json"),
+        r#"{"formatVersion":1,"recognized":true,"mode":"full","fallback":"缺少 --base-sha","steps":["full-rust-gate"]}"#).unwrap();
+    let full = read_resource_gate_decision(&target, "sample-003").unwrap();
+    assert!(full.is_valid());
+    assert!(!full.is_targeted());
     fs::remove_dir_all(target).unwrap();
 }
 
@@ -177,15 +182,13 @@ fn gate_suite_definitions_preserve_audited_execution_contracts() {
     assert!(gate.steps[0].args.contains(&"{target}/driver"));
     assert_eq!(
         gate.environment,
-        &[
-            ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
-            ("RYFRAME_RESOURCE_GATE_TARGETED", "replay-verified-v1"),
-            (
-                "RYFRAME_RESOURCE_GATE_DECISION_FILE",
-                "{target}/resource-gate-decision-{label}.json"
-            )
-        ]
+        &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),]
     );
+    assert!(gate.steps[0].args.contains(&"--targeted"));
+    assert!(gate.steps[0].args.contains(&"--decision-file"));
+    assert!(gate.steps[0].args.contains(&"--jobs"));
+    assert!(gate.steps[0].args.contains(&"--test-jobs"));
+    assert!(!gate.steps[0].args.contains(&"--head-sha"));
     let rust_gate = DevexSuite::RustGate.definition("default").unwrap();
     assert!(rust_gate.steps[0].args.contains(&"rust-gate"));
     assert!(rust_gate.steps[0].args.contains(&"{target}/driver"));
@@ -357,7 +360,7 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
     ]);
     assert_eq!(environment.get("CARGO_INCREMENTAL").unwrap(), "0");
     assert_eq!(environment.get("CARGO_NET_OFFLINE").unwrap(), "true");
-    assert_eq!(environment.get("RYFRAME_VERIFY_JOBS").unwrap(), "8");
+    assert!(!environment.contains_key("RYFRAME_VERIFY_JOBS"));
     assert!(environment.contains_key("RUSTFLAGS"));
     assert_eq!(
         environment.get("RUSTC_WORKSPACE_WRAPPER").unwrap(),
