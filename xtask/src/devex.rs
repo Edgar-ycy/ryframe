@@ -27,12 +27,12 @@ mod preflight;
 mod report;
 #[path = "devex/runtime.rs"]
 mod runtime;
-#[path = "devex/runtime_native/mod.rs"]
-pub(crate) mod runtime_native;
 #[path = "devex/runtime_configuration.rs"]
 pub(crate) mod runtime_configuration;
 #[path = "devex/runtime_input.rs"]
 pub(crate) mod runtime_input;
+#[path = "devex/runtime_native/mod.rs"]
+pub(crate) mod runtime_native;
 #[path = "devex/runtime_pacing.rs"]
 pub(crate) mod runtime_pacing;
 #[path = "devex/runtime_selection.rs"]
@@ -374,7 +374,7 @@ pub(crate) fn usage() -> &'static str {
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
      cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n\
-     Linux 内存测量需要 RYFRAME_DEVEX_CGROUP_ROOT 指向已授权且启用 memory controller 的 cgroup v2 委托目录；缺失时保留不可用原因并阻止完整性能验收。\n\
+     Linux 内存测量从当前进程的 cgroup v2 归属核对本次门禁创建的 measure 子树；不在受管 cgroup 门禁中时保留不可用原因并阻止完整性能验收。\n\
      cgroup CI 门禁只允许 Linux GitHub Actions 的非 root runner；run 先创建精确证据目录，再由 Rust xtask 的 prepare、独立降权 Cargo runner、test 和 cleanup 阶段执行。cleanup 只处理同一 run/attempt/nonce 与内核身份匹配的 /sys/fs/cgroup/ryframe-devex-ci-*。"
 }
 

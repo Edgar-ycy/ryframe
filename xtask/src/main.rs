@@ -37,6 +37,14 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if let Some(result) = devex::memory::run_trampoline_if_requested() {
+        if let Err(error) = result {
+            eprintln!("DevEx cgroup 执行跳板失败：{error}");
+            std::process::exit(125);
+        }
+        unreachable!("成功的 exec 不会返回");
+    }
     if let Some(code) = devex::runtime_native::entry::run_hidden_if_requested() {
         std::process::exit(code);
     }
@@ -60,14 +68,6 @@ fn main() {
     }
     if let Some(code) = devex::import_samples::run_hidden_if_requested() {
         std::process::exit(code);
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(result) = devex::memory::run_trampoline_if_requested() {
-        if let Err(error) = result {
-            eprintln!("DevEx cgroup 执行跳板失败：{error}");
-            std::process::exit(125);
-        }
-        unreachable!("成功的 exec 不会返回");
     }
     if let Some(result) = devex::cgroup::run_hidden_if_requested() {
         if let Err(error) = result {

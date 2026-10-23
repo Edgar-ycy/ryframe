@@ -171,7 +171,6 @@ fn run_cargo(
         .current_dir(&plan.backend)
         .env_clear()
         .envs(&plan.environment)
-        .env("RYFRAME_DEVEX_CGROUP_ROOT", plan.root.join("measure"))
         .env("CARGO_INCREMENTAL", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))

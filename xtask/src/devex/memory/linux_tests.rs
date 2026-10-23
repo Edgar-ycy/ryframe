@@ -7,9 +7,9 @@ const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
 #[test]
 #[ignore = "仅由 stdin 透传测试作为子进程调用"]
 fn stdin_target() {
-    if env::args_os().next().as_deref() == Some(OsStr::new(IN_PLACE_TRAMPOLINE_ARG0)) {
-        let error = target_command(env::args_os()).unwrap().exec();
-        panic!("测试目标 exec 失败：{error}");
+    if let Some(result) = run_trampoline_if_requested() {
+        result.unwrap();
+        unreachable!("成功的 exec 不会返回");
     }
     for (key, _) in env::vars_os() {
         let key = key.to_string_lossy().to_ascii_uppercase();
@@ -52,9 +52,7 @@ fn invocation(input: Stdio) -> Command {
         .env("RYFRAME_OLD_PROTOCOL", "must-not-leak")
         .env("VITE_OLD_PROTOCOL", "must-not-leak")
         .env("SNOWFLAKE_WORKER_ID", "must-not-leak")
-        .env("APP_DATABASE_PASSWORD", "must-not-leak")
-        // 原生入口会清除继承的旧配置，采集器仍须能传递其 cgroup 登记信息。
-        .env_remove(CGROUP_ROOT_ENV);
+        .env("APP_DATABASE_PASSWORD", "must-not-leak");
     command
 }
 
@@ -160,12 +158,47 @@ fn trampoline_keeps_ordinary_command_arguments_directory_and_exit_status() {
         trampoline.get_args().collect::<Vec<_>>(),
         ["/bin/sh", "-c", "exit 7"]
     );
-    let arguments = std::iter::once(executable.into_os_string())
-        .chain(trampoline.get_args().map(OsStr::to_owned));
-    let mut target = target_command(arguments).unwrap();
+    let arguments = trampoline.get_args().map(OsStr::to_owned);
+    let mut target = target_command(false, arguments).unwrap();
     target.stdin(Stdio::null());
     let (status, stdout, stderr) = bounded_output(target);
     assert_eq!(status.code(), Some(7));
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
+}
+
+#[test]
+fn trampoline_marker_round_trips_mode_and_non_utf8_group() {
+    let group = PathBuf::from(OsString::from_vec(
+        b"/delegated/ryframe-devex-1-\xff-3".to_vec(),
+    ));
+    for (mode, in_place) in [(IN_PLACE_MODE, true), (EXTERNAL_MODE, false)] {
+        let marker = trampoline_marker(mode, &group).unwrap();
+        assert_eq!(
+            parse_trampoline_marker(&marker).unwrap(),
+            Some((in_place, group.clone()))
+        );
+    }
+    assert!(
+        parse_trampoline_marker(OsStr::new("ordinary-program"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(parse_trampoline_marker(OsStr::new("__ryframe_devex_cgroup:x:/tmp/a")).is_err());
+}
+
+#[test]
+fn gate_group_name_requires_exact_run_attempt_and_nonce() {
+    assert!(valid_gate_name(
+        "ryframe-devex-ci-12-3-0123456789abcdef0123456789abcdef"
+    ));
+    for name in [
+        "ryframe-devex-ci-0-3-0123456789abcdef0123456789abcdef",
+        "ryframe-devex-ci-12-03-0123456789abcdef0123456789abcdef",
+        "ryframe-devex-ci-12-3-0123456789ABCDEF0123456789ABCDEF",
+        "ryframe-devex-ci-12-3-0123",
+        "ryframe-devex-ci-12-3-0123456789abcdef0123456789abcdef-extra",
+    ] {
+        assert!(!valid_gate_name(name), "{name}");
+    }
 }

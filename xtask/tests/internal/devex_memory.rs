@@ -130,7 +130,11 @@ fn memory_child() {
         return;
     };
     assert!(
-        std::env::var_os("RYFRAME_DEVEX_CGROUP_TRAMPOLINE").is_none(),
+        !std::env::args_os()
+            .next()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .starts_with("__ryframe_devex_cgroup:"),
         "私有跳板标记不得泄漏给目标程序"
     );
     #[cfg(target_os = "linux")]
@@ -211,9 +215,9 @@ fn linux_owned_group_name_requires_exact_numeric_identity() {
 
 #[cfg(target_os = "linux")]
 #[test]
-#[ignore = "需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT"]
+#[ignore = "需要由 DevEx cgroup 门禁创建并委托 memory controller"]
 fn linux_cgroup_joins_before_exec_covers_grandchildren_and_cleans_its_group() {
-    let root = std::env::var_os("RYFRAME_DEVEX_CGROUP_ROOT").expect("缺少显式 cgroup 委托目录");
+    let root = memory::linux::authorized_root().expect("缺少受管 cgroup measure 目录");
     let entries = || {
         fs::read_dir(&root)
             .unwrap()
@@ -238,9 +242,9 @@ fn linux_cgroup_joins_before_exec_covers_grandchildren_and_cleans_its_group() {
 
 #[cfg(target_os = "linux")]
 #[test]
-#[ignore = "需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT"]
+#[ignore = "需要由 DevEx cgroup 门禁创建并委托 memory controller"]
 fn linux_cgroup_fails_closed_and_reaps_descendants_that_outlive_command() {
-    let root = std::env::var_os("RYFRAME_DEVEX_CGROUP_ROOT").expect("缺少显式 cgroup 委托目录");
+    let root = memory::linux::authorized_root().expect("缺少受管 cgroup measure 目录");
     let before = fs::read_dir(&root).unwrap().count();
     let (status, reading) = memory::linux::execute_with_trampoline(
         child_command("orphan-parent"),
@@ -254,11 +258,11 @@ fn linux_cgroup_fails_closed_and_reaps_descendants_that_outlive_command() {
 
 #[cfg(target_os = "linux")]
 #[test]
-#[ignore = "需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT"]
+#[ignore = "需要由 DevEx cgroup 门禁创建并委托 memory controller"]
 fn linux_cgroup_native_stdin_preserves_protocol_errors_and_cleans_its_group() {
     use std::io::{Seek, SeekFrom, Write};
 
-    let root = std::env::var_os("RYFRAME_DEVEX_CGROUP_ROOT").expect("缺少显式 cgroup 委托目录");
+    let root = memory::linux::authorized_root().expect("缺少受管 cgroup measure 目录");
     let entries = || {
         fs::read_dir(&root)
             .unwrap()
@@ -281,8 +285,7 @@ fn linux_cgroup_native_stdin_preserves_protocol_errors_and_cleans_its_group() {
             .arg("__devex-runtime")
             .stdin(input)
             .stdout(Stdio::null())
-            .stderr(output.reopen().unwrap())
-            .env_remove("RYFRAME_DEVEX_CGROUP_ROOT");
+            .stderr(output.reopen().unwrap());
         let (status, reading) =
             memory::linux::execute_with_trampoline(command, executable).unwrap();
         assert_eq!(status.code(), Some(2));

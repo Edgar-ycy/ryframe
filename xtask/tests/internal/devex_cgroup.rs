@@ -476,9 +476,9 @@ fn extended_ci_runs_only_rust_and_always_cleans_then_uploads() {
 
     let memory = fs::read_to_string(root_dir().join("xtask/tests/internal/devex_memory.rs"))
         .expect("读取内存用例");
-    assert!(memory.contains(
-        "#[ignore = \"需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT\"]"
-    ));
+    assert!(
+        memory.contains("#[ignore = \"需要由 DevEx cgroup 门禁创建并委托 memory controller\"]")
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
