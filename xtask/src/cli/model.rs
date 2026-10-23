@@ -247,7 +247,7 @@ pub(crate) enum DataCommand {
 pub(crate) enum CiCommand {
     Plan(Option<String>),
     Preflight(Option<String>),
-    RustGate,
+    RustGate(RustGateOptions),
     ResourceGate(Option<String>),
     ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
@@ -255,6 +255,13 @@ pub(crate) enum CiCommand {
     FrontendSource(FrontendSourceOptions),
     Required(RequiredOptions),
     Security(SecurityCommand),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RustGateOptions {
+    pub(crate) frontend_ref: Option<String>,
+    pub(crate) profile: Option<String>,
+    pub(crate) test_jobs: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

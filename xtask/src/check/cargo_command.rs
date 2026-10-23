@@ -103,16 +103,13 @@ pub(crate) fn cargo_operation_jobs(operation: &str, windows: bool, fallback: usi
 }
 
 pub(crate) fn ci_test_jobs_from(
-    configured: Option<&str>,
+    configured: Option<usize>,
     windows: bool,
     fallback: usize,
 ) -> Result<usize> {
     match configured {
-        Some(value) => value
-            .parse::<usize>()
-            .ok()
-            .filter(|jobs| (1..=64).contains(jobs))
-            .ok_or_else(|| "RYFRAME_CI_TEST_JOBS 必须是 1 到 64 的整数".into()),
+        Some(value) if (1..=64).contains(&value) => Ok(value),
+        Some(_) => Err("CI --test-jobs 必须是 1 到 64 的整数".into()),
         None => Ok(default_test_jobs_from(windows, fallback)),
     }
 }

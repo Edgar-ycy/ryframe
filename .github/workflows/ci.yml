@@ -219,7 +219,9 @@ jobs:
 
       - name: 执行 Clippy、feature、Workspace 测试与快照门禁
         working-directory: backend
-        run: cargo xtask check ci rust-gate --frontend-dir ../frontend
+        run: >-
+          cargo xtask check ci rust-gate --frontend-dir ../frontend
+          --frontend-ref "${{ steps.frontend-ref.outputs.ref }}"
 
       - name: 输出 sccache 命中统计
         if: ${{ always() }}
@@ -580,11 +582,10 @@ jobs:
 
       - name: 执行 Windows 产品、工具、进程与资源 Workspace 门禁
         working-directory: ryframe
-        env:
-          RYFRAME_CI_FRONTEND_REF: ${{ steps.windows-frontend-ref.outputs.ref }}
-          RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke
-          RYFRAME_CI_TEST_JOBS: "4"
-        run: cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3
+        run: >-
+          cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3
+          --frontend-ref "${{ steps.windows-frontend-ref.outputs.ref }}"
+          --profile windows-smoke --test-jobs 4
 
       - name: 输出 sccache 统计
         if: ${{ always() }}

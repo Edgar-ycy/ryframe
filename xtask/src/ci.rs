@@ -191,10 +191,10 @@ fn write_github_outputs(plan: &[CiJob]) -> Result<()> {
     Ok(())
 }
 
-fn windows_smoke(frontend_dir: &Path) -> Result<()> {
+fn windows_smoke(frontend_dir: &Path, configured_test_jobs: Option<usize>) -> Result<()> {
     let root = root_dir();
     let jobs = ci_test_jobs_from(
-        env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
+        configured_test_jobs,
         true,
         std::thread::available_parallelism().map_or(4, usize::from),
     )?;

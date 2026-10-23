@@ -5,7 +5,8 @@ use serde::Deserialize;
 use super::super::model::{
     CiCommand, CliError, ConsumerContractOptions, DeploymentOptions, DeploymentPhase,
     RequiredAction, RequiredEvent, RequiredJobResult, RequiredNeed, RequiredOptions,
-    ResourceGateReplayOptions, SecurityCommand, SecurityReportKind, SecurityReportOptions,
+    ResourceGateReplayOptions, RustGateOptions, SecurityCommand, SecurityReportKind,
+    SecurityReportOptions,
 };
 
 #[path = "ci/frontend_source.rs"]
@@ -18,7 +19,9 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         [command, rest @ ..] if command == "preflight" => {
             parse_base_sha(rest).map(CiCommand::Preflight)
         }
-        [command] if command == "rust-gate" => Ok(CiCommand::RustGate),
+        [command, rest @ ..] if command == "rust-gate" => {
+            parse_rust_gate(rest).map(CiCommand::RustGate)
+        }
         [command, operation, rest @ ..] if command == "resource-gate" && operation == "replay" => {
             parse_resource_gate_replay(rest).map(CiCommand::ResourceGateReplay)
         }
@@ -54,6 +57,54 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
             "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|frontend-source|required|security>；正式消费契约使用 consumer-contract [--frontend-ref <SHA>] [--backend-head <SHA> --backend-repository <owner/repo> --candidate-openapi <绝对文件>]；前端来源使用 frontend-source --event-name <事件> [--event <绝对文件>] [--base-sha <SHA>] [--prefer-marker] [--candidate-openapi <绝对文件>] [--release-ref <ref>] [--fallback-main-on-invalid-base]；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放由 Rust 执行：resource-gate replay --manifest <文件> --work-dir <.local-tests/resource-gate-replay 内目录> --report <同一目录内新文件> [--activation-gate]",
         )),
     }
+}
+
+fn parse_rust_gate(args: &[String]) -> Result<RustGateOptions, CliError> {
+    let mut options = RustGateOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--frontend-ref" => {
+                let value = required_argument(args.get(index + 1), "--frontend-ref")?;
+                if options.frontend_ref.replace(value.to_owned()).is_some() {
+                    return Err(CliError::new("--frontend-ref 不能重复"));
+                }
+                index += 2;
+            }
+            "--profile" => {
+                let value = required_argument(args.get(index + 1), "--profile")?;
+                if !matches!(value, "standard" | "windows-smoke") {
+                    return Err(CliError::new("--profile 只允许 standard 或 windows-smoke"));
+                }
+                if options.profile.replace(value.to_owned()).is_some() {
+                    return Err(CliError::new("--profile 不能重复"));
+                }
+                index += 2;
+            }
+            "--test-jobs" => {
+                let value = required_argument(args.get(index + 1), "--test-jobs")?;
+                let jobs = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|jobs| (1..=64).contains(jobs))
+                    .ok_or_else(|| CliError::new("--test-jobs 必须是 1 到 64 的整数"))?;
+                if options.test_jobs.replace(jobs).is_some() {
+                    return Err(CliError::new("--test-jobs 不能重复"));
+                }
+                index += 2;
+            }
+            unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
+        }
+    }
+    if let Some(frontend_ref) = options.frontend_ref.as_deref() {
+        if !valid_git_sha(frontend_ref) {
+            return Err(CliError::new(
+                "--frontend-ref 必须是非零的 40 位十六进制提交 SHA",
+            ));
+        }
+        options.frontend_ref = Some(frontend_ref.to_ascii_lowercase());
+    }
+    Ok(options)
 }
 
 fn parse_consumer_contract(args: &[String]) -> Result<ConsumerContractOptions, CliError> {

@@ -294,11 +294,7 @@ fn run_workspace_gates(
         .ok_or("Workspace 门禁缺少后端快照")?;
     let budget = context.jobs;
     let test_jobs = match mode {
-        TaskExecutionMode::Ci => ci_test_jobs_from(
-            std::env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
-            cfg!(windows),
-            budget.total,
-        )?,
+        TaskExecutionMode::Ci => ci_test_jobs_from(context.test_jobs, cfg!(windows), budget.total)?,
         TaskExecutionMode::Check(_) => default_test_jobs_from(cfg!(windows), budget.backend),
     };
     println!(

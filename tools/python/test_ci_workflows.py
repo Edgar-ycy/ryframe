@@ -344,6 +344,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("cargo xtask check ci frontend-source", rust_gate)
         self.assertIn("corepack pnpm install --frozen-lockfile", rust_gate)
         self.assertIn("cargo xtask check ci rust-gate --frontend-dir ../frontend", rust_gate)
+        self.assertIn('--frontend-ref "${{ steps.frontend-ref.outputs.ref }}"', rust_gate)
         integration = workflow.split("\n  integration:\n", 1)[1].split(
             "\n  windows-smoke:\n", 1
         )[0]
@@ -367,11 +368,16 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("--candidate-openapi", windows)
         self.assertIn("ref: ${{ steps.windows-frontend-ref.outputs.ref }}", windows)
         self.assertIn("github.event.pull_request.head.sha || github.sha", windows)
-        self.assertIn("RYFRAME_CI_FRONTEND_REF", windows)
-        self.assertIn("RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke", windows)
         self.assertIn(
             "cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3", windows
         )
+        self.assertIn(
+            '--frontend-ref "${{ steps.windows-frontend-ref.outputs.ref }}"', windows
+        )
+        self.assertIn("--profile windows-smoke --test-jobs 4", windows)
+        self.assertNotIn("RYFRAME_CI_FRONTEND_REF", windows)
+        self.assertNotIn("RYFRAME_CI_RUST_GATE_PROFILE", windows)
+        self.assertNotIn("RYFRAME_CI_TEST_JOBS", windows)
         self.assertNotIn("cargo check --locked -p ryframe", windows)
         self.assertNotIn("--test process_windows", windows)
 

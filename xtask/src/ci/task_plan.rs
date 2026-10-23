@@ -1,4 +1,4 @@
-use std::{env, path::Path};
+use std::path::Path;
 
 use crate::{
     Result,
@@ -168,8 +168,11 @@ pub(crate) fn ci_plan_for(
 }
 
 pub(crate) fn ci_execution_plan_for(command: &CiCommand) -> Result<TaskPlan> {
-    let profile = env::var("RYFRAME_CI_RUST_GATE_PROFILE").ok();
-    ci_execution_plan_for_profile(command, profile.as_deref())
+    let profile = match command {
+        CiCommand::RustGate(options) => options.profile.as_deref(),
+        _ => None,
+    };
+    ci_execution_plan_for_profile(command, profile)
 }
 
 pub(crate) fn ci_execution_plan_for_profile(
@@ -192,7 +195,7 @@ pub(crate) fn ci_execution_plan_for_profile(
             Some(WINDOWS_RUST_GATE_PROFILE) => WINDOWS_RUST_GATE_TASKS,
             Some(profile) => {
                 return Err(format!(
-                    "RYFRAME_CI_RUST_GATE_PROFILE 只允许 standard 或 \
+                    "rust-gate --profile 只允许 standard 或 \
                      {WINDOWS_RUST_GATE_PROFILE}，实际为 {profile}"
                 )
                 .into());
@@ -247,6 +250,10 @@ pub(super) fn execute_ci_job(
         CiCommand::Preflight(base) | CiCommand::ResourceGate(base) => base.clone(),
         _ => None,
     };
+    context.test_jobs = match command {
+        CiCommand::RustGate(options) => options.test_jobs,
+        _ => None,
+    };
     let mut state = CheckExecutionState::default();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
@@ -276,7 +283,7 @@ fn execute_ci_task(
         TaskExecutor::CiFrontendCheckout => {
             let requested_ref = match command {
                 CiCommand::ConsumerContract(options) => options.frontend_ref.clone(),
-                CiCommand::RustGate => std::env::var("RYFRAME_CI_FRONTEND_REF").ok(),
+                CiCommand::RustGate(options) => options.frontend_ref.clone(),
                 _ => None,
             };
             super::verify_frontend_checkout(&context.frontend_dir, requested_ref.as_deref())
@@ -287,7 +294,9 @@ fn execute_ci_task(
             };
             super::verify_formal_contract_source(&context.frontend_dir, options)
         }
-        TaskExecutor::CiWindowsSmoke => super::windows_smoke(&context.frontend_dir),
+        TaskExecutor::CiWindowsSmoke => {
+            super::windows_smoke(&context.frontend_dir, context.test_jobs)
+        }
         TaskExecutor::CiResourceGate => {
             super::resource_gate::run(&context.frontend_dir, context.base_sha.as_deref())
         }
@@ -299,7 +308,7 @@ fn execute_ci_task(
 fn job_for_command(command: &CiCommand) -> Result<CiJob> {
     match command {
         CiCommand::Preflight(_) => Ok(CiJob::Preflight),
-        CiCommand::RustGate => Ok(CiJob::RustGate),
+        CiCommand::RustGate(_) => Ok(CiJob::RustGate),
         CiCommand::ResourceGate(_) => Ok(CiJob::ResourceGate),
         CiCommand::Integration => Ok(CiJob::Integration),
         CiCommand::ConsumerContract(_) => Ok(CiJob::ConsumerContract),

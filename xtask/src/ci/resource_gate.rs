@@ -391,9 +391,10 @@ fn execute_step(
     targets: &crate::check::VerifyTargetPolicy,
 ) -> Result<()> {
     match step {
-        GateStep::FullRustGate => {
-            super::execute_ci_command(&crate::cli::CiCommand::RustGate, frontend_dir)?
-        }
+        GateStep::FullRustGate => super::execute_ci_command(
+            &crate::cli::CiCommand::RustGate(Default::default()),
+            frontend_dir,
+        )?,
         GateStep::FullIntegration => {
             super::execute_ci_command(&crate::cli::CiCommand::Integration, frontend_dir)?
         }

@@ -167,7 +167,7 @@ fn parses_check_task_graph_and_internal_groups() {
     for (name, operation) in [
         ("plan", CiCommand::Plan(None)),
         ("preflight", CiCommand::Preflight(None)),
-        ("rust-gate", CiCommand::RustGate),
+        ("rust-gate", CiCommand::RustGate(Default::default())),
         ("resource-gate", CiCommand::ResourceGate(None)),
         ("integration", CiCommand::Integration),
         (
@@ -180,6 +180,28 @@ fn parses_check_task_graph_and_internal_groups() {
             Command::Check(CheckCommand::Ci(operation))
         );
     }
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "rust-gate",
+            "--frontend-ref",
+            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            "--profile",
+            "windows-smoke",
+            "--test-jobs",
+            "4",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::RustGate(
+            crate::cli::RustGateOptions {
+                frontend_ref: Some("cccccccccccccccccccccccccccccccccccccccc".to_owned()),
+                profile: Some("windows-smoke".to_owned()),
+                test_jobs: Some(4),
+            }
+        )))
+    );
+    assert!(parse_command(&["check", "ci", "rust-gate", "--test-jobs", "0"]).is_err());
     let candidate = std::env::current_dir()
         .unwrap()
         .join("candidate-openapi.json");

@@ -138,10 +138,9 @@ impl DevexSuite {
                 environment: &[
                     ("CARGO_INCREMENTAL", "0"),
                     ("RUSTC_WRAPPER", "sccache"),
-                    ("RYFRAME_CI_RUST_GATE_PROFILE", "standard"),
                     ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
                 ],
-                remove_environment: &["RYFRAME_CI_FRONTEND_REF", "SCCACHE_RECACHE"],
+                remove_environment: &["SCCACHE_RECACHE"],
                 requirement: SuiteRequirement::Executable("sccache"),
                 requires_frontend: true,
             }),

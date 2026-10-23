@@ -209,7 +209,7 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
             ][..],
         ),
         (
-            CiCommand::RustGate,
+            CiCommand::RustGate(Default::default()),
             &[
                 TaskExecutor::CiFrontendCheckout,
                 TaskExecutor::SnapshotPrepare,
@@ -294,12 +294,12 @@ fn daily_full_checks_use_explicit_repository_scopes() {
 
 #[test]
 fn rust_gate_profile_only_changes_the_selected_primitive_nodes() {
-    let standard = ci_execution_plan_for_profile(&CiCommand::RustGate, Some("standard")).unwrap();
+    let command = CiCommand::RustGate(Default::default());
+    let standard = ci_execution_plan_for_profile(&command, Some("standard")).unwrap();
     assert_eq!(standard.tasks[0].executor, TaskExecutor::CiFrontendCheckout);
     assert_eq!(standard.tasks[1].executor, TaskExecutor::SnapshotPrepare);
 
-    let windows =
-        ci_execution_plan_for_profile(&CiCommand::RustGate, Some("windows-smoke")).unwrap();
+    let windows = ci_execution_plan_for_profile(&command, Some("windows-smoke")).unwrap();
     assert_eq!(
         windows
             .tasks
@@ -312,7 +312,7 @@ fn rust_gate_profile_only_changes_the_selected_primitive_nodes() {
         ]
     );
     assert!(
-        ci_execution_plan_for_profile(&CiCommand::RustGate, Some("unknown"))
+        ci_execution_plan_for_profile(&command, Some("unknown"))
             .unwrap_err()
             .to_string()
             .contains("只允许 standard 或 windows-smoke")

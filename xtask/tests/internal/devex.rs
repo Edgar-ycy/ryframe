@@ -194,13 +194,14 @@ fn gate_suite_definitions_preserve_audited_execution_contracts() {
             .environment
             .contains(&("RUSTC_WRAPPER", "sccache"))
     );
+    assert!(!rust_gate.environment.iter().any(|(name, _)| {
+        matches!(
+            *name,
+            "RYFRAME_CI_RUST_GATE_PROFILE" | "RYFRAME_CI_TEST_JOBS"
+        )
+    }));
     assert!(
-        rust_gate
-            .environment
-            .contains(&("RYFRAME_CI_RUST_GATE_PROFILE", "standard"))
-    );
-    assert!(
-        rust_gate
+        !rust_gate
             .remove_environment
             .contains(&"RYFRAME_CI_FRONTEND_REF")
     );

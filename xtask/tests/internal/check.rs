@@ -325,8 +325,8 @@ fn windows_tests_use_four_jobs_without_reducing_compile_jobs() {
     assert_eq!(cargo_operation_jobs("test", true, 12), 4);
     assert_eq!(ci_test_jobs_from(None, true, 12).unwrap(), 4);
     assert_eq!(ci_test_jobs_from(None, false, 12).unwrap(), 12);
-    assert_eq!(ci_test_jobs_from(Some("6"), true, 12).unwrap(), 6);
-    assert!(ci_test_jobs_from(Some("0"), true, 12).is_err());
+    assert_eq!(ci_test_jobs_from(Some(6), true, 12).unwrap(), 6);
+    assert!(ci_test_jobs_from(Some(0), true, 12).is_err());
 }
 
 #[test]
