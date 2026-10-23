@@ -167,6 +167,17 @@ class DepartmentTests(unittest.TestCase):
         self.guard.start()
         self.addCleanup(self.guard.stop)
 
+    def expected_entries(self):
+        entries = []
+        for group in self.plan["groups"]:
+            entries.extend({"operation": operation, "slot": group["slot"], "phase": "confirmed"}
+                           for operation in ("post_system_roles", "put_system_roles_by_id_permissions"))
+            for user in group["users"]:
+                entries.extend({"operation": operation, "slot": user["user_slot"], "phase": "confirmed"}
+                    for operation in ("post_system_users", "post_system_users_by_id_password_reset_requests",
+                                      "post_auth_password_reset_complete"))
+        return entries
+
     def prepared_identity(self):
         root = Path(self.request["identity_state"])
         root.mkdir(parents=True, exist_ok=True)
@@ -176,7 +187,7 @@ class DepartmentTests(unittest.TestCase):
         user_slots = [user["user_slot"] for group in self.plan["groups"] for user in group["users"]]
         users = {slot: str(20000 + index) for index, slot in enumerate(user_slots)}
         entries = []
-        for index, value in enumerate(model.expected_entries(self.plan)):
+        for index, value in enumerate(self.expected_entries()):
             identifier = roles.get(value["slot"], users.get(value["slot"]))
             entry = {**value, "id": identifier}
             if value["operation"] == "post_system_users_by_id_password_reset_requests":

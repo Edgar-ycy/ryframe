@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - Resource-gate replay now passes driver context and fake-tool log requests as bounded JSON through managed stdin. The corresponding custom environment inputs are removed, while Cargo target isolation, the 20-case comparison, and failure-log evidence are retained.
+- Moved department adoption read-only receipts and closed guard evidence validation to Rust, reusing the native 622-entry ordered ledger projection for identity prerequisites. Removed duplicate Python validation and object receipt tests while preserving unknown-write, failure, cancellation, drift, and recovery boundaries.
 
 - Migrate reference business-fixture browser binding, stage orchestration, evidence and static-response validation, atomic tool-configuration publication, and read-only consumers to Rust. Retain the existing runtime and full-stack process-engine interfaces, with tests for complete tree cleanup on timeout, unknown outcomes, and credential redaction.
 

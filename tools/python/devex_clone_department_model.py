@@ -56,78 +56,28 @@ def targets(plan):
             for group in groups[1:]]
 
 
-def expected_entries(plan):
-    entries = []
-    for group in plan["groups"]:
-        entries.extend(({"operation": "post_system_roles", "slot": group["slot"], "phase": "confirmed"},
-                        {"operation": "put_system_roles_by_id_permissions", "slot": group["slot"],
-                         "phase": "confirmed"}))
-        for user in group["users"]:
-            entries.extend(({"operation": "post_system_users", "slot": user["user_slot"], "phase": "confirmed"},
-                            {"operation": "post_system_users_by_id_password_reset_requests",
-                             "slot": user["user_slot"], "phase": "confirmed"},
-                            {"operation": "post_auth_password_reset_complete", "slot": user["user_slot"],
-                             "phase": "confirmed"}))
-    if len(entries) != 622:
-        raise ValueError("身份计划不能形成固定 622 项写入序列")
-    return entries
+def native_evidence(backend, directory, arguments):
+    import subprocess
+    from native_s3_client import _invoke
 
-
-def validate_entries(plan, ledger):
-    expected = expected_entries(plan)
-    entries = ledger["entries"]
-    if not isinstance(entries, list) or len(entries) != len(expected):
-        raise ValueError("身份账本写入序列不完整")
-    reset_ids = []
-    for actual, base in zip(entries, expected):
-        reset = base["operation"] == "post_system_users_by_id_password_reset_requests"
-        exact(actual, set(base) | {"id"} | ({"request_id"} if reset else set()))
-        identifier = ledger["roles"].get(base["slot"], ledger["users"].get(base["slot"]))
-        if any(actual[key] != value for key, value in base.items()) or actual["id"] != identifier:
-            raise ValueError("身份账本序列与已确认角色或用户不一致")
-        if reset:
-            reset_ids.append(snowflake(actual["request_id"]))
-    if len(reset_ids) != 200 or len(set(reset_ids)) != len(reset_ids):
-        raise ValueError("身份账本密码请求 ID 不完整或重复")
+    payload = {"format_version": 1, "kind": "ryframe-seed-evidence", "run_dir": str(directory),
+               "operation": "department-guard",
+               "arguments": {"backend_root": str(backend), "parameters": arguments}}
+    try:
+        process, response = _invoke("__seed-evidence", payload, subprocess.run, may_write=False)
+    except RuntimeError:
+        raise ValueError("部门原生证据核验未完成；保留文件、锁和未知写入现场，核对绑定工具后显式恢复") from None
+    if (process.returncode != 0 or not isinstance(response, dict)
+            or set(response) != {"ok", "result"} or response["ok"] is not True):
+        raise ValueError("部门文件证据、只读闭集或身份账本无效；保留现场，禁止自动重放")
+    return response["result"]
 
 
 def identity_projection(backend, request, *, allow_absent):
-    plan = identity_plan(backend, request)
     root = local_path(backend, request["identity_state"])
-    if not root.exists():
-        if linked(root) or not allow_absent:
-            raise ValueError("身份账本缺失或路径不是明确未创建状态")
-        return {"state": "absent", "identity_state": str(root), "plan_sha256": plan["plan_sha256"],
-                "ledger": None, "projection_sha256": None, "entries": 0, "roles": 0, "users": 0}
-    exact_directory(root)
-    if (root / "lock").exists() or linked(root / "lock"):
-        raise ValueError("身份账本仍持锁或锁状态未知")
-    ledger = read_json(root / "ledger.json")
-    fields = {"format_version", "plan_sha256", "status", "entries", "roles", "users"}
-    if ledger.get("status") in {"verifying", "verified"}:
-        fields.add("publication_nonce")
-    if ledger.get("status") == "verified":
-        fields.add("verified_receipt")
-    exact(ledger, fields)
-    groups = {group["slot"] for group in plan["groups"]}
-    users = {user["user_slot"] for group in plan["groups"] for user in group["users"]}
-    if (ledger["format_version"] != 1 or ledger["plan_sha256"] != plan["plan_sha256"]
-            or ledger["status"] not in {"prepared", "verifying", "verified"}
-            or set(ledger["roles"]) != groups or set(ledger["users"]) != users):
-        raise ValueError("身份账本不是全部确认的固定准备结果")
-    if (ledger["status"] in {"verifying", "verified"}
-            and (not isinstance(ledger["publication_nonce"], str)
-                 or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
-                                     ledger["publication_nonce"]))):
-        raise ValueError("身份账本发布 nonce 无效")
-    ids = list(ledger["roles"].values()) + list(ledger["users"].values())
-    if len(ids) != 211 or len(set(ids)) != len(ids) or any(snowflake(value) != value for value in ids):
-        raise ValueError("身份账本角色或用户 ID 不完整或重复")
-    validate_entries(plan, ledger)
-    stable = {key: ledger[key] for key in ("format_version", "plan_sha256", "entries", "roles", "users")}
-    return {"state": ledger["status"], "identity_state": str(root), "plan_sha256": plan["plan_sha256"],
-            "ledger": binding(root / "ledger.json"), "projection_sha256": plan_hash(stable),
-            "entries": 622, "roles": 11, "users": 200}
+    return native_evidence(backend, root.parent.parent, {"operation": "identity-projection",
+        "request": {key: request[key] for key in ("identity_plan", "identity_state")},
+        "allow_absent": allow_absent})
 
 
 def template_identities(backend, request):

@@ -11,6 +11,7 @@ use crate::{
 pub(crate) mod bridge;
 mod business;
 pub(crate) mod catalog;
+pub(crate) mod department;
 pub(crate) mod digest;
 pub(crate) mod export;
 pub(crate) mod input;

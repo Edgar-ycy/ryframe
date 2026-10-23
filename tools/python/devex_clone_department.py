@@ -12,7 +12,7 @@ from devex_clone_run_state import binding, load_state
 from devex_clone_seed import identity_inputs, latest
 from devex_clone_source_proof import bound_file
 from full_stack_process import process_identity
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import plan_hash
 from devex_clone_department_model import (authorization, classify, confirmation, created_response,
     directories, identity_plan, identity_projection, image, intent, page_data, plan_path,
     prerequisite_path, principal, read_prerequisite, reconciliation, require_prerequisite, snowflake,
@@ -250,195 +250,30 @@ def _adoption_result(context, attempt):
     return value
 
 
-_GUARD_COMMAND = re.compile(r"(?:command-[a-f0-9]{32}|redis-kernel-[a-f0-9]{32}\.command)\.json")
-_GUARD_MYSQL = re.compile(r"mysql-(identity|ownership)-([a-f0-9]{32})\.(json|stdout)")
-_GUARD_MYSQL_RETRY = re.compile(r"mysql-(identity|ownership)-retry-[a-f0-9]{32}\.json")
-_GUARD_OWNER = re.compile(r"owner-target-([a-z0-9-]+)-[a-f0-9]{32}\.txt")
-_GUARD_LAYOUT = re.compile(r"storage-layout-[a-f0-9]{32}\.json")
+def _native_guard(context, operation, output, attempt=None):
+    from devex_clone_department_model import native_evidence
 
-
-def _read_only_object(value, target):
-    exact(value, {"transport", "operation", "bucket", "returncode", "error_type",
-                  "response", "key", "destination", "remote_writes", "scope_id",
-                  "endpoint", "configuration_sha256", "prefix", "continuation"})
-    operation, bucket, response = value["operation"], value["bucket"], value["response"]
-    if not isinstance(target, dict):
-        raise ValueError("部门采用守卫对象收据缺少目标配置")
-    scope, configuration = target.get("scope_id"), target.get("s3")
-    if (not isinstance(scope, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{2,47}", scope)
-            or not isinstance(configuration, dict)):
-        raise ValueError("部门采用守卫对象收据缺少明确有效的目标配置")
-    if (value["transport"] != "rust-s3-sigv4" or not isinstance(bucket, str) or bucket not in BUCKETS
-            or type(value["returncode"]) is not int or value["returncode"] != 0
-            or value["error_type"] is not None or not isinstance(response, dict)
-            or type(value["remote_writes"]) is not int or value["remote_writes"] != 0
-            or not isinstance(operation, str)
-            or operation not in {"head-bucket", "get-bucket-versioning", "list-objects-v2", "get-object"}
-            or value["scope_id"] != scope or value["endpoint"] != configuration.get("endpoint")
-            or value["configuration_sha256"] != plan_hash(configuration)
-            or value["prefix"] != (scope + "/" if operation == "list-objects-v2" else None)
-            or value["continuation"] is not None):
-        raise ValueError("部门采用守卫原生对象收据不是成功的固定只读调用")
-    if operation == "get-object":
-        destination = value["destination"]
-        if (not isinstance(scope, str) or value["key"] != f"{scope}/.ryframe-owner"
-                or not isinstance(destination, str)
-                or not re.fullmatch(rf"owner-target-{re.escape(bucket)}-[a-f0-9]{{32}}\.txt", destination)):
-            raise ValueError("部门采用守卫对象 owner 的作用域或输出路径无效")
-        expected = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
-        if (type(response.get("ContentLength")) is not int or response["ContentLength"] != len(expected)
-                or not isinstance(response.get("Metadata"), dict)
-                or any(not isinstance(response.get(field), str) or not response[field]
-                       for field in ("ETag", "LastModified", "ContentType"))):
-            raise ValueError("部门采用守卫对象 owner 的响应元数据无效")
-    else:
-        if value["key"] is not None or value["destination"] is not None:
-            raise ValueError("部门采用守卫对象观察包含未知 key 或输出路径")
-        if operation == "list-objects-v2":
-            if (not isinstance(scope, str) or set(response) != {"IsTruncated", "Contents"}
-                    or response["IsTruncated"] is not False
-                    or response["Contents"] != [{"Key": f"{scope}/.ryframe-owner"}]):
-                raise ValueError("部门采用守卫对象列表不是当前作用域的唯一 owner")
-        elif response not in (({}, {"MFADelete": "Disabled"})
-                               if operation == "get-bucket-versioning" else ({},)):
-            raise ValueError("部门采用守卫对象端点或版本响应无效")
-    return value
-
-
-def _read_only_command(value, target=None):
-    if isinstance(value, dict) and "transport" in value:
-        return _read_only_object(value, target)
-    exact(value, {"command", "returncode", "error_type", "stdout", "stderr"}
-          | ({"stdout_file"} if "stdout_file" in value else set()))
-    command = value["command"]
-    if (not isinstance(command, list) or not command
-            or any(not isinstance(item, str) or not item for item in command)
-            or value["returncode"] != 0 or value["error_type"] is not None):
-        raise ValueError("部门采用守卫命令收据不是成功的固定只读调用")
-    executable = command[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
-    if executable == "mysql.exe":
-        if "--execute" in command:
-            index = command.index("--execute")
-            if index + 1 >= len(command) or not command[index + 1].lstrip().upper().startswith("SELECT "):
-                raise ValueError("部门采用守卫包含非 SELECT MySQL 命令")
-    elif executable == "powershell.exe":
-        script = command[-1]
-        if ("Get-CimInstance Win32_Process" not in script
-                or not script.endswith(".CommandLine | ConvertTo-Json -Compress")):
-            raise ValueError("部门采用守卫包含未知 PowerShell 命令")
-    elif executable == "wsl.exe":
-        if not any(item in {"/usr/bin/cat", "/usr/bin/readlink", "/usr/bin/sha256sum"}
-                   for item in command):
-            raise ValueError("部门采用守卫包含未知 WSL 命令")
-    elif (executable, tuple(command[1:])) not in {("cargo", ("-V",)), ("rustc", ("-Vv",))}:
-        raise ValueError("部门采用守卫包含未知外部命令")
-    return value
+    target = getattr(context, "target_config", None)
+    projection = None
+    if isinstance(target, dict) and isinstance(target.get("s3"), dict):
+        projection = {"scope_id": target.get("scope_id"), "endpoint": target["s3"].get("endpoint"),
+                      "configuration_sha256": plan_hash(target["s3"])}
+    return native_evidence(context.backend, context.directory_root, {
+        "operation": operation, "output": str(output), "target": projection, "attempt": attempt})
 
 
 def _guard_artifacts(context, output):
-    if linked(output) or not output.is_dir():
-        raise ValueError("部门计划采用守卫目录无效")
-    artifacts, payloads, referenced = [], set(), set()
-    for path in sorted(output.iterdir(), key=lambda item: item.name):
-        if path.name == "adoption-guard.json":
-            continue
-        if linked(path) or not path.is_file():
-            raise ValueError("部门计划采用守卫出现目录、链接或未知证据")
-        command_match = _GUARD_COMMAND.fullmatch(path.name)
-        mysql_match = _GUARD_MYSQL.fullmatch(path.name)
-        mysql_retry_match = _GUARD_MYSQL_RETRY.fullmatch(path.name)
-        owner_match = _GUARD_OWNER.fullmatch(path.name)
-        if command_match:
-            value = read_json(path)
-            target = context.target_config if isinstance(value, dict) and "transport" in value else None
-            value = _read_only_command(value, target)
-            if value.get("transport") == "rust-s3-sigv4":
-                if value["operation"] == "get-object":
-                    destination = output / value["destination"]
-                    if destination in referenced:
-                        raise ValueError("部门采用守卫对象输出被多份收据重复声明")
-                    referenced.add(destination)
-                artifacts.append(binding(path))
-                continue
-            if "stdout_file" in value:
-                stdout = bound_file(context.backend, value["stdout_file"])
-                if stdout.parent != output:
-                    raise ValueError("部门采用守卫 stdout 跨出当前 attempt")
-                referenced.add(stdout)
-            for argument in value["command"]:
-                candidate = type(path)(argument)
-                if candidate.is_absolute() and candidate.parent == output:
-                    referenced.add(candidate)
-        elif mysql_match and mysql_match.group(3) == "json":
-            value = read_json(path)
-            exact(value, {"format_version", "kind", "check", "target_key", "returncode",
-                          "error_type", "stderr_bytes", "stderr_sha256", "stdout_file"})
-            stdout = path.with_suffix(".stdout")
-            if (value["format_version"] != 1 or value["kind"] != "mysql-verification-output"
-                    or value["check"] != mysql_match.group(1) or value["returncode"] != 0
-                    or value["error_type"] is not None or value["stderr_bytes"] != 0
-                    or value["stderr_sha256"] != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    or bound_file(context.backend, value["stdout_file"]) != stdout):
-                raise ValueError("部门采用守卫 MySQL 核验收据无效")
-            referenced.add(stdout)
-        elif mysql_match and mysql_match.group(3) == "stdout":
-            payloads.add(path)
-        elif mysql_retry_match:
-            retry = read_json(path)
-            exact(retry, {"format_version", "kind", "check", "target_key",
-                          "reason", "first", "second"})
-            if (retry["format_version"] != 1 or retry["kind"] != "mysql-verification-retry"
-                    or retry["check"] != mysql_retry_match.group(1)
-                    or retry["reason"] != "first_returncode_zero_stdout_stderr_exactly_empty"):
-                raise ValueError("部门采用守卫 MySQL 空输出重试收据无效")
-            for descriptor in (retry["first"], retry["second"]):
-                receipt = bound_file(context.backend, descriptor)
-                if receipt.parent != output or not _GUARD_MYSQL.fullmatch(receipt.name):
-                    raise ValueError("部门采用守卫 MySQL 重试跨出当前 attempt")
-        elif owner_match:
-            bucket = owner_match.group(1)
-            if bucket not in BUCKETS:
-                raise ValueError("部门采用守卫对象 owner 桶无效")
-            expected = f"ryframe-owner:v1:{context.target_config['scope_id']}:object-storage:{bucket}".encode()
-            if path.read_bytes() != expected:
-                raise ValueError("部门采用守卫对象 owner 内容无效")
-            payloads.add(path)
-        elif _GUARD_LAYOUT.fullmatch(path.name):
-            layout = read_json(path)
-            exact(layout, {"actual_arguments_sha256", "data_dir", "environment_proof",
-                           "launch_receipt", "process_receipt", "runtime_transition"})
-            bound_file(context.backend, layout["launch_receipt"])
-            bound_file(context.backend, layout["process_receipt"])
-        else:
-            raise ValueError("部门计划采用链节点出现 Node、动作或未知证据")
-        artifacts.append(binding(path))
-    if payloads != referenced:
-        raise ValueError("部门采用守卫本地输出没有被唯一只读命令收据覆盖")
-    return artifacts
+    return _native_guard(context, "artifacts", output)
 
 
 def _empty_adoption_output(context, attempt):
     output = context.directory_root / "seed-runtime" / f"attempt-{attempt['number']:04d}"
-    artifacts = _guard_artifacts(context, output)
-    manifest_path = output / "adoption-guard.json"
-    if not manifest_path.exists() and not linked(manifest_path):
-        return None
-    manifest = read_json(bound_file(context.backend, binding(manifest_path)))
-    exact(manifest, {"format_version", "kind", "attempt", "artifacts"})
-    if (manifest["format_version"] != 1 or manifest["kind"] != "devex-department-adoption-guard"
-            or manifest["attempt"] != attempt["number"] or manifest["artifacts"] != artifacts):
-        raise ValueError("部门计划采用守卫清单与当前只读证据不同")
-    return binding(manifest_path)
+    return _native_guard(context, "inspect", output, attempt["number"])
 
 
 def _publish_adoption_guard(context, attempt):
-    if _empty_adoption_output(context, attempt) is not None:
-        raise ValueError("部门计划采用守卫清单已经存在")
     output = context.directory_root / "seed-runtime" / f"attempt-{attempt['number']:04d}"
-    write_json(output / "adoption-guard.json", {"format_version": 1,
-        "kind": "devex-department-adoption-guard", "attempt": attempt["number"],
-        "artifacts": _guard_artifacts(context, output)})
-    return _empty_adoption_output(context, attempt)
+    return _native_guard(context, "publish", output, attempt["number"])
 
 
 def _guard_only_failure(context, attempt):
