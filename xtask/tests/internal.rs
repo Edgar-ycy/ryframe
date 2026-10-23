@@ -18,6 +18,8 @@ mod devex;
 mod diff;
 #[path = "../src/doctor.rs"]
 mod doctor;
+#[path = "../src/frontend_origin.rs"]
+mod frontend_origin;
 #[path = "../src/http_session.rs"]
 mod http_session;
 #[path = "../src/local_test_path.rs"]
@@ -102,6 +104,8 @@ mod check_removed_identity_tests;
 mod check_snapshot_tests;
 #[path = "internal/check_supply_chain.rs"]
 mod check_supply_chain_tests;
+#[path = "internal/check_test_harness.rs"]
+mod check_test_harness_tests;
 #[path = "internal/check.rs"]
 mod check_tests;
 #[path = "internal/check_trivy.rs"]

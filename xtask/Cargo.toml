@@ -58,7 +58,7 @@ tempfile = { workspace = true }
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
-test = true
+test = false
 
 [lints]
 workspace = true

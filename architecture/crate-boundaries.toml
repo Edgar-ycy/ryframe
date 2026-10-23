@@ -64,6 +64,9 @@ directory = "tests"
 allow_colocated_unit_tests = true
 forbid_source_test_files = true
 max_integration_test_lines = 1000
+shared_bin_test_harnesses = [
+    { target = "xtask:xtask", source_entry = "xtask/src/main.rs", owner_test_entry = "xtask/tests/internal.rs" },
+]
 disabled_bin_test_targets = [
     "ryframe:ryframe",
     "ryframe:export_openapi",

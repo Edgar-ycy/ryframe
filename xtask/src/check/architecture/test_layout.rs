@@ -13,6 +13,9 @@ use super::{
     workspace::Packages,
 };
 
+#[path = "test_harness.rs"]
+pub(crate) mod test_harness;
+
 pub(crate) fn validate_test_layout(
     root: &Path,
     raw: &Table,
@@ -35,6 +38,7 @@ pub(crate) fn validate_test_layout(
         "test_layout.disabled_bin_test_targets",
         errors,
     );
+    let shared = test_harness::validate_registrations(root, raw, packages, &disabled, errors);
     let actual_bins = packages
         .iter()
         .flat_map(|(name, package)| {
@@ -75,6 +79,7 @@ pub(crate) fn validate_test_layout(
                     package,
                     target,
                     &disabled,
+                    &shared,
                     errors,
                 );
             }
@@ -204,12 +209,13 @@ fn check_binary_target(
     package: &super::workspace::Package,
     target: &super::workspace::Target,
     disabled: &BTreeSet<String>,
+    shared: &BTreeSet<String>,
     errors: &mut Vec<String>,
 ) {
     let name = target.name.as_deref().unwrap_or("");
     let key = format!("{}:{name}", package.name);
     let test_disabled = target.test == Some(false);
-    if test_disabled && !disabled.contains(&key) {
+    if test_disabled && !disabled.contains(&key) && !shared.contains(&key) {
         errors.push(format!("关闭测试 harness 的二进制目标必须登记: {key}"));
     }
     if !disabled.contains(&key) {
