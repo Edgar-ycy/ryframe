@@ -532,14 +532,15 @@ fn maintenance_rejects_nonlocal_and_linked_output_before_running_commands() {
 }
 
 fn python(root: &Path, script: &str, arguments: &[&Path]) {
-    let result =
-        Command::new(std::env::var_os("RYFRAME_PYTHON").unwrap_or_else(|| "python".into()))
-            .args(["-B", "-c", script])
-            .args(arguments)
-            .current_dir(root)
-            .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
-            .output()
-            .unwrap();
+    let result = Command::new(
+        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
+    )
+    .args(["-B", "-c", script])
+    .args(arguments)
+    .current_dir(root)
+    .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
+    .output()
+    .unwrap();
     assert!(
         result.status.success(),
         "python failed:\nstdout:\n{}\nstderr:\n{}",
@@ -549,14 +550,15 @@ fn python(root: &Path, script: &str, arguments: &[&Path]) {
 }
 
 fn python_json(root: &Path, script: &str, arguments: &[&Path]) -> Value {
-    let result =
-        Command::new(std::env::var_os("RYFRAME_PYTHON").unwrap_or_else(|| "python".into()))
-            .args(["-B", "-c", script])
-            .args(arguments)
-            .current_dir(root)
-            .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
-            .output()
-            .unwrap();
+    let result = Command::new(
+        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
+    )
+    .args(["-B", "-c", script])
+    .args(arguments)
+    .current_dir(root)
+    .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
+    .output()
+    .unwrap();
     assert!(
         result.status.success(),
         "python failed:\nstdout:\n{}\nstderr:\n{}",

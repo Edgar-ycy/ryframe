@@ -134,15 +134,16 @@ from pathlib import Path
 from devex_clone_target_reset_evidence import reset_completed
 print(json.dumps(reset_completed(Path(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3]), ensure_ascii=False))
 "#;
-    let output =
-        Command::new(std::env::var_os("RYFRAME_PYTHON").unwrap_or_else(|| "python".into()))
-            .args(["-X", "utf8", "-B", "-c", script])
-            .arg(&fixture.target)
-            .arg(fixture.manifest.to_string())
-            .arg(&fixture.hash)
-            .env("PYTHONPATH", fixture.backend.join("tools/python"))
-            .output()
-            .unwrap();
+    let output = Command::new(
+        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
+    )
+    .args(["-X", "utf8", "-B", "-c", script])
+    .arg(&fixture.target)
+    .arg(fixture.manifest.to_string())
+    .arg(&fixture.hash)
+    .env("PYTHONPATH", fixture.backend.join("tools/python"))
+    .output()
+    .unwrap();
     assert!(
         output.status.success(),
         "{}",

@@ -16,7 +16,6 @@ fn cyclonedx_report_runs_only_its_registered_report_node() {
     )
     .unwrap();
     let result = xtask_command()
-        .env("RYFRAME_PYTHON", "missing-security-python-executable")
         .env_remove("GITHUB_OUTPUT")
         .args([
             "check",
@@ -53,7 +52,6 @@ fn trivy_report_runs_native_node_without_python_or_source_checks() {
     let report = report_dir.join(format!("trivy-{}.json", std::process::id()));
     fs::write(&report, r#"{"Results":[]}"#).unwrap();
     let result = xtask_command()
-        .env("RYFRAME_PYTHON", "missing-security-python-executable")
         .env_remove("GITHUB_OUTPUT")
         .args([
             "check",
@@ -81,7 +79,6 @@ fn trivy_report_runs_native_node_without_python_or_source_checks() {
 
     fs::write(&report, r#"{"Results":{}}"#).unwrap();
     let failure = xtask_command()
-        .env("RYFRAME_PYTHON", "missing-security-python-executable")
         .env_remove("GITHUB_OUTPUT")
         .args([
             "check",
@@ -121,7 +118,6 @@ fn cyclonedx_report_failures_preserve_exit_code_and_redact_input_without_python(
             fs::write(&report, input).unwrap();
         }
         let output = xtask_command()
-            .env("RYFRAME_PYTHON", "missing-security-python-executable")
             .env_remove("GITHUB_OUTPUT")
             .args([
                 "check",

@@ -85,7 +85,6 @@ fn full_plan_exposes_rust_deployment_and_permission_policy_nodes() {
 fn full_plan_lists_the_rust_python_environment_without_spawning_it() {
     let output = xtask_command()
         .args(["check", "--full", "--plan"])
-        .env("RYFRAME_PYTHON", "missing-python-for-plan")
         .output()
         .unwrap();
     assert!(

@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import unittest
 
 from workspace_directory import WorkspaceDirectory
@@ -20,7 +19,7 @@ class DatasetCliTests(unittest.TestCase):
         temporary = WorkspaceDirectory(BACKEND / ".local-tests/t", prefix="dc-")
         self.addCleanup(temporary.cleanup)
         self.root = temporary.path
-        self.environment = {**os.environ, "RYFRAME_PYTHON": sys.executable}
+        self.environment = os.environ.copy()
 
     def invoke(self, *arguments, environment=None):
         return subprocess.run(

@@ -97,7 +97,7 @@ fn target_tree_matches_python_for_unicode_files_and_empty_directories() {
     fs::create_dir(fixture.target.join("中文 空格")).unwrap();
     fs::write(fixture.target.join("中文 空格/receipt.json"), b"{}\n").unwrap();
     let actual = tree::snapshot(&fixture.backend, &fixture.target, false).unwrap();
-    let output = std::process::Command::new(std::env::var_os("RYFRAME_PYTHON").unwrap_or_else(|| "python".into()))
+    let output = std::process::Command::new(crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap())
         .args(["-X", "utf8", "-B", "-c", "import json,sys; from pathlib import Path; from devex_clone_target_binding import target_files; print(json.dumps(target_files(Path(sys.argv[1]))))"])
         .arg(&fixture.target).env("PYTHONPATH", fixture.backend.join("tools/python"))
         .output().unwrap();

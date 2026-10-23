@@ -212,37 +212,42 @@ mod tests {
     }
 
     #[test]
-    fn legacy_environment_does_not_change_file_or_path_selection() {
-        const SENTINEL: &str = "CONSUMER_INVALID_LEGACY_PYTHON_89dd";
+    fn local_tool_configuration_overrides_public_python_selection() {
         let root = fixture();
-        if std::env::var_os("RYFRAME_PYTHON").as_deref() == Some(std::ffi::OsStr::new(SENTINEL)) {
-            let observed = selected_program(root.path()).unwrap();
-            assert!(observed.is_absolute());
-            assert!(observed.is_file());
-            std::fs::create_dir(root.path().join("config")).unwrap();
-            let document = serde_json::json!({"verification": {"python_program": observed}});
-            std::fs::write(
-                root.path().join("config/tools.toml"),
-                toml::to_string(&document).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(selected_program(root.path()).unwrap(), observed);
-            return;
+        let observed = selected_program(&crate::workspace::root_dir()).unwrap();
+        std::fs::create_dir(root.path().join("config")).unwrap();
+        let public = root.path().join("config/tools.toml");
+        std::fs::write(&public, "[verification]\npython_program='missing-python'\n").unwrap();
+        assert!(selected_program(root.path()).is_err());
+        let document = serde_json::json!({"verification": {"python_program": observed}});
+        let configuration = toml::to_string(&document).unwrap();
+        std::fs::create_dir(root.path().join(".local-tests")).unwrap();
+        let local = root.path().join(".local-tests/tools.toml");
+        std::fs::write(&local, &configuration).unwrap();
+        assert_eq!(selected_program(root.path()).unwrap(), observed);
+        std::fs::remove_file(local).unwrap();
+        assert!(selected_program(root.path()).is_err());
+        std::fs::write(public, configuration).unwrap();
+        assert_eq!(selected_program(root.path()).unwrap(), observed);
+    }
+
+    #[test]
+    fn python_selection_and_test_callers_have_no_legacy_environment_protocol() {
+        let root = crate::workspace::root_dir();
+        let legacy = ["RYFRAME", "PYTHON"].join("_");
+        for path in [
+            "xtask/src/check/consumer_context/python.rs",
+            "xtask/src/cli/help.rs",
+            "xtask/tests/cli_process.rs",
+            "xtask/tests/cli_process/security_reports.rs",
+            "xtask/tests/internal/target_reset_native.rs",
+            "xtask/tests/internal/target_proof_native.rs",
+            "xtask/tests/internal/target_guard_native.rs",
+            "xtask/tests/internal/clone_bridge.rs",
+            "tools/python/test_restore_reference_dataset_cli.py",
+        ] {
+            let source = std::fs::read_to_string(root.join(path)).unwrap();
+            assert!(!source.contains(&legacy), "{path} 仍含旧解释器环境入口");
         }
-        let program = std::env::current_exe().unwrap();
-        let qualified = concat!(
-            module_path!(),
-            "::legacy_environment_does_not_change_file_or_path_selection"
-        );
-        let name = qualified.split_once("::").unwrap().1;
-        let mut child = command(root.path(), &program, &["--exact", name, "--nocapture"]);
-        child.env("RYFRAME_PYTHON", SENTINEL);
-        let output = output(root.path(), child, None, Duration::from_secs(90)).unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }

@@ -104,7 +104,7 @@ fn initialized_history_matches_python_and_includes_resume_evidence() {
         fs::write(fixture.target.join(name), b"{}\n").unwrap();
     }
     let before = proof::history(&fixture.backend, &fixture.target).unwrap();
-    let output = Command::new(std::env::var_os("RYFRAME_PYTHON").unwrap_or_else(|| "python".into()))
+    let output = Command::new(crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap())
         .args(["-X", "utf8", "-B", "-c", "import json,sys; from pathlib import Path; from devex_clone_target import history; print(json.dumps(history(Path(sys.argv[1]))))"])
         .arg(&fixture.target)
         .env("PYTHONPATH", fixture.backend.join("tools/python"))
