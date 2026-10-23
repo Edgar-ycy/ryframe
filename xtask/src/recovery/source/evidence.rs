@@ -20,6 +20,8 @@ mod model;
 mod ready;
 #[path = "evidence/reference.rs"]
 mod reference;
+#[path = "evidence/reference_workflow/mod.rs"]
+pub(crate) mod reference_workflow;
 #[path = "evidence/staging.rs"]
 mod staging;
 #[cfg(test)]
@@ -81,7 +83,16 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     } else {
         matches!(
             request["operation"].as_str(),
-            Some("staging-create" | "database-configuration" | "reference-sql-normalize")
+            Some(
+                "staging-create"
+                    | "database-configuration"
+                    | "reference-sql-normalize"
+                    | "reference-work-directory"
+                    | "reference-copy"
+                    | "reference-damage"
+                    | "reference-receipt-start"
+                    | "reference-receipt-finish"
+            )
         )
     };
     if request["write"].as_bool() != Some(writes) {
@@ -111,7 +122,11 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
         Some("runtime-generation") => crate::recovery::runtime::generation::request(args),
         Some(operation) if operation.starts_with("reference-") => {
-            reference::request(operation, args)
+            if reference_workflow::handles(operation) {
+                reference_workflow::request(operation, args)
+            } else {
+                reference::request(operation, args)
+            }
         }
         _ => Err("来源证据操作无效".into()),
     }

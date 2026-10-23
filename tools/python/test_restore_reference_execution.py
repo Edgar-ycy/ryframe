@@ -1,7 +1,6 @@
 """正式恢复必须先通过严格目标计划与原生产品运行记录；外部资源使用离线替身。"""
 
 import copy
-import hashlib
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -48,19 +47,6 @@ class RestoreExecutionTests(unittest.TestCase):
         return execution.restore_inputs(self.backend, self.plan, self.target_path, self.root,
                                         self.record_path, self.registration_path, read_only=True)
 
-    def test_cli_requires_target_plan_before_work_directory_or_external_calls(self):
-        path = self.write("reference-plan.json", self.plan)
-        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
-                    "request": {"format_version": 1, "operation": "restore",
-                                "backend_dir": str(self.backend), "plan": str(path),
-                                "backup_root": str(self.root), "record": str(self.record_path),
-                                "runtime_registration": str(self.registration_path), "write": True}}
-        with patch.object(reference, "work_directory") as work, \
-                patch.object(reference, "ExternalTools") as tools, \
-                self.assertRaises(reference.ReferenceProtocolError):
-            reference._request_from_protocol(protocol)
-        work.assert_not_called()
-        tools.assert_not_called()
 
     def test_direct_legacy_arguments_are_rejected_before_reading(self):
         for extra in (["--target-plan", "one", "--target-plan=two"], ["--target-p", "unused"],
@@ -88,32 +74,6 @@ class RestoreExecutionTests(unittest.TestCase):
             self.assertEqual(tools.mock_calls, [])
             self.assertFalse((self.work / "restore-base.json").exists())
 
-    def test_product_digest_uses_native_struct_order_including_database_fields(self):
-        serialized = ('{"id":"r","backup_id":"b","scope_id":"s","fault_at":"2026-09-05T00:00:00Z",'
-                      '"databases":[{"source_key":"c","target_key":"c","server_uuid":"u","database":"d"}],'
-                      '"object_endpoint":"http://127.0.0.1:9000","object_prefix":"s/",'
-                      '"api_ready_url":"http://127.0.0.1:3000/readyz",'
-                      '"worker_ready_url":"http://127.0.0.1:9200/readyz","frontend_sha":"f"}')
-        value = reference.json.loads(serialized)
-        value = dict(reversed(list(value.items())))
-        value["databases"][0] = dict(reversed(list(value["databases"][0].items())))
-        self.assertEqual(execution.product_plan_hash(value), hashlib.sha256(serialized.encode()).hexdigest())
-
-    def test_record_rejects_extra_fields_bad_hash_state_time_and_recovery_point(self):
-        changes = [lambda value: value.update(extra=True), lambda value: value.update(plan_hash="f" * 64),
-                   lambda value: value.update(status="succeeded"), lambda value: value.update(failure="failed"),
-                   lambda value: value.update(data_verified_at=value["started_at"]),
-                   lambda value: value.update(completed_at=value["started_at"]),
-                   lambda value: value.update(started_at="2000-01-01T00:00:00Z"),
-                   lambda value: value.update(started_at="2999-01-01T00:00:00Z"),
-                   lambda value: value.update(started_at="2026-01-01T00:00:00"),
-                   lambda value: value.update(recovered_at="2000-01-01T00:00:00Z")]
-        for change in changes:
-            record = copy.deepcopy(self.record)
-            change(record)
-            self.write("record.json", record)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.inputs()
 
     def test_same_data_from_another_backup_directory_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "同一正式备份目录"):

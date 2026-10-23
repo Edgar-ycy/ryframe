@@ -7,7 +7,6 @@ import sys
 sys.dont_write_bytecode = True
 
 from dataclasses import dataclass
-import datetime as dt
 import hashlib
 import json
 import os
@@ -21,8 +20,8 @@ from restore_build import file_digest, source_snapshot
 from restore_reference_backup import backup_source, document_binding, validate_backup_result
 from restore_reference_execution import RestoreInputs, restore_inputs, restore_output
 from restore_reference_images import RestoreImages
-from restore_reference_io import ExternalTools, object_index, redact_object_diagnostic, validate_dump
-from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_hash, safe_file,
+from restore_reference_io import ExternalTools, redact_object_diagnostic
+from restore_reference_plan import (dataset_timeout_seconds, plan_hash,
                                     validate_inventory, validate_plan,
                                     verify_artifacts)
 from restore_runtime import read_json
@@ -30,12 +29,22 @@ from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target import execute_plan
 from source_inventory import build_source_domains, capture_inventory
+from native_s3_client import _invoke, _read_response
 
 DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"
 
 
+def _coordinate(operation: str, arguments: dict, *, write=False):
+    response, _ = _read_response(*_invoke(
+        "__source-evidence", {"operation": "reference-" + operation,
+            "arguments": arguments, "write": write}, subprocess.run, may_write=False,
+    ))
+    return response["value"]
+
+
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def write_json(path: Path, value: dict, *, new=True) -> None:
@@ -45,20 +54,9 @@ def write_json(path: Path, value: dict, *, new=True) -> None:
 
 
 def dataset_protocol(backend: Path, plan: Path, preflight: Path) -> str:
-    value = {
-        "backend_dir": str(backend),
-        "format_version": 1,
-        "kind": DATASET_PROTOCOL_KIND,
-        "plan": str(plan),
-        "preflight": str(preflight),
-        "side": "source",
-        "verify_existing": None,
-        "write": True,
-    }
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    if len(encoded) > 32 * 1024 or any(character in encoded for character in ("\r", "\n", "\0")):
-        raise ValueError("数据准备私有协议过长或包含换行/NUL")
-    return encoded
+    return _coordinate("dataset-protocol", {
+        "backend": str(backend), "plan": str(plan), "preflight": str(preflight),
+    })
 
 
 def failure_diagnostic(error: BaseException) -> dict:
@@ -73,15 +71,7 @@ def failure_diagnostic(error: BaseException) -> dict:
 
 
 def work_directory(plan: dict) -> Path:
-    work = Path(plan["work_dir"]).resolve()
-    owner = {"format_version": 1, "id": plan["id"], "plan_sha256": plan_hash(plan)}
-    if work.exists():
-        if read_json(work / "reference-owner.json") != owner:
-            raise ValueError("演练目录已存在且 ownership 不匹配")
-    else:
-        work.mkdir(parents=True, exist_ok=False)
-        write_json(work / "reference-owner.json", owner)
-    return work
+    return Path(_coordinate("work-directory", {"plan": plan}, write=True))
 
 
 def require_stopped(plan: dict, side: str) -> None:
@@ -130,11 +120,9 @@ def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
         path = directory / "index.json"
         write_json(path, {"entries": entries})
         artifacts.append(artifact(root, path, f"objects:{objects['bucket']}"))
-    # 采集时间来自 Inventory；完成或登记时间不能刷新恢复点。
-    captured = dt.datetime.fromisoformat(inventory["captured_at"].replace("Z", "+00:00"))
-    manifest = {**inventory, "id": plan["id"], "completed_at": now(),
-                "retention_until": (captured + dt.timedelta(days=7)).isoformat(), "artifacts": artifacts}
-    verify_artifacts(root, manifest)
+    manifest = _coordinate("backup-manifest", {
+        "plan": plan, "inventory": inventory, "artifacts": artifacts, "root": str(root),
+    })
     require_stopped(plan, "source")
     if backup_source(backend, plan, inventory, source_generation, source_export_result, live=True) != inputs:
         raise ValueError("备份期间共享导出或来源绑定被替换")
@@ -166,12 +154,7 @@ def restore_locked(plan: dict, tools: ExternalTools, backend: Path, inputs: Rest
     if current.bindings() != inputs.bindings():
         raise ValueError("恢复执行前目标计划或运行记录发生变化")
     root, manifest, record = current.root, current.manifest.value, current.record.value
-    validate_inventory(plan, manifest)
-    verify_artifacts(root, manifest)
-    # 全部 SQL 与对象索引先校验；任一缺失或篡改不能留下部分目标写入。
-    for db in manifest["databases"]:
-        validate_dump(safe_file(root, f"databases/{db['key']}.sql"), {table["table"] for table in db["tables"]})
-    indices = {objects["bucket"]: object_index(root, objects, manifest["artifacts"]) for objects in manifest["objects"]}
+    tasks = _coordinate("restore-resources", {"plan": plan, "root": str(root), "manifest": manifest})
     images = RestoreImages(backend, plan, current, tools)
     try:
         with images.control():
@@ -180,7 +163,7 @@ def restore_locked(plan: dict, tools: ExternalTools, backend: Path, inputs: Rest
             checkpoint()
             current.assert_unchanged()
             try:
-                restore_resources(plan, tools, current, indices, checkpoint, images)
+                restore_resources(plan, tools, current, tasks, checkpoint, images)
                 checkpoint()
                 verify_artifacts(root, manifest)
                 images.capture("after", after=True)
@@ -200,82 +183,27 @@ def restore_locked(plan: dict, tools: ExternalTools, backend: Path, inputs: Rest
     except BaseException as error:
         error.restore_evidence = dict(images.bindings)
         raise
-    return {"restore_id": record["plan"]["id"], "status": "external_copy_completed",
-            **current.bindings(), "runtime": runtime, "resource_images": images.bindings,
-            "next": "执行 restore-verify-data；外部复制完成不代表恢复成功"}
+    return _coordinate("restore-result", {
+        "record": record, "bindings": current.bindings(), "runtime": runtime, "images": images.bindings,
+    })
 
 
-def restore_resources(plan: dict, tools: ExternalTools, current: RestoreInputs, indices: dict,
+def restore_resources(plan: dict, tools: ExternalTools, current: RestoreInputs, tasks: list,
                       checkpoint, images: RestoreImages) -> None:
-    root, manifest = current.root, current.manifest.value
-    artifacts = {entry["relative_path"]: entry for entry in manifest["artifacts"]}
-    def bound_artifact(relative):
-        path = safe_file(root, relative)
-        if any(artifacts[relative][key] != value for key, value in file_digest(path).items()):
-            raise ValueError("恢复写入前当前产物字节与备份清单不同")
-        return path
-    for db in manifest["databases"]:
+    for task in tasks:
         checkpoint()
         current.assert_unchanged()
-        target = next(value for value in plan["target"]["databases"] if value["key"] == db["key"])
+        bound = _coordinate("bound-artifact", {
+            "root": str(current.root), "manifest": current.manifest.value, "relative": task["relative"],
+        })
+        source = Path(bound["path"])
         with images.target_environment():
-            tools.restore_database(target, [table["table"] for table in db["tables"]], bound_artifact(f"databases/{db['key']}.sql"))
-    for bucket, index in indices.items():
-        for entry in index["entries"]:
-            checkpoint()
-            current.assert_unchanged()
-            key = plan["target"]["scope_id"] + "/" + entry["key"].removeprefix(plan["source"]["scope_id"] + "/")
-            with images.target_environment():
-                source = bound_artifact(entry["file"])
-                tools.create_object_if_absent(
-                    bucket, key, source,
-                    {"ContentType": entry["content_type"], "CacheControl": None,
-                     "ContentDisposition": None, "ContentEncoding": None,
-                     "ContentLanguage": None, "Expires": None,
-                     "WebsiteRedirectLocation": None, "Metadata": {}},
-                    file_digest(source),
-                )
+            if task["kind"] == "database":
+                tools.restore_database(task["target"], task["tables"], source)
+            else:
+                tools.create_object_if_absent(task["bucket"], task["key"], source,
+                                               task["metadata"], {key: bound[key] for key in ("bytes", "sha256")})
 
-
-def copy_backup(work: Path, manifest: dict, source: Path, new_id: str) -> dict:
-    identifier(new_id)
-    if new_id == manifest["id"]:
-        raise ValueError("失败演练必须使用独立备份 ID")
-    verify_artifacts(source, manifest)
-    target = work / new_id
-    target.mkdir(exist_ok=False)
-    for item in manifest["artifacts"]:
-        destination = safe_file(target, item["relative_path"], exists=False)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(safe_file(source, item["relative_path"]), destination)
-    copied = {**manifest, "id": new_id}
-    verify_artifacts(target, copied)
-    write_json(target / "manifest.json", copied)
-    return {"manifest": str(target / "manifest.json"), "backup_root": str(target),
-            "next": "先登记有效副本并执行 restore-begin，然后用 damage 注入损坏，再执行 restore-verify-data"}
-
-
-def damage(work: Path, root: Path, manifest: dict, relative: str, missing: bool) -> dict:
-    if (root.resolve() in (work.resolve(), (work / "backup").resolve())
-            or not root.resolve().is_relative_to(work.resolve())):
-        raise ValueError("只允许损坏当前演练目录内的独立备份副本")
-    verify_artifacts(root, manifest)
-    if relative not in {entry["relative_path"] for entry in manifest["artifacts"]}:
-        raise ValueError("损坏文件必须精确登记在该副本清单")
-    path = safe_file(root, relative)
-    if missing:
-        path.unlink()
-    else:
-        with path.open("r+b") as stream:
-            first = stream.read(1)
-            stream.seek(0)
-            stream.write(bytes([first[0] ^ 1]))
-    return {"backup_id": manifest["id"], "artifact": relative, "injected": "missing" if missing else "corrupt"}
-
-
-OPERATIONS = frozenset(("plan", "check-dataset", "check-existing", "dataset", "backup",
-                        "restore", "copy", "damage"))
-WRITING_OPERATIONS = frozenset(("dataset", "backup", "restore", "copy", "damage"))
 
 
 class ReferenceProtocolError(ValueError):
@@ -308,118 +236,34 @@ class ReferenceRequest:
     restore_inputs: object | None = None
 
 
-def _unique_protocol_object(pairs: list[tuple[str, object]]) -> dict:
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ReferenceProtocolError(f"reference 私有协议字段重复：{key}")
-        result[key] = value
-    return result
-
-
-def _exact_protocol(value: object, fields: set[str], label: str) -> dict:
-    if not isinstance(value, dict) or set(value) != fields:
-        raise ReferenceProtocolError(f"{label}字段不完整或含未知字段")
-    return value
-
-
-def _protocol_path(value: object, label: str) -> Path:
-    path = Path(value) if isinstance(value, str) else None
-    if (not isinstance(value, str) or not value or path is None or not path.is_absolute()
-            or ".." in path.parts
-            or any(character in value for character in ("\n", "\r", "\0"))):
-        raise ReferenceProtocolError(f"{label}必须是无父目录跳转和控制字符的非空绝对路径")
-    return path
-
-
-def _plan_protocol_fields(request: dict) -> set[str]:
-    base = {"backend_dir", "format_version", "operation", "plan", "write"}
-    target_inputs = {"backup_receipt", "comparison_sources", "arm_input",
-                     "fresh_target_verify", "product_plan"}
-    extras = set(request) - base
-    if extras == set() or extras == {"target_plan"} or extras == target_inputs:
-        return base | extras
-    if extras == target_inputs | {"output"}:
-        return base | extras
-    raise ReferenceProtocolError("reference plan 私有协议的模式或输入组合无效")
-
-
-def _operation_fields(request: dict, operation: str) -> set[str]:
-    base = {"backend_dir", "format_version", "operation", "plan", "write"}
-    additions = {
-        "check-dataset": set(),
-        "check-existing": {"side"},
-        "dataset": set(),
-        "backup": {"inventory", "source_generation", "source_export_result"},
-        "restore": {"backup_root", "record", "target_plan", "runtime_registration"},
-        "copy": {"backup_root", "copy_id"},
-        "damage": {"backup_root", "artifact", "missing"},
-    }
-    return base | additions[operation]
-
-
 def private_protocol_request(argv: list[str] | None = None) -> ReferenceRequest:
     arguments = sys.argv[1:] if argv is None else argv
+    if len(arguments) == 3 and arguments[0] == "--native-tool" and arguments[2] == "--stdin":
+        from rate_limit_tool import install_binding
+        try:
+            install_binding(arguments[1])
+        except (ValueError, TypeError) as error:
+            raise ReferenceProtocolError("reference 原生工具绑定无效") from error
+        arguments = ["--stdin"]
     if arguments != ["--stdin"]:
         raise ReferenceProtocolError("reference 私有脚本只接受 --stdin")
     raw = sys.stdin.buffer.read(65_537)
-    if len(raw) > 65_536:
-        raise ReferenceProtocolError("reference 私有协议超过64KiB")
     try:
-        protocol = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_protocol_object)
+        return _request_from_raw(raw.decode("utf-8"))
     except (ValueError, UnicodeError) as error:
-        raise ReferenceProtocolError("reference stdin私有协议无效") from error
-    return _request_from_protocol(protocol)
+        raise ReferenceProtocolError("reference stdin 私有协议无效") from error
 
 
-def _request_from_protocol(protocol: object) -> ReferenceRequest:
-    outer = _exact_protocol(protocol, {"format_version", "kind", "request"}, "reference 私有协议")
-    if (type(outer["format_version"]) is not int or outer["format_version"] != 1
-            or outer["kind"] != "ryframe-xtask-recovery-reference"):
-        raise ReferenceProtocolError("reference 私有协议版本或类型无效")
-    request = outer["request"]
-    if not isinstance(request, dict):
-        raise ReferenceProtocolError("reference 私有请求必须是对象")
-    operation = request.get("operation")
-    if not isinstance(operation, str) or operation not in OPERATIONS:
-        raise ReferenceProtocolError("reference 私有协议操作无效")
-    fields = _plan_protocol_fields(request) if operation == "plan" else _operation_fields(request, operation)
-    values = _exact_protocol(request, fields, f"reference {operation} 私有请求")
-    write = values["write"]
-    expected_write = operation in WRITING_OPERATIONS or operation == "plan" and "output" in values
-    if type(write) is not bool or write != expected_write:
-        raise ReferenceProtocolError("reference 私有协议写入授权与操作不一致")
-    if type(values["format_version"]) is not int or values["format_version"] != 1:
-        raise ReferenceProtocolError("reference 私有请求版本无效")
-    return _reference_request(values, operation, write)
-
-
-def _reference_request(values: dict, operation: str, write: bool) -> ReferenceRequest:
-    paths = {field: _protocol_path(values[field], field) for field in (
+def _request_from_raw(raw: str) -> ReferenceRequest:
+    try:
+        values = _coordinate("request", {"raw": raw})
+    except (ValueError, RuntimeError) as error:
+        raise ReferenceProtocolError("reference 私有参数协议无效") from error
+    paths = {name: Path(value) for name, value in values.items() if name in {
         "backend_dir", "plan", "inventory", "source_generation", "source_export_result",
-        "backup_root", "record", "runtime_registration", "backup_receipt",
-        "comparison_sources", "arm_input", "fresh_target_verify", "product_plan",
-        "target_plan", "output") if field in values}
-    side = values.get("side")
-    if side is not None and (not isinstance(side, str) or side not in {"source", "target"}):
-        raise ReferenceProtocolError("check-existing side 无效")
-    copy_id = values.get("copy_id")
-    if copy_id is not None:
-        try:
-            identifier(copy_id)
-        except (TypeError, ValueError) as error:
-            raise ReferenceProtocolError("copy id 无效") from error
-    artifact = values.get("artifact")
-    if artifact is not None and (not isinstance(artifact, str) or not artifact
-            or "\\" in artifact or ":" in artifact
-            or any(part in {"", ".", ".."} for part in artifact.split("/"))
-            or any(ord(character) < 32 for character in artifact)):
-        raise ReferenceProtocolError("damage artifact 不是安全相对路径")
-    missing = values.get("missing", False)
-    if type(missing) is not bool:
-        raise ReferenceProtocolError("damage missing 必须是布尔值")
-    return ReferenceRequest(command=operation, write=write, copy_id=copy_id,
-                            artifact=artifact, side=side, missing=missing, **paths)
+        "backup_root", "record", "runtime_registration", "backup_receipt", "comparison_sources",
+        "arm_input", "fresh_target_verify", "product_plan", "target_plan", "output"}}
+    return ReferenceRequest(**{**values, **paths})
 
 
 def main(args: ReferenceRequest) -> None:
@@ -427,14 +271,11 @@ def main(args: ReferenceRequest) -> None:
     validate_plan(plan, backend)
     if args.command == "plan":
         result = execute_plan(args, backend, plan)
-        print(json.dumps(result if result is not None else {"id": plan["id"], "plan_sha256": plan_hash(plan), "work_dir": plan["work_dir"],
-                          "targets": {side: [{key: db[key] for key in ("key", "server_uuid", "database")} for db in plan[side]["databases"]]
-                                      for side in ("source", "target")}}, ensure_ascii=False))
+        print(json.dumps(result if result is not None else _coordinate("summary", {"plan": plan}), ensure_ascii=False))
         return
     if args.command in ("check-dataset", "check-existing"):
         work = Path(plan["work_dir"])
-        if read_json(work / "reference-owner.json").get("plan_sha256") != plan_hash(plan):
-            raise ValueError("参考环境目录没有对应的计划 ownership")
+        _coordinate("work-verify", {"plan": plan})
         side = "source" if args.command == "check-dataset" else args.side or "target"
         check_api(plan, ExternalTools(plan, work), side)
         if args.command == "check-dataset":
@@ -444,12 +285,6 @@ def main(args: ReferenceRequest) -> None:
         return
     if not args.write:
         raise ReferenceProtocolError("所有执行阶段必须显式授权写入")
-    required = {"backup": ("inventory", "source_generation", "source_export_result"),
-                "restore": ("backup_root", "record", "target_plan", "runtime_registration"),
-                "copy": ("backup_root", "copy_id"), "damage": ("backup_root", "artifact")}
-    for name in required.get(args.command, ()):
-        if getattr(args, name) is None:
-            raise ReferenceProtocolError(f"当前阶段缺少 {name}")
     if args.command == "restore":
         args.restore_inputs = restore_inputs(backend, plan, args.target_plan, args.backup_root, args.record,
                                              args.runtime_registration, read_only=True)
@@ -466,19 +301,18 @@ def main(args: ReferenceRequest) -> None:
 
 
 def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -> dict:
-    name = args.command + ("-" + identifier(args.copy_id) if args.copy_id else "")
-    if args.command == "damage":
-        name += "-" + identifier(args.backup_root.resolve().name)
-    receipt = work / f"{name}.json"
     inputs = None
+    output = None
     if args.command == "restore":
         inputs = getattr(args, "restore_inputs", None) or restore_inputs(
             backend, plan, args.target_plan, args.backup_root, args.record, args.runtime_registration, read_only=True)
-        receipt = restore_output(backend, plan, inputs)
-    started = {"command": args.command, "plan_sha256": plan_hash(plan), "started_at": now(), "status": "running"}
-    if inputs is not None:
-        started.update(inputs.bindings())
-    write_json(receipt, started)
+        output = restore_output(backend, plan, inputs)
+    receipt = _coordinate("receipt-start", {
+        "plan": plan, "command": args.command, "copy_id": args.copy_id,
+        "root": str(args.backup_root.resolve()) if args.command == "damage" else None,
+        "receipt": str(output) if output is not None else None,
+        "bindings": inputs.bindings() if inputs is not None else None,
+    }, write=True)
     try:
         if args.command == "dataset":
             timeout = dataset_timeout_seconds(plan)
@@ -494,14 +328,7 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             })
             check_api(plan, tools, "source")
             require_empty_source(plan, tools)
-            preflight = {
-                "format_version": 1,
-                "kind": "restore-reference-dataset-preflight",
-                "plan_sha256": plan_hash(plan),
-                "side": "source",
-                "scope_id": plan["source"]["scope_id"],
-                "actions": {"business": "empty_source_verified"},
-            }
+            preflight = _coordinate("dataset-preflight", {"plan": plan})
             preflight_path = work / "dataset-preflight.json"
             write_json(preflight_path, preflight)
             from rate_limit_tool import tool_binding, verified_tool
@@ -516,39 +343,33 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
                     backend, args.plan.resolve(), preflight_path.resolve()).encode("utf-8"),
                     env=configured({}), timeout=timeout)
             result = read_json(work / "dataset/result.json")
-            if read_json(preflight_path) != preflight:
-                raise ValueError("数据准备预检收据在执行期间发生变化")
-            if source_snapshot(backend) != source:
-                raise ValueError("参考数据准备期间源码发生变化")
-            if capture_inventory(tool_root) != tool_inventory:
-                raise ValueError("参考数据准备期间维护工具来源发生变化")
-            result = {**result, "source": source}
+            result = _coordinate("dataset-result", {
+                "preflight": preflight, "actual_preflight": read_json(preflight_path),
+                "source": source, "actual_source": source_snapshot(backend),
+                "tools": tool_inventory, "actual_tools": capture_inventory(tool_root), "result": result,
+            })
         elif args.command == "backup":
             inventory = read_json(args.inventory)
             if "id" in inventory:
                 raise ValueError("backup 必须直接消费共享导出的原始库存，不能手工补写 id")
-            inventory = {"id": plan["id"], **inventory}
-            source = source_snapshot(backend)
-            if not source["clean"] or source["head"] != inventory["source_sha"]:
-                raise ValueError("正式备份协调器必须是共享导出库存 source_sha 对应的干净工作树")
+            inventory = _coordinate("backup-inventory", {
+                "plan": plan, "inventory": inventory, "source": source_snapshot(backend),
+            })
             result = backup(plan, tools, work, inventory, backend, args.source_generation.absolute(), args.source_export_result.absolute())
         elif args.command == "restore":
             result = restore(plan, tools, backend, inputs)
         else:
-            root = args.backup_root.resolve()
-            if not root.is_relative_to(work.resolve()):
-                raise ValueError("参考备份根目录必须位于本次明确演练目录内")
-            manifest = read_json(root / "manifest.json")
-            if args.command == "copy":
-                result = copy_backup(work, manifest, root, args.copy_id)
-            else:
-                result = damage(work, root, manifest, args.artifact, args.missing)
-        write_json(receipt, {**started, "status": "completed", "completed_at": now(), "result": result}, new=False)
+            raise ReferenceProtocolError("本地 copy/damage 阶段必须通过 Rust 公共入口运行")
+        _coordinate("receipt-finish", {"receipt": receipt, "result": result,
+            "failure": None, "resource_images": None}, write=True)
         return result
     except BaseException as error:
-        write_json(receipt, {**started, "status": "failed", "completed_at": now(),
-                             "failure": failure_diagnostic(error),
-                             **({"resource_images": error.restore_evidence} if hasattr(error, "restore_evidence") else {})}, new=False)
+        try:
+            _coordinate("receipt-finish", {"receipt": receipt, "result": None,
+                "failure": failure_diagnostic(error),
+                "resource_images": getattr(error, "restore_evidence", None)}, write=True)
+        except BaseException as failure:
+            error.add_note("失败收据发布未确认，保留运行收据和未知结果：" + type(failure).__name__)
         raise
 
 

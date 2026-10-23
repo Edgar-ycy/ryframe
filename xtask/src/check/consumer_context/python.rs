@@ -244,7 +244,6 @@ mod tests {
             "xtask/tests/internal/target_proof_native.rs",
             "xtask/tests/internal/target_guard_native.rs",
             "xtask/tests/internal/clone_bridge.rs",
-            "tools/python/test_restore_reference_dataset_cli.py",
         ] {
             let source = std::fs::read_to_string(root.join(path)).unwrap();
             assert!(!source.contains(&legacy), "{path} 仍含旧解释器环境入口");

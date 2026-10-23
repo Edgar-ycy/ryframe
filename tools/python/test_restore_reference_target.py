@@ -266,16 +266,15 @@ class TargetPlanTests(unittest.TestCase):
         plan = self.write("reference-plan.json", self.plan)
         cache = self.work / "cold-bytecode"
         before = {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")}
-        protocol = json.dumps({"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
-                               "request": {"format_version": 1, "operation": "plan",
-                                           "backend_dir": str(self.backend), "plan": str(plan),
-                                           "write": False}})
         environment = dict(os.environ)
         environment.update({"RYFRAME_XTASK_RECOVERY_REFERENCE": "untrusted",
                             "RYFRAME_XTASK_RECOVERY_INPUTS": "untrusted",
                             "PYTHONPYCACHEPREFIX": str(cache)})
-        result = subprocess.run([sys.executable, "-B", str(Path(reference.__file__).absolute()), "--stdin"],
-                                cwd=self.backend, env=environment, input=protocol.encode(),
+        from rate_limit_tool import tool_binding
+        binding = tool_binding()
+        self.assertIsNotNone(binding)
+        result = subprocess.run([binding["path"], "check", "recovery", "plan", "--plan", str(plan)],
+                                cwd=self.backend, env=environment,
                                 capture_output=True, check=True)
         self.assertEqual(json.loads(result.stdout)["id"], self.plan["id"])
         self.assertFalse(cache.exists())

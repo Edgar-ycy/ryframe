@@ -58,26 +58,6 @@ class BackupBindingTests(unittest.TestCase):
             return backup.backup_source(self.backend, self.plan, self.inventory,
                                         self.generation_path, self.export_path)
 
-    def test_binds_same_published_export_and_both_source_proofs(self):
-        self.assertEqual(self.verify(), {"source_export": self.identity,
-                                       "source_generation": self.descriptor(self.generation_path)})
-
-    def test_rejects_different_inventory_configuration_build_and_generation(self):
-        original = copy.deepcopy(self.exported)
-        changes = [lambda value: value["inventory"].update(source_sha="b" * 40),
-                   lambda value: value["inventory"]["databases"][0]["tables"][0].update(rows=2),
-                   lambda value: value["request"]["source"].update(scope_id="other"),
-                   lambda value: value["request"]["tools"]["mysqldump"].update(sha256="d" * 64),
-                   lambda value: value["request"]["backend_build"].update(sha256="d" * 64),
-                   lambda value: value["generation"]["source"].update(head="c" * 40),
-                   lambda value: value["generation"]["processes"]["api"].update(pid=21),
-                   lambda value: value["generation"]["runtime"].update(scope_id="other"),
-                   lambda value: value["generation"]["physical_binding"].update(scope_id="other")]
-        for change in changes:
-            self.exported = copy.deepcopy(original)
-            change(self.exported)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.verify()
 
     def test_rejects_stale_quiescence_and_mutation_during_verification(self):
         self.write("quiescence.json", {"observed_stopped_at": "2026-01-01T00:00:00Z"})
@@ -92,18 +72,6 @@ class BackupBindingTests(unittest.TestCase):
                 patch.object(backup, "verify_source_export", side_effect=mutate), self.assertRaises(ValueError):
             backup.backup_source(self.backend, self.plan, self.inventory, self.generation_path, self.export_path)
 
-    def test_backup_requires_export_argument_before_any_resource_access(self):
-        path = self.write("plan.json", self.plan)
-        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
-                    "request": {"format_version": 1, "operation": "backup",
-                                "backend_dir": str(self.backend), "plan": str(path),
-                                "inventory": str(self.work / "unused.json"),
-                                "source_generation": str(self.work / "generation.json"),
-                                "write": True}}
-        with patch.object(reference, "work_directory") as work, \
-                self.assertRaises(reference.ReferenceProtocolError):
-            reference._request_from_protocol(protocol)
-        work.assert_not_called()
 
     def test_execution_consumes_original_export_inventory_without_editing_it(self):
         raw = copy.deepcopy(self.exported["inventory"])

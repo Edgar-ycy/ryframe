@@ -7,7 +7,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 BACKEND = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND / "scripts"))
@@ -15,6 +15,19 @@ sys.path.insert(0, str(BACKEND / "scripts"))
 import reference_fixture_dataset as dataset
 from reference_fixture_control_protocol import run_private
 from workspace_directory import WorkspaceDirectory
+
+
+@contextlib.contextmanager
+def _stage_runner(*, side_effect=None):
+    """仅替换外部数据准备阶段，原生只读证据调用继续真实执行。"""
+    native_run = subprocess.run
+    stage = Mock(side_effect=side_effect)
+    def dispatch(command, **options):
+        if any(Path(str(argument)).name == "restore_reference.py" for argument in command):
+            return stage(command, **options)
+        return native_run(command, **options)
+    with patch.object(dataset.subprocess, "run", side_effect=dispatch):
+        yield stage
 
 
 class ReferenceFixtureDatasetTests(unittest.TestCase):
@@ -283,12 +296,12 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
             dataset.write_json(result_path, {"format_version": 1, "records": 100000})
             return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
 
-        with patch.object(dataset.subprocess, "run", side_effect=run) as execute:
+        with _stage_runner(side_effect=run) as execute:
             result = dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
         self.assertEqual(result["status"], "reference_fixture_dataset_prepared")
         self.assertEqual(result["dataset"], dataset._bound(result_path))
         self.assertEqual(execute.call_count, 1)
-        with patch.object(dataset.subprocess, "run") as execute, self.assertRaises(ValueError):
+        with _stage_runner() as execute, self.assertRaises(ValueError):
             dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
         execute.assert_not_called()
 
@@ -297,13 +310,13 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         plan_file = self.runtime / "dataset-plan.json"
         dataset.write_json(plan_file, plan)
         error = subprocess.CalledProcessError(1, ["xtask"], output=self.private["admin_password"], stderr=self.private["secret_key"])
-        with patch.object(dataset.subprocess, "run", side_effect=error) as execute, self.assertRaisesRegex(RuntimeError, "脱敏诊断"):
+        with _stage_runner(side_effect=error) as execute, self.assertRaisesRegex(RuntimeError, "脱敏诊断"):
             dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
         self.assertEqual(execute.call_count, 1)
         failure = dataset.read_json(self.runtime / "dataset-plan.prepare-failed.json")
         self.assertEqual(failure["status"], "failed_unknown_writes")
         self.assertNotIn(self.private["admin_password"], failure["stdout"])
         self.assertNotIn(self.private["secret_key"], failure["stderr"])
-        with patch.object(dataset.subprocess, "run") as execute, self.assertRaisesRegex(ValueError, "禁止覆盖或重放"):
+        with _stage_runner() as execute, self.assertRaisesRegex(ValueError, "禁止覆盖或重放"):
             dataset.prepare(self.backend, self.bootstrap, self.runtime, plan_file, "base")
         execute.assert_not_called()

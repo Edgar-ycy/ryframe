@@ -173,6 +173,7 @@ pub(crate) fn private_invocation_at(
     if matches!(
         command,
         FixtureControlCommand::Services(_)
+            | FixtureControlCommand::Dataset(_)
             | FixtureControlCommand::Request(_)
             | FixtureControlCommand::Environment(_)
     ) && let Some(binding) = crate::check::python_suite::binding(&std::env::current_exe()?)?

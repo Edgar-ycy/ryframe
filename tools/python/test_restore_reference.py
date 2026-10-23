@@ -119,36 +119,6 @@ class ReferenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_inventory(self.plan, candidate)
 
-    def test_reference_work_requires_same_plan_owner_and_explicit_write(self):
-        path = self.backend / "plan.json"
-        path.write_text(json.dumps(self.plan))
-        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
-                    "request": {"format_version": 1, "operation": "dataset",
-                                "backend_dir": str(self.backend), "plan": str(path), "write": False}}
-        with self.assertRaises(reference.ReferenceProtocolError):
-            reference._request_from_protocol(protocol)
-        self.assertFalse(Path(self.plan["work_dir"]).exists())
-        reference.work_directory(self.plan)
-        changed = copy.deepcopy(self.plan)
-        changed["id"] = "another"
-        with self.assertRaisesRegex(ValueError, "ownership"):
-            reference.work_directory(changed)
-
-    def test_new_copy_damage_keeps_original_intact_and_detects_missing_and_corrupt(self):
-        work = reference.work_directory(self.plan)
-        root, manifest = stored_backup(self.plan, work)
-        for missing in (False, True):
-            copied = reference.copy_backup(work, manifest, root, f"bad-{int(missing)}")
-            bad = Path(copied["backup_root"])
-            copied_manifest = reference.read_json(bad / "manifest.json")
-            reference.damage(work, bad, copied_manifest, "databases/control.sql", missing)
-            with self.assertRaises(ValueError):
-                verify_artifacts(bad, copied_manifest)
-            verify_artifacts(root, manifest)
-        with self.assertRaises(ValueError):
-            reference.damage(work, root, manifest, "databases/control.sql", False)
-        with self.assertRaises(ValueError):
-            reference.copy_backup(work, manifest, root, manifest["id"])
 
     def test_invalid_artifact_stops_restore_before_any_external_call(self):
         work = reference.work_directory(self.plan)
@@ -234,19 +204,6 @@ class ReferenceTests(unittest.TestCase):
                                                             "side": side, "scope_id": self.plan[side]["scope_id"]})
         self.assertEqual(path.read_bytes(), original)
 
-    def test_side_is_rejected_for_every_non_existing_command_before_resource_access(self):
-        for command, side in (("check-existing", "other"), ("check-dataset", "source"),
-                              ("dataset", "source"), ("restore", "source"), ("plan", "target"),
-                              ("backup", "source"), ("copy", "target"), ("damage", "target")):
-            request = {"format_version": 1, "operation": command, "backend_dir": str(self.backend),
-                       "plan": str(self.backend / "unused.json"), "side": side,
-                       "write": command in reference.WRITING_OPERATIONS}
-            protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
-                        "request": request}
-            with patch.object(reference, "read_json") as read, \
-                    self.assertRaises(reference.ReferenceProtocolError):
-                reference._request_from_protocol(protocol)
-            read.assert_not_called()
 
     def test_dataset_check_stays_source_and_requires_empty_source(self):
         reference.work_directory(self.plan)
@@ -261,36 +218,6 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(check.call_args.args[2], "source")
         empty.assert_called_once()
 
-    def test_private_protocol_rejects_duplicate_unknown_and_cross_family_fields(self):
-        request = {"backend_dir": str(self.backend), "format_version": 1,
-                   "operation": "check-existing", "plan": str(self.backend / "plan.json"),
-                   "side": "target", "write": False}
-        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
-                    "request": request}
-        self.assertEqual(reference._request_from_protocol(protocol).side, "target")
-        unknown = copy.deepcopy(protocol)
-        unknown["request"]["other"] = True
-        with self.assertRaises(reference.ReferenceProtocolError):
-            reference._request_from_protocol(unknown)
-        parent_jump = copy.deepcopy(protocol)
-        parent_jump["request"]["plan"] = str(self.backend / "evidence" / ".." / "plan.json")
-        with self.assertRaises(reference.ReferenceProtocolError):
-            reference._request_from_protocol(parent_jump)
-        raw = json.dumps(protocol).replace('"side": "target"',
-                                           '"side": "target", "side": "source"')
-        with patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw.encode()))), \
-                self.assertRaises(reference.ReferenceProtocolError):
-            reference.private_protocol_request(argv=["--stdin"])
-        with self.assertRaises(reference.ReferenceProtocolError):
-            reference.private_protocol_request(argv=[])
-
-    def test_dataset_requires_explicit_bounded_stage_timeout(self):
-        self.plan["dataset"] = {"timeout_seconds": 21600}
-        self.assertEqual(dataset_timeout_seconds(self.plan), 21600)
-        for value in (None, 0, -1, 604801, True, 1.5, "21600"):
-            self.plan["dataset"]["timeout_seconds"] = value
-            with self.assertRaisesRegex(ValueError, "阶段时限"):
-                dataset_timeout_seconds(self.plan)
 
     def test_dataset_uses_long_stage_timeout_and_preserves_timeout_failure(self):
         self.plan["dataset"] = {"timeout_seconds": 21600}

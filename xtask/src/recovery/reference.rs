@@ -28,13 +28,19 @@ pub(super) fn run(command: &RecoveryReferenceCommand, root: &Path) -> Result<()>
         return Ok(());
     }
     let payload = protocol_at(command, root)?;
+    if let Some(value) = super::source::evidence::reference_workflow::run_local(&payload)? {
+        println!("{}", serde_json::to_string(&value)?);
+        return Ok(());
+    }
     let mut input = tempfile::tempfile()?;
     input.write_all(payload.as_bytes())?;
     input.seek(SeekFrom::Start(0))?;
+    let binding = crate::check::python_suite::binding(&std::env::current_exe()?)?
+        .ok_or("参考恢复要求可核验的当前原生工具，拒绝临时编译回退")?;
     run_with_stdin_env_removed(
         root,
         "python",
-        &["-B", SCRIPT, "--stdin"],
+        &["-B", SCRIPT, "--native-tool", &binding, "--stdin"],
         Stdio::from(input),
         &[
             "RYFRAME_XTASK_RECOVERY_REFERENCE",

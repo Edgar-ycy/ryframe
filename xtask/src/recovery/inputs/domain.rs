@@ -160,6 +160,9 @@ pub(crate) fn validate_plan(plan: &Value, backend: &Path) -> Result<()> {
     if plan.get("dataset").is_some() {
         fields.push("dataset");
     }
+    if plan.get("fixture_bindings").is_some() {
+        fields.push("fixture_bindings");
+    }
     let root = exact(plan, &fields, "参考计划")?;
     if root.get("format_version") != Some(&Value::from(1)) {
         return Err("参考演练计划版本无效".into());
@@ -184,19 +187,24 @@ pub(crate) fn validate_plan(plan: &Value, backend: &Path) -> Result<()> {
                 "object_count",
                 "object_bytes",
                 "admin",
-                "owner_password_env",
+                "configuration",
             ],
             "数据准备计划",
         )?;
         exact(
             dataset.get("admin").unwrap(),
-            &["tenant_id", "username", "password_env"],
+            &["tenant_id", "username"],
             "数据准备管理员",
         )?;
         let timeout = integer(dataset.get("timeout_seconds").unwrap(), "数据准备时限")?;
         if !(1..=604_800).contains(&timeout) {
             return Err("数据准备必须显式设置 1 至 604800 秒的阶段时限".into());
         }
+        crate::recovery::clone::native::s3::app_configuration::load(
+            backend,
+            dataset.get("configuration").unwrap(),
+            &mut Vec::new(),
+        )?;
     }
     let local = backend.join(".local-tests");
     validate_local_optional(
@@ -245,7 +253,7 @@ fn side<'a>(
     backend: &Path,
     local: &Path,
 ) -> Result<SideIdentity<'a>> {
-    let fields = if name == "target" {
+    let mut fields = if name == "target" {
         vec![
             "scope_id",
             "runtime_dir",
@@ -258,6 +266,9 @@ fn side<'a>(
     } else {
         vec!["scope_id", "runtime_dir", "api_url", "s3", "databases"]
     };
+    if name == "source" && value.get("frontend_url").is_some() {
+        fields.push("frontend_url");
+    }
     let side = exact(value, &fields, &format!("参考计划 {name} 侧"))?;
     let scope = text(side.get("scope_id").unwrap(), "演练 scope")?;
     scope_identifier(scope)?;

@@ -1,58 +1,24 @@
 """恢复执行前固定产品运行记录、严格目标计划与同一备份文件快照。"""
 
 from dataclasses import dataclass
-import datetime as dt
-import hashlib
-import json
 from pathlib import Path
 
-from devex_clone_model import exact, local_path
+from devex_clone_model import local_path
 from restore_reference_backup import bound_document, document_binding
-from restore_reference_plan import identifier, scope_identifier
-from restore_reference_target import PRODUCT_FIELDS, verify_target_plan
-from restore_runtime_evidence import JsonDocument, read_json_document, timestamp
+from restore_reference_plan import _native
+from restore_reference_target import verify_target_plan
+from restore_runtime_evidence import JsonDocument, read_json_document
 from restore_runtime_registration import verify_registration
 
 
 def product_plan_hash(value: dict) -> str:
-    """与 Rust RestorePlan/RestoreDatabase 的 serde 字段顺序保持一致。"""
-    fields = ("id", "backup_id", "scope_id", "fault_at", "databases", "object_endpoint",
-              "object_prefix", "api_ready_url", "worker_ready_url", "frontend_sha")
-    ordered = {key: value[key] for key in fields}
-    ordered["databases"] = [{key: db[key] for key in ("source_key", "target_key", "server_uuid", "database")}
-                            for db in value["databases"]]
-    return hashlib.sha256(json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    return _native("reference-product-hash", {"value": value})
 
 
 def validate_restore_record(plan: dict, manifest: dict, record: dict, product_plan: dict) -> None:
-    exact(record, {"plan", "plan_hash", "status", "started_at", "data_verified_at", "completed_at", "recovered_at", "failure"})
-    exact(record["plan"], PRODUCT_FIELDS)
-    if record["plan"] != product_plan or record["plan_hash"] != product_plan_hash(product_plan):
-        raise ValueError("restore-begin 记录与目标计划内嵌产品计划或产品摘要不完全一致")
-    target, restore_plan = plan["target"], record["plan"]
-    identifier(restore_plan["id"])
-    identifier(restore_plan["backup_id"])
-    scope_identifier(restore_plan["scope_id"])
-    for database in restore_plan["databases"]:
-        exact(database, {"source_key", "target_key", "server_uuid", "database"})
-    expected = {(db["key"], db["key"], db["server_uuid"], db["database"]) for db in target["databases"]}
-    actual = {(db["source_key"], db["target_key"], db["server_uuid"], db["database"]) for db in restore_plan["databases"]}
-    if (record["status"] != "running" or restore_plan["backup_id"] != manifest["id"]
-            or restore_plan["backup_id"] != plan["id"] or restore_plan["scope_id"] != target["scope_id"]
-            or actual != expected or len(restore_plan["databases"]) != len(expected)
-            or restore_plan["object_endpoint"] != target["s3"]["endpoint"]
-            or restore_plan["object_prefix"] != target["scope_id"] + "/"
-            or any(record[key] is not None for key in ("data_verified_at", "completed_at", "failure"))):
-        raise ValueError("还原必须绑定 restore-begin 的运行中记录和相同精确目标")
-    for field in ("started_at", "recovered_at"):
-        timestamp(record[field], "恢复运行记录时间")
-    started = dt.datetime.fromisoformat(record["started_at"].replace("Z", "+00:00"))
-    recovered = dt.datetime.fromisoformat(record["recovered_at"].replace("Z", "+00:00"))
-    captured = dt.datetime.fromisoformat(manifest["captured_at"].replace("Z", "+00:00"))
-    if recovered != captured or recovered > started:
-        raise ValueError("恢复记录的恢复点与同一备份清单不一致")
-    if not 0 <= (dt.datetime.now(dt.timezone.utc) - started).total_seconds() <= 3600:
-        raise ValueError("恢复操作尚未开始、时钟回退或已超过 60 分钟")
+    _native("reference-restore-record", {
+        "plan": plan, "manifest": manifest, "record": record, "product_plan": product_plan,
+    })
 
 
 @dataclass(frozen=True)

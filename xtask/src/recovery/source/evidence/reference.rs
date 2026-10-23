@@ -57,7 +57,7 @@ fn identifier(args: &Value, scope: bool) -> Result<Value> {
     Ok(Value::String(value.to_owned()))
 }
 
-fn safe_relative(relative: &str) -> Result<()> {
+pub(super) fn safe_relative(relative: &str) -> Result<()> {
     if relative.is_empty()
         || relative.contains(['\\', ':'])
         || relative.chars().any(char::is_control)
@@ -311,7 +311,7 @@ fn normalize_dump(args: &Value) -> Result<Value> {
     Ok(Value::Bool(true))
 }
 
-fn validate_dump(args: &Value) -> Result<Value> {
+pub(super) fn validate_dump(args: &Value) -> Result<Value> {
     exact(args, &["path", "tables"])?;
     dump_lines(
         Path::new(text(&args["path"], "SQL产物")?),
@@ -321,7 +321,7 @@ fn validate_dump(args: &Value) -> Result<Value> {
     Ok(Value::Bool(true))
 }
 
-fn object_index(args: &Value) -> Result<Value> {
+pub(super) fn object_index(args: &Value) -> Result<Value> {
     exact(args, &["root", "objects", "artifacts"])?;
     let root = Path::new(text(&args["root"], "备份根目录")?);
     let objects = native::json::object(&args["objects"], "对象库存")?;

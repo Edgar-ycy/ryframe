@@ -12,8 +12,8 @@ from reference_fixture_control_protocol import run_private
 
 
 PROTOCOL_SCHEMAS = {
-    "plan": (("environment", "runtime", "work_dir", "output", "side"), (), True),
-    "prepare": (("environment", "runtime", "plan", "side"), (), True),
+    "plan": (("environment", "runtime", "work_dir", "output", "side"), ("native_tool",), True),
+    "prepare": (("environment", "runtime", "plan", "side"), ("native_tool",), True),
 }
 
 
@@ -234,7 +234,12 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
     reports.mkdir()
     # 产品夹具保持冻结；维护工具来自当前控制器，不把工具修复写进已有产物来源。
     runner = Path(__file__).resolve().with_name("restore_reference.py")
-    command = [sys.executable, "-X", "utf8", "-B", str(runner), "--stdin"]
+    from rate_limit_tool import tool_binding
+    binding = tool_binding()
+    if binding is None:
+        raise ValueError("参考数据准备需要当前协调器的显式原生工具绑定")
+    command = [sys.executable, "-X", "utf8", "-B", str(runner),
+               "--native-tool", json.dumps(binding, ensure_ascii=False), "--stdin"]
     protocol = json.dumps({"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
                            "request": {"backend_dir": str(execution), "format_version": 1,
                                        "operation": "dataset", "plan": str(plan_file),
@@ -263,7 +268,11 @@ def main(arguments: list[str]) -> None:
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--side", choices=("base", "candidate"), required=True)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--native-tool")
     args = parser.parse_args(arguments)
+    if args.native_tool is not None:
+        from rate_limit_tool import install_binding
+        install_binding(args.native_tool)
     if args.operation == "plan":
         if not args.write or args.work_dir is None or args.output is None or args.plan is not None:
             parser.error("plan 需要 --work-dir、--output 与显式 --write，且不接受 --plan")
