@@ -28,7 +28,7 @@ mod plan;
 #[path = "fixture_runtime/process.rs"]
 mod process;
 #[cfg(test)]
-#[path = "fixture_runtime/process_tests.rs"]
+#[path = "../../tests/unit/recovery/fixture_runtime/process_tests.rs"]
 mod process_tests;
 #[path = "fixture_runtime/protocol.rs"]
 pub(crate) mod protocol;
@@ -41,10 +41,10 @@ mod responses;
 #[path = "fixture_runtime/review.rs"]
 mod review;
 #[cfg(test)]
-#[path = "fixture_runtime/scenario_tests.rs"]
+#[path = "../../tests/unit/recovery/fixture_runtime/scenario_tests.rs"]
 mod scenario_tests;
 #[cfg(test)]
-#[path = "fixture_runtime/tests.rs"]
+#[path = "../../tests/unit/recovery/fixture_runtime/tests.rs"]
 mod tests;
 #[path = "fixture_runtime/worker_handoff.rs"]
 mod worker_handoff;

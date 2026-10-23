@@ -5,7 +5,10 @@ use std::{collections::VecDeque, fs, path::Path};
 const TENANT: &str = "tenant-0123abcd";
 const MIGRATION: i64 = 123456789;
 fn snapshot() -> Value {
-    serde_json::from_str(include_str!("snapshot.json")).unwrap()
+    serde_json::from_str(include_str!(
+        "../../../../../src/recovery/fixture_control/retention/snapshot.json"
+    ))
+    .unwrap()
 }
 fn contract() -> Value {
     json!({"scope_id":"history-test","tenant_id":TENANT,"migration_id":MIGRATION.to_string(),"server_uuid":"server","schemas":["control_test","source_test","target_test"],"configuration_sha256":"a".repeat(64)})

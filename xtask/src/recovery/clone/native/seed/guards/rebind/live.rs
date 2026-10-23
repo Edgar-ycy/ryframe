@@ -132,4 +132,5 @@ fn stopped_with(
 }
 
 #[cfg(test)]
+#[path = "../../../../../../../tests/unit/recovery/clone/native/seed/guards/rebind/live/tests.rs"]
 mod tests;

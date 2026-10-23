@@ -13,6 +13,7 @@ pub(crate) mod protocol;
 mod response;
 mod signing;
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/s3/tests.rs"]
 mod tests;
 mod write;
 

@@ -7,6 +7,7 @@ pub(crate) mod protocol;
 mod runtime;
 
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/post_process/tests.rs"]
 mod tests;
 
 pub(crate) fn runtime_proof(request: &serde_json::Value) -> crate::Result<serde_json::Value> {

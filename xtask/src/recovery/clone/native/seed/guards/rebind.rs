@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 mod history;
 pub(super) mod live;
 #[cfg(test)]
+#[path = "../../../../../../tests/unit/recovery/clone/native/seed/guards/rebind/tests.rs"]
 mod tests;
 
 pub(super) fn dispatch(input: &Value) -> Result<Value> {

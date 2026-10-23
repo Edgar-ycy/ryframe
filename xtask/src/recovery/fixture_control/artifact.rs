@@ -10,7 +10,7 @@ use std::path::Path;
 #[path = "artifact/database.rs"]
 mod database;
 #[cfg(test)]
-#[path = "artifact/object_tests.rs"]
+#[path = "../../../tests/unit/recovery/fixture_control/artifact/object_tests.rs"]
 mod object_tests;
 #[path = "artifact/objects.rs"]
 mod objects;
@@ -19,7 +19,7 @@ pub(super) mod runtime;
 #[path = "artifact/source.rs"]
 mod source;
 #[cfg(test)]
-#[path = "artifact/tests.rs"]
+#[path = "../../../tests/unit/recovery/fixture_control/artifact/tests.rs"]
 mod tests;
 
 pub(super) fn run(command: &FixtureArtifactCommand, root: &Path) -> Result<()> {

@@ -14,6 +14,7 @@ use crate::{
 
 mod status;
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/cli/tests.rs"]
 mod tests;
 
 const DIAGNOSTICS: &[&str] = &[

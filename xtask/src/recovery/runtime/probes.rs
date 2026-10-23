@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::{Result, recovery::clone::native::json as strict};
 
 #[cfg(test)]
-#[path = "probes/tests.rs"]
+#[path = "../../../tests/unit/recovery/runtime/probes/tests.rs"]
 mod tests;
 
 pub(crate) fn request(args: &Value) -> Result<Value> {

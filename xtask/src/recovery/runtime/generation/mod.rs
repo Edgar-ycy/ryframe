@@ -10,6 +10,7 @@ use crate::{Result, recovery::clone::native::json as strict};
 mod files;
 mod receipts;
 #[cfg(test)]
+#[path = "../../../../tests/unit/recovery/runtime/generation/tests.rs"]
 mod tests;
 
 pub(super) const ROLES: [&str; 3] = ["api", "worker", "frontend"];

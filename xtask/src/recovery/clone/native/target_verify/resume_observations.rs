@@ -12,6 +12,7 @@ use std::{
 };
 
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/resume_observations/tests.rs"]
 mod tests;
 
 pub(super) fn receipt(backend: &Path, target: &Path, name: &str) -> Result<Value> {

@@ -1,20 +1,20 @@
 use super::*;
 use std::{collections::VecDeque, fs, path::PathBuf};
-#[path = "tests/context.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/context.rs"]
 mod context_tests;
-#[path = "tests/observation.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/observation.rs"]
 mod observation_tests;
-#[path = "tests/recovery.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/recovery.rs"]
 mod recovery;
-#[path = "tests/registration.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/registration.rs"]
 mod registration_tests;
-#[path = "tests/restart.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/restart.rs"]
 mod restart_tests;
-#[path = "tests/status.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/status.rs"]
 mod status_tests;
-#[path = "tests/support.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/support.rs"]
 mod support;
-#[path = "tests/wait.rs"]
+#[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/wait.rs"]
 mod wait;
 use support::*;
 

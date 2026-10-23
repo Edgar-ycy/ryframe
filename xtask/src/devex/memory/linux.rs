@@ -349,5 +349,5 @@ impl Drop for Cgroup {
 }
 
 #[cfg(test)]
-#[path = "linux_tests.rs"]
+#[path = "../../../tests/unit/devex/memory/linux_tests.rs"]
 mod tests;

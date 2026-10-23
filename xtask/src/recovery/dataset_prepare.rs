@@ -22,7 +22,7 @@ mod prepare;
 #[path = "dataset_prepare/session.rs"]
 mod session;
 #[cfg(test)]
-#[path = "dataset_prepare/tests.rs"]
+#[path = "../../tests/unit/recovery/dataset_prepare/tests.rs"]
 mod tests;
 const KIND: &str = "ryframe-xtask-recovery-dataset-prepare";
 pub(crate) const MARKER: &str = "__recovery-dataset";

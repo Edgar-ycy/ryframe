@@ -8,14 +8,14 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 #[cfg(test)]
-#[path = "generation/build_tests.rs"]
+#[path = "../../../../../tests/unit/recovery/clone/native/seed/generation/build_tests.rs"]
 mod build_tests;
 #[path = "generation/builds.rs"]
 mod builds;
 #[path = "generation/coordinator.rs"]
 mod coordinator;
 #[cfg(test)]
-#[path = "generation/tests.rs"]
+#[path = "../../../../../tests/unit/recovery/clone/native/seed/generation/tests.rs"]
 mod tests;
 
 pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<Value> {

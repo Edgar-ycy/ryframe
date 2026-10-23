@@ -12,7 +12,7 @@ mod prepare;
 #[path = "full_stack/provenance.rs"]
 mod provenance;
 #[cfg(test)]
-#[path = "full_stack/tests.rs"]
+#[path = "../../tests/unit/recovery/full_stack/tests.rs"]
 mod tests;
 #[path = "full_stack/worker/mod.rs"]
 pub(crate) mod worker;

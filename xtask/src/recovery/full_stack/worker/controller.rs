@@ -23,7 +23,7 @@ impl std::fmt::Display for Pending {
 impl std::error::Error for Pending {}
 
 #[cfg(test)]
-#[path = "reconciliation_tests.rs"]
+#[path = "../../../../tests/unit/recovery/full_stack/worker/reconciliation_tests.rs"]
 mod reconciliation_tests;
 
 pub(super) fn guard(directory: &Path, timeout: Duration) -> Result<super::guard::Guard> {

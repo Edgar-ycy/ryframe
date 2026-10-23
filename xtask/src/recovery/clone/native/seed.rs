@@ -161,20 +161,20 @@ pub(crate) fn latest<'a>(
 }
 
 #[cfg(test)]
-#[path = "seed/current_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/seed/current_tests.rs"]
 mod current_tests;
 #[cfg(test)]
 #[path = "seed/fixture.rs"]
 mod fixture;
 #[cfg(test)]
-#[path = "seed/history_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/seed/history_tests.rs"]
 mod history_tests;
 #[cfg(test)]
-#[path = "seed/publication_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/seed/publication_tests.rs"]
 mod publication_tests;
 #[cfg(test)]
-#[path = "seed/runtime_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/seed/runtime_tests.rs"]
 mod runtime_tests;
 #[cfg(test)]
-#[path = "seed/tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/seed/tests.rs"]
 mod tests;

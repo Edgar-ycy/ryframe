@@ -9,6 +9,7 @@ mod process;
 mod receipts;
 mod supervisor;
 #[cfg(test)]
+#[path = "../../../../tests/unit/recovery/full_stack/worker/tests.rs"]
 mod tests;
 mod tree;
 

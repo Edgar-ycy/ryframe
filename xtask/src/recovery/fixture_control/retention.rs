@@ -21,7 +21,7 @@ mod model;
 #[path = "retention/sql.rs"]
 mod sql;
 #[cfg(test)]
-#[path = "retention/tests.rs"]
+#[path = "../../../tests/unit/recovery/fixture_control/retention/tests.rs"]
 mod tests;
 
 pub(super) fn run(command: &FixtureRetentionCommand, root: &Path) -> Result<()> {

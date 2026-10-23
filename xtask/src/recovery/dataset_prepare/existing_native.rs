@@ -30,5 +30,5 @@ pub(crate) fn run(args: &[OsString]) -> i32 {
 }
 
 #[cfg(test)]
-#[path = "existing_native/tests.rs"]
+#[path = "../../../tests/unit/recovery/dataset_prepare/existing_native/tests.rs"]
 mod tests;

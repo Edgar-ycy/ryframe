@@ -81,5 +81,5 @@ fn artifact(root: &Path, name: &str, output: &str) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "build_tests.rs"]
+#[path = "../../../tests/unit/recovery/full_stack/build_tests.rs"]
 mod tests;

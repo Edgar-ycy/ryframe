@@ -21,7 +21,7 @@ pub(crate) struct Native<'a> {
 }
 
 #[cfg(test)]
-#[path = "process_tests.rs"]
+#[path = "../../../tests/unit/recovery/full_stack/process_tests.rs"]
 mod process_tests;
 
 impl<'a> Native<'a> {

@@ -179,4 +179,5 @@ fn inventory(databases: &Value, images: &Value) -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/creation_plan/tests.rs"]
 mod tests;

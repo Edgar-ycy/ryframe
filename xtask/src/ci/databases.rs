@@ -9,7 +9,7 @@ mod model;
 #[path = "databases/prepare.rs"]
 mod prepare;
 #[cfg(test)]
-#[path = "databases/tests.rs"]
+#[path = "../../tests/unit/ci/databases/tests.rs"]
 mod tests;
 
 #[path = "databases/snapshot.rs"]

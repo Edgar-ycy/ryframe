@@ -49,7 +49,7 @@ pub(crate) mod runtime;
 #[path = "lifecycle/status.rs"]
 mod status;
 #[cfg(test)]
-#[path = "lifecycle/tests.rs"]
+#[path = "../../../../tests/unit/recovery/fixture_control/services/lifecycle/tests.rs"]
 mod tests;
 
 use model::{Context, binding, check, read, text};

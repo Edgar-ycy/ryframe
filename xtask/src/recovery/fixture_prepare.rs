@@ -2,7 +2,7 @@
 #[path = "fixture_prepare/snapshot.rs"]
 mod snapshot;
 #[cfg(test)]
-#[path = "fixture_prepare/tests.rs"]
+#[path = "../../tests/unit/recovery/fixture_prepare/tests.rs"]
 mod tests;
 
 use super::full_stack::{Port, context::Context, execution::Native};

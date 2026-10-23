@@ -158,11 +158,14 @@ pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> 
 }
 
 #[cfg(all(test, windows))]
+#[path = "../../../../../tests/unit/recovery/clone/native/cache/process_tests.rs"]
 mod process_tests;
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/cache/tests.rs"]
 mod tests;
 
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/cache/stage_tests.rs"]
 mod stage_tests;
 
 #[derive(Debug)]

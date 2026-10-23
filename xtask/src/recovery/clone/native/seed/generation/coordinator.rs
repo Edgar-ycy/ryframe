@@ -10,7 +10,7 @@ mod lineage;
 #[path = "coordinator_receipts.rs"]
 mod receipts;
 #[cfg(test)]
-#[path = "coordinator_tests.rs"]
+#[path = "../../../../../../tests/unit/recovery/clone/native/seed/generation/coordinator_tests.rs"]
 mod tests;
 
 pub(super) const START: &str = "source-generation-start";

@@ -158,25 +158,25 @@ fn inspect(backend: &Path, output: &Path, target: &Value, attempt: u64) -> Resul
 }
 
 #[cfg(test)]
-#[path = "department/history_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/history_tests.rs"]
 mod history_tests;
 #[cfg(test)]
-#[path = "department/model_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/model_tests.rs"]
 mod model_tests;
 #[cfg(test)]
-#[path = "department/plan_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/plan_tests.rs"]
 mod plan_tests;
 #[cfg(test)]
-#[path = "department/projection_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/projection_tests.rs"]
 mod projection_tests;
 #[cfg(test)]
-#[path = "department/tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "department/workflow_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/workflow_tests.rs"]
 mod workflow_tests;
 
 #[cfg(test)]
-#[path = "department/adoption_tests.rs"]
+#[path = "../../../../tests/unit/recovery/clone/native/department/adoption_tests.rs"]
 mod adoption_tests;

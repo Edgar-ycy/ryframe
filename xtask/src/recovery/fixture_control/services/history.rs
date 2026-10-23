@@ -14,7 +14,7 @@ pub(super) mod prefix;
 #[path = "history/protocol.rs"]
 pub(crate) mod protocol;
 #[cfg(test)]
-#[path = "history/tests.rs"]
+#[path = "../../../../tests/unit/recovery/fixture_control/services/history/tests.rs"]
 mod tests;
 
 pub(super) const INITIAL: [(&str, &str); 3] = [

@@ -12,6 +12,7 @@ mod close;
 mod rebind;
 mod result;
 #[cfg(test)]
+#[path = "../../../../../../tests/unit/recovery/clone/native/seed/guards/tests.rs"]
 mod tests;
 
 pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<Value> {

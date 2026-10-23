@@ -249,5 +249,5 @@ fn duplicate_protocol_keys_and_noncanonical_ids_are_rejected() {
     }
 }
 
-#[path = "tests_http.rs"]
+#[path = "../../../../src/recovery/dataset_prepare/tests_http.rs"]
 mod http;

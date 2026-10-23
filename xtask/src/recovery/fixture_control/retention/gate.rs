@@ -210,5 +210,5 @@ fn blocked_sql(
 }
 
 #[cfg(test)]
-#[path = "gate_tests.rs"]
+#[path = "../../../../tests/unit/recovery/fixture_control/retention/gate_tests.rs"]
 mod tests;

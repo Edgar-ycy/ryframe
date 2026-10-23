@@ -30,7 +30,7 @@ enum Client {
 }
 
 #[cfg(test)]
-#[path = "database_tests.rs"]
+#[path = "../../../../tests/unit/recovery/fixture_control/retention/database_tests.rs"]
 mod tests;
 
 pub(super) struct Invocation {

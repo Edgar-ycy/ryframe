@@ -10,7 +10,7 @@ mod history;
 #[path = "lineage_receipts.rs"]
 mod receipts;
 #[cfg(test)]
-#[path = "lineage_tests.rs"]
+#[path = "../../../../../../tests/unit/recovery/clone/native/seed/generation/lineage_tests.rs"]
 mod tests;
 
 const FAILED: u64 = 68;
