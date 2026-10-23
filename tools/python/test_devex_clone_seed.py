@@ -113,7 +113,8 @@ class SeedTests(unittest.TestCase):
         return result
 
     def evidence(self):
-        # runtime 外层状态测试仍复用此端口夹具；完整身份数据由 Rust verifier 测试覆盖。
+        # 已完成身份阶段留下此受控父目录；完整身份数据由 Rust verifier 测试覆盖。
+        (self.directory / "seed-runtime").mkdir(exist_ok=True)
         value = {"ledger": {"fixture": "ledger"}, "publication_intent": {"fixture": "intent"},
                  "verified": {"fixture": "receipt"}, "templates": []}
         for module in (seed, runtime):
