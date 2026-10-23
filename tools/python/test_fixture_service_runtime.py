@@ -20,7 +20,8 @@ class FixtureServiceRuntimeTests(unittest.TestCase):
             importlib.import_module(module)
 
     def test_unknown_operation_fields_and_escaped_paths_reject_before_side_effects(self):
-        for operation, args in [("close", {}), ("cache-stop", {"password": "private"}),
+        for operation, args in [("close", {}), ("registered", {"context": {}, "settled": True}),
+                                ("observe", {"services": {}}), ("cache-stop", {"password": "private"}),
                                 ("controller", {"run": str(ROOT)})]:
             with (self.subTest(operation=operation),
                   patch("devex_clone_cache_process.stop") as stop,
@@ -43,6 +44,25 @@ class FixtureServiceRuntimeTests(unittest.TestCase):
         with patch("full_stack_process_tree.terminate_owned_process_tree", return_value=False) as stop:
             self.assertIs(runtime.dispatch(ROOT, "tree-stop", {"tree": {"exact": True}, "crash": False}), False)
         stop.assert_called_once_with({"exact": True}, crash=False)
+
+    def test_observation_leaves_forward_frozen_requests_without_state_decisions(self):
+        request, receipt, successor = {"original": True}, {"runtime": True}, {"successor": True}
+        with (patch("devex_clone_cache_process.status", return_value={"state": "stopped"}) as status,
+              patch("devex_clone_cache_process.predecessor_status", return_value={"state": "running"}) as predecessor):
+            self.assertEqual(runtime.dispatch(ROOT, "cache-status", {"request": request,
+                             "runtime": receipt, "effective": None}), {"state": "stopped"})
+            self.assertEqual(runtime.dispatch(ROOT, "cache-status", {"request": request,
+                             "runtime": receipt, "effective": successor}), {"state": "running"})
+        status.assert_called_once_with(request, receipt)
+        predecessor.assert_called_once_with(request, receipt, successor)
+        with patch("full_stack_process_monitor.wait_members", return_value={"members": "frozen"}) as wait:
+            self.assertEqual(runtime.dispatch(ROOT, "members-wait", {"tree": {"exact": True}}), {"members": "frozen"})
+        wait.assert_called_once_with({"exact": True}, timeout=0)
+        request = {"api_url": "api", "console_url": "console"}
+        with (patch("devex_clone_storage_process.running", return_value=True) as running,
+              patch("devex_clone_storage_request.arguments", return_value=["frozen"])):
+            self.assertIs(runtime.dispatch(ROOT, "storage-running", {"identity": {"pid": 123}, "request": request}), True)
+        running.assert_called_once_with({"pid": 123}, ["frozen"], ("api", "console"))
 
     def test_start_passes_supervision_and_guard_callback_without_stage_logic(self):
         context = {"backend": str(ROOT), "run": str(ROOT / ".local-tests/run")}

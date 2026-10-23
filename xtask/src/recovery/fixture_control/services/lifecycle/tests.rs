@@ -2,8 +2,12 @@ use super::*;
 use std::{collections::VecDeque, fs, path::PathBuf};
 #[path = "tests/context.rs"]
 mod context_tests;
+#[path = "tests/observation.rs"]
+mod observation_tests;
 #[path = "tests/recovery.rs"]
 mod recovery;
+#[path = "tests/registration.rs"]
+mod registration_tests;
 #[path = "tests/restart.rs"]
 mod restart_tests;
 #[path = "tests/status.rs"]

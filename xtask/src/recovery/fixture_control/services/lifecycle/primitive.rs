@@ -5,8 +5,9 @@ use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
 pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<()> {
     let fields: &[&str] = match operation {
         "review-successor" => &["previous", "review"],
-        "registered" => &["context", "settled"],
-        "observe" => &["services"],
+        "cache-status" => &["request", "runtime", "effective"],
+        "storage-running" => &["identity", "request"],
+        "members-wait" => &["tree"],
         "controller" => &["run"],
         "identity" => &["pid"],
         "completion" => &["tree"],
@@ -77,6 +78,8 @@ fn unknown_fields_escaped_paths_and_invalid_pid_fail_before_process_launch() {
     let backend = crate::workspace::root_dir();
     for (operation, args) in [
         ("context", json!({})),
+        ("registered", json!({"context":{},"settled":true})),
+        ("observe", json!({"services":{}})),
         ("identity", json!({"pid":true})),
         ("identity", json!({"pid":0})),
         ("identity", json!({"pid":12,"secret":"private-marker"})),

@@ -121,8 +121,6 @@ class ServiceContextTests(unittest.TestCase):
             build(self.backend, self.bootstrap, self.run, "fresh-seed", "seed")
         self.assertEqual(before, self.snapshot())
 
-
-
     def test_context_and_transition_bridges_only_pass_native_protocol(self):
         value = {"backend": str(self.backend), "run": str(self.run), "private": {"APP_ENV": "test"}}
         with patch.object(context, "_invoke", return_value=value) as invoke:
@@ -139,101 +137,6 @@ class ServiceContextTests(unittest.TestCase):
             self.assertEqual(context.status(self.backend, self.review, self.bootstrap), {"status": "service_status"})
         invoke.assert_called_once_with(self.backend, "status", self.review, self.bootstrap, None, write=False)
 
-    def test_successor_tools_observe_predecessor(self):
-        original = {"wsl": {"path": "old"}, "python": {"path": "python"}}
-        effective = {"wsl": {"path": "current"}, "python": {"path": "python"}}
-        services = {**self.services, "requests": {"redis": original, "rustfs": {
-            "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201"}},
-            "cache_effective": effective}
-        services["runtime"] = {**services["runtime"],
-            "linux_identity": {"pid": 9001, "started": "1", "executable": "/usr/bin/redis-server",
-                               "boot_id": "11111111-1111-1111-1111-111111111111"},
-            "boot_id": "11111111-1111-1111-1111-111111111111",
-            "redis": {"run_id": "a" * 40}}
-        with patch("devex_clone_cache_process.status") as status, \
-                patch("devex_clone_cache_process.predecessor_status",
-                      return_value={"state": "stopped"}) as predecessor, \
-                patch.object(context, "_identity_observations",
-                             return_value={"supervisor": "running", "monitor": "running", "process": "running"}), \
-                patch.object(context, "arguments", return_value=[]), \
-                patch.object(context, "running", return_value=True):
-            observed = context.observe_services(services)
-        status.assert_not_called()
-        predecessor.assert_called_once_with(original, services["runtime"], effective)
-        self.assertEqual(observed["redis"], "stopped")
-
-
-
-
-
-
-
-
-
-
-    def test_external_termination_requires_every_identity_missing_and_redis_stopped(self):
-        request = {"api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201"}
-        services = {**self.services, "requests": {"rustfs": request, "redis": {}}, "evidence": {}}
-        identities = {role: "missing" for role in ("supervisor", "monitor", "process")}
-        ready = {"format_version": 1, "operation_id": self.services["tree"]["operation_id"],
-                 "directory": self.services["tree"]["runtime_directory"], "role": "rustfs",
-                 "scope_id": self.services["tree"]["scope_id"],
-                 "supervisor": self.services["tree"]["supervisor"], "monitor": self.services["tree"]["monitor"]}
-        with patch.object(context, "read_json", return_value=ready), \
-                patch.object(context, "binding", return_value={"path": "ready"}), \
-                patch.object(context, "require_closed_port") as closed, \
-                patch.object(context, "_identity_observations", return_value=identities):
-            result = context._external_termination(services, identities)
-        self.assertEqual(result["status"], "external-termination-unreconciled")
-        self.assertEqual(closed.call_count, 2)
-
-        with patch("devex_clone_cache_process.status", return_value={"state": "running"}), \
-                patch.object(context, "_identity_observations", return_value=identities), \
-                patch("full_stack_process_monitor.wait_members", side_effect=ValueError(
-                    "成员监督器退出但没有完整成员关闭证明")), \
-                patch.object(context, "_external_termination", return_value=result), \
-                self.assertRaisesRegex(ValueError, "Redis 仍存活"):
-            context.observe_services(services)
-
-
-    def test_service_observation_treats_reused_identity_as_recorded_exit(self):
-        reused = {**self.services["tree"]["monitor"], "started": "2"}
-        with patch.object(context, "process_identity", side_effect=lambda pid: reused
-                          if pid == self.services["tree"]["monitor"]["pid"] else None):
-            observations = context._identity_observations(self.services["tree"])
-        self.assertEqual(observations, {role: "missing" for role in ("supervisor", "monitor", "process")})
-        with patch("devex_clone_cache_process.status", return_value={"state": "stopped"}), \
-                patch.object(context, "_identity_observations", return_value={
-                    "supervisor": "missing", "monitor": "missing", "process": "running"}), \
-                self.assertRaisesRegex(ValueError, "部分存活"):
-            context.observe_services({**self.services, "requests": {"redis": {}, "rustfs": {}}, "evidence": {}})
-
-
-    def test_identity_observation_retries_transient_permission_denial_but_not_persistent_denial(self):
-        with patch.object(context, "process_identity",
-                          side_effect=[PermissionError(), None, None, None]), \
-                patch.object(context.time, "sleep") as sleep:
-            self.assertEqual(context._identity_observations(self.services["tree"]), {
-                role: "missing" for role in ("supervisor", "monitor", "process")})
-        sleep.assert_called_once_with(0.05)
-        with patch.object(context, "process_identity", side_effect=PermissionError), \
-                patch.object(context.time, "monotonic", side_effect=[0, 6]), \
-                patch.object(context.time, "sleep") as sleep, self.assertRaises(PermissionError):
-            context._identity_observations(self.services["tree"])
-        sleep.assert_not_called()
-
-
-    def test_identity_observation_permission_retry_uses_one_shared_deadline(self):
-        with patch.object(context, "process_identity",
-                          side_effect=[PermissionError(), None, PermissionError()]), \
-                patch.object(context.time, "monotonic", side_effect=[0, 1, 6]), \
-                patch.object(context.time, "sleep") as sleep, self.assertRaises(PermissionError):
-            context._identity_observations(self.services["tree"])
-        sleep.assert_called_once_with(0.05)
-
-
-
-
     def test_legacy_receipts_do_not_gain_invented_tree_ownership(self):
         value = context.context(self.backend, self.review, self.bootstrap)
         before = self.snapshot()
@@ -242,41 +145,15 @@ class ServiceContextTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
 
 
-    def test_frozen_service_requests_tree_and_results_are_bound_together(self):
-        from full_stack_process_tree import record_process_tree
-        state = load_state(self.run)
-        executable = str(self.fixture.tool)
-        storage_identity = {"pid": 12345, "started": "1", "executable": executable}
-        supervisor = {"pid": 12346, "started": "2", "executable": str(Path(sys.executable).resolve())}
-        data = self.run / "rustfs-data"
-        data.mkdir()
-        request = {"scope_id": "services-fixture-seed", "executable": {"sha256": "1" * 64},
-                   "data_directory": {"path": str(data), "device": data.stat().st_dev, "inode": data.stat().st_ino}}
-        for role, body, index in (("rustfs", request, 0), ("redis", {}, 1)):
-            path = self.run / role / "request.json"
-            write_json(path, body)
-            state["attempts"][index]["sources"]["request"] = binding(path)
-        tree = record_process_tree(self.run / "rustfs", "rustfs", request["scope_id"], supervisor, storage_identity, "a" * 32,
-                                   {**supervisor, "pid": 12347})
-        write_json(self.run / "controller-0001.json", {"fixture": True})
-        observed = {"state": "recorded", "identity": storage_identity,
-                    "process_receipt": binding(self.run / "rustfs/process.json"),
-                    "launch_receipt": binding(self.run / "rustfs/launch.json")}
-        results = [{**observed, "sha256": "1" * 64, "tree": binding(self.run / "rustfs/rustfs-tree.json")},
-                   {"service": "redis", "runtime": read_json(self.run / "redis/runtime.json")}]
-        for index, result in enumerate(results):
-            path = self.run / "results" / f"{index + 1:04d}.json"
-            self.fixture.write(path, result)
-            state["attempts"][index]["result"] = binding(path)
-        self.fixture.write(self.run / "state.json", state)
-        value = context.context(self.backend, self.review, self.bootstrap)
-        with patch.object(context, "inspect_attempt", return_value=observed) as inspect:
-            services = context.registered_services(value)
-        self.assertEqual(services["tree"], tree)
-        self.assertEqual(inspect.call_args.kwargs["request_binding"], state["attempts"][0]["sources"]["request"])
-        self.fixture.write(self.run / "redis/request.json", {"changed": True})
-        with self.assertRaises(ValueError):
-            context.registered_services(value)
+    def test_registration_and_observation_bridges_do_not_interpret_native_result(self):
+        value = {"backend": self.backend, "run": self.run}
+        expected = {"origin": "frozen"}
+        with patch.object(context, "_invoke", return_value=expected) as invoke:
+            self.assertIs(context.registered_services(value, settled=False), expected)
+        invoke.assert_called_once_with("service-registered", {"value": value, "settled": False}, backend=self.backend)
+        with patch.object(context, "_invoke", return_value=expected) as invoke:
+            self.assertIs(context.observe_services({"frozen": True}), expected)
+        invoke.assert_called_once_with("service-observe", {"services": {"frozen": True}})
 
 
     def test_cli_rejects_ambiguous_or_write_status_arguments_with_usage_exit(self):
@@ -315,8 +192,6 @@ class ServiceContextTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             read.assert_not_called()
             self.assertEqual(before, self.snapshot())
-
-
 
 if __name__ == "__main__":
     unittest.main()

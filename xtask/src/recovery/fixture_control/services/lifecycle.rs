@@ -24,6 +24,8 @@ mod context;
 mod ledger;
 #[path = "lifecycle/model.rs"]
 pub(super) mod model;
+#[path = "lifecycle/observation.rs"]
+mod observation;
 #[path = "lifecycle/prepared.rs"]
 mod prepared;
 #[path = "lifecycle/primitive.rs"]
@@ -38,6 +40,8 @@ pub(crate) mod query;
 mod reconcile;
 #[path = "lifecycle/recover.rs"]
 mod recover;
+#[path = "lifecycle/registration.rs"]
+mod registration;
 #[path = "lifecycle/restart.rs"]
 mod restart;
 #[path = "lifecycle/runtime.rs"]

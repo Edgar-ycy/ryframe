@@ -3,6 +3,21 @@ use super::*;
 
 pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     match operation {
+        "service-registered" => {
+            exact(args, &["value", "settled"])?;
+            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            registration::load(
+                &mut runtime,
+                backend,
+                &args["value"],
+                args["settled"].as_bool().ok_or("settled 必须为布尔值")?,
+            )
+        }
+        "service-observe" => {
+            exact(args, &["services"])?;
+            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            observation::observe(&mut runtime, backend, &args["services"])
+        }
         "service-run" => {
             exact(args, &["review"])?;
             Ok(json!(context::service_run(&args["review"])?))

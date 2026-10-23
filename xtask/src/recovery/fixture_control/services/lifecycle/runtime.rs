@@ -142,6 +142,19 @@ impl Runtime for PythonRuntime {
                 Path::new(model::text(&arguments, "review")?),
                 Path::new(model::text(&arguments, "environment")?),
             )
+        } else if operation == "registered" {
+            let backend = self.backend.clone();
+            super::registration::load(
+                self,
+                &backend,
+                &arguments["context"],
+                arguments["settled"]
+                    .as_bool()
+                    .ok_or("settled 必须为布尔值")?,
+            )
+        } else if operation == "observe" {
+            let backend = self.backend.clone();
+            super::observation::observe(self, &backend, &arguments["services"])
         } else {
             self.invoke(operation, arguments)
         }

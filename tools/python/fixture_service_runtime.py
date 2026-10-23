@@ -27,7 +27,7 @@ def _context(value, backend):
 
 
 def dispatch(backend, operation, args):
-    from reference_fixture_service_context import guard, registered_services, observe_services
+    from reference_fixture_service_context import guard
     from devex_clone_run_state import controller_observation, recover_run_lock
     from process_environment import configured
     from full_stack_process import process_identity
@@ -35,8 +35,10 @@ def dispatch(backend, operation, args):
     from full_stack_process_monitor import completion_binding
     from devex_clone_cache_process import start, stop
     schemas = {
-        "review-successor": {"previous", "review"}, "registered": {"context", "settled"},
-        "observe": {"services"}, "controller": {"run"}, "identity": {"pid"},
+        "review-successor": {"previous", "review"},
+        "cache-status": {"request", "runtime", "effective"},
+        "storage-running": {"identity", "request"}, "members-wait": {"tree"},
+        "controller": {"run"}, "identity": {"pid"},
         "completion": {"tree"}, "tree-stop": {"tree", "crash"},
         "tree-read": {"output", "scope_id"}, "recover-controller": {"run", "owner"},
         "cache-stop": {"request", "private", "runtime", "output"},
@@ -53,10 +55,18 @@ def dispatch(backend, operation, args):
         from reference_fixture_environment import validate_preflight_successor
         validate_preflight_successor(args["previous"], args["review"])
         return None
-    if operation == "registered":
-        return registered_services(_context(args["context"], backend), settled=args["settled"])
-    if operation == "observe":
-        return observe_services(args["services"])
+    if operation == "cache-status":
+        from devex_clone_cache_process import status, predecessor_status
+        return (status(args["request"], args["runtime"]) if args["effective"] is None else
+                predecessor_status(args["request"], args["runtime"], args["effective"]))
+    if operation == "storage-running":
+        from devex_clone_storage_process import running
+        from devex_clone_storage_request import arguments
+        request = args["request"]
+        return running(args["identity"], arguments(request), (request["api_url"], request["console_url"]))
+    if operation == "members-wait":
+        from full_stack_process_monitor import wait_members
+        return wait_members(args["tree"], timeout=0)
     if operation == "controller":
         return controller_observation(Path(args["run"]))
     if operation == "identity":
