@@ -381,6 +381,17 @@ class NativeBindingEntrypointProcesses(unittest.TestCase):
 import atexit,json,runpy,sys
 from pathlib import Path
 calls=[]
+expected=json.loads(sys.argv.pop(1))
+rejected=[]
+def trace(frame,event,arg):
+    if event == 'exception':
+        kind,error,_=arg
+        observed=[Path(frame.f_code.co_filename).name,frame.f_code.co_name,kind.__name__,str(error)]
+        if observed == expected:
+            rejected.append(True)
+    return trace
+sys.settrace(trace)
+atexit.register(lambda: print('NATIVE_BINDING_REJECTION='+json.dumps({'matched':bool(rejected)}),file=sys.stderr))
 def audit(event,args):
     if event == 'subprocess.Popen':
         calls.append(event)
@@ -431,14 +442,39 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                     ("restore_monitoring_authority.py", [], envelope(monitoring)),
                     ("devex_provenance.py", [], envelope({})),
                 ]
+                missing_rejections = {
+                    "restore_source.py": ["restore_source.py", "decode_request", "SourceProtocolError",
+                        "恢复来源私有协议字段不完整或含未知字段"],
+                    "restore_reference.py": ["native_s3_client.py", "_invoke", "NativeS3InvocationError",
+                        "原生对象操作未确认：native_tool_unavailable；禁止降级或自动重试"],
+                    "restore_reference_post_batch.py": ["argparse.py", "exit", "SystemExit", "2"],
+                    "reference_fixture_runtime.py": ["reference_fixture_runtime.py", "_exact_protocol",
+                        "RuntimeProtocolError", "私有协议字段不完整或含未知字段"],
+                    "reference_fixture_successor.py": ["reference_fixture_control_protocol.py", "private_arguments",
+                        "FixtureControlProtocolError", "参考夹具控制私有协议字段不完整或含未知字段"],
+                    "restore_monitoring_authority.py": ["restore_runtime_evidence.py", "exact_fields",
+                        "ValueError", "监控预检协议字段必须精确匹配当前格式"],
+                    "devex_provenance.py": ["devex_provenance.py", "private_request", "KeyError", "'native_tool'"],
+                }
                 for script, arguments, payload in cases:
+                    bad_rejection = (
+                        ["artifact_digests.py", "__init__", "ValueError", "持有保护句柄前二进制摘要与登记不符"]
+                        if os.name == "nt" else
+                        ["rate_limit_tool.py", "verified_tool", "ValueError", "限流工具字节或摘要与当前协调器绑定不同"]
+                    )
+                    expected = missing_rejections[script] if binding is None else bad_rejection
                     with self.subTest(script=script, missing=binding is None):
                         before = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
                         result = subprocess.run([sys.executable,"-X","utf8","-B","-c",self.DRIVER,
-                            str(ROOT / "tools/python" / script),*arguments], input=payload,
+                            json.dumps(expected), str(ROOT / "tools/python" / script),*arguments], input=payload,
                             cwd=ROOT, env=private_environment(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", timeout=60, check=False)
                         self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('NATIVE_BINDING_REJECTION={"matched": true}', result.stderr,
+                            f"expected binding rejection {expected!r}: {result.stderr}")
+                        if script == "restore_reference_post_batch.py" and binding is None:
+                            self.assertIn("the following arguments are required: --native-tool", result.stderr)
+                        self.assertNotIn("SyntaxError", result.stderr)
                         self.assertIn('NATIVE_BINDING_AUDIT={"subprocesses": 0}', result.stderr)
                         after = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
                         self.assertEqual(before, after)
