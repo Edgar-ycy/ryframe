@@ -39,13 +39,14 @@ def invoke(operation, **arguments):
             and set(response) == {"ok", "error", "message", "exit_code"} and response["ok"] is False
             and response["error"] in {"CacheProcessRejected", "CacheControlFailed", "CacheConnectionRefused", "CacheObservationTimeout"}
             and isinstance(response["message"], str)):
+        code = response["exit_code"]
+        if (code is not None and (type(code) is not int or code == 0 or not -(2 ** 31) <= code < 2 ** 31)
+                or response["error"] != "CacheControlFailed" and code is not None):
+            raise RuntimeError("缓存原生退出状态无效；保留现场，禁止重放")
         if response["error"] == "CacheConnectionRefused":
             raise ConnectionRefusedError(response["message"])
         if response["error"] == "CacheObservationTimeout":
             raise TimeoutError(response["message"])
-        code = response["exit_code"]
-        if code is not None and type(code) is not int:
-            raise RuntimeError("缓存原生退出状态无效；保留现场，禁止重放")
         message = response["message"] + (" 原始退出码：" + str(code) if code is not None else "")
         if response["error"] == "CacheControlFailed":
             raise RuntimeError(message)

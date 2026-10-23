@@ -70,6 +70,22 @@ class CacheNativeTransportTests(unittest.TestCase):
             native.invoke("password", value="\ud800")
         run.assert_not_called()
 
+    def test_malformed_exit_status_never_becomes_a_retryable_observation_failure(self):
+        categories = ("CacheConnectionRefused", "CacheObservationTimeout", "CacheProcessRejected", "CacheControlFailed")
+        for category in categories:
+            codes = [True, "private-secret", 0, 2 ** 31, -(2 ** 31) - 1]
+            if category != "CacheControlFailed":
+                codes.append(17)
+            for code in codes:
+                response = subprocess.CompletedProcess([], 1, json.dumps({"ok": False, "error": category,
+                    "message": "仅观察失败", "exit_code": code}).encode(), b'private-secret')
+                with self.subTest(category=category, code=code), self.binding(), \
+                        patch.object(native, "run_native", return_value=response) as run:
+                    with self.assertRaisesRegex(RuntimeError, "退出状态无效") as failure:
+                        native.invoke("facts", request={})
+                    self.assertNotIn("private-secret", str(failure.exception))
+                    run.assert_called_once()
+
 
 class FrozenHelperSetTests(unittest.TestCase):
     """WSL 冻结辅助集合必须自包含；仓库工具目录不进入 Linux 侧导入路径。"""
