@@ -14,6 +14,75 @@ use ryframe_kernel::AppError;
 use serde_json::json;
 use std::{fs, thread, time::Duration};
 
+#[test]
+fn remaining_dependency_check_rejects_wrong_identity_version_and_pyyaml() {
+    let executable = std::env::current_exe().unwrap();
+    let selected = executable.to_str().unwrap();
+    let mut input = json!({
+        "executable": executable,
+        "implementation": "CPython",
+        "version": [3, 12, 7],
+        "pyyaml": "6.0.3",
+    });
+    let validate = |input: &serde_json::Value| {
+        let observed =
+            serde_json::from_value::<proof_python::PythonEnvironment>(input.clone()).unwrap();
+        proof_python::validate_python_environment(selected, "6.0.3", &observed)
+    };
+    assert!(validate(&input).is_ok());
+    input["version"] = json!([3, 10, 9]);
+    assert!(
+        validate(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("版本过低")
+    );
+    input["version"] = json!([3, 12, 7]);
+    input["pyyaml"] = json!("6.0.2");
+    assert!(validate(&input).unwrap_err().to_string().contains("PyYAML"));
+    input["pyyaml"] = json!("6.0.3");
+    input["executable"] = json!(executable.parent().unwrap());
+    assert!(
+        validate(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("身份不一致")
+    );
+    input["executable"] = json!(executable);
+    input["implementation"] = json!("");
+    assert!(validate(&input).is_err());
+}
+
+#[test]
+fn dependency_protocol_rejects_empty_missing_and_extra_fields() {
+    for source in [
+        b"".as_slice(),
+        b"{}",
+        br#"{"executable":"python.exe","implementation":"CPython","version":[3,12,7],"pyyaml":"6.0.3","unknown":true}"#,
+    ] {
+        assert!(serde_json::from_slice::<proof_python::PythonEnvironment>(source).is_err());
+    }
+}
+
+#[test]
+#[ignore = "需要固定 Python 3.11+ 和 PyYAML 运行环境"]
+fn remaining_dependencies_are_really_imported() {
+    let output = std::process::Command::new("python")
+        .args(["-I", "-B", "-c", proof_python::PYTHON_DEPENDENCY_PROBE])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let input = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    let observed =
+        serde_json::from_value::<proof_python::PythonEnvironment>(input.clone()).unwrap();
+    let selected = input["executable"].as_str().unwrap();
+    proof_python::validate_python_environment(selected, "6.0.3", &observed).unwrap();
+}
+
 fn arguments(value: &str) -> Result<Command, String> {
     let arguments = ryframe_config::ConfigurationArgs::parse(
         value.split_whitespace().map(String::from).collect(),
