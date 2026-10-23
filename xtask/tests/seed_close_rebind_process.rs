@@ -116,6 +116,69 @@ fn bound_rebind_transition_is_read_only_and_rejects_endpoint_and_unknown_operati
 }
 
 #[test]
+fn rebind_history_plan_uses_bound_read_only_protocol_and_rejects_malformed_inputs() {
+    let fixture = Fixture::new();
+    let published = json!({"number":52,"stage":"seed-runtime","mode":"source-register",
+        "status":"passed","result":{"published":true}});
+    let active = json!({"number":53,"stage":"seed-runtime","mode":"source-rebind","status":"running","result":null});
+    let args = json!({"attempts":[published,active],"descriptor":{"published":true},"current":53,
+        "archive":null,"segment":null,"pending":[],"backend_available":true,
+        "cache_recovery":false,"generation_output_exists":false});
+    let request = fixture.request("rebind-model", json!({"action":"history","input":args}));
+    let before = fixture.files();
+    let output = invoke(&request);
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        response["result"]["value"]["actions"],
+        json!([{"kind":"owner"}])
+    );
+    assert_eq!(response["result"]["remote_writes"], 0);
+    assert_eq!(response["result"]["automatic_retry_permitted"], false);
+    assert_eq!(before, fixture.files());
+    for field in [
+        "backend_available",
+        "cache_recovery",
+        "generation_output_exists",
+    ] {
+        let mut bad = args.clone();
+        bad[field] = json!("secret-credential");
+        reject(&invoke(&fixture.request(
+            "rebind-model",
+            json!({"action":"history","input":bad}),
+        )));
+    }
+    let mut bad = args;
+    bad["attempts"][1]["number"] = json!(true);
+    reject(&invoke(&fixture.request(
+        "rebind-model",
+        json!({"action":"history","input":bad}),
+    )));
+}
+
+#[test]
+fn rebind_receipt_never_publishes_after_changed_second_observation() {
+    let fixture = Fixture::new();
+    let output = invoke(&fixture.request("rebind-model",json!({"action":"register-receipt",
+        "input":{"before":{"source":"original"},"after":{"source":"secret-credential"},"request":{}}})));
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        response["result"]["value"]["rejected"]
+            .as_str()
+            .unwrap()
+            .contains("历史变化")
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret-credential"));
+    assert!(!fixture.run.join("results").exists());
+    let request = fixture.request(
+        "rebind-model",
+        json!({"action":"secret-credential","input":{}}),
+    );
+    reject(&invoke(&request));
+}
+
+#[test]
 fn stale_parameter_binding_and_duplicate_raw_json_fail_without_writing_evidence() {
     let fixture = Fixture::new();
     let request = fixture.request(

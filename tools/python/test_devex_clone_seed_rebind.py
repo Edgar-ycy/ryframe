@@ -68,7 +68,6 @@ class SeedRebindTests(unittest.TestCase):
 
     def patches(self):
         stack = ExitStack()
-        stack.enter_context(patch.object(rebind, "require_recorded_producer_stopped"))
         stack.enter_context(patch.object(rebind, "registered_storage_binding", return_value=self.current))
         stack.enter_context(patch.object(rebind, "quiet_producers"))
         return stack
@@ -141,18 +140,6 @@ class SeedRebindTests(unittest.TestCase):
                         patch.object(rebind, "read_json", return_value=value), self.assertRaises(ValueError):
                     rebind.resolve_storage(self.backend, self.published, self.source, state, live_storage=False)
 
-    def test_unknown_failed_repeated_and_post_rebind_mutating_history_rejected(self):
-        receipt, state = self.published_rebind()
-        for stage, mode, status in (("copy", "run", "passed"), ("storage-target", "restart", "passed"),
-                                   ("storage-target", "stop", "passed"), ("seed-runtime", "source-rebind", "passed"),
-                                   ("seed-runtime", "arm-input", "failed"), ("seed-runtime", "start", "running")):
-            changed = {"attempts": state["attempts"] + [self.record(55, stage, mode, receipt, status)]}
-            with self.subTest(stage=stage, mode=mode, status=status), self.assertRaises(ValueError):
-                rebind.history(self.directory, changed, self.published)
-        unfinished = {"attempts": self.prefix + [self.record(54, "seed-runtime", "source-rebind", status="failed")]}
-        with self.assertRaises(ValueError):
-            rebind.history(self.directory, unfinished, self.published)
-
     def test_current_operation_requires_actual_owned_run_and_exact_last_attempt(self):
         state = {"attempts": self.prefix + [self.record(54, "seed-runtime", "source-rebind", status="running")]}
         with patch("devex_clone_run._require_owned_run", side_effect=ValueError("wrong owner")), self.assertRaises(ValueError):
@@ -160,62 +147,42 @@ class SeedRebindTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rebind.history(self.directory, state, self.published, current=53)
 
-    def test_transition_keeps_live_identity_and_directory_guards_after_native_model_check(self):
-        with self.patches(), patch.object(rebind, "require_recorded_producer_stopped",
-                                         side_effect=ValueError("same creation")), self.assertRaises(ValueError):
+    def test_transition_keeps_full_directory_identity_checks_around_native_observation(self):
+        with patch.object(rebind, "guard") as native, patch.object(rebind, "directory_identity") as identity:
             rebind.transition(self.backend, self.original, self.current)
-        with self.patches(), patch.object(rebind, "directory_identity", side_effect=ValueError("changed inode")), self.assertRaises(ValueError):
-            rebind.transition(self.backend, self.original, self.current)
+        self.assertEqual(identity.call_count, 2)
+        native.assert_called_once()
+        for outcomes in ([ValueError("changed inode")], [self.data, ValueError("changed inode")]):
+            with patch.object(rebind, "guard") as native, \
+                    patch.object(rebind, "directory_identity", side_effect=outcomes), self.assertRaises(ValueError):
+                rebind.transition(self.backend, self.original, self.current)
+            self.assertEqual(native.call_count, len(outcomes) - 1)
 
-    def test_transition_proves_the_full_old_creation_identity_is_stopped(self):
-        with patch.object(rebind, "require_recorded_producer_stopped") as stopped:
-            rebind.transition(self.backend, self.original, self.current)
-        stopped.assert_called_once_with(self.original["storage"]["identity"])
+    def test_lineage_recovery_consumes_same_native_rebind_receipt_without_field_alias(self):
+        import devex_clone_seed_generation_lineage_recovery as recovery
 
-    def test_bound_request_bytes_cannot_change_credentials_after_restart(self):
-        Path(self.original["request"]["path"]).write_text('{"credentials":"changed"}', encoding="utf-8")
-        with self.patches(), self.assertRaises(ValueError):
-            rebind.transition(self.backend, self.original, self.current)
-
-    def test_producer_lineage_and_both_ports_are_rechecked_without_external_writes(self):
-        with patch.object(rebind, "require_recorded_producer_stopped") as stopped, \
-                patch.object(rebind, "require_closed_port") as ports:
-            rebind.quiet_producers(self.backend, self.source)
-        stopped.assert_called_once_with(self.original["storage"]["identity"])
-        self.assertEqual([call.args[0] for call in ports.call_args_list],
-                         ["http://127.0.0.1:29002", "http://127.0.0.1:29003"])
-
-    def test_source_export_requires_rebind_and_is_allowed_once(self):
         receipt, state = self.published_rebind()
-        state["attempts"] += [self.record(55, "seed-runtime", "source-generation-start", self.successor),
-                              self.record(56, "seed-runtime", "source-generation-stop", self.successor)]
-        export = self.record(57, "seed-runtime", "source-export", receipt)
-        rebind.history(self.directory, {"attempts": state["attempts"] + [export]}, self.published)
-        for attempts in (self.prefix + [export], state["attempts"] + [export, {**export, "number": 56}]):
-            with self.subTest(attempts=attempts), self.assertRaises(ValueError):
-                rebind.history(self.directory, {"attempts": attempts}, self.published)
-        active = {**export, "status": "running", "result": None}
-        with patch("devex_clone_run._require_owned_run"):
-            rebind.history(self.directory, {"attempts": state["attempts"] + [active]}, self.published, current=57)
-
-    def test_published_generation_cannot_be_recovered_then_reused_as_export_source(self):
-        receipt, state = self.published_rebind()
-        state["attempts"] += [self.record(55, "seed-runtime", "source-generation-start", receipt),
-                              self.record(56, "seed-runtime", "source-generation-stop", receipt),
-                              self.record(57, "seed-runtime", "source-generation-recover", receipt),
-                              self.record(58, "seed-runtime", "source-export", receipt)]
-        with self.assertRaisesRegex(ValueError, "不能重放"):
-            rebind.history(self.directory, state, self.published)
-
-    def test_changed_runtime_history_is_not_hidden_by_old_stopped_identities(self):
-        runtime_history = self.file("producer-history.json", {"events": ["stopped"]})
         source = copy.deepcopy(self.source)
-        source["registration"]["producer_lineage"] = self.file("updated-lineage.json", {
-            "identities": [], "runtimes": [{"history": runtime_history}]})
-        Path(runtime_history["path"]).write_text('{"events":["started"]}', encoding="utf-8")
-        with patch.object(rebind, "require_closed_port") as ports, self.assertRaises(ValueError):
-            rebind.quiet_producers(self.backend, source)
-        ports.assert_not_called()
+        source["review_successor_binding"] = self.successor
+        storage = {**copy.deepcopy(self.current), "attempt": 65}
+        request = {"source_registration": self.published, "source_rebind": receipt,
+                   "review_successor": self.successor, "current_storage": storage}
+        cache = self.record(66, "cache-target", "restart", self.successor)
+        with patch("reference_fixture_successor._source_with_loader", return_value=source), \
+                patch("devex_clone_storage.registered_storage_binding", return_value=storage), \
+                patch("devex_clone_cache.registered_cache_binding", return_value={
+                    "attempt": 66, "restart_result": self.successor}):
+            result = recovery._source(self.backend, self.directory, state["attempts"], request, (cache, {}, {}))
+            self.assertEqual(result["storage"]["storage"], storage)
+            self.assertEqual(result["source_rebind"], receipt)
+            changed = self.value()
+            changed["history_sha256"] = "0" * 64
+            Path(receipt["path"]).unlink()
+            write_json(Path(receipt["path"]), changed)
+            state["attempts"][-1]["result"] = binding(Path(receipt["path"]))
+            request["source_rebind"] = state["attempts"][-1]["result"]
+            with self.assertRaises(ValueError):
+                recovery._source(self.backend, self.directory, state["attempts"], request, (cache, {}, {}))
 
     def test_published_restart_guard_requires_published_quiet_source_and_owned_stage(self):
         state = {"attempts": [self.prefix[0], self.record(53, "storage-target", "restart", status="running")]}
@@ -242,7 +209,7 @@ class SeedRebindTests(unittest.TestCase):
                 patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
                 patch.object(rebind, "segmented_resume", return_value={"phase": "storage-retryable"}), \
                 patch("devex_clone_seed_source._registered_source", return_value=self.source), \
-                patch.object(rebind, "directory_identity"), patch.object(rebind, "bound_file"):
+                patch.object(rebind, "bound_file"):
             rebind.published_restart_guard(self.backend, self.directory, None)
         with self.patches(), patch.object(rebind, "load_state", return_value=state), \
                 patch.object(rebind, "history", return_value=later), \

@@ -9,6 +9,7 @@ use std::path::Path;
 
 mod checkpoint;
 mod close;
+mod rebind;
 mod result;
 #[cfg(test)]
 mod tests;
@@ -32,6 +33,10 @@ pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<V
     )?;
     let input = &parameters["arguments"];
     let value = match parameters["operation"].as_str() {
+        Some("rebind-model") => rebind::dispatch(input)?,
+        Some("rebind-transition-files") => rebind::live::transition(backend, input)?,
+        Some("rebind-quiet-producers") => rebind::live::quiet(backend, input)?,
+        Some("rebind-restart-files") => rebind::live::restart(backend, input)?,
         Some("snapshot") => {
             document::exact(input, &["value"], "排空快照参数")?;
             close::snapshot(&input["value"])?;

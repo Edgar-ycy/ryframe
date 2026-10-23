@@ -100,7 +100,8 @@ def _history(backend: Path, directory: Path, attempts: list) -> tuple[dict, tupl
 
 def _source(backend: Path, directory: Path, attempts: list, request: dict, tail: tuple[dict, ...]) -> dict:
     from devex_clone_cache import registered_cache_binding
-    from devex_clone_seed_rebind import FIELDS as REBIND_FIELDS, transition
+    from devex_clone_seed_rebind import transition
+    from devex_clone_seed_guards import guard
     from devex_clone_seed_source import _registered_source
     from devex_clone_storage import registered_storage_binding
     from reference_fixture_successor import _source_with_loader
@@ -116,12 +117,11 @@ def _source(backend: Path, directory: Path, attempts: list, request: dict, tail:
     if rebound_path != directory / "results" / f"{rebinds[0]['number']:04d}.json":
         raise ValueError("C68 重绑定收据不属于同一复制运行")
     rebound = read_json(rebound_path)
-    exact(rebound, REBIND_FIELDS)
     prefix = [row for row in attempts if row["number"] < rebinds[0]["number"]]
-    if (rebound["status"] != "seed_source_rebound" or rebound["source_registration"] != request["source_registration"]
-            or rebound["review_successor"] != request["review_successor"]
-            or rebound["history_length"] != len(prefix) or rebound["history_sha256"] != plan_hash(prefix)
-            or rebound["remote_writes"] != 0 or rebound["restore_qualified"] is not False):
+    guard("rebind-receipt", {"value": rebound, "descriptor": request["source_registration"],
+          "original": rebound.get("original_storage"), "prefix": prefix}, backend=backend,
+          label="C68 重绑定来源及完整历史前缀")
+    if rebound["review_successor"] != request["review_successor"]:
         raise ValueError("C68 重绑定没有冻结相同 C52、successor 与完整历史")
     source = _source_with_loader(backend, request["review_successor"], live_storage=False, loader=_registered_source)
     if (source["directory"] != directory
