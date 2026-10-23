@@ -2,7 +2,6 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -200,7 +199,12 @@ impl stage::StageRunner for ObserveController {
         &self,
         _request: &stage::StageRequest<'_>,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let status = python_status(&self.backend, &self.run);
+        let status = super::recovery::clone::native::lifecycle::run(
+            &CloneCommand::Status {
+                run_dir: self.run.clone(),
+            },
+            &self.backend,
+        )?;
         assert_eq!(status["controller"]["process_matches"], true, "{status}");
         assert_eq!(status["controller"]["process_missing"], false, "{status}");
         assert!(status["controller"].get("phase").is_none());
@@ -258,6 +262,137 @@ fn init_status_and_stage_preserve_registered_output_shape() {
 }
 
 #[test]
+fn seed_to_arm_manifest_is_registered_by_the_native_state_machine() {
+    let fixture = Fixture::new();
+    let source_registration = fixture.local.join("source-registration.json");
+    let target_registration = fixture.local.join("target-registration.json");
+    let initialized_files = fixture.local.join("initialized-files.json");
+    let storage_run = fixture.local.join("target-storage-run");
+    fs::create_dir(&storage_run).unwrap();
+    let storage_manifest = storage_run.join("manifest.json");
+    for path in [&source_registration, &initialized_files, &storage_manifest] {
+        write_json(path, &json!({"fixture": true}));
+    }
+    super::recovery::clone::native::lifecycle::state::initialize(&storage_run).unwrap();
+    let historical_state = binding(&storage_run.join("state.json"));
+    let storage_attempt = super::recovery::clone::native::lifecycle::state::begin(
+        &storage_run,
+        "storage-target",
+        "restart",
+        &json!({"fixture": true}),
+    )
+    .unwrap()
+    .0;
+    super::recovery::clone::native::lifecycle::state::finish(
+        &storage_run,
+        storage_attempt,
+        Some(&json!({"status": "storage_restarted"})),
+        None,
+    )
+    .unwrap();
+    write_json(
+        &target_registration,
+        &json!({
+            "storage_run": {
+                "path": storage_run,
+                "manifest": binding(&storage_manifest),
+                "state": historical_state,
+            }
+        }),
+    );
+    let evidence = (0..10)
+        .map(|index| {
+            let path = fixture.local.join(format!("lifecycle-{index}.json"));
+            write_json(&path, &json!({"fixture": index}));
+            binding(&path)
+        })
+        .collect::<Vec<_>>();
+    let mut manifest = read_json(&fixture.manifest);
+    manifest["copy_stage"] = json!("seed_to_arm");
+    manifest["source_registration"] = binding(&source_registration);
+    manifest["target_registration"] = binding(&target_registration);
+    manifest["target_initialized_files"] = binding(&initialized_files);
+    manifest["target_storage_run"] = json!({
+        "path": storage_run,
+        "manifest": binding(&storage_manifest),
+        "storage": {
+            "request": evidence[0],
+            "storage": {
+                "identity": {"pid": 1},
+                "sha256": "a".repeat(64),
+                "process_receipt": evidence[1],
+                "launch_receipt": evidence[2],
+            },
+            "attempt": 1,
+            "data_directory": storage_run.join("data"),
+            "api_url": "http://127.0.0.1:1",
+            "console_url": "http://127.0.0.1:2",
+            "restart_result": evidence[3],
+        },
+        "cache": {
+            "request": evidence[4],
+            "runtime": evidence[5],
+            "redis": {"pid": 2},
+            "owner": evidence[6],
+            "controller": evidence[7],
+            "attempt": 1,
+            "ready": evidence[8],
+            "restart_result": evidence[9],
+        },
+    });
+    write_json(&fixture.manifest, &manifest);
+
+    let registered = fixture.init().unwrap();
+    assert_eq!(registered["status"], "run_registered");
+    assert_eq!(fixture.status().unwrap()["attempts"], json!([]));
+}
+
+#[test]
+fn dead_controller_recovery_is_native_and_requires_reconciliation() {
+    let fixture = Fixture::new();
+    fixture.init().unwrap();
+    super::recovery::clone::native::lifecycle::state::begin(
+        &fixture.run,
+        "copy",
+        "resume",
+        &json!({"fixture": true}),
+    )
+    .unwrap();
+    let lock = fixture.run.join("run.lock");
+    fs::create_dir(&lock).unwrap();
+    let owner_path = lock.join("owner.json");
+    write_json(
+        &owner_path,
+        &json!({
+            "format_version": 1,
+            "identity": {
+                "pid": u32::MAX,
+                "started": "dead-fixture",
+                "executable": "dead-fixture",
+            },
+            "directory": fixture.run,
+            "manifest_sha256": binding(&fixture.run.join("manifest.json"))["sha256"],
+        }),
+    );
+    let result = super::recovery::clone::native::lifecycle::run(
+        &CloneCommand::Recover {
+            run_dir: fixture.run.clone(),
+            owner_binding: owner_path,
+        },
+        &fixture.backend,
+    )
+    .unwrap();
+    assert_eq!(result["status"], "controller_recovered");
+    assert_eq!(result["copy_requires_reconciliation"], true);
+    assert_eq!(fixture.state()["attempts"][0]["status"], "failed");
+    assert_eq!(
+        fixture.state()["attempts"][0]["error_type"],
+        "ControllerInterrupted"
+    );
+    assert!(!lock.exists());
+}
+
+#[test]
 fn init_conflict_and_preflight_failure_do_not_overwrite_or_begin() {
     let fixture = Fixture::new();
     fixture.init().unwrap();
@@ -301,7 +436,9 @@ fn failure_cancel_and_partial_results_are_recorded_without_replay() {
     assert!(!fixture.run.join("run.lock").exists());
     let failure = read_json(&fixture.run.join("failure-0001.json"));
     assert_eq!(failure["error_type"], "CancelledError");
-    assert_eq!(failure["frames"], json!([]));
+    assert_eq!(failure["format_version"], 2);
+    assert_eq!(failure["operation_id"], "clone.export.run");
+    assert!(failure.get("frames").is_none());
     assert_eq!(
         failure["controller"],
         state::binding(&fixture.run.join("controller-0001.json"))
@@ -431,9 +568,9 @@ fn linked_manifest_is_rejected() {
 }
 
 #[test]
-fn native_status_matches_python_field_for_field() {
+fn native_status_preserves_the_registered_attempt_projection() {
     let fixture = Fixture::new();
-    let native_init = fixture.init().unwrap();
+    fixture.init().unwrap();
     stage::run(
         &fixture.backend,
         &fixture.run,
@@ -443,68 +580,13 @@ fn native_status_matches_python_field_for_field() {
     .unwrap();
     let native = fixture.status().unwrap();
     assert_eq!(native["attempts"][0]["execution_source_matches"], true);
-    let python_run = fixture.local.join("python-run");
-    let protocol = json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-clone",
-        "request": {
-            "backend_dir": fixture.backend,
-            "command": "init",
-            "effect": "evidence-write",
-            "options": {
-                "manifest": fixture.manifest,
-                "run_dir": python_run,
-            },
-            "write": true,
-        }
-    });
-    let output = Command::new("python")
-        .args(["-B", "tools/python/devex_clone.py"])
-        .current_dir(&fixture.backend)
-        .env(
-            "RYFRAME_XTASK_RECOVERY_CLONE",
-            serde_json::to_string(&protocol).unwrap(),
-        )
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(native["status"], "run_status");
+    assert_eq!(native["id"], "clone-case");
+    assert_eq!(native["attempts"][0]["status"], "passed");
+    assert_eq!(
+        native["attempts"][0]["result"],
+        fixture.state()["attempts"][0]["result"]
     );
-    let python_init: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(python_init["status"], "run_registered");
-    assert_eq!(python_init["id"], native_init["id"]);
-
-    let status_protocol = json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-clone",
-        "request": {
-            "backend_dir": fixture.backend,
-            "command": "status",
-            "effect": "read-only",
-            "options": {"run_dir": fixture.run},
-            "write": false,
-        }
-    });
-    let output = Command::new("python")
-        .args(["-B", "tools/python/devex_clone.py"])
-        .current_dir(&fixture.backend)
-        .env(
-            "RYFRAME_XTASK_RECOVERY_CLONE",
-            serde_json::to_string(&status_protocol).unwrap(),
-        )
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let python_status: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(python_status, native);
 }
 
 #[test]
@@ -524,7 +606,7 @@ fn stage_python_preflight_uses_the_typed_resource_protocol() {
 }
 
 #[test]
-fn live_controller_owner_is_observable_by_python_without_writes() {
+fn live_controller_owner_is_observable_by_native_status_without_writes() {
     let fixture = Fixture::new();
     fixture.init().unwrap();
     stage::run(
@@ -558,36 +640,6 @@ fn write_json(path: &Path, value: &Value) {
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
-}
-
-fn python_status(backend: &Path, run: &Path) -> Value {
-    let protocol = json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-clone",
-        "request": {
-            "backend_dir": backend,
-            "command": "status",
-            "effect": "read-only",
-            "options": {"run_dir": run},
-            "write": false,
-        }
-    });
-    let output = Command::new("python")
-        .args(["-B", "tools/python/devex_clone.py"])
-        .current_dir(backend)
-        .env(
-            "RYFRAME_XTASK_RECOVERY_CLONE",
-            serde_json::to_string(&protocol).unwrap(),
-        )
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
 }
 
 fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {

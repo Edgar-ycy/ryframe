@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
-from devex_clone_run import cleanup_inputs, execute, initialize, recover_copy, run_runtime, status
-from devex_clone_run_state import recover_lock
+from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
 
 FRESH_TARGET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET"
 FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
@@ -290,14 +289,6 @@ def dispatch(args, backend: Path) -> dict:
             return reconcile_preflight(backend, workspace)
         return verify(backend, workspace, evidence_path(backend, args.observation_dir, new=True))
     directory = evidence_path(backend, args.run_dir)
-    if args.command == "init":
-        if not args.write:
-            raise ValueError("init 需要显式 --write")
-        return initialize(backend, args.manifest, directory)
-    if args.command == "status":
-        if args.write:
-            raise ValueError("status 是只读操作，不接受 --write")
-        return status(backend, directory)
     if args.command == "storage":
         if args.request is not None and args.operation != "restart":
             raise ValueError("仅 storage restart 可提供 --request")
@@ -364,18 +355,6 @@ def dispatch(args, backend: Path) -> dict:
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None
         result = execute(backend, directory, "post-copy", args.operation, post_copy_request=args.request, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
-    if args.command == "stage":
-        if not args.write:
-            raise ValueError("stage 需要显式 --write")
-        if args.stage == "target-verify" and args.mode != "run":
-            raise ValueError("target-verify 只支持首次 run")
-        result = execute(backend, directory, args.stage, args.mode)
-        return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
-    if args.command == "recover":
-        if not args.write:
-            raise ValueError("recover 需要显式 --write")
-        value = read_json(local_path(backend, str(args.owner_binding)))
-        return recover_lock(backend, directory, value, verify_results=False)
     if args.command == "recover-copy":
         if not args.write:
             raise ValueError("recover-copy 需要显式 --write")

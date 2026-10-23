@@ -9,7 +9,7 @@ use super::{
         CacheOperation, CheckCommand, CloneCommand, CloneEffect, CloneRole, CloneRuntimeOperation,
         Command, PostCopyOperation, RecoveryCommand, SeedRuntimeOperation, StorageOperation, parse,
     },
-    recovery::clone::{protocol, requires_seed_to_arm_python},
+    recovery::clone::protocol,
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(1);
@@ -488,49 +488,4 @@ fn native_offline_commands_never_construct_a_python_protocol() {
                 .contains("Rust 原生")
         );
     }
-}
-
-#[test]
-fn seed_to_arm_lifecycle_uses_the_complete_python_fallback() {
-    let fixture = Fixture::new();
-    fs::write(&fixture.first, br#"{"copy_stage":"seed_to_arm"}"#).unwrap();
-    let init = fixture
-        .parse(&[
-            "init",
-            "--manifest",
-            Fixture::value(&fixture.first),
-            "--run-dir",
-            Fixture::value(&fixture.directory.join("new-run")),
-            "--write",
-        ])
-        .unwrap();
-    assert!(requires_seed_to_arm_python(&init));
-
-    fs::write(
-        fixture.run.join("manifest.json"),
-        br#"{"copy_stage":"seed_to_arm"}"#,
-    )
-    .unwrap();
-    for command in [
-        fixture
-            .parse(&["status", "--run-dir", Fixture::value(&fixture.run)])
-            .unwrap(),
-        fixture
-            .parse(&[
-                "stage",
-                "--run-dir",
-                Fixture::value(&fixture.run),
-                "--stage",
-                "copy",
-                "--mode",
-                "resume",
-                "--write",
-            ])
-            .unwrap(),
-    ] {
-        assert!(requires_seed_to_arm_python(&command));
-    }
-
-    fs::write(&fixture.first, br#"{"copy_stage":"source_to_seed"}"#).unwrap();
-    assert!(!requires_seed_to_arm_python(&init));
 }

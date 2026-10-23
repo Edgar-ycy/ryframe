@@ -50,24 +50,6 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
     Ok(payload)
 }
 
-pub(crate) fn requires_seed_to_arm_python(command: &CloneCommand) -> bool {
-    let path = match command {
-        CloneCommand::Init { manifest, .. } => manifest,
-        CloneCommand::Status { run_dir } | CloneCommand::Stage { run_dir, .. } => {
-            return is_seed_to_arm(&run_dir.join("manifest.json"));
-        }
-        _ => return false,
-    };
-    is_seed_to_arm(path)
-}
-
-fn is_seed_to_arm(path: &Path) -> bool {
-    fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|value| value.get("copy_stage").and_then(Value::as_str) == Some("seed_to_arm"))
-}
-
 fn options(command: &CloneCommand, root: &Path) -> Result<Value> {
     Ok(match command {
         CloneCommand::Help => return Err("clone 帮助没有私有请求参数".into()),

@@ -11,8 +11,8 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_factory_context import initialization_history
 from process_environment import Environments
 from devex_clone_model import exact, linked, local_path, name
-from devex_clone_run_state import (begin, bind_controller_attempt, binding, claim_run_lock, controller_observation, finish,
-                                   historical_state, initialize_state, load_state,
+from devex_clone_run_state import (begin, bind_controller_attempt, binding, claim_run_lock, finish,
+                                   historical_state, load_state,
                                    record_failure, run_lock)
 from devex_clone_source_proof import bound_file
 from process_guard import process_guard
@@ -68,23 +68,6 @@ def manifest(backend: Path, value: dict) -> dict:
         if binding(path)["sha256"] != bridge["sha256"]:
             raise ValueError("构建审计证据发生变化")
     return copy.deepcopy(value)
-
-
-def initialize(backend: Path, filename: Path, directory: Path) -> dict:
-    filename = local_path(backend, str(filename))
-    directory = local_path(backend, str(directory), new=True)
-    original = binding(filename)
-    value = manifest(backend, read_json(filename))
-    storage = target_storage_run(backend, value, live=False)
-    if storage is not None and _overlap(directory, storage):
-        raise ValueError("seed_to_arm 运行目录必须与外部目标 storage run 拓扑分离")
-    if binding(filename) != original or not directory.parent.is_dir():
-        raise ValueError("验收清单读取期间变化或父目录不存在")
-    directory.mkdir()
-    write_json(directory / "manifest.json", value)
-    initialize_state(directory)
-    return {"status": "run_registered", "id": value["id"], "directory": str(directory),
-            "remote_writes": 0, "stages_passed": [], "restore_qualified": False}
 
 
 def read_manifest(backend: Path, directory: Path) -> dict:
@@ -823,16 +806,3 @@ def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
         if read_manifest(backend, directory) != value:
             raise ValueError("阶段运行期间验收清单发生变化")
         return result
-
-
-def status(backend: Path, directory: Path) -> dict:
-    from source_fingerprints import current_execution_source
-
-    value = read_manifest(backend, directory)
-    state = load_state(directory)
-    current = current_execution_source(backend)
-    active = controller_observation(directory)
-    attempts = [{key: item[key] for key in ("number", "stage", "mode", "status", "error_type", "result")}
-                | {"execution_source_matches": item["sources"] == current} for item in state["attempts"]]
-    return {"status": "run_status", "id": value["id"], "controller": active, "attempts": attempts,
-            "remote_writes": 0, "restore_qualified": False}

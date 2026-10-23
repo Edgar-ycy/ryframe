@@ -39,6 +39,22 @@ _FAILED_RESTART_FILES = {
 }
 
 
+def _failure_call_matches(failure: dict, calls: tuple, operation_id: str) -> bool:
+    """兼容历史 Python 栈收据，并以稳定 Rust 操作标识核验新收据。"""
+    common = {"kind", "attempt", "stage", "mode", "error_type", "controller"}
+    if failure.get("format_version") == 1:
+        exact(failure, common | {"format_version", "frames"})
+        frames = failure["frames"]
+        return (tuple((frame.get("file"), frame.get("function")) for frame in frames) == calls
+                and all(set(frame) == {"file", "function", "line"}
+                        and type(frame["line"]) is int and frame["line"] > 0
+                        for frame in frames))
+    if failure.get("format_version") == 2:
+        exact(failure, common | {"format_version", "operation_id"})
+        return failure["operation_id"] == operation_id
+    return False
+
+
 def _attempt_result(backend: Path, directory: Path, attempt: dict) -> dict:
     path = bound_file(backend, attempt["result"])
     if path != directory / "results" / f"{attempt['number']:04d}.json":
@@ -151,15 +167,11 @@ def _verify_failed_storage_stop(backend: Path, directory: Path, attempt: dict,
     failure_path = local_path(backend, str(directory / f"failure-{attempt['number']:04d}.json"))
     failure_descriptor = binding(failure_path)
     failure = read_json(bound_file(backend, failure_descriptor))
-    exact(failure, {"format_version", "kind", "attempt", "stage", "mode", "error_type", "frames", "controller"})
-    frames = failure["frames"]
-    calls = tuple((frame.get("file"), frame.get("function")) for frame in frames)
-    if (failure["format_version"] != 1 or failure["kind"] != "devex-stage-failure"
+    if (failure["kind"] != "devex-stage-failure"
             or failure["attempt"] != attempt["number"] or failure["stage"] != "storage-target"
             or failure["mode"] != "stop" or failure["error_type"] != "ValueError"
-            or calls != _FAILED_STOP_CALLS
-            or any(set(frame) != {"file", "function", "line"} or type(frame["line"]) is not int
-                   or frame["line"] <= 0 for frame in frames)
+            or not _failure_call_matches(
+                failure, _FAILED_STOP_CALLS, "clone.storage-target.stop")
             or failure["controller"] != controller):
         raise ValueError("存储停止失败不是冻结的端口核验调用链")
     controller_value = read_json(bound_file(backend, controller))
@@ -200,14 +212,11 @@ def _verify_failed_storage_restart(backend: Path, directory: Path, attempt: dict
     failure_path = local_path(backend, str(directory / f"failure-{attempt['number']:04d}.json"))
     failure_descriptor = binding(failure_path)
     failure = read_json(bound_file(backend, failure_descriptor))
-    exact(failure, {"format_version", "kind", "attempt", "stage", "mode", "error_type", "frames", "controller"})
-    calls = tuple((frame.get("file"), frame.get("function")) for frame in failure["frames"])
-    if (failure["format_version"] != 1 or failure["kind"] != "devex-stage-failure"
+    if (failure["kind"] != "devex-stage-failure"
             or failure["attempt"] != attempt["number"] or failure["stage"] != "storage-target"
             or failure["mode"] != "restart" or failure["error_type"] != attempt["error_type"]
-            or calls != _FAILED_RESTART_CALLS
-            or any(set(frame) != {"file", "function", "line"} or type(frame["line"]) is not int
-                   or frame["line"] <= 0 for frame in failure["frames"])
+            or not _failure_call_matches(
+                failure, _FAILED_RESTART_CALLS, "clone.storage-target.restart")
             or failure["controller"] != controller):
         raise ValueError("存储重启失败不是固定的启动后身份查询调用链")
     controller_value = read_json(bound_file(backend, controller))

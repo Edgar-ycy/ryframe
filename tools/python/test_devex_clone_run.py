@@ -31,8 +31,9 @@ class RunTests(unittest.TestCase):
                       "target_environment": self.file("target-env", {"environment": {"SIDE": "target"}}),
                       "copy_directory": str(self.local / "copy"), "copy_stage": "source_to_seed", "build_bridges": []}
         self.value["source_export"] = self.file("export", {"request": self.value["source_request"]})
-        manifest = self.file("manifest-input", self.value)
-        run.initialize(self.backend, Path(manifest["path"]), self.directory)
+        self.directory.mkdir()
+        write_json(self.directory / "manifest.json", self.value)
+        state.initialize_state(self.directory)
         self.sources = {"product": "unchanged", "test_tools": "tool-a", "complete": "all-a"}
         self.addCleanup(patch.stopall)
         patch("source_fingerprints.current_execution_source", return_value=self.sources).start()
@@ -324,17 +325,6 @@ class RunTests(unittest.TestCase):
             execute.assert_not_called()
         self.assertEqual(state.binding(self.directory / "state.json"), before)
 
-    def test_clone_status_resolves_relative_run_directory_under_backend(self):
-        import devex_clone_run_cli as cli
-
-        with patch.object(cli, "status", return_value={"status": "observed"}) as observe:
-            result = cli.dispatch(
-                SimpleNamespace(command="status", run_dir=Path(".local-tests/run"), write=False),
-                self.backend,
-            )
-        self.assertEqual(result, {"status": "observed"})
-        observe.assert_called_once_with(self.backend, self.directory)
-
     def test_runtime_environment_and_identity_are_delegated_without_build(self):
         value = dict(self.value)
         request = self.file("runtime-request", {"source": {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}})
@@ -512,15 +502,6 @@ class RunTests(unittest.TestCase):
         with state.run_lock(self.directory), self.assertRaises(ValueError):
             run.execute(self.backend, self.directory, "export", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "running")
-
-    def test_status_is_readonly_and_reports_old_execution_source(self):
-        with patch.object(run, "run_export", return_value={"status": "export_verified"}):
-            run.execute(self.backend, self.directory, "export", "run")
-        before = state.binding(self.directory / "state.json")
-        with patch("source_fingerprints.current_execution_source", return_value={"changed": True}):
-            report = run.status(self.backend, self.directory)
-        self.assertFalse(report["attempts"][0]["execution_source_matches"])
-        self.assertEqual(state.binding(self.directory / "state.json"), before)
 
     def test_concurrent_control_rejected_and_result_tampering_detected(self):
         with state.run_lock(self.directory), self.assertRaises(ValueError):

@@ -185,23 +185,33 @@ def _failure(context, candidate, controller, controller_value):
     path = context.directory_root / f"failure-{number:04d}.json"
     descriptor = binding(path)
     value = read_json(bound_file(context.backend, descriptor))
-    exact(value, {"format_version", "kind", "attempt", "stage", "mode", "error_type", "frames", "controller"})
-    frames = value["frames"]
-    if (value["format_version"] != 1 or value["kind"] != "devex-stage-failure"
+    common = {"format_version", "kind", "attempt", "stage", "mode", "error_type", "controller"}
+    if value.get("format_version") == 1:
+        exact(value, common | {"frames"})
+        frames = value["frames"]
+    elif value.get("format_version") == 2:
+        exact(value, common | {"operation_id"})
+        if value["operation_id"] != "clone.seed-runtime.departments-plan":
+            raise ValueError("原部门计划失败的 Rust 操作标识不匹配")
+        frames = None
+    else:
+        raise ValueError("原部门计划失败收据版本不受支持")
+    if (value["kind"] != "devex-stage-failure"
             or value["attempt"] != number or value["stage"] != "seed-runtime"
             or value["mode"] != "departments-plan" or value["error_type"] != candidate["error_type"]
             or value["controller"] != controller
-            or not isinstance(frames, list) or not frames):
+            or frames is not None and (not isinstance(frames, list) or not frames)):
         raise ValueError("原部门计划失败收据不完整或不属于候选 attempt")
-    for frame in frames:
-        exact(frame, {"file", "function", "line"})
-        if (not isinstance(frame["file"], str) or not frame["file"].startswith("tools/python/")
-                or not isinstance(frame["function"], str) or not frame["function"]
-                or type(frame["line"]) is not int or frame["line"] <= 0):
-            raise ValueError("原部门计划失败栈结构无效")
-    if not any(frame["file"] == "tools/python/devex_clone_run.py" and frame["function"] == "execute"
-               for frame in frames):
-        raise ValueError("原部门计划失败未绑定统一阶段执行边界")
+    if frames is not None:
+        for frame in frames:
+            exact(frame, {"file", "function", "line"})
+            if (not isinstance(frame["file"], str) or not frame["file"].startswith("tools/python/")
+                    or not isinstance(frame["function"], str) or not frame["function"]
+                    or type(frame["line"]) is not int or frame["line"] <= 0):
+                raise ValueError("原部门计划失败栈结构无效")
+        if not any(frame["file"] == "tools/python/devex_clone_run.py" and frame["function"] == "execute"
+                   for frame in frames):
+            raise ValueError("原部门计划失败未绑定统一阶段执行边界")
     if read_json(bound_file(context.backend, value["controller"])) != controller_value:
         raise ValueError("部门计划失败收据与控制器不同")
     if binding(path) != descriptor:
@@ -221,6 +231,8 @@ def _pre_dispatch_failure(context, attempt):
     controller, controller_value = _controller(context, attempt, current=False)
     descriptor = _failure(context, attempt, controller, controller_value)
     failure = read_json(bound_file(context.backend, descriptor))
+    if failure["format_version"] == 2:
+        return False
     frames = [(item["file"], item["function"]) for item in failure["frames"]]
     expected = [("tools/python/devex_clone_run.py", "execute"),
                 ("tools/python/devex_clone_seed_runtime.py", "execute_seed"),
@@ -283,6 +295,8 @@ def _guard_only_failure(context, attempt):
     controller, controller_value = _controller(context, attempt, current=False)
     descriptor = _failure(context, attempt, controller, controller_value)
     failure = read_json(bound_file(context.backend, descriptor))
+    if failure["format_version"] == 2:
+        return False
     frames = [(item["file"], item["function"]) for item in failure["frames"]]
     expected = [("tools/python/devex_clone_run.py", "execute"),
                 ("tools/python/devex_clone_seed_runtime.py", "execute_seed"),

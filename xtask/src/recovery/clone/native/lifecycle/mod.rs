@@ -12,15 +12,13 @@ use crate::{
 pub(crate) mod identity;
 pub(crate) mod lock;
 pub(crate) mod manifest;
+mod recover;
 pub(crate) mod source;
 pub(crate) mod stage;
 pub(crate) mod state;
 mod status;
 
 pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
-    if is_seed_to_arm(command) {
-        return Err("seed_to_arm init/status/stage 必须整体使用 Python 状态机".into());
-    }
     match command {
         CloneCommand::Init { manifest, run_dir } => init(backend, manifest, run_dir),
         CloneCommand::Status { run_dir } => status::run(backend, run_dir),
@@ -40,22 +38,12 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
         CloneCommand::Stage { run_dir, stage } => {
             stage::run(backend, run_dir, *stage, &stage::PythonRunner::new(backend))
         }
+        CloneCommand::Recover {
+            run_dir,
+            owner_binding,
+        } => recover::run(backend, run_dir, owner_binding),
         _ => Err("clone 生命周期模块不处理该命令".into()),
     }
-}
-
-fn is_seed_to_arm(command: &CloneCommand) -> bool {
-    let path = match command {
-        CloneCommand::Init { manifest, .. } => manifest.clone(),
-        CloneCommand::Status { run_dir } | CloneCommand::Stage { run_dir, .. } => {
-            run_dir.join("manifest.json")
-        }
-        _ => return false,
-    };
-    fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|value| value.get("copy_stage").and_then(Value::as_str) == Some("seed_to_arm"))
 }
 
 fn init(backend: &Path, manifest_path: &Path, run_dir: &Path) -> Result<Value> {

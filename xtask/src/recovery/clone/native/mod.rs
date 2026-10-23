@@ -36,9 +36,10 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
     let value = match command {
         CloneCommand::Plan { input, output } => plan(backend, input, output)?,
         CloneCommand::Verify { plan } => verify(backend, plan)?,
-        CloneCommand::Init { .. } | CloneCommand::Status { .. } | CloneCommand::Stage { .. } => {
-            lifecycle::run(command, backend)?
-        }
+        CloneCommand::Init { .. }
+        | CloneCommand::Status { .. }
+        | CloneCommand::Stage { .. }
+        | CloneCommand::Recover { .. } => lifecycle::run(command, backend)?,
         CloneCommand::Bridge {
             build,
             inventory,

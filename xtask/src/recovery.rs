@@ -87,12 +87,11 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
         | CloneCommand::Init { .. }
         | CloneCommand::Status { .. }
         | CloneCommand::Stage { .. }
+        | CloneCommand::Recover { .. }
         | CloneCommand::Bridge { .. }
         | CloneCommand::MaintenanceBuild { .. }
         | CloneCommand::MaintenanceVerify { .. }
-        | CloneCommand::Storage(_)
-            if !clone::requires_seed_to_arm_python(command) =>
-        {
+        | CloneCommand::Storage(_) => {
             return clone::native::run(command, &root_dir());
         }
         _ => {}

@@ -5,6 +5,7 @@ use std::{
 
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::super::{
     digest,
@@ -182,13 +183,13 @@ pub(crate) fn record_failure(
     json_io::write_new(
         &directory.join(format!("failure-{number:04}.json")),
         &json!({
-            "format_version": 1,
+            "format_version": 2,
             "kind": "devex-stage-failure",
             "attempt": number,
             "stage": stage,
             "mode": mode,
             "error_type": error_type,
-            "frames": [],
+            "operation_id": format!("clone.{stage}.{mode}"),
             "controller": manifest::binding(&controller, &digest::file(&controller)?)?,
         }),
     )
@@ -213,6 +214,114 @@ pub(crate) fn attempts(value: &Value) -> Result<&[Value]> {
         value.get("attempts").ok_or("阶段记录缺少 attempts")?,
         "验收阶段记录",
     )
+}
+
+pub(crate) fn historical(
+    directory: &Path,
+    descriptor: &Value,
+    verify_results: bool,
+) -> Result<Value> {
+    let descriptor = exact(descriptor, &["path", "bytes", "sha256"], "历史阶段记录描述")?;
+    let path = Path::new(text(descriptor.get("path").unwrap(), "历史阶段记录路径")?);
+    if path != directory.join("state.json")
+        || descriptor
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .is_none_or(|bytes| bytes == 0)
+    {
+        return Err("历史阶段记录描述不属于固定运行目录".into());
+    }
+    let expected_sha = text(descriptor.get("sha256").unwrap(), "历史阶段记录摘要")?;
+    if expected_sha.len() != 64 || !expected_sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("历史阶段记录摘要无效".into());
+    }
+    let before = digest::file(path)?;
+    let value = load(directory, verify_results)?;
+    let historical_attempts = if descriptor.get("bytes").and_then(Value::as_u64)
+        == Some(before.bytes)
+        && expected_sha == before.sha256
+    {
+        attempts(&value)?.len()
+    } else {
+        let attempts = attempts(&value)?;
+        let mut matches = Vec::new();
+        for count in 0..=attempts.len() {
+            let mut candidate = value.clone();
+            candidate["attempts"] = Value::Array(attempts[..count].to_vec());
+            if serialized_matches(
+                &candidate,
+                descriptor.get("bytes").and_then(Value::as_u64).unwrap(),
+                expected_sha,
+            )? {
+                matches.push(count);
+            }
+        }
+        if matches.len() != 1 {
+            return Err("历史阶段记录不是当前账本的精确追加前缀".into());
+        }
+        matches[0]
+    };
+    if digest::file(path)? != before {
+        return Err("阶段记录在历史前缀核对期间变化".into());
+    }
+    Ok(json!({
+        "state": value,
+        "historical_attempts": historical_attempts,
+        "current": manifest::binding(path, &before)?,
+    }))
+}
+
+fn serialized_matches(value: &Value, bytes: u64, expected_sha: &str) -> Result<bool> {
+    let mut pretty = serde_json::to_string_pretty(value)?;
+    pretty.push('\n');
+    let variants = [pretty.clone(), pretty.replace('\n', "\r\n")];
+    Ok(variants.iter().any(|candidate| {
+        candidate.len() as u64 == bytes
+            && Sha256::digest(candidate.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+                == expected_sha
+    }))
+}
+
+pub(crate) fn interrupt_owned(
+    directory: &Path,
+    owner: &Value,
+    controller_number: Option<u64>,
+) -> Result<Value> {
+    let mut value = load(directory, false)?;
+    let attempts = value["attempts"]
+        .as_array_mut()
+        .ok_or("阶段记录 attempts 类型无效")?;
+    let mut changed = false;
+    for attempt in attempts {
+        if attempt.get("status").and_then(Value::as_str) != Some("running") {
+            continue;
+        }
+        let number = attempt
+            .get("number")
+            .and_then(Value::as_u64)
+            .ok_or("运行中阶段序号无效")?;
+        let controller = controller_path(directory, number);
+        if controller.exists() {
+            let (_, recorded_owner) = controller_record(directory, number, attempt)?;
+            if recorded_owner != *owner {
+                continue;
+            }
+        }
+        if controller_number.is_none_or(|expected| expected == number) {
+            attempt["status"] = Value::String("failed".into());
+            attempt["finished_at"] = Value::String(now());
+            attempt["error_type"] = Value::String("ControllerInterrupted".into());
+            changed = true;
+        }
+    }
+    if !changed {
+        return Err("死亡控制器没有可恢复的运行中阶段".into());
+    }
+    write(directory, &value)?;
+    Ok(value)
 }
 
 pub(crate) fn manifest_binding(directory: &Path) -> Result<Value> {

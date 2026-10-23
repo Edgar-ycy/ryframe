@@ -212,6 +212,31 @@ pub(crate) fn verify_lock(
     Ok(())
 }
 
+pub(crate) fn recover_dead(directory: &Path, expected_owner: &Value) -> Result<()> {
+    let path = directory.join("run.lock");
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("无法核验待恢复控制锁：{error}").into()),
+    };
+    if digest::linked(&metadata) || !metadata.is_dir() {
+        return Err("待恢复控制锁类型无效，保留现场".into());
+    }
+    let identity = metadata_identity(&metadata)?;
+    verify_lock(directory, &identity, expected_owner, true)?;
+    let pid = expected_owner["identity"]["pid"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or("待恢复控制器 PID 无效")?;
+    if super::identity::process(pid)?.is_some() {
+        return Err("控制进程仍存在或 PID 已复用，拒绝回收".into());
+    }
+    fs::remove_file(path.join("owner.json"))
+        .map_err(|error| format!("控制锁 owner 清理失败，保留现场：{error}"))?;
+    fs::remove_dir(&path).map_err(|error| format!("控制锁目录清理失败，保留现场：{error}"))?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MetadataIdentity(String);
 
