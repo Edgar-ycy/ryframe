@@ -20,6 +20,7 @@ struct Fixture {
     source: Value,
     server: String,
     frontend_url: String,
+    frontend_reservation: Option<std::net::TcpListener>,
     process_state: Value,
     calls: Vec<String>,
     fail: Option<String>,
@@ -89,7 +90,6 @@ impl Fixture {
         fs::write(&mysql_secret, b"[client]\npassword=DatabaseSecret123!\n").unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let frontend_url = format!("http://{}", listener.local_addr().unwrap());
-        drop(listener);
         let review = backend.join(".local-tests/review.json");
         put(
             &review,
@@ -125,6 +125,7 @@ impl Fixture {
             source,
             server: server.into(),
             frontend_url,
+            frontend_reservation: Some(listener),
             process_state: json!({"api":"running","worker":"running"}),
             calls: vec![],
             fail: None,
@@ -146,6 +147,8 @@ impl Fixture {
     }
     fn execute(&mut self, operation: &str) -> Result<Value> {
         let request = self.request(operation);
+        // 构造夹具期间持续持有端口，直到交给真实端口核验，避免提前释放后被其他临时监听器复用。
+        drop(self.frontend_reservation.take());
         execution::execute(self, &request)
     }
     fn outputs(&self) -> BTreeMap<String, PathBuf> {
@@ -294,7 +297,9 @@ impl Dependencies for Fixture {
 fn preview_build_browser_verify_close_preserve_order_and_bound_origin() {
     let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = Fixture::new("preview");
+    assert!(std::net::TcpListener::bind(f.frontend_url.strip_prefix("http://").unwrap()).is_err());
     let binding = f.execute("bind").unwrap();
+    assert!(f.frontend_reservation.is_none());
     assert_eq!(binding["status"], "reference_fixture_browser_bound");
     assert!(f.execute("bind").is_err());
     let result = f.execute("browser").unwrap();
@@ -385,6 +390,7 @@ fn binding_rejects_unregistered_outputs_review_drift_and_occupied_frontend_port(
     assert!(f.execute("browser").is_err());
     assert!(!f.outputs()["intent"].exists());
     let mut f = Fixture::new("dev");
+    drop(f.frontend_reservation.take());
     let listener =
         std::net::TcpListener::bind(f.frontend_url.strip_prefix("http://").unwrap()).unwrap();
     assert!(f.execute("bind").is_err());

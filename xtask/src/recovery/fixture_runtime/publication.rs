@@ -65,7 +65,7 @@ fn terminal_with(
     before_link()?;
     check(!target.try_exists()?, "成功收据已存在，拒绝覆盖或重放")?;
     unchanged(&guard)?;
-    fs::hard_link(&staged, target)?;
+    publish_new(&staged, target)?;
     // 删除 pending 是最终提交点；此后不能再增加会失败的校验或写入。
     unlink(&staged)?;
     Ok(())
@@ -132,9 +132,9 @@ fn tool_publish_with(
         unchanged(&guard)?;
         attempted = true;
         if capture["guard"].is_null() {
-            fs::hard_link(&pending_path, &path)?;
+            publish_new(&pending_path, &path)?;
         } else {
-            fs::hard_link(&pending_path, &staging)?;
+            publish_new(&pending_path, &staging)?;
             tool_assert(capture)?;
             replace(&staging, &path)?;
         }
@@ -164,15 +164,37 @@ fn tool_publish_with(
     }
 }
 #[cfg(windows)]
+fn staged_copy(source: &Path, target: &Path) -> Result<tempfile::TempPath> {
+    let guard = snapshot(source, 16 * 1024 * 1024)?;
+    let temp = tempfile::NamedTempFile::new_in(target.parent().ok_or("替换缺少父目录")?)?;
+    fs::copy(source, temp.path())?;
+    temp.as_file().sync_all()?;
+    let copy = snapshot(temp.path(), 16 * 1024 * 1024)?;
+    check(
+        copy["descriptor"]["bytes"] == guard["descriptor"]["bytes"]
+            && copy["descriptor"]["sha256"] == guard["descriptor"]["sha256"],
+        "浏览器待发布副本内容漂移",
+    )?;
+    unchanged(&guard)?;
+    Ok(temp.into_temp_path())
+}
+#[cfg(windows)]
+fn publish_new(source: &Path, target: &Path) -> Result<()> {
+    // Windows 受限令牌可能禁止硬链接；同目录原子移动不覆盖并发目标，pending 独立保留。
+    staged_copy(source, target)?
+        .persist_noclobber(target)
+        .map_err(|error| error.error)?;
+    Ok(())
+}
+#[cfg(not(windows))]
+fn publish_new(source: &Path, target: &Path) -> Result<()> {
+    fs::hard_link(source, target)?;
+    Ok(())
+}
+#[cfg(windows)]
 fn replace(source: &Path, target: &Path) -> Result<()> {
     // tempfile 的安全 persist 使用平台原子替换，保留独立 pending 证据。
-    let temp = tempfile::NamedTempFile::new_in(target.parent().ok_or("替换缺少父目录")?)?;
-    let staged = temp.into_temp_path();
-    fs::copy(source, &staged)?;
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&staged)?
-        .sync_all()?;
+    let staged = staged_copy(source, target)?;
     staged
         .persist(target)
         .map_err(|_| "浏览器工具配置原子替换结果未知")?;
@@ -211,6 +233,11 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read(&target).unwrap(), b"racer");
+        let staged = root.join("atomic.pending");
+        let guard = pending(&staged, b"candidate").unwrap();
+        assert!(publish_new(&staged, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"racer");
+        unchanged(&guard).unwrap();
     }
     #[test]
     fn terminal_unlink_interruption_preserves_unknown_result() {
@@ -229,6 +256,12 @@ mod tests {
         );
         assert!(target.exists());
         assert_eq!(fs::read_dir(root).unwrap().count(), 2);
+        let staged = fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path != &target)
+            .unwrap();
+        assert_eq!(fs::read(&target).unwrap(), fs::read(staged).unwrap());
     }
     #[test]
     fn tool_merge_preserves_fields_and_rejects_drift_and_concurrent_creation() {
@@ -270,7 +303,19 @@ mod tests {
         );
         let parent = root.join(".local-tests");
         assert!(parent.join("frontend-tools.json.lock").exists());
-        assert_eq!(fs::read_dir(parent).unwrap().count(), 3);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 3);
+        let staged = fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "pending")
+            })
+            .unwrap();
+        assert_eq!(
+            fs::read(parent.join("frontend-tools.json")).unwrap(),
+            fs::read(staged).unwrap()
+        );
         assert!(tool_publish(&tool_capture(root).unwrap(), &json!({})).is_err());
     }
     #[test]
