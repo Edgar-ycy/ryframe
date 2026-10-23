@@ -280,3 +280,161 @@ fn describe_binds_real_executable_and_all_compiled_source_bytes() {
         );
     }
 }
+
+#[test]
+fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watches() {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read(package.join("build.rs")).unwrap();
+    let marker: Value = serde_json::from_slice(
+        &fs::read(Path::new(env!("OUT_DIR")).join("frontend-origin-build-program.json")).unwrap(),
+    )
+    .unwrap();
+    let program = Path::new(marker["path"].as_str().unwrap());
+    assert_eq!(
+        marker["sha256"],
+        hex::encode(Sha256::digest(fs::read(program).unwrap()))
+    );
+    assert_eq!(
+        marker["source_sha256"],
+        hex::encode(Sha256::digest(&source))
+    );
+    let helper = fs::read(package.join("src/frontend_origin/sources.rs")).unwrap();
+    assert_eq!(
+        marker["helper_sha256"],
+        hex::encode(Sha256::digest(&helper))
+    );
+    let mut observations = Vec::new();
+    for content in [b"same-content".as_slice(), b"same-content".as_slice()] {
+        let fixture = Fixture::new();
+        let root = fixture.0.path();
+        let manifest = root.join("xtask");
+        fs::create_dir_all(manifest.join("src/frontend_origin")).unwrap();
+        fs::write(manifest.join("src/frontend_origin/sources.rs"), &helper).unwrap();
+        fs::write(manifest.join("build.rs"), &source).unwrap();
+        fs::write(manifest.join("source-inventory.json"),
+            r#"{"format_version":1,"files":["xtask/build.rs","xtask/source-inventory.json"],"trees":["xtask/src"],"excluded_directories":[]}"#).unwrap();
+        fs::write(manifest.join("src/input.txt"), content).unwrap();
+        let output = root.join("out");
+        fs::create_dir(&output).unwrap();
+        let result = Command::new(program)
+            .current_dir(&manifest)
+            .env("CARGO_MANIFEST_DIR", &manifest)
+            .env("OUT_DIR", &output)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        let watches = stdout
+            .lines()
+            .map(|line| line.strip_prefix("cargo:rerun-if-changed=").unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            watches,
+            [
+                output
+                    .join("frontend-origin-always-check")
+                    .to_str()
+                    .unwrap(),
+                "../xtask/build.rs",
+                "../xtask/source-inventory.json",
+                "../xtask/src/frontend_origin/sources.rs",
+                "../xtask/src/input.txt",
+                "../xtask/src"
+            ]
+        );
+        let snapshot: Value =
+            serde_json::from_slice(&fs::read(output.join("frontend-origin-sources.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            snapshot["root"],
+            serde_json::to_value(root.canonicalize().unwrap()).unwrap()
+        );
+        let entries = snapshot["files"].as_array().unwrap();
+        assert_eq!(entries.len(), 4);
+        for entry in entries {
+            let bytes = fs::read(root.join(entry["path"].as_str().unwrap())).unwrap();
+            assert_eq!(entry["sha256"], hex::encode(Sha256::digest(bytes)));
+        }
+        let generated = output.join("frontend-origin-sources.json");
+        let before = fs::metadata(&generated).unwrap().modified().unwrap();
+        let repeated = Command::new(program)
+            .current_dir(&manifest)
+            .env("CARGO_MANIFEST_DIR", &manifest)
+            .env("OUT_DIR", &output)
+            .output()
+            .unwrap();
+        assert!(repeated.status.success());
+        assert_eq!(
+            fs::metadata(&generated).unwrap().modified().unwrap(),
+            before
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(generated).unwrap()).unwrap(),
+            snapshot
+        );
+        reject_existing_always_check(program, &manifest, &output);
+        reject_changed_build_inputs(program, &manifest, &output);
+        observations.push(snapshot);
+    }
+    assert_eq!(observations[0]["files"], observations[1]["files"]);
+    assert_ne!(observations[0]["root"], observations[1]["root"]);
+}
+
+fn reject_existing_always_check(program: &Path, manifest: &Path, output: &Path) {
+    let sentinel = output.join("frontend-origin-always-check");
+    let generated = output.join("frontend-origin-sources.json");
+    let before = fs::read(&generated).unwrap();
+    let check = || {
+        let rejected = Command::new(program)
+            .current_dir(manifest)
+            .env("CARGO_MANIFEST_DIR", manifest)
+            .env("OUT_DIR", output)
+            .output()
+            .unwrap();
+        assert!(!rejected.status.success());
+        let error = String::from_utf8(rejected.stderr).unwrap();
+        assert!(error.contains(sentinel.to_str().unwrap()));
+        assert!(error.contains("cargo clean -p xtask"));
+        assert!(fs::symlink_metadata(&sentinel).is_ok());
+        assert_eq!(fs::read(&generated).unwrap(), before);
+    };
+    fs::write(&sentinel, b"owned regression fixture").unwrap();
+    check();
+    assert_eq!(fs::read(&sentinel).unwrap(), b"owned regression fixture");
+    fs::remove_file(&sentinel).unwrap();
+    fs::create_dir(&sentinel).unwrap();
+    check();
+    fs::remove_dir(&sentinel).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(output.join("missing-target"), &sentinel).unwrap();
+        check();
+        fs::remove_file(&sentinel).unwrap();
+    }
+}
+
+fn reject_changed_build_inputs(program: &Path, manifest: &Path, output: &Path) {
+    let generated = output.join("frontend-origin-sources.json");
+    let before = fs::read(&generated).unwrap();
+    for relative in ["build.rs", "src/frontend_origin/sources.rs"] {
+        let path = manifest.join(relative);
+        let original = fs::read(&path).unwrap();
+        fs::write(&path, b"changed compilation input").unwrap();
+        let rejected = Command::new(program)
+            .current_dir(manifest)
+            .env("CARGO_MANIFEST_DIR", manifest)
+            .env("OUT_DIR", output)
+            .output()
+            .unwrap();
+        fs::write(&path, original).unwrap();
+        assert!(!rejected.status.success());
+        let error = String::from_utf8(rejected.stderr).unwrap();
+        assert!(error.contains(path.to_str().unwrap()), "{error}");
+        assert!(error.contains("cargo clean -p xtask"));
+        assert_eq!(fs::read(&generated).unwrap(), before);
+    }
+}

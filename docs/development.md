@@ -158,3 +158,11 @@ CI 计划和快速预检通过 `cargo xtask check ci <plan|preflight> --base-sha
 语言与文件构成使用 `cargo xtask check language`，默认只向终端报告完整后端非 ignored 文件的原始字节；已跟踪但符合 ignore 的文件也排除。自维护代码包含手写、测试、生成物及源代码模板，vendor 单列，文档、配置、资源与全量文件体积另列；固定分类以 [language-policy.toml](../architecture/language-policy.toml) 为准。显式 `--min-rust-percent 80` 用精确整数运算校验阈值，未达或分母为空时失败，不隐式加入日常门禁；百分比允许 0 到 100、最多六位小数。`--output .local-tests/language/current.json --write` 在已存在的忽略目录创建未跟踪的新 JSON 报告，不覆盖或创建父目录；报告含口径摘要、HEAD 和逐文件字节及摘要，同时请求阈值时先保存结论再返回失败。`--plan` 只输出同一任务图，不启动 Git、不落盘。54.4% 缺少原始复现证据，只保留为旧参考，不计算增减趋势。
 
 任务性能样本的 `.local-tests/devex/runtime.json` 中，`bindings.job_timings` 只包含 `control`、`server_uuid` 和 `mysql_client`，不再配置 Python 采集器。`control` 明确登记隔离回环控制库的 `host`、整数 `port`、`database`、`username`、明文 `password`、`tls_mode`；`mysql_client` 是客户端二进制的绝对路径。控制器自动向内部采集入口传递当前原生产物绑定，在样本目录保存 `native-tool-before.json` 与 `native-tool-after.json`；不要手动指定或临时编译另一个采集器。采集会同时核对服务器 UUID、scope 和 ownership，完成观察复用只读连接并为每轮建立新快照，最终耗时使用全部持久化尝试的排队和执行时间。警告输出不会使有效查询失败；退出、超时、响应不完整或归属变化都不能成为成功样本，诊断保留固定分类并隐藏凭据和原始 SQL 输出。 凭据仅经后端 `.local-tests` 下的会话独占 MySQL option file 传递，启动前核验私有权限，客户端完全退出后删除；首参数固定为 `--defaults-extra-file=<绝对路径>`。子进程清空项目与凭据环境，仅保留必要的操作系统环境；不读取 `MYSQL_PWD`、`password_env` 或 CI 容器环境协议，CI 同样连接显式主机端口。凭据包含 NUL、无法安全编码的字符，或文件权限、写入、清理失败时均拒绝成功。
+
+### Cargo 工具来源核验
+
+直接执行 Cargo build、check 或 test 时，xtask 构建脚本每次重新核对当前 Cargo 工作区根与完整来源文件集，包括新增和删除的文件。编译快照包含规范化的根路径及文件摘要；跨工作树即使内容相同，也属于不同的编译来源。工具的 describe 只读取编译时固化的来源，不在运行时重算。
+
+生成内容不变时保留生成文件的内容及修改时间；内容改变时完整写入临时文件并安全替换。构建脚本保留完整文件与目录监视集，并监视一个不生成的 OUT_DIR 路径，使 Cargo 每次执行核验。若该检查路径已存在（包括链接），构建会拒绝并提示核对后精确清理该缓存对象或仅清理 xtask，不自动删除未知对象。当前工具链实测同根同内容的 build、check、test 仍执行构建脚本并重新编译 xtask，即使生成快照的摘要与修改时间保持不变；不能据此保证增量构建不重编译。共享 target 的跨工作树切换会更新根身份并重新编译。并发回归环境中的耗时仅供参考，独占性能需另行测量。
+
+构建脚本还固化并核对自身与来源遍历 helper 的编译输入字节。共享缓存中的脚本若与当前根这两个文件不符，将拒绝构建并要求仅清理 xtask 后重建；不会读取当前文件后将其摘要伪装成脚本编译来源。

@@ -128,6 +128,15 @@ fn normalize_origin(value: &str, allow_empty: bool) -> Result<String, &'static s
     Ok(origin)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompiledSources {
+    // 根身份必须参与编译输入，即使两棵树的文件字节完全相同。
+    #[serde(rename = "root")]
+    _root: std::path::PathBuf,
+    files: Vec<Value>,
+}
+
 fn describe() -> Result<Value, &'static str> {
     let path = env::current_exe()
         .and_then(std::fs::canonicalize)
@@ -149,7 +158,7 @@ fn describe() -> Result<Value, &'static str> {
     let description_path = &path;
     let executable_hash = hash_executable(&mut executable)?;
     let path = description_path.to_str().ok_or(EXECUTABLE_PATH)?;
-    let sources: Value = serde_json::from_str(include_str!(concat!(
+    let snapshot: CompiledSources = serde_json::from_str(include_str!(concat!(
         env!("OUT_DIR"),
         "/frontend-origin-sources.json"
     )))
@@ -158,7 +167,7 @@ fn describe() -> Result<Value, &'static str> {
         "format_version": 1,
         "kind": "frontend-origin-tool",
         "executable": {"path": path, "sha256": executable_hash},
-        "sources": sources,
+        "sources": snapshot.files,
     }))
 }
 
