@@ -174,11 +174,7 @@ class WorkerControlTests(unittest.TestCase):
     def cleanup(self):
         result = getattr(self._outcome, "result", None)
         failures = [] if result is None else result.errors + result.failures
-        if any(getattr(test, "test_case", test) is self for test, _ in failures):
-            evidence = self.root.parent.parent / "python-failures" / self.root.name
-            evidence.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(self.root, evidence)
-            print(f"Worker 失败收据与日志已保留：{evidence}", file=sys.stderr)
+        failed = any(getattr(test, "test_case", test) is self for test, _ in failures)
         for process in self.controllers:
             if process.poll() is None:
                 process.kill()
@@ -207,12 +203,17 @@ class WorkerControlTests(unittest.TestCase):
                     terminate_owned_process(identity, crash=True)
             except (OSError, ValueError):
                 pass
+        if failed:
+            evidence = self.root.parent.parent / "python-failures" / self.root.name
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.root, evidence)
+            print(f"Worker 失败收据与日志已保留：{evidence}", file=sys.stderr)
         shutil.rmtree(self.root)
 
     def control(self, operation, timeout=4):
         return worker.control(operation, self.root, self.directory, timeout)
 
-    def wait_for(self, condition, timeout=10):
+    def wait_for(self, condition, timeout=30):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if condition():

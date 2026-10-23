@@ -13,6 +13,7 @@ import devex_clone_seed_close as close
 import devex_clone_seed_runtime as runtime
 from devex_clone_capture import write_json
 from devex_clone_run_state import begin, binding, finish, initialize_state, load_state
+from rate_limit_client import ROOT
 from restore_reference_plan import plan_hash
 
 
@@ -26,7 +27,7 @@ def snapshot(*, active=None, terminal=None, moment="2026-09-05T00:00:00.000000Z"
 
 
 def local_test_directory(label):
-    root = Path.cwd().resolve() / ".local-tests/test-python"
+    root = ROOT / ".local-tests/test-python"
     root.mkdir(parents=True, exist_ok=True)
     directory = root / f"{label}-{uuid.uuid4().hex}"
     directory.mkdir()
@@ -34,7 +35,7 @@ def local_test_directory(label):
 
 
 def remove_local_test_directory(directory):
-    root = Path.cwd().resolve() / ".local-tests/test-python"
+    root = ROOT / ".local-tests/test-python"
     if directory.resolve().parent != root.resolve():
         raise AssertionError("测试清理目录越界")
     shutil.rmtree(directory)
@@ -96,7 +97,7 @@ class SnapshotTests(unittest.TestCase):
 
 class CloseTests(unittest.TestCase):
     def setUp(self):
-        self.backend = Path.cwd().resolve()
+        self.backend = ROOT
         self.test_root = local_test_directory("seed-close")
         self.addCleanup(remove_local_test_directory, self.test_root)
         self.directory = self.test_root / "run"
