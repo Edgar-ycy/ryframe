@@ -6,6 +6,9 @@ use crate::{Result, cli::FixtureServicesCommand, local_test_path::LocalTestPathK
 
 use super::{insert_optional_path, insert_path};
 
+#[path = "services/history.rs"]
+pub(crate) mod history;
+
 pub(super) fn fields(command: &FixtureServicesCommand, root: &Path) -> Result<Map<String, Value>> {
     let FixtureServicesCommand::Run(options) = command else {
         return Err("services 帮助没有私有请求".into());

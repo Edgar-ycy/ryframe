@@ -790,6 +790,10 @@ fn private_protocol_selects_fixed_script_and_never_contains_argv_fields() {
     assert_eq!(protocol["review"], text(&fixture.input));
     assert_eq!(protocol["environment"], text(&fixture.input_two));
     assert!(protocol.get("arguments").is_none());
+    let native_tool: Value =
+        serde_json::from_str(protocol["native_tool"].as_str().unwrap()).unwrap();
+    assert_eq!(native_tool["kind"], "ryframe-native-rate-limit-tool");
+    assert!(native_tool["bytes"].as_u64().unwrap() > 0);
 }
 
 #[test]

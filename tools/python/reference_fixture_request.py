@@ -15,7 +15,7 @@ from reference_fixture_service_context import application_settings
 from restore_reference_plan import plan_hash
 from reference_fixture_service_context import service_run as expected_service_run
 from reference_fixture_control_protocol import run_private
-from reference_fixture_service_history import validate_history
+from fixture_service_client import validate_history
 from devex_clone_run_state import load_state
 
 
@@ -310,7 +310,7 @@ def publish(
 
 
 PROTOCOL_SCHEMAS = {
-    "publish": (("environment", "service_run", "id", "side", "output"), (), True),
+    "publish": (("environment", "service_run", "id", "side", "output"), ("native_tool",), True),
 }
 
 
@@ -323,9 +323,13 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--side", choices=SIDES, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--native-tool")
     args = parser.parse_args(argv)
     if not args.write:
         parser.error("签发 fresh-target 请求需要显式 --write")
+    if args.native_tool is not None:
+        from rate_limit_tool import install_binding
+        install_binding(args.native_tool)
     backend = args.backend_dir.resolve()
     request = publish(
         backend, args.environment, args.service_run, args.id, args.side, args.output

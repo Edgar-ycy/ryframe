@@ -32,7 +32,7 @@ mod retention;
 #[path = "fixture_control/review.rs"]
 pub(crate) mod review;
 #[path = "fixture_control/services.rs"]
-mod services;
+pub(crate) mod services;
 #[path = "fixture_control/source_pair.rs"]
 pub(crate) mod source_pair;
 #[path = "fixture_control/successor.rs"]
@@ -134,6 +134,13 @@ pub(crate) fn private_invocation_at(
         if protocol.insert(name.clone(), value).is_some() {
             return Err(format!("fixture 控制私有协议字段重复：{name}").into());
         }
+    }
+    if matches!(
+        command,
+        FixtureControlCommand::Services(_) | FixtureControlCommand::Request(_)
+    ) && let Some(binding) = crate::check::python_suite::binding(&std::env::current_exe()?)?
+    {
+        protocol.insert("native_tool".to_owned(), Value::String(binding));
     }
     Ok(PrivateFixtureControlInvocation {
         script,

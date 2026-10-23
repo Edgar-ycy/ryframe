@@ -320,14 +320,14 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
 
 
 PROTOCOL_SCHEMAS = {
-    "rustfs": (("review", "environment"), (), True),
-    "redis": (("review", "environment"), (), True),
-    "buckets": (("review", "environment"), (), True),
-    "status": (("review", "environment"), (), False),
-    "close": (("review", "environment"), (), True),
-    "reconcile": (("review", "environment", "owner_binding"), (), True),
-    "recover": (("review", "environment", "owner_binding"), (), True),
-    "restart": (("review", "environment", "owner_binding"), (), True),
+    "rustfs": (("review", "environment"), ("native_tool",), True),
+    "redis": (("review", "environment"), ("native_tool",), True),
+    "buckets": (("review", "environment"), ("native_tool",), True),
+    "status": (("review", "environment"), ("native_tool",), False),
+    "close": (("review", "environment"), ("native_tool",), True),
+    "reconcile": (("review", "environment", "owner_binding"), ("native_tool",), True),
+    "recover": (("review", "environment", "owner_binding"), ("native_tool",), True),
+    "restart": (("review", "environment", "owner_binding"), ("native_tool",), True),
 }
 
 
@@ -338,6 +338,7 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--native-tool")
     parser.add_argument("--owner-binding", type=Path,
                         help="reconcile/recover/restart 时传 status 返回的当前 state 文件")
     options = [value.partition("=")[0] for value in argv if value.startswith("--")]
@@ -350,6 +351,9 @@ def main(argv: list[str]) -> None:
         parser.error("服务操作必须显式指定 --write")
     if (args.operation in {"reconcile", "recover", "restart"}) != (args.owner_binding is not None):
         parser.error("reconcile、recover 和 restart 必须指定 --owner-binding，其他操作不接受")
+    if args.native_tool is not None:
+        from rate_limit_tool import install_binding
+        install_binding(args.native_tool)
     backend = args.backend_dir.resolve(strict=True)
     if args.operation in {"status", "close", "reconcile", "recover", "restart"}:
         from reference_fixture_service_context import status

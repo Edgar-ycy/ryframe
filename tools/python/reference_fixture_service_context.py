@@ -15,7 +15,7 @@ from full_stack_process import process_identity
 from full_stack_process_tree import read_process_tree
 from rate_limit_client import load_app_table
 from restore_reference_plan import plan_hash
-from reference_fixture_service_history import (close_reconciliation_evidence,
+from fixture_service_client import (close_reconciliation_evidence,
                                                reconcilable_failed_close, validate_history,
                                                validate_manifest)
 

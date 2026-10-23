@@ -31,7 +31,7 @@ def _fixture_runtime_evidence(backend: Path, expected: dict,
     """从夹具追加账本重新派生指定历史重启代次，不信任 started 的内嵌值。"""
     from devex_clone_run_state import load_state
     from reference_fixture_service_context import runtime_transition
-    from reference_fixture_service_history import validate_history
+    from fixture_service_client import validate_history
 
     result_path = bound_file(backend, generation)
     if result_path.parent.name != "results":

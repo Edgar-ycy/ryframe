@@ -186,7 +186,7 @@ class TargetCliTests(unittest.TestCase):
             return {"closed": True, "external_recovery": None,
                     "active_generation": {"kind": "initial"}}
 
-        with patch("reference_fixture_service_history.validate_history", side_effect=closed):
+        with patch("fixture_service_client.validate_history", side_effect=closed):
             result = target_cli._fixture_service_generation(fixture, descriptor)
         self.assertFalse(result["available"])
         self.assertIn("fixture services restart", result["reason"])
@@ -220,7 +220,7 @@ class TargetCliTests(unittest.TestCase):
             return {"closed": True, "external_recovery": None,
                     "active_generation": {"kind": "initial"}}
 
-        with patch("reference_fixture_service_history.validate_history", side_effect=reconciled):
+        with patch("fixture_service_client.validate_history", side_effect=reconciled):
             result = target_cli._fixture_service_generation(fixture, descriptor)
         self.assertFalse(result["available"])
         self.assertIn("fixture services restart", result["reason"])

@@ -18,7 +18,7 @@ from full_stack_process import process_identity
 from process_guard import process_guard
 from reference_fixture_service_context import (context, guard, observe_services, registered_services,
                                                unknown_recoveries)
-from reference_fixture_service_history import (LIFECYCLE_STAGE, close_reconciliation_evidence,
+from fixture_service_client import (LIFECYCLE_STAGE, close_reconciliation_evidence,
                                                failed_restart_reconciliation_evidence,
                                                reconcilable_failed_close, reconcilable_failed_restart,
                                                validate_history)

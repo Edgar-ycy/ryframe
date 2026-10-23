@@ -17,7 +17,7 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding, begin, finish, load_state
 import reference_fixture_service_context as context
 import reference_fixture_service_lifecycle as lifecycle
-from reference_fixture_service_history import validate_history
+from fixture_service_client import validate_history
 import reference_fixture_services as cli
 import devex_clone_target_cli as target
 

@@ -40,6 +40,11 @@ fn main() {
     if let Some(code) = recovery::source::evidence::run_hidden_if_requested() {
         std::process::exit(code);
     }
+    if let Some(code) =
+        recovery::fixture_control::services::history::protocol::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::dataset_prepare::run_hidden_if_requested() {
         std::process::exit(code);
     }

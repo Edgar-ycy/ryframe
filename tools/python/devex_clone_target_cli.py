@@ -76,13 +76,10 @@ def _fixture_service_run(manifest: dict, state: dict) -> bool:
     """识别只提供首代服务的参考夹具，不能把它伪装成复制重启。"""
     if manifest.get("kind") != "reference-fixture-service-run":
         return False
-    from reference_fixture_service_history import INITIAL, validate_manifest
+    from fixture_service_client import validate_initial, validate_manifest
 
     validate_manifest(manifest)
-    initial = state["attempts"][:len(INITIAL)]
-    actual = tuple((item["stage"], item["mode"]) for item in initial)
-    if actual != INITIAL or any(item["status"] != "passed" for item in initial):
-        raise ValueError("夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化")
+    validate_initial(state)
     return True
 
 
@@ -93,7 +90,7 @@ def _fixture_service_generation(directory: Path, descriptor: dict) -> dict | Non
     state = load_state(directory)
     if not _fixture_service_run(manifest, state):
         return None
-    from reference_fixture_service_history import validate_history
+    from fixture_service_client import validate_history
 
     history = validate_history(directory, state)
     if history["closed"]:
@@ -115,7 +112,7 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
         raise ValueError("fresh 目标 storage manifest 不属于固定统一目录")
     historical = historical_state(directory, descriptor["state"])
     if _fixture_service_run(manifest, historical["state"]):
-        from reference_fixture_service_history import validate_history
+        from fixture_service_client import validate_history
 
         validate_history(directory, historical["state"])
         if historical["historical_attempts"] < 3 or binding(directory / "state.json") != historical["current"]:
