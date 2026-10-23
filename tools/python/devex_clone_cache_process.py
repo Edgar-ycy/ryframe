@@ -12,6 +12,7 @@ import shlex
 import signal
 import socket
 import subprocess
+from subprocess import Popen as launch_process
 import sys
 import time
 from types import SimpleNamespace
@@ -23,12 +24,8 @@ FIELDS = {"scope_id", "wsl", "distribution", "launcher", "executable", "sha256",
 
 
 def validate_password(value):
-    if not isinstance(value, str) or not value.strip() or "\0" in value:
-        raise ValueError("Redis password 必须是配置文件中明确的非空文本，不含 NUL")
-    try:
-        value.encode("utf-8")
-    except UnicodeError:
-        raise ValueError("Redis password 必须是有效 UTF-8 文本") from None
+    from devex_clone_cache_native import invoke
+    invoke("password", value=value)
 
 
 def canonical(value):
@@ -87,41 +84,15 @@ def linux_path(value):
 
 
 def validate(request, *, files=True):
-    if not isinstance(request, dict) or set(request) != FIELDS:
-        raise ValueError("Redis 进程请求字段不同")
-    validate_password(request["password"])
-    if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{2,47}", request["scope_id"])
-            or not re.fullmatch(r"[A-Za-z0-9._-]+", request["distribution"])
-            or request["launcher"] != "/usr/bin/redis-server" or not re.fullmatch(r"/usr/(?:local/)?bin/[a-z0-9-]+", request["executable"])
-            or type(request["port"]) is not int or not 1024 <= request["port"] <= 65535
-            or type(request["timeout_seconds"]) is not int or not 1 <= request["timeout_seconds"] <= 180
-            or not re.fullmatch(r"[a-f0-9]{64}", request["sha256"])
-            or request["previous_identity"] is None and (request["previous_boot_id"] is not None or request["previous_run_id"] is not None)
-            or request["previous_identity"] is not None and (not re.fullmatch(r"[a-f0-9]{40}", request["previous_run_id"])
-                                                       or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", request["previous_boot_id"]))):
-        raise ValueError("Redis 原进程、端点或工具声明无效")
-    previous = request["previous_identity"]
-    if previous is not None and (set(previous) != {"pid", "started", "executable"} or type(previous["pid"]) is not int or previous["pid"] <= 1
-            or not isinstance(previous["started"], str) or not previous["started"].isdigit() or previous["executable"] != request["executable"]):
-        raise ValueError("Redis 原始 Linux 创建身份不完整")
-    if set(request["directory"]) != {"path", "device", "inode"} or set(request["wsl"]) != {"path", "sha256"}:
-        raise ValueError("Redis 目录或 WSL 绑定字段无效")
-    python = request["python"]
-    if (set(python) != {"path", "executable", "sha256"} or python["path"] != "/usr/bin/python3"
-            or not re.fullmatch(r"/usr/bin/python3\.[0-9]+", python["executable"])
-            or not re.fullmatch(r"[a-f0-9]{64}", python["sha256"])):
-        raise ValueError("WSL Python 必须绑定明确入口、实际文件与摘要")
-    directory = Path(request["directory"]["path"])
-    if Path(request["configuration"]["path"]) != directory / "redis.conf":
-        raise ValueError("Redis 仅使用原服务目录中的配置文件")
+    from devex_clone_cache_native import invoke
+    invoke("validate", request=request, files=files)
     if files:
-        plain(directory)
-        if (not directory.is_dir() or type(request["directory"]["device"]) is not int or type(request["directory"]["inode"]) is not int
-                or (directory.stat().st_dev, directory.stat().st_ino) != (request["directory"]["device"], request["directory"]["inode"])):
+        directory = plain(request["directory"]["path"])
+        identity = request["directory"]
+        if (not directory.is_dir() or type(identity["device"]) is not int
+                or type(identity["inode"]) is not int
+                or (directory.stat().st_dev, directory.stat().st_ino) != (identity["device"], identity["inode"])):
             raise ValueError("Redis 原 Windows 数据目录身份变化")
-        file_bound(request["configuration"])
-        if bound(plain(request["wsl"]["path"]))["sha256"] != request["wsl"]["sha256"]:
-            raise ValueError("WSL 实际工具变化")
 
 
 def configuration(request):
@@ -129,66 +100,14 @@ def configuration(request):
             "databases": "1", "protected-mode": "yes", "save": "", "appendonly": "no", "daemonize": "no"}
 
 
-def response(stream, depth=0):
-    if depth > 2:
-        raise ValueError("Redis 响应嵌套过深")
-    line = stream.readline(1048577)
-    if len(line) > 1048576 or not line.endswith(b"\r\n"):
-        raise ValueError("Redis 响应截断或超界")
-    kind, value = line[:1], line[1:-2]
-    if kind == b"+":
-        return value.decode("utf-8")
-    if kind == b"$":
-        count = int(value)
-        if not 0 <= count <= 1048576:
-            raise ValueError("Redis 字符串响应长度无效")
-        body = stream.read(count + 2)
-        if len(body) != count + 2 or not body.endswith(b"\r\n"):
-            raise ValueError("Redis 字符串响应不完整")
-        return body[:-2].decode("utf-8")
-    if kind == b"*":
-        count = int(value)
-        if not 0 <= count <= 32:
-            raise ValueError("Redis 配置响应条目过多")
-        return [response(stream, depth + 1) for _ in range(count)]
-    # 不传播可能含密码/命令正文的服务错误。
-    raise ValueError("Redis 认证或固定核验命令失败")
-
-
 def redis_facts(request, environment):
-    password = request["password"]
-    validate_password(password)
-    with socket.create_connection(("127.0.0.1", request["port"]), timeout=3) as connection, connection.makefile("rb") as stream:
-        def send(parts):
-            values = [item.encode() for item in parts]
-            connection.sendall(f"*{len(values)}\r\n".encode() + b"".join(f"${len(item)}\r\n".encode() + item + b"\r\n" for item in values))
-            return response(stream)
-        if send(["AUTH", password]) != "OK":
-            raise ValueError("Redis 原凭据认证未通过")
-        raw = send(["INFO", "server"])
-        facts = {}
-        for line in raw.splitlines():
-            if ":" in line and not line.startswith("#"):
-                key, value = line.split(":", 1)
-                if key in facts:
-                    raise ValueError("Redis INFO 重复字段")
-                facts[key] = value
-        actual = {}
-        for key, value in configuration(request).items():
-            result = send(["CONFIG", "GET", key])
-            if result != [key, value]:
-                raise ValueError("Redis 实际目录、持久化或监听配置变化")
-            actual[key] = value
-    return {key: facts.get(key) for key in ("process_id", "run_id", "config_file")} | {"configuration_sha256": canonical(actual)}
+    from devex_clone_cache_native import invoke
+    return invoke("facts", request=request)
 
 
 def check_facts(request, linux_identity, facts, *, run_id=None):
-    if (facts.get("process_id") != str(linux_identity["pid"])
-            or facts.get("config_file") != linux_path(request["configuration"]["path"])
-            or not isinstance(facts.get("run_id"), str) or not re.fullmatch(r"[a-f0-9]{40}", facts["run_id"])
-            or facts["run_id"] == request["previous_run_id"] or run_id is not None and facts["run_id"] != run_id
-            or facts.get("configuration_sha256") != canonical(configuration(request))):
-        raise ValueError("Redis INFO、运行代次和实际配置不属于本次进程")
+    from devex_clone_cache_native import invoke
+    invoke("check-facts", request=request, identity=linux_identity, facts=facts, run_id=run_id)
 
 
 def boot_id():
@@ -302,7 +221,7 @@ def linux_serve(payload):
     try:
         with (output / "redis.stdout.log").open("xb") as stdout, (output / "redis.stderr.log").open("xb") as stderr:
             popen_called = True
-            child = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+            child = launch_process(args, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                                      cwd=linux_path(request["directory"]["path"]), start_new_session=True)
         actual = linux_identity(kernel, child.pid)
         if actual is None or actual["executable"] != request["executable"]:
@@ -373,108 +292,15 @@ def command(request, output, action):
             "--sha256", bound(output / "launch-request.json")["sha256"]]
 
 
-def frozen_payload(request, output):
-    plain(output)
-    payload = read(output / "launch-request.json")
-    if payload["request"] != request or payload["request_sha256"] != canonical(request) or payload["windows_output"] != str(output):
-        raise ValueError("Redis 冻结运行不属于明确请求及输出目录")
-    for item in payload["helpers"].values():
-        local = output / "helpers" / Path(item["path"]).name
-        if linux_path(str(local)) != item["path"] or bound(plain(local)) != {**item, "path": str(local)}:
-            raise ValueError("Redis 冻结辅助代码变化")
-    return payload
-
-
 def inspect_start(request, output):
-    output = Path(output)
-    if not (output / "intent.json").exists():
-        if any((output / name).exists() for name in ("launcher.json", "linux-intent.json", "linux-process.json", "runtime.json")):
-            raise ValueError("Redis 进程证据缺少先行意图")
-        return None
-    try:
-        if (output / "partial.json").exists():
-            return partial_start(request, output)
-        return recorded_start(request, output)
-    except FileNotFoundError as error:
-        raise ValueError("Redis 启动意图缺少完整创建身份，必须保留现场核实") from error
-
-
-def partial_start(request, output):
-    frozen_payload(request, output)
-    proof = read(output / "partial.json")
-    if read(output / "intent.json") != {"request_sha256": canonical(request), "arguments": command(request, output, "serve"),
-                                       "launch": bound(output / "launch-request.json")}:
-        raise ValueError("Redis 部分启动意图不属于原冻结请求")
-    if (set(proof) != {"state", "request_sha256", "intent", "launcher_pid", "launcher_returncode", "authorization_sent", "linux_cleanup"}
-            or proof["state"] not in {"not_started", "stopped"} or proof["request_sha256"] != canonical(request)
-            or proof["intent"] != bound(output / "intent.json") or type(proof["launcher_pid"]) is not int
-            or type(proof["launcher_returncode"]) is not int):
-        raise ValueError("Redis 部分启动退出证据不完整")
-    if proof["state"] == "not_started":
-        if proof["authorization_sent"] is not False or proof["linux_cleanup"] is not None or (output / "linux-intent.json").exists():
-            raise ValueError("Redis 已授权或已有 Linux 启动意图，不能宣称未启动")
-    else:
-        failure_path = file_bound(proof["linux_cleanup"])
-        failure = read(failure_path)
-        expected_intent = {**bound(output / "linux-intent.json"), "path": linux_path(str(output / "linux-intent.json"))}
-        if (failure_path != output / "linux-failure.json" or failure.get("request_sha256") != canonical(request)
-                or failure.get("cleanup_completed") is not True or failure.get("cleanup_error_type") is not None
-                or failure.get("intent") != expected_intent):
-            raise ValueError("Redis Linux 监督器未证明完整回收")
-    return {"state": proof["state"], "request_sha256": canonical(request), "output": str(output),
-            "launch": bound(output / "launch-request.json"), "intent": bound(output / "intent.json"),
-            "partial_receipt": bound(output / "partial.json")}
-
-
-def recorded_start(request, output):
-    payload = frozen_payload(request, output)
-    intent = read(output / "intent.json")
-    if intent != {"request_sha256": canonical(request), "arguments": command(request, output, "serve"), "launch": bound(output / "launch-request.json")}:
-        raise ValueError("WSL 启动意图与冻结请求不同")
-    launcher = read(output / "launcher.json")
-    identity = launcher.get("identity", {})
-    if (set(launcher) != {"identity", "intent"} or set(identity) != {"pid", "started", "executable"}
-            or type(identity["pid"]) is not int or identity["pid"] <= 1
-            or not isinstance(identity["started"], str) or not identity["started"].isdigit()
-            or launcher["intent"] != bound(output / "intent.json") or identity["executable"].lower() != request["wsl"]["path"].lower()):
-        raise ValueError("WSL 启动进程缺少明确创建身份")
-    linux = read(output / "linux-process.json")
-    linux_intent = read(output / "linux-intent.json")
-    expected_intent = {**bound(output / "linux-intent.json"), "path": linux_path(str(output / "linux-intent.json"))}
-    if (linux.get("request_sha256") != canonical(request) or linux.get("intent") != expected_intent
-            or linux_intent.get("request_sha256") != canonical(request)
-            or linux_intent.get("arguments") != [request["launcher"], linux_path(request["configuration"]["path"])]) :
-        raise ValueError("Redis Linux 身份不是同一启动意图")
-    identity = linux["identity"]
-    if (set(identity) != {"pid", "started", "executable", "boot_id"} or type(identity["pid"]) is not int or identity["pid"] <= 1
-            or not isinstance(identity["started"], str) or not identity["started"].isdigit() or identity["executable"] != request["executable"]
-            or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", identity["boot_id"])):
-        raise ValueError("Redis Linux 内核身份字段不完整")
-    return {"format_version": 1, "request_sha256": canonical(request), "output": str(output), "launch": bound(output / "launch-request.json"),
-            "launcher": launcher["identity"], "linux_identity": identity, "boot_id": identity["boot_id"],
-            "launcher_receipt": bound(output / "launcher.json"), "process_receipt": bound(output / "linux-process.json"),
-            "helpers_sha256": canonical(payload["helpers"])}
+    from devex_clone_cache_native import invoke
+    return invoke("inspect", request=request, output=str(output))
 
 
 def linux_call(request, runtime, action):
+    from devex_clone_cache_native import invoke
     validate(request)
-    output = Path(runtime["output"])
-    observed = inspect_start(request, output)
-    if observed is None or observed != {key: runtime[key] for key in observed}:
-        raise ValueError("Redis 运行收据与实际创建身份不同")
-    args = command(request, output, action)
-    result = subprocess.run(args, input=(json.dumps(runtime["linux_identity"]) + "\n").encode(),
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
-                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-    if result.returncode != 0:
-        raise RuntimeError("WSL Redis 精确身份操作失败")
-    value = json.loads(result.stdout.decode("utf-8"))
-    if (set(value) != {"identity", "alive", "boot_id", "terminated"} or value["identity"] != runtime["linux_identity"]
-            or type(value["alive"]) is not bool or type(value["terminated"]) is not bool
-            or not isinstance(value["boot_id"], str)
-            or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value["boot_id"])):
-        raise ValueError("WSL 返回其他 Redis 进程身份")
-    return value
+    return invoke("call", request=request, runtime=runtime, action=action)
 
 
 def windows_identity(request, runtime, *, required):
@@ -683,7 +509,7 @@ def start(request, environment, output, guard):
     child, trusted, runtime, authorization_sent = None, None, None, False
     try:
         with (output / "wsl.stdout.log").open("xb") as stdout, (output / "wsl.stderr.log").open("xb") as stderr:
-            child = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, cwd=output,
+            child = launch_process(args, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, cwd=output,
                                      env=child_environment,
                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         actual = process_identity(child.pid)
@@ -739,7 +565,7 @@ def start(request, environment, output, guard):
                     write(output / "partial.json", {"state": state, "request_sha256": canonical(request),
                           "intent": bound(output / "intent.json"), "launcher_pid": child.pid, "launcher_returncode": child.returncode,
                           "authorization_sent": authorization_sent, "linux_cleanup": None if state == "not_started" else bound(failure)})
-                    partial_start(request, output)
+                    inspect_start(request, output)
         except BaseException as error:
             original.add_note("Redis 精确回收未完成：" + type(error).__name__)
         try:
@@ -752,7 +578,7 @@ def start(request, environment, output, guard):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("serve", "observe", "stop", "partial", "predecessor"))
+    parser.add_argument("action", choices=("serve", "observe", "check", "stop", "partial", "predecessor"))
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
     args = parser.parse_args()

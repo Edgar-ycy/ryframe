@@ -13,9 +13,62 @@ from workspace_directory import WorkspaceDirectory
 from unittest.mock import Mock, patch
 
 import devex_clone_cache_process as process
+import devex_clone_cache_native as native
 
 
 BOOT = "5a81dc04-9e9a-416b-8eab-1b059bddf489"
+
+
+class CacheNativeTransportTests(unittest.TestCase):
+    def binding(self):
+        from contextlib import nullcontext
+        return patch.object(native, "verified_tool", return_value=nullcontext("bound-tool.exe"))
+
+    def test_credentials_only_travel_in_stdin_and_ambient_secrets_are_removed(self):
+        response = subprocess.CompletedProcess([], 0, b'{"ok":true,"result":null}', b'')
+        with (self.binding(), patch.object(native, "run_native", return_value=response) as run,
+              patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-secret", "AWS_SECRET_ACCESS_KEY": "ambient-aws",
+                                      "RYFRAME_SECRET": "ambient-private"})):
+            self.assertIsNone(native.invoke("password", value="bound-private-value"))
+        args, options = run.call_args
+        self.assertNotIn("bound-private-value", repr(args))
+        self.assertIn(b"bound-private-value", options["input"])
+        self.assertFalse(any(name.upper().startswith(("APP_", "AWS_", "RYFRAME_")) for name in options["env"]))
+        run.assert_called_once()
+
+    def test_failure_retains_exit_code_and_never_retries(self):
+        response = subprocess.CompletedProcess([], 1, json.dumps({"ok": False, "error": "CacheControlFailed",
+            "message": "核对原始代次；禁止重放", "exit_code": 17}).encode(), b'private-secret')
+        with self.binding(), patch.object(native, "run_native", return_value=response) as run:
+            with self.assertRaisesRegex(RuntimeError, "17") as failure:
+                native.invoke("call", request={})
+        self.assertNotIn("private-secret", str(failure.exception))
+        run.assert_called_once()
+
+    def test_connection_refusal_stays_distinct_from_unknown_results(self):
+        for category, expected in (("CacheConnectionRefused", ConnectionRefusedError),
+                                   ("CacheObservationTimeout", TimeoutError), ("CacheProcessRejected", ValueError)):
+            response = subprocess.CompletedProcess([], 1, json.dumps({"ok": False, "error": category,
+                "message": "仅观察失败", "exit_code": None}).encode(), b'')
+            with self.subTest(category=category), self.binding(), patch.object(native, "run_native", return_value=response):
+                with self.assertRaises(expected):
+                    native.invoke("facts", request={})
+
+    def test_missing_binding_bad_response_and_invalid_utf8_never_fall_back(self):
+        from contextlib import nullcontext
+        with patch.object(native, "verified_tool", return_value=nullcontext(None)), patch.object(native, "run_native") as run:
+            with self.assertRaises(ValueError):
+                native.invoke("password", value="secret")
+            run.assert_not_called()
+        for raw in (b'{}', b'{"ok":true,"ok":false,"result":null}', b'\xff'):
+            response = subprocess.CompletedProcess([], 0, raw, b'')
+            with self.subTest(raw=raw[:1]), self.binding(), patch.object(native, "run_native", return_value=response) as run:
+                with self.assertRaises((ValueError, RuntimeError)):
+                    native.invoke("password", value="secret")
+                run.assert_called_once()
+        with patch.object(native, "run_native") as run, self.assertRaises(ValueError):
+            native.invoke("password", value="\ud800")
+        run.assert_not_called()
 
 
 class FrozenHelperSetTests(unittest.TestCase):
@@ -132,7 +185,7 @@ class CacheProcessTests(unittest.TestCase):
     def test_invalid_password_fails_before_network_or_process_creation(self):
         invalid = {**self.request, "password": None}
         with patch.object(process.socket, "create_connection") as connect, \
-                patch.object(process.subprocess, "Popen") as popen:
+                patch.object(process, "launch_process") as popen:
             with self.assertRaises(ValueError):
                 process.redis_facts(invalid, {"APP_REDIS_PASSWORD": "ambient-secret"})
             with self.assertRaises(ValueError):
@@ -153,7 +206,7 @@ class CacheProcessTests(unittest.TestCase):
                 )[1]) as identity, \
                 patch.object(process.socket, "socket"), \
                 patch.object(process, "write", side_effect=RuntimeError("已越过前代检查")), \
-                patch.object(process.subprocess, "Popen") as popen, self.assertRaisesRegex(RuntimeError, "已越过前代检查"):
+                patch.object(process, "launch_process") as popen, self.assertRaisesRegex(RuntimeError, "已越过前代检查"):
             process.linux_serve(payload)
         self.assertEqual([call.args[1] for call in identity.call_args_list], [os.getpid()])
         popen.assert_not_called()
@@ -355,34 +408,6 @@ class CacheProcessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             process.check_facts(self.request, self.identity, self.facts(), run_id="c" * 40)
 
-    def test_resp_truncation_error_invalid_utf8_and_excess_are_rejected(self):
-        for raw in (b"-ERR secret password\r\n", b"$2\r\na\r\n", b"$1\r\n\xff\r\n", b"*33\r\n", b"+OK\n"):
-            with self.subTest(raw=raw[:1]), self.assertRaises((ValueError, UnicodeError)) as result:
-                process.response(io.BytesIO(raw))
-            self.assertNotIn("secret password", str(result.exception))
-
-    def test_protocol_uses_only_auth_info_and_fixed_configuration(self):
-        def bulk(value):
-            raw = value.encode()
-            return f"${len(raw)}\r\n".encode() + raw + b"\r\n"
-        raw = b"+OK\r\n" + bulk("process_id:300\r\nrun_id:" + "b" * 40 + "\r\nconfig_file:" + self.facts()["config_file"])
-        for key, value in process.configuration(self.request).items():
-            raw += b"*2\r\n" + bulk(key) + bulk(value)
-        connection = Mock()
-        connection.__enter__ = Mock(return_value=connection)
-        connection.__exit__ = Mock(return_value=False)
-        connection.makefile.return_value = io.BytesIO(raw)
-        with patch.object(process.socket, "create_connection", return_value=connection):
-            with patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-value"}):
-                self.assertEqual(process.redis_facts(self.request, {"APP_ENV": "test"}), self.facts())
-        commands = [call.args[0] for call in connection.sendall.call_args_list]
-        self.assertEqual(len(commands), 10)
-        self.assertIn(b"AUTH", commands[0])
-        self.assertIn(b"bound-private-value", commands[0])
-        self.assertNotIn(b"ambient-value", commands[0])
-        self.assertIn(b"INFO", commands[1])
-        self.assertTrue(all(b"CONFIG" in item and b"GET" in item for item in commands[2:]))
-
     def test_boot_change_never_signals_reused_pid(self):
         kernel = Mock()
         with patch.object(process, "boot_id", return_value="another-boot"):
@@ -391,6 +416,20 @@ class CacheProcessTests(unittest.TestCase):
         with patch.object(process, "boot_id", return_value=BOOT):
             process.linux_stop(kernel, self.identity)
         kernel.terminate_owned_process.assert_called_once_with({key: self.identity[key] for key in ("pid", "started", "executable")})
+
+    def test_readonly_check_action_reaches_frozen_linux_observer_without_stop(self):
+        path = self.output / "control.json"
+        payload = {"request_sha256": process.canonical(self.request)}
+        process.write(path, payload)
+        result = {"identity": self.identity, "alive": False, "boot_id": BOOT, "terminated": False}
+        with (patch.object(process.sys, "argv", ["cache.py", "check", "--request", str(path),
+                                                "--sha256", process.bound(path)["sha256"]]),
+              patch.object(process.sys, "stdin", io.StringIO(json.dumps(self.identity))),
+              patch.object(process.sys, "stdout", io.StringIO()) as output,
+              patch.object(process, "linux_check", return_value=result) as observe):
+            process.main()
+        observe.assert_called_once_with(payload, self.identity, stop=False)
+        self.assertEqual(json.loads(output.getvalue()), result)
 
     def test_linux_control_refuses_unrecorded_identity_before_signal(self):
         self.recorded()
@@ -451,7 +490,7 @@ class CacheProcessTests(unittest.TestCase):
         self.assertFalse((self.output / "stopped.json").exists())
 
     def test_launch_constructor_exception_remains_unknown(self):
-        with patch("devex_clone_source_proof.require_closed_port"), patch.object(process.subprocess, "Popen", side_effect=OSError("injected")):
+        with patch("devex_clone_source_proof.require_closed_port"), patch.object(process, "launch_process", side_effect=OSError("injected")):
             with self.assertRaises(OSError):
                 process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         with self.assertRaises(ValueError):
@@ -462,7 +501,7 @@ class CacheProcessTests(unittest.TestCase):
         with patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-secret", "APP_ENV": "prod",
                                      "AWS_SECRET_ACCESS_KEY": "ambient-aws", "RYFRAME_SECRET": "ambient-private"}), \
                 patch("devex_clone_source_proof.require_closed_port"), \
-                patch.object(process.subprocess, "Popen", side_effect=OSError("constructor unknown")) as popen:
+                patch.object(process, "launch_process", side_effect=OSError("constructor unknown")) as popen:
             with self.assertRaises(OSError):
                 process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         child_environment = popen.call_args.kwargs["env"]
@@ -478,13 +517,13 @@ class CacheProcessTests(unittest.TestCase):
         self.assertNotIn(self.request["password"], json.dumps(popen.call_args.args))
 
     def test_legacy_child_environment_rejected_before_any_launch_intent(self):
-        with patch.object(process.subprocess, "Popen") as popen, self.assertRaises(ValueError):
+        with patch.object(process, "launch_process") as popen, self.assertRaises(ValueError):
             process.start(self.request, {"APP_REDIS_PASSWORD": "ambient-secret"}, self.output, lambda: None)
         popen.assert_not_called()
         self.assertEqual(list(self.output.iterdir()), [])
 
     def test_guard_before_popen_has_no_intent(self):
-        with patch.object(process.subprocess, "Popen") as popen, self.assertRaises(RuntimeError):
+        with patch.object(process, "launch_process") as popen, self.assertRaises(RuntimeError):
             process.start(self.request, {"APP_ENV": "test"}, self.output,
                           lambda: (_ for _ in ()).throw(RuntimeError("guard")))
         popen.assert_not_called()
@@ -495,14 +534,14 @@ class CacheProcessTests(unittest.TestCase):
         payload = {"request": self.request, "request_sha256": process.canonical(self.request), "windows_output": str(self.output)}
         for data in ("", '{}\n'):
             with self.subTest(data=bool(data)), patch.object(process, "linux_inputs", return_value=(self.output, kernel)), \
-                    patch.object(process.sys, "stdin", io.StringIO(data)), patch.object(process.subprocess, "Popen") as popen, self.assertRaises(ValueError):
+                    patch.object(process.sys, "stdin", io.StringIO(data)), patch.object(process, "launch_process") as popen, self.assertRaises(ValueError):
                 process.linux_serve(payload)
             popen.assert_not_called()
 
     def test_launcher_exits_before_authorization_has_explicit_partial_proof(self):
         child = Mock(pid=777, stdin=io.BytesIO(), returncode=1)
         child.wait.return_value = 1
-        with patch("devex_clone_source_proof.require_closed_port"), patch.object(process.subprocess, "Popen", return_value=child), \
+        with patch("devex_clone_source_proof.require_closed_port"), patch.object(process, "launch_process", return_value=child), \
                 patch("full_stack_process.process_identity", return_value=None), self.assertRaises(ValueError):
             process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         result = process.inspect_start(self.request, self.output)

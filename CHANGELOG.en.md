@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 - Move restore-runtime readiness probes and complete frontend resource response verification to Rust. Managed requests bind the current coordinator tool, preserving strict readiness, empty Worker responses, size/redirect rejection, per-file digests, and cancellation/failure semantics. Lifecycle registration, supervision, and recovery orchestration retain their existing entry points.
+- Move cache-recovery request structure, frozen receipts, read-only Redis authentication/configuration validation, and exact process calls to the bound Rust tool; retain full directory-identity observations, startup authorization, and Linux supervision primitives, with no automatic replay of unknown results.
 
 - Resource-gate replay now passes driver context and fake-tool log requests as bounded JSON through managed stdin. The corresponding custom environment inputs are removed, while Cargo target isolation, the 20-case comparison, and failure-log evidence are retained.
 - Moved department adoption read-only receipts and closed guard evidence validation to Rust, reusing the native 622-entry ordered ledger projection for identity prerequisites. Removed duplicate Python validation and object receipt tests while preserving unknown-write, failure, cancellation, drift, and recovery boundaries.

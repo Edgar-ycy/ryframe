@@ -10,6 +10,7 @@ use crate::{
 
 pub(crate) mod bridge;
 mod business;
+pub(crate) mod cache;
 pub(crate) mod catalog;
 pub(crate) mod department;
 pub(crate) mod digest;

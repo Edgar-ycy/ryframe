@@ -64,9 +64,9 @@ class SuccessorRequestTests(CacheFixture):
             model.successor_process(
                 self.backend, self.directory, self.value, self.request, successor,
                 observe_current_tools=False)
-        self.assertEqual(validate.call_count, 2)
+        self.assertEqual(validate.call_count, 3)
         self.assertEqual([call.kwargs for call in validate.call_args_list],
-                         [{"files": False}, {"files": False}])
+                         [{"files": False}, {"files": False}, {"files": False}])
 
     def test_frozen_successor_survives_later_launcher_change_but_live_path_rejects_it(self):
         successor = self.successor()
