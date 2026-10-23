@@ -31,11 +31,8 @@ const RUST_ENVIRONMENT_KEYS: [&str; 18] = [
     "RUSTFLAGS",
     "RUSTUP_TOOLCHAIN",
 ];
-const REMOVED_ENVIRONMENT_KEYS: [&str; 3] = [
-    "RYFRAME_DEVEX_TARGET_ROOT",
-    "CMAKE_C_COMPILER_LAUNCHER",
-    "CMAKE_CXX_COMPILER_LAUNCHER",
-];
+const REMOVED_ENVIRONMENT_KEYS: [&str; 2] =
+    ["CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER"];
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolExecutables {
@@ -150,7 +147,10 @@ pub(crate) fn controlled_environment(
     let remove = environment
         .keys()
         .filter(|key| {
-            key.starts_with("RYFRAME_CI_")
+            key.starts_with("RYFRAME_REPLAY_")
+                || key.starts_with("RYFRAME_DEVEX_")
+                || key.starts_with("RYFRAME_INTEGRATION_")
+                || key.starts_with("RYFRAME_CI_")
                 || key.starts_with("RYFRAME_RESOURCE_GATE_")
                 || key.starts_with("RYFRAME_VERIFY_")
                 || key.starts_with("SCCACHE_")
@@ -414,4 +414,27 @@ fn required_text_value<'a>(
     key: &str,
 ) -> Result<&'a str, String> {
     text_value(environment, key).ok_or_else(|| format!("replay 环境变量 {key} 缺失或不是 UTF-8"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replay_environment_drops_private_protocol_namespaces_and_keeps_system_inputs() {
+        let mut environment = ProcessEnvironment::from([
+            ("PATH".to_owned(), "system-path".into()),
+            ("TEMP".to_owned(), "system-temp".into()),
+        ]);
+        for prefix in ["RYFRAME_REPLAY_", "RYFRAME_DEVEX_", "RYFRAME_INTEGRATION_"] {
+            environment.insert(format!("{prefix}LEGACY"), "ignored".into());
+        }
+        let controlled =
+            controlled_environment(environment, Path::new("sccache"), Path::new("cache"), false)
+                .unwrap();
+        assert_eq!(text_value(&controlled, "PATH"), Some("system-path"));
+        assert_eq!(text_value(&controlled, "TEMP"), Some("system-temp"));
+        assert_eq!(text_value(&controlled, "CARGO_INCREMENTAL"), Some("0"));
+        assert!(!controlled.keys().any(|key| key.starts_with("RYFRAME_")));
+    }
 }

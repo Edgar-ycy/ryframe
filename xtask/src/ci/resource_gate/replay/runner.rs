@@ -20,6 +20,11 @@ use super::{
     },
 };
 
+#[path = "command_protocol.rs"]
+mod command_protocol;
+
+use command_protocol::ReplayCommandRequest;
+
 #[derive(Debug, Clone)]
 pub(crate) struct PrimeSelection {
     pub(crate) case: ReplayCase,
@@ -278,8 +283,14 @@ fn run_case_command(
             test_jobs: Some(8),
         },
     )?;
-    let (status, duration_ms) =
-        run_logged_command(&command, backend_worktree, &environment, command_log)?;
+    let request = ReplayCommandRequest::new(target_root.clone());
+    let (status, duration_ms) = run_logged_command(
+        &command,
+        backend_worktree,
+        &environment,
+        command_log,
+        &request,
+    )?;
     let return_code = status_code(status);
     let decision = load_decision_after_command(decision_path, command_log, return_code)?;
     let passed = status.success();
@@ -302,22 +313,6 @@ fn case_environment(execution: &CaseExecution<'_>) -> Result<ProcessEnvironment,
         .map_err(|error| format!("无法解析 replay Cargo target：{error}"))?;
     validate_inside(&target_root, execution.session, "replay Cargo target")?;
     let mut environment = execution.base_environment.clone();
-    let integration_id = format!(
-        "resource-replay-{}",
-        execution
-            .worktree
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("case")
-    );
-    environment.insert(
-        "RYFRAME_INTEGRATION_RUN_ID".to_owned(),
-        integration_id.into(),
-    );
-    environment.insert(
-        "RYFRAME_DEVEX_TARGET_ROOT".to_owned(),
-        target_root.as_os_str().to_owned(),
-    );
     environment.insert(
         "CARGO_TARGET_DIR".to_owned(),
         target_root.join("runner").as_os_str().to_owned(),
@@ -330,6 +325,7 @@ fn run_logged_command(
     working_directory: &Path,
     environment: &ProcessEnvironment,
     command_log: &Path,
+    request: &ReplayCommandRequest,
 ) -> Result<(ExitStatus, u64), String> {
     let executable = command
         .first()
@@ -343,13 +339,18 @@ fn run_logged_command(
     let log_copy = log
         .try_clone()
         .map_err(|error| format!("无法复制 replay 命令日志句柄：{error}"))?;
+    let input = request.input_file(
+        command_log
+            .parent()
+            .ok_or_else(|| "replay 命令日志缺少受管父目录".to_owned())?,
+    )?;
     let started = Instant::now();
     let status = Command::new(executable)
         .args(&command[1..])
         .current_dir(working_directory)
         .env_clear()
         .envs(environment)
-        .stdin(Stdio::null())
+        .stdin(Stdio::from(input))
         .stdout(Stdio::from(log_copy))
         .stderr(Stdio::from(log))
         .status()

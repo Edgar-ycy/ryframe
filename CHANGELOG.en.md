@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Resource-gate replay now passes driver context and fake-tool log requests as bounded JSON through managed stdin. The corresponding custom environment inputs are removed, while Cargo target isolation, the 20-case comparison, and failure-log evidence are retained.
+
 - Migrate reference business-fixture browser binding, stage orchestration, evidence and static-response validation, atomic tool-configuration publication, and read-only consumers to Rust. Retain the existing runtime and full-stack process-engine interfaces, with tests for complete tree cleanup on timeout, unknown outcomes, and credential redaction.
 
 - Native seed producers bind execution and publication boundaries to the fixed registration, post-copy evidence, plan, and live controller; quota and department protocols recheck the current generation for each operation. Interrupted input or output still closes held sessions, logout remains possible after later source drift, and simultaneous business and cleanup failures retain a failed result.

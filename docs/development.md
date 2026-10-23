@@ -160,7 +160,7 @@ python_program = ".local-tests/python/Scripts/python.exe"
 
 CI 计划和快速预检通过 `cargo xtask check ci <plan|preflight> --base-sha <SHA>` 选择基准，省略或空值表示没有基准。资源门禁使用 `cargo xtask check ci resource-gate [--base-sha <SHA>] [--head-sha <SHA>] [--frontend-ref <SHA>] [--targeted] [--decision-file <绝对文件>] [--jobs <1..64>] [--test-jobs <1..64>]`：三个 SHA 参数必须是非零的 40 位十六进制提交 SHA，参数不得重复；缺少基准、head、前端提交或 targeted 激活时执行完整门禁。decision 文件只创建新文件，父目录必须已存在；并发参数必须为 1 到 64。工作流仅在 PR 或分支 push 传入基准，tag 不使用 `before`。回放器显式传递每个案例的提交、激活状态、decision 路径与固定预算；本地 DevEx 不从环境推测范围，缺少显式范围时记录完整回退。预检将同一基准传给迁移保护和函数长度增量扫描；资源门禁不读取项目自定义环境变量。
 
-资源门禁回放由 `cargo xtask check ci resource-gate replay` 原生执行。manifest 每个案例绑定前后端精确提交；回放器在 `.local-tests/resource-gate-replay` 创建隔离 worktree，交替执行 targeted 与 full arm，只安装一次前端离线依赖并复用 session 级 Cargo target。报告只创建新文件，`--work-dir` 与报告都必须位于该证据根目录的子路径。`--activation-gate` 还要求隔离 MySQL、Redis 与 TLS 服务、至少 20 个案例、10 个成功 targeted 案例、双模式与 pass/fail 覆盖、零分歧、健康 sccache 和 60 秒 P95 预算；失败保留命令末尾、退出码及清理错误，不自动重放未知写入。
+资源门禁回放由 `cargo xtask check ci resource-gate replay` 原生执行。manifest 每个案例绑定前后端精确提交；回放器在 `.local-tests/resource-gate-replay` 创建隔离 worktree，交替执行 targeted 与 full arm，只安装一次前端离线依赖并复用 session 级 Cargo target。报告只创建新文件，`--work-dir` 与报告都必须位于该证据根目录的子路径。`--activation-gate` 还要求隔离 MySQL、Redis 与 TLS 服务、至少 20 个案例、10 个成功 targeted 案例、双模式与 pass/fail 覆盖、零分歧、健康 sccache 和 60 秒 P95 预算；失败保留命令末尾、退出码及清理错误，不自动重放未知写入。 外部驱动不追加门禁参数，通过 stdin 接收版本为 1、上限为 16 KiB 的 JSON 请求，包含 `format_version` 与绝对路径 `target_root`；`CARGO_TARGET_DIR` 继续由 Cargo 环境提供，旧 replay 夹具、target 和日志环境入口不再读取。
 
 来源运行验收的完整证据清单、动态采集文件身份、生产者 ready 绑定和授权缓存收据由 Rust xtask 校验。Python generation 锁与完整像采集编排仍使用原入口；现存调用方通过同一有界 stdin 协议消费校验结果。来源与凭据异常只返回脱敏分类，未确认的缓存清理结果保留原 intent 并先核对全部计划键，不自动重放。
 

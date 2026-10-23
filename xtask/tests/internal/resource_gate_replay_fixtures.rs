@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -75,12 +76,7 @@ fn run_twenty_case_fixture() -> FixtureOutput {
     .unwrap();
     let work_dir = backend.join(".local-tests/resource-gate-replay/tests");
     let report = backend.join(".local-tests/resource-gate-replay/report.json");
-    let mut environment = base_environment();
-    environment.insert("RYFRAME_REPLAY_FIXTURE".to_owned(), "1".into());
-    environment.insert(
-        "RYFRAME_REPLAY_TEST_TOOL_LOG".to_owned(),
-        tool_log.as_os_str().to_owned(),
-    );
+    let environment = base_environment();
     let run = execute_configured(
         backend.clone(),
         frontend,
@@ -174,6 +170,23 @@ fn assert_cases(document: &Value) {
         .map(|arm| arm["target_fingerprint"].as_str().unwrap())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(targets.len(), 1);
+    for case in document["cases"].as_array().unwrap() {
+        for arm in ["targeted", "full"] {
+            let result = &case[arm];
+            if case["expected"] == "fail" {
+                assert_ne!(result["return_code"], 0);
+                assert!(
+                    result["failure_tail"]
+                        .as_str()
+                        .unwrap()
+                        .contains("fixture 预期失败")
+                );
+            } else {
+                assert_eq!(result["return_code"], 0);
+                assert!(result["failure_tail"].is_null());
+            }
+        }
+    }
 }
 
 fn assert_cleanup(output: &FixtureOutput) {
@@ -199,19 +212,19 @@ fn assert_cleanup(output: &FixtureOutput) {
 }
 
 #[test]
+#[ignore = "仅由 replay 驱动通过受限 stdin 请求调用"]
 fn targeted_fixture() {
     run_driver("targeted");
 }
 
 #[test]
+#[ignore = "仅由 replay 驱动通过受限 stdin 请求调用"]
 fn full_fixture() {
     run_driver("full");
 }
 
 fn run_driver(mode: &str) {
-    if env::var("RYFRAME_REPLAY_FIXTURE").ok().as_deref() != Some("1") {
-        return;
-    }
+    let request = read_driver_request(std::io::stdin().lock()).unwrap();
     let cwd = env::current_dir().unwrap();
     let arguments = fs::read_to_string("fixture-arguments.txt").unwrap();
     assert!(
@@ -225,7 +238,7 @@ fn run_driver(mode: &str) {
         fs::read_to_string(frontend.join("scenario.txt")).unwrap(),
         fs::read_to_string("scenario.txt").unwrap()
     );
-    let target = PathBuf::from(env::var_os("RYFRAME_DEVEX_TARGET_ROOT").unwrap());
+    let target = request.target_root;
     assert!(target.is_absolute());
     assert_eq!(target.file_name().unwrap(), "target");
     assert_eq!(
@@ -348,61 +361,88 @@ fn create_cases(backend: &Path, frontend: &Path) -> Vec<Value> {
 }
 
 fn create_fake_tools(directory: &Path, log: &Path) -> ToolExecutables {
-    let corepack = tool_script(
+    ToolExecutables {
+        corepack: corepack_fixture(directory, log),
+        sccache: sccache_fixture(directory, log),
+    }
+}
+
+fn corepack_fixture(directory: &Path, log: &Path) -> PathBuf {
+    tool_script(
         directory,
         "corepack",
+        log,
         r#"@echo off
->>"%RYFRAME_REPLAY_TEST_TOOL_LOG%" echo %*
-if "%~1"=="--version" (
+if "%*"=="--version" (
+  @version@
   echo corepack 0.test
   exit /b 0
 )
-if "%~1"=="pnpm" if "%~2"=="--version" (
+if "%*"=="pnpm --version" (
+  @pnpm-version@
   echo 11.20.0-test
   exit /b 0
 )
-if "%~1"=="pnpm" if "%~2"=="install" (
+if "%*"=="pnpm install --offline --frozen-lockfile" (
+  @install@
   mkdir node_modules 2>nul
   exit /b 0
 )
 exit /b 2
 "#,
         r#"#!/bin/sh
-printf '%s\n' "$*" >> "$RYFRAME_REPLAY_TEST_TOOL_LOG"
-if [ "$1" = "--version" ]; then echo 'corepack 0.test'; exit 0; fi
-if [ "$1" = "pnpm" ] && [ "$2" = "--version" ]; then echo '11.20.0-test'; exit 0; fi
-if [ "$1" = "pnpm" ] && [ "$2" = "install" ]; then mkdir -p node_modules; exit 0; fi
+if [ "$*" = "--version" ]; then @version@; echo 'corepack 0.test'; exit 0; fi
+if [ "$*" = "pnpm --version" ]; then @pnpm-version@; echo '11.20.0-test'; exit 0; fi
+if [ "$*" = "pnpm install --offline --frozen-lockfile" ]; then @install@; mkdir -p node_modules; exit 0; fi
 exit 2
 "#,
-    );
-    let sccache = tool_script(
+    )
+}
+
+fn sccache_fixture(directory: &Path, log: &Path) -> PathBuf {
+    tool_script(
         directory,
         "sccache",
+        log,
         r#"@echo off
->>"%RYFRAME_REPLAY_TEST_TOOL_LOG%" echo %*
-if "%~1"=="--version" (
+if "%*"=="--version" (
+  @version@
   echo sccache 0.test
   exit /b 0
 )
-if "%~1"=="--show-stats" (
+if "%*"=="--show-stats --stats-format json" (
+  @stats@
   echo {"compile_requests":0,"stats":{"cache_errors":{"counts":{}},"cache_timeouts":0,"cache_read_errors":0,"cache_write_errors":0,"dist_errors":0}}
   exit /b 0
 )
-exit /b 0
+if "%*"=="--start-server" (
+  @start@
+  exit /b 0
+)
+if "%*"=="--zero-stats" (
+  @zero@
+  exit /b 0
+)
+if "%*"=="--stop-server" (
+  @stop@
+  exit /b 0
+)
+exit /b 2
 "#,
         r#"#!/bin/sh
-printf '%s\n' "$*" >> "$RYFRAME_REPLAY_TEST_TOOL_LOG"
-if [ "$1" = "--version" ]; then echo 'sccache 0.test'; exit 0; fi
-if [ "$1" = "--show-stats" ]; then echo '{"compile_requests":0,"stats":{"cache_errors":{"counts":{}},"cache_timeouts":0,"cache_read_errors":0,"cache_write_errors":0,"dist_errors":0}}'; exit 0; fi
-exit 0
+if [ "$*" = "--version" ]; then @version@; echo 'sccache 0.test'; exit 0; fi
+if [ "$*" = "--show-stats --stats-format json" ]; then @stats@; echo '{"compile_requests":0,"stats":{"cache_errors":{"counts":{}},"cache_timeouts":0,"cache_read_errors":0,"cache_write_errors":0,"dist_errors":0}}'; exit 0; fi
+if [ "$*" = "--start-server" ]; then @start@; exit 0; fi
+if [ "$*" = "--zero-stats" ]; then @zero@; exit 0; fi
+if [ "$*" = "--stop-server" ]; then @stop@; exit 0; fi
+exit 2
 "#,
-    );
-    let _ = log;
-    ToolExecutables { corepack, sccache }
+    )
 }
 
-fn tool_script(directory: &Path, name: &str, windows: &str, unix: &str) -> PathBuf {
-    let _ = (windows, unix);
+fn tool_script(directory: &Path, name: &str, log: &Path, windows: &str, unix: &str) -> PathBuf {
+    let (windows, unix) = bind_tool_log_requests(directory, name, log, windows, unix);
+    let _ = (&windows, &unix);
     #[cfg(windows)]
     {
         let path = directory.join(format!("{name}.cmd"));
@@ -414,12 +454,171 @@ fn tool_script(directory: &Path, name: &str, windows: &str, unix: &str) -> PathB
         use std::os::unix::fs::PermissionsExt;
 
         let path = directory.join(name);
-        fs::write(&path, unix).unwrap();
+        fs::write(&path, &unix).unwrap();
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions).unwrap();
         path
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolLogRequest {
+    format_version: u32,
+    log: PathBuf,
+    entry: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DriverRequest {
+    format_version: u32,
+    target_root: PathBuf,
+}
+
+fn read_json_request<T: serde::de::DeserializeOwned>(reader: impl Read) -> Result<T, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(16 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > 16 * 1024 {
+        return Err("夹具 JSON 请求超过 16 KiB".to_owned());
+    }
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
+fn read_driver_request(reader: impl Read) -> Result<DriverRequest, String> {
+    let request: DriverRequest = read_json_request(reader)?;
+    if request.format_version != 1 || !request.target_root.is_absolute() {
+        return Err("驱动请求的版本或 target_root 绝对路径无效".to_owned());
+    }
+    Ok(request)
+}
+
+fn read_tool_log_request(reader: impl Read) -> Result<ToolLogRequest, String> {
+    let request: ToolLogRequest = read_json_request(reader)?;
+    if request.format_version != 1
+        || !request.log.is_absolute()
+        || request.entry.contains(['\r', '\n'])
+    {
+        return Err("工具日志请求的版本、绝对路径或单行记录无效".to_owned());
+    }
+    Ok(request)
+}
+
+#[test]
+#[ignore = "仅由假工具通过受管 JSON 请求调用"]
+fn tool_log_fixture() {
+    let request = read_tool_log_request(std::io::stdin().lock()).unwrap();
+    let mut log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(request.log)
+        .unwrap();
+    writeln!(log, "{}", request.entry).unwrap();
+}
+
+fn bind_tool_log_requests(
+    directory: &Path,
+    name: &str,
+    log: &Path,
+    windows: &str,
+    unix: &str,
+) -> (String, String) {
+    let mut windows = windows.to_owned();
+    let mut unix = unix.to_owned();
+    let executable = env::current_exe().unwrap();
+    for (token, entry) in [
+        ("version", "--version"),
+        ("pnpm-version", "pnpm --version"),
+        ("install", "pnpm install --offline --frozen-lockfile"),
+        ("stats", "--show-stats --stats-format json"),
+        ("start", "--start-server"),
+        ("zero", "--zero-stats"),
+        ("stop", "--stop-server"),
+    ] {
+        let token_text = format!("@{token}@");
+        if !windows.contains(&token_text) && !unix.contains(&token_text) {
+            continue;
+        }
+        let path = directory.join(format!("{name}-{token}.json"));
+        fs::write(
+            &path,
+            serde_json::to_vec(&ToolLogRequest {
+                format_version: 1,
+                log: log.to_path_buf(),
+                entry: entry.to_owned(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let helper =
+            "--exact resource_gate_replay_fixtures::tool_log_fixture --ignored --nocapture";
+        windows = windows.replace(
+            &token_text,
+            &format!(
+                "\"{}\" {helper} < \"{}\" >nul || exit /b 97",
+                executable.display().to_string().replace('%', "%%"),
+                path.display().to_string().replace('%', "%%"),
+            ),
+        );
+        unix = unix.replace(
+            &token_text,
+            &format!(
+                "{} {helper} < {} >/dev/null || exit 97",
+                shell_quote(&executable),
+                shell_quote(&path),
+            ),
+        );
+    }
+    (windows, unix)
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
+}
+
+#[test]
+fn tool_log_protocol_rejects_invalid_and_oversized_requests() {
+    for input in [
+        "",
+        "{}",
+        "null",
+        r#"{"format_version":2,"log":"/tmp/log","entry":"test"}"#,
+        r#"{"format_version":1,"log":"relative","entry":"test"}"#,
+        r#"{"format_version":1,"log":"/tmp/log","entry":"a\nb"}"#,
+        r#"{"format_version":1,"log":"/tmp/log","entry":"test","extra":true}"#,
+    ] {
+        assert!(read_tool_log_request(input.as_bytes()).is_err());
+    }
+    assert!(
+        read_tool_log_request(&vec![b' '; 16 * 1024 + 1][..])
+            .unwrap_err()
+            .contains("16 KiB")
+    );
+}
+
+#[test]
+fn driver_protocol_rejects_invalid_and_oversized_requests() {
+    for input in [
+        "",
+        "{}",
+        "null",
+        "{",
+        r#"{"format_version":2,"target_root":"/tmp"}"#,
+        r#"{"format_version":1,"target_root":"relative"}"#,
+        r#"{"format_version":1,"target_root":"/tmp","extra":true}"#,
+        r#"{"format_version":1,"target_root":"/tmp"} {}"#,
+    ] {
+        assert!(read_driver_request(input.as_bytes()).is_err());
+    }
+    assert!(
+        read_driver_request(&vec![b' '; 16 * 1024 + 1][..])
+            .unwrap_err()
+            .contains("16 KiB")
+    );
 }
 
 fn create_fixture_wrapper(directory: &Path, label: &str, executable: &Path, test: &str) -> PathBuf {
@@ -429,7 +628,7 @@ fn create_fixture_wrapper(directory: &Path, label: &str, executable: &Path, test
         fs::write(
             &path,
             format!(
-                "@echo off\r\nsetlocal\r\ntype nul > fixture-arguments.txt\r\n:parse\r\nif \"%~1\"==\"\" goto run\r\n>>fixture-arguments.txt echo %~1\r\nshift\r\ngoto parse\r\n:run\r\n\"{}\" --exact {} --nocapture\r\nexit /b %ERRORLEVEL%\r\n",
+                "@echo off\r\nsetlocal\r\ntype nul > fixture-arguments.txt\r\n:parse\r\nif \"%~1\"==\"\" goto run\r\n>>fixture-arguments.txt echo %~1\r\nshift\r\ngoto parse\r\n:run\r\n\"{}\" --exact {} --ignored --nocapture\r\nexit /b %ERRORLEVEL%\r\n",
                 executable.display(),
                 test
             ),
@@ -445,7 +644,7 @@ fn create_fixture_wrapper(directory: &Path, label: &str, executable: &Path, test
         fs::write(
             &path,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > fixture-arguments.txt\nexec '{}' --exact {} --nocapture\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > fixture-arguments.txt\nexec '{}' --exact {} --ignored --nocapture\n",
                 executable.display(),
                 test
             ),
