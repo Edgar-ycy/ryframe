@@ -125,6 +125,32 @@ fn recovery_help_reaches_the_selected_stage_parser() {
 }
 
 #[test]
+fn ci_baseline_is_explicit_and_validated_for_each_consumer() {
+    let sha = "1111111111111111111111111111111111111111";
+    for (name, expected) in [
+        ("plan", CiCommand::Plan(Some(sha.to_owned()))),
+        ("preflight", CiCommand::Preflight(Some(sha.to_owned()))),
+        (
+            "resource-gate",
+            CiCommand::ResourceGate(Some(sha.to_owned())),
+        ),
+    ] {
+        assert_eq!(
+            parse_command(&["check", "ci", name, "--base-sha", sha]).unwrap(),
+            Command::Check(CheckCommand::Ci(expected))
+        );
+        assert!(parse_command(&["check", "ci", name, "--base-sha", ""]).is_ok());
+        for invalid in ["HEAD", "123", "0000000000000000000000000000000000000000"] {
+            assert!(parse_command(&["check", "ci", name, "--base-sha", invalid]).is_err());
+        }
+        assert!(parse_command(&["check", "ci", name, "--base-sha"]).is_err());
+        assert!(
+            parse_command(&["check", "ci", name, "--base-sha", sha, "--base-sha", sha]).is_err()
+        );
+    }
+}
+
+#[test]
 fn parses_check_task_graph_and_internal_groups() {
     assert_eq!(
         parse_command(&["check", "--scope", "frontend", "--full", "--plan"]).unwrap(),
@@ -139,10 +165,10 @@ fn parses_check_task_graph_and_internal_groups() {
         Command::Check(CheckCommand::Doctor)
     );
     for (name, operation) in [
-        ("plan", CiCommand::Plan),
-        ("preflight", CiCommand::Preflight),
+        ("plan", CiCommand::Plan(None)),
+        ("preflight", CiCommand::Preflight(None)),
         ("rust-gate", CiCommand::RustGate),
-        ("resource-gate", CiCommand::ResourceGate),
+        ("resource-gate", CiCommand::ResourceGate(None)),
         ("integration", CiCommand::Integration),
         ("consumer-contract", CiCommand::ConsumerContract),
     ] {

@@ -57,20 +57,27 @@ class CiWorkflowTests(unittest.TestCase):
         workflow = yaml.safe_load(
             (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         )
-        bases = [
-            step["env"][key]
-            for job in workflow["jobs"].values()
-            for step in job["steps"]
-            for key in ("RYFRAME_CI_BASE_SHA", "DEPLOYMENT_BASE_SHA")
-            if key in step.get("env", {})
+        expression = (
+            "${{ github.event.pull_request.base.sha || "
+            "(github.ref_type == 'branch' && github.event.before) || '' }}"
+        )
+        baseline_steps = [
+            step for job in workflow["jobs"].values() for step in job["steps"]
+            if any(f"cargo xtask check ci {command}" in step.get("run", "")
+                   for command in ("plan", "preflight", "resource-gate --frontend-dir"))
         ]
-        self.assertEqual(len(bases), 5)
-        for expression in bases:
-            self.assertEqual(
-                expression,
-                "${{ github.event.pull_request.base.sha || "
-                "(github.ref_type == 'branch' && github.event.before) || '' }}",
-            )
+        self.assertEqual(len(baseline_steps), 3)
+        for step in baseline_steps:
+            self.assertIn(f'--base-sha "{expression}"', step["run"])
+        deployment_bases = [
+            step["env"]["DEPLOYMENT_BASE_SHA"]
+            for job in workflow["jobs"].values() for step in job["steps"]
+            if "DEPLOYMENT_BASE_SHA" in step.get("env", {})
+        ]
+        self.assertEqual(deployment_bases, [expression, expression])
+        text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("RYFRAME_CI_BASE_SHA", text)
+        self.assertNotIn("GITHUB_BASE_SHA", text)
 
     def test_frontend_source_selection_uses_only_the_typed_entry(self) -> None:
         daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -124,8 +131,8 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("uses: ./frontend/.github/actions/setup-pnpm", block)
         self.assertIn("corepack pnpm install --frozen-lockfile", block)
         self.assertIn(
-            "RYFRAME_CI_BASE_SHA: "
-            "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}",
+            '--base-sha "'
+            "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}\"",
             block,
         )
         self.assertIn(

@@ -44,11 +44,11 @@ struct OwnershipEntryWire {
     content_hash: String,
 }
 
-pub(crate) fn load(root: &Path) -> Result<LoadedRepository, String> {
-    let base_ref = configured_base_ref()
-        .ok_or_else(|| "缺少 RYFRAME_CI_BASE_SHA 或 GITHUB_BASE_SHA".to_owned())?;
+pub(crate) fn load(root: &Path, base: Option<&str>) -> Result<LoadedRepository, String> {
+    let base_ref =
+        base.ok_or_else(|| "缺少 --base-sha；无法确定资源差异，执行完整门禁".to_owned())?;
     let head_ref = configured_head_ref().unwrap_or_else(|| "HEAD".to_owned());
-    let base = resolve_commit(root, &base_ref)
+    let base = resolve_commit(root, base_ref)
         .map_err(|reason| format!("base ref 无效（{base_ref}）：{reason}"))?;
     let head = resolve_commit(root, &head_ref)
         .map_err(|reason| format!("head ref 无效（{head_ref}）：{reason}"))?;
@@ -70,13 +70,6 @@ pub(crate) fn load(root: &Path) -> Result<LoadedRepository, String> {
             workspace_graph,
         },
     })
-}
-
-fn configured_base_ref() -> Option<String> {
-    preferred_nonempty_ref(
-        env::var("RYFRAME_CI_BASE_SHA").ok().as_deref(),
-        env::var("GITHUB_BASE_SHA").ok().as_deref(),
-    )
 }
 
 fn configured_head_ref() -> Option<String> {

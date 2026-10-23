@@ -6,7 +6,6 @@ from __future__ import annotations
 import datetime as dt
 import importlib.metadata
 import json
-import os
 import re
 import subprocess
 import sys
@@ -396,12 +395,15 @@ def source_text(node: Any, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8")
 
 
-def changed_line_ranges(root: Path, errors: list[str]) -> dict[str, list[tuple[int, int]]] | None:
-    configured_base = os.environ.get("RYFRAME_CI_BASE_SHA") or os.environ.get("GITHUB_BASE_SHA")
-    if configured_base is not None and not SHA_PATTERN.fullmatch(configured_base):
+def changed_line_ranges(
+    root: Path, errors: list[str], base_sha: str | None = None
+) -> dict[str, list[tuple[int, int]]] | None:
+    if base_sha is not None and (
+        not SHA_PATTERN.fullmatch(base_sha) or set(base_sha) == {"0"}
+    ):
         errors.append("函数长度 changed 模式收到无效 base SHA，已回退检查全部函数")
         return None
-    base = configured_base or "HEAD"
+    base = base_sha if base_sha is not None else "HEAD"
     completed = subprocess.run(
         ["git", "diff", "--unified=0", "--no-ext-diff", base, "--", "*.rs"],
         cwd=root,

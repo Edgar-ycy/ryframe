@@ -204,7 +204,7 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
     if profile != PolicyProfile::Smart {
         super::super::prerelease::run(&context.root)?;
     }
-    super::super::architecture::run(&context.root)?;
+    super::super::architecture::run(&context.root, context.base_sha.as_deref())?;
     for task in policy_tasks(profile) {
         match task.invocation {
             PolicyTaskInvocation::SupplyChain => {
@@ -230,10 +230,7 @@ fn run_migration_history(
     mode: TaskExecutionMode<'_>,
 ) -> Result<()> {
     let trusted_ref = if matches!(mode, TaskExecutionMode::Ci) {
-        let base = std::env::var("RYFRAME_CI_BASE_SHA")
-            .or_else(|_| std::env::var("GITHUB_BASE_SHA"))
-            .ok();
-        preflight_trusted_ref(base.as_deref()).unwrap_or_else(|| "HEAD".to_owned())
+        preflight_trusted_ref(context.base_sha.as_deref()).unwrap_or_else(|| "HEAD".to_owned())
     } else {
         "HEAD".to_owned()
     };

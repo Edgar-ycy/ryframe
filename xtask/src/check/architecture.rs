@@ -21,7 +21,7 @@ pub(crate) mod test_layout;
 #[path = "architecture/workspace.rs"]
 pub(crate) mod workspace;
 
-pub(crate) fn run(root: &Path) -> Result<()> {
+pub(crate) fn run(root: &Path, base_sha: Option<&str>) -> Result<()> {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     docs::validate_documentation(root, &mut errors);
@@ -80,6 +80,7 @@ pub(crate) fn run(root: &Path) -> Result<()> {
             &templates,
             &policy.function_size,
             &source_stats.frozen_migrations,
+            base_sha,
             &mut errors,
         );
     }

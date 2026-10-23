@@ -263,10 +263,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             source.write_text("fn first() {}\nfn second() {}\n", encoding="utf-8")
 
             errors: list[str] = []
-            with patch.dict(os.environ, {}, clear=False):
-                os.environ.pop("RYFRAME_CI_BASE_SHA", None)
-                os.environ.pop("GITHUB_BASE_SHA", None)
-                changed = MODULE.changed_line_ranges(root, errors)
+            changed = MODULE.changed_line_ranges(root, errors)
 
         self.assertEqual(errors, [])
         self.assertIsNotNone(changed)
@@ -280,6 +277,22 @@ diff --git a/src/lib.rs b/src/lib.rs
             policy(), records, changed, errors
         )
         self.assertEqual((checked, violations), (2, 0))
+
+    def test_changed_mode_uses_only_the_explicit_baseline(self) -> None:
+        sha = "1" * 40
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        errors: list[str] = []
+        with patch.dict(os.environ, {"RYFRAME_CI_BASE_SHA": "invalid", "GITHUB_BASE_SHA": "invalid"}):
+            with patch.object(MODULE.subprocess, "run", return_value=completed) as run:
+                self.assertEqual(MODULE.changed_line_ranges(Path.cwd(), errors, sha), {})
+                self.assertEqual(run.call_args_list[0].args[0][4], sha)
+                self.assertEqual(MODULE.changed_line_ranges(Path.cwd(), errors), {})
+                self.assertEqual(run.call_args_list[2].args[0][4], "HEAD")
+        self.assertEqual(errors, [])
+        for invalid in ("HEAD", "0" * 40):
+            with patch.object(MODULE.subprocess, "run") as run:
+                self.assertIsNone(MODULE.changed_line_ranges(Path.cwd(), errors, invalid))
+                run.assert_not_called()
 
     def test_policy_rejects_exception_beyond_thirty_days(self) -> None:
         errors: list[str] = []

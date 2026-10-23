@@ -48,6 +48,7 @@ pub(crate) struct VerifyExecutionContext {
     pub(crate) include_frontend: bool,
     pub(crate) jobs: VerifyJobBudget,
     pub(crate) targets: VerifyTargetPolicy,
+    pub(crate) base_sha: Option<String>,
     ci: bool,
 }
 
@@ -65,6 +66,7 @@ impl VerifyExecutionContext {
             include_frontend: true,
             jobs: verify_job_budget()?,
             targets: verify_target_policy_from(full, ci, cargo_target.as_deref()),
+            base_sha: None,
             ci,
         })
     }

@@ -149,6 +149,7 @@ pub(crate) fn command_for_replay(
     frontend: &Path,
     runner_target: &Path,
     runner_manifest: &Path,
+    base_sha: &str,
 ) -> Result<Vec<String>, String> {
     let normalized = command_for_frontend(command, frontend)?;
     if !normalized.starts_with(&["cargo".to_owned(), "xtask".to_owned()]) {
@@ -167,6 +168,13 @@ pub(crate) fn command_for_replay(
         "--".to_owned(),
     ];
     expanded.extend_from_slice(&normalized[2..]);
+    if normalized.get(2..5).is_some_and(|args| {
+        args[0] == "check"
+            && args[1] == "ci"
+            && matches!(args[2].as_str(), "plan" | "preflight" | "resource-gate")
+    }) {
+        expanded.extend(["--base-sha".to_owned(), base_sha.to_owned()]);
+    }
     Ok(expanded)
 }
 
@@ -228,6 +236,7 @@ fn run_case_command(
         frontend_worktree,
         &target_root.join("runner"),
         execution.runner_manifest,
+        &execution.case.base,
     )?;
     let (status, duration_ms) =
         run_logged_command(&command, backend_worktree, &environment, command_log)?;
@@ -254,7 +263,6 @@ fn case_environment(execution: &CaseExecution<'_>) -> Result<ProcessEnvironment,
     validate_inside(&target_root, execution.session, "replay Cargo target")?;
     let mut environment = execution.base_environment.clone();
     for (key, value) in [
-        ("RYFRAME_CI_BASE_SHA", execution.case.base.as_str()),
         ("RYFRAME_CI_HEAD_SHA", execution.case.head.as_str()),
         (
             "RYFRAME_CI_FRONTEND_REF",

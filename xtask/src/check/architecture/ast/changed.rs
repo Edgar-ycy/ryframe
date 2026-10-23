@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, env, ffi::OsStr, path::Path, sync::OnceLock};
+use std::{collections::BTreeMap, ffi::OsStr, path::Path, sync::OnceLock};
 
 use regex::Regex;
 
@@ -6,19 +6,16 @@ use super::super::support::command_stdout;
 
 pub(crate) fn changed_line_ranges(
     root: &Path,
+    configured: Option<&str>,
     errors: &mut Vec<String>,
 ) -> Option<BTreeMap<String, Vec<(usize, usize)>>> {
-    let configured = env::var("RYFRAME_CI_BASE_SHA")
-        .ok()
-        .or_else(|| env::var("GITHUB_BASE_SHA").ok());
     if configured
-        .as_ref()
-        .is_some_and(|base| !git_sha().is_match(base))
+        .is_some_and(|base| !git_sha().is_match(base) || base.bytes().all(|byte| byte == b'0'))
     {
         errors.push("函数长度 changed 模式收到无效 base SHA，已回退检查全部函数".into());
         return None;
     }
-    let base = configured.as_deref().unwrap_or("HEAD");
+    let base = configured.unwrap_or("HEAD");
     let diff = match command_stdout(
         root,
         OsStr::new("git"),

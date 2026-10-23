@@ -198,7 +198,7 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
     );
     for (command, expected) in [
         (
-            CiCommand::Preflight,
+            CiCommand::Preflight(None),
             &[
                 TaskExecutor::CargoFormat,
                 TaskExecutor::PythonEnvironment,
@@ -220,7 +220,10 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
                 TaskExecutor::SnapshotVerify,
             ][..],
         ),
-        (CiCommand::ResourceGate, &[TaskExecutor::CiResourceGate][..]),
+        (
+            CiCommand::ResourceGate(None),
+            &[TaskExecutor::CiResourceGate][..],
+        ),
         (CiCommand::Integration, &[TaskExecutor::CiIntegration][..]),
         (
             CiCommand::ConsumerContract,
@@ -316,10 +319,10 @@ fn rust_gate_profile_only_changes_the_selected_primitive_nodes() {
             .contains("只允许 standard 或 windows-smoke")
     );
     assert!(
-        ci_execution_plan_for_profile(&CiCommand::Preflight, Some("unknown")).is_ok(),
+        ci_execution_plan_for_profile(&CiCommand::Preflight(None), Some("unknown")).is_ok(),
         "Rust gate profile 不得改变其他独立 job"
     );
-    assert!(ci_execution_plan_for(&CiCommand::Plan).is_err());
+    assert!(ci_execution_plan_for(&CiCommand::Plan(None)).is_err());
 }
 
 #[test]

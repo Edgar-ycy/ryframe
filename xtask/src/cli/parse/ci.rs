@@ -14,12 +14,16 @@ use frontend_source::parse_frontend_source;
 
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
     match args {
-        [command] if command == "plan" => Ok(CiCommand::Plan),
-        [command] if command == "preflight" => Ok(CiCommand::Preflight),
+        [command, rest @ ..] if command == "plan" => parse_base_sha(rest).map(CiCommand::Plan),
+        [command, rest @ ..] if command == "preflight" => {
+            parse_base_sha(rest).map(CiCommand::Preflight)
+        }
         [command] if command == "rust-gate" => Ok(CiCommand::RustGate),
-        [command] if command == "resource-gate" => Ok(CiCommand::ResourceGate),
         [command, operation, rest @ ..] if command == "resource-gate" && operation == "replay" => {
             parse_resource_gate_replay(rest).map(CiCommand::ResourceGateReplay)
+        }
+        [command, rest @ ..] if command == "resource-gate" => {
+            parse_base_sha(rest).map(CiCommand::ResourceGate)
         }
         [command] if command == "integration" => Ok(CiCommand::Integration),
         [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
@@ -46,6 +50,29 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         }
         _ => Err(CliError::new(
             "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|frontend-source|required|security>；前端来源使用 frontend-source --event-name <事件> [--event <绝对文件>] [--base-sha <SHA>] [--prefer-marker] [--candidate-openapi <绝对文件>] [--release-ref <ref>] [--fallback-main-on-invalid-base]；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放由 Rust 执行：resource-gate replay --manifest <文件> --work-dir <.local-tests/resource-gate-replay 内目录> --report <同一目录内新文件> [--activation-gate]",
+        )),
+    }
+}
+
+fn parse_base_sha(args: &[String]) -> Result<Option<String>, CliError> {
+    match args {
+        [] => Ok(None),
+        [option, value] if option == "--base-sha" => {
+            if value.is_empty() {
+                return Ok(None);
+            }
+            if value.len() != 40
+                || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || value.bytes().all(|byte| byte == b'0')
+            {
+                return Err(CliError::new(
+                    "--base-sha 必须是非零的 40 位十六进制提交 SHA；无基准事件应传空值或省略参数",
+                ));
+            }
+            Ok(Some(value.to_ascii_lowercase()))
+        }
+        _ => Err(CliError::new(
+            "此 CI 子命令只接受可选参数 --base-sha <SHA>，不得重复指定",
         )),
     }
 }

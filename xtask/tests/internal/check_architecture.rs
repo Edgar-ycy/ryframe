@@ -400,6 +400,47 @@ fn temporary_edge_policy_requires_reason_and_rejects_expired_registration() {
 }
 
 #[test]
+fn changed_ranges_use_the_explicit_commit_and_reject_invalid_baselines() {
+    let directory = test_dir();
+    let root = directory.path();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--quiet"]);
+    git(&["config", "user.name", "CI"]);
+    git(&["config", "user.email", "ci@example.invalid"]);
+    write(root, "sample.rs", "fn first() {}\n");
+    git(&["add", "sample.rs"]);
+    git(&["commit", "--quiet", "-m", "fixture"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    write(root, "sample.rs", "fn first() {}\nfn added() {}\n");
+    git(&["commit", "--quiet", "-am", "change"]);
+    let mut errors = Vec::new();
+    let changed = ast::changed::changed_line_ranges(root, Some(&base), &mut errors).unwrap();
+    assert_eq!(changed["sample.rs"], [(2, 2)]);
+    assert!(
+        ast::changed::changed_line_ranges(root, None, &mut errors)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(errors.is_empty());
+    for invalid in ["HEAD", "0000000000000000000000000000000000000000"] {
+        assert!(ast::changed::changed_line_ranges(root, Some(invalid), &mut errors).is_none());
+    }
+    assert_eq!(errors.len(), 2);
+}
+
+#[test]
 fn changed_ranges_ignore_deletion_hunks_and_expand_untracked_paths() {
     let diff = "\
 diff --git a/src/lib.rs b/src/lib.rs
@@ -748,6 +789,7 @@ fn rust_ast_bridge_preserves_tree_sitter_function_and_unsafe_records() {
         &["crates/example/templates/unsafe.rs.tpl".to_owned()],
         &function_size,
         &Default::default(),
+        None,
         &mut errors,
     );
     assert_eq!(stats.checked_unsafe_sources, 2);
@@ -776,6 +818,7 @@ fn ast_helper_process_failure_produces_an_explicit_diagnostic() {
         &[],
         &function_size,
         &Default::default(),
+        None,
         &mut errors,
     );
     assert_eq!(stats.checked_unsafe_sources, 1);
@@ -834,14 +877,14 @@ fn function_policy_applies_changed_ranges_orchestration_and_exception_growth() {
 #[test]
 fn checked_in_workspace_passes_the_rust_architecture_task() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    architecture::run(root).unwrap();
+    architecture::run(root, None).unwrap();
 }
 
 #[test]
 fn failed_architecture_check_preserves_exit_code_and_writes_nothing() {
     let directory = test_dir();
     let before = fs::read_dir(directory.path()).unwrap().count();
-    let error = architecture::run(directory.path()).unwrap_err();
+    let error = architecture::run(directory.path(), None).unwrap_err();
     let after = fs::read_dir(directory.path()).unwrap().count();
     assert_eq!(super::process::failure_exit_code(error.as_ref()), Some(1));
     assert_eq!(before, after);

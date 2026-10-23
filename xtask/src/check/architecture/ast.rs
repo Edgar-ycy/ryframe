@@ -73,6 +73,7 @@ pub(crate) fn validate_ast(
     templates: &[String],
     function_size: &Table,
     frozen_migrations: &BTreeSet<String>,
+    base_sha: Option<&str>,
     errors: &mut Vec<String>,
 ) -> AstStats {
     let response = run_helper(root, sources, templates, errors);
@@ -93,7 +94,7 @@ pub(crate) fn validate_ast(
     let mutable = mutable_function_records(&response.functions, frozen_migrations, &retained);
     let excluded_frozen_functions = response.functions.len() - mutable.len();
     let changed = if policy.mode == "changed" {
-        changed::changed_line_ranges(root, errors)
+        changed::changed_line_ranges(root, base_sha, errors)
     } else {
         None
     };

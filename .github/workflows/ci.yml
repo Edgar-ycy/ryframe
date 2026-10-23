@@ -54,9 +54,10 @@ jobs:
         id: plan
         env:
           GITHUB_EVENT_ACTION: ${{ github.event.action }}
-          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: cargo xtask check ci plan
+        run: >-
+          cargo xtask check ci plan
+          --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
 
       - name: 固定 CI Python 3.12
         if: ${{ steps.plan.outputs.preflight == 'true' }}
@@ -117,9 +118,9 @@ jobs:
 
       - name: 执行仓库快速预检
         if: ${{ steps.plan.outputs.preflight == 'true' }}
-        env:
-          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
-        run: cargo xtask check ci preflight --frontend-dir ../frontend
+        run: >-
+          cargo xtask check ci preflight --frontend-dir ../frontend
+          --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
 
   # ============================================================
   # Rust 单一编译门禁
@@ -393,11 +394,12 @@ jobs:
         if: ${{ needs.plan.outputs.resource_gate == 'true' }}
         working-directory: backend
         env:
-          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
-        run: cargo xtask check ci resource-gate --frontend-dir ../frontend
+        run: >-
+          cargo xtask check ci resource-gate --frontend-dir ../frontend
+          --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
 
       - name: 校验正式前端消费契约
         if: ${{ needs.plan.outputs.consumer_contract == 'true' }}

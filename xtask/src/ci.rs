@@ -61,7 +61,7 @@ const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
-        CiCommand::Plan => plan(),
+        CiCommand::Plan(base) => plan(base.as_deref()),
         CiCommand::ResourceGateReplay(options) => {
             resource_gate::replay::run(&options, frontend_dir)
         }
@@ -83,11 +83,11 @@ fn execute_ci_command(command: &CiCommand, frontend_dir: &Path) -> Result<()> {
     task_plan::execute_ci_job(command, &plan, frontend_dir)
 }
 
-fn plan() -> Result<()> {
+fn plan(base: Option<&str>) -> Result<()> {
     let root = root_dir();
     let event = env::var("GITHUB_EVENT_NAME").unwrap_or_else(|_| "local".to_owned());
     let action = env::var("GITHUB_EVENT_ACTION").unwrap_or_default();
-    let (paths, repository_range_valid) = ci_changed_paths(&root, &event)?;
+    let (paths, repository_range_valid) = ci_changed_paths(&root, &event, base)?;
     let graph = load_workspace_graph(&root)?;
     let selection = ci_selection_for_paths(&paths, &graph);
     let resource_gate = resource_gate::should_run_for_paths(&paths)
@@ -136,24 +136,21 @@ fn action_label(action: &str) -> String {
     }
 }
 
-fn ci_changed_paths(root: &Path, event: &str) -> Result<(Vec<String>, bool)> {
+fn ci_changed_paths(root: &Path, event: &str, base: Option<&str>) -> Result<(Vec<String>, bool)> {
     if let Ok(configured) = env::var("RYFRAME_CI_CHANGED_PATHS") {
         return Ok((
             parse_changed_paths(&configured),
-            configured_ci_range_valid(),
+            configured_ci_range_valid(base),
         ));
     }
     if FULL_CI_EVENTS.contains(&event) {
         // 定时、手动和主分支构建必须完整执行，具体文件列表不影响计划。
-        return Ok((Vec::new(), configured_ci_range_valid()));
+        return Ok((Vec::new(), configured_ci_range_valid(base)));
     }
-    let base = env::var("RYFRAME_CI_BASE_SHA")
-        .or_else(|_| env::var("GITHUB_BASE_SHA"))
-        .ok();
     let head = env::var("RYFRAME_CI_HEAD_SHA")
         .or_else(|_| env::var("GITHUB_SHA"))
         .ok();
-    match (base.as_deref(), head.as_deref()) {
+    match (base, head.as_deref()) {
         (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head) => {
             match changed_paths_between(root, base, head) {
                 Ok(paths) => Ok((paths, true)),
@@ -167,15 +164,12 @@ fn ci_changed_paths(root: &Path, event: &str) -> Result<(Vec<String>, bool)> {
     }
 }
 
-fn configured_ci_range_valid() -> bool {
-    let base = env::var("RYFRAME_CI_BASE_SHA")
-        .or_else(|_| env::var("GITHUB_BASE_SHA"))
-        .ok();
+fn configured_ci_range_valid(base: Option<&str>) -> bool {
     let head = env::var("RYFRAME_CI_HEAD_SHA")
         .or_else(|_| env::var("GITHUB_SHA"))
         .ok();
     matches!(
-        (base.as_deref(), head.as_deref()),
+        (base, head.as_deref()),
         (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head)
     )
 }

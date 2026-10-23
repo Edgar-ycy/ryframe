@@ -75,11 +75,11 @@ pub(crate) struct ResourceGateDecision {
     pub(crate) steps: Vec<String>,
 }
 
-pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
+pub(crate) fn run(frontend_dir: &Path, base: Option<&str>) -> Result<()> {
     let root = root_dir();
     let recognized =
         targeted_activation_from(env::var("RYFRAME_RESOURCE_GATE_TARGETED").ok().as_deref());
-    let loaded = match repository::load(&root) {
+    let loaded = match repository::load(&root, base) {
         Ok(loaded) => loaded,
         Err(reason) => {
             let change_set = ResourceChangeSet {

@@ -242,7 +242,11 @@ pub(super) fn execute_ci_job(
         job.definition().output_name,
         job.definition().command_name
     );
-    let context = VerifyExecutionContext::new_ci(frontend_dir)?;
+    let mut context = VerifyExecutionContext::new_ci(frontend_dir)?;
+    context.base_sha = match command {
+        CiCommand::Preflight(base) | CiCommand::ResourceGate(base) => base.clone(),
+        _ => None,
+    };
     let mut state = CheckExecutionState::default();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
@@ -275,7 +279,9 @@ fn execute_ci_task(
             super::verify_formal_contract_source_from_environment(&context.frontend_dir)
         }
         TaskExecutor::CiWindowsSmoke => super::windows_smoke(&context.frontend_dir),
-        TaskExecutor::CiResourceGate => super::resource_gate::run(&context.frontend_dir),
+        TaskExecutor::CiResourceGate => {
+            super::resource_gate::run(&context.frontend_dir, context.base_sha.as_deref())
+        }
         TaskExecutor::CiIntegration => super::integration(),
         executor => execute_registered_task(executor, TaskExecutionMode::Ci, context, state),
     }
@@ -283,12 +289,12 @@ fn execute_ci_task(
 
 fn job_for_command(command: &CiCommand) -> Result<CiJob> {
     match command {
-        CiCommand::Preflight => Ok(CiJob::Preflight),
+        CiCommand::Preflight(_) => Ok(CiJob::Preflight),
         CiCommand::RustGate => Ok(CiJob::RustGate),
-        CiCommand::ResourceGate => Ok(CiJob::ResourceGate),
+        CiCommand::ResourceGate(_) => Ok(CiJob::ResourceGate),
         CiCommand::Integration => Ok(CiJob::Integration),
         CiCommand::ConsumerContract => Ok(CiJob::ConsumerContract),
-        CiCommand::Plan
+        CiCommand::Plan(_)
         | CiCommand::ResourceGateReplay(_)
         | CiCommand::FrontendSource(_)
         | CiCommand::Required(_)

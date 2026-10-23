@@ -245,10 +245,10 @@ pub(crate) enum DataCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CiCommand {
-    Plan,
-    Preflight,
+    Plan(Option<String>),
+    Preflight(Option<String>),
     RustGate,
-    ResourceGate,
+    ResourceGate(Option<String>),
     ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
     ConsumerContract,

@@ -325,7 +325,14 @@ fn command_normalization_keeps_frontend_absolute_and_expands_xtask() {
     assert_eq!(normalized.last().unwrap(), &frontend.to_string_lossy());
     let runner = Path::new("D:/runner/Cargo.toml");
     let target = Path::new("D:/runner-target");
-    let expanded = command_for_replay(&command, frontend, target, runner).unwrap();
+    let expanded = command_for_replay(
+        &command,
+        frontend,
+        target,
+        runner,
+        "1111111111111111111111111111111111111111",
+    )
+    .unwrap();
     assert_eq!(
         expanded.iter().map(String::as_str).collect::<Vec<_>>(),
         vec![
@@ -344,6 +351,8 @@ fn command_normalization_keeps_frontend_absolute_and_expands_xtask() {
             "resource-gate",
             "--frontend-dir",
             "D:/前端 worktree",
+            "--base-sha",
+            "1111111111111111111111111111111111111111",
         ]
     );
     assert_eq!(expanded[8], "xtask");
@@ -370,7 +379,14 @@ fn command_expansion_preserves_option_and_unicode_path_argument_boundaries() {
     .to_vec();
     let normalized = command_for_frontend(&command, frontend).unwrap();
     assert_eq!(normalized[6], frontend.to_string_lossy());
-    let expanded = command_for_replay(&command, frontend, target, runner).unwrap();
+    let expanded = command_for_replay(
+        &command,
+        frontend,
+        target,
+        runner,
+        "1111111111111111111111111111111111111111",
+    )
+    .unwrap();
     assert_eq!(
         expanded.iter().map(String::as_str).collect::<Vec<_>>(),
         [
