@@ -1,5 +1,6 @@
 """fresh 目标 inventory 与严格迁移前缀续作回归。"""
 import copy
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import re
@@ -44,7 +45,7 @@ def publish_initialized_files(output, files=None):
         "format_version": 1, "kind": "devex-clone-fresh-target-initialized-files",
         "registration": receipt_binding(workspace / "registration.json"),
         "predecessor": receipt_binding(workspace / "prepared-files.json"),
-        "files": target_evidence.target_files(output) if files is None else files,
+        "files": target_binding.target_files(output) if files is None else files,
     })
 
 
@@ -77,7 +78,7 @@ def fail_readonly_receipt(path, value):
 
 def migration_resume_state(backend, output, descriptor):
     return target_evidence.migration_resume_state(
-        backend, output, descriptor, target.target_evidence_hooks(), prepared_files(output)
+        backend, output, descriptor, prepared_files(output)
     )
 
 
@@ -148,31 +149,13 @@ class TargetResumeTests(unittest.TestCase):
         return {"path": str(self.f.path), **file_digest(self.f.path)}
 
     def fixture_restart(self):
-        f = self.f
-        run, results = f.local / "service-run", f.local / "service-run/results"
-        results.mkdir(parents=True)
-        (run / "manifest.json").write_text(
-            json.dumps({"kind": "reference-fixture-service-run"}), encoding="utf-8"
-        )
-        # 重启结果经 generation 文件绑定 Redis 请求中的真实 WSL 工具指纹。
-        redis_request = f.bound(results / "redis-request.json", {
-            "wsl": copy.deepcopy(f.request["storage"]["redis"]["wsl"]),
-        })
-        restarted = f.bound(results / "restart-generation.json", {
-            "redis": {"request": redis_request},
-        })
-        generation = f.bound(results / "restart.json", {"generation": restarted})
-        directory = Path(f.review["services"]["rustfs"]["data_dir"])
-        storage_runtime = {
-            "storage": copy.deepcopy(f.request["storage"]["rustfs"]),
-            "data_directory": {"path": str(directory), "device": directory.stat().st_dev,
-                               "inode": directory.stat().st_ino},
-            "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
-            "generation": generation,
-        }
-        redis = copy.deepcopy(f.request["storage"]["redis"]); redis["run_id"] = "4" * 40
-        f.storage_restarted = True; f.redis_values.clear()
-        return run, storage_runtime, {"redis": redis, "generation": generation}
+        from devex_clone_target_resume_fixture import restart
+
+        run, storage, cache = restart(self.f)
+        # 外部运行代次来源仍由独立校验器负责；本夹具只替代该来源读取，Rust 核验完整本地账本。
+        self.enterContext(patch("devex_clone_target_runtime_evidence._fixture_runtime_evidence",
+                                return_value=(storage, cache)))
+        return run, storage, cache
 
     def use_long_path_fixture(self):
         temporary = WorkspaceDirectory(
@@ -284,11 +267,16 @@ class TargetResumeTests(unittest.TestCase):
         confirmation_path = next(f.output.glob("resume-initialize-*.confirmed.json"))
         started_path = next(f.output.glob("resume-initialize-*.started.json"))
 
+        with patch.object(target_evidence, "validate_started_generation",
+                          side_effect=ValueError("可信运行代次来源拒绝")) as source:
+            self.assertFalse(target_evidence.migration_resume_confirmed(f.root, f.output, result))
+            source.assert_called_once()
+
         original_confirmation = copy.deepcopy(confirmation)
         confirmation["at"] = ""
         replace_json(confirmation_path, confirmation)
         self.assertFalse(target_evidence.migration_resume_confirmed(
-            f.root, f.output, result, target.target_evidence_hooks()
+            f.root, f.output, result
         ))
         confirmation = copy.deepcopy(original_confirmation)
         replace_json(confirmation_path, confirmation)
@@ -349,6 +337,22 @@ class TargetResumeTests(unittest.TestCase):
         replace_json(confirmation_path, confirmation)
         self.assertTrue(target.unresolved_failure(f.root, f.output))
 
+    def test_migration_resume_preserves_frozen_binary_field_order(self):
+        f = self.f
+        artifacts = f.maintenance["artifacts"]
+        f.maintenance["artifacts"] = {role: artifacts[role] for role in sorted(artifacts)}
+        build_path = Path(f.request["maintenance_build"]["path"])
+        replace_json(build_path, f.maintenance)
+        f.request["maintenance_build"] = receipt_binding(build_path)
+        replace_json(f.path, f.request)
+        descriptor = self.interrupt_migration_prefix(3)
+        result = resume_initialize_target(f.root, f.output, f.run, request_descriptor=descriptor)
+        self.assertEqual(result["status"], "fresh_target_initialized")
+        self.assertFalse(target.unresolved_failure(f.root, f.output))
+        intent = read_json(next(f.output.glob("resume-initialize-*.intent.json")))
+        self.assertEqual([item["path"] for item in intent["protected_binaries"]][1:3],
+                         [str(f.paths["migrate"]), str(f.paths["reset"])])
+
     def test_fixture_restart_rebinds_only_redis_markers_before_resume(self):
         f = self.f
         descriptor = self.interrupt_migration_prefix(3)
@@ -356,8 +360,7 @@ class TargetResumeTests(unittest.TestCase):
         run, storage_runtime, cache_runtime = self.fixture_restart()
         transition = (storage_runtime, cache_runtime)
         with patch("reference_fixture_service_context.runtime_transition",
-                   return_value=transition), \
-                patch.object(target_evidence, "validate_started_generation"):
+                   return_value=transition):
             result = resume_initialize_target(
                 f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run
             )
@@ -507,13 +510,10 @@ class TargetResumeTests(unittest.TestCase):
                 self.initialize()
         descriptor = {"path": str(f.path), **file_digest(f.path)}
         linked_path = f.output / "reset-state"
-        original = target_evidence.linked
         binding_linked = target_binding.linked
         calls = len(f.calls)
 
-        with patch.object(target_evidence, "linked",
-                          side_effect=lambda path: path == linked_path or original(path)), \
-                patch.object(target_binding, "linked",
+        with patch.object(target_binding, "linked",
                              side_effect=lambda path: path == linked_path or binding_linked(path)), \
                 self.assertRaisesRegex(ValueError, "经过链接"):
             resume_inventory_target(
@@ -713,42 +713,35 @@ class TargetResumeTests(unittest.TestCase):
             migration_resume_state(f.root, f.output, descriptor)
 
     def test_migration_resume_rejects_linked_required_evidence_before_intent(self):
+        from devex_clone_target_resume_fixture import linked_evidence
+
         f = self.f
         descriptor = self.interrupt_migration_prefix(3)
-        original = target_evidence.linked
-        binding_linked = target_binding.linked
+        self.assertTrue(migration_resume_state(f.root, f.output, descriptor)["resumable"])
         calls = len(f.calls)
-        for linked_path in (f.output / "reset-plan.json", f.output / "reset-state"):
-            with self.subTest(path=linked_path), patch.object(
-                    target_evidence, "linked",
-                    side_effect=lambda path, expected=linked_path: path == expected or original(path)), \
-                    patch.object(target_binding, "linked", side_effect=lambda path, expected=linked_path:
-                                 path == expected or binding_linked(path)), \
-                    self.assertRaisesRegex(ValueError, "经过链接"):
-                resume_initialize_target(
-                    f.root, f.output, f.run, request_descriptor=descriptor
-                )
+        for path in (f.output / "reset-plan.json", f.output / "reset-state"):
+            with self.subTest(path=path), linked_evidence(path), self.assertRaises(ValueError):
+                resume_initialize_target(f.root, f.output, f.run, request_descriptor=descriptor)
             self.assertFalse(any(f.output.glob("resume-initialize-*.intent.json")))
             self.assertEqual(len(f.calls), calls)
 
     def test_migration_resume_rechecks_links_after_initialize_lock(self):
+        from devex_clone_target_resume_fixture import linked_evidence
+
         f = self.f
         descriptor = self.interrupt_migration_prefix(3)
-        linked_path = f.output / "reset-state"
-        original = target_evidence.linked
-        binding_linked = target_binding.linked
+        lock = target_resume.generation_lock
+        self.assertTrue(migration_resume_state(f.root, f.output, descriptor)["resumable"])
         calls = len(f.calls)
 
-        def linked_after_lock(path):
-            return ((f.output / "initialize.lock").exists() and path == linked_path) or original(path)
+        @contextmanager
+        def linked_after_lock(output, **options):
+            with lock(output, **options) as identity:
+                with linked_evidence(output / "reset-state"):
+                    yield identity
 
-        with patch.object(target_evidence, "linked", side_effect=linked_after_lock), \
-                patch.object(target_binding, "linked", side_effect=linked_after_lock), \
-                self.assertRaisesRegex(ValueError, "经过链接"):
-            resume_initialize_target(
-                f.root, f.output, f.run, request_descriptor=descriptor
-            )
-
+        with patch.object(target_resume, "generation_lock", new=linked_after_lock), self.assertRaises(ValueError):
+            resume_initialize_target(f.root, f.output, f.run, request_descriptor=descriptor)
         self.assertFalse(any(f.output.glob("resume-initialize-*.intent.json")))
         self.assertEqual(len(f.calls), calls)
 
@@ -795,7 +788,7 @@ class TargetResumeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "predecessor"):
             target_evidence.migration_resume_state(
-                f.root, f.output, descriptor, target.target_evidence_hooks(), evidence
+                f.root, f.output, descriptor, evidence
             )
 
     def test_migration_resume_rejects_unknown_create_or_reset_evidence(self):
@@ -1005,7 +998,6 @@ class TargetResumeTests(unittest.TestCase):
         run, storage_runtime, cache_runtime = self.fixture_restart()
         with patch("reference_fixture_service_context.runtime_transition",
                    return_value=(storage_runtime, cache_runtime)), \
-                patch.object(target_evidence, "validate_started_generation"), \
                 patch.object(Resources, "_redis", side_effect=f.redis) as redis:
             with patch.object(target_resources, "write_json", new=fail_readonly_receipt), \
                     self.assertRaises(FileNotFoundError):
@@ -1018,6 +1010,9 @@ class TargetResumeTests(unittest.TestCase):
             failure_path = next(f.output.glob("resume-initialize-*.failure.json"))
             self.assertEqual(migration_resume_state(f.root, f.output, descriptor)["mode"],
                              "migration-successor")
+            with patch.object(target_evidence, "validate_started_generation",
+                              side_effect=ValueError("可信运行代次来源拒绝")), self.assertRaises(ValueError):
+                migration_resume_state(f.root, f.output, descriptor)
             corruptions = [
                 ("unknown write", {"unknown_write_operation": "redis-marker-rebind"}),
                 ("already confirmed", {"confirmed_operations": [{"id": "unexpected"}]}),
@@ -1062,11 +1057,10 @@ class TargetResumeTests(unittest.TestCase):
         self.assertEqual(successor["predecessor"], receipt_binding(next(
             f.output.glob("resume-initialize-*.failure.json"))))
         self.assertEqual(result["status"], "fresh_target_initialized")
-        with patch.object(target_evidence, "validate_started_generation"), \
-                patch("reference_fixture_service_context.runtime_transition",
+        with patch("reference_fixture_service_context.runtime_transition",
                       return_value=(storage_runtime, cache_runtime)):
-            self.assertTrue(target_evidence._migration_resume_confirmed(
-                f.root, f.output, result, target.target_evidence_hooks()
+            self.assertTrue(target_evidence.migration_resume_confirmed(
+                f.root, f.output, result
             ))
             self.assertFalse(target.unresolved_failure(f.root, f.output))
             confirmation_path = next(f.output.glob("resume-initialize-*.confirmed.json"))
@@ -1084,12 +1078,12 @@ class TargetResumeTests(unittest.TestCase):
                     replace_json(confirmation_path, {**confirmation,
                                  "started": receipt_binding(started_path)})
                     self.assertFalse(target_evidence.migration_resume_confirmed(
-                        f.root, f.output, result, target.target_evidence_hooks()))
+                        f.root, f.output, result))
                     replace_json(started_path, started)
                     replace_json(confirmation_path, confirmation)
             replace_json(confirmation_path, {**confirmation, "predecessor": descriptor})
             self.assertFalse(target_evidence.migration_resume_confirmed(
-                f.root, f.output, result, target.target_evidence_hooks()))
+                f.root, f.output, result))
             replace_json(confirmation_path, confirmation)
         with self.assertRaises(ValueError):
             resume_initialize_target(f.root, f.output, f.run, request_descriptor=descriptor)
@@ -1101,7 +1095,6 @@ class TargetResumeTests(unittest.TestCase):
         run, storage_runtime, cache_runtime = self.fixture_restart()
         with patch("reference_fixture_service_context.runtime_transition",
                    return_value=(storage_runtime, cache_runtime)), \
-                patch.object(target_evidence, "validate_started_generation"), \
                 patch.object(target_resources, "write_json", new=fail_readonly_receipt), \
                 patch.object(Resources, "_redis", side_effect=f.redis) as redis:
             for _ in range(2):

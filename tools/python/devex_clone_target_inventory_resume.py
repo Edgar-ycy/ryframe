@@ -18,6 +18,12 @@ from devex_clone_target_time import ordered, parse_timestamp, timestamp as _time
 import devex_clone_target_tree_claim as tree_claim
 
 
+INITIALIZED_FIELDS = {"format_version", "status", "id", "scope_id", "completed_at", "generation",
+                      "prepare_sha256", "reset", "inventory", "objects", "redis", "history",
+                      "controlled_generation_never_started", "external_writers_discovered",
+                      "target_ready", "clone_verified", "restore_qualified"}
+
+
 def _inventory_resume_confirmed(backend: Path, output: Path, initialized: dict) -> bool:
     """仅接受绑定原 inventory 失败和最终初始化收据的显式恢复确认。"""
     confirmations = list(output.glob("resume-initialize-*.confirmed.json"))
@@ -40,7 +46,6 @@ def _inventory_resume_confirmed(backend: Path, output: Path, initialized: dict) 
                    "prepared_files", "remote_writes"})
     failed = read_json(failure_path)
     from devex_clone_target import FAILURE_FIELDS
-    from devex_clone_target_resume_evidence import INITIALIZED_FIELDS
 
     exact(failed, FAILURE_FIELDS)
     exact(initialized, INITIALIZED_FIELDS)
@@ -193,8 +198,6 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
                                              validate_initialization_delta)
     from devex_clone_target import (FAILURE_FIELDS, PREPARE_FIELDS,
                                     initialization_failure_path)
-    from devex_clone_target_resume_evidence import (_creation_evidence, _initialization_paths,
-                                                    _reset_evidence)
 
     backend, output = backend.resolve(strict=True), local_path(backend, str(output))
     files_before = target_files(output, ignored={"initialize.lock"},
@@ -230,8 +233,8 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
     if request != read_json(output / "request.json"):
         return {"resumable": False, "reason": "固定请求文件已变化"}
     baseline = prepared_target_files(backend, output, prepared_files, request_descriptor)
-    creation = _creation_evidence(output, request)
-    reset = _reset_evidence(backend, output, request, prepared["generation"])
+    creation = evidence("creation-evidence", backend, output, request=request)
+    reset = evidence("reset-evidence", backend, output, request=request, original=prepared["generation"])
     retries = _inventory_resume_records(
         backend, output, binding(failure_path), failed["at"], prepared_files,
         read_json(output / "reset-plan.json"),
@@ -240,7 +243,7 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
     operations = evidence("migration-operations", backend, output,
                           executable=cli_executable(prepared["generation"]["maintenance"], "migrate"))["operations"]
     completed = evidence("migration-prefix", backend, output, operations=operations, complete=True)["completed"]
-    required = _initialization_paths(output, creation, reset, completed)
+    required = set(evidence("initialization-paths", backend, output, creation=creation, reset=reset, prefix=completed)["paths"])
     required.add(failure_path.name)
     required.update(retries["files"])
     if (output / "inventory-initial").is_dir():

@@ -27,7 +27,7 @@ pub(crate) mod request_evidence;
 #[path = "request_physical.rs"]
 pub(crate) mod request_physical;
 #[path = "request_review.rs"]
-mod request_review;
+pub(super) mod request_review;
 #[cfg(test)]
 #[path = "../../../../../tests/internal/target_request_native.rs"]
 mod request_tests;

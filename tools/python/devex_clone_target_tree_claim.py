@@ -133,18 +133,16 @@ def validate_complete(backend: Path, output: Path, baseline: list[dict], request
                       original: dict, initial: dict, inventory_files: tuple[dict, ...],
                       result: dict) -> list[dict]:
     """只接受固定创建、reset、迁移、库存和最终发布组成的完整树。"""
-    from devex_clone_target_resume_evidence import (
-        _creation_evidence, _initialization_paths, _reset_evidence)
 
     from devex_clone_target_evidence import evidence
     from devex_clone_export import cli_executable
 
-    creation = _creation_evidence(output, request)
-    reset = _reset_evidence(backend, output, request, original)
+    creation = evidence("creation-evidence", backend, output, request=request)
+    reset = evidence("reset-evidence", backend, output, request=request, original=original)
     operations = evidence("migration-operations", backend, output,
                           executable=cli_executable(original["maintenance"], "migrate"))["operations"]
     completed = evidence("migration-prefix", backend, output, operations=operations, complete=True)["completed"]
-    required = _initialization_paths(output, creation, reset, completed)
+    required = set(evidence("initialization-paths", backend, output, creation=creation, reset=reset, prefix=completed)["paths"])
     required.discard("failure.json")
     required.update(_inventory_paths(output, initial, inventory_files))
     required.update({"initialized-candidate.json", "initialized.json"})

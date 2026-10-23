@@ -1,6 +1,7 @@
 """新目标的固定 MySQL、S3、Redis 操作；不启动服务、不复制业务或删除资源。"""
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path

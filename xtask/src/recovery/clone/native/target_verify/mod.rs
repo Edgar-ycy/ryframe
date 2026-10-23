@@ -8,7 +8,11 @@ use crate::Result;
 
 pub(crate) mod authority;
 pub(crate) mod database;
+pub(crate) mod evidence_creation;
+mod evidence_model;
+pub(crate) mod evidence_prepare;
 pub(crate) mod evidence_protocol;
+pub(crate) mod evidence_reset;
 mod execution;
 pub(crate) mod guard;
 pub(crate) mod input;
@@ -17,7 +21,17 @@ pub(crate) mod proof;
 pub(crate) mod publication;
 pub(crate) mod redis;
 pub(crate) mod reset;
+mod resume_baseline;
+mod resume_confirmed;
+mod resume_model;
+mod resume_observations;
+mod resume_predecessor;
 pub(crate) mod resume_prefix;
+mod resume_runtime;
+mod resume_state;
+#[cfg(test)]
+#[path = "../../../../../tests/internal/target_resume_evidence.rs"]
+mod resume_tests;
 pub(crate) mod storage;
 pub(crate) mod tree;
 

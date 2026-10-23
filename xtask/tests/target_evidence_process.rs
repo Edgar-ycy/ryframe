@@ -193,3 +193,89 @@ fn migration_protocol_refuses_private_bad_output_and_binds_successful_operation(
     assert_eq!(response["result"]["bytes"], bytes.len());
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[test]
+fn prepare_history_keeps_failure_diagnostics_in_bound_file_only() {
+    let backend = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let parent = backend.join(".local-tests/target-evidence-process");
+    std::fs::create_dir_all(&parent).unwrap();
+    let directory = tempfile::tempdir_in(parent).unwrap();
+    let attempt = "a".repeat(32);
+    let descriptor =
+        json!({"path":directory.path().join("request.json"),"bytes":2,"sha256":"b".repeat(64)});
+    let intent_path = directory
+        .path()
+        .join(format!("resume-prepare-{attempt}.intent.json"));
+    let intent = serde_json::to_vec(
+        &json!({"format_version":1,"kind":"devex-clone-prepare-resume-intent",
+        "attempt":attempt,"at":"2026-10-23T00:00:00Z","request":descriptor,"files_before":{}}),
+    )
+    .unwrap();
+    std::fs::write(&intent_path, &intent).unwrap();
+    use sha2::{Digest, Sha256};
+    let binding = json!({"path":intent_path,"bytes":intent.len(),"sha256":hex::encode(Sha256::digest(&intent))});
+    let failure_path = directory
+        .path()
+        .join(format!("resume-prepare-{attempt}.failure.json"));
+    let secret = "fixture-raw-failure-diagnostic-private";
+    let failure = serde_json::to_vec(
+        &json!({"format_version":1,"kind":"devex-clone-prepare-resume-failure",
+        "attempt":attempt,"at":"2026-10-23T00:00:01Z","intent":binding,"remote_writes":0,
+        "error_type":secret,"reason":secret}),
+    )
+    .unwrap();
+    std::fs::write(&failure_path, &failure).unwrap();
+    let request = json!({"format_version":1,"operation":"prepare-resume-records",
+        "backend":backend,"target":directory.path(),"request_descriptor":descriptor});
+    let output = invoke(
+        &["__target-evidence"],
+        &serde_json::to_vec(&request).unwrap(),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["result"]["pending"], json!([]));
+    assert_eq!(std::fs::read(failure_path).unwrap(), failure);
+}
+
+#[test]
+fn resume_confirmation_is_fail_closed_without_python_or_private_output() {
+    let backend = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let parent = backend.join(".local-tests/target-resume-process");
+    std::fs::create_dir_all(&parent).unwrap();
+    let directory = tempfile::tempdir_in(parent).unwrap();
+    let path = directory.path().join(format!(
+        "resume-initialize-{}.confirmed.json",
+        "a".repeat(32)
+    ));
+    let secret = "private-resume-evidence-never-echo";
+    let bytes = serde_json::to_vec(
+        &json!({"kind":"devex-clone-migration-resume-confirmed","private":secret}),
+    )
+    .unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let request = json!({"format_version":1,"operation":"migration-resume-confirmed",
+        "backend":backend,"target":directory.path(),"initialized":{"private":secret}});
+    let result = invoke(
+        &["__target-evidence"],
+        &serde_json::to_vec(&request).unwrap(),
+    );
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    assert!(!String::from_utf8_lossy(&result.stdout).contains(secret));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        json!({"ok":true,"result":{"confirmed":false}})
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}

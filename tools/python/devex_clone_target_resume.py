@@ -24,14 +24,13 @@ from restore_reference_plan import plan_hash
 def initialize_resume_state(backend: Path, output: Path, request_descriptor: dict,
                             prepared_files: dict) -> dict:
     """统一判定库存失败或严格迁移前缀，两类证据不能互相降级。"""
-    from devex_clone_target import target_evidence_hooks
     from devex_clone_target_inventory_resume import inventory_resume_state
 
     inventory = inventory_resume_state(backend, output, request_descriptor, prepared_files)
     if inventory["resumable"]:
         return {**inventory, "mode": "inventory"}
     migration = migration_resume_state(backend, output, request_descriptor,
-                                       target_evidence_hooks(), prepared_files)
+                                       prepared_files)
     if migration["resumable"]:
         return migration
     return {"resumable": False,
@@ -171,13 +170,12 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                             request_descriptor: dict | None = None,
                             prepared_files: dict, publish_files=None) -> dict:
     """从首个缺失 verify 起完成迁移、库存和发布，已有命令一条也不重放。"""
-    from devex_clone_target import context, inventory, target_evidence_hooks, unchanged
+    from devex_clone_target import context, inventory, unchanged
 
     backend, output = backend.resolve(strict=True), local_path(backend, str(output))
     prepared = read_json(output / "prepare.json")
     expected = prepared["request"] if request_descriptor is None else request_descriptor
-    hooks = target_evidence_hooks()
-    state = migration_resume_state(backend, output, expected, hooks, prepared_files)
+    state = migration_resume_state(backend, output, expected, prepared_files)
     if not state["resumable"]:
         raise ValueError("迁移初始化不可续作：" + state["reason"])
     attempt = uuid.uuid4().hex
@@ -190,7 +188,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
     after_unlock = [] if publish_files is not None else None
     try:
         with generation_lock(output, after_initialize_unlock=after_unlock) as lock_identity:
-            if migration_resume_state(backend, output, expected, hooks, prepared_files,
+            if migration_resume_state(backend, output, expected, prepared_files,
                                       owned_lock_identity=lock_identity) != state:
                 raise ValueError("取得初始化锁前迁移前缀或固定前像发生变化")
             binaries = execution_binary_bindings(backend, state["request"])

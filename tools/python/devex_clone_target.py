@@ -41,14 +41,6 @@ PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request
 FAILURE_FIELDS = {"status", "stage", "at", "error_type", "reason", "automatic_retry",
                   "automatic_resource_cleanup", "fresh_target_initialized", "clone_verified",
                   "restore_qualified"}
-RESUME_FIELDS = {"format_version", "kind", "attempt", "at", "request", "files_before"}
-
-
-def target_evidence_hooks():
-    """为叶子证据模块绑定当前目标实现，不形成反向导入。"""
-    from devex_clone_target_resume_evidence import TargetEvidenceHooks
-
-    return TargetEvidenceHooks(resume_records=_resume_records, prepare_artifact=_prepare_artifact)
 
 
 def _prepare_failure(output: Path) -> dict | None:
@@ -82,66 +74,7 @@ def _prepare_artifact(name: str) -> bool:
 
 
 def _resume_records(backend: Path, output: Path, request_descriptor: dict) -> dict:
-    intents, intent_values, terminals = {}, {}, {}
-    for path in sorted(output.glob("resume-prepare-*.json")):
-        parsed = _resume_name(path.name)
-        if parsed is None:
-            raise ValueError("fresh 目标包含无法归属的 prepare 续作记录")
-        attempt, kind = parsed
-        value = read_json(path)
-        if kind == "intent":
-            exact(value, RESUME_FIELDS)
-            if (value["format_version"] != 1 or value["kind"] != "devex-clone-prepare-resume-intent"
-                    or value["attempt"] != attempt or value["request"] != request_descriptor
-                    or not timestamp(value["at"])
-                    or not isinstance(value["files_before"], dict)):
-                raise ValueError("fresh 目标 prepare 续作 intent 无效")
-            for name, descriptor in value["files_before"].items():
-                if not isinstance(name, str) or Path(name).name != name \
-                        or binding(output / name) != descriptor:
-                    raise ValueError("fresh 目标 prepare 续作前像变化")
-            intents[attempt], intent_values[attempt] = binding(path), value
-            continue
-        expected = {"format_version", "kind", "attempt", "at", "intent", "remote_writes"}
-        expected |= ({"prepare", "request"} if kind == "confirmed" else {"error_type", "reason"})
-        exact(value, expected)
-        if (value["format_version"] != 1 or value["kind"] != f"devex-clone-prepare-resume-{kind}"
-                or value["attempt"] != attempt or not timestamp(value["at"])
-                or value["remote_writes"] != 0):
-            raise ValueError("fresh 目标 prepare 续作结果无效")
-        if attempt in terminals:
-            raise ValueError("fresh 目标同一 prepare 续作同时存在多个结果")
-        terminals[attempt] = (kind, value, binding(path))
-    if set(terminals) - set(intents):
-        raise ValueError("fresh 目标 prepare 续作结果缺少原 intent")
-    causal_failure = None
-    if intents and (output / "failure.json").exists():
-        causal_failure = read_json(output / "failure.json")
-        exact(causal_failure, FAILURE_FIELDS)
-        if not timestamp(causal_failure["at"]):
-            raise ValueError("fresh 目标既有失败时间无效")
-    started_path = output / "initialize.started.json"
-    started_at = None
-    if intents and started_path.exists():
-        started = read_json(started_path)
-        exact(started, {"at", "generation_sha256"})
-        if not timestamp(started["at"]):
-            raise ValueError("fresh 初始化开始时间无效")
-        started_at = started["at"]
-    for attempt, (_, value, _) in terminals.items():
-        intent_value = intent_values[attempt]
-        if (value["intent"] != intents[attempt]
-                or not ordered(intent_value["at"], value["at"])):
-            raise ValueError("fresh 目标 prepare 续作结果不属于原 intent")
-    for value in intent_values.values():
-        if (causal_failure is not None and not ordered(causal_failure["at"], value["at"])
-                or started_at is not None and not ordered(value["at"], started_at)):
-            raise ValueError("fresh 目标 prepare 续作时间不属于初始化前因果链")
-    if started_at is not None and any(
-            not ordered(value[1]["at"], started_at) for value in terminals.values()):
-        raise ValueError("fresh 目标 prepare 续作结果晚于初始化开始")
-    return {"intents": intents, "terminals": terminals,
-            "pending": sorted(set(intents) - set(terminals))}
+    return evidence("prepare-resume-records", backend, output, request_descriptor=request_descriptor)
 
 
 def _prepare_failure_resolved(backend: Path, output: Path,
@@ -160,20 +93,8 @@ def _prepare_failure_resolved(backend: Path, output: Path,
         return False
 
 
-def initialization_failure_path(backend: Path, output: Path,
-                                request_descriptor: dict) -> Path:
-    """返回唯一初始化失败；允许其前面存在已收尾的 prepare 失败。"""
-    root = output / "failure.json"
-    secondary = sorted(path for path in output.glob("failure-*.json")
-                       if re.fullmatch(r"failure-[a-f0-9]{32}\.json", path.name))
-    all_secondary = sorted(output.glob("failure-*.json"))
-    if not root.is_file() or secondary != all_secondary or len(secondary) > 1:
-        raise ValueError("fresh 目标没有唯一可归属的初始化失败")
-    if not secondary:
-        return root
-    if not _prepare_failure_resolved(backend, output, request_descriptor):
-        raise ValueError("初始化失败之前的 prepare 失败尚未显式收尾")
-    return secondary[0]
+def initialization_failure_path(backend: Path, output: Path, request_descriptor: dict) -> Path:
+    return Path(evidence("initialization-failure", backend, output, request_descriptor=request_descriptor)["path"])
 
 
 def prepare_resume_state(backend: Path, output: Path, request_descriptor: dict) -> dict:
@@ -314,7 +235,7 @@ def unresolved_failure(backend: Path, output: Path) -> bool:
             from devex_clone_target_resume_evidence import migration_resume_confirmed
 
             migration = (migration_resume_confirmed(
-                         backend, output, initialized, target_evidence_hooks()))
+                         backend, output, initialized))
             if inventory or migration:
                 return False
             return not (active == output / "failure.json"
