@@ -6,7 +6,7 @@ use std::{
 };
 
 use regex::Regex;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::super::super::{clone::native, inputs};
 use crate::Result;
