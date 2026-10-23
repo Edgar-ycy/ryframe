@@ -35,7 +35,7 @@ class SourceFileConfigurationTests(unittest.TestCase):
         self.assertTrue(all(target["password"] == "fixture-secret" for target in table["tenant_data"]["targets"]))
         self.assertEqual(table["redis"]["password"], "redis-fixture-secret")
         self.assertEqual({field: table["object_storage"][field] for field in ("access_key", "secret_key")},
-                         {field: item.request["source"]["s3"][field] for field in ("access_key", "secret_key")})
+                         {"access_key": "access-fixture", "secret_key": "secret-fixture"})
         self.assertEqual(load_app_table(item.backend, item.environment, config_dir=item.backend / "config"), table)
         self.assertEqual((item.backend / "config/app.toml").read_text(encoding="utf-8").count("="), 0)
 
