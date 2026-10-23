@@ -422,6 +422,8 @@ class FrontendConfigurationTests(unittest.TestCase):
         command = [
             sys.executable,
             "-B",
+            "-X",
+            "utf8",
             str(ROOT / "tools/python/source_domain_contract.py"),
             "--frontend-dir",
             str(self.root),

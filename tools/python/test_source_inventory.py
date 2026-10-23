@@ -199,7 +199,8 @@ class SourceDomainContractNativeTests(unittest.TestCase):
         import subprocess
         from source_inventory import capture_inventory
         request = {"frontend_inventories": [capture_inventory(self.frontend)], "backend_inventories": []}
-        return subprocess.run([sys.executable, "-B", str(self.backend / "tools/python/source_domain_contract.py"),
+        return subprocess.run([sys.executable, "-B", "-X", "utf8",
+                               str(self.backend / "tools/python/source_domain_contract.py"),
                                "--frontend-dir", str(self.frontend)], input=json.dumps(request).encode(),
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1810, check=False)
 
