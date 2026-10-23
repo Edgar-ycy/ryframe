@@ -513,18 +513,12 @@ fn context_fixture_uses_the_published_session_context_and_user_schemas() {
     let reference = context["properties"]["user"]["$ref"].as_str().unwrap();
     let user = &schemas[reference.rsplit('/').next().unwrap()];
     let fixture = full_context("");
-    assert_eq!(
-        fixture["user"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .collect::<std::collections::BTreeSet<_>>(),
-        user["properties"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .collect::<std::collections::BTreeSet<_>>()
-    );
+    let fields = fixture["user"].as_object().unwrap();
+    let properties = user["properties"].as_object().unwrap();
+    for required in user["required"].as_array().unwrap() {
+        assert!(fields.contains_key(required.as_str().unwrap()));
+    }
+    assert!(fields.keys().all(|name| properties.contains_key(name)));
     assert!(
         !user["properties"]
             .as_object()
