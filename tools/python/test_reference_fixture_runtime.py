@@ -190,9 +190,10 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             environment=self.bootstrap, output=self.reference / "runtime-r1", write=False,
             browser_binding=self.reference / "runtime-r1/binding.json",
         )
-        with patch.object(runtime, "verify_browser", return_value=result) as verify:
+        with patch.object(runtime, "_native_browser", return_value=result) as verify:
             self.assertEqual(runtime.execute(request), result)
-        self.assertTrue(verify.call_args.kwargs["closed"])
+        self.assertEqual(verify.call_args.args[0].operation, "browser-close")
+        self.assertFalse(verify.call_args.args[0].write)
 
     def test_browser_private_protocol_requires_only_a_non_secret_loopback_endpoint(self):
         binding = self.reference / "runtime-r1/binding.json"
@@ -220,3 +221,23 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         missing.pop("credential_endpoint")
         with self.assertRaises(runtime.RuntimeProtocolError):
             runtime._request_from_protocol(missing)
+
+    def test_browser_bridge_passes_exact_file_protocol_without_environment_overrides(self):
+        binding = self.reference / "runtime-r1/browser-binding-r1.json"
+        request = runtime.RuntimeRequest(
+            operation="browser", backend_dir=self.backend, environment=self.bootstrap,
+            output=binding.parent, write=True, browser_binding=binding,
+            credential_endpoint="http://127.0.0.1:49152/v1/credentials",
+        )
+        with patch("fixture_service_client._request", return_value={"value": {"status": "passed"}}) as invoke:
+            self.assertEqual(runtime._native_browser(request), {"status": "passed"})
+        marker, payload, timeout, error_code = invoke.call_args.args
+        self.assertEqual(marker, "__fixture-browser")
+        self.assertEqual(timeout, 6000)
+        self.assertEqual(error_code, "invalid_fixture_browser")
+        value = json.loads(payload)
+        self.assertEqual(set(value), {"operation", "arguments", "write"})
+        self.assertTrue(value["write"])
+        self.assertEqual(value["arguments"]["browser_binding"], str(binding))
+        self.assertNotIn("run_id", value["arguments"])
+        self.assertNotIn("server", value["arguments"])

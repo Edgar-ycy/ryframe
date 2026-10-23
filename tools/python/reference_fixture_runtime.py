@@ -18,7 +18,6 @@ from devex_clone_model import linked
 from devex_clone_runtime import control, observe
 from full_stack_provenance import verify_build_evidence
 from full_stack_runtime import register_runtime, verify_runtime
-from reference_fixture_browser import RuntimeApi, bind_browser, run_browser, verify_browser
 from reference_fixture_environment import prepared_environment
 from reference_fixture_service_context import application_settings
 from reference_fixture_source_pair import write_pair
@@ -199,10 +198,6 @@ def worker_only(backend: Path, environment_path: Path, output_path: Path,
         return _worker_control(execution, output, operation)
 
 
-def _browser_api() -> RuntimeApi:
-    return RuntimeApi(_bootstrap, _output, verify, run, observe_runtime, worker_only)
-
-
 OPERATIONS = frozenset({
     "build", "verify", "start", "stop", "status", "bind", "browser",
     "browser-verify", "browser-close",
@@ -337,17 +332,22 @@ def execute(request: RuntimeRequest) -> dict:
         return build(backend, request.environment, request.output)
     if request.operation == "verify":
         return verify(backend, request.environment, request.output)
-    if request.operation == "bind":
-        return bind_browser(_browser_api(), backend, request.environment, request.output,
-                            request.browser_binding, request.run_id, request.server)
-    if request.operation == "browser":
-        return run_browser(_browser_api(), backend, request.environment, request.output,
-                           request.browser_binding, request.credential_endpoint)
-    if request.operation in {"browser-verify", "browser-close"}:
-        return verify_browser(_browser_api(), backend, request.environment, request.output,
-                              request.browser_binding,
-                              closed=request.operation == "browser-close")
+    if request.operation in {"bind", "browser", "browser-verify", "browser-close"}:
+        return _native_browser(request)
     return run(backend, request.environment, request.output, request.operation)
+
+
+def _native_browser(request: RuntimeRequest) -> dict:
+    from dataclasses import asdict
+    from fixture_service_client import _request
+
+    arguments = {key: str(value) if isinstance(value, Path) else value
+                 for key, value in asdict(request).items() if value is not None}
+    arguments["format_version"] = 1
+    result = _request("__fixture-browser", json.dumps({
+        "operation": "execute", "arguments": arguments, "write": request.write,
+    }, ensure_ascii=False).encode("utf-8"), 6000, "invalid_fixture_browser")
+    return result["value"]
 
 
 def main(request: RuntimeRequest) -> None:

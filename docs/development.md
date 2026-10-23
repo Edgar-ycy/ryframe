@@ -98,7 +98,7 @@ cargo generate -- resource --package order-business --model Order --write
 5. 在前端通过生成的 typed caller 接入业务 API；页面登记路由与 i18n namespace，查询和变更绑定当前会话 scope，方法见[前端架构说明](https://github.com/Edgar-ycy/ryframe-vue3/blob/main/ARCHITECTURE.md)。
 6. 运行前端 `corepack pnpm check --full`，再用本地 Chrome 验证业务成功、权限拒绝、租户切换和取消。只在隔离开发环境准备数据，完成后核验自己创建的数据库与对象资源。
 
-框架的自动化业务夹具使用同一脚手架，在忽略目录中生成使用者业务 crate 并核验重复生成；可通过 `cargo xtask check recovery fixture --output-dir <absolute-isolated-directory> --write` 创建，不会向框架产品加入内置业务模块。
+框架的自动化业务夹具使用同一脚手架，在忽略目录中生成使用者业务 crate 并核验重复生成；可通过 `cargo xtask check recovery fixture --output-dir <absolute-isolated-directory> --write` 创建，不会向框架产品加入内置业务模块。 参考夹具运行时完成 `build`、`start` 后，使用 `cargo xtask check recovery fixture runtime bind` 为独立的 `run_id` 和 `dev` 或 `preview` 模式创建浏览器绑定，再执行同组的 `browser`。`preview` 会先执行真实前端构建，并在浏览器前后校验生产产物及浏览器实际收到的静态响应；`dev` 不创建生产构建。`browser-verify` 只读核验运行中的 API/Worker 与全部成功证据，停止运行时后使用 `browser-close` 只读核验关闭状态。具体必填路径与写入参数见该命令的 `--help`。每个 run id 的输出只能创建一次；失败、残留锁或 pending 文件、来源变化及未知业务写入必须先核对完整现场，不能覆盖结果或自动重跑。登录密码由本机短生命周期凭据代理提供，工具配置和脱敏日志不保存密码。
 
 ## 开发自定义业务
 

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Migrate reference business-fixture browser binding, stage orchestration, evidence and static-response validation, atomic tool-configuration publication, and read-only consumers to Rust. Retain the existing runtime and full-stack process-engine interfaces, with tests for complete tree cleanup on timeout, unknown outcomes, and credential redaction.
+
 - Native seed producers bind execution and publication boundaries to the fixed registration, post-copy evidence, plan, and live controller; quota and department protocols recheck the current generation for each operation. Interrupted input or output still closes held sessions, logout remains possible after later source drift, and simultaneous business and cleanup failures retain a failed result.
 
 - Seed registration file validation and create-new publication now run in the bound Rust tool, checking the current attempt, live controller, target lock, and latest post-copy generation; the Python registration writer is removed. Native evidence validation covers identity publication, fixed handoffs, failed starts, and exact stops. Existing orchestration still owns the complete runtime resource guards, and successful registration grants neither Worker startup nor recovery eligibility.

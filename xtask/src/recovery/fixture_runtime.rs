@@ -11,8 +11,43 @@ use crate::{
 
 const SCRIPT: &str = "tools/python/reference_fixture_runtime.py";
 
+#[path = "fixture_runtime/binding.rs"]
+mod binding;
 #[path = "fixture_runtime/browser.rs"]
 mod browser;
+#[path = "fixture_runtime/dependency.rs"]
+mod dependency;
+#[path = "fixture_runtime/execution.rs"]
+mod execution;
+#[path = "fixture_runtime/manifest.rs"]
+mod manifest;
+#[path = "fixture_runtime/model.rs"]
+mod model;
+#[path = "fixture_runtime/plan.rs"]
+mod plan;
+#[path = "fixture_runtime/process.rs"]
+mod process;
+#[cfg(test)]
+#[path = "fixture_runtime/process_tests.rs"]
+mod process_tests;
+#[path = "fixture_runtime/protocol.rs"]
+pub(crate) mod protocol;
+#[path = "fixture_runtime/publication.rs"]
+mod publication;
+#[path = "fixture_runtime/receipts.rs"]
+mod receipts;
+#[path = "fixture_runtime/responses.rs"]
+mod responses;
+#[path = "fixture_runtime/review.rs"]
+mod review;
+#[cfg(test)]
+#[path = "fixture_runtime/scenario_tests.rs"]
+mod scenario_tests;
+#[cfg(test)]
+#[path = "fixture_runtime/tests.rs"]
+mod tests;
+#[path = "fixture_runtime/worker_handoff.rs"]
+mod worker_handoff;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateFixtureRuntimeInvocation {
@@ -42,6 +77,19 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         Some(endpoint) => private_invocation_with_endpoint(command, root, Some(endpoint))?,
         None => private_invocation_at(command, root)?,
     };
+    if ["bind", "browser", "browser-verify", "browser-close"].contains(&command.operation()) {
+        let request: Value = serde_json::from_str(&invocation.protocol)?;
+        let mut api = dependency::Python::new(root)?;
+        let result = execution::execute(&mut api, &request);
+        if let Some(credentials) = credentials {
+            let broker = credentials.finish(result.is_ok());
+            if result.is_ok() {
+                broker?;
+            }
+        }
+        println!("{}", result?);
+        return Ok(());
+    }
     let result = run_with_env_removed(
         root,
         "python",
