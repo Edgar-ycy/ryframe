@@ -73,7 +73,7 @@ class QuotaTests(unittest.TestCase):
         self.plan["plan_sha256"] = plan_hash({key: value for key, value in self.plan.items() if key != "plan_sha256"})
         Path(self.request["identity_plan"]["path"]).write_text(json.dumps(self.plan), encoding="utf-8")
         self.request["identity_plan"] = binding(Path(self.request["identity_plan"]["path"]))
-        self.post["source_admin"] = {"subject_id": "101", "tenant_id": "system", "username": "admin"}
+        self.post["source_admin"] = {"subject_id": "101", "tenant_id": "system", "username": "admin", "client_address": "198.19.20.1"}
         (self.directory / "post-copy.json").write_text(json.dumps(self.post), encoding="utf-8")
         self.request["post_copy"] = binding(self.directory / "post-copy.json")
         self.request["post_verify"] = self.stage("post-copy", "verify", {"status": "post_copy_existing_data_verified",

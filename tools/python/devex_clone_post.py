@@ -15,7 +15,7 @@ from devex_clone_post_registration import resolve_post_registration
 
 FIELDS = {"format_version", "kind", "run_manifest", "copy_stage_receipt", "copy_result", "ledger_head",
           "api_environment", "backend_build", "node", "source_admin", "frontend_root", "pacing",
-          "reference_plan", "dataset"}
+          "reference_plan", "dataset", "administrator_credentials"}
 
 
 def _validate_business_lineage(backend: Path, value: dict, request: dict, plan: dict) -> None:
@@ -87,7 +87,7 @@ def validate_registration(backend: Path, directory: Path, value: dict, request: 
                 "ledger_head": binding(output / "ledger/head.json")}
     if any(request[field] != item for field, item in expected.items()):
         raise ValueError("复制后登记必须绑定当前复制成功阶段及账本 head")
-    for field in FIELDS - {"format_version", "kind", "node", "source_admin", "frontend_root", "pacing"}:
+    for field in FIELDS - {"format_version", "kind", "node", "source_admin", "frontend_root", "pacing", "administrator_credentials"}:
         bound_file(backend, request[field])
     external_file(request["node"])
     bridge_builds = [read_json(Path(item["path"]))["build"] for item in value["build_bridges"]]
@@ -103,13 +103,14 @@ def validate_registration(backend: Path, directory: Path, value: dict, request: 
         raise ValueError("派生 API 环境必须是文本映射")
     old = read_json(bound_file(backend, value["target_environment"]))["environment"]
     environment_delta(old, api, selected["frontend_url"])
-    administrator(request["source_admin"], api)
+    administrator(request["source_admin"], backend, request["administrator_credentials"])
     frontend = Path(request["frontend_root"])
     exact_directory(frontend)
     if frontend != backend.parent / "ryframe-vue3" or not frontend.is_dir():
         raise ValueError("pacing 只允许读取明确的当前前端项目")
     pacing_binding(backend, directory, request)
     _validate_business_lineage(backend, value, request, verified.plan)
+    administrator(request["source_admin"], backend, request["administrator_credentials"])
     return verified
 
 
@@ -217,9 +218,10 @@ def amend(backend: Path, directory: Path, value: dict, filename: Path, number: i
         raise ValueError("post-copy amendment 只能修正 API 环境绑定")
     old = read_json(bound_file(backend, active.request["api_environment"]))["environment"]
     new = read_json(bound_file(backend, candidate["api_environment"]))["environment"]
-    changed = {key for key in set(old) | set(new) if old.get(key) != new.get(key)}
-    if changed != {"APP_CORS_ALLOW_ORIGINS"}:
-        raise ValueError("amendment 私有环境只能修正单一 CORS 字段")
+    if old != {"APP_ENV": "test"} or new != {"APP_ENV": "test"}:
+        raise ValueError("amendment API 选择文件只能包含 APP_ENV=test；不能覆盖项目配置")
+    if candidate["api_environment"] == active.request["api_environment"]:
+        raise ValueError("amendment 必须明确重新绑定 API 选择文件")
     state = load_state(directory)
     if ((directory / "seed-runtime.json").exists()
             or any(item["stage"] == "seed-runtime" for item in state["attempts"])
@@ -270,6 +272,8 @@ def runtime_inputs(backend: Path, directory: Path, *, descriptor=None) -> tuple[
     request = active.request
     private = read_json(bound_file(backend, request["api_environment"]))
     exact(private, {"environment"})
+    if private["environment"] != {"APP_ENV": "test"}:
+        raise ValueError("API 运行环境只能选择 APP_ENV=test")
     runtime = active.runtime
     exact_directory(runtime)
     handoff = read_json(runtime / "handoff.json")

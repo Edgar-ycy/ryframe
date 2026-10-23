@@ -19,6 +19,38 @@ from devex_clone_run_state import binding, initialize_state, begin, finish, load
 from restore_reference_plan import plan_hash
 
 
+class PostContractTests(unittest.TestCase):
+    def test_administrator_forwards_only_metadata_and_file_binding(self):
+        admin = dict(subject_id='9', tenant_id='system', username='admin',
+                     client_address='198.19.20.1')
+        descriptor = dict(path='D:/backend/.local-tests/administrator.toml',
+                          bytes=100, sha256='a' * 64)
+        response = (SimpleNamespace(returncode=0), {"ok": True, "result": {"value": None}})
+        with patch('devex_clone_post_model.native_invoke', return_value=response) as invoked:
+            administrator(admin, Path('D:/backend'), descriptor)
+        payload = invoked.call_args.args[1]
+        self.assertEqual(payload['arguments'], {
+            'backend': str(Path('D:/backend')), 'identity': admin,
+            'administrator_credentials': descriptor})
+        self.assertFalse(payload['write'])
+        self.assertFalse(invoked.call_args.kwargs['may_write'])
+        self.assertNotIn('password', json.dumps(payload))
+        for field in ('password', 'password_env'):
+            with patch('devex_clone_post_model.native_invoke') as invoked, self.assertRaises(ValueError):
+                administrator({**admin, field: 'private-sentinel'}, Path('D:/backend'), descriptor)
+            invoked.assert_not_called()
+
+    def test_environment_selector_rejects_overrides_on_both_sides(self):
+        valid = {'APP_ENV': 'test'}
+        environment_delta(valid, valid, 'http://127.0.0.1:4190')
+        for field in ('APP_REDIS_PASSWORD', 'APP_APP_PORT', 'APP_JOBS_MODE',
+                      'SNOWFLAKE_WORKER_ID', 'RYFRAME_ADMIN'):
+            invalid = {**valid, field: 'private-sentinel'}
+            for old, new in ((invalid, valid), (valid, invalid)):
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    environment_delta(old, new, 'http://127.0.0.1:4190')
+
+
 class PostTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -36,12 +68,13 @@ class PostTests(unittest.TestCase):
         (self.copy / 'ledger').mkdir(parents=True)
         self.write(self.copy / 'result.json', {'status': 'data_steps_verified'})
         self.write(self.copy / 'ledger/head.json', {'sequence': 2})
-        self.original = {'APP_ENV': 'test', 'APP_SCOPE_ID': 'target-one', 'APP_JOBS_MODE': 'external',
-                         'APP_JOBS_SCHEDULER_ENABLED': 'false', 'APP_DATABASE_URL': 'test-only'}
-        self.api = {**self.original, 'APP_JOBS_SCHEDULER_ENABLED': 'true', 'SNOWFLAKE_WORKER_ID': '1',
-                    'APP_CORS_ALLOW_ORIGINS': 'http://127.0.0.1:4190', 'RYFRAME_TEST_ADMIN_PASSWORD': 'unit-only'}
+        self.original = {'APP_ENV': 'test'}
+        self.api = {'APP_ENV': 'test'}
         self.admin = dict(subject_id='9', tenant_id='system', username='admin',
-                          password_env='RYFRAME_TEST_ADMIN_PASSWORD', client_address='198.19.20.1')
+                          client_address='198.19.20.1')
+        credentials = self.local / 'administrator.toml'
+        credentials.write_text('[administrator]\ntenant_id="system"\nusername="admin"\npassword="Current!Changed123"\n', encoding='utf-8')
+        self.credentials = binding(credentials)
         build = self.file('build', {'kind': 'fixture-build'})
         bridge = self.file('bridge', {'build': {key: build[key] for key in ('path', 'sha256')}})
         self.value = {'copy_directory': str(self.copy), 'initialized': self.file('initialized', {'fixture': True}),
@@ -59,6 +92,7 @@ class PostTests(unittest.TestCase):
             'copy_result': binding(self.copy / 'result.json'), 'ledger_head': binding(self.copy / 'ledger/head.json'),
             'api_environment': self.file('api', {'environment': self.api}), 'backend_build': build,
             'node': {key: build[key] for key in ('path', 'sha256')}, 'source_admin': self.admin,
+            'administrator_credentials': self.credentials,
             'frontend_root': str(self.frontend), 'pacing': {'contract': {},
                 'bindings': {'python': build['path'], 'login_budget_state': str(self.directory / 'post-copy/login-budget.json')},
                 'python_sha256': build['sha256'], 'login_budget_module_sha256': budget_module['sha256']},
@@ -158,18 +192,18 @@ class PostTests(unittest.TestCase):
             post._validate_business_lineage(self.backend, {**value, 'source_request': self.request['dataset']},
                                             self.request, {'copy_stage': 'seed_to_arm', 'source_scope': 'seed-one'})
 
-    def test_derivation_rejects_database_changes_disabled_routes_and_nonexternal_worker(self):
+    def test_environment_only_selects_test_and_rejects_project_overrides(self):
         environment_delta(self.original, self.api, self.selected['frontend_url'])
         for field, value in (('APP_DATABASE_URL', 'other'), ('APP_JOBS_MODE', 'embedded'),
                              ('APP_JOBS_SCHEDULER_ENABLED', 'false'), ('APP_SCOPE_ID', 'other'), ('SNOWFLAKE_WORKER_ID', '2')):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 environment_delta(self.original, {**self.api, field: value}, self.selected['frontend_url'])
 
-    def test_admin_requires_explicit_password_env_and_actual_subject(self):
-        administrator(self.admin, self.api)
+    def test_admin_requires_bound_current_credentials_and_metadata_only(self):
+        administrator(self.admin, self.backend, self.credentials)
         for admin in ({**self.admin, 'subject_id': '0'}, {**self.admin, 'password_env': 'RYFRAME_MISSING_PASSWORD'},
                       {**self.admin, 'tenant_id': 'other'}, {**self.admin, 'password': 'unit-only'}):
-            with self.assertRaises(ValueError): administrator(admin, self.api)
+            with self.assertRaises(ValueError): administrator(admin, self.backend, self.credentials)
 
     def test_budget_cannot_write_outside_fixed_run_or_use_unbound_module(self):
         request = {**self.request, 'pacing': {**self.request['pacing'], 'bindings': {

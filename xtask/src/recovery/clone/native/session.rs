@@ -9,6 +9,9 @@ use crate::{
     session_pacing::PreparationHook,
 };
 
+#[path = "session/credentials.rs"]
+pub(crate) mod credentials;
+
 #[path = "session/model.rs"]
 pub(crate) mod model;
 

@@ -1,5 +1,7 @@
 """复制后只允许登记的配置差异与完整调度行，不推断新资源或认证信息。"""
 import re
+import subprocess
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -61,27 +63,26 @@ def inspect_disabled(backend: Path, action: dict, before: dict, observed: dict,
 
 
 def environment_delta(initial: dict, api: dict, frontend_url: str) -> None:
-    old = {key: value for key, value in initial.items() if key.startswith("APP_")}
-    new = {key: value for key, value in api.items() if key.startswith("APP_")}
     endpoint(frontend_url)
-    if old.get("APP_JOBS_SCHEDULER_ENABLED") != "false":
-        raise ValueError("初始配置必须明确关闭 scheduler")
-    old["APP_JOBS_SCHEDULER_ENABLED"] = "true"
-    old["APP_CORS_ALLOW_ORIGINS"] = frontend_url.rstrip("/")
-    if new != old or new.get("APP_ENV") != "test" or new.get("APP_JOBS_MODE") != "external":
-        raise ValueError("仅可启用调度路由与登记的管理端 Origin，其余 APP 配置必须相同")
-    if api.get("SNOWFLAKE_WORKER_ID") != "1":
-        raise ValueError("API-only 必须明确登记 Snowflake worker 1")
+    if initial != {"APP_ENV": "test"} or api != {"APP_ENV": "test"}:
+        raise ValueError("复制后 API 环境只能显式选择 APP_ENV=test；其他配置使用绑定 TOML")
 
 
-def administrator(value: dict, environment: dict) -> None:
-    exact(value, {"subject_id", "tenant_id", "username", "password_env", "client_address"})
-    if (value["tenant_id"] != "system" or not re.fullmatch(r"[1-9][0-9]{0,18}", value["subject_id"])
+def administrator(value: dict, backend: Path, credentials: dict) -> None:
+    exact(value, {"subject_id", "tenant_id", "username", "client_address"})
+    if (value["tenant_id"] != "system" or not isinstance(value["subject_id"], str)
+            or not re.fullmatch(r"[1-9][0-9]{0,18}", value["subject_id"])
+            or not isinstance(value["username"], str)
             or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value["username"])
-            or not re.fullmatch(r"RYFRAME_[A-Z0-9_]+", value["password_env"])
-            or not environment.get(value["password_env"])
+            or not isinstance(value["client_address"], str)
             or not re.fullmatch(r"198\.19\.20\.(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])", value["client_address"])):
-        raise ValueError("必须登记实际 system 身份及独立认证 ENV，不能默认借用密码")
+        raise ValueError("必须登记实际 system 身份；当前凭据只通过独立 TOML 文件绑定")
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-administrator-credentials", "write": False,
+            "arguments": {"backend": str(backend), "identity": value,
+                          "administrator_credentials": credentials}},
+        subprocess.run, may_write=False,
+    ))
 
 
 def exact_directory(path: Path) -> None:

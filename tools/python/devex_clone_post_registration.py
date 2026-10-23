@@ -116,10 +116,18 @@ def resolve_post_registration(backend: Path, directory: Path, *, descriptor: dic
             raise ValueError("历史 post-copy 登记不属于本 run 的已发布代次")
         if not cleanup and (not attempts or attempts[-1]["status"] != "passed" or found[0] != candidates[-1]):
             raise ValueError("普通操作只能使用最新通过的 post-copy 登记")
+        if not cleanup:
+            from devex_clone_post_model import administrator
+            administrator(found[0].request["source_admin"], backend,
+                          found[0].request["administrator_credentials"])
         return found[0]
     if not cleanup and (not attempts or attempts[-1]["status"] != "passed"):
         raise ValueError("最新 post-copy 登记或 amendment 未通过，禁止回退")
     if len(amendments) > 9999 or any(not re.fullmatch(r"[0-9]{4}\.json", Path(item.descriptor["path"]).name)
                                      for item in amendments):
         raise ValueError("post-copy amendment 代次无效")
+    if not cleanup:
+        from devex_clone_post_model import administrator
+        administrator(candidates[-1].request["source_admin"], backend,
+                      candidates[-1].request["administrator_credentials"])
     return candidates[-1]
