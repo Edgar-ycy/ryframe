@@ -192,7 +192,7 @@ fn mtime_drift_with_unchanged_bytes_changes_aggregate() {
 fn replacement_or_mutation_during_each_read_boundary_is_rejected() {
     for stage in ["before_open", "between_reads", "after_close"] {
         let fixture = Fixture::new();
-        let selected = fixture.root().join("Cargo.lock");
+        let selected = fs::canonicalize(fixture.root().join("Cargo.lock")).unwrap();
         let error = verify(
             &fixture.request(),
             fixture.root(),
