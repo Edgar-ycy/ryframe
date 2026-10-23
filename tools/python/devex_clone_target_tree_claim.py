@@ -133,13 +133,12 @@ def validate_complete(backend: Path, output: Path, baseline: list[dict], request
                       original: dict, initial: dict, inventory_files: tuple[dict, ...],
                       result: dict) -> list[dict]:
     """只接受固定创建、reset、迁移、库存和最终发布组成的完整树。"""
-    from devex_clone_target import target_evidence_hooks
     from devex_clone_target_resume_evidence import (
         _creation_evidence, _initialization_paths, _reset_evidence,
         migration_operations, migration_prefix)
 
     creation = _creation_evidence(output, request)
-    reset = _reset_evidence(target_evidence_hooks(), output, request, original)
+    reset = _reset_evidence(backend, output, request, original)
     operations = migration_operations(original["maintenance"])
     completed = migration_prefix(output, operations, complete=True)["completed"]
     required = _initialization_paths(output, creation, reset, completed)

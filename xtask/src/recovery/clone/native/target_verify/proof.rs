@@ -58,16 +58,8 @@ pub(crate) fn initial_inventory(
         validate_local_test_path(&path, backend, LocalTestPathKind::ExistingFile)?;
         json_io::exact(expected, &["bytes", "sha256"], "原始库存文件摘要")?;
         let actual = digest::file(&path)?;
-        if actual.bytes
-            != expected
-                .get("bytes")
-                .and_then(Value::as_u64)
-                .unwrap_or_default()
-            || actual.sha256
-                != expected
-                    .get("sha256")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
+        if expected.get("bytes").and_then(Value::as_u64) != Some(actual.bytes)
+            || expected.get("sha256").and_then(Value::as_str) != Some(actual.sha256.as_str())
         {
             return Err("初始库存原始文件或摘要变化".into());
         }

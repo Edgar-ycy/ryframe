@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 import devex_clone_target as target
 import devex_clone_target_binding as binding
-from devex_clone_target_reset_evidence import PHASES
+PHASES = {"preflight", "object_storage", "redis", "databases", "control_baseline",
+          "tenant_baselines", "verification", "release"}
 from artifact_digests import filesystem_path
 import devex_clone_target_resources as resources
 import devex_clone_target_storage as storage

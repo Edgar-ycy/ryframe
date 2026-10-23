@@ -13,7 +13,7 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_state import generation_lock, now
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
-from devex_clone_target_reset_evidence import validate_plan_receipt
+from devex_clone_target_evidence import evidence
 from devex_clone_target_time import ordered, parse_timestamp, timestamp as _timestamp
 import devex_clone_target_tree_claim as tree_claim
 
@@ -85,7 +85,7 @@ def _inventory_resume_confirmed(backend: Path, output: Path, initialized: dict) 
 
         plan = read_json(output / "reset-plan.json")
         executable = cli_executable(prepared["generation"]["maintenance"], "reset")
-        _inventory_resume_records(output, failure_digest, failed["at"], value["prepared_files"],
+        _inventory_resume_records(backend, output, failure_digest, failed["at"], value["prepared_files"],
                                    plan, executable, request,
                                    {item["path"] for item in target_files(output)},
                                    success_attempt=attempt, success_terminal_at=value["at"])
@@ -100,7 +100,7 @@ def inventory_resume_confirmed(backend: Path, output: Path, initialized: dict) -
         return False
 
 
-def _retry_plan_evidence(output: Path, attempt: str, plan: dict, executable: str) -> set[str]:
+def _retry_plan_evidence(backend: Path, output: Path, attempt: str, plan: dict, executable: str) -> set[str]:
     plan_path = output / f"resume-reset-plan-{attempt}.json"
     if read_json(plan_path) != plan:
         raise ValueError("库存续作 reset plan 不属于原固定计划")
@@ -109,11 +109,11 @@ def _retry_plan_evidence(output: Path, attempt: str, plan: dict, executable: str
                 if pattern.fullmatch(path.name)]
     if len(commands) != 1:
         raise ValueError("库存续作必须保留唯一 reset plan 命令收据")
-    validate_plan_receipt(commands[0], executable, plan)
+    evidence("reset-plan", backend, output, path=str(commands[0]), executable=executable, plan=plan)
     return {plan_path.name, commands[0].name}
 
 
-def _inventory_resume_records(output: Path, failure_digest: dict, source_failure_at: str,
+def _inventory_resume_records(backend: Path, output: Path, failure_digest: dict, source_failure_at: str,
                                prepared_files: dict,
                                plan: dict, executable: str, request: dict,
                                available: set[str], *,
@@ -175,7 +175,7 @@ def _inventory_resume_records(output: Path, failure_digest: dict, source_failure
     files = {f"resume-initialize-{attempt}.{kind}.json"
              for attempt in intents for kind in ("intent", "confirmed" if attempt in confirmations else "failure")}
     for attempt in intents:
-        files.update(_retry_plan_evidence(output, attempt, plan, executable))
+        files.update(_retry_plan_evidence(backend, output, attempt, plan, executable))
         if attempt in failures:
             from devex_clone_inventory_failure import inventory_failure_files
 
@@ -192,7 +192,7 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
     from devex_clone_target_binding import (prepared_target_files, target_files,
                                              validate_initialization_delta)
     from devex_clone_target import (FAILURE_FIELDS, PREPARE_FIELDS,
-                                    initialization_failure_path, target_evidence_hooks)
+                                    initialization_failure_path)
     from devex_clone_target_resume_evidence import (_creation_evidence, _initialization_paths,
                                                     _reset_evidence, migration_operations,
                                                     migration_prefix)
@@ -231,11 +231,10 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
     if request != read_json(output / "request.json"):
         return {"resumable": False, "reason": "固定请求文件已变化"}
     baseline = prepared_target_files(backend, output, prepared_files, request_descriptor)
-    hooks = target_evidence_hooks()
     creation = _creation_evidence(output, request)
-    reset = _reset_evidence(hooks, output, request, prepared["generation"])
+    reset = _reset_evidence(backend, output, request, prepared["generation"])
     retries = _inventory_resume_records(
-        output, binding(failure_path), failed["at"], prepared_files,
+        backend, output, binding(failure_path), failed["at"], prepared_files,
         read_json(output / "reset-plan.json"),
         cli_executable(prepared["generation"]["maintenance"], "reset"), request,
         {item["path"] for item in files_before})
@@ -261,9 +260,8 @@ def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, 
                             request_descriptor: dict | None = None,
                             prepared_files: dict, publish_files=None) -> dict:
     """只恢复 reset 已完成后的库存采集与发布，绝不重放任何资源写入。"""
-    from devex_clone_target import (PREPARE_FIELDS, context, history, inventory, reset_plan,
+    from devex_clone_target import (PREPARE_FIELDS, context, inventory, reset_plan,
                                     unchanged)
-    from devex_clone_target_reset_evidence import reset_completed
 
     backend, output = backend.resolve(strict=True), local_path(backend, str(output))
     prepared = read_json(output / "prepare.json")
@@ -322,10 +320,10 @@ def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, 
             trusted = tree_claim.claim_many(
                 output, trusted, [plan_path, command_paths[0]]
             )
-            validate_plan_receipt(command_paths[0],
-                                  cli_executable(original["maintenance"], "reset"),
-                                  {"manifest": manifest, "plan_hash": sha})
-            reset = reset_completed(output, manifest, sha)
+            evidence("reset-plan", backend, output, path=str(command_paths[0]),
+                     executable=cli_executable(original["maintenance"], "reset"),
+                     plan={"manifest": manifest, "plan_hash": sha})
+            reset = evidence("reset-completed", backend, output, manifest=manifest, sha=sha)
             if read_json(output / "reset.confirmed.json").get("observed") != reset:
                 raise ValueError("库存恢复 reset 完成收据不同于当前受控计划")
             inventory_directory = output / f"inventory-resume-{attempt}"
@@ -347,7 +345,7 @@ def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, 
             result = {"format_version": 1, "status": "fresh_target_initialized", "id": request["id"],
                       "scope_id": request["target"]["scope_id"], "completed_at": now(), "generation": original,
                       "prepare_sha256": file_digest(output / "prepare.json")["sha256"], "reset": reset,
-                      "inventory": initial, "objects": objects, "redis": redis, "history": history(output),
+                      "inventory": initial, "objects": objects, "redis": redis, "history": evidence("history", backend, output),
                       "controlled_generation_never_started": True, "external_writers_discovered": False,
                       "target_ready": False, "clone_verified": False, "restore_qualified": False}
             candidate_path = output / "initialized-candidate.json"

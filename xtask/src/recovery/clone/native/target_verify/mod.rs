@@ -8,6 +8,7 @@ use crate::Result;
 
 pub(crate) mod authority;
 pub(crate) mod database;
+pub(crate) mod evidence_protocol;
 mod execution;
 pub(crate) mod guard;
 pub(crate) mod input;

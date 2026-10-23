@@ -19,7 +19,7 @@ from devex_clone_target_binding import (KEYS, execution_binary_bindings, prepare
 from devex_clone_target_runtime_evidence import (fixture_restart_generation,
                                                   validate_redis_marker_rebind,
                                                   validate_started_generation)
-from devex_clone_target_reset_evidence import validate_plan_receipt
+from devex_clone_target_evidence import evidence
 from devex_clone_target_time import ordered, timestamp as _timestamp
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
@@ -41,9 +41,6 @@ INITIALIZED_FIELDS = {"format_version", "status", "id", "scope_id", "completed_a
 class TargetEvidenceHooks:
     resume_records: Callable[..., dict]
     prepare_artifact: Callable[[str], bool]
-    reset_completed: Callable[..., dict]
-    history: Callable[[Path], dict]
-    verify_initial_inventory: Callable[..., None]
 
 
 def migration_operations(maintenance: dict) -> list[dict]:
@@ -179,7 +176,7 @@ def _validate_stage_names(output: Path, expected: set[str]) -> None:
         raise ValueError("fresh 初始化包含未登记的 intent 或 confirmed 证据")
 
 
-def _reset_command_evidence(output: Path, maintenance: dict, plans: tuple[dict, dict],
+def _reset_command_evidence(backend: Path, output: Path, maintenance: dict, plans: tuple[dict, dict],
                             completed: dict) -> dict:
     stages = ("reset-plan", "reset-plan-confirm", "reset-execute")
     found = {}
@@ -209,7 +206,7 @@ def _reset_command_evidence(output: Path, maintenance: dict, plans: tuple[dict, 
                 raise ValueError("reset execute 收据与固定计划或完成报告不一致")
         else:
             plan = plans[0 if stage == "reset-plan" else 1]
-            found[stage] = validate_plan_receipt(path, executable, plan)
+            found[stage] = evidence("reset-plan", backend, output, path=str(path), executable=executable, plan=plan)
             continue
         found[stage] = binding(path)
     if all_paths != {Path(value["path"]) for value in found.values()}:
@@ -217,7 +214,7 @@ def _reset_command_evidence(output: Path, maintenance: dict, plans: tuple[dict, 
     return found
 
 
-def _reset_evidence(hooks: TargetEvidenceHooks, output: Path, request: dict, original: dict) -> dict:
+def _reset_evidence(backend: Path, output: Path, request: dict, original: dict) -> dict:
     reset_evidence = ({path.name for path in output.glob("reset-plan*.json")
                        if not path.name.endswith(".command.json")} |
                       {path.name for path in output.glob("reset*.intent.json")} |
@@ -232,10 +229,10 @@ def _reset_evidence(hooks: TargetEvidenceHooks, output: Path, request: dict, ori
     if first != second:
         raise ValueError("原 reset 两次固定计划证据不一致")
     validate_reset_manifest(first["manifest"], request, original)
-    completed = hooks.reset_completed(output, first["manifest"], first["plan_hash"])
+    completed = evidence("reset-completed", backend, output, manifest=first["manifest"], sha=first["plan_hash"])
     intent_binding = _stage_record(output, "reset", "intent", {"plan_hash": first["plan_hash"]})
     confirmed_binding = _stage_record(output, "reset", "confirmed", completed)
-    commands = _reset_command_evidence(output, original["maintenance"], (first, second), completed)
+    commands = _reset_command_evidence(backend, output, original["maintenance"], (first, second), completed)
     return {"plan": binding(output / "reset-plan.json"),
             "plan_confirm": binding(output / "reset-plan-confirm.json"),
             "intent": intent_binding, "confirmed": confirmed_binding, "commands": commands,
@@ -530,7 +527,7 @@ def migration_resume_state(backend: Path, output: Path, request_descriptor: dict
         raise ValueError("迁移续作的初始化前像摘要无效")
     creation = _creation_evidence(output, request)
     prepare_resume_names = _prepare_resume_stage_names(hooks, backend, output, request_descriptor)
-    reset = _reset_evidence(hooks, output, request, prepared["generation"])
+    reset = _reset_evidence(backend, output, request, prepared["generation"])
     operations = migration_operations(prepared["generation"]["maintenance"])
     prefix = migration_prefix(output, operations)
     prior = _failed_readonly_resume_records(
@@ -673,14 +670,14 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
             or initialized["clone_verified"] is not False
             or initialized["restore_qualified"] is not False
             or read_json(output / "initialized-candidate.json") != initialized
-            or initialized["history"] != hooks.history(output)):
+            or initialized["history"] != evidence("history", backend, output)):
         return False
     prepare_resume_names = _prepare_resume_stage_names(hooks, backend, output, prepared["request"])
     creation = _creation_evidence(output, request)
-    reset = _reset_evidence(hooks, output, request, initialized["generation"])
+    reset = _reset_evidence(backend, output, request, initialized["generation"])
     if initialized["reset"] != reset["completed"]:
         return False
-    hooks.verify_initial_inventory(backend, output, initialized["inventory"]["receipt"],
+    evidence("initial-inventory", backend, output, receipt=initialized["inventory"]["receipt"],
                                    resumed=True)
     operations = migration_operations(initialized["generation"]["maintenance"])
     prefix = migration_prefix(output, operations, complete=True)["completed"]

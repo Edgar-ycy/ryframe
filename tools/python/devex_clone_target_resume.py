@@ -153,14 +153,14 @@ def _safe_os_error(error: BaseException, active: dict | None) -> dict | None:
             "filename_length": len(str(normalized)) if normalized is not None else None}
 
 
-def _initialized_result(output: Path, request: dict, original: dict, reset: dict,
+def _initialized_result(backend: Path, output: Path, request: dict, original: dict, reset: dict,
                         initial: dict, objects: dict, redis: dict) -> dict:
-    from devex_clone_target import history
+    from devex_clone_target_evidence import evidence
 
     return {"format_version": 1, "status": "fresh_target_initialized", "id": request["id"],
             "scope_id": request["target"]["scope_id"], "completed_at": now(), "generation": original,
             "prepare_sha256": file_digest(output / "prepare.json")["sha256"], "reset": reset,
-            "inventory": initial, "objects": objects, "redis": redis, "history": history(output),
+            "inventory": initial, "objects": objects, "redis": redis, "history": evidence("history", backend, output),
             "controlled_generation_never_started": True, "external_writers_discovered": False,
             "target_ready": False, "clone_verified": False, "restore_qualified": False}
 
@@ -302,7 +302,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 cache_runtime=resources.cache_runtime_binding
             )
             bound_file(backend, expected)
-            result = _initialized_result(output, state["request"], state["prepared"]["generation"],
+            result = _initialized_result(backend, output, state["request"], state["prepared"]["generation"],
                                          state["reset"]["completed"], initial, objects, redis)
             tree_claim.unchanged(output, trusted)
             candidate_path = output / "initialized-candidate.json"

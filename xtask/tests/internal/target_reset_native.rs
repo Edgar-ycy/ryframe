@@ -1,9 +1,12 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 use serde_json::{Value, json};
 
 use crate::{
-    recovery::clone::native::{json as json_io, target_verify::reset},
+    recovery::clone::native::{
+        json as json_io,
+        target_verify::{evidence_protocol, reset},
+    },
     workspace,
 };
 
@@ -119,7 +122,7 @@ impl Fixture {
 }
 
 #[test]
-fn completed_reset_matches_python_without_changing_evidence() {
+fn completed_reset_binds_exact_files_without_changing_evidence() {
     let fixture = Fixture::new();
     let paths = [
         fixture.path("report"),
@@ -128,28 +131,13 @@ fn completed_reset_matches_python_without_changing_evidence() {
     ];
     let before = paths.each_ref().map(|path| fs::read(path).unwrap());
     let actual = fixture.verify().unwrap();
-    let script = r#"
-import json, sys
-from pathlib import Path
-from devex_clone_target_reset_evidence import reset_completed
-print(json.dumps(reset_completed(Path(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3]), ensure_ascii=False))
-"#;
-    let output = Command::new(
-        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
-    )
-    .args(["-X", "utf8", "-B", "-c", script])
-    .arg(&fixture.target)
-    .arg(fixture.manifest.to_string())
-    .arg(&fixture.hash)
-    .env("PYTHONPATH", fixture.backend.join("tools/python"))
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let expected: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let expected = json!({
+        "report": {"file": format!("reset-state{}test-reset-proof-{}.report.json", std::path::MAIN_SEPARATOR, fixture.hash),
+            "bytes": before[0].len(), "sha256": crate::recovery::clone::native::digest::file(&paths[0]).unwrap().sha256},
+        "ledger": {"file": format!("reset-state{}test-reset-proof-{}.ledger.json", std::path::MAIN_SEPARATOR, fixture.hash),
+            "bytes": before[1].len(), "sha256": crate::recovery::clone::native::digest::file(&paths[1]).unwrap().sha256},
+        "completed_at": "2026-10-18T00:01:00Z", "status": "completed"
+    });
     assert_eq!(actual, expected);
     assert_eq!(paths.each_ref().map(|path| fs::read(path).unwrap()), before);
     assert_eq!(actual["status"], "completed");
@@ -232,4 +220,69 @@ fn reset_refuses_duplicate_keys_and_invalid_plan_path_components() {
     fixture.manifest["scope_id"] = json!("reset-proof");
     fs::write(fixture.path("previous"), br#"{"phases":{},"phases":{}}"#).unwrap();
     assert!(fixture.verify().is_err());
+}
+
+#[test]
+fn native_reset_protocol_reuses_exact_completed_evidence() {
+    let fixture = Fixture::new();
+    let payload = json!({"format_version":1,"operation":"reset-completed",
+        "backend":fixture.backend,"target":fixture.target,
+        "manifest":fixture.manifest,"sha":fixture.hash});
+    let result = evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).unwrap();
+    assert_eq!(result, fixture.verify().unwrap());
+    fixture.mutate("previous", |value| {
+        value["phases"]["release"]["status"] = json!("complete")
+    });
+    assert!(evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).is_err());
+}
+
+#[test]
+fn reset_plan_binds_full_command_original_text_and_digest() {
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new();
+    let document = "{\n  \"scope_id\": \"审阅目标\"\n}";
+    let hash = hex::encode(Sha256::digest(document.as_bytes()));
+    let plan = json!({"manifest":{"scope_id":"审阅目标"},"plan_hash":hash});
+    let path = fixture.target.join("plan.command.json");
+    let valid = json!({"command":["reset.exe","plan"],"returncode":0,
+        "error_type":null,"stdout":format!("{document}\nplan_hash={hash}\n"),"stderr":""});
+    for case in 0..10 {
+        let mut value = valid.clone();
+        match case {
+            0 => {}
+            1 => value["returncode"] = json!(true),
+            2 => value["returncode"] = json!(1),
+            3 => value["error_type"] = json!("Interrupted"),
+            4 => value["stderr"] = json!("warning"),
+            5 => value["stdout"] = json!(format!("{document}\nplan_hash={hash}")),
+            6 => value["stdout"] = json!(format!("{{\"scope_id\":\"other\"}}\nplan_hash={hash}\n")),
+            7 => value["command"] = json!(["other.exe", "plan"]),
+            8 => value["extra"] = json!(true),
+            _ => {
+                value["stdout"] = json!(format!(
+                    "{{\"scope_id\":1,\"scope_id\":2}}\nplan_hash={hash}\n"
+                ))
+            }
+        }
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let observed =
+            reset::plan_receipt(&fixture.backend, &fixture.target, &path, "reset.exe", &plan);
+        assert_eq!(observed.is_ok(), case == 0, "case {case}");
+    }
+    let outside = fixture
+        .target
+        .parent()
+        .unwrap()
+        .join("foreign.command.json");
+    fs::write(&outside, serde_json::to_vec(&valid).unwrap()).unwrap();
+    assert!(
+        reset::plan_receipt(
+            &fixture.backend,
+            &fixture.target,
+            &outside,
+            "reset.exe",
+            &plan
+        )
+        .is_err()
+    );
 }

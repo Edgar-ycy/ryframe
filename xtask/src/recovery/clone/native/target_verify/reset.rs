@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, path::Path};
 
 use regex::Regex;
@@ -26,6 +27,43 @@ const IDENTITY: [&str; 5] = [
     "config_sha",
     "credential_version",
 ];
+
+/// 重新绑定完整命令输出及其原文摘要，不接受截断、重复字段或未知结果。
+pub(crate) fn plan_receipt(
+    backend: &Path,
+    target: &Path,
+    path: &Path,
+    executable: &str,
+    plan: &Value,
+) -> Result<Value> {
+    if path.parent() != Some(target) {
+        return Err("reset 命令收据不属于当前目标目录".into());
+    }
+    let value = read(backend, path)?;
+    json_io::exact(
+        &value,
+        &["command", "returncode", "error_type", "stdout", "stderr"],
+        "reset 命令收据",
+    )?;
+    let stdout = json_io::text(&value["stdout"], "reset plan 输出")?.replace("\r\n", "\n");
+    let (document, digest_line) = stdout
+        .rsplit_once("\nplan_hash=")
+        .ok_or("reset plan 输出缺少摘要")?;
+    let parsed = json_io::parse_fragment(document, "reset plan 输出")?;
+    let hash = json_io::text(&plan["plan_hash"], "reset plan 摘要")?;
+    if value["command"] != json!([executable, "plan"])
+        || value["returncode"].as_i64() != Some(0)
+        || !value.get("error_type").is_some_and(Value::is_null)
+        || value["stderr"] != ""
+        || digest_line != format!("{hash}\n")
+        || parsed != plan["manifest"]
+        || hex::encode(Sha256::digest(document.as_bytes())) != hash
+    {
+        return Err("reset plan 命令收据与固定清单不一致".into());
+    }
+    let actual = digest::file(path)?;
+    Ok(json!({"path":path,"bytes":actual.bytes,"sha256":actual.sha256}))
+}
 
 // 复核最终 release 及其直接前像，不把同一计划的 reused 报告当成本次完成。
 pub(crate) fn completed(

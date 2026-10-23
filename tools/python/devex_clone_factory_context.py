@@ -8,8 +8,8 @@ from devex_clone_capture import read_json, regular_file
 from devex_clone_inventory import KEYS
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import bound_file
-from devex_clone_target import context, history
-from devex_clone_target_reset_evidence import reset_completed
+from devex_clone_target import context
+from devex_clone_target_evidence import evidence
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_transfer import DatabaseObservation
 from restore_build import file_digest
@@ -82,13 +82,13 @@ def _initialization_evidence(backend: Path, filename: Path, owned_lock_identity:
     if (result["status"] != "fresh_target_initialized" or result["controlled_generation_never_started"] is not True
             or result["prepare_sha256"] != file_digest(regular_file(root / "prepare.json"))["sha256"]
             or read_json(regular_file(root / "initialized-candidate.json")) != result
-            or read_json(regular_file(root / "request.json")) != request or result["history"] != history(root)
+            or read_json(regular_file(root / "request.json")) != request or result["history"] != evidence("history", backend, root)
             or result["generation"] != prepared["generation"] or prepared["request_sha256"] != plan_hash(request)
             or result["id"] != request["id"] or result["scope_id"] != request["target"]["scope_id"]):
         raise ValueError("目标初始化发布、原请求或完整准备记录已变化")
     inventory_history(backend, root, result["inventory"], request, resumed=resumed)
     reset = read_json(regular_file(root / "reset-plan.json"))
-    if reset_completed(root, reset["manifest"], reset["plan_hash"]) != result["reset"]:
+    if evidence("reset-completed", backend, root, manifest=reset["manifest"], sha=reset["plan_hash"]) != result["reset"]:
         raise ValueError("目标 reset 未取得本代次完整完成及释放证明")
     return result, request
 

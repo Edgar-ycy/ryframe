@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 use serde_json::{Value, json};
 
@@ -86,7 +86,7 @@ fn binding(path: &std::path::Path) -> Value {
 }
 
 #[test]
-fn initialized_history_matches_python_and_includes_resume_evidence() {
+fn initialized_history_binds_every_file_and_includes_resume_evidence() {
     let fixture = Fixture::new();
     fixture.history();
     for name in [
@@ -104,20 +104,13 @@ fn initialized_history_matches_python_and_includes_resume_evidence() {
         fs::write(fixture.target.join(name), b"{}\n").unwrap();
     }
     let before = proof::history(&fixture.backend, &fixture.target).unwrap();
-    let output = Command::new(crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap())
-        .args(["-X", "utf8", "-B", "-c", "import json,sys; from pathlib import Path; from devex_clone_target import history; print(json.dumps(history(Path(sys.argv[1]))))"])
-        .arg(&fixture.target)
-        .env("PYTHONPATH", fixture.backend.join("tools/python"))
-        .output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        before,
-        serde_json::from_slice::<Value>(&output.stdout).unwrap()
-    );
+    for (name, binding) in before.as_object().unwrap() {
+        let actual = digest::file(&fixture.target.join(name)).unwrap();
+        assert_eq!(
+            binding,
+            &json!({"bytes": actual.bytes, "sha256": actual.sha256})
+        );
+    }
     assert_eq!(
         proof::history(&fixture.backend, &fixture.target).unwrap(),
         before
@@ -200,4 +193,57 @@ fn initial_inventory_refuses_nested_raw_files_drift_and_unknown_binding_fields()
     assert!(proof::initial_inventory(&fixture.backend, &fixture.target, &receipt, false).is_err());
     receipt["unknown"] = json!(true);
     assert!(proof::initial_inventory(&fixture.backend, &fixture.target, &receipt, false).is_err());
+}
+
+#[test]
+fn empty_inventory_file_requires_numeric_byte_count() {
+    let fixture = Fixture::new();
+    let original = fixture.inventory("inventory-initial", "inventory.json", "empty.json");
+    let receipt_path = PathBuf::from(original["path"].as_str().unwrap());
+    let raw = fixture.target.join("inventory-initial/empty.json");
+    fs::write(&raw, b"").unwrap();
+    let hash = digest::file(&raw).unwrap().sha256;
+    for bytes in [json!(0), Value::Null, json!(false), json!("0")] {
+        fs::write(
+            &receipt_path,
+            serde_json::to_vec(&json!({"inventories":{
+            "empty.json":{"bytes":bytes,"sha256":hash}}}))
+            .unwrap(),
+        )
+        .unwrap();
+        let receipt = binding(&receipt_path);
+        assert_eq!(
+            proof::initial_inventory(&fixture.backend, &fixture.target, &receipt, false).is_ok(),
+            bytes == json!(0),
+            "{bytes}"
+        );
+    }
+}
+
+#[test]
+fn native_evidence_protocol_requires_exact_shape_and_bound_inventory() {
+    use crate::recovery::clone::native::target_verify::evidence_protocol;
+    let fixture = Fixture::new();
+    let receipt = fixture.inventory("inventory-initial", "inventory.json", "data.json");
+    let request = json!({"format_version":1,"operation":"initial-inventory",
+        "backend":fixture.backend,"target":fixture.target,"receipt":receipt,"resumed":false});
+    let observed = evidence_protocol::execute(&serde_json::to_vec(&request).unwrap()).unwrap();
+    assert_eq!(
+        observed,
+        json!({"status":"initial_inventory_verified","remote_writes":0})
+    );
+    for case in 0..5 {
+        let mut value = request.clone();
+        match case {
+            0 => value["format_version"] = json!(true),
+            1 => value["resumed"] = json!(1),
+            2 => value["operation"] = json!("unknown"),
+            3 => value["credentials"] = json!({"password":"must-not-be-read"}),
+            _ => value["receipt"]["sha256"] = json!("0".repeat(64)),
+        }
+        assert!(
+            evidence_protocol::execute(&serde_json::to_vec(&value).unwrap()).is_err(),
+            "{case}"
+        );
+    }
 }

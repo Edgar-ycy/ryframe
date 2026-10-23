@@ -28,7 +28,7 @@ from devex_clone_target_resources import Resources
 from devex_clone_target_state import confirmed, failure, generation_lock, intent, now
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_time import ordered, timestamp
-import devex_clone_target_reset_evidence as reset_evidence
+from devex_clone_target_evidence import evidence
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import plan_hash
@@ -48,9 +48,7 @@ def target_evidence_hooks():
     """为叶子证据模块绑定当前目标实现，不形成反向导入。"""
     from devex_clone_target_resume_evidence import TargetEvidenceHooks
 
-    return TargetEvidenceHooks(resume_records=_resume_records, prepare_artifact=_prepare_artifact,
-                               reset_completed=reset_evidence.reset_completed, history=history,
-                               verify_initial_inventory=verify_initial_inventory)
+    return TargetEvidenceHooks(resume_records=_resume_records, prepare_artifact=_prepare_artifact)
 
 
 def _prepare_failure(output: Path) -> dict | None:
@@ -329,40 +327,6 @@ def unresolved_failure(backend: Path, output: Path) -> bool:
         return True
 
 
-def history_files() -> set[str]:
-    stages = ["sentinel", "reset", *("create-" + key for key in KEYS)]
-    return {"initialize.started.json", "prepare.json", "request.json", "reset-plan.json", "reset-plan-confirm.json",
-            *(f"{stage}.{state}.json" for stage in stages for state in ("intent", "confirmed"))}
-
-
-def history(output: Path) -> dict:
-    names = history_files()
-    names.update(path.name for path in output.glob("failure*.json"))
-    names.update(path.name for path in output.glob("resume-prepare-*.json"))
-    names.update(path.name for path in output.glob("resume-initialize-*.intent.json"))
-    names.update(path.name for path in output.glob("resume-initialize-*.started.json"))
-    names.update(path.name for path in output.glob("resume-initialize-*.failure.json"))
-    names.update(path.name for pattern in ("resume-redis-markers-*.json", "resume-migrate-*.json")
-                 for path in output.glob(pattern))
-    if (output / "resume-reset-plan.json").exists():
-        names.add("resume-reset-plan.json")
-    names.update(path.name for path in output.glob("resume-reset-plan-*.json"))
-    return {name: file_digest(output / name) for name in sorted(names)}
-
-
-def verify_initial_inventory(backend: Path, output: Path, receipt: dict, *, resumed: bool = False) -> None:
-    filename = bound_file(backend, receipt)
-    resumed_directory = filename.parent.name.startswith("inventory-resume-")
-    if filename.name != "inventory.json" or (filename.parent != output / "inventory-initial"
-                                               and not (resumed and resumed_directory)):
-        raise ValueError("初始库存文件不属于本代次")
-    value = read_json(filename)
-    for name, expected in value["inventories"].items():
-        path = local_path(backend, str(filename.parent / name))
-        if path.parent != filename.parent or file_digest(path) != expected:
-            raise ValueError("原始初始库存文件发生变化")
-
-
 def context(backend: Path, request: dict, output: Path, run, *, storage_run: Path | None = None,
             owned_lock_identity: int | None = None,
             lock_output: Path | None = None) -> tuple[dict, Resources]:
@@ -501,7 +465,7 @@ def initialize_databases(backend: Path, request: dict, original: dict, resources
     resources.command("reset-execute", [cli_executable(maintenance, "reset"), "execute", "--plan-hash", sha,
                       "--confirm-reset", manifest["confirmation_phrase"]],
                       env=resources.environment, timeout=1800)
-    completed = reset_evidence.reset_completed(resources.output, manifest, sha)
+    completed = evidence("reset-completed", backend, resources.output, manifest=manifest, sha=sha)
     confirmed(resources.output, "reset", completed)
     from devex_clone_target_resume_evidence import migration_operations
 
@@ -636,7 +600,7 @@ def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storag
             result = {"format_version": 1, "status": "fresh_target_initialized", "id": request["id"],
                       "scope_id": request["target"]["scope_id"], "completed_at": now(), "generation": original,
                       "prepare_sha256": file_digest(output / "prepare.json")["sha256"], "reset": reset,
-                      "inventory": initial, "objects": objects, "redis": redis, "history": history(output),
+                      "inventory": initial, "objects": objects, "redis": redis, "history": evidence("history", backend, output),
                       "controlled_generation_never_started": True, "external_writers_discovered": False,
                       "target_ready": False, "clone_verified": False, "restore_qualified": False}
             write_json(output / "initialized-candidate.json", result)
@@ -708,9 +672,9 @@ def verify_target(backend: Path, output: Path, observation_dir: Path, run=subpro
             request = read_bound_json(local_path(backend, expected_request["path"]), expected_request)
             if (file_digest(output / "prepare.json")["sha256"] != original_result["prepare_sha256"]
                     or read_json(output / "initialized-candidate.json") != original_result
-                    or request != read_json(output / "request.json") or original_result["history"] != history(output)):
+                    or request != read_json(output / "request.json") or original_result["history"] != evidence("history", backend, output)):
                 raise ValueError("初始化发布或请求证据变化")
-            verify_initial_inventory(backend, output, original_result["inventory"]["receipt"],
+            evidence("initial-inventory", backend, output, receipt=original_result["inventory"]["receipt"],
                                      resumed=(output / "failure.json").is_file())
             original, resources = context(
                 backend, request, observation_dir, run, storage_run=storage_run,
@@ -718,7 +682,7 @@ def verify_target(backend: Path, output: Path, observation_dir: Path, run=subpro
             )
             verify_storage_generation(original_result["generation"], original, resources.storage_runtime_binding, resources.cache_runtime_binding)
             reset = read_json(output / "reset-plan.json")
-            if reset_evidence.reset_completed(output, reset["manifest"], reset["plan_hash"]) != original_result["reset"]:
+            if evidence("reset-completed", backend, output, manifest=reset["manifest"], sha=reset["plan_hash"]) != original_result["reset"]:
                 raise ValueError("原 reset 完成证据已变化")
             observed, _ = inventory(backend, request, resources, observation_dir / "inventory")
             if (observed["observations"] != original_result["inventory"]["observations"]
