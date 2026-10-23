@@ -107,26 +107,34 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("GITHUB_BASE_SHA", text)
 
     def test_frontend_source_selection_uses_only_the_typed_entry(self) -> None:
-        daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        extended = (ROOT / ".github/workflows/extended-ci.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual(daily.count("cargo xtask check ci frontend-source"), 5)
-        self.assertEqual(extended.count("cargo xtask check ci frontend-source"), 1)
-        self.assertNotIn("tools/python/select_frontend_commit.py", daily + extended)
-        self.assertNotIn("--backend-worktree", daily + extended)
-        for job in ("plan", "rust-gate", "resource-gate", "windows-smoke"):
-            block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
-            self.assertLess(
-                block.index("安装 Rust 工具链"),
-                block.index("cargo xtask check ci frontend-source"),
-                job,
-            )
-        full_stack = extended.split("\n  full-stack-e2e:\n", 1)[1]
-        self.assertLess(
-            full_stack.index("安装 Rust 工具链"),
-            full_stack.index("cargo xtask check ci frontend-source"),
-        )
+        import yaml
+
+        for filename, expected_counts in (
+            ("ci.yml", {"plan": 1, "rust-gate": 1, "resource-gate": 2, "windows-smoke": 1}),
+            ("extended-ci.yml", {"full-stack-e2e": 1}),
+        ):
+            text = (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
+            self.assertNotIn("tools/python/select_frontend_commit.py", text)
+            self.assertNotIn("--backend-worktree", text)
+            jobs = yaml.safe_load(text)["jobs"]
+            actual_counts = {}
+            for name, job in jobs.items():
+                steps = job["steps"]
+                selections = [
+                    index for index, step in enumerate(steps)
+                    if "cargo xtask check ci frontend-source" in step.get("run", "")
+                ]
+                if not selections:
+                    continue
+                with self.subTest(workflow=filename, job=name):
+                    installers = [
+                        index for index, step in enumerate(steps)
+                        if step.get("uses", "").startswith("dtolnay/rust-toolchain@")
+                    ]
+                    self.assertTrue(installers, "来源选择前必须安装 Rust 工具链")
+                    self.assertLess(min(installers), min(selections))
+                    actual_counts[name] = len(selections)
+            self.assertEqual(actual_counts, expected_counts)
 
     def test_resource_gate_owns_its_git_range_and_frontend_checkout(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
