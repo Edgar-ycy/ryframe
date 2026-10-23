@@ -1,6 +1,8 @@
 use super::*;
 #[path = "devex_runtime_native_boundaries.rs"]
 mod boundaries;
+#[path = "devex_runtime_native_evidence.rs"]
+mod evidence;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
