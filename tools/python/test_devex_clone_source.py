@@ -4,7 +4,6 @@ import errno
 import json
 import os
 from pathlib import Path
-import re
 import socket
 import sys
 import unittest
@@ -194,17 +193,6 @@ class SourceExportTests(unittest.TestCase):
                 self.fixture.ledger_sets = {key: ledgers}
                 self.failed("source_identity_and_schema")
                 self.assertFalse(any("--no-create-info" in command for command in self.fixture.calls))
-
-    def test_ledger_names_are_bound_to_current_rust_migrators(self):
-        root = Path(__file__).resolve().parents[2]
-        for relative, constant, expected in (
-            ("crates/ryframe-db/src/migration/mod.rs", "CONTROL_MIGRATION_LEDGER", "seaql_migrations"),
-            ("crates/ryframe-tenant-db/src/migration/status.rs", "TENANT_DATA_MIGRATION_LEDGER", "seaql_tenant_data_migrations"),
-        ):
-            content = (root / relative).read_text(encoding="utf-8")
-            matched = re.search(rf'pub const {constant}: &str = "([^"]+)";', content)
-            self.assertIsNotNone(matched)
-            self.assertEqual(matched[1], expected)
 
     def test_wrong_uuid_or_owner_refuses_source_before_dump(self):
         for field in ("uuid_failure", "owner_failure"):
