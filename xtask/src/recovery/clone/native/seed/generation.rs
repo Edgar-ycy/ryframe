@@ -12,6 +12,8 @@ use std::path::Path;
 mod build_tests;
 #[path = "generation/builds.rs"]
 mod builds;
+#[path = "generation/coordinator.rs"]
+mod coordinator;
 #[cfg(test)]
 #[path = "generation/tests.rs"]
 mod tests;
@@ -26,6 +28,12 @@ pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<V
     let parameters = common::read_bound(backend, &args["parameters"], "生成守卫请求快照")?;
     document::exact(&parameters, &["operation", "arguments"], "生成守卫请求快照")?;
     let input = &parameters["arguments"];
+    if parameters["operation"] == "coordinator" {
+        let value = coordinator::dispatch(input)?;
+        common::bound_file(backend, &args["parameters"], "生成守卫请求快照")?;
+        return Ok(json!({"verified":true,"remote_writes":0,
+            "automatic_retry_permitted":false,"value":value}));
+    }
     match parameters["operation"].as_str() {
         Some("builds") => {
             document::exact(input, &["previous", "request"], "生成构建参数")?;

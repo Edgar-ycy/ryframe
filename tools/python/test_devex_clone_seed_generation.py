@@ -122,6 +122,7 @@ class GenerationTests(unittest.TestCase):
     def test_success_preserves_predecessor_and_only_publishes_after_equal_complete_images(self):
         original = {path: path.read_bytes() for path in self.directory.glob("*.json")}
         value = self.execute()
+        self.assertEqual(set(value), generation.START_FIELDS)
         self.assertEqual(value["status"], "seed_source_generation_running")
         self.assertEqual(value["remote_writes"], 0)
         self.assertFalse(value["restore_qualified"])
@@ -163,6 +164,42 @@ class GenerationTests(unittest.TestCase):
             generation._generation_evidence(self.backend, "archived-image", {})
         self.assertNotIn("private-secret", str(raised.exception))
         self.assertFalse(self.output.exists())
+
+    def test_native_start_receipt_failure_stops_before_retain_and_keeps_complete_images(self):
+        original = generation._generation_model
+
+        def fail(backend, action, arguments):
+            if action == "start-receipt":
+                raise ValueError("收据发布前原生模型失败；禁止自动重放")
+            return original(backend, action, arguments)
+
+        with patch.object(generation, "_generation_model", side_effect=fail), self.assertRaisesRegex(ValueError, "禁止自动重放"):
+            self.execute()
+        self.runtime.stop.assert_called_once()
+        self.runtime.retain.assert_not_called()
+        for image in ("before", "running", "after"):
+            self.assertTrue((self.output / image / "image.json").is_file())
+
+    def test_cancelled_start_reclaims_once_and_never_retries(self):
+        self.runtime.start.side_effect = KeyboardInterrupt("cancelled")
+        with self.assertRaises(KeyboardInterrupt):
+            self.execute()
+        self.runtime.start.assert_called_once()
+        self.runtime.stop.assert_called_once()
+        self.runtime.retain.assert_not_called()
+        self.assertTrue((self.output / "after/image.json").is_file())
+
+    def test_native_model_rejects_malformed_nested_results_without_retry(self):
+        for action, value in (
+                ("equal-images", {"equal": 1}), ("preflight-plan", {"needs_segment": 1}),
+                ("preflight-finish", {"ready": False}), ("inputs", {"prefix": {}}),
+                ("running", {"verified": 1}), ("published", {"verified": True, "extra": True})):
+            response = {"ok": True, "result": {"verified": True, "remote_writes": 0,
+                "automatic_retry_permitted": False, "value": value}}
+            with self.subTest(action=action), patch.object(generation, "native_invoke",
+                    return_value=(SimpleNamespace(returncode=0), response)) as invoke, self.assertRaises(ValueError):
+                generation._generation_model(self.backend, action, {})
+            invoke.assert_called_once()
 
     def test_ready_failure_stops_tree_and_captures_after_image_without_publishing(self):
         self.runtime.start.side_effect = TimeoutError("ready")
@@ -321,6 +358,17 @@ class GenerationTests(unittest.TestCase):
         with patch("devex_clone_run._require_owned_run", side_effect=ValueError("unowned")), self.assertRaisesRegex(ValueError, "unowned"):
             generation.inputs(self.backend, self.directory, self.request_path, 54)
 
+    def test_invalid_input_stops_before_loading_predecessor_or_rebuilding_request(self):
+        invalid = {**self.request, "id": "../invalid"}
+        self.request_path.write_text(__import__("json").dumps(invalid), encoding="utf-8")
+        with patch.object(generation, "load_state", return_value=self.state), \
+                patch("devex_clone_run._require_owned_run"), \
+                patch("devex_clone_seed_export._source") as source, \
+                patch("reference_fixture_successor_generation.rebuild") as rebuild, self.assertRaises(ValueError):
+            generation.inputs(self.backend, self.directory, self.request_path, 54)
+        source.assert_not_called()
+        rebuild.assert_not_called()
+
     def test_unknown_runtime_files_block_stop_before_any_process_or_port_action(self):
         directory = self.directory / "unknown-runtime"
         directory.mkdir()
@@ -355,8 +403,11 @@ class GenerationTests(unittest.TestCase):
     def test_running_verification_is_readonly_and_live_check_is_explicit(self):
         with self.running_fixture() as (descriptor, _state, verifier, storage):
             before = {str(path): path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
-            with patch("subprocess.run", side_effect=AssertionError("只读 verifier 不应执行工具或写 Git")):
+            with patch.object(generation, "native_invoke", wraps=generation.native_invoke) as invoked:
                 facts = generation.verify_running_source(self.backend, descriptor, live=False)
+            for call in invoked.call_args_list:
+                self.assertIn(call.args[0], {"__seed-evidence", "__source-evidence"})
+                self.assertFalse(call.kwargs["may_write"])
             self.assertEqual(facts["receipt"]["generation_id"], "g0054")
             self.assertFalse(verifier.call_args.kwargs["live"])
             storage.assert_not_called()
