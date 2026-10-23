@@ -63,7 +63,7 @@ impl Fixture {
             .join(binary_name(mode));
         fs::copy(&self.executable, &path).unwrap();
         json!({"control": {"host": "127.0.0.1", "port": 3306, "database": "fixture_control",
-            "username": "fixture", "password_env": "FIXTURE_PASSWORD", "tls_mode": "required"},
+            "username": "fixture", "password": "fixture-only", "tls_mode": "required"},
             "server_uuid": "12345678-1234-1234-1234-123456789abc", "mysql_client": path})
     }
 
@@ -75,7 +75,16 @@ impl Fixture {
                 environment.insert(OsString::from(name), value);
             }
         }
-        environment.insert("FIXTURE_PASSWORD".into(), "fixture-only".into());
+        for (key, value) in [
+            ("FIXTURE_PASSWORD", "wrong-ambient-secret"),
+            ("MYSQL_PWD", "wrong-ambient-secret"),
+            ("mysql_pwd", "another-ambient-secret"),
+            ("GITHUB_ACTIONS", "true"),
+            ("APP_SCOPE_ID", "wrong-scope"),
+            ("RYFRAME_CI_MYSQL_CONTAINER_ID", "not-a-container"),
+        ] {
+            environment.insert(key.into(), value.into());
+        }
         MysqlSession::open_with_environment(&binding, &environment).expect("应打开受限原生夹具")
     }
 }
@@ -104,6 +113,12 @@ fn identity(session: &mut MysqlSession) -> Value {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["password"], true);
     assert_eq!(rows[0]["private_removed"], true);
+    let path = PathBuf::from(rows[0]["options"].as_str().unwrap());
+    assert!(path.is_file(), "进程存活时保留凭据文件");
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        "[client]\npassword=\"fixture-only\"\n"
+    );
     let pid = u32::try_from(rows[0]["pid"].as_u64().unwrap()).unwrap();
     common::process_identity(pid)
         .unwrap()
@@ -117,6 +132,19 @@ fn assert_stopped(identity: &Value) {
         Some(identity),
         "原客户端内核代次必须已经停止"
     );
+}
+
+fn assert_options_removed(fixture: &Fixture, mode: &str) {
+    let marker = fixture
+        .directory
+        .as_ref()
+        .unwrap()
+        .path()
+        .join(binary_name(mode))
+        .with_extension("options");
+    let path = PathBuf::from(fs::read_to_string(marker).unwrap());
+    assert!(!path.exists(), "关闭后删除凭据文件");
+    assert!(!path.parent().unwrap().exists(), "关闭后删除独占目录");
 }
 
 fn healthy_sessions(fixture: &Fixture) {
@@ -145,6 +173,20 @@ fn healthy_sessions(fixture: &Fixture) {
             "健康关闭应先回滚只读事务"
         );
         assert_stopped(&first);
+        assert_eq!(
+            fs::read(
+                fixture
+                    .directory
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join(binary_name(mode))
+                    .with_extension("option-at-exit")
+            )
+            .unwrap(),
+            b"observed"
+        );
+        assert_options_removed(fixture, mode);
         session.close().expect("关闭后重复关闭应幂等");
     }
 }
@@ -154,6 +196,7 @@ fn failed_queries(fixture: &Fixture) {
         ("SELECT fixture_utf8", Some("mysql-output-utf8")),
         ("SELECT fixture_limit", Some("mysql-output-limit")),
         ("SELECT fixture_duplicate", Some("mysql-output-json")),
+        ("SELECT fixture_password_error", Some("mysql-output-json")),
         ("SELECT fixture_exit", None),
         ("SELECT fixture_timeout", Some("mysql-timeout")),
     ] {
@@ -175,6 +218,7 @@ fn failed_queries(fixture: &Fixture) {
             Err("mysql-closed")
         );
         assert_stopped(&before);
+        assert_options_removed(fixture, "mysql-failure");
         drop(session);
     }
 }
@@ -192,6 +236,7 @@ fn blocked_pipe_and_close_timeout(fixture: &Fixture) {
         "stdin阻塞不得阻止超时回收"
     );
     drop(session);
+    assert_options_removed(fixture, "mysql-block");
     let mut session = fixture.open("mysql-close-hang");
     let before = identity(&mut session);
     let started = Instant::now();
@@ -201,6 +246,29 @@ fn blocked_pipe_and_close_timeout(fixture: &Fixture) {
         "关闭超时后必须回收完整客户端"
     );
     assert_stopped(&before);
+    assert_options_removed(fixture, "mysql-close-hang");
+}
+
+fn cleanup_failure_closes_process_and_refuses_success(fixture: &Fixture) {
+    let mut session = fixture.open("mysql-cleanup-failure");
+    let before = identity(&mut session);
+    let marker = fixture
+        .directory
+        .as_ref()
+        .unwrap()
+        .path()
+        .join(binary_name("mysql-cleanup-failure"))
+        .with_extension("options");
+    let path = PathBuf::from(fs::read_to_string(marker).unwrap());
+    let foreign = path.parent().unwrap().join("unexpected");
+    fs::write(&foreign, b"unrelated").unwrap();
+    assert_eq!(session.close(), Err("mysql-option-cleanup"));
+    assert_stopped(&before);
+    assert!(!path.exists());
+    assert!(foreign.is_file());
+    fs::remove_file(foreign).unwrap();
+    assert_eq!(session.close(), Err("mysql-closed"));
+    assert_options_removed(fixture, "mysql-cleanup-failure");
 }
 
 #[test]
@@ -209,11 +277,13 @@ fn native_mysql_session_preserves_connection_and_recovers_all_pipe_lifecycles() 
     healthy_sessions(&fixture);
     failed_queries(&fixture);
     blocked_pipe_and_close_timeout(&fixture);
+    cleanup_failure_closes_process_and_refuses_success(&fixture);
     actual_private_entrypoints(&fixture);
     let mut session = fixture.open("mysql-drop");
     let before = identity(&mut session);
     drop(session);
     assert_stopped(&before);
+    assert_options_removed(&fixture, "mysql-drop");
     assert!(fixture.executable.is_file());
 }
 
@@ -223,8 +293,9 @@ fn invoke(operation: &str, input: &[u8]) -> std::process::Output {
         env!("CARGO_BIN_EXE_xtask"),
         &["__job-evidence", operation],
         &[
-            ("FIXTURE_PASSWORD", "fixture-only"),
-            ("GITHUB_ACTIONS", "false"),
+            ("FIXTURE_PASSWORD", "wrong-ambient-secret"),
+            ("MYSQL_PWD", "wrong-ambient-secret"),
+            ("GITHUB_ACTIONS", "true"),
         ],
         Some(input),
         Duration::from_secs(15),
@@ -247,6 +318,8 @@ fn actual_private_entrypoints(fixture: &Fixture) {
     let proof: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(proof["format_version"], 1);
     assert_eq!(proof["valid"], true);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("fixture-only"));
+    assert_options_removed(fixture, "mysql-native-warning");
     assert_eq!(proof["scope_id"], scope);
     assert_eq!(proof["business_id"], "101");
     assert_eq!(proof["queue_ms"].as_f64(), Some(1000.0));
@@ -274,9 +347,11 @@ fn actual_private_entrypoints(fixture: &Fixture) {
     let output = invoke("collect", &serde_json::to_vec(&request).unwrap());
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
+    assert_options_removed(fixture, "mysql-native-query-error");
     let failure: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(failure["valid"], false);
     assert!(failure["reason"].as_str().unwrap().starts_with("mysql-"));
     assert!(!failure["hint"].as_str().unwrap().is_empty());
     assert!(!String::from_utf8_lossy(&output.stdout).contains("fixture-private-credential"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("fixture-only"));
 }

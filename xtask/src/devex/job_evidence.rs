@@ -1,7 +1,6 @@
 //! 只读任务证据的原生私有入口；所有业务关联与 SQL 由固定模型限定。
 
 use std::{
-    collections::BTreeMap,
     env,
     io::{BufReader, Read, Write},
 };
@@ -49,7 +48,7 @@ fn run_collect() -> i32 {
     let result = if read.is_err() || input.len() > protocol::INPUT_LIMIT {
         Err("collector_input_limit")
     } else {
-        collect(&input, &environment())
+        collect(&input)
     };
     let value = result.unwrap_or_else(failure);
     let success = value["valid"].as_bool() == Some(true);
@@ -59,10 +58,7 @@ fn run_collect() -> i32 {
     if success { 0 } else { 1 }
 }
 
-pub(crate) fn collect(
-    input: &[u8],
-    environment: &BTreeMap<String, String>,
-) -> EvidenceResult<Value> {
+pub(crate) fn collect(input: &[u8]) -> EvidenceResult<Value> {
     let request = protocol::parse(input, "invalid_collector_request")?;
     protocol::exact(
         &request,
@@ -70,7 +66,7 @@ pub(crate) fn collect(
         "invalid_collector_request",
     )?;
     let scope = request["scope_id"].as_str().ok_or("invalid_scope")?;
-    protocol::binding(&request["binding"], scope, environment)?;
+    protocol::binding(&request["binding"], scope)?;
     model::selection(&request["selection"])?;
     let mut session = mysql::MysqlSession::open(&request["binding"])?;
     let result = protocol::collect(
@@ -80,10 +76,10 @@ pub(crate) fn collect(
         &request["selection"],
     );
     let closed = Session::close(&mut session);
-    match result {
-        Ok(value) => closed.map(|()| value),
-        Err(reason) => Err(reason),
+    if closed == Err("mysql-option-cleanup") {
+        return Err("mysql-option-cleanup");
     }
+    result.and_then(|value| closed.map(|()| value))
 }
 
 fn run_wait() -> i32 {
@@ -92,10 +88,13 @@ fn run_wait() -> i32 {
         let request = protocol::read_line(&mut reader)?.ok_or("invalid_wait_binding")?;
         protocol::exact(&request, &["binding", "scope_id"], "invalid_wait_binding")?;
         let scope = request["scope_id"].as_str().ok_or("invalid_scope")?;
-        protocol::binding(&request["binding"], scope, &environment())?;
+        protocol::binding(&request["binding"], scope)?;
         let mut session = mysql::MysqlSession::open(&request["binding"])?;
         let result = wait::serve(&mut session, &request["binding"], scope, reader, emit);
         let closed = Session::close(&mut session);
+        if closed == Err("mysql-option-cleanup") {
+            return Err("mysql-option-cleanup");
+        }
         result.and(closed)
     })();
     match result {
@@ -132,13 +131,6 @@ fn emit(mut value: Value) -> EvidenceResult<()> {
         .map_err(|_| "job_observer_output_failed")
 }
 
-fn environment() -> BTreeMap<String, String> {
-    env::vars_os()
-        // 此层仅核对变量存在性；密码保留 OsString 交由客户端构造入口读取。
-        .filter_map(|(name, _)| Some((name.into_string().ok()?, String::new())))
-        .collect()
-}
-
 fn hint(reason: &str) -> &'static str {
     match reason {
         "invalid_collector_request"
@@ -152,13 +144,14 @@ fn hint(reason: &str) -> &'static str {
         | "invalid_server_identity" => {
             "检查 bindings.job_timings 的 control、server_uuid、mysql_client 和本次 scope_id。"
         }
-        "missing_database_password_environment" | "mysql-password-missing" => {
-            "在控制器环境中设置 control.password_env 指定的密码变量，变量名和凭据值须分别配置。"
+        "mysql-password-encoding" => "检查 control.password；移除 NUL 和无法安全编码的控制字符。",
+        "mysql-option-permissions" | "mysql-option-file" => {
+            "检查后端 .local-tests 目录、当前用户的独占访问权限及受管凭据文件写入能力。"
         }
-        "ambiguous_database_password_environment" | "mysql-environment-ambiguous" => {
-            "清理同名但大小写不同的环境声明，保持 control.password_env 对应的唯一密码变量。"
+        "mysql-option-cleanup" => {
+            "受管凭据文件未能删除；核对客户端已退出及 .local-tests 目录权限，清理该会话文件后重试。"
         }
-        "wrong_database_ownership" | "wrong_server_identity" | "mysql-ci-owner" => {
+        "wrong_database_ownership" | "wrong_server_identity" => {
             "改用本次明确登记的隔离控制库，并核对服务器 UUID、scope 与 ownership 收据。"
         }
         "mysql-client-path" | "mysql-client-binary" => {

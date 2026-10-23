@@ -11,12 +11,22 @@ fn main() {
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
+    let first = std::env::args_os().nth(1).expect("首参数");
+    let options = first
+        .to_str()
+        .unwrap()
+        .strip_prefix("--defaults-extra-file=")
+        .expect("首参数必须是受管文件");
+    assert!(std::path::Path::new(options).is_absolute());
+    assert!(!std::env::args().any(|arg| arg.contains("fixture-only")));
+    assert!(std::env::vars_os().all(|(key, _)| key == "SystemRoot"));
+    std::fs::write(executable.with_extension("options"), options).expect("受管文件观察");
     if mode.ends_with("block") {
         std::thread::sleep(Duration::from_secs(60));
         return;
     }
     if mode.ends_with("query-error") {
-        eprintln!("fixture-private-credential-diagnostic");
+        eprintln!("fixture-only fixture-private-credential-diagnostic");
         std::process::exit(7);
     }
     if mode.ends_with("warning") {
@@ -49,6 +59,12 @@ fn main() {
             respond(&line);
         }
     }
+    assert!(
+        std::path::Path::new(options).is_file(),
+        "退出前仍须持有凭据文件"
+    );
+    std::fs::write(executable.with_extension("option-at-exit"), b"observed")
+        .expect("退出时文件观察");
     if mode.ends_with("close-hang") {
         std::thread::sleep(Duration::from_secs(60));
     }
@@ -66,6 +82,9 @@ fn respond(line: &str) {
     } else if line.contains("fixture_limit") {
         let block = vec![b'x'; 4 * 1024 * 1024 + 1];
         io::stdout().write_all(&block).expect("超限夹具");
+    } else if line.contains("fixture_password_error") {
+        println!("fixture-only");
+        eprintln!("fixture-only");
     } else if line.contains("fixture_duplicate") {
         println!("{{\"x\":1,\"x\":2}}");
     } else {
@@ -74,13 +93,23 @@ fn respond(line: &str) {
                 .write_all(&vec![b'x'; 8 * 1024 * 1024])
                 .expect("stderr夹具");
         }
-        let password = std::env::var("MYSQL_PWD").as_deref() == Ok("fixture-only");
-        let private_removed = std::env::var_os("FIXTURE_PASSWORD").is_none();
+        let first = std::env::args_os().nth(1).expect("首参数");
+        let path = first
+            .to_str()
+            .unwrap()
+            .strip_prefix("--defaults-extra-file=")
+            .expect("首参数必须是受管文件");
+        let password = matches!(
+            std::fs::read_to_string(path).as_deref(),
+            Ok("[client]\npassword=\"fixture-only\"\n")
+        );
+        let private_removed = std::env::vars_os().all(|(key, _)| key == "SystemRoot");
         println!(
-            "{{\"pid\":{},\"password\":{},\"private_removed\":{}}}",
+            "{{\"pid\":{},\"password\":{},\"private_removed\":{},\"options\":{:?}}}",
             std::process::id(),
             password,
-            private_removed
+            private_removed,
+            path
         );
     }
     io::stdout().flush().expect("夹具输出刷新");

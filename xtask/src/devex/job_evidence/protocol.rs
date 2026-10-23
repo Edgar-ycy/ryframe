@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     io::{BufRead, Read},
     time::Duration,
 };
@@ -60,11 +59,7 @@ pub(crate) fn read_line(reader: &mut impl BufRead) -> EvidenceResult<Option<Valu
     parse(&line, "invalid_wait_request").map(Some)
 }
 
-pub(crate) fn binding(
-    value: &Value,
-    scope: &str,
-    environment: &BTreeMap<String, String>,
-) -> EvidenceResult<()> {
+pub(crate) fn binding(value: &Value, scope: &str) -> EvidenceResult<()> {
     exact(
         value,
         &["control", "server_uuid", "mysql_client"],
@@ -77,16 +72,11 @@ pub(crate) fn binding(
     exact(
         control,
         &[
-            "host",
-            "port",
-            "database",
-            "username",
-            "password_env",
-            "tls_mode",
+            "host", "port", "database", "username", "password", "tls_mode",
         ],
         "invalid_control_binding",
     )?;
-    let password = control["password_env"]
+    let password = control["password"]
         .as_str()
         .ok_or("invalid_control_binding")?;
     if !matches(
@@ -101,30 +91,15 @@ pub(crate) fn binding(
             Some("required" | "preferred" | "disabled")
         )
         || control["username"].as_str().is_none_or(str::is_empty)
-        || !matches(password, r"^[A-Z][A-Z0-9_]*$")
     {
         return Err("invalid_control_binding");
     }
+    super::mysql::options::encode(password)?;
     if !matches(
         value["server_uuid"].as_str().unwrap_or_default(),
         r"^[a-f0-9-]{36}$",
     ) {
         return Err("invalid_server_identity");
-    }
-    #[cfg(windows)]
-    let present = match environment
-        .keys()
-        .filter(|name| name.eq_ignore_ascii_case(password))
-        .count()
-    {
-        0 => false,
-        1 => true,
-        _ => return Err("ambiguous_database_password_environment"),
-    };
-    #[cfg(not(windows))]
-    let present = environment.contains_key(password);
-    if !present {
-        return Err("missing_database_password_environment");
     }
     Ok(())
 }

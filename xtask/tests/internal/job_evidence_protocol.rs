@@ -8,7 +8,7 @@ use crate::devex::job_evidence::{
 };
 
 fn binding() -> Value {
-    json!({"control": {"host": "127.0.0.1", "port": 3306, "database": "devex_control", "username": "test", "password_env": "DEVEX_TEST_PASSWORD", "tls_mode": "required"}, "server_uuid": "12345678-1234-1234-1234-123456789abc", "mysql_client": "fixture-client"})
+    json!({"control": {"host": "127.0.0.1", "port": 3306, "database": "devex_control", "username": "test", "password": "fixture-only", "tls_mode": "required"}, "server_uuid": "12345678-1234-1234-1234-123456789abc", "mysql_client": "fixture-client"})
 }
 
 fn selection() -> Value {
@@ -141,29 +141,21 @@ fn collection_preserves_unfinished_and_unknown_attempt_evidence() {
 
 #[test]
 fn binding_rejects_injection_booleans_missing_secrets_and_remote_hosts() {
-    let environment = BTreeMap::from([("DEVEX_TEST_PASSWORD".into(), "fixture-only".into())]);
-    protocol::binding(&binding(), "devex-test-scope", &environment).unwrap();
+    protocol::binding(&binding(), "devex-test-scope").unwrap();
     for (path, invalid) in [
         ("database", json!("x`;DROP")),
         ("host", json!("shared.example.invalid")),
         ("port", json!(true)),
         ("port", json!(65536)),
-        ("password_env", json!("APP_TOKEN;")),
+        ("password", json!("private\0value")),
         ("username", json!("")),
         ("tls_mode", json!("unknown")),
     ] {
         let mut value = binding();
         value["control"][path] = invalid;
-        assert!(protocol::binding(&value, "devex-test-scope", &environment).is_err());
+        assert!(protocol::binding(&value, "devex-test-scope").is_err());
     }
-    assert_eq!(
-        protocol::binding(&binding(), "devex-test-scope", &BTreeMap::new()),
-        Err("missing_database_password_environment")
-    );
-    assert_eq!(
-        protocol::binding(&binding(), "x';--", &environment),
-        Err("invalid_scope")
-    );
+    assert_eq!(protocol::binding(&binding(), "x';--"), Err("invalid_scope"));
 }
 
 #[test]
@@ -189,27 +181,19 @@ fn private_input_rejects_duplicates_non_utf8_oversize_and_unterminated_frames() 
 }
 
 #[test]
-fn password_environment_lookup_preserves_platform_case_rules() {
-    let mut environment = BTreeMap::from([("devex_test_password".into(), "fixture-only".into())]);
-    let expected = if cfg!(windows) {
-        Ok(())
-    } else {
-        Err("missing_database_password_environment")
-    };
-    assert_eq!(
-        protocol::binding(&binding(), "devex-test-scope", &environment),
-        expected
-    );
-    environment.insert("DEVEX_TEST_PASSWORD".into(), "another-fixture".into());
-    let expected = if cfg!(windows) {
-        Err("ambiguous_database_password_environment")
-    } else {
-        Ok(())
-    };
-    assert_eq!(
-        protocol::binding(&binding(), "devex-test-scope", &environment),
-        expected
-    );
+fn binding_uses_password_and_strictly_rejects_legacy_and_unknown_fields() {
+    protocol::binding(&binding(), "devex-test-scope").unwrap();
+    for remove_password in [false, true] {
+        let mut value = binding();
+        value["control"]["password_env"] = json!("DEVEX_TEST_PASSWORD");
+        if remove_password {
+            value["control"].as_object_mut().unwrap().remove("password");
+        }
+        assert_eq!(
+            protocol::binding(&value, "devex-test-scope"),
+            Err("invalid_control_binding")
+        );
+    }
 }
 
 #[test]

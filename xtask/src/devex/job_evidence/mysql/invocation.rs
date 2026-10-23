@@ -1,43 +1,63 @@
 use std::{
     collections::BTreeMap,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fs,
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
 };
 
 use serde_json::Value;
 
 pub(crate) type Environment = BTreeMap<OsString, OsString>;
 
-/// 只构造命令，不启动客户端，也不修改当前进程的环境。
-pub(crate) fn command(binding: &Value, environment: &Environment) -> Result<Command, &'static str> {
+pub(crate) struct Invocation {
+    pub(crate) command: Command,
+    pub(crate) options: super::options::OptionFile,
+}
+
+impl Invocation {
+    pub(crate) fn spawn(mut self) -> Result<(Child, super::options::OptionFile), &'static str> {
+        match self.command.spawn() {
+            Ok(child) => Ok((child, self.options)),
+            Err(_) => {
+                self.options.close()?;
+                Err("mysql-spawn")
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for Invocation {
+    type Target = Command;
+
+    fn deref(&self) -> &Command {
+        &self.command
+    }
+}
+
+/// 构造客户端及其独占凭据文件；调用方必须持有文件至进程退出。
+pub(crate) fn command(
+    binding: &Value,
+    environment: &Environment,
+) -> Result<Invocation, &'static str> {
     let control = binding.get("control").ok_or("mysql-binding")?;
+    super::super::protocol::exact(
+        control,
+        &[
+            "host", "port", "database", "username", "password", "tls_mode",
+        ],
+        "invalid_control_binding",
+    )?;
     let (port, username, tls) = connection(control)?;
-    let password_name = text(control, "password_env")?;
-    if !password_name
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_uppercase)
-        || !password_name
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-    {
-        return Err("mysql-password-env");
-    }
-    let password = env_value(environment, password_name)?.ok_or("mysql-password-missing")?;
-    if password.as_encoded_bytes().contains(&0) {
-        return Err("mysql-password-env");
-    }
-    let (mut command, port) = if env_text(environment, "GITHUB_ACTIONS")? == Some("true") {
-        docker_command(environment)?
-    } else {
-        let executable = Path::new(text(binding, "mysql_client")?);
-        validate_client(executable)?;
-        (Command::new(executable), port)
-    };
+    let password = text(control, "password")?;
+    let executable = Path::new(text(binding, "mysql_client")?);
+    validate_client(executable)?;
+    let options = super::options::OptionFile::create(password)?;
+    let mut command = Command::new(executable);
+    let mut first = OsString::from("--defaults-extra-file=");
+    first.push(options.path());
+    command.arg(first);
     command.args([
-        "--no-defaults".to_owned(),
         "--host=127.0.0.1".to_owned(),
         format!("--port={port}"),
         format!("--user={username}"),
@@ -53,18 +73,27 @@ pub(crate) fn command(binding: &Value, environment: &Environment) -> Result<Comm
         "--skip-reconnect",
         "--connect-timeout=5",
     ]);
-    // 来源变量只由父进程读取，客户端只通过 MYSQL_PWD 接收本次密码。
-    command
-        .env_clear()
-        .envs(environment)
-        .env_remove(password_name)
-        .env("MYSQL_PWD", password);
+    minimal_environment(&mut command, environment);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     hide_window(&mut command);
-    Ok(command)
+    Ok(Invocation { command, options })
+}
+
+/// 绝对客户端无需 PATH；仅 Windows 加载系统 DLL 所需的 OS 根目录可继承。
+pub(super) fn minimal_environment(command: &mut Command, environment: &Environment) {
+    command.env_clear();
+    #[cfg(windows)]
+    if let Some((_, value)) = environment
+        .iter()
+        .find(|(name, _)| name.as_encoded_bytes().eq_ignore_ascii_case(b"SystemRoot"))
+    {
+        command.env("SystemRoot", value);
+    }
+    #[cfg(not(windows))]
+    let _ = environment;
 }
 
 fn connection(control: &Value) -> Result<(u16, &str, &'static str), &'static str> {
@@ -98,34 +127,6 @@ fn connection(control: &Value) -> Result<(u16, &str, &'static str), &'static str
     Ok((port, username, tls))
 }
 
-fn docker_command(environment: &Environment) -> Result<(Command, u16), &'static str> {
-    let container =
-        env_text(environment, "RYFRAME_CI_MYSQL_CONTAINER_ID")?.ok_or("mysql-ci-owner")?;
-    let run = env_text(environment, "GITHUB_RUN_ID")?.ok_or("mysql-ci-owner")?;
-    let attempt = env_text(environment, "GITHUB_RUN_ATTEMPT")?.ok_or("mysql-ci-owner")?;
-    if !(12..=64).contains(&container.len())
-        || !container
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        || !positive_decimal(run)
-        || !positive_decimal(attempt)
-        || env_text(environment, "APP_SCOPE_ID")? != Some(format!("ci-{run}-{attempt}").as_str())
-    {
-        return Err("mysql-ci-owner");
-    }
-    let mut command = Command::new("docker");
-    command.args(["exec", "-i", "--env", "MYSQL_PWD", container, "mysql"]);
-    Ok((command, 3306))
-}
-
-fn positive_decimal(value: &str) -> bool {
-    value
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| (b'1'..=b'9').contains(byte))
-        && value.bytes().all(|byte| byte.is_ascii_digit())
-}
-
 fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, &'static str> {
     value
         .get(key)
@@ -148,32 +149,6 @@ fn port(value: &Value) -> Result<u16, &'static str> {
         .ok()
         .filter(|number| *number != 0)
         .ok_or("mysql-port")
-}
-
-/// 已知环境键遵循平台大小写语义；Windows 注入环境的大小写别名不得有歧义。
-fn env_value<'a>(
-    environment: &'a Environment,
-    name: &str,
-) -> Result<Option<&'a OsStr>, &'static str> {
-    #[cfg(windows)]
-    {
-        let mut matches = environment
-            .iter()
-            .filter(|(key, _)| key.as_encoded_bytes().eq_ignore_ascii_case(name.as_bytes()));
-        let value = matches.next().map(|(_, value)| value.as_os_str());
-        if matches.next().is_some() {
-            return Err("mysql-environment-ambiguous");
-        }
-        Ok(value)
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(environment.get(OsStr::new(name)).map(OsString::as_os_str))
-    }
-}
-
-fn env_text<'a>(environment: &'a Environment, name: &str) -> Result<Option<&'a str>, &'static str> {
-    Ok(env_value(environment, name)?.and_then(OsStr::to_str))
 }
 
 fn validate_client(path: &Path) -> Result<(), &'static str> {
@@ -232,21 +207,21 @@ fn validate_binary(path: &Path) -> Result<(), &'static str> {
 }
 
 #[cfg(windows)]
-fn linked(metadata: &fs::Metadata) -> bool {
+pub(super) fn linked(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     metadata.file_attributes() & 0x400 != 0 || metadata.file_type().is_symlink()
 }
 
 #[cfg(not(windows))]
-fn linked(metadata: &fs::Metadata) -> bool {
+pub(super) fn linked(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
 #[cfg(windows)]
-fn hide_window(command: &mut Command) {
+pub(super) fn hide_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     command.creation_flags(0x0800_0000);
 }
 
 #[cfg(not(windows))]
-fn hide_window(_: &mut Command) {}
+pub(super) fn hide_window(_: &mut Command) {}

@@ -15,6 +15,8 @@ use serde_json::Value;
 pub(crate) mod invocation;
 #[path = "mysql/io.rs"]
 pub(crate) mod io;
+#[path = "mysql/options.rs"]
+pub(crate) mod options;
 
 use io::{ReadEvent, Response, WriteRequest};
 
@@ -24,6 +26,7 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// 独占一个持久 mysql CLI 连接；任意查询失败后关闭，禁止重连或重放。
 pub(crate) struct MysqlSession {
     child: Option<Child>,
+    options: Option<options::OptionFile>,
     writes: Option<SyncSender<WriteRequest>>,
     lines: Option<Receiver<ReadEvent>>,
     readers: Vec<JoinHandle<()>>,
@@ -32,7 +35,7 @@ pub(crate) struct MysqlSession {
 }
 
 impl MysqlSession {
-    /// binding 与采集器协议一致，包含 control 和非 CI 使用的 mysql_client。
+    /// binding 与采集器协议一致，包含明文 control.password 和绝对 mysql_client。
     /// SQL、schema、scope 和 server_uuid 的业务所有权由父层在同一会话内核验。
     pub(crate) fn open(binding: &Value) -> Result<Self, &'static str> {
         let environment = std::env::vars_os().collect();
@@ -44,18 +47,20 @@ impl MysqlSession {
         binding: &Value,
         environment: &invocation::Environment,
     ) -> Result<Self, &'static str> {
-        let mut command = invocation::command(binding, environment)?;
-        // 不输出 Command：它的子进程环境包含密码。
-        let child = command.spawn().map_err(|_| "mysql-spawn")?;
+        let (child, options) = invocation::command(binding, environment)?.spawn()?;
         let mut session = Self {
             child: Some(child),
+            options: Some(options),
             writes: None,
             lines: None,
             readers: Vec::new(),
             stderr_failure: Arc::new(AtomicU8::new(0)),
             failed: false,
         };
-        session.start_threads()?;
+        if let Err(reason) = session.start_threads() {
+            session.terminate()?;
+            return Err(reason);
+        }
         Ok(session)
     }
 
@@ -98,7 +103,7 @@ impl MysqlSession {
         let result = self.execute_inner(sql, timeout);
         if result.is_err() {
             self.failed = true;
-            let _ = self.terminate();
+            self.terminate()?;
         }
         result
     }
@@ -181,6 +186,7 @@ impl MysqlSession {
     /// 健康连接先在同一连接内 ROLLBACK，再关闭 stdin 并等待正常退出。
     pub(crate) fn close(&mut self) -> Result<(), &'static str> {
         if self.child.is_none() {
+            self.clean_options()?;
             return if self.failed {
                 Err("mysql-closed")
             } else {
@@ -189,7 +195,7 @@ impl MysqlSession {
         }
         let result = self.execute("ROLLBACK", CLOSE_TIMEOUT).map(|_| ());
         if let Err(error) = result {
-            let _ = self.terminate();
+            self.terminate()?;
             return Err(error);
         }
         // 写线程收到断开后退出并释放其独占的 stdin。
@@ -197,7 +203,7 @@ impl MysqlSession {
         let result = self.wait_exit(CLOSE_TIMEOUT);
         let cleanup = self.terminate();
         let result = process_result(
-            result.and(cleanup),
+            cleanup.and(result),
             self.stderr_failure.load(Ordering::Acquire),
         );
         self.failed |= result.is_err();
@@ -237,7 +243,8 @@ impl MysqlSession {
                 }
             }
             if child.wait().is_err() {
-                result = Err("mysql-wait");
+                self.child = Some(child);
+                return Err("mysql-wait");
             }
         }
         for reader in self.readers.drain(..) {
@@ -245,14 +252,30 @@ impl MysqlSession {
                 result = Err("mysql-reader-panic");
             }
         }
+        self.clean_options()?;
         result
+    }
+
+    fn clean_options(&mut self) -> Result<(), &'static str> {
+        if let Some(options) = &mut self.options {
+            options.close()?;
+        }
+        self.options = None;
+        Ok(())
     }
 }
 
 impl Drop for MysqlSession {
     fn drop(&mut self) {
         // Drop 不执行 SQL、不 unwrap，也不传播线程 panic。
-        let _ = self.terminate();
+        if let Err(reason) = self.terminate() {
+            if self.child.is_some()
+                && let Some(options) = &mut self.options
+            {
+                options.preserve();
+            }
+            eprintln!("{reason}");
+        }
     }
 }
 

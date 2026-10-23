@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsStr,
     fs,
     io::{self, BufRead, Cursor, Read},
     path::PathBuf,
@@ -61,7 +60,7 @@ impl Fixture {
             binding: json!({
                 "control": {
                     "host": "localhost", "port": "3307", "database": "isolated_control",
-                    "username": "test_user", "password_env": "JOB_PASSWORD", "tls_mode": "required"
+                    "username": "test_user", "password": "unit-secret-only", "tls_mode": "required"
                 },
                 "mysql_client": executable,
                 "server_uuid": "baf03c60-671c-47f1-8504-d55640cc108e"
@@ -72,7 +71,7 @@ impl Fixture {
         }
     }
 
-    fn docker(&mut self) {
+    fn legacy_environment(&mut self) {
         for (key, value) in [
             ("GITHUB_ACTIONS", "true"),
             ("GITHUB_RUN_ID", "123"),
@@ -97,14 +96,25 @@ fn accepted_line(bytes: &[u8], response: &mut Response) -> Result<bool, &'static
 }
 
 #[test]
-fn direct_invocation_has_fixed_mysql_flags_and_no_password_arguments() {
+fn direct_invocation_has_fixed_flags_private_file_and_no_password_arguments() {
     let fixture = Fixture::new();
     let command = command(&fixture.binding, &fixture.environment).unwrap();
     assert_eq!(command.get_program(), fixture.executable.as_os_str());
+    let arguments = args(&command);
     assert_eq!(
-        args(&command),
+        arguments[0],
+        format!("--defaults-extra-file={}", command.options.path().display())
+    );
+    assert!(command.options.path().is_absolute());
+    assert!(
+        command
+            .options
+            .path()
+            .starts_with(super::workspace::root_dir().join(".local-tests"))
+    );
+    assert_eq!(
+        &arguments[1..],
         [
-            "--no-defaults",
             "--host=127.0.0.1",
             "--port=3307",
             "--user=test_user",
@@ -119,294 +129,162 @@ fn direct_invocation_has_fixed_mysql_flags_and_no_password_arguments() {
             "--connect-timeout=5",
         ]
     );
-    assert!(
-        !args(&command)
-            .iter()
-            .any(|arg| arg.contains("unit-secret-only"))
+    assert!(!arguments.iter().any(|arg| arg.contains("unit-secret-only")));
+    assert!(command.get_envs().all(|(name, _)| name == "SystemRoot"));
+    assert_eq!(
+        fs::read_to_string(command.options.path()).unwrap(),
+        "[client]\npassword=\"unit-secret-only\"\n"
     );
-    assert!(command.get_envs().any(|(key, value)| {
-        key == "MYSQL_PWD" && value == Some(OsStr::new("unit-secret-only"))
-    }));
+    let path = command.options.path().to_owned();
+    let directory = path.parent().unwrap().to_owned();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    // Windows 创建及写入路径在写入前后实际核验 ACL，核验失败不能构造命令。
+    drop(command);
+    assert!(!path.exists());
+    assert!(!directory.exists());
 }
 
 #[test]
-fn command_build_does_not_mutate_process_or_supplied_environment() {
-    let fixture = Fixture::new();
+fn ambient_credentials_ci_switches_and_case_aliases_cannot_change_command() {
+    let mut fixture = Fixture::new();
+    fixture.legacy_environment();
+    for (key, value) in fixture.environment.clone() {
+        fixture
+            .environment
+            .insert(key.to_string_lossy().to_ascii_lowercase().into(), value);
+    }
+    fixture.environment.insert("APP_ENV".into(), "prod".into());
+    fixture
+        .environment
+        .insert("MYSQL_HOME".into(), "private-location".into());
+    fixture
+        .environment
+        .insert("MYSQL_TEST_LOGIN_FILE".into(), "private-location".into());
     let supplied = fixture.environment.clone();
     let before: Environment = std::env::vars_os().collect();
     let command = command(&fixture.binding, &fixture.environment).unwrap();
-    assert!(before == std::env::vars_os().collect());
-    assert!(supplied == fixture.environment);
-    assert!(
-        command.get_envs().any(|(key, value)| {
-            key == "PRESERVED_ENV" && value == Some(OsStr::new("same-value"))
-        })
-    );
-    assert!(
-        !command
-            .get_envs()
-            .any(|(key, value)| key == "JOB_PASSWORD" && value.is_some())
-    );
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_password_lookup_accepts_mixed_case_environment_key() {
-    let mut fixture = Fixture::new();
-    let password = fixture
-        .environment
-        .remove(OsStr::new("JOB_PASSWORD"))
-        .unwrap();
-    fixture.environment.insert("jOb_pAsSwOrD".into(), password);
-    let supplied = fixture.environment.clone();
-    let command = command(&fixture.binding, &fixture.environment).unwrap();
-    assert!(supplied == fixture.environment);
-    assert!(command.get_envs().any(|(key, value)| {
-        key.as_encoded_bytes().eq_ignore_ascii_case(b"MYSQL_PWD")
-            && value == Some(OsStr::new("unit-secret-only"))
-    }));
-    assert!(!command.get_envs().any(|(key, value)| {
-        key.as_encoded_bytes().eq_ignore_ascii_case(b"JOB_PASSWORD") && value.is_some()
-    }));
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_ci_lookup_accepts_mixed_case_environment_keys() {
-    let mut fixture = Fixture::new();
-    fixture.docker();
-    for (canonical, mixed) in [
-        ("GITHUB_ACTIONS", "github_Actions"),
-        ("GITHUB_RUN_ID", "Github_Run_Id"),
-        ("GITHUB_RUN_ATTEMPT", "github_run_Attempt"),
-        ("APP_SCOPE_ID", "app_Scope_Id"),
-        (
-            "RYFRAME_CI_MYSQL_CONTAINER_ID",
-            "ryframe_CI_mysql_Container_Id",
-        ),
-    ] {
-        let value = fixture.environment.remove(OsStr::new(canonical)).unwrap();
-        fixture.environment.insert(mixed.into(), value);
-    }
-    let command = command(&fixture.binding, &fixture.environment).unwrap();
-    assert_eq!(command.get_program(), OsStr::new("docker"));
-    assert_eq!(
-        &args(&command)[..6],
-        [
-            "exec",
-            "-i",
-            "--env",
-            "MYSQL_PWD",
-            "0123456789abcdef",
-            "mysql"
-        ]
-    );
-    assert!(args(&command).contains(&"--port=3306".into()));
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_known_environment_keys_reject_duplicate_case_aliases_without_values() {
-    for key in [
-        "JOB_PASSWORD",
-        "GITHUB_ACTIONS",
-        "GITHUB_RUN_ID",
-        "GITHUB_RUN_ATTEMPT",
-        "APP_SCOPE_ID",
-        "RYFRAME_CI_MYSQL_CONTAINER_ID",
-    ] {
-        for same_value in [false, true] {
-            let mut fixture = Fixture::new();
-            fixture.docker();
-            let value = if same_value {
-                fixture.environment.get(OsStr::new(key)).unwrap().clone()
-            } else {
-                "private-conflicting-value".into()
-            };
-            fixture
-                .environment
-                .insert(key.to_ascii_lowercase().into(), value);
-            assert!(matches!(
-                command(&fixture.binding, &fixture.environment),
-                Err("mysql-environment-ambiguous")
-            ));
-        }
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn unix_password_lookup_keeps_exact_case_and_distinct_aliases() {
-    let mut fixture = Fixture::new();
-    let password = fixture
-        .environment
-        .remove(OsStr::new("JOB_PASSWORD"))
-        .unwrap();
-    fixture.environment.insert("job_password".into(), password);
-    assert!(matches!(
-        command(&fixture.binding, &fixture.environment),
-        Err("mysql-password-missing")
-    ));
-    fixture
-        .environment
-        .insert("JOB_PASSWORD".into(), "exact-case-secret".into());
-    let command = command(&fixture.binding, &fixture.environment).unwrap();
-    assert!(command.get_envs().any(|(key, value)| {
-        key == "MYSQL_PWD" && value == Some(OsStr::new("exact-case-secret"))
-    }));
-}
-
-#[cfg(unix)]
-#[test]
-fn unix_ci_switch_does_not_match_lowercase_environment_key() {
-    let mut fixture = Fixture::new();
-    fixture.docker();
-    let value = fixture
-        .environment
-        .remove(OsStr::new("GITHUB_ACTIONS"))
-        .unwrap();
-    fixture.environment.insert("github_actions".into(), value);
-    let command = command(&fixture.binding, &fixture.environment).unwrap();
     assert_eq!(command.get_program(), fixture.executable.as_os_str());
+    assert!(args(&command).contains(&"--port=3307".into()));
+    assert!(command.get_envs().all(|(name, _)| name == "SystemRoot"));
+    assert!(supplied == fixture.environment);
+    assert!(before == std::env::vars_os().collect());
 }
 
-#[cfg(unix)]
 #[test]
-fn unix_ci_owner_lookup_requires_exact_keys_and_allows_distinct_aliases() {
-    for key in [
-        "GITHUB_RUN_ID",
-        "GITHUB_RUN_ATTEMPT",
-        "APP_SCOPE_ID",
-        "RYFRAME_CI_MYSQL_CONTAINER_ID",
+fn passwords_are_explicit_and_option_values_escape_special_characters() {
+    for (password, encoded) in [
+        ("", ""),
+        (" spaces # ; = ' \" \\ ", " spaces # ; = ' \\\" \\\\ "),
+        ("\n\r\t\u{8}", "\\n\\r\\t\\b"),
+        ("中文\\n", "中文\\\\n"),
     ] {
         let mut fixture = Fixture::new();
-        fixture.docker();
-        let value = fixture.environment.remove(OsStr::new(key)).unwrap();
-        fixture
-            .environment
-            .insert(key.to_ascii_lowercase().into(), value.clone());
-        assert!(matches!(
-            command(&fixture.binding, &fixture.environment),
-            Err("mysql-ci-owner")
-        ));
-        fixture.environment.insert(key.into(), value);
-        let command = command(&fixture.binding, &fixture.environment).unwrap();
-        assert_eq!(command.get_program(), OsStr::new("docker"));
-    }
-}
-
-#[test]
-fn password_can_be_empty_or_already_named_mysql_pwd_without_changing_arguments() {
-    for password in ["", "private password with spaces = and quotes '\""] {
-        let mut fixture = Fixture::new();
-        fixture.binding["control"]["password_env"] = json!("MYSQL_PWD");
-        fixture
-            .environment
-            .insert("MYSQL_PWD".into(), password.into());
-        let command = command(&fixture.binding, &fixture.environment).unwrap();
-        assert!(
-            command
-                .get_envs()
-                .any(|(key, value)| { key == "MYSQL_PWD" && value == Some(OsStr::new(password)) })
+        fixture.binding["control"]["password"] = json!(password);
+        let command = command(&fixture.binding, &Environment::new()).unwrap();
+        assert_eq!(
+            fs::read_to_string(command.options.path()).unwrap(),
+            format!("[client]\npassword=\"{encoded}\"\n")
         );
         assert!(
             !args(&command)
                 .iter()
                 .any(|arg| arg.starts_with("--password"))
         );
+        assert!(!command.get_envs().any(|(key, _)| key == "MYSQL_PWD"));
     }
 }
 
 #[test]
-fn password_with_nul_is_rejected_without_exposing_its_value() {
+fn invalid_password_encoding_and_legacy_fields_fail_without_values() {
+    for password in [
+        "private\0password",
+        "private\u{1b}password",
+        "private\u{7f}password",
+    ] {
+        let mut fixture = Fixture::new();
+        fixture.binding["control"]["password"] = json!(password);
+        assert!(matches!(
+            command(&fixture.binding, &fixture.environment),
+            Err("mysql-password-encoding")
+        ));
+    }
     let mut fixture = Fixture::new();
-    fixture
-        .environment
-        .insert("JOB_PASSWORD".into(), "private\0password".into());
+    fixture.binding["control"]["password_env"] = json!("JOB_PASSWORD");
     assert!(matches!(
         command(&fixture.binding, &fixture.environment),
-        Err("mysql-password-env")
+        Err("invalid_control_binding")
+    ));
+    fixture.binding["control"]
+        .as_object_mut()
+        .unwrap()
+        .remove("password");
+    assert!(matches!(
+        command(&fixture.binding, &fixture.environment),
+        Err("invalid_control_binding")
     ));
 }
 
 #[test]
-fn ci_uses_owned_container_stdin_env_reference_and_container_port() {
-    let mut fixture = Fixture::new();
-    fixture.docker();
-    fixture.binding["mysql_client"] = json!("not-used-in-ci");
-    let command = command(&fixture.binding, &fixture.environment).unwrap();
-    assert_eq!(command.get_program(), OsStr::new("docker"));
-    let args = args(&command);
-    assert_eq!(
-        &args[..6],
-        [
-            "exec",
-            "-i",
-            "--env",
-            "MYSQL_PWD",
-            "0123456789abcdef",
-            "mysql"
-        ]
-    );
-    assert!(args.iter().any(|arg| arg == "--port=3306"));
-    assert!(!args.iter().any(|arg| arg.contains("unit-secret-only")));
+fn spawn_failure_removes_file_and_private_directory_before_returning_error() {
+    let fixture = Fixture::new();
+    let invocation = command(&fixture.binding, &fixture.environment).unwrap();
+    let path = invocation.options.path().to_owned();
+    assert!(matches!(invocation.spawn(), Err("mysql-spawn")));
+    assert!(!path.exists());
+    assert!(!path.parent().unwrap().exists());
 }
 
 #[test]
-fn ci_rejects_invalid_container_run_attempt_and_scope() {
-    for (key, invalid) in [
-        ("RYFRAME_CI_MYSQL_CONTAINER_ID", "0123456789a"),
-        ("RYFRAME_CI_MYSQL_CONTAINER_ID", "0123456789ABCDEF"),
-        ("RYFRAME_CI_MYSQL_CONTAINER_ID", "--privileged"),
-        ("GITHUB_RUN_ID", "0"),
-        ("GITHUB_RUN_ID", "0123"),
-        ("GITHUB_RUN_ID", "123\n"),
-        ("GITHUB_RUN_ATTEMPT", "-2"),
-        ("APP_SCOPE_ID", "ci-123-1"),
-    ] {
-        let mut fixture = Fixture::new();
-        fixture.docker();
-        fixture.environment.insert(key.into(), invalid.into());
-        assert!(matches!(
-            command(&fixture.binding, &fixture.environment),
-            Err("mysql-ci-owner")
-        ));
+fn option_file_permissions_are_verified_and_changed_access_fails_closed() {
+    let mut options = mysql::options::OptionFile::create("unit-secret-only").unwrap();
+    options.verify().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(options.path(), fs::Permissions::from_mode(0o644)).unwrap();
     }
-    let mut fixture = Fixture::new();
-    fixture.docker();
-    fixture.environment.insert(
-        "RYFRAME_CI_MYSQL_CONTAINER_ID".into(),
-        "a".repeat(65).into(),
-    );
-    assert!(command(&fixture.binding, &fixture.environment).is_err());
-}
-
-#[test]
-fn ci_requires_each_ownership_environment_field() {
-    for key in [
-        "RYFRAME_CI_MYSQL_CONTAINER_ID",
-        "GITHUB_RUN_ID",
-        "GITHUB_RUN_ATTEMPT",
-        "APP_SCOPE_ID",
-    ] {
-        let mut fixture = Fixture::new();
-        fixture.docker();
-        fixture.environment.remove(OsStr::new(key));
-        assert!(matches!(
-            command(&fixture.binding, &fixture.environment),
-            Err("mysql-ci-owner")
-        ));
+    #[cfg(windows)]
+    {
+        // 在空测试 ACL 中加入 Everyone 读取权；产品核验必须拒绝该访问者。
+        let executable =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe");
+        let status = Command::new(executable)
+            .arg(options.path())
+            .args(["/grant", "*S-1-1-0:R"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
+    assert_eq!(options.verify(), Err("mysql-option-permissions"));
+    options.close().unwrap();
 }
 
 #[test]
-fn only_exact_github_actions_true_enables_docker() {
-    let mut fixture = Fixture::new();
-    fixture
-        .environment
-        .insert("GITHUB_ACTIONS".into(), "TRUE".into());
-    let command = command(&fixture.binding, &fixture.environment).unwrap();
-    assert_eq!(command.get_program(), fixture.executable.as_os_str());
+fn option_file_cleanup_failure_is_reported_and_does_not_delete_unknown_files() {
+    let mut options = mysql::options::OptionFile::create("unit-secret-only").unwrap();
+    let path = options.path().to_owned();
+    let directory = path.parent().unwrap().to_owned();
+    let foreign = directory.join("unexpected");
+    fs::write(&foreign, b"unrelated").unwrap();
+    assert_eq!(options.close(), Err("mysql-option-cleanup"));
+    assert!(!path.exists());
+    assert!(foreign.is_file());
+    fs::remove_file(foreign).unwrap();
+    options.close().unwrap();
+    assert!(!directory.exists());
 }
 
 #[test]
@@ -427,8 +305,8 @@ fn host_port_tls_and_argument_injection_fail_closed() {
         ("username", json!("")),
         ("database", json!("schema`")),
         ("database", json!("--help")),
-        ("password_env", json!("JOB_PASSWORD=other")),
-        ("password_env", json!("bad_name")),
+        ("password", json!(false)),
+        ("password", json!("private\0value")),
     ] {
         let mut fixture = Fixture::new();
         fixture.binding["control"][field] = invalid;
@@ -440,12 +318,7 @@ fn host_port_tls_and_argument_injection_fail_closed() {
 fn missing_or_wrong_typed_connection_fields_fail_before_spawn() {
     let mut fixture = Fixture::new();
     for key in [
-        "host",
-        "port",
-        "database",
-        "username",
-        "tls_mode",
-        "password_env",
+        "host", "port", "database", "username", "tls_mode", "password",
     ] {
         let original = fixture.binding["control"]
             .as_object_mut()
@@ -499,14 +372,15 @@ fn valid_port_bounds_and_all_supported_tls_modes() {
 #[test]
 fn missing_password_and_invalid_client_files_are_rejected() {
     let mut fixture = Fixture::new();
-    fixture.environment.remove(OsStr::new("JOB_PASSWORD"));
+    fixture.binding["control"]
+        .as_object_mut()
+        .unwrap()
+        .remove("password");
     assert!(matches!(
         command(&fixture.binding, &fixture.environment),
-        Err("mysql-password-missing")
+        Err("invalid_control_binding")
     ));
-    fixture
-        .environment
-        .insert("JOB_PASSWORD".into(), "unit-secret-only".into());
+    fixture.binding["control"]["password"] = json!("unit-secret-only");
     for path in [
         "mysql",
         "mysql.exe",
