@@ -70,6 +70,13 @@ def response_handler(routes):
 
 
 class RestoreRuntimeTests(unittest.TestCase):
+    def test_native_probe_requires_bound_coordinator_without_compilation_fallback(self):
+        with patch.object(restore_runtime, "tool_binding", return_value=None), patch.object(
+            restore_runtime, "native_invoke"
+        ) as invoke, self.assertRaisesRegex(ValueError, "工具绑定"):
+            restore_runtime._probe_api("http://127.0.0.1:1/readyz")
+        invoke.assert_not_called()
+
     def setUp(self):
         self.enterContext(
             patch.object(
@@ -538,36 +545,6 @@ class RestoreRuntimeTests(unittest.TestCase):
         self.assertEqual(set(result["processes"]), {"api", "worker", "frontend"})
         self.assertEqual({item["path"] for item in result["frontend"]["files"]},
                          {"index.html", "app.js", ".vite/manifest.json", "build-identity.json"})
-
-    def test_arbitrary_200_and_invalid_readiness_payloads_are_rejected(self):
-        payloads = [
-            ("text/plain", b"ok"),
-            ("application/json", b"{}"),
-            ("application/json", json.dumps({**READY, "extra": True}).encode()),
-            ("application/json", json.dumps({**READY, "mysql": "down"}).encode()),
-        ]
-        for content_type, body in payloads:
-            with self.subTest(content_type=content_type, body=body):
-                server = self.start_server(response_handler({"/readyz": (200, content_type, body, {})}))
-                with self.assertRaises(ValueError):
-                    restore_runtime._probe_api(f"http://127.0.0.1:{server.server_port}/readyz")
-        server = self.start_server(response_handler({"/readyz": (200, "text/plain", b"unexpected", {})}))
-        with self.assertRaises(ValueError):
-            restore_runtime._probe_worker(f"http://127.0.0.1:{server.server_port}/readyz")
-        redirect = self.start_server(
-            response_handler(
-                {
-                    "/readyz": (
-                        302,
-                        "text/plain",
-                        b"",
-                        {"Location": "http://127.0.0.1:1/readyz"},
-                    )
-                }
-            )
-        )
-        with self.assertRaisesRegex(ValueError, "重定向"):
-            restore_runtime._probe_worker(f"http://127.0.0.1:{redirect.server_port}/readyz")
 
     def test_process_receipt_change_during_probe_is_detected(self):
         authority, receipt, bindings = self.bind_receipt()

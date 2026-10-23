@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 import sys
 from types import SimpleNamespace
-import urllib.error
-import urllib.request
 from pathlib import Path
-from urllib.parse import quote
+
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+from rate_limit_tool import install_binding, parse_binding, tool_binding
+import subprocess
 
 from full_stack_process import process_identity
 from process_sockets import verify_listener
@@ -24,13 +24,11 @@ from restore_build import (
 from restore_frontend_build import (
     FRONTEND_RECEIPT,
     build_registered_frontend,
-    frontend_files,
     frontend_snapshots,
 )
 from restore_runtime_source import require_bindings, resolve_runtime_sources, runtime_authority
 from restore_runtime_evidence import (
     HEX_40,
-    HEX_64,
     ArtifactSnapshot,
     JsonDocument,
     artifact_snapshot,
@@ -44,7 +42,6 @@ from restore_runtime_evidence import (
     read_json_document,
     reject_json_constant as _reject_json_constant,
     same_path as _same_path,
-    strict_object_pairs as _strict_object_pairs,
     validate_authority,
     validate_frontend_receipt as _validate_frontend_receipt,
     validate_runtime_receipt as _validate_runtime_receipt,
@@ -66,25 +63,14 @@ def validate_launch(value: object, generation: Path) -> dict:
     return validate(value, generation)
 
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *_args, **_kwargs):
-        return None
-
-
-def _opener():
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-
-
-def _read_response(url: str, limit: int, headers: dict | None = None) -> tuple[object, bytes]:
-    request = urllib.request.Request(url, headers=headers or {})
-    try:
-        with _opener().open(request, timeout=10) as response:
-            body = response.read(limit + 1)
-            if response.status != 200 or len(body) > limit:
-                raise ValueError("恢复探针拒绝非 200、重定向或超限响应")
-            return getattr(response, "headers", None), body
-    except (urllib.error.HTTPError, urllib.error.URLError) as error:
-        raise ValueError("恢复探针连接失败或收到重定向") from error
+def _native_probe(role: str, url: str, **values) -> dict:
+    if tool_binding() is None:
+        raise ValueError("恢复运行探针缺少协调器工具绑定；请通过正式 xtask 入口执行")
+    result, response = native_invoke("__source-evidence", {
+        "operation": "runtime-probe", "write": False,
+        "arguments": {"role": role, "url": url, **values},
+    }, subprocess.run, may_write=False)
+    return native_response(result, response)[0]["value"]
 
 
 def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tuple[list[dict], list[ArtifactSnapshot]]:
@@ -96,13 +82,7 @@ def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tupl
         raise ValueError("前端生产构建与文件收据不一致")
     if not {"index.html", ".vite/manifest.json"}.issubset({item["path"] for item in files}):
         raise ValueError("恢复前端缺少生产首页或 Vite manifest")
-    for item in files:
-        if item["path"].startswith(".vite/"):
-            continue
-        url = base_url + "/" + quote(item["path"], safe="/")
-        _headers, body = _read_response(url, item["bytes"], {"Accept-Encoding": "identity"})
-        if len(body) != item["bytes"] or hashlib.sha256(body).hexdigest() != item["sha256"]:
-            raise ValueError("恢复站点实际返回的资源与生产构建不一致")
+    _native_probe("frontend", base_url, files=files)
     inputs.assert_unchanged()
     if frontend_snapshots(root)[0] != files:
         raise ValueError("探针期间前端完整 dist 文件集合或内容发生漂移")
@@ -135,32 +115,11 @@ def verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> None:
 
 
 def _probe_api(url: str) -> dict:
-    headers, body = _read_response(url, 64 * 1024, {"Accept": "application/json"})
-    if headers is None or headers.get_content_type() != "application/json":
-        raise ValueError("API readyz 必须返回 application/json")
-    try:
-        value = json.loads(
-            body.decode("utf-8", errors="strict"),
-            object_pairs_hook=_strict_object_pairs,
-            parse_constant=_reject_json_constant,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("API readyz 必须返回 UTF-8 严格 JSON") from error
-    value = _exact_fields(value, {"status", "mysql", "redis", "object_storage"}, "API readyz")
-    if (
-        value["status"] != "ready"
-        or value["mysql"] != "up"
-        or value["redis"] not in {"up", "optional_degraded"}
-        or value["object_storage"] not in {"up", "not_required"}
-    ):
-        raise ValueError("API readyz 没有证明必要依赖已就绪")
-    return value
+    return _native_probe("api", url)
 
 
 def _probe_worker(url: str) -> None:
-    _headers, body = _read_response(url, 0)
-    if body:
-        raise ValueError("Worker readyz 必须返回有界空响应体")
+    _native_probe("worker", url)
 
 
 def _observe_processes(
@@ -713,11 +672,14 @@ def private_protocol_request(argv: list[str] | None = None) -> RuntimeRequest:
     try:
         path = _protocol_path(arguments[1], "请求文件")
         document = read_json_document(path)
-        request = decode_request(document.raw.decode("utf-8"))
+        envelope = _exact_fields(document.value, {"request", "native_tool"}, "恢复运行受管请求")
+        parse_binding(envelope["native_tool"])
+        request = decode_request(json.dumps(envelope["request"], ensure_ascii=False))
         if (".." in path.parts or path.resolve(strict=True) != path
                 or not path.is_relative_to(request.values["backend_dir"] / ".local-tests")):
             raise ValueError("请求文件不在后端受管目录")
         document.assert_unchanged()
+        install_binding(envelope["native_tool"])
         return request
     except (OSError, ValueError):
         raise RuntimeProtocolError("恢复运行受管请求文件无效") from None

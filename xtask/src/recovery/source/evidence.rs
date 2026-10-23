@@ -103,6 +103,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("runtime-cache-observation") => cache::observation(args),
         Some("runtime-cache-receipt") => cache::receipt(args),
         Some("runtime-cache-resume") => cache::resume(args),
+        Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
         _ => Err("来源证据操作无效".into()),
     }
 }

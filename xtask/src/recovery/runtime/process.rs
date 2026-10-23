@@ -18,8 +18,14 @@ pub(super) fn run(root: &Path, invocation: &PrivateRuntimeInvocation) -> Result<
         .prefix("runtime-request-")
         .suffix(".json")
         .tempfile_in(&local)?;
+    let binding = crate::check::python_suite::binding(&std::env::current_exe()?)?
+        .ok_or("恢复运行要求可核验的本机原生工具绑定，拒绝临时编译回退")?;
+    let envelope = serde_json::to_vec(&serde_json::json!({
+        "request": serde_json::from_str::<serde_json::Value>(&invocation.protocol)?,
+        "native_tool": binding,
+    }))?;
     let written = request
-        .write_all(invocation.protocol.as_bytes())
+        .write_all(&envelope)
         .and_then(|()| request.as_file().sync_all());
     let path = request.into_temp_path();
     let result = written
@@ -85,7 +91,10 @@ from pathlib import Path
 assert sys.argv[1] == '--request-file' and len(sys.argv) == 3
 path = Path(sys.argv[2])
 assert path.is_absolute() and path.parent == Path.cwd() / '.local-tests'
-assert json.loads(path.read_text(encoding='utf-8')) == {'private': 'file-only'}
+value = json.loads(path.read_text(encoding='utf-8'))
+assert set(value) == {'request', 'native_tool'}
+assert value['request'] == {'private': 'file-only'}
+assert json.loads(value['native_tool'])['kind'] == 'ryframe-native-rate-limit-tool'
 assert not any(key.upper().startswith(('APP_', 'RYFRAME_')) or key.upper() == 'MYSQL_PWD' for key in os.environ)
 assert sys.flags.utf8_mode == 1 and sys.flags.dont_write_bytecode == 1
 "#).unwrap();

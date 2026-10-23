@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_runtime
 import restore_source
+from rate_limit_tool import tool_binding
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -222,13 +223,15 @@ class RestorePrivateProtocolTests(unittest.TestCase):
     def test_runtime_file_protocol_preserves_stdin_and_ignores_ambient_protocol(self):
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
             path = Path(directory) / "请求 file.json"
-            path.write_text(json.dumps(runtime_protocol("status")), encoding="utf-8")
+            envelope = {"request": runtime_protocol("status"), "native_tool": json.dumps(tool_binding())}
+            path.write_text(json.dumps(envelope), encoding="utf-8")
             with patch.dict(os.environ, {"RYFRAME_RESTORE_RUNTIME_PROTOCOL": "retired"}), patch.object(
                 sys, "stdin", object()
-            ) as input_stream:
+            ) as input_stream, patch.object(restore_runtime, "install_binding") as install:
                 request = restore_runtime.private_protocol_request(["--request-file", str(path)])
                 self.assertEqual(request.operation, "status")
                 self.assertIs(sys.stdin, input_stream)
+                install.assert_called_once_with(envelope["native_tool"])
             for args in ([], ["--request-file", str(path), "extra"], ["--environment", str(path)]):
                 with self.assertRaises(ValueError):
                     restore_runtime.private_protocol_request(args)
@@ -280,7 +283,7 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
                 if key is None:
                     path = Path(directory) / "request.json"
-                    path.write_text(json.dumps(protocol), encoding="utf-8")
+                    path.write_text(json.dumps({"request": protocol, "native_tool": json.dumps(tool_binding())}), encoding="utf-8")
                     arguments += ["--request-file", str(path)]
                 else:
                     environment[key] = json.dumps(protocol)
