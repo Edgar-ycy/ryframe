@@ -104,7 +104,6 @@ class FullStackCiTests(unittest.TestCase):
             ):
                 MODULE.prepare(root)
                 databases.assert_called_once_with(
-                    MODULE._run,
                     MODULE._required_environment,
                     root,
                     root / "runner/ryframe-full-stack",

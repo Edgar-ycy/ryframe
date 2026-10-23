@@ -18,8 +18,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 
-from ci_full_stack_databases import DatabasePlan, plan_databases, prepare_databases
-from full_stack_migration_mysql import load_control
+from ci_full_stack_databases import DatabasePlan, load_control, plan_databases, prepare_databases
 from ci_full_stack_resources import BUCKETS, bucket_request, build_binaries, create_bucket, read_binaries
 from full_stack_process import read_process
 from full_stack_process_tree import (
@@ -158,7 +157,7 @@ def prepare(backend_root: Path) -> None:
     binaries = build_binaries(_run, backend_root, output_dir)
     _prepare_storage(database_plan.settings)
     prepare_databases(
-        _run, _required_environment, backend_root, output_dir, plan=database_plan
+        _required_environment, backend_root, output_dir, plan=database_plan
     )
     config_arguments = ["--config-dir", str(output_dir / "config")]
 

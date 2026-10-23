@@ -18,6 +18,9 @@ use crate::{
     workspace::root_dir,
 };
 
+#[path = "ci/databases.rs"]
+pub(crate) mod databases;
+
 #[path = "ci/frontend_source.rs"]
 pub(crate) mod frontend_source;
 #[path = "ci/integration_configuration.rs"]

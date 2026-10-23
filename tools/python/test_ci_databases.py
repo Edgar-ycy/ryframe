@@ -1,230 +1,103 @@
-import copy
+"""CI 协调器协议测试；MySQL 校验和进程场景由 ci::databases 的 Rust 测试覆盖。"""
 import json
 import os
-import shutil
 import sys
 import tomllib
 import unittest
-import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci_full_stack_databases as databases
-from ci_full_stack_databases import prepare_databases
+from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMP = ROOT / '.local-tests/python-unit'
+TEMP.mkdir(parents=True, exist_ok=True)
 
 
-class CiDatabaseTests(unittest.TestCase):
-    def setUp(self):
-        TEMP.mkdir(parents=True, exist_ok=True)
-        self.root = TEMP / f'ci-databases-{uuid.uuid4().hex}'
-        self.root.mkdir()
-        self.addCleanup(shutil.rmtree, self.root)
-        self.source = self.root / 'input'
-        self.source.mkdir()
-        self.output = self.root / 'output'
-        self.output.mkdir()
-        (self.source / 'app.toml').write_text('[tenant_data]\n', encoding='utf-8')
-        self.settings = {'scope_id': 'ci-42-3', 'snowflake_worker_id': 3, 'database': {'primary': {
-            'host': '127.0.0.1', 'port': 3306, 'database': 'ryframe_e2e_42_3',
-            'username': 'root', 'password': 'unit-test-only', 'tls_mode': 'disabled'}}}
-        self.write_configuration()
-        self.environment = {'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_ID': '42',
-                            'GITHUB_RUN_ATTEMPT': '3', 'APP_ENV': 'test'}
-        self.container = 'a' * 64
-        self.loader = patch.object(databases, 'load_app_table', side_effect=lambda *a, **k: copy.deepcopy(self.settings))
-        self.load = self.loader.start()
-        self.addCleanup(self.loader.stop)
-        environment = patch.dict(os.environ, self.environment, clear=True)
-        environment.start()
-        self.addCleanup(environment.stop)
+class NativeCiDatabaseProtocolTests(unittest.TestCase):
+    def test_frozen_plan_uses_private_request_and_explicit_configuration(self):
+        with WorkspaceDirectory(TEMP, prefix='ci-protocol-') as root:
+            source = Path(root) / 'input'
+            source.mkdir()
+            (source / 'app.toml').write_text('[tenant_data]\n', encoding='utf-8')
+            (source / 'app.test.toml').write_text('scope_id="ci-42-3"\n', encoding='utf-8')
+            settings = {'scope_id': 'ci-42-3', 'database': {'primary': {'password': 'private-password'}}}
+            context = {'APP_ENV': 'test', 'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '3'}
+            output = Path(root) / 'output'
+            with patch.object(databases, 'load_app_table', return_value=settings) as loader, patch.object(databases, '_native') as native:
+                native.return_value = {'scope_id': 'ci-42-3'}
+                plan = databases.plan_databases(context.__getitem__, ROOT, output, config_dir=source, container_id='a' * 64)
+                loader.assert_called_once_with(ROOT, {'APP_ENV': 'test'}, config_dir=source)
+                self.assertEqual(native.call_args.args[0], 'plan')
+                self.assertNotIn('private-password', repr(plan))
+                (source / 'app.test.toml').write_text('scope_id="foreign"', encoding='utf-8')
+                settings['database']['primary']['password'] = 'changed'
+                native.return_value = {'config_dir': str(output / 'config')}
+                self.assertEqual(databases.prepare_databases(context.__getitem__, ROOT, output, plan=plan), output / 'config')
+                request = native.call_args.args[1]
+                self.assertEqual(request['settings']['database']['primary']['password'], 'private-password')
+                self.assertIn('ci-42-3', request['environment_text'])
+                self.assertNotIn('foreign', request['environment_text'])
+                with self.assertRaisesRegex(ValueError, '执行目录'):
+                    databases.prepare_databases(context.__getitem__, ROOT, output / 'other', plan=plan)
+            self.assertFalse(output.exists())
 
-    def write_configuration(self):
-        text = f'scope_id = {json.dumps(self.settings["scope_id"])}\nsnowflake_worker_id = {self.settings["snowflake_worker_id"]}\n[database.primary]\n'
-        text += '\n'.join(f'{key} = {json.dumps(value)}' for key, value in self.settings['database']['primary'].items())
-        (self.source / 'app.test.toml').write_text(text, encoding='utf-8')
+    def test_missing_explicit_directory_never_loads_defaults(self):
+        with patch.object(databases, 'load_app_table') as loader, self.assertRaisesRegex(ValueError, '显式绑定'):
+            databases.prepare_databases(lambda key: 'test', ROOT, ROOT / '.local-tests/unused')
+        loader.assert_not_called()
 
-    def prepare(self, run):
-        return prepare_databases(run, os.environ.__getitem__, ROOT, self.output, config_dir=self.source, container_id=self.container)
+    def process(self, response, code=0):
+        process = Mock(returncode=code)
+        process.communicate.return_value = (json.dumps(response).encode(), None)
+        return process
 
-    def test_exact_new_targets_and_credentials_use_stdin_and_managed_toml(self):
-        run = Mock()
-        result = self.prepare(run)
-        arguments = run.call_args.args[0]
-        self.assertEqual(arguments[:4], ['docker', 'exec', '-i', 'a' * 64])
-        self.assertIn('--ssl-mode=DISABLED', arguments)
-        self.assertNotIn('unit-test-only', ' '.join(arguments))
-        self.assertFalse(any(key.startswith('APP_') or key == 'MYSQL_PWD' for key in run.call_args.kwargs['env']))
-        sql = run.call_args.kwargs['input']
-        self.assertTrue(sql.startswith('[client]\npassword="unit-test-only"\n'))
-        for suffix in ('', '_shared', '_dedicated_a', '_dedicated_b'):
-            self.assertIn(f'CREATE DATABASE `ryframe_e2e_42_3{suffix}`', sql)
-        self.assertEqual(sql.count('CREATE DATABASE'), 4)
-        self.assertNotIn('IF NOT EXISTS', sql)
-        settings = tomllib.loads((result / 'app.test.toml').read_text(encoding='utf-8'))
-        self.assertEqual(settings['database']['primary']['password'], 'unit-test-only')
-        worker = tomllib.loads((self.output / 'worker-config/app.test.toml').read_text(encoding='utf-8'))
-        self.assertEqual(settings['snowflake_worker_id'], 3)
-        self.assertEqual(worker['snowflake_worker_id'], 2)
-        self.assertEqual({k: v for k, v in settings.items() if k != 'snowflake_worker_id'},
-                         {k: v for k, v in worker.items() if k != 'snowflake_worker_id'})
-        self.assertEqual((self.output / 'worker-config/app.toml').read_bytes(), (result / 'app.toml').read_bytes())
-        if os.name != 'nt':
-            for directory in (result, self.output / 'worker-config'):
-                self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
-                self.assertEqual((directory / 'app.test.toml').stat().st_mode & 0o777, 0o600)
-        targets = settings['tenant_data']['targets']
-        self.assertEqual([target['mode'] for target in targets], ['shared', 'dedicated', 'dedicated'])
-        self.assertTrue(all(target['password'] == 'unit-test-only' for target in targets))
-        self.assertNotIn('APP_CONFIG_DIR', os.environ)
-        self.load.assert_called_once_with(ROOT, {'APP_ENV': 'test'}, config_dir=self.source)
-        receipt_text = (self.output / 'database-targets.json').read_text(encoding='utf-8')
-        self.assertEqual(json.loads(receipt_text)['state'], 'created')
-        self.assertNotIn('unit-test-only', receipt_text)
+    def test_credentials_are_only_in_stdin_and_host_overrides_are_not_forwarded(self):
+        process = self.process({'ok': True, 'result': {'scope_id': 'ci-42-3'}})
+        with patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=process) as launch, patch.dict(os.environ, {'APP_DATABASE_PASSWORD': 'host-secret', 'MYSQL_PWD': 'host-secret'}):
+            result = databases._native('plan', {'password': 'private-password'})
+        self.assertEqual(result, {'scope_id': 'ci-42-3'})
+        self.assertEqual(launch.call_args.args[0], ['bound-xtask', '__ci-databases', 'plan'])
+        self.assertNotIn('host-secret', str(launch.call_args))
+        self.assertNotIn('private-password', str(launch.call_args))
+        self.assertIn(b'private-password', process.communicate.call_args.args[0])
 
-    def test_unsafe_ci_metadata_fails_before_creation(self):
-        for key, value in {'GITHUB_ACTIONS': 'false', 'APP_ENV': 'prod', 'GITHUB_RUN_ID': '42;DROP',
-                           'GITHUB_RUN_ATTEMPT': '0'}.items():
-            with self.subTest(key=key), patch.dict(os.environ, {key: value}):
-                run = Mock()
-                with self.assertRaises(ValueError):
-                    self.prepare(run)
-                run.assert_not_called()
-                self.assertEqual(list(self.output.iterdir()), [])
+    def test_unknown_write_is_not_retried_and_public_error_is_preserved(self):
+        process = self.process({'ok': False, 'error': {'code': 'creation_unknown', 'message': '创建结果未知，禁止自动重放'}}, 1)
+        with patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=process) as launch, self.assertRaisesRegex(RuntimeError, '创建结果未知'):
+            databases._native('prepare', {})
+        self.assertEqual(launch.call_count, 1)
 
-    def test_invalid_file_fields_fail_without_files_or_database_writes(self):
-        for field, value in (('host', 'remote.example'), ('database', 'business'), ('port', 70000),
-                             ('port', '3306x'), ('port', True), ('username', ''), ('password', ''),
-                             ('password', 'secret\x00'), ('password_env', 'PRIVATE'),
-                             ('tls_mode', 'preferred'), ('tls_mode', 'verify_identity')):
-            with self.subTest(field=field):
-                settings = copy.deepcopy(self.settings)
-                settings['database']['primary'][field] = value
-                run = Mock()
-                with patch.object(databases, 'load_app_table', return_value=settings), self.assertRaises(ValueError) as raised:
-                    self.prepare(run)
-                self.assertNotIn('PRIVATE', str(raised.exception))
-                run.assert_not_called()
-                self.assertEqual(list(self.output.iterdir()), [])
+    def test_malformed_or_inconsistent_protocol_is_rejected(self):
+        for response, code in [({'ok': True, 'result': {}}, 1), ({'ok': False, 'error': 'secret'}, 1), ({'other': True}, 0)]:
+            with self.subTest(response=response), patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=self.process(response, code)), self.assertRaises(RuntimeError):
+                databases._native('plan', {})
 
-    def test_legacy_environment_cannot_override_file_credentials(self):
-        run = Mock()
-        with patch.dict(os.environ, {'APP_DATABASE_PASSWORD': 'host-secret', 'MYSQL_PWD': 'host-secret',
-                                    'APP_DATABASE_NAME': 'business', 'APP_CONFIG_DIR': 'elsewhere'}):
-            self.prepare(run)
-        self.assertNotIn('host-secret', str(run.call_args))
+    def test_timeout_requests_cancellation_before_kill_without_replay(self):
+        process = self.process({})
+        process.communicate.side_effect = [databases.subprocess.TimeoutExpired('hidden', 180), (b'', None)]
+        with patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=process) as launch, self.assertRaises(databases.subprocess.TimeoutExpired):
+            databases._native('prepare', {})
+        process.send_signal.assert_called_once()
+        process.kill.assert_not_called()
+        self.assertEqual(launch.call_count, 1)
 
-    def test_partial_creation_retains_unknown_receipt_and_redacts_failure(self):
-        run = Mock(side_effect=RuntimeError('unit-test-only'))
-        with self.assertRaisesRegex(RuntimeError, '创建结果未知') as raised:
-            self.prepare(run)
-        self.assertNotIn('unit-test-only', str(raised.exception))
-        receipt = (self.output / 'database-targets.json').read_text(encoding='utf-8')
-        self.assertEqual(json.loads(receipt)['state'], 'creation-unknown')
-        self.assertNotIn('unit-test-only', receipt)
-        self.assertFalse((self.output / 'config/app.test.toml').exists())
-        with self.assertRaisesRegex(ValueError, '拒绝自动重放'):
-            self.prepare(Mock())
+    def test_oversized_request_is_rejected_before_launch(self):
+        with patch.object(databases.subprocess, 'Popen') as launch, self.assertRaises(ValueError):
+            databases._native('plan', {'password': 'x' * databases.LIMIT})
+        launch.assert_not_called()
 
-    def test_existing_plan_or_config_prevents_replay(self):
-        for existing in ('database-targets.json', 'config', 'worker-config'):
-            with self.subTest(existing=existing):
-                path = self.output / existing
-                path.mkdir() if existing != 'database-targets.json' else path.write_text('{}', encoding='utf-8')
-                run = Mock()
-                with self.assertRaisesRegex(ValueError, '拒绝自动重放'):
-                    self.prepare(run)
-                run.assert_not_called()
-                path.rmdir() if path.is_dir() else path.unlink()
-
-    def test_plan_is_read_only_and_binds_configuration_snapshot(self):
-        planned = databases.plan_databases(os.environ.__getitem__, ROOT, self.output, config_dir=self.source, container_id=self.container)
-        self.assertEqual(list(self.output.iterdir()), [])
-        self.assertNotIn('unit-test-only', repr(planned))
-        (self.source / 'app.test.toml').write_text('scope_id="unrelated"', encoding='utf-8')
-        prepare_databases(Mock(), os.environ.__getitem__, ROOT, self.output, plan=planned)
-        result = tomllib.loads((self.output / 'config/app.test.toml').read_text(encoding='utf-8'))
-        self.assertEqual(result['scope_id'], 'ci-42-3')
-
-    def test_duplicate_or_invalid_instance_id_prevents_all_writes(self):
-        for value in (2, True, -1, 1024, '3', None):
-            with self.subTest(value=value):
-                settings = {**self.settings, 'snowflake_worker_id': value}
-                run = Mock()
-                with patch.object(databases, 'load_app_table', return_value=settings), self.assertRaisesRegex(ValueError, 'snowflake_worker_id'):
-                    self.prepare(run)
-                run.assert_not_called()
-                self.assertEqual(list(self.output.iterdir()), [])
-
-    def test_missing_configuration_binding_never_uses_backend_defaults(self):
-        run = Mock()
-        with self.assertRaisesRegex(ValueError, '显式绑定'):
-            prepare_databases(run, os.environ.__getitem__, ROOT, self.output)
-        run.assert_not_called()
-        self.load.assert_not_called()
-        self.assertEqual(list(self.output.iterdir()), [])
-
-    def test_worker_override_does_not_change_nested_fields(self):
-        text = 'scope_id="test-scope"\n[app]\nsnowflake_worker_id = 99\n'
-        rewritten = databases._instance_text(text, 2)
-        parsed = tomllib.loads(rewritten)
-        self.assertEqual(parsed['snowflake_worker_id'], 2)
-        self.assertEqual(parsed['app']['snowflake_worker_id'], 99)
+    def test_shared_worker_override_retains_nested_fields(self):
         for key in ('snowflake_worker_id', '"snowflake_worker_id"', "'snowflake_worker_id'"):
-            with self.subTest(key=key):
-                self.assertEqual(tomllib.loads(databases._instance_text(f'  {key} = 3\n[app]\nport=8080\n', 2))['snowflake_worker_id'], 2)
+            parsed = tomllib.loads(databases._instance_text(f'{key}=3\n[app]\nsnowflake_worker_id=99\n', 2))
+            self.assertEqual(parsed['snowflake_worker_id'], 2)
+            self.assertEqual(parsed['app']['snowflake_worker_id'], 99)
 
-    def test_required_tls_is_explicit_on_creation_and_targets(self):
-        self.settings['database']['primary']['tls_mode'] = 'required'
-        self.write_configuration()
-        run = Mock()
-        result = self.prepare(run)
-        self.assertIn('--ssl-mode=REQUIRED', run.call_args.args[0])
-        targets = tomllib.loads((result / 'app.test.toml').read_text(encoding='utf-8'))['tenant_data']['targets']
-        self.assertTrue(all(target['tls_mode'] == 'required' for target in targets))
 
-    def test_selected_toml_is_read_by_the_existing_rust_entry(self):
-        self.loader.stop()
-        with patch.dict(os.environ, {'APP_DATABASE_NAME': 'foreign', 'APP_DATABASE_PASSWORD': 'foreign'}):
-            planned = databases.plan_databases(os.environ.__getitem__, ROOT, self.output, config_dir=self.source, container_id=self.container)
-        self.assertEqual(planned.database, 'ryframe_e2e_42_3')
-        self.assertEqual(planned.password, 'unit-test-only')
-        self.assertEqual(list(self.output.iterdir()), [])
-        (self.source / 'app.test.toml').unlink()
-        with self.assertRaises((ValueError, FileNotFoundError)) as raised:
-            databases.plan_databases(os.environ.__getitem__, ROOT, self.output, config_dir=self.source, container_id=self.container)
-        self.assertNotIn('unit-test-only', str(raised.exception))
-
-    def test_unicode_and_quoted_credentials_roundtrip_in_generated_toml(self):
-        password = '中文🔐"\\line\nnext'
-        self.settings['database']['primary']['password'] = password
-        run = Mock()
-        result = self.prepare(run)
-        targets = tomllib.loads((result / 'app.test.toml').read_text(encoding='utf-8'))['tenant_data']['targets']
-        self.assertTrue(all(target['password'] == password for target in targets))
-        self.assertNotIn(password, ' '.join(run.call_args.args[0]))
-
-    def test_verified_tls_parameters_and_job_identity_are_preserved(self):
-        self.settings['database']['primary'].update(tls_mode='verify_identity', tls_ca='/tmp/ci-ca.pem')
-        run = Mock()
-        self.prepare(run)
-        self.assertIn('--ssl-mode=VERIFY_IDENTITY', run.call_args.args[0])
-        self.assertIn('--ssl-ca=/tmp/ci-ca.pem', run.call_args.args[0])
-
-    def test_predeclared_targets_or_wrong_table_types_fail_before_writes(self):
-        for update in ({'tenant_data': {'targets': []}}, {'tenant_data': 'private-value'},
-                       {'database': {'primary': 'private-value'}}):
-            run = Mock()
-            settings = {**self.settings, **update}
-            with patch.object(databases, 'load_app_table', return_value=settings), self.assertRaises(ValueError) as raised:
-                self.prepare(run)
-            self.assertNotIn('private-value', str(raised.exception))
-            run.assert_not_called()
-            self.assertEqual(list(self.output.iterdir()), [])
-
+class CiDatabaseWorkflowTests(unittest.TestCase):
     def test_workflow_uses_private_fixture_and_excludes_credential_artifacts(self):
         import yaml
         workflow = yaml.safe_load((ROOT / '.github/workflows/extended-ci.yml').read_text(encoding='utf-8'))
@@ -264,47 +137,6 @@ class CiDatabaseTests(unittest.TestCase):
         image = next(step for step in job['steps'] if step['name'] == '构建生产镜像')
         self.assertIn('--build-arg "SOURCE_COMMIT=$GITHUB_SHA"', image['run'])
         self.assertNotIn('RYFRAME_BUILD_COMMIT', image['run'])
-
-
-class ManagedFullStackControlTests(unittest.TestCase):
-    def test_control_uses_file_and_rejects_missing_invalid_or_ambiguous_values(self):
-        from full_stack_migration_mysql import load_control
-        from workspace_directory import WorkspaceDirectory
-        with WorkspaceDirectory(TEMP, prefix="control-") as root:
-            backend = Path(root)
-            path = backend / '.local-tests/full-stack-control.json'
-            path.parent.mkdir()
-            valid = {'format_version': 1, 'runtime_dir': str(backend / 'runtime'),
-                     **{f'{role}_container_id': letter * 64 for role, letter in [('mysql', 'a'), ('redis', 'b'), ('s3', 'c')]}}
-            path.write_text(json.dumps(valid), encoding='utf-8')
-            with patch.dict(os.environ, {'RYFRAME_CI_MYSQL_CONTAINER_ID': 'd' * 64}):
-                self.assertEqual(load_control(backend), valid)
-            for changed in ({**valid, 'format_version': True}, {**valid, 'runtime_dir': 'relative'},
-                            {**valid, 'mysql_container_id': 'bad;command'}, {**valid, 'extra': 'value'}):
-                path.write_text(json.dumps(changed), encoding='utf-8')
-                with self.subTest(changed=changed), self.assertRaises(ValueError):
-                    load_control(backend)
-            path.unlink()
-            with self.assertRaises(ValueError):
-                load_control(backend)
-
-    def test_native_client_path_is_bound_by_managed_control_file(self):
-        from full_stack_migration_mysql import load_control
-        from workspace_directory import WorkspaceDirectory
-        with WorkspaceDirectory(TEMP, prefix="native-control-") as root:
-            backend = Path(root)
-            executable = backend / "mysql.exe"
-            executable.write_bytes(b"fixture")
-            path = backend / ".local-tests/full-stack-control.json"
-            path.parent.mkdir()
-            value = {"format_version": 1, "runtime_dir": str(backend / "runtime"), "mysql_client": str(executable)}
-            path.write_text(json.dumps(value), encoding="utf-8")
-            with patch.dict(os.environ, {"RYFRAME_E2E_MYSQL_CLIENT": "ignored"}):
-                self.assertEqual(load_control(backend)["mysql_client"], str(executable))
-            value["mysql_client"] = "relative/mysql"
-            path.write_text(json.dumps(value), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "绝对路径"):
-                load_control(backend)
 
     def test_upload_globs_exclude_actual_plaintext_browser_and_both_runtime_configs(self):
         import glob

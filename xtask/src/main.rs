@@ -42,6 +42,9 @@ fn main() {
     {
         std::process::exit(code);
     }
+    if let Some(code) = ci::databases::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::source::evidence::run_hidden_if_requested() {
         std::process::exit(code);
     }

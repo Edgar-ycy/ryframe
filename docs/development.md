@@ -127,7 +127,7 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 历史保留期夹具通过 `cargo xtask check recovery fixture retention` 的 Rust 实现执行。`plan-history` 只读绑定当前租户、迁移、配置、服务器及全部任务尝试；`historical-expired --plan-sha256 <摘要> --write` 仅在 Worker 已停止且事务内前后像一致时平移 169 小时，保留 168 小时策略。`export-backup --write` 在精确租户写入 fence 下实际导出并验证摘要，明确不代表恢复成功；中断、部分写入或确认丢失均保留证据，先核实数据库和导出文件，不能自动重放。
 
-复制阶段的原生事务门入口为 `cargo xtask check recovery fixture retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>`，仅接受已登记且 Worker 已停止的隔离运行。标准输入每行发送 `{"operation":"wait-blocked"}` 或 `{"operation":"release"}`，标准输出保留 `held`、`blocked`、`released` 的逐行 JSON 协议；EOF 或异常退出会回收锁连接。复制门与历史保留期操作均由 Rust 执行。Python 数据库辅助仅服务 CI 初始化的受管配置读取、连接字段校验和客户端凭据文件或标准输入传递，不再管理迁移交互会话；CI 建库流程与资源归属约束保持一致。
+复制阶段的原生事务门入口为 `cargo xtask check recovery fixture retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>`，仅接受已登记且 Worker 已停止的隔离运行。标准输入每行发送 `{"operation":"wait-blocked"}` 或 `{"operation":"release"}`，标准输出保留 `held`、`blocked`、`released` 的逐行 JSON 协议；EOF 或异常退出会回收锁连接。复制门与历史保留期操作均由 Rust 执行。CI 四库初始化同样由 Rust 的 `__ci-databases` 私有入口执行：协调器通过有界 stdin JSON 绑定当前 Job、显式配置目录及规划时捕获的配置快照；连接字段、TLS、容器归属、客户端凭据文件和配置发布只由 Rust 校验和执行，不再保留 Python MySQL helper。凭据仅进入私有管道和受限目录文件，不进入 argv、环境或公开日志；容器内客户端固定使用 3306，保留显式 TLS 参数。建库前先持久化 `creation-unknown` 收据，只有四库创建成功才写入 `created`；失败、取消或进程中断均保留现场且禁止自动重放。已有同名资源仍失败，不使用 `IF NOT EXISTS`；API 和 Worker 分别使用已校验的实例编号与固定编号 2。
 
 Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
 
