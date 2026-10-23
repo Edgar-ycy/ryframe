@@ -118,6 +118,22 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertNotIn("owner_password", value["dataset"])
         self.assertNotIn("password_env", value["dataset"]["admin"])
 
+    def test_target_schema_requires_exact_current_credentials_binding_before_native_validation(self):
+        import restore_reference_target as target
+        value = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+        for field in ("administrator_credentials", "path", "bytes", "sha256", "password"):
+            changed = copy.deepcopy(value)
+            if field == "administrator_credentials":
+                del changed["dataset"][field]
+            elif field == "password":
+                changed["dataset"]["administrator_credentials"][field] = "private-sentinel"
+            else:
+                del changed["dataset"]["administrator_credentials"][field]
+            with self.subTest(field=field), patch.object(target, "validate_plan") as native:
+                with self.assertRaises(ValueError):
+                    target._plan(changed, self.execution)
+                native.assert_not_called()
+
     def test_missing_or_changed_prebound_current_credentials_fail_without_stage_execution(self):
         original = self.bootstrap.read_text(encoding="utf-8")
         document = json.loads(original)

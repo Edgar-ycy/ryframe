@@ -263,3 +263,31 @@ fn credentials(directory: &std::path::Path) -> Value {
     fs::write(&file, bytes).unwrap();
     json!({"path":file,"bytes":bytes.len(),"sha256":model::sha(bytes)})
 }
+
+#[test]
+fn verify_existing_inputs_require_only_current_password_without_bootstrap_fields() {
+    let root = crate::workspace::root_dir();
+    let temporary = directory();
+    let mut plan = plan();
+    plan["work_dir"] = json!(temporary.path());
+    let config = temporary.path().join("config");
+    fs::create_dir(&config).unwrap();
+    let bytes = b"[object_storage]\naccess_key='fixture-access'\nsecret_key='fixture-secret'\n";
+    fs::write(config.join("app.test.toml"), bytes).unwrap();
+    let mut binding = json!({"app_env":"test","directory":config,"files":{"app.test.toml":{"bytes":bytes.len(),"sha256":model::sha(bytes)}}});
+    binding["sha256"] = json!(model::hash(&binding).unwrap());
+    plan["dataset"]["configuration"] = binding;
+    plan["dataset"]["administrator_credentials"] = credentials(temporary.path());
+    let plan_file = temporary.path().join("plan.json");
+    let dataset_file = temporary.path().join("dataset.json");
+    fs::write(&plan_file, serde_json::to_vec(&plan).unwrap()).unwrap();
+    fs::write(&dataset_file, serde_json::to_vec(&dataset(&plan)).unwrap()).unwrap();
+    for side in ["source", "target"] {
+        let request = json!({"backend_dir":root,"format_version":1,"kind":super::KIND,
+            "plan":plan_file,"preflight":null,"side":side,"verify_existing":dataset_file,"write":true});
+        let inputs = model::Inputs::read(&request, &root).unwrap();
+        assert_eq!(inputs.password, "Current!Changed123");
+        assert!(inputs.initial_password.is_none());
+        inputs.unchanged().unwrap();
+    }
+}
