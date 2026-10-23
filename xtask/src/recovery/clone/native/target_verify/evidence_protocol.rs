@@ -274,6 +274,9 @@ fn safe_message(error: &dyn std::error::Error) -> &str {
     if let Some(message) = super::binding::diagnostic(&reason) {
         return message;
     }
+    if let Some(message) = super::cli::diagnostic(&reason) {
+        return message;
+    }
     DIAGNOSTICS
         .iter()
         .copied()
@@ -292,6 +295,31 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let value = json_io::parse_fragment(std::str::from_utf8(bytes)?, "目标证据请求")?;
     let operation = json_io::text(&value["operation"], "目标证据操作")?;
+    if value.get("arguments").is_some() {
+        json_io::exact(
+            &value,
+            &[
+                "format_version",
+                "operation",
+                "backend",
+                "target",
+                "arguments",
+            ],
+            "目标 CLI 请求",
+        )?;
+        if value["format_version"].as_u64() != Some(1) {
+            return Err("目标证据请求版本无效".into());
+        }
+        let backend = Path::new(json_io::text(&value["backend"], "目标证据后端")?);
+        let target = Path::new(json_io::text(&value["target"], "目标证据目录")?);
+        let kind = if operation == "cli-status" && target.is_file() {
+            crate::local_test_path::LocalTestPathKind::ExistingFile
+        } else {
+            crate::local_test_path::LocalTestPathKind::StateDirectory
+        };
+        crate::local_test_path::validate_local_test_path(target, backend, kind)?;
+        return super::cli::execute(backend, target, operation, &value["arguments"]);
+    }
     let extra = match operation {
         "reset-completed" => &["manifest", "sha"][..],
         "reset-plan" => &["path", "executable", "plan"][..],

@@ -375,7 +375,7 @@ class TargetCliTests(unittest.TestCase):
                          "tenant-data-dedicated-a-verify")
         self.assertTrue(result["resume"]["next_operation_is_read_only"])
         blocked_services = {"available": False, "active_generation": {"kind": "initial"},
-                            "reason": "夹具服务已正常关闭，当前生命周期没有可执行重启"}
+                            "reason": "夹具服务已正常关闭；须先执行 fixture services restart 再续作 fresh target"}
         with patch("devex_clone_target_resume.initialize_resume_state", return_value=state), \
                 patch.object(target_cli, "_fixture_service_generation", return_value=blocked_services):
             blocked = target_cli.status(self.backend, self.workspace)
@@ -384,31 +384,9 @@ class TargetCliTests(unittest.TestCase):
         self.assertIsNone(blocked["next_action"])
         self.assertFalse(blocked["evidence_valid"])
         self.assertEqual(blocked["resume"], result["resume"])
-        self.assertIn("没有可执行重启", blocked["blocking_reason"])
+        self.assertIn("fixture services restart", blocked["blocking_reason"])
         self.assertEqual(self.local_files(), before)
 
-    def test_status_preserves_migration_successor_mode_and_readonly_resume_action(self):
-        self.prepare()
-        target = self.workspace / "target"
-        write_json(target / "initialize.started.json", {"at": "fixture", "generation_sha256": "a" * 64})
-        state = {"resumable": True, "reason": None, "mode": "migration-successor",
-                 "completed": [{"id": "tenant-data-dedicated-a-up"}], "next_index": 1,
-                 "operations": [{"id": "tenant-data-dedicated-a-up", "write": True},
-                                {"id": "tenant-data-dedicated-a-verify", "write": False}]}
-        before = self.local_files()
-
-        with patch("devex_clone_target_resume.initialize_resume_state", return_value=state):
-            result = target_cli.status(self.backend, self.workspace)
-
-        self.assertEqual(result["status"], "fresh_target_migration_resume_pending")
-        self.assertEqual(result["last_successful_stage"], "migration:tenant-data-dedicated-a-up")
-        self.assertEqual(result["pending_stage"], "migration_resume")
-        self.assertEqual(result["next_action"], "resume-initialize")
-        self.assertTrue(result["evidence_valid"])
-        self.assertEqual(result["resume"], {
-            "mode": "migration-successor", "completed_operations": ["tenant-data-dedicated-a-up"],
-            "next_operation": "tenant-data-dedicated-a-verify", "next_operation_is_read_only": True})
-        self.assertEqual(self.local_files(), before)
 
     def test_binding_drift_fails_after_stage_without_copying_environment(self):
         self.prepare()

@@ -213,9 +213,9 @@ def validate_prepared_tree(backend: Path, target: Path, files: list[dict],
     if "failure.json" in names or any(name.startswith("resume-prepare-") for name in names):
         from devex_clone_target import _prepare_failure, _resume_records
 
-        failure = _prepare_failure(target)
+        failure = _prepare_failure(backend, target)
         records = _resume_records(backend, target, request_descriptor)
-        if failure is None or records["pending"] or not any(
+        if not failure or records["pending"] or not any(
                 item[0] == "confirmed" for item in records["terminals"].values()):
             raise ValueError("fresh prepare 失败续作谱系没有完整确认")
         consumed.add("failure.json")

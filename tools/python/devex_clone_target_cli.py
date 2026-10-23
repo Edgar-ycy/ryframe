@@ -14,8 +14,8 @@ from devex_clone_run_state import binding, controller_observation, historical_st
 from devex_clone_source_proof import bound_file
 import devex_clone_target_tree_claim as snapshot_evidence
 from process_guard import process_guard
+from devex_clone_target_evidence import evidence
 
-FIELDS = {"format_version", "kind", "request", "environment", "storage_run", "target_directory"}
 WORKSPACE_GUARD = "fresh-target.guard"
 
 
@@ -98,17 +98,13 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
             raise ValueError("夹具服务登记未包含完整首代或核验期间账本变化")
         return directory
     appended = historical["state"]["attempts"][historical["historical_attempts"]:]
-    allowed = {"storage-target": {"restart", "stop", "recover"},
-               "cache-target": {"restart", "stop", "recover", "reconcile", "resume"}}
-    if any(item["stage"] not in allowed or item["mode"] not in allowed[item["stage"]]
-           or item["status"] == "running" for item in appended):
-        raise ValueError("fresh 目标登记后仅允许已收尾的受控目标存储阶段")
-    if any(item["stage"] == "storage-target" for item in appended):
+    stages = evidence("cli-storage-append", backend, directory, arguments={"attempts": appended})
+    if stages["storage"]:
         from devex_clone_storage import registered_storage_binding
 
         if registered_storage_binding(backend, directory, "target") is None:
             raise ValueError("fresh 目标当前 RustFS 重启尚未完整发布")
-    if any(item["stage"] == "cache-target" for item in appended):
+    if stages["cache"]:
         from devex_clone_cache import registered_cache_binding
 
         if registered_cache_binding(backend, directory) is None:
@@ -118,11 +114,8 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
     return directory
 
 
-def _disjoint(*paths: Path) -> None:
-    for index, path in enumerate(paths):
-        for other in paths[index + 1:]:
-            if path == other or path.is_relative_to(other) or other.is_relative_to(path):
-                raise ValueError("fresh 目标 workspace、storage run 与观察目录必须互不包含")
+def _disjoint(backend: Path, *paths: Path) -> None:
+    evidence("cli-disjoint", backend, paths[0], arguments={"paths": [str(path) for path in paths]})
 
 
 def _preflight_reconciliation(backend: Path, target: Path) -> dict:
@@ -166,16 +159,8 @@ def _initialized(backend: Path, workspace: Path, value: dict) -> tuple[dict, dic
 
 def _registration(backend: Path, workspace: Path) -> tuple[Path, dict, dict]:
     workspace = local_path(backend, str(workspace))
-    path = workspace / "registration.json"
-    before = binding(path)
-    value = read_bound_json(path, before)
-    exact(value, FIELDS)
-    if value["format_version"] != 1 or value["kind"] != "devex-clone-fresh-target-registration":
-        raise ValueError("fresh 目标登记类型无效")
-    target = local_path(backend, value["target_directory"])
-    if target != workspace / "target":
-        raise ValueError("fresh 目标目录必须固定在登记 workspace")
-    bound_file(backend, value["request"])
+    observed = evidence("cli-registration", backend, workspace, arguments={})
+    path, before, value = Path(observed["path"]), observed["binding"], observed["value"]
     _, private = _private_environment(backend, value["environment"])
     _storage_run(backend, value["storage_run"])
     if binding(path) != before:
@@ -254,7 +239,7 @@ def prepare(backend: Path, workspace: Path, request_file: Path, environment_file
     request = local_path(backend, str(request_file))
     environment = local_path(backend, str(environment_file))
     storage = local_path(backend, str(storage_run))
-    _disjoint(workspace, storage)
+    _disjoint(backend, workspace, storage)
     request_binding, environment_binding = binding(request), binding(environment)
     bound_file(backend, request_binding)
     _, private = _private_environment(backend, environment_binding)
@@ -401,7 +386,7 @@ def verify(backend: Path, workspace: Path, observation_dir: Path) -> dict:
         _, value, _ = _registration(backend, workspace)
         storage = _storage_run(backend, value["storage_run"])
         for existing in (workspace, Path(value["target_directory"]), storage):
-            _disjoint(observation, existing)
+            _disjoint(backend, observation, existing)
         initialized, _ = _initialized(backend, workspace, value)
         result = _run_registered(backend, workspace, verify_target, observation)
         if snapshot_evidence.snapshot(workspace, value, "initialized") != initialized:
@@ -410,138 +395,94 @@ def verify(backend: Path, workspace: Path, observation_dir: Path) -> dict:
                 "observation": binding(observation / "verify.json"), "restore_qualified": False}
 
 
-def status(backend: Path, workspace: Path) -> dict:
-    def report(current: str, last: str | None, pending: str, next_action: str | None,
-               *, valid: bool, reason: str | None, registration: dict | None = None) -> dict:
-        result = {"status": current, "last_successful_stage": last,
-                  "pending_stage": pending, "next_action": next_action,
-                  "evidence_valid": valid, "blocking_reason": reason,
-                  "restore_qualified": False}
-        if registration is not None:
-            result["registration"] = registration
-        return result
+def validate_dispatch(backend: Path, workspace: Path, args) -> None:
+    evidence("cli-dispatch", backend, workspace, arguments={"operation": args.operation,
+             "write": args.write, "supplied": [args.request is not None, args.environment is not None,
+                                                args.storage_run is not None, args.observation_dir is not None]})
 
+
+def _status_projection(backend: Path, workspace: Path, phase: str, details=None, *,
+                       registration=None, fixture=None, controller=None) -> dict:
+    return evidence("cli-status", backend, workspace,
+                    arguments={"phase": phase, "details": details, "registration": registration,
+                               "fixture": fixture, "controller": controller})
+
+
+def _stage_observation(backend: Path, workspace: Path, value: dict) -> tuple[str, object]:
+    """仅采集并核验原始阶段证据；状态和后续动作由 Rust 决定。"""
+    from devex_clone_target import prepare_resume_state, unresolved_failure
+    from devex_clone_target_resume import initialize_resume_state
+
+    target = Path(value["target_directory"])
+    if (target / "reconciliation-completed.json").is_file():
+        return "preflight-reconciled", _preflight_reconciliation(backend, target)
+    if (target / "initialized.json").is_file():
+        if unresolved_failure(backend, target):
+            return "initialized-failure", None
+        _initialized(backend, workspace, value)
+        return "initialized", None
+    if (target / "initialize.lock").exists() or (target / "initialize.started.json").exists():
+        resume = initialize_resume_state(backend, target, value["request"],
+                                         snapshot_evidence.resume_prepared_files(workspace, value))
+        return (("initialize-resume", resume) if resume["resumable"] else
+                ("initialize-blocked", (workspace / "prepared-files.json").exists()))
+    if (target / "prepare.json").is_file():
+        if (workspace / "prepared-files.json").is_file():
+            if unresolved_failure(backend, target):
+                raise ValueError("prepare 失败尚未由显式续作确认")
+            _prepared(backend, workspace, value)
+            return "prepared", None
+        state = prepare_resume_state(backend, target, value["request"])
+        if not state["resumable"]:
+            raise ValueError(state["reason"])
+        return "prepare-publication", None
+    state = prepare_resume_state(backend, target, value["request"])
+    return (("prepare-interrupted", None) if state["resumable"] else
+            ("prepare-blocked", state["reason"]))
+
+
+def status(backend: Path, workspace: Path) -> dict:
     backend = backend.resolve(strict=True)
     workspace = local_path(backend, str(workspace))
     if not workspace.exists():
-        return report("fresh_target_unregistered", None, "registration", "prepare",
-                      valid=True, reason=None)
+        return _status_projection(backend, workspace, "unregistered")
     if linked(workspace) or not workspace.is_dir() or not (workspace / "registration.json").is_file():
-        return report("fresh_target_needs_reconciliation", None, "reconciliation", None,
-                      valid=False, reason="workspace 或 registration 不完整")
+        return _status_projection(backend, workspace, "incomplete")
     try:
         path, value, private = _registration(backend, workspace)
     except (OSError, TypeError, ValueError):
-        return report("fresh_target_needs_reconciliation", None, "reconciliation", None,
-                      valid=False, reason="registration、私有环境或受控存储绑定无效")
+        return _status_projection(backend, workspace, "registration-invalid")
     try:
         _validate_registered_request(backend, value["request"])
     except (OSError, TypeError, ValueError):
         _unchanged(backend, path, value, private)
-        return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
-                      valid=False, reason="固定请求未达到可执行条件", registration=binding(path))
+        return _status_projection(backend, workspace, "request-invalid", registration=binding(path))
     registration = binding(path)
     storage = _storage_run(backend, value["storage_run"])
     storage_state = binding(storage / "state.json")
     try:
-        fixture_services = _fixture_service_generation(storage, value["storage_run"])
+        fixture = _fixture_service_generation(storage, value["storage_run"])
     except (OSError, TypeError, ValueError):
         _unchanged(backend, path, value, private, storage_state)
-        return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
-                      valid=False, reason="夹具服务账本或当前代次无效", registration=registration)
+        return _status_projection(backend, workspace, "fixture-invalid", registration=registration)
     target = Path(value["target_directory"])
     target_existed = target.exists()
     try:
         target_files = snapshot_evidence.target_files(target) if target_existed else None
     except (OSError, ValueError):
         _unchanged(backend, path, value, private, storage_state)
-        return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
-                      valid=False, reason="fresh 目标目录结构无效", registration=registration)
-    from devex_clone_target import prepare_resume_state, unresolved_failure
-    from devex_clone_target_resume import initialize_resume_state
-
+        return _status_projection(backend, workspace, "tree-invalid", registration=registration)
     try:
-        if (target / "reconciliation-completed.json").is_file():
-            reconciliation = _preflight_reconciliation(backend, target)
-            result = report("fresh_target_preflight_reconciled", "preflight_reconciled", "new_registration",
-                            "prepare-new-workspace", valid=True,
-                            reason="原 workspace 已记录收尾，必须使用新的私有环境和工作区重新登记",
-                            registration=registration)
-            result["reconciliation"] = reconciliation
-        elif (target / "initialized.json").is_file():
-            if unresolved_failure(backend, target):
-                result = report("fresh_target_needs_reconciliation", "prepared", "reconciliation", None,
-                                valid=False, reason="初始化存在未解决失败", registration=registration)
-            else:
-                _initialized(backend, workspace, value)
-                result = report("fresh_target_initialized", "initialized", "verification", "verify",
-                                valid=True, reason=None, registration=registration)
-        elif ((target / "initialize.lock").exists() or (target / "initialize.started.json").exists()):
-            resume = initialize_resume_state(backend, target, value["request"],
-                                             snapshot_evidence.resume_prepared_files(workspace, value))
-            if resume["resumable"]:
-                if resume["mode"] in {"migration", "migration-successor"}:
-                    completed = resume["completed"]
-                    operation = resume["operations"][resume["next_index"]]
-                    result = report("fresh_target_migration_resume_pending",
-                                    "migration:" + completed[-1]["id"], "migration_resume",
-                                    "resume-initialize", valid=True, reason=None,
-                                    registration=registration)
-                    result["resume"] = {"mode": resume["mode"],
-                                        "completed_operations": [item["id"] for item in completed],
-                                        "next_operation": operation["id"],
-                                        "next_operation_is_read_only": not operation["write"]}
-                else:
-                    result = report("fresh_target_inventory_resume_pending", "reset", "inventory_resume",
-                                    "resume-initialize", valid=True, reason=None,
-                                    registration=registration)
-            else:
-                result = report("fresh_target_needs_reconciliation", "prepared" if
-                                (workspace / "prepared-files.json").exists() else "registered",
-                                "reconciliation", None, valid=False,
-                                reason="初始化已有 intent、锁或未解决失败", registration=registration)
-        elif (target / "prepare.json").is_file():
-            if (workspace / "prepared-files.json").is_file():
-                if unresolved_failure(backend, target):
-                    raise ValueError("prepare 失败尚未由显式续作确认")
-                _prepared(backend, workspace, value)
-                result = report("fresh_creation_prepared", "prepared", "initialization", "initialize",
-                                valid=True, reason=None, registration=registration)
-            else:
-                resumable = prepare_resume_state(backend, target, value["request"])
-                if not resumable["resumable"]:
-                    raise ValueError(resumable["reason"])
-                result = report("fresh_target_prepare_publication_pending", "prepared",
-                                "prepared_snapshot", "resume-prepare", valid=True, reason=None,
-                                registration=registration)
-        else:
-            resumable = prepare_resume_state(backend, target, value["request"])
-            if resumable["resumable"]:
-                result = report("fresh_target_prepare_interrupted", "registered", "prepare",
-                                "resume-prepare", valid=True, reason=None, registration=registration)
-            else:
-                result = report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
-                                valid=False, reason=resumable["reason"], registration=registration)
+        phase, detail = _stage_observation(backend, workspace, value)
     except (OSError, TypeError, ValueError):
-        result = report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
-                        valid=False, reason="fresh 目标本地阶段证据无效", registration=registration)
-    if (result["next_action"] == "resume-initialize" and fixture_services is not None
-            and not fixture_services["available"]):
-        result.update(evidence_valid=False, pending_stage="service_restart", next_action=None,
-                      blocking_reason=fixture_services["reason"])
+        phase, detail = "local-invalid", None
     try:
-        controller = controller_observation(storage)
-        if controller is not None:
-            result["controller"] = {"run_directory": str(storage), **controller}
-            if result["evidence_valid"]:
-                result["pending_stage"] = "controller"
-                result["next_action"] = "recover" if controller["process_missing"] else None
-                result["blocking_reason"] = ("原控制器已退出，须通过原 recover 入口核对并回收锁"
-                    if controller["process_missing"] else "原控制器仍在运行" if controller["process_matches"]
-                    else "控制器 PID 已复用或进程身份不同，不能回收锁")
+        observed = controller_observation(storage)
+        controller = None if observed is None else {"run_directory": str(storage), **observed}
     except (OSError, TypeError, ValueError):
-        result.update(evidence_valid=False, pending_stage="reconciliation", next_action=None,
-                      blocking_reason="控制器收据或进程身份无法核实")
+        controller = "invalid"
+    result = _status_projection(backend, workspace, phase, detail, registration=registration,
+                                fixture=fixture, controller=controller)
     if (target.exists() != target_existed
             or target_existed and snapshot_evidence.target_files(target) != target_files):
         raise ValueError("fresh 目标文件在 status 只读观察期间变化")

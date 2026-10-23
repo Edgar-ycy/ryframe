@@ -59,6 +59,12 @@ class NativeEvidenceTransportTests(unittest.TestCase):
             client.evidence("history", self.backend, self.target)
         self.run.assert_called_once()
 
+    def test_missing_tool_binding_never_invokes_cargo_or_a_subprocess(self):
+        with patch.object(client, "tool_binding", return_value=None), self.assertRaisesRegex(
+                ValueError, "缺少受管 Rust 工具"):
+            client.evidence("history", self.backend, self.target)
+        self.run.assert_not_called()
+
     def test_invalid_boundary_and_oversized_request_never_launch(self):
         for target, fields in [(self.target.parent, {}),
                                (self.target, {"manifest": "x" * (1024 * 1024)})]:

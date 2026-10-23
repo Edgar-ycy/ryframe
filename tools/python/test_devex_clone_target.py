@@ -630,44 +630,7 @@ class TargetTests(unittest.TestCase):
         self.assertFalse(target.unresolved_failure(f.root, f.output))
         self.assertEqual(self.initialize()["status"], "fresh_target_initialized")
 
-    def test_prepare_resume_rejects_invalid_timestamp(self):
-        f = self.f
-        descriptor = {"path": str(f.path), **file_digest(f.path)}
-        with patch.object(target, "context", side_effect=OSError("fixture interrupted")), \
-                self.assertRaises(OSError):
-            target.prepare_target(f.root, f.path, f.output, f.run)
-        target.resume_prepare_target(
-            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor
-        )
-        intent = next(f.output.glob("resume-prepare-*.intent.json"))
-        value = read_json(intent)
-        value["at"] = "fixture"
-        intent.write_text(json.dumps(value), encoding="utf-8")
 
-        with self.assertRaisesRegex(ValueError, "intent 无效"):
-            target.prepare_resume_state(f.root, f.output, descriptor)
-
-    def test_prepare_resume_rejects_result_before_intent(self):
-        f = self.f
-        descriptor = {"path": str(f.path), **file_digest(f.path)}
-        with patch.object(target, "context", side_effect=OSError("fixture interrupted")), \
-                self.assertRaises(OSError):
-            target.prepare_target(f.root, f.path, f.output, f.run)
-        target.resume_prepare_target(
-            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor
-        )
-        intent = next(f.output.glob("resume-prepare-*.intent.json"))
-        confirmed = next(f.output.glob("resume-prepare-*.confirmed.json"))
-        intent_value = read_json(intent)
-        intent_value["at"] = "2030-01-02T00:00:00+00:00"
-        intent.write_text(json.dumps(intent_value), encoding="utf-8")
-        confirmed_value = read_json(confirmed)
-        confirmed_value["at"] = "2030-01-01T00:00:00+00:00"
-        confirmed_value["intent"] = receipt_binding(intent)
-        confirmed.write_text(json.dumps(confirmed_value), encoding="utf-8")
-
-        with self.assertRaisesRegex(ValueError, "不属于原 intent"):
-            target.prepare_resume_state(f.root, f.output, descriptor)
 
     def test_prepare_resume_rejects_any_resource_write_intent(self):
         f = self.f

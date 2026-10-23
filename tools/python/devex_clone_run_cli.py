@@ -262,20 +262,11 @@ def dispatch(args, backend: Path) -> dict:
         from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, status as target_status, verify
 
         workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
-        supplied = (args.request is not None, args.environment is not None,
-                    args.storage_run is not None, args.observation_dir is not None)
-        expected = {"prepare": (True, True, True, False), "resume-prepare": (False, False, False, False),
-                    "initialize": (False, False, False, False), "resume-initialize": (False, False, False, False),
-                    "reconcile-preflight": (False, False, False, False),
-                    "verify": (False, False, False, True), "status": (False, False, False, False)}[args.operation]
-        if supplied != expected:
-            raise ValueError("fresh-target 参数必须严格匹配当前阶段")
+        from devex_clone_target_cli import validate_dispatch
+
+        validate_dispatch(backend, workspace, args)
         if args.operation == "status":
-            if args.write:
-                raise ValueError("fresh-target status 是只读操作，不接受 --write")
             return target_status(backend, workspace)
-        if not args.write:
-            raise ValueError("fresh-target 非 status 操作需要显式 --write")
         if args.operation == "prepare":
             return prepare(backend, workspace, evidence_path(backend, args.request),
                            evidence_path(backend, args.environment), evidence_path(backend, args.storage_run))

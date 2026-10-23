@@ -7,34 +7,29 @@ intent 的四库 CREATE、同 hash reset、迁移和完整库存。任何未知�
 from __future__ import annotations
 
 from dataclasses import asdict
-import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import uuid
 
 from devex_clone import read_json
-from devex_clone_capture import read_bound_json, unique_object, write_json
+from devex_clone_capture import read_bound_json, write_json
 from devex_clone_export import cli_executable
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import (KEYS, execution_backend, generation, request_binding,
-                                         target_files, validate_reset_manifest)
+                                         target_files)
 from devex_clone_target_resources import Resources
 from devex_clone_target_state import confirmed, failure, generation_lock, intent, now
 from devex_clone_target_storage import verify_storage_generation
-from devex_clone_target_time import ordered, timestamp
 from devex_clone_target_evidence import evidence
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import plan_hash
-from rate_limit_client import load_app_table
 
-PREPARE_STAGES = {"request", "prepare_binding", "prepare_absence"}
 PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
                   "generation", "absence", "fresh_target_initialized", "controlled_generation_only",
                   "external_writers_discovered", "create_intents"}
@@ -43,54 +38,17 @@ FAILURE_FIELDS = {"status", "stage", "at", "error_type", "reason", "automatic_re
                   "restore_qualified"}
 
 
-def _prepare_failure(output: Path) -> dict | None:
-    path = output / "failure.json"
-    if not path.exists():
-        return None
-    value = read_json(path)
-    exact(value, FAILURE_FIELDS)
-    if (value["status"] != "needs_reconciliation" or not isinstance(value["stage"], str)
-            or value["stage"] not in PREPARE_STAGES
-            or not timestamp(value["at"])
-            or not isinstance(value["error_type"], str) or not value["error_type"]
-            or not isinstance(value["reason"], str) or not value["reason"]
-            or value["automatic_retry"] is not False or value["automatic_resource_cleanup"] is not False
-            or value["fresh_target_initialized"] is not False or value["clone_verified"] is not False
-            or value["restore_qualified"] is not False):
-        raise ValueError("fresh 目标 failure 不是可续作的只读 prepare 失败")
-    return value
-
-
-def _resume_name(name: str) -> tuple[str, str] | None:
-    match = re.fullmatch(r"resume-prepare-([a-f0-9]{32})\.(intent|confirmed|failure)\.json", name)
-    return (match.group(1), match.group(2)) if match else None
-
-
-def _prepare_artifact(name: str) -> bool:
-    return (name in {"request.json", "prepare.json", "failure.json"}
-            or re.fullmatch(r"[a-z0-9-]+-[a-f0-9]{32}\.command\.json", name) is not None
-            or re.fullmatch(r"storage-layout-[a-f0-9]{32}\.json", name) is not None
-            or _resume_name(name) is not None)
+def _prepare_failure(backend: Path, output: Path) -> bool:
+    return evidence("prepare-failure", backend, output, arguments={})["present"]
 
 
 def _resume_records(backend: Path, output: Path, request_descriptor: dict) -> dict:
     return evidence("prepare-resume-records", backend, output, request_descriptor=request_descriptor)
 
 
-def _prepare_failure_resolved(backend: Path, output: Path,
-                              request_descriptor: dict) -> bool:
-    """确认根 failure 是已由显式只读续作收尾的 prepare 失败。"""
-    try:
-        if _prepare_failure(output) is None or not (output / "prepare.json").is_file():
-            return False
-        records = _resume_records(backend, output, request_descriptor)
-        prepared = binding(output / "prepare.json")
-        return not records["pending"] and any(
-            value[0] == "confirmed" and value[1]["prepare"] == prepared
-            and value[1]["request"] == binding(output / "request.json")
-            for value in records["terminals"].values())
-    except (AttributeError, IndexError, KeyError, OSError, TypeError, ValueError):
-        return False
+def _prepare_failure_resolved(backend: Path, output: Path, request_descriptor: dict) -> bool:
+    return evidence("prepare-failure-resolved", backend, output,
+                    arguments={"request_descriptor": request_descriptor})["resolved"]
 
 
 def initialization_failure_path(backend: Path, output: Path, request_descriptor: dict) -> Path:
@@ -98,45 +56,13 @@ def initialization_failure_path(backend: Path, output: Path, request_descriptor:
 
 
 def prepare_resume_state(backend: Path, output: Path, request_descriptor: dict) -> dict:
-    """只读判定 registration/request/prepare 中断能否显式续作。"""
-    bound_file(backend, request_descriptor)
-    output = local_path(backend, str(output), new=not output.exists())
-    if not output.exists():
-        return {"resumable": True, "prepared": False, "reason": None,
-                "files": {}, "pending_attempts": []}
-    if not output.is_dir():
-        raise ValueError("fresh 目标 prepare 输出不是普通目录")
-    files = {}
-    if any((output / name).exists() for name in ("sentinel.intent.json", "reset.intent.json")) \
-            or any(output.glob("create-*.intent.json")):
-        return {"resumable": False, "prepared": False,
-                "reason": "已存在资源写入 intent", "files": files, "pending_attempts": []}
-    for item in sorted(output.iterdir()):
-        if not item.is_file() or not _prepare_artifact(item.name):
-            return {"resumable": False, "prepared": False,
-                    "reason": "包含非只读 prepare 证据", "files": files, "pending_attempts": []}
-        files[item.name] = file_digest(item)
-    request_path = output / "request.json"
-    if request_path.exists() and read_json(request_path) != read_bound_json(
-            local_path(backend, request_descriptor["path"]), request_descriptor):
-        raise ValueError("fresh 目标中断请求不同于固定 registration")
-    failure_value = _prepare_failure(output)
-    records = _resume_records(backend, output, request_descriptor)
-    prepared = output / "prepare.json"
-    if prepared.exists():
-        value = read_json(prepared)
-        exact(value, PREPARE_FIELDS)
-        if value["status"] != "fresh_creation_prepared" or value["request"] != request_descriptor:
-            raise ValueError("fresh 目标 prepare 结果不属于固定 registration")
-        confirmed = [terminal for terminal in records["terminals"].values()
-                     if terminal[0] == "confirmed" and terminal[1]["prepare"] == binding(prepared)
-                     and terminal[1]["request"] == binding(request_path)]
-        if failure_value is not None and not confirmed and not records["pending"]:
-            raise ValueError("fresh 目标 prepare 与旧失败之间缺少显式续作绑定")
-    elif any(value[0] == "confirmed" for value in records["terminals"].values()):
-        raise ValueError("fresh 目标 prepare 续作确认缺少最终 prepare.json")
-    return {"resumable": True, "prepared": prepared.exists(), "reason": None,
-            "files": files, "pending_attempts": records["pending"]}
+    return evidence("prepare-resume-state", backend, output,
+                    arguments={"request_descriptor": request_descriptor})
+
+
+def _prepare_document(backend: Path, output: Path, descriptor: dict, original: dict, empty: dict) -> dict:
+    return evidence("prepare-document", backend, output, arguments={"at": now(),
+                    "request_descriptor": descriptor, "generation": original, "absence": empty})
 
 
 def _validate_prepared(backend: Path, request_file: Path, output: Path, run, storage_run: Path | None,
@@ -148,10 +74,9 @@ def _validate_prepared(backend: Path, request_file: Path, output: Path, run, sto
     empty = empty_resources(resources)
     unchanged(backend, request, original, resources, run)
     bound_file(backend, request_descriptor)
-    if (result["format_version"] != 1 or result["status"] != "fresh_creation_prepared"
-            or result["request"] != request_descriptor or result["request_sha256"] != plan_hash(request)
-            or result["generation"] != original or result["absence"] != empty):
-        raise ValueError("fresh 目标已发布 prepare 与当前只读前像不同")
+    evidence("prepare-current", backend, output, arguments={"at": result["prepared_at"],
+             "request_descriptor": request_descriptor, "generation": original, "absence": empty,
+             "observed": result})
     return result
 
 
@@ -189,13 +114,7 @@ def resume_prepare_target(backend: Path, output: Path, run=subprocess.run, *, st
             bound_file(backend, request_descriptor)
             if read_json(request_path) != request:
                 raise ValueError("fresh 目标请求副本在 prepare 续作期间变化")
-            result = {"format_version": 1, "status": "fresh_creation_prepared", "prepared_at": now(),
-                      "request": request_descriptor, "request_sha256": plan_hash(request),
-                      "generation": original, "absence": empty, "fresh_target_initialized": False,
-                      "controlled_generation_only": True, "external_writers_discovered": False,
-                      "create_intents": [{"key": db["key"], "server_uuid": db["server_uuid"],
-                                          "database": db["database"]}
-                                         for db in request["target"]["databases"]]}
+            result = _prepare_document(backend, output, request_descriptor, original, empty)
             write_json(output / "prepare.json", result)
         write_json(output / f"resume-prepare-{attempt}.confirmed.json", {
             "format_version": 1, "kind": "devex-clone-prepare-resume-confirmed",
@@ -301,12 +220,7 @@ def prepare_target(backend: Path, request_file: Path, output: Path, run=subproce
         unchanged(backend, request, original, resources, run)
         if {"path": str(request_file), **file_digest(request_file)} != expected_request:
             raise ValueError("准备期间请求文件变化")
-        result = {"format_version": 1, "status": "fresh_creation_prepared", "prepared_at": now(),
-                  "request": expected_request, "request_sha256": plan_hash(request),
-                  "generation": original, "absence": empty, "fresh_target_initialized": False,
-                  "controlled_generation_only": True, "external_writers_discovered": False,
-                  "create_intents": [{"key": db["key"], "server_uuid": db["server_uuid"], "database": db["database"]}
-                                     for db in request["target"]["databases"]]}
+        result = _prepare_document(backend, output, expected_request, original, empty)
         write_json(output / "prepare.json", result)
         return result
     except BaseException as error:
@@ -321,36 +235,17 @@ def reset_plan(resources: Resources, maintenance: dict, request: dict, original:
         [cli_executable(maintenance, "reset"), "plan"],
         env=resources.environment,
     ).stdout
-    text = raw.decode("utf-8").replace("\r\n", "\n")
-    match = re.fullmatch(r"(\{[\s\S]*\})\nplan_hash=([a-f0-9]{64})\n?", text)
-    if not match or hashlib.sha256(match[1].encode()).hexdigest() != match[2]:
-        raise ValueError("实际 reset plan 原文或 hash 缺失、重复、不一致")
-    manifest = json.loads(match[1], object_pairs_hook=unique_object)
-    validate_reset_manifest(manifest, request, original)
-    write_json(resources.output / f"{stage}.json", {"manifest": manifest, "plan_hash": match[2]})
-    return manifest, match[2]
+    value = evidence("reset-plan-output", backend=resources.backend, target=resources.output,
+                     arguments={"text": raw.decode("utf-8"), "request": request, "original": original})
+    write_json(resources.output / f"{stage}.json", value)
+    return value["manifest"], value["plan_hash"]
 
 
 def reset_execution_configuration(resources: Resources, maintenance: dict) -> Path:
-    table = load_app_table(
-        resources.execution_backend,
-        {"APP_ENV": resources.environment.get("APP_ENV")},
-    )
-    reset = table.get("reset", {})
-    if not isinstance(reset, dict):
-        raise ValueError("所选配置文件的 reset 必须是配置表")
-    expected_source = maintenance["source"]["snapshot"]["head"].lower()
-    if reset.get("source_sha") != expected_source:
-        raise ValueError("所选配置文件的 reset.source_sha 与维护构建提交不一致")
-    if reset.get("services_stopped") is not True:
-        raise ValueError("所选配置文件的 reset.services_stopped 必须为 true")
-    value = reset.get("state_directory")
-    if not isinstance(value, str) or not value:
-        raise ValueError("所选配置文件缺少 reset.state_directory")
-    state = Path(value)
-    if not state.is_absolute() or state.resolve() != (resources.output / "reset-state").resolve():
-        raise ValueError("reset.state_directory 必须精确指向本次初始化的 reset-state 目录")
-    return state
+    result = evidence("reset-execution-configuration", resources.backend, resources.output,
+                      arguments={"execution_backend": str(resources.execution_backend),
+                                 "app_env": resources.environment.get("APP_ENV"), "maintenance": maintenance})
+    return Path(result["path"])
 
 
 def initialize_databases(backend: Path, request: dict, original: dict, resources: Resources, run) -> dict:
@@ -463,13 +358,8 @@ def inventory(backend: Path, request: dict, resources: Resources,
     captured = capture_side_inventory(resources.execution_backend, "target", tools,
                                       bound_file(backend, request["maintenance_build"]), output, **arguments)
     images = {item.resource["database"]: json.loads(json.dumps(asdict(item))) for item in captured.observations}
-    for db in request["target"]["databases"]:
-        image = images[db["database"]]
-        for table, value in image["tables"].items():
-            if table.startswith("biz_") and table not in {"biz_tenant_target_slot", "biz_tenant_fence"} and value["rows"] != 0:
-                raise ValueError("fresh 目标已出现业务数据")
-        if db["kind"] != "combined" and (image["tables"]["biz_tenant_fence"]["rows"] != 0 or image["tables"]["biz_tenant_target_slot"]["rows"] != 1):
-            raise ValueError("外部新租户库 fence 或空槽行不符")
+    evidence("initial-inventory-shape", backend, resources.output,
+             arguments={"databases": request["target"]["databases"], "images": images})
     return {"receipt": captured.receipt_file, "observations": images}, captured.evidence_files
 
 

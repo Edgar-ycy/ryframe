@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 from rate_limit_client import ROOT, _child_environment
@@ -28,11 +27,14 @@ def evidence(operation: str, backend: Path, target: Path, **fields) -> dict:
     if len(payload) > 1024 * 1024:
         raise ValueError("目标证据请求超过 1 MiB")
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    registered = tool_binding()
+    if registered is None:
+        raise ValueError("目标证据缺少受管 Rust 工具；请通过正式 xtask 或 run_checks.py 绑定工具后执行")
     try:
-        with verified_tool(tool_binding()) as executable:
-            command = [executable, "__target-evidence"] if executable else [
-                os.environ.get("CARGO") or shutil.which("cargo") or "cargo",
-                "run", "--quiet", "--locked", "-p", "xtask", "--", "__target-evidence"]
+        with verified_tool(registered) as executable:
+            if not executable:
+                raise ValueError("目标证据缺少受管 Rust 工具；请核对绑定，禁止临时编译回退")
+            command = [executable, "__target-evidence"]
             result = subprocess.run(command, cwd=ROOT, env=_child_environment(), input=payload,
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                     timeout=30, check=False, **options)
