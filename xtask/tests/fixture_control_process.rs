@@ -237,25 +237,14 @@ fn source_pair_request_runs_without_python_and_keeps_create_only_output() {
 }
 
 #[test]
-fn artifact_snapshot_uses_private_protocol_without_public_write_or_forwarded_values() {
+fn artifact_snapshot_runs_natively_and_rejects_missing_runtime_before_network() {
     let fixture = Fixture::new();
-    let arguments = fixture.artifact_snapshot();
-    let result = invoke(&arguments);
+    let result = invoke(&fixture.artifact_snapshot());
     assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(result.stdout.is_empty());
     let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/full_stack_artifacts.py"),
-        "{stdout}"
-    );
-    for private in ["--runtime-dir", "--job-id", "--receipt", "123"] {
-        assert!(!stdout.contains(private), "{stdout}");
-    }
-    assert!(
-        stderr.contains("reference_fixture_artifact_failed"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
+    assert!(stderr.contains("runtime.json"), "{stderr}");
+    assert!(!stderr.contains(".py"), "{stderr}");
 }
 
 #[test]
@@ -295,16 +284,20 @@ fn artifact_invalid_arguments_exit_two_before_python_starts() {
 }
 
 #[test]
-fn artifact_private_process_rejects_conflicting_fixture_protocol_environment() {
+fn artifact_native_process_ignores_legacy_credential_protocol_environment() {
     let fixture = Fixture::new();
     let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(fixture.artifact_snapshot())
         .env("RYFRAME_REFERENCE_FIXTURE_CONTROL_CONFLICT", "untrusted")
-        .env("PYTHONUTF8", "1")
+        .env("APP_DATABASE_PASSWORD", "untrusted-secret")
+        .env("APP_OBJECT_STORAGE_SECRET_KEY", "untrusted-secret")
+        .env("MYSQL_PWD", "untrusted-secret")
         .output()
         .unwrap();
-    assert_eq!(result.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&result.stderr).contains("protocol_error"));
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("runtime.json"), "{stderr}");
+    assert!(!stderr.contains("untrusted-secret"));
 }
 
 #[test]

@@ -149,15 +149,14 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         snapshot,
         FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(_))
     ));
-    let invocation = private_invocation_at(&snapshot, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "tools/python/full_stack_artifacts.py");
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["domain"], "artifact");
-    assert_eq!(protocol["operation"], "snapshot");
-    assert_eq!(protocol["runtime_dir"], text(&fixture.controlled_dir));
-    assert_eq!(protocol["job_id"], "9223372036854775807");
-    assert_eq!(protocol["receipt"], text(&receipt));
-    assert_eq!(protocol["write"], true);
+    assert!(private_invocation_at(&snapshot, &root_dir()).is_err());
+    let FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(options)) = &snapshot
+    else {
+        panic!("应为原生快照");
+    };
+    assert_eq!(options.job_id, i64::MAX);
+    assert_eq!(options.runtime_dir, fixture.controlled_dir);
+    assert_eq!(options.receipt, receipt);
 
     fs::write(&receipt, b"{}\n").unwrap();
     let verify = parse_control(command(
@@ -173,10 +172,11 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         ],
     ))
     .unwrap();
-    let invocation = private_invocation_at(&verify, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["operation"], "verify-deleted");
-    assert_eq!(protocol["write"], false);
+    assert!(private_invocation_at(&verify, &root_dir()).is_err());
+    assert!(matches!(
+        verify,
+        FixtureControlCommand::Artifact(FixtureArtifactCommand::VerifyDeleted(_))
+    ));
 }
 
 #[test]

@@ -95,7 +95,7 @@ fn private_recovery_scripts_exist_in_checkout() {
         root.join("tools/python/ci_full_stack.py").is_file(),
         "全栈恢复私有脚本不在当前检出中"
     );
-    assert!(root.join("tools/python/full_stack_artifacts.py").is_file());
+    assert!(!root.join("tools/python/full_stack_artifacts.py").exists());
     assert!(root.join("tools/python/devex_clone.py").is_file());
     assert!(root.join("tools/python/restore_runtime.py").is_file());
     assert!(root.join("tools/python/restore_source.py").is_file());

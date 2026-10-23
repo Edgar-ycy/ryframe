@@ -8,7 +8,7 @@ pub(crate) mod homepage;
 pub(crate) mod imports;
 pub(crate) mod jobs;
 pub(crate) mod load;
-mod mysql;
+pub(crate) mod mysql;
 pub(crate) mod pacing;
 pub(crate) mod process;
 pub(crate) mod provenance;

@@ -51,6 +51,7 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
     match command {
         FixtureControlCommand::SourcePair(command) => return source_pair::run(command, root),
         FixtureControlCommand::Review(command) => return review::run(command, root),
+        FixtureControlCommand::Artifact(command) => return artifact::run(command, root),
         _ => {}
     }
     let invocation = private_invocation_at(command, root)?;
@@ -77,15 +78,14 @@ pub(crate) fn private_invocation_at(
     }
     if matches!(
         command,
-        FixtureControlCommand::SourcePair(_) | FixtureControlCommand::Review(_)
+        FixtureControlCommand::SourcePair(_)
+            | FixtureControlCommand::Review(_)
+            | FixtureControlCommand::Artifact(_)
     ) {
         return Err("该夹具操作由 Rust 原生实现".into());
     }
     let (script, fields) = match command {
-        FixtureControlCommand::Artifact(command) => (
-            "tools/python/full_stack_artifacts.py",
-            artifact::fields(command, root)?,
-        ),
+        FixtureControlCommand::Artifact(_) => unreachable!("原生导出物理验收已提前返回"),
         FixtureControlCommand::Dataset(command) => (
             "tools/python/reference_fixture_dataset.py",
             dataset::fields(command, root)?,
