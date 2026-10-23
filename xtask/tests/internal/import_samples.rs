@@ -73,7 +73,7 @@ fn performance_rows_are_valid_and_preserve_template_members() {
 }
 
 #[test]
-fn rust_model_hash_matches_the_node_runtime_contract() {
+fn model_hash_is_stable_for_native_runtime() {
     assert_eq!(
         model_sha256().unwrap(),
         "6d297f248e6b750425af25a95cafd035803fcbda03c3d8b5dd3503cc5b038c8f"

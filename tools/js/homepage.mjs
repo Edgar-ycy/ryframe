@@ -2,8 +2,18 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import { summarize } from './load.mjs'
 import { homepageFailure, homepageVisitors } from './homepage-model.mjs'
+
+// 浏览器仅汇总本页的数值样本；请求和作业测量由原生运行器负责。
+export function homepageSummary(durations, failed, elapsed) {
+  const sorted = [...durations].sort((left, right) => left - right)
+  const percentile = (fraction) => sorted.length
+    ? sorted[Math.ceil(sorted.length * fraction) - 1] : 0
+  return { completed: sorted.length, failed, elapsed_ms: elapsed,
+    p50_ms: percentile(.5), p95_ms: percentile(.95), p99_ms: percentile(.99),
+    throughput: elapsed > 0 ? sorted.length / (elapsed / 1000) : 0,
+    queue_p95_ms: null, execution_p95_ms: null }
+}
 
 export function runtimeChromium(runnerFrontend) {
   return createRequire(path.join(runnerFrontend, 'package.json'))('@playwright/test').chromium
@@ -98,7 +108,7 @@ export async function homepage(config, runnerFrontend, cache, artifacts) {
     }
   } finally { await browser.close() }
   const elapsed = performance.now() - started
-  return { scenarios: { navigation: summarize(navigation, failed, elapsed), lcp: summarize(lcp, failed, elapsed),
-    content: summarize(content, failed, elapsed) }, network_requests: network.reduce((sum, value) => sum + value, 0),
+  return { scenarios: { navigation: homepageSummary(navigation, failed, elapsed), lcp: homepageSummary(lcp, failed, elapsed),
+    content: homepageSummary(content, failed, elapsed) }, network_requests: network.reduce((sum, value) => sum + value, 0),
     completed_cycles: navigation.length, failed_cycles: failed, session_failures: sessionFailures }
 }

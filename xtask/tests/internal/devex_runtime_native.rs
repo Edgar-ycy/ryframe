@@ -3,6 +3,12 @@ use super::*;
 mod boundaries;
 #[path = "devex_runtime_native_evidence.rs"]
 mod evidence;
+#[path = "devex_runtime_native_imports.rs"]
+mod import_requests;
+#[path = "devex_runtime_native_migration.rs"]
+mod migration;
+#[path = "devex_runtime_native_provenance.rs"]
+mod provenance_process;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,

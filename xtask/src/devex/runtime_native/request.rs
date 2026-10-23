@@ -434,6 +434,9 @@ fn multipart(files: &Value, samples: Option<&Samples>) -> NativeResult<reqwest::
         if file.get("path_env").is_some() {
             return Err(Failure::new("file_configuration_required"));
         }
+        if file.get("sample").is_some() == file.get("path").is_some() {
+            return Err(Failure::new("multipart_binding"));
+        }
         let content = if let Some(sample) = file["sample"].as_str() {
             samples
                 .ok_or_else(|| Failure::new("multipart_sample"))?

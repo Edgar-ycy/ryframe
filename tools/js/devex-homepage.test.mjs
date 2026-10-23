@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { runtimeChromium } from './homepage.mjs'
+import { homepageSummary, runtimeChromium } from './homepage.mjs'
 import { browserFailure, homepageFailure, homepageVisitors } from './homepage-model.mjs'
 import { identityPool } from './devex-selection-fixture.mjs'
 
@@ -14,6 +14,19 @@ function config() {
     api_url: 'http://127.0.0.1:18080', frontend_url: 'http://127.0.0.1:4174',
     identity_pools: { visitors: pool.binding } } }
 }
+
+test('首页数值汇总保持最近秩分位数、失败计数和空样本边界', () => {
+  const durations = [99, 1, 10, 20]
+  assert.deepEqual(homepageSummary(durations, 2, 2000), {
+    completed: 4, failed: 2, elapsed_ms: 2000, p50_ms: 10, p95_ms: 99, p99_ms: 99,
+    throughput: 2, queue_p95_ms: null, execution_p95_ms: null,
+  })
+  assert.deepEqual(durations, [99, 1, 10, 20])
+  assert.deepEqual(homepageSummary([], 3, 0), {
+    completed: 0, failed: 3, elapsed_ms: 0, p50_ms: 0, p95_ms: 0, p99_ms: 0,
+    throughput: 0, queue_p95_ms: null, execution_p95_ms: null,
+  })
+})
 
 test('首页客户模型使用预登记身份与固定地址，保持同一顺序和间隔', () => {
   const input = config()
