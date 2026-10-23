@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 use super::super::json as json_io;
 use crate::Result;
 
+#[path = "inventory_history.rs"]
+mod inventory_history;
+
 const MARKER: &str = "__target-evidence";
 const MAX_BYTES: u64 = 1024 * 1024;
 
@@ -268,6 +271,9 @@ const DIAGNOSTICS: &[&str] = &[
 fn safe_message(error: &dyn std::error::Error) -> &str {
     // 只公开固定诊断，解析错误、文件路径与任意输入值均不进入协议输出。
     let reason = error.to_string();
+    if let Some(message) = inventory_history::diagnostic(&reason) {
+        return message;
+    }
     if let Some(message) = super::resume::diagnostic(&reason) {
         return message;
     }
@@ -325,6 +331,7 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
         "reset-plan" => &["path", "executable", "plan"][..],
         "history" => &[][..],
         "initial-inventory" => &["receipt", "resumed"][..],
+        "inventory-history" => &["initial", "request", "resumed", "inventory_directory"][..],
         "migration-operations" => &["executable"][..],
         "migration-prefix" => &["operations", "complete"][..],
         "migration-operation-record" => &["migration_operation"][..],
@@ -357,6 +364,7 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Result<Value> {
     match operation {
+        "inventory-history" => inventory_history::verify(backend, target, value),
         "migration-resume-state" => super::resume_state::state(
             backend,
             target,

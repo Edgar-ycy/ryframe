@@ -5,7 +5,6 @@ import copy
 from pathlib import Path
 
 from devex_clone_capture import read_json, regular_file
-from devex_clone_inventory import KEYS
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import bound_file
 from devex_clone_target import context
@@ -36,37 +35,8 @@ def unfailed(directory: Path, owned_lock_identity: int | None = None, *, allow_r
 
 def inventory_history(backend: Path, root: Path, initial: dict, request: dict, *, resumed: bool = False,
                       inventory_directory: Path | None = None) -> None:
-    filename = bound_file(backend, initial["receipt"])
-    initial_directory = root / "inventory-initial" if inventory_directory is None else inventory_directory
-    resumed_directory = filename.parent.name.startswith("inventory-resume-")
-    if filename.name != "inventory.json" or (filename.parent != initial_directory and not (resumed and resumed_directory)):
-        raise ValueError("初始库存必须属于本初始化代次的精确目录")
-    unfailed(filename.parent, allow_resolved_failure=resumed)
-    receipt = read_json(filename)
-    if (receipt.get("status") != "side_inventory_captured" or receipt.get("format_version") != 1
-            or receipt.get("side") != "target" or receipt.get("scope_id") != request["target"]["scope_id"]
-            or receipt.get("keys") != list(KEYS) or set(receipt["observations"]) != set(KEYS)):
-        raise ValueError("原始库存未完整采集本侧四个目标")
-    expected_names = {f"{phase}-target-{key}.json" for phase in ("before", "after") for key in KEYS}
-    if set(receipt["inventories"]) != expected_names:
-        raise ValueError("初始库存必须保留完整八份原始输出")
-    for name, expected in receipt["inventories"].items():
-        path = local_path(backend, str(filename.parent / name))
-        if file_digest(regular_file(path)) != expected:
-            raise ValueError("初始库存原始文件发生变化")
-    for name in ("binding-before.json", "binding-after.json"):
-        value = read_json(regular_file(filename.parent / name))
-        if plan_hash(value) != receipt["binding_sha256"]:
-            raise ValueError("初始库存来源前后绑定变化")
-    expected_images = {}
-    for db in request["target"]["databases"]:
-        image = receipt["observations"][db["key"]]
-        if image["resource"] != {"kind": "database", "scope_id": request["target"]["scope_id"],
-                                  "server_uuid": db["server_uuid"], "database": db["database"]}:
-            raise ValueError("初始库存目标物理身份不同")
-        expected_images[db["database"]] = image
-    if initial["observations"] != expected_images:
-        raise ValueError("目标初始库存与原实际采集收据不同")
+    evidence("inventory-history", backend, root, initial=initial, request=request, resumed=resumed,
+             inventory_directory=None if inventory_directory is None else str(inventory_directory))
 
 
 def _initialization_evidence(backend: Path, filename: Path, owned_lock_identity: int | None = None) -> tuple[dict, dict]:
