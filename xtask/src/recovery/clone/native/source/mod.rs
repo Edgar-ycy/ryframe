@@ -13,6 +13,10 @@ use super::{digest, json as native_json};
 use crate::Result;
 
 mod domains;
+pub(crate) mod protocol;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileRecord {
@@ -53,11 +57,23 @@ pub(crate) fn current(root: &Path) -> Result<Value> {
 }
 
 pub(crate) fn capture(root: &Path) -> Result<Inventory> {
-    let before = snapshot(root)?;
-    let fingerprint = worktree_fingerprint(root, &before.head)?;
-    let (files, guard) = file_inventory(root)?;
-    if snapshot(root)? != before
-        || worktree_fingerprint(root, &before.head)? != fingerprint
+    capture_observed(
+        || snapshot(root),
+        |head| worktree_fingerprint(root, head),
+        || file_inventory(root),
+    )
+}
+
+fn capture_observed(
+    mut snapshot: impl FnMut() -> Result<SourceSnapshot>,
+    mut worktree_fingerprint: impl FnMut(&str) -> Result<String>,
+    mut file_inventory: impl FnMut() -> Result<(Vec<FileRecord>, SourceGuard)>,
+) -> Result<Inventory> {
+    let before = snapshot()?;
+    let fingerprint = worktree_fingerprint(&before.head)?;
+    let (files, guard) = file_inventory()?;
+    if snapshot()? != before
+        || worktree_fingerprint(&before.head)? != fingerprint
         || guard.head != before.head
     {
         return Err("采集指纹期间完整源码发生变化".into());
@@ -407,11 +423,21 @@ fn file_value(file: &FileRecord) -> Value {
 }
 
 fn git(root: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(arguments)
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(arguments);
+    // 来源仅由显式仓库决定，拒绝继承的仓库、索引、配置和 replace 覆盖。
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
+    }
+    let output = command
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
         .output()
         .map_err(|error| format!("无法执行 Git 源码观察：{error}"))?;
     if !output.status.success() {

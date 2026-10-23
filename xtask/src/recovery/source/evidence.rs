@@ -103,6 +103,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("copy-administrator-credentials") => {
             crate::recovery::clone::native::session::credentials::validate_request(args)
         }
+        Some("source-inventory") => super::super::clone::native::source::protocol::request(args),
         Some("physical-binding") => binding::physical(args),
         Some("lineage-derive") => lineage::derive(args),
         Some("lineage-verify") => lineage::verify(args),

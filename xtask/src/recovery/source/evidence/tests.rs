@@ -5,6 +5,9 @@ use super::{execute, model};
 #[path = "tests/staging.rs"]
 mod staging;
 
+#[path = "tests/source_inventory.rs"]
+mod source_inventory;
+
 fn subjects() -> Value {
     Value::Array((0..11).map(|index| json!({
         "tenant_id":if index == 0 {"system".into()} else {format!("origin-unit-{index:02}")},

@@ -132,3 +132,44 @@ fn windows_drive(relative: &str) -> bool {
     let bytes = relative.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
+
+pub(super) fn frontend_tool(relative: &str) -> bool {
+    matches!(
+        relative.split('/').next(),
+        Some("scripts" | "tests" | ".github")
+    ) || matches!(
+        relative,
+        "eslint.config.js"
+            | "playwright.config.ts"
+            | "playwright.real.config.ts"
+            | "prettier.config.mjs"
+            | "stylelint.config.js"
+            | "vitest.config.ts"
+            | "config/tools.json"
+    )
+}
+
+pub(super) fn frontend_product(relative: &str) -> bool {
+    if matches!(
+        relative.split('/').next(),
+        Some("src" | "public" | "openapi")
+    ) {
+        return true;
+    }
+    // 未知路径保守绑定产品输入，已知文档与工具保留完整来源绑定。
+    !frontend_tool(relative)
+        && !matches!(
+            relative,
+            ".editorconfig"
+                | ".gitattributes"
+                | ".gitignore"
+                | ".prettierignore"
+                | "ARCHITECTURE.md"
+                | "ARCHITECTURE.en.md"
+                | "CHANGELOG.md"
+                | "CHANGELOG.en.md"
+                | "LICENSE"
+                | "README.md"
+                | "README.en.md"
+        )
+}
