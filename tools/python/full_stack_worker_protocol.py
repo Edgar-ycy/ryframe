@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
+from full_stack_worker_native import validate as validate_native
 from artifact_digests import file_digest
 from full_stack_process import process_identity, write_receipt
 
@@ -17,14 +18,6 @@ LOCK = "worker-control.lock"
 ARCHIVE = "worker-control-receipts"
 OPERATIONS = frozenset({"start", "stop", "crash", "status", "reconcile"})
 OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
-SHA256 = re.compile(r"^[a-f0-9]{64}$")
-COMMON_FIELDS = {
-    "format_version",
-    "kind",
-    "operation_id",
-    "runtime_directory",
-    "source_sha256",
-}
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -34,10 +27,6 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
             raise ValueError("Worker 控制收据包含重复字段")
         value[key] = item
     return value
-
-
-def _positive_integer(value: object) -> bool:
-    return type(value) is int and value > 0
 
 
 def _digest(value: object) -> str:
@@ -104,19 +93,6 @@ def _common(kind: str, operation_id: str, directory: Path, source: str) -> dict:
     }
 
 
-def _validate_common(value: dict, kind: str, directory: Path, source: str) -> None:
-    if (
-        value.get("format_version") != 1
-        or value.get("kind") != kind
-        or not isinstance(value.get("operation_id"), str)
-        or OPERATION_ID.fullmatch(value["operation_id"]) is None
-        or value.get("runtime_directory") != str(directory)
-        or SHA256.fullmatch(source) is None
-        or value.get("source_sha256") != source
-    ):
-        raise ValueError("Worker 控制收据与运行目录、操作或来源不匹配")
-
-
 def _archive_directory(directory: Path) -> Path:
     archive = directory / ARCHIVE
     archive.mkdir(exist_ok=True)
@@ -141,43 +117,7 @@ def _operation(directory: Path, source: str) -> dict:
     if not {"owner.json", "request.json"} <= names or not names <= allowed:
         raise ValueError("Worker 控制锁缺少收据或包含未知文件")
     owner, request = _read(lock / "owner.json"), _read(lock / "request.json")
-    _validate_common(owner, "full-stack-worker-control-owner", directory, source)
-    _validate_common(request, "full-stack-worker-control-request", directory, source)
-    operation_id = owner["operation_id"]
-    identity = _valid_identity(owner.get("identity"), "Worker 控制器")
-    if (
-        set(owner) != COMMON_FIELDS | {"identity", "created_at_ns"}
-        or not _positive_integer(owner.get("created_at_ns"))
-        or set(request)
-        != COMMON_FIELDS
-        | {
-            "operation",
-            "backend_root",
-            "scope_id",
-            "controller_identity",
-            "owner_sha256",
-            "runtime_receipt_sha256",
-            "worker_artifact",
-            "worker_ready_url",
-            "timeout_seconds",
-            "log",
-            "requested_at_ns",
-        }
-        or request.get("operation_id") != operation_id
-        or request.get("owner_sha256") != _digest(owner)
-        or request.get("controller_identity") != identity
-        or request.get("operation") not in OPERATIONS
-        or request.get("log")
-        != (
-            f"worker-{operation_id}.log"
-            if request.get("operation") == "start"
-            else None
-        )
-        or not _positive_integer(request.get("requested_at_ns"))
-        or request.get("runtime_receipt_sha256")
-        != file_digest(directory / "runtime.json")["sha256"]
-    ):
-        raise ValueError("Worker 控制请求没有绑定原子 owner 或当前 runtime 收据")
+    validate_native("operation", {"path": lock, "owner": owner, "request": request}, source=source)
     return {
         "path": lock,
         "inode": _file_identity(lock),
@@ -269,20 +209,7 @@ def _write_operation_receipt(
 
 
 def _validate_request(operation: dict, backend: Path, receipt: dict) -> None:
-    request = operation["request"]
-    timeout = request.get("timeout_seconds")
-    if (
-        request.get("backend_root") != str(backend)
-        or request.get("scope_id") != receipt["scope_id"]
-        or request.get("worker_artifact") != receipt["artifacts"]["worker"]
-        or request.get("worker_ready_url") != receipt["worker_ready_url"]
-        or not isinstance(request.get("scope_id"), str)
-        or not request["scope_id"]
-        or isinstance(timeout, bool)
-        or not isinstance(timeout, (int, float))
-        or not 0 < timeout <= 180
-    ):
-        raise ValueError("Worker 控制请求与当前后端、scope、产物或端点不匹配")
+    validate_native("request", operation, backend=str(backend), runtime=receipt)
 
 
 def _child_receipt(operation: dict, kind: str, identity: dict, **extra: object) -> dict:
@@ -302,74 +229,19 @@ def _child_receipt(operation: dict, kind: str, identity: dict, **extra: object) 
 
 
 def _validate_child(operation: dict, name: str, kind: str) -> dict:
-    value = _read(operation["path"] / name)
-    owner, request = operation["owner"], operation["request"]
-    _validate_common(value, kind, operation["path"].parent, owner["source_sha256"])
-    identity = _valid_identity(value.get("identity"), "Worker 启动监督进程")
-    extras = {
-        "candidate.json": {"created_at_ns"},
-        "supervisor.json": {"candidate_sha256", "authorized_at_ns"},
-    }.get(name)
-    if (
-        extras is None
-        or set(value)
-        != COMMON_FIELDS | {"identity", "owner_sha256", "request_sha256"} | extras
-        or value.get("operation_id") != owner["operation_id"]
-        or value.get("owner_sha256") != _digest(owner)
-        or value.get("request_sha256") != _digest(request)
-        or not _positive_integer(
-            value.get(
-                "created_at_ns" if name == "candidate.json" else "authorized_at_ns"
-            )
-        )
-    ):
-        raise ValueError("Worker 启动监督收据没有绑定当前控制操作")
-    if name == "supervisor.json":
-        candidate = _validate_child(
-            operation, "candidate.json", "full-stack-worker-control-candidate"
-        )
-        if value.get("candidate_sha256") != _digest(candidate):
-            raise ValueError("Worker 启动监督授权没有绑定当前候选进程")
-    return {**value, "identity": identity}
+    expected = {"candidate.json": "full-stack-worker-control-candidate",
+                "supervisor.json": "full-stack-worker-control-supervisor"}
+    if name not in expected or kind != expected[name]:
+        raise ValueError("未知 Worker 启动监督收据")
+    candidate = _read(operation["path"] / "candidate.json") if name == "supervisor.json" else None
+    return validate_native("candidate" if name == "candidate.json" else "supervisor", operation,
+                           value=_read(operation["path"] / name), candidate=candidate)
 
 
 def _validate_progress(operation: dict) -> dict:
-    value = _read(operation["path"] / "progress.json")
-    owner, request = operation["owner"], operation["request"]
-    _validate_common(
-        value,
-        "full-stack-worker-control-progress",
-        operation["path"].parent,
-        owner["source_sha256"],
-    )
-    phase = value.get("phase")
-    identity = value.get("identity")
-    supervisor = _validate_child(
-        operation, "supervisor.json", "full-stack-worker-control-supervisor"
-    )
-    if (
-        set(value)
-        != COMMON_FIELDS
-        | {
-            "phase",
-            "identity",
-            "owner_sha256",
-            "request_sha256",
-            "supervisor_sha256",
-            "updated_at_ns",
-        }
-        or phase not in {"launching", "started", "ready"}
-        or (phase == "launching" and identity is not None)
-        or (phase != "launching" and not isinstance(identity, dict))
-        or value.get("owner_sha256") != _digest(owner)
-        or value.get("request_sha256") != _digest(request)
-        or value.get("supervisor_sha256") != _digest(supervisor)
-        or not _positive_integer(value.get("updated_at_ns"))
-    ):
-        raise ValueError("Worker 启动进度没有绑定当前控制操作")
-    if identity is not None:
-        identity = _valid_identity(identity, "Worker 启动进度")
-    return {**value, "identity": identity}
+    return validate_native("progress", operation, value=_read(operation["path"] / "progress.json"),
+                           candidate=_read(operation["path"] / "candidate.json"),
+                           supervisor=_read(operation["path"] / "supervisor.json"))
 
 
 def _result(
@@ -404,75 +276,7 @@ def _result(
 
 
 def _validate_result(operation: dict) -> dict:
-    value = _read(operation["path"] / "result.json")
-    owner, request = operation["owner"], operation["request"]
-    _validate_common(
-        value,
-        "full-stack-worker-control-result",
-        operation["path"].parent,
-        owner["source_sha256"],
-    )
-    identity = value.get("identity")
-    outcome, state = value.get("outcome"), value.get("state")
-    error_type, error = value.get("error_type"), value.get("error")
-    if (
-        set(value)
-        != COMMON_FIELDS
-        | {
-            "operation",
-            "scope_id",
-            "controller_identity",
-            "owner_sha256",
-            "request_sha256",
-            "outcome",
-            "state",
-            "identity",
-            "log",
-            "reconciled",
-            "error_type",
-            "error",
-            "completed_at_ns",
-        }
-        or value.get("operation_id") != owner["operation_id"]
-        or value.get("operation") != request["operation"]
-        or value.get("scope_id") != request["scope_id"]
-        or value.get("controller_identity") != owner["identity"]
-        or value.get("owner_sha256") != _digest(owner)
-        or value.get("request_sha256") != _digest(request)
-        or value.get("log") != request["log"]
-        or outcome not in {"succeeded", "failed"}
-        or state not in {"running", "stopped", "unknown"}
-        or type(value.get("reconciled")) is not bool
-        or not _positive_integer(value.get("completed_at_ns"))
-    ):
-        raise ValueError("Worker 控制结果与当前请求不匹配")
-    if identity is not None:
-        identity = _valid_identity(identity, "Worker 控制结果")
-    if outcome == "succeeded":
-        if error_type is not None or error is not None or state == "unknown":
-            raise ValueError("成功的 Worker 控制结果包含错误或未知状态")
-        expected = {
-            "start": {"running"},
-            "stop": {"stopped"},
-            "crash": {"stopped"},
-            "status": {"running", "stopped"},
-            "reconcile": {"running", "stopped"},
-        }[request["operation"]]
-        if state not in expected:
-            raise ValueError("Worker 控制结果没有达到请求的目标状态")
-    elif (
-        state not in {"stopped", "unknown"}
-        or not isinstance(error_type, str)
-        or not error_type
-        or not isinstance(error, str)
-        or not error
-    ):
-        raise ValueError("失败的 Worker 控制结果缺少错误信息或包含错误状态")
-    if (state == "running" and identity is None) or (
-        state == "stopped" and identity is not None
-    ):
-        raise ValueError("Worker 控制结果状态与进程身份不一致")
-    return {**value, "identity": identity}
+    return validate_native("result", operation, value=_read(operation["path"] / "result.json"))
 
 
 def _archive(operation: dict) -> dict:

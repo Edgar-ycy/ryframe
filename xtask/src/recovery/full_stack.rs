@@ -14,6 +14,8 @@ mod provenance;
 #[cfg(test)]
 #[path = "full_stack/tests.rs"]
 mod tests;
+#[path = "full_stack/worker/mod.rs"]
+pub(crate) mod worker;
 
 use crate::{Result, cli::FullStackCommand};
 use serde_json::Value;

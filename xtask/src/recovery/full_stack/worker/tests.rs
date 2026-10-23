@@ -1,0 +1,311 @@
+use super::*;
+use serde_json::json;
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    thread,
+    time::Instant,
+};
+
+fn common(kind: &str) -> Value {
+    json!({"format_version":1,"kind":kind,"operation_id":"a".repeat(32),
+        "runtime_directory":std::env::current_dir().unwrap(),"source_sha256":"b".repeat(64)})
+}
+
+fn fixture() -> Value {
+    let identity =
+        json!({"pid":42,"started":"12345","executable":std::env::current_exe().unwrap()});
+    let mut owner = common("full-stack-worker-control-owner");
+    owner["identity"] = identity.clone();
+    owner["created_at_ns"] = json!(1);
+    let mut request = common("full-stack-worker-control-request");
+    for (key, value) in json!({"operation":"start","backend_root":"backend","scope_id":"隔离😀",
+        "controller_identity":identity,"owner_sha256":documents::hash(&owner).unwrap(),
+        "runtime_receipt_sha256":"c".repeat(64),"worker_artifact":{"path":"worker.exe","bytes":10,"sha256":"d".repeat(64)},
+        "worker_ready_url":"http://127.0.0.1:19210/readyz","timeout_seconds":0.2,
+        "log":format!("worker-{}.log","a".repeat(32)),"requested_at_ns":2}).as_object().unwrap() {
+        request[key] = value.clone();
+    }
+    json!({"mode":"operation","directory":owner["runtime_directory"],"source":owner["source_sha256"],
+        "owner":owner,"request":request,"value":null,"candidate":null,"supervisor":null,
+        "runtime_sha256":"c".repeat(64),"backend":"backend","runtime":{
+            "scope_id":"隔离😀","artifacts":{"worker":request["worker_artifact"]},
+            "worker_ready_url":request["worker_ready_url"]}})
+}
+
+fn bind(args: &Value, kind: &str) -> Value {
+    let mut value = common(kind);
+    value["owner_sha256"] = json!(documents::hash(&args["owner"]).unwrap());
+    value["request_sha256"] = json!(documents::hash(&args["request"]).unwrap());
+    value
+}
+
+fn launch() -> Value {
+    let mut args = fixture();
+    let mut candidate = bind(&args, "full-stack-worker-control-candidate");
+    candidate["identity"] = args["owner"]["identity"].clone();
+    candidate["created_at_ns"] = json!(3);
+    let mut supervisor = bind(&args, "full-stack-worker-control-supervisor");
+    supervisor["identity"] = candidate["identity"].clone();
+    supervisor["authorized_at_ns"] = json!(4);
+    supervisor["candidate_sha256"] = json!(documents::hash(&candidate).unwrap());
+    args["candidate"] = candidate;
+    args["supervisor"] = supervisor;
+    args
+}
+
+fn successful(args: &Value) -> Value {
+    let mut value = bind(args, "full-stack-worker-control-result");
+    for key in ["operation", "scope_id", "controller_identity", "log"] {
+        value[key] = args["request"][key].clone();
+    }
+    for (key, value2) in
+        json!({"outcome":"succeeded","state":"running","identity":args["owner"]["identity"],
+        "reconciled":false,"error_type":null,"error":null,"completed_at_ns":6})
+        .as_object()
+        .unwrap()
+    {
+        value[key] = value2.clone();
+    }
+    value
+}
+
+#[test]
+fn operation_rejects_changed_owner_source_log_and_unknown_fields() {
+    let original = fixture();
+    receipts::execute(&original).unwrap();
+    for (pointer, value) in [
+        ("/owner/created_at_ns", json!(true)),
+        ("/owner/identity/pid", json!(true)),
+        ("/owner/identity/started", json!("")),
+        ("/request/log", json!("elsewhere.log")),
+        ("/request/runtime_receipt_sha256", json!("e".repeat(64))),
+        ("/request/operation", json!("restart")),
+        ("/request/owner_sha256", json!("e".repeat(64))),
+        ("/source", json!("e".repeat(64))),
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(receipts::execute(&changed).is_err(), "{pointer}");
+    }
+    let mut changed = original;
+    changed["owner"]["extra"] = json!(1);
+    assert!(receipts::execute(&changed).is_err());
+}
+
+#[test]
+fn request_binds_worker_config_and_never_accepts_boolean_or_nonpositive_timeout() {
+    let mut original = fixture();
+    original["mode"] = json!("request");
+    receipts::execute(&original).unwrap();
+    for (pointer, value) in [
+        ("/request/timeout_seconds", json!(true)),
+        ("/request/timeout_seconds", json!(0)),
+        ("/request/timeout_seconds", json!(181)),
+        ("/request/timeout_seconds", json!("60")),
+        ("/request/scope_id", json!("other")),
+        ("/backend", json!("other")),
+        ("/runtime/artifacts/worker/path", json!("api.exe")),
+        (
+            "/runtime/worker_ready_url",
+            json!("http://127.0.0.1:8080/readyz"),
+        ),
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(receipts::execute(&changed).is_err(), "{pointer}");
+    }
+}
+
+#[test]
+fn child_authorization_binds_candidate_and_exact_creation_identity() {
+    let mut args = launch();
+    args["mode"] = json!("supervisor");
+    args["value"] = args["supervisor"].clone();
+    receipts::execute(&args).unwrap();
+    for (pointer, value) in [
+        ("/candidate/identity/started", json!("999")),
+        ("/value/authorized_at_ns", json!(false)),
+        ("/value/identity/executable", json!("relative.exe")),
+        ("/value/candidate_sha256", json!("e".repeat(64))),
+    ] {
+        let mut changed = args.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(receipts::execute(&changed).is_err(), "{pointer}");
+    }
+}
+
+#[test]
+fn progress_requires_authorized_supervisor_and_phase_identity() {
+    let mut args = launch();
+    args["mode"] = json!("progress");
+    let mut progress = bind(&args, "full-stack-worker-control-progress");
+    progress["phase"] = json!("launching");
+    progress["identity"] = Value::Null;
+    progress["supervisor_sha256"] = json!(documents::hash(&args["supervisor"]).unwrap());
+    progress["updated_at_ns"] = json!(5);
+    args["value"] = progress;
+    receipts::execute(&args).unwrap();
+    args["value"]["phase"] = json!("ready");
+    assert!(receipts::execute(&args).is_err());
+    args["value"]["identity"] = args["owner"]["identity"].clone();
+    receipts::execute(&args).unwrap();
+    args["value"]["phase"] = json!("launching");
+    assert!(receipts::execute(&args).is_err());
+    args["value"]["phase"] = json!("started");
+    args["supervisor"]["authorized_at_ns"] = json!(9);
+    assert!(receipts::execute(&args).is_err());
+}
+
+#[test]
+fn successful_result_cannot_hide_unknown_state_error_or_missing_identity() {
+    let mut args = fixture();
+    args["mode"] = json!("result");
+    args["value"] = successful(&args);
+    receipts::execute(&args).unwrap();
+    for (pointer, value) in [
+        ("/value/state", json!("unknown")),
+        ("/value/state", json!("stopped")),
+        ("/value/identity", Value::Null),
+        ("/value/error", json!("failure")),
+        ("/value/reconciled", json!(1)),
+        ("/value/completed_at_ns", json!(true)),
+        ("/value/controller_identity/pid", json!(55)),
+    ] {
+        let mut changed = args.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(receipts::execute(&changed).is_err(), "{pointer}");
+    }
+}
+
+#[test]
+fn failed_results_preserve_unknown_identity_and_require_both_error_fields() {
+    let mut args = fixture();
+    args["mode"] = json!("result");
+    args["value"] = successful(&args);
+    args["value"]["outcome"] = json!("failed");
+    args["value"]["state"] = json!("unknown");
+    args["value"]["error_type"] = json!("InterruptedControl");
+    args["value"]["error"] = json!("未确认回收");
+    receipts::execute(&args).unwrap();
+    args["value"]["state"] = json!("running");
+    assert!(receipts::execute(&args).is_err());
+    args["value"]["state"] = json!("stopped");
+    assert!(receipts::execute(&args).is_err());
+    args["value"]["identity"] = Value::Null;
+    receipts::execute(&args).unwrap();
+    args["value"]["error_type"] = json!("");
+    assert!(receipts::execute(&args).is_err());
+}
+
+#[test]
+fn completed_operations_enforce_their_exact_goal_without_replaying_start() {
+    for operation in ["stop", "crash", "status", "reconcile"] {
+        let mut args = fixture();
+        args["request"]["operation"] = json!(operation);
+        args["request"]["log"] = Value::Null;
+        args["mode"] = json!("result");
+        args["value"] = successful(&args);
+        if matches!(operation, "stop" | "crash") {
+            assert!(receipts::execute(&args).is_err());
+        } else {
+            receipts::execute(&args).unwrap();
+        }
+        args["value"]["state"] = json!("stopped");
+        args["value"]["identity"] = Value::Null;
+        receipts::execute(&args).unwrap();
+        args["value"]["state"] = json!("unknown");
+        assert!(receipts::execute(&args).is_err());
+    }
+}
+
+#[test]
+fn protocol_rejects_duplicates_boolean_versions_trailing_and_oversized_inputs() {
+    for input in [
+        b"{}".as_slice(),
+        b"{\"a\":1,\"a\":2}",
+        b"{}{}",
+        b"[]",
+        b"\xff",
+    ] {
+        assert!(execute(input).is_err());
+    }
+    assert!(execute(&vec![b' '; LIMIT + 1]).is_err());
+    let mut value = json!({"format_version":true,"kind":"ryframe-full-stack-worker","operation":"validate","arguments":fixture()});
+    assert!(execute(&serde_json::to_vec(&value).unwrap()).is_err());
+    value["format_version"] = json!(1);
+    execute(&serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+#[test]
+fn ascii_canonical_digest_preserves_unicode_and_python_numeric_lexemes() {
+    let value = strict::parse_fragment(
+        r#"{"b":1.0,"a":["中文","😀","\u007f"],"c":1e-07}"#,
+        "fixture",
+    )
+    .unwrap();
+    assert_eq!(
+        documents::hash(&value).unwrap(),
+        "60f6c2942df1a9ec1112c464e4d3b96a197144f03683d8a1d6b9efe6bbad5e91"
+    );
+}
+
+fn probe(action: &str, url: String, timeout: f64) -> Result<Value> {
+    probes::execute(&json!({"action":action,"url":url,"timeout":timeout}))
+}
+
+#[test]
+fn occupied_port_rejects_status_and_timeout_then_accepts_closed_port() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(
+        probe("free", format!("http://{address}/readyz"), 0.0)
+            .unwrap_err()
+            .to_string()
+            .contains("端口已占用")
+    );
+    assert!(
+        probe("wait-free", format!("http://{address}/readyz"), 0.05)
+            .unwrap_err()
+            .to_string()
+            .contains("仍被占用")
+    );
+    drop(listener);
+    probe("free", format!("http://{address}/readyz"), 0.0).unwrap();
+}
+
+#[test]
+fn readiness_accepts_200_and_never_follows_redirect_or_waits_forever() {
+    for (status, expected) in [
+        ("200 OK", true),
+        ("302 Found", false),
+        ("500 Failed", false),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0; 4096];
+            assert!(stream.read(&mut bytes).unwrap() > 0);
+            write!(stream,"HTTP/1.1 {status}\r\nLocation: http://{address}/other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        assert_eq!(
+            probe("ready", format!("http://{address}/readyz"), 0.0).unwrap(),
+            json!(expected)
+        );
+        server.join().unwrap();
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        thread::sleep(std::time::Duration::from_millis(1200));
+    });
+    let started = Instant::now();
+    assert_eq!(
+        probe("ready", format!("http://{address}/readyz"), 0.0).unwrap(),
+        json!(false)
+    );
+    assert!(started.elapsed().as_secs_f64() < 2.0);
+    server.join().unwrap();
+}

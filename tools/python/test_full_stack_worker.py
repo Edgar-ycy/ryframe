@@ -717,6 +717,18 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         verify.assert_not_called()
         self.assertFalse((self.directory / worker.LOCK).exists())
 
+    def test_native_guard_requires_bound_tool_before_observation_or_lock(self):
+        with mock.patch("full_stack_worker_native.tool_binding", return_value=None):
+            with self.assertRaisesRegex(ValueError, "正式入口绑定原生工具"):
+                worker.ready(verify_runtime(self.root, self.directory)["worker_ready_url"])
+        self.assertFalse((self.directory / worker.LOCK).exists())
+
+    def test_native_guard_rejects_credential_endpoint_without_echo_or_side_effect(self):
+        with self.assertRaisesRegex(ValueError, "凭据") as failure:
+            worker.ready("http://user:private-do-not-echo@127.0.0.1:1/readyz")
+        self.assertNotIn("private-do-not-echo", str(failure.exception))
+        self.assertFalse((self.directory / worker.LOCK).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

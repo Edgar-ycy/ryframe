@@ -5,14 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -34,6 +30,7 @@ from full_stack_process_tree import (
     terminate_owned_process_tree,
 )
 from full_stack_runtime import process_environment, verify_runtime
+from full_stack_worker_native import invoke as native_worker
 from rate_limit_tool import install_binding, tool_binding
 from full_stack_worker_protocol import (
     ARCHIVE as ARCHIVE,
@@ -128,16 +125,7 @@ def _verify_worker_tree_running(directory: Path, receipt: dict, identity: dict) 
 
 
 def ready(url: str) -> bool:
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *_args, **_kwargs):
-            return None
-
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    try:
-        with opener.open(url, timeout=1) as response:
-            return response.status == 200
-    except (OSError, urllib.error.URLError):
-        return False
+    return native_worker("probe", action="ready", url=url, timeout=0)
 
 
 def verify_running(identity: dict, url: str) -> None:
@@ -149,23 +137,11 @@ def verify_running(identity: dict, url: str) -> None:
 
 
 def ensure_port_free(url: str) -> None:
-    parsed = urllib.parse.urlsplit(url)
-    with socket.socket() as probe:
-        probe.settimeout(1)
-        if probe.connect_ex((parsed.hostname, parsed.port)) == 0:
-            raise ValueError("全栈就绪端口已占用，拒绝把其他进程当作新服务")
+    native_worker("probe", action="free", url=url, timeout=0)
 
 
 def wait_for_port_free(url: str, timeout: float = 5) -> None:
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            ensure_port_free(url)
-            return
-        except ValueError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("全栈进程退出后就绪端口仍被占用") from None
-            time.sleep(0.05)
+    native_worker("probe", action="wait-free", url=url, timeout=timeout)
 
 
 def _progress(
