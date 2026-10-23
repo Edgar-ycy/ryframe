@@ -326,8 +326,8 @@ fn directory_link(source: &Path, destination: &Path) {
         // junction不要求符号链接特权，同时覆盖重解析点拒绝。
         let status = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/J"])
-            .arg(destination)
-            .arg(source)
+            .arg(destination.to_string_lossy().replace('/', "\\"))
+            .arg(source.to_string_lossy().replace('/', "\\"))
             .status()
             .unwrap();
         assert!(status.success());
