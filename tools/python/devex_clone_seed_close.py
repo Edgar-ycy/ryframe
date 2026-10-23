@@ -4,13 +4,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 import time
 import uuid
 
+from devex_clone_seed_guards import guard
 from devex_clone_capture import read_json
 from process_environment import Environments
-from devex_clone_model import exact
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file
 from devex_clone_target_resources import Resources
@@ -87,17 +86,6 @@ DRAIN_SQL = ("SELECT JSON_OBJECT('database_time',"
              f"'active',{_json_object(ACTIVE_QUERIES)},"
              f"'terminal_non_success',{_json_object(TERMINAL_QUERIES)});")
 
-RESULT_FIELDS = {
-    "format_version", "kind", "status", "phase", "handoff", "runtime_directory", "scope_id",
-    "process_identities", "runtime_status", "api_stop", "drain", "worker_stop", "final_snapshot", "last_snapshot",
-    "terminal_non_success", "stopped_evidence", "worker_preserved", "reason", "error_type",
-    "outbox_drained", "direct_remote_writes", "worker_drain_writes", "restore_qualified",
-}
-REASONS = {
-    "api_stop_failed", "post_api_stop_observation_failed", "drain_timeout", "drain_observation_failed",
-    "guard_failed", "worker_stop_failed",
-    "worker_stop_result_unavailable", "final_verification_failed", "final_state_not_drained",
-}
 MISSING_RESULT = object()
 CHECKPOINT_FILES = {
     "running": "close-10-running.json",
@@ -106,10 +94,7 @@ CHECKPOINT_FILES = {
     "worker_stopped": "close-40-worker-stopped.json",
     "verified": "close-50-verified.json",
 }
-CHECKPOINT_FIELDS = {
-    "format_version", "kind", "attempt", "controller", "handoff", "runtime_directory", "scope_id",
-    "phase", "previous", "resumed_from", "result", "sha256",
-}
+
 
 
 class DrainTimeout(TimeoutError):
@@ -118,35 +103,12 @@ class DrainTimeout(TimeoutError):
         self.last_snapshot, self.observations = last_snapshot, observations
 
 
-def _unique_object(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("排空快照包含重复字段")
-        value[key] = item
-    return value
-
-
 def validate_snapshot(value: dict) -> dict:
-    exact(value, {"database_time", "active", "terminal_non_success"})
-    if not isinstance(value["database_time"], str) or re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z", value["database_time"]) is None:
-        raise ValueError("排空快照数据库时间无效")
-    for field, expected in (("active", ACTIVE_QUERIES), ("terminal_non_success", TERMINAL_QUERIES)):
-        exact(value[field], set(expected))
-        if any(type(item) is not int or item < 0 for item in value[field].values()):
-            raise ValueError("排空快照计数必须是非负整数")
-    return value
+    return guard("snapshot", {"value": value}, label="排空快照")
 
 
 def parse_snapshot(raw: str) -> dict:
-    if not isinstance(raw, str) or not raw:
-        raise ValueError("排空查询没有返回固定 JSON")
-    try:
-        value = json.loads(raw, object_pairs_hook=_unique_object)
-    except json.JSONDecodeError:
-        raise ValueError("排空查询返回无效 JSON") from None
-    return validate_snapshot(value)
+    return guard("parse-snapshot", {"raw": raw}, label="排空快照（含重复字段）")
 
 
 def is_drained(snapshot: dict) -> bool:
@@ -170,12 +132,7 @@ def observe_snapshot(context) -> dict:
 
 
 def validate_identity(value: dict) -> dict:
-    exact(value, {"pid", "started", "executable"})
-    if (type(value["pid"]) is not int or value["pid"] <= 1 or not isinstance(value["started"], str)
-            or not value["started"].isdigit() or not isinstance(value["executable"], str)
-            or not value["executable"]):
-        raise ValueError("seed 运行进程身份无效")
-    return value
+    return guard("identity", {"value": value}, label="seed 运行进程身份")
 
 
 def recorded_identities(runtime: Path, handoff: dict) -> dict:
@@ -183,81 +140,43 @@ def recorded_identities(runtime: Path, handoff: dict) -> dict:
             for role in ("api", "worker")}
 
 
-def validate_control(value: dict, operation: str, roles: tuple[str, ...], runtime: Path, handoff: dict) -> dict:
-    exact(value, {"format_version", "kind", "operation", "scope_id", "runtime_directory", "processes",
-                  "producer_history"})
-    expected_history = str(runtime / "producer-history.json")
-    if (value["format_version"] != 1 or value["kind"] != "devex-clone-runtime-control"
-            or value["operation"] != operation or value["scope_id"] != handoff["scope_id"]
-            or value["runtime_directory"] != str(runtime) or value["producer_history"] != expected_history):
-        raise ValueError("运行控制结果不属于固定 seed handoff")
-    exact(value["processes"], set(roles))
-    for process in value["processes"].values():
-        exact(process, {"state", "identity", "ready"})
-        if process["state"] not in {"running", "stopped"} or type(process["ready"]) is not bool:
-            raise ValueError("seed 运行状态无效")
-        if process["state"] == "running":
-            validate_identity(process["identity"])
-        elif process != {"state": "stopped", "identity": None, "ready": False}:
-            raise ValueError("已停止 seed 进程仍包含身份或就绪状态")
-    return value
+def _runtime_guard(value, requirement, runtime, handoff, identities=None, *, operation="status", roles=("api", "worker")):
+    labels = {"initial": "首次 close 的固定就绪进程", "draining": "排空期间固定 API/Worker 代次"}
+    return guard("control", {"value": value, "requirement": requirement, "operation": operation,
+                            "roles": list(roles), "runtime": str(runtime), "handoff": handoff,
+                            "identities": identities}, label=labels.get(requirement, "seed 固定 handoff 运行状态"))
 
 
-def require_initial_running(value: dict, runtime: Path, handoff: dict) -> dict:
-    validate_control(value, "status", ("api", "worker"), runtime, handoff)
-    for role in ("api", "worker"):
-        if value["processes"][role]["state"] != "running" or value["processes"][role]["ready"] is not True:
-            raise ValueError("首次 close 必须从同一 handoff 的就绪 API/Worker 开始")
-    return value
+def validate_control(value, operation, roles, runtime, handoff):
+    return _runtime_guard(value, "validate", runtime, handoff, operation=operation, roles=roles)
 
 
-def require_fixed_running(value: dict, runtime: Path, handoff: dict, identities: dict) -> dict:
-    require_initial_running(value, runtime, handoff)
-    if any(value["processes"][role]["identity"] != identities[role] for role in ("api", "worker")):
-        raise ValueError("运行中的 API/Worker 不属于固定进程代次")
-    return value
+def require_initial_running(value, runtime, handoff):
+    return _runtime_guard(value, "initial", runtime, handoff)
 
 
-def require_api_stopped(value: dict, runtime: Path, handoff: dict) -> dict:
-    validate_control(value, "stop", ("api",), runtime, handoff)
-    if value["processes"]["api"] != {"state": "stopped", "identity": None, "ready": False}:
-        raise ValueError("API 停止结果无效")
-    return value
+def require_fixed_running(value, runtime, handoff, identities):
+    return _runtime_guard(value, "fixed", runtime, handoff, identities)
 
 
-def require_worker_stopped(value: dict, runtime: Path, handoff: dict) -> dict:
-    validate_control(value, "stop", ("worker",), runtime, handoff)
-    if value["processes"]["worker"] != {"state": "stopped", "identity": None, "ready": False}:
-        raise ValueError("Worker 停止结果无效")
-    return value
+def require_api_stopped(value, runtime, handoff):
+    return _runtime_guard(value, "api-stopped", runtime, handoff)
 
 
-def require_drain_runtime(value: dict, runtime: Path, handoff: dict, worker_identity: dict) -> dict:
-    validate_control(value, "status", ("api", "worker"), runtime, handoff)
-    expected_api = {"state": "stopped", "identity": None, "ready": False}
-    worker = value["processes"]["worker"]
-    if (value["processes"]["api"] != expected_api or worker["state"] != "running"
-            or worker["ready"] is not True or worker["identity"] != worker_identity):
-        raise ValueError("排空期间 API/Worker 进程代次不属于固定阶段")
-    return value
+def require_worker_stopped(value, runtime, handoff):
+    return _runtime_guard(value, "worker-stopped", runtime, handoff)
 
 
-def validate_observed_runtime(value: dict, runtime: Path, handoff: dict, identities: dict) -> dict:
-    validate_control(value, "status", ("api", "worker"), runtime, handoff)
-    for role in ("api", "worker"):
-        process = value["processes"][role]
-        if process["state"] == "running" and (process["ready"] is not True
-                or process["identity"] != identities[role]):
-            raise ValueError("实际运行进程不属于固定 API/Worker 代次")
-    return value
+def require_drain_runtime(value, runtime, handoff, worker_identity):
+    return _runtime_guard(value, "draining", runtime, handoff, {"worker": worker_identity})
 
 
-def require_closed_runtime(value: dict, runtime: Path, handoff: dict) -> dict:
-    validate_control(value, "status", ("api", "worker"), runtime, handoff)
-    expected = {"state": "stopped", "identity": None, "ready": False}
-    if value["processes"] != {"api": expected, "worker": expected}:
-        raise ValueError("seed 终检要求 API/Worker 均精确停止")
-    return value
+def validate_observed_runtime(value, runtime, handoff, identities):
+    return _runtime_guard(value, "observed", runtime, handoff, identities)
+
+
+def require_closed_runtime(value, runtime, handoff):
+    return _runtime_guard(value, "closed", runtime, handoff)
 
 
 def drain_until_stable(observe, runtime_status, *, timeout_seconds=DRAIN_TIMEOUT_SECONDS,
@@ -312,16 +231,8 @@ def _control(private: dict, backend: Path, runtime: Path, operation: str, roles:
         return control(backend, runtime, operation, roles, handoff["api_url"])
 
 
-def _drain_evidence(value: dict, worker_identity: dict) -> dict:
-    exact(value, {"stable_seconds", "observations", "first_snapshot", "last_snapshot"})
-    if (value["stable_seconds"] != DRAIN_STABLE_SECONDS or type(value["observations"]) is not int
-            or value["observations"] < 2):
-        raise ValueError("稳定排空证据参数无效")
-    first, last = validate_snapshot(value["first_snapshot"]), validate_snapshot(value["last_snapshot"])
-    if not is_drained(first) or not is_drained(last) or snapshot_signature(first) != snapshot_signature(last):
-        raise ValueError("稳定排空证据仍有活跃状态或前后变化")
-    validate_identity(worker_identity)
-    return value
+def _drain_evidence(value, worker_identity):
+    return guard("drain", {"value": value, "worker_identity": worker_identity}, label="稳定排空证据")
 
 
 def _base_result(runtime: Path, handoff: dict, runtime_status: dict, identities: dict, *,
@@ -351,81 +262,9 @@ def _partial(result: dict, phase: str, reason: str, error: BaseException | None 
     return value
 
 
-def validate_result(value: dict, runtime: Path, handoff: dict, *, in_progress: bool = False) -> dict:
-    exact(value, RESULT_FIELDS)
-    if (value["format_version"] != 1 or value["kind"] != "devex-clone-seed-close"
-            or value["handoff"] != binding(runtime / "handoff.json") or value["runtime_directory"] != str(runtime)
-            or value["scope_id"] != handoff["scope_id"] or value["direct_remote_writes"] != 0
-            or value["worker_drain_writes"] is not True or value["restore_qualified"] is not False):
-        raise ValueError("历史 close 结果不属于固定 handoff")
-    exact(value["process_identities"], {"api", "worker"})
-    identities = {role: validate_identity(value["process_identities"][role]) for role in ("api", "worker")}
-    runtime_status = validate_observed_runtime(value["runtime_status"], runtime, handoff, identities)
-    worker_identity = identities["worker"]
-    phase = value["phase"]
-    if phase not in {"running", "api_stopped", "drained", "worker_stopped", "verified"}:
-        raise ValueError("历史 close 阶段无效")
-    if phase == "running":
-        require_fixed_running(runtime_status, runtime, handoff, identities)
-        if value["api_stop"] is not None:
-            raise ValueError("运行阶段不能包含 API 停止结果")
-    elif value["api_stop"] is None:
-        require_drain_runtime(runtime_status, runtime, handoff, worker_identity)
-    else:
-        require_api_stopped(value["api_stop"], runtime, handoff)
-    if phase in {"running", "api_stopped"}:
-        if value["drain"] is not None or value["worker_stop"] is not None or value["final_snapshot"] is not None:
-            raise ValueError("close 当前阶段包含未来阶段证据")
-    else:
-        _drain_evidence(value["drain"], worker_identity)
-    if phase in {"running", "api_stopped", "drained"} and value["worker_stop"] is not None:
-        raise ValueError("Worker 尚未停止却包含停止结果")
-    if value["worker_stop"] is not None:
-        require_worker_stopped(value["worker_stop"], runtime, handoff)
-    if value["final_snapshot"] is not None:
-        validate_snapshot(value["final_snapshot"])
-    if value["last_snapshot"] is not None:
-        validate_snapshot(value["last_snapshot"])
-    source = value["final_snapshot"] or value["last_snapshot"]
-    if value["terminal_non_success"] != (source["terminal_non_success"] if source else None):
-        raise ValueError("历史 close 终态异常统计不属于最后快照")
-    expected_preserved = phase in {"running", "api_stopped", "drained"}
-    if value["worker_preserved"] is not expected_preserved:
-        raise ValueError("历史 close Worker 保留语义无效")
-    if value["status"] == "seed_runtime_closed":
-        if (phase != "verified" or value["reason"] is not None or value["error_type"] is not None
-                or value["outbox_drained"] is not True or value["final_snapshot"] is None
-                or not is_drained(value["final_snapshot"]) or value["stopped_evidence"] is None):
-            raise ValueError("历史 close 成功结果不完整")
-    elif (value["status"] != "needs_reconciliation" or phase == "verified"
-          or value["reason"] is None and (not in_progress or value["error_type"] is not None)
-          or value["reason"] is not None and value["reason"] not in REASONS
-          or value["outbox_drained"] is not False or (value["error_type"] is not None and
-          (not isinstance(value["error_type"], str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", value["error_type"]) is None))):
-        raise ValueError("历史 close 待核对结果无效")
-    return value
-
-
-def _original_attempt(attempt: dict) -> dict:
-    return {**attempt, "status": "running", "finished_at": None, "result": None, "error_type": None}
-
-
-def _validate_controller(backend: Path, directory: Path, attempt: dict, descriptor: dict) -> None:
-    path = bound_file(backend, descriptor)
-    expected = directory / f"controller-{attempt['number']:04d}.json"
-    value = read_json(path)
-    exact(value, {"format_version", "kind", "owner", "attempt", "attempt_sha256"})
-    exact(value["owner"], {"format_version", "identity", "directory", "manifest_sha256"})
-    if (path != expected or value["format_version"] != 1 or value["kind"] != "devex-stage-controller"
-            or value["attempt"] != attempt["number"] or value["attempt_sha256"] != plan_hash(_original_attempt(attempt))
-            or value["owner"]["format_version"] != 1 or value["owner"]["directory"] != str(directory)
-            or value["owner"]["manifest_sha256"] != binding(directory / "manifest.json")["sha256"]):
-        raise ValueError("close checkpoint 控制器不属于固定 attempt")
-    validate_identity(value["owner"]["identity"])
-
-
-def _checkpoint_body(value: dict) -> dict:
-    return {key: item for key, item in value.items() if key != "sha256"}
+def validate_result(value, runtime, handoff, *, in_progress=False):
+    return guard("result", {"value": value, "runtime": str(runtime), "handoff": handoff,
+                           "in_progress": in_progress}, label="历史 close 固定 handoff 结果")
 
 
 def _checkpoint_path(directory: Path, attempt: int, phase: str) -> Path:
@@ -454,26 +293,13 @@ def _validate_resume_source(backend: Path, directory: Path, state: dict, descrip
 
 def _validate_checkpoint(backend: Path, directory: Path, state: dict, attempt: dict, value: dict,
                          phase: str, previous: dict | None, runtime: Path, handoff: dict) -> dict:
-    exact(value, CHECKPOINT_FIELDS)
-    body = _checkpoint_body(value)
-    if (value["format_version"] != 1 or value["kind"] != "devex-clone-seed-close-checkpoint"
-            or value["attempt"] != attempt["number"] or value["phase"] != phase
-            or value["previous"] != previous or value["sha256"] != plan_hash(body)
-            or value["handoff"] != binding(runtime / "handoff.json")
-            or value["runtime_directory"] != str(runtime) or value["scope_id"] != handoff["scope_id"]):
-        raise ValueError("close checkpoint 不属于固定阶段或摘要链")
-    _validate_controller(backend, directory, attempt, value["controller"])
-    result = validate_result(value["result"], runtime, handoff, in_progress=True)
-    if result["phase"] != phase:
-        raise ValueError("close checkpoint 阶段与结果不同")
+    result = guard("checkpoint", {"directory": str(directory), "attempt": attempt, "value": value,
+                                  "phase": phase, "previous": previous, "runtime": str(runtime),
+                                  "handoff": handoff}, backend=backend, label="close checkpoint 固定阶段与摘要链")
     if previous is None:
         if value["resumed_from"] is not None:
             _validate_resume_source(backend, directory, state, value["resumed_from"], attempt["number"],
                                     runtime, handoff)
-        elif phase not in {"running", "api_stopped"}:
-            raise ValueError("close checkpoint 中途阶段缺少固定续作来源")
-    elif value["resumed_from"] is not None:
-        raise ValueError("close checkpoint 只有链首可以绑定续作来源")
     return result
 
 

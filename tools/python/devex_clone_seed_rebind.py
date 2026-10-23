@@ -4,8 +4,9 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+from devex_clone_seed_guards import guard
 from devex_clone_capture import read_json
-from devex_clone_model import exact, local_path
+from devex_clone_model import local_path
 from devex_clone_run_state import binding, load_state
 from devex_clone_seed_segment import segmented_resume
 from devex_clone_source_proof import bound_file, require_closed_port, require_recorded_producer_stopped
@@ -13,8 +14,6 @@ from devex_clone_storage import current_storage_binding, registered_storage_bind
 from devex_clone_storage_request import directory_identity
 from restore_reference_plan import plan_hash
 
-FIELDS = {"status", "source_registration", "review_successor", "original_storage", "current_storage",
-          "history_length", "history_sha256", "remote_writes", "restore_qualified"}
 READ_ONLY_AFTER = {("seed-runtime", "arm-input"), ("storage-target", "status"),
                    ("seed-runtime", "source-generation-start"), ("seed-runtime", "source-generation-stop"),
                    ("seed-runtime", "source-generation-recover"),
@@ -164,16 +163,9 @@ def quiet_producers(backend: Path, source: dict) -> None:
 
 
 def transition(backend: Path, original: dict, current: dict | None) -> None:
-    if current is None or current == original:
-        raise ValueError("重绑定需要不同的已发布存储代次")
-    for field in ("request", "data_directory", "api_url", "console_url"):
-        if current[field] != original[field]:
-            raise ValueError("重绑定不得改变固定请求、目录身份或监听端点")
+    guard("rebind-transition", {"original": original, "current": current}, backend=backend,
+          label="重绑定固定请求、目录、端点与后续存储代次")
     directory_identity(backend, original["data_directory"])
-    if (current["storage"]["sha256"] != original["storage"]["sha256"]
-            or current["storage"]["identity"]["executable"] != original["storage"]["identity"]["executable"]
-            or current["attempt"] <= original["attempt"]):
-        raise ValueError("重绑定不是同一二进制的后续代次")
     require_recorded_producer_stopped(original["storage"]["identity"])
     bound_file(backend, original["request"])
     bound_file(backend, original["restart_result"])
@@ -207,13 +199,10 @@ def resolve_storage(backend: Path, descriptor: dict, source: dict, state: dict, 
         if bound_file(backend, receipt) != directory / "results" / f"{record['number']:04d}.json":
             raise ValueError("重绑定结果不属于固定 run attempt")
         value = read_json(bound_file(backend, receipt))
-        exact(value, FIELDS)
         prefix = [item for item in state["attempts"] if item["number"] < record["number"]]
-        if (value["status"] != "seed_source_rebound" or value["source_registration"] != descriptor
-                or value["original_storage"] != original or value["history_length"] != len(prefix)
-                or value["history_sha256"] != plan_hash(prefix) or value["remote_writes"] != 0
-                or value["restore_qualified"] is not False):
-            raise ValueError("重绑定没有精确冻结来源及完整历史前缀")
+        guard("rebind-receipt", {"value": value, "descriptor": descriptor,
+                                 "original": original, "prefix": prefix}, backend=backend,
+              label="重绑定来源及完整历史前缀")
         bound_file(backend, value["review_successor"])
         effective = value["current_storage"]
         transition(backend, original, effective)

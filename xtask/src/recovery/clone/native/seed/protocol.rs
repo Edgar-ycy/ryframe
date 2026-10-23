@@ -15,6 +15,9 @@ use std::{
     path::Path,
 };
 
+#[path = "guards/mod.rs"]
+mod guards;
+
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.first().map(String::as_str) != Some("__seed-evidence") {
@@ -70,6 +73,7 @@ pub(crate) fn execute(backend: &Path, bytes: &[u8]) -> Result<Value> {
     validate_local_test_path(run, backend, LocalTestPathKind::ExistingDirectory)?;
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("close-rebind-guard") => guards::dispatch(backend, run, args),
         Some("generation-guard") => super::generation::dispatch(backend, run, args),
         Some("department-guard") => super::super::department::dispatch(backend, run, args),
         Some("register") => {

@@ -160,18 +160,7 @@ class SeedRebindTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rebind.history(self.directory, state, self.published, current=53)
 
-    def test_transition_rejects_identity_data_directory_request_endpoint_and_binary_changes(self):
-        variations = [None, self.original, {**self.current, "attempt": 6}]
-        for field in ("request", "data_directory", "api_url", "console_url"):
-            variations.append({**self.current, field: {"changed": True}})
-        for field in ("sha256", "identity"):
-            value = copy.deepcopy(self.current)
-            value["storage"][field] = ("b" * 64 if field == "sha256" else
-                                      {**value["storage"][field], "executable": "other.exe"})
-            variations.append(value)
-        for value in variations:
-            with self.subTest(value=value), self.patches(), self.assertRaises(ValueError):
-                rebind.transition(self.backend, self.original, value)
+    def test_transition_keeps_live_identity_and_directory_guards_after_native_model_check(self):
         with self.patches(), patch.object(rebind, "require_recorded_producer_stopped",
                                          side_effect=ValueError("same creation")), self.assertRaises(ValueError):
             rebind.transition(self.backend, self.original, self.current)

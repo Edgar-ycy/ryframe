@@ -52,24 +52,11 @@ class Clock:
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_snapshot_parser_requires_exact_nonnegative_integer_counts(self):
+    def test_snapshot_parser_uses_formal_native_binding_and_rejects_duplicate_keys(self):
         value = snapshot(terminal={"outbox_event_dead": 2})
         self.assertEqual(close.parse_snapshot(json.dumps(value)), value)
-        changes = [
-            lambda item: item["active"].pop("outbox_event_status"),
-            lambda item: item["active"].update(extra=0),
-            lambda item: item["active"].update(outbox_event_status=True),
-            lambda item: item["active"].update(outbox_event_status=-1),
-            lambda item: item.update(database_time="local-time"),
-        ]
-        for change in changes:
-            candidate = snapshot()
-            change(candidate)
-            with self.subTest(candidate=candidate), self.assertRaises(ValueError):
-                close.parse_snapshot(json.dumps(candidate))
-        duplicate = json.dumps(snapshot()).replace('"database_time":', '"database_time":"old","database_time":', 1)
         with self.assertRaisesRegex(ValueError, "重复字段"):
-            close.parse_snapshot(duplicate)
+            close.parse_snapshot('{"active":{},"active":{}}')
 
     def test_fixed_query_covers_validate_state_tables_and_is_read_only(self):
         for table in (
