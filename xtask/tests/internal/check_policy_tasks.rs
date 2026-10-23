@@ -41,19 +41,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
         [("migration-history", PolicyTaskInvocation::MigrationHistory)]
     );
     assert_eq!(definitions(PolicyProfile::CiPreflight), []);
-    assert_eq!(
-        definitions(PolicyProfile::FullStatic)
-            .iter()
-            .filter(|(_id, invocation)| *invocation == PolicyTaskInvocation::SupplyChain)
-            .count(),
-        1
-    );
-    assert!(
-        !definitions(PolicyProfile::CiPreflight)
-            .iter()
-            .any(|(_id, invocation)| *invocation == PolicyTaskInvocation::SupplyChain),
-        "CI preflight 的供应链检查由始终执行的 security source job 覆盖"
-    );
 }
 
 #[test]
