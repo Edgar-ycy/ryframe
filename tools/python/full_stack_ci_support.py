@@ -57,15 +57,6 @@ def execute(value):
     if not backend.is_absolute() or not directory.is_absolute():
         raise ValueError('全栈底层请求必须绑定绝对目录')
     operation = value['operation']
-    if operation == 'build':
-        from ci_full_stack_resources import build_binaries
-        import subprocess
-        def run(command, **options):
-            result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **{k:v for k,v in options.items() if k != 'capture_output'})
-            if result.returncode:
-                raise ValueError('全栈构建失败；核对 Cargo 阶段与退出状态')
-            return result
-        return build_binaries(run, backend, directory)
     if operation == 'register':
         from full_stack_runtime import register_runtime
         return register_runtime(backend, directory)

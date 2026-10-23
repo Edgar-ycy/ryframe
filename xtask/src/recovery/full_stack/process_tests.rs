@@ -157,3 +157,24 @@ fn logging_redacts_nested_plaintext_credentials_and_preserves_other_evidence() {
     );
     assert_eq!(text, "phase reset [已脱敏] [已脱敏] [已脱敏]");
 }
+
+#[test]
+fn private_cargo_json_never_merges_compiler_diagnostics_into_artifact_events() {
+    let root = directory();
+    let output = capture(
+        command("json", root.path()),
+        root.path(),
+        b"",
+        Duration::from_secs(5),
+        None,
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&output).unwrap(),
+        json!({"reason":"compiler-artifact"})
+    );
+    assert!(!output.contains("private-password"));
+    gone(root.path());
+}

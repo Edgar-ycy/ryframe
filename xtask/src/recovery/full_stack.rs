@@ -1,4 +1,6 @@
 //! 原生全栈阶段协调；既有进程树和来源权威只作为底层核验端口复用。
+#[path = "full_stack/build.rs"]
+mod build;
 #[path = "full_stack/context.rs"]
 pub(super) mod context;
 #[path = "full_stack/execution.rs"]
@@ -7,6 +9,8 @@ pub(super) mod execution;
 mod lifecycle;
 #[path = "full_stack/prepare.rs"]
 mod prepare;
+#[path = "full_stack/provenance.rs"]
+mod provenance;
 #[cfg(test)]
 #[path = "full_stack/tests.rs"]
 mod tests;

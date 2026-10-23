@@ -142,6 +142,9 @@ impl<'a> Native<'a> {
 
 impl Port for Native<'_> {
     fn leaf(&mut self, operation: &str) -> Result<Value> {
+        if operation == "build" {
+            return super::build::run(self.context, self);
+        }
         if operation == "api-alive" {
             let identity = self.api.as_ref().ok_or("API 启动未确认创建身份")?;
             let pid = identity["pid"]
@@ -186,6 +189,8 @@ impl Port for Native<'_> {
         if Path::new(program).is_absolute() {
             command.env("APP_ENV", "test");
         }
+        let cargo_json =
+            program == "cargo" && args.iter().any(|arg| arg == "--message-format=json");
         let output = capture(
             command,
             &self.context.root,
@@ -193,7 +198,8 @@ impl Port for Native<'_> {
             Duration::from_secs(1800),
             Some(&self.cancel),
             false,
-            true,
+            // Cargo JSON 事件与诊断分流，诊断不能混入产物协议。
+            !cargo_json,
         );
         let output = match output {
             Ok(output) => output,
@@ -208,6 +214,10 @@ impl Port for Native<'_> {
                 return Err(error);
             }
         };
+        if cargo_json && log.is_none() {
+            // 私有产物协议不写日志，路径字节在解析前不能被脱敏替换。
+            return Ok(output);
+        }
         let output = match self.context.table() {
             Ok(table) => redact(output, &table),
             Err(_) if log.is_some() => {

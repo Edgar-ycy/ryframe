@@ -129,7 +129,7 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 复制阶段的原生事务门入口为 `cargo xtask check recovery fixture retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>`，仅接受已登记且 Worker 已停止的隔离运行。标准输入每行发送 `{"operation":"wait-blocked"}` 或 `{"operation":"release"}`，标准输出保留 `held`、`blocked`、`released` 的逐行 JSON 协议；EOF 或异常退出会回收锁连接。复制门与历史保留期操作均由 Rust 执行。CI 四库初始化同样由 Rust 的 `__ci-databases` 私有入口执行：协调器通过有界 stdin JSON 绑定当前 Job、显式配置目录及规划时捕获的配置快照；连接字段、TLS、容器归属、客户端凭据文件和配置发布只由 Rust 校验和执行，不再保留 Python MySQL helper。凭据仅进入私有管道和受限目录文件，不进入 argv、环境或公开日志；容器内客户端固定使用 3306，保留显式 TLS 参数。建库前先持久化 `creation-unknown` 收据，只有四库创建成功才写入 `created`；失败、取消或进程中断均保留现场且禁止自动重放。已有同名资源仍失败，不使用 `IF NOT EXISTS`；API 和 Worker 分别使用已校验的实例编号与固定编号 2。
 
-全栈 `prepare`、`start`、`collect` 与登录预算导出由 Rust 协调，业务夹具工作树复制、双仓来源复核、资源生成顺序、只读检查和 xtask 预热也由 Rust 执行；原 Python 协调入口已经删除。仅已有构建来源、长驻监督进程和 Worker 归属核验继续由有界 stdin 底层端口复用，不在该端口决定阶段或自动重试。对象桶创建调用原生 Rust S3 客户端，先保存写入未知收据，创建响应与独立 HEAD 核验均成功后才标记完成。目录权限及实例编号改写共用 Rust 文件协议，凭据不进入子进程环境或公开日志。
+全栈 `prepare`、`start`、`collect` 与登录预算导出由 Rust 协调，业务夹具工作树复制、双仓来源复核、资源生成顺序、只读检查和 xtask 预热也由 Rust 执行；原 Python 协调入口已经删除。全栈 CI 的四角色构建与构建来源采集由 Rust 直接执行：按 Cargo JSON 中当前 Workspace 的唯一二进制产物取路径，构建前后复核双方来源、业务夹具、模型及产物摘要；已有清单或证据时拒绝覆盖。运行登记、长驻监督进程和 Worker 归属核验继续由有界 stdin 底层端口复用，不在该端口决定阶段或自动重试。源码组合签发与 Release 归档校验复用既有 Rust 实现，不再保留重复的 Python 实现。对象桶创建调用原生 Rust S3 客户端，先保存写入未知收据，创建响应与独立 HEAD 核验均成功后才标记完成。目录权限及实例编号改写共用 Rust 文件协议，凭据不进入子进程环境或公开日志。
 
 Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
 

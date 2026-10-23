@@ -35,6 +35,11 @@ fn main() {
         eprintln!("private-password");
         std::process::exit(17);
     }
+    if mode == "json" {
+        eprintln!("编译诊断 private-password");
+        println!("{{\"reason\":\"compiler-artifact\"}}");
+        return;
+    }
     if mode == "flood" {
         let _ = std::io::stdout().write_all(&vec![b'x'; 17 * 1024 * 1024]);
         return;
