@@ -77,7 +77,8 @@ pub(super) fn prepare(
         &fs::read(&path)
             .map_err(|error| format!("运行时测量需要显式隔离配置 {}：{error}", path.display()))?,
     )?;
-    super::runtime_input::validate(root, &config, suite, environment)?;
+    let projected = super::runtime_native::configuration::selection_config(&config)?;
+    super::runtime_input::validate(root, &projected, suite, environment)?;
     let contract = config.get("contract").ok_or("运行时配置缺少 contract")?;
     // contract 只包含固定负载、数据集、硬件环境和服务参数，不含端点、scope、凭据或源码 SHA。
     let hash = Sha256::digest(serde_json::to_vec(contract)?)

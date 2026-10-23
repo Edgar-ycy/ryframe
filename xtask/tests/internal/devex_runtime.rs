@@ -3,7 +3,7 @@ use super::devex::{CacheState, DevexCommand, DevexSuite, comparison_checks, dist
 use super::devex::{DevexRunOptions, require_runtime_frontend_layout};
 use super::devex_acceptance_tests::summary;
 use serde_json::json;
-use std::{fs, path::Path, process::Command as ProcessCommand};
+use std::{fs, path::Path};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -31,38 +31,15 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
     let definition = options.suite.definition(&options.variant).unwrap();
     assert_eq!(definition.steps.len(), 1);
     let step = &definition.steps[0];
-    assert_eq!(step.program, "node");
-    assert_eq!(step.args[0], "{driver}/tools/js/runtime.mjs");
+    assert_eq!(step.program, "__devex-runtime");
+    assert_eq!(step.args[0], "--suite");
     assert!(
         step.args
             .windows(2)
             .any(|pair| { pair == ["--runner-frontend", "{runner-frontend}"] })
     );
 
-    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let driver = backend.join("tools/js/runtime.mjs");
-    assert!(driver.is_file(), "{}", driver.display());
-    let node_test = backend.join("tools/js/devex-runtime.test.mjs");
-    let integration = ProcessCommand::new("node")
-        .args(["--test", "--test-isolation=none", "--test-concurrency=1"])
-        .arg(&node_test)
-        .current_dir(backend)
-        .output()
-        .unwrap();
-    assert!(
-        integration.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&integration.stdout),
-        String::from_utf8_lossy(&integration.stderr)
-    );
-
-    let invalid = ProcessCommand::new("node")
-        .arg(driver)
-        .current_dir(backend)
-        .output()
-        .unwrap();
-    assert_eq!(invalid.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&invalid.stderr).contains("参数无效"));
+    assert!(super::devex::runtime_native::entry::parse(&[], &Default::default()).is_err());
 }
 
 #[test]
@@ -128,7 +105,7 @@ fn stable_b0_paired_runtime_plan_binds_both_products_and_the_shared_runner_argum
     ];
     for definition in definitions {
         assert_eq!(definition.steps.len(), 1);
-        assert_eq!(definition.steps[0].program, "node");
+        assert_eq!(definition.steps[0].program, "__devex-runtime");
         assert!(
             definition.steps[0]
                 .args

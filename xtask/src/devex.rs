@@ -27,6 +27,8 @@ mod preflight;
 mod report;
 #[path = "devex/runtime.rs"]
 mod runtime;
+#[path = "devex/runtime_native/mod.rs"]
+pub(crate) mod runtime_native;
 #[path = "devex/runtime_configuration.rs"]
 pub(crate) mod runtime_configuration;
 #[path = "devex/runtime_input.rs"]

@@ -37,6 +37,9 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    if let Some(code) = devex::runtime_native::entry::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::clone::native::s3::protocol::run_hidden_if_requested() {
         std::process::exit(code);
     }

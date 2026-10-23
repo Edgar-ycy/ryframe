@@ -31,9 +31,8 @@ macro_rules! runtime_step {
     ($name:ident, $suite:literal) => {
         const $name: &[StepDefinition] = &[StepDefinition {
             working_directory: WorkingDirectory::RunnerFrontend,
-            program: "node",
+            program: "__devex-runtime",
             args: &[
-                "{driver}/tools/js/runtime.mjs",
                 "--suite",
                 $suite,
                 "--backend",
