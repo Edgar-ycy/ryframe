@@ -582,6 +582,44 @@ class PipeFailureTests(unittest.TestCase):
 
 
 class NativeBindingTests(unittest.TestCase):
+    def setUp(self):
+        self.binding = ROOT / tool.BINDING
+        self.raw = self.binding.read_bytes()
+        self.metadata = json.loads(self.raw)
+        self.addCleanup(self.binding.write_bytes, self.raw)
+
+    def test_real_program_rejects_stale_digest_and_incomplete_source_binding(self):
+        changed = copy.deepcopy(self.metadata)
+        changed["sources"][0]["sha256"] = "0" * 64
+        omitted = copy.deepcopy(self.metadata)
+        omitted["sources"].pop()
+        for metadata in (changed, omitted):
+            with self.subTest(sources=len(metadata["sources"])):
+                self.binding.write_bytes(encoded(metadata))
+                with self.assertRaisesRegex(ValueError, "编译来源"):
+                    tool.normalize_origin("https://example.invalid", allow_empty=False)
+
+    def test_real_loader_rejects_identical_binding_replacement_during_guard(self):
+        temporary = WorkspaceDirectory(ROOT / ".local-tests/python-unit")
+        self.addCleanup(temporary.cleanup)
+        replacement = Path(temporary.name) / "replacement.json"
+        replacement.write_bytes(self.raw)
+        with self.assertRaisesRegex(ValueError, "漂移"):
+            with tool._verified_tool():
+                os.replace(replacement, self.binding)
+
+    def test_real_program_copy_with_changed_bytes_cannot_enter_native_probe(self):
+        temporary = WorkspaceDirectory(ROOT / ".local-tests/python-unit")
+        self.addCleanup(temporary.cleanup)
+        executable = Path(temporary.name) / "changed.exe"
+        original = Path(self.metadata["executable"]["path"]).read_bytes()
+        executable.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+        metadata = copy.deepcopy(self.metadata)
+        metadata["executable"]["path"] = str(executable)
+        self.binding.write_bytes(encoded(metadata))
+        with self.assertRaisesRegex(ValueError, "程序身份或 SHA-256"):
+            tool.normalize_origin("https://example.invalid", allow_empty=False)
+
     def test_real_managed_binding_normalizes_origin_without_skip_or_mock(self):
         self.assertEqual(
             tool.normalize_origin("\ufeffHTTPS://EXAMPLE.INVALID:443/?#\ufeff", allow_empty=False),
