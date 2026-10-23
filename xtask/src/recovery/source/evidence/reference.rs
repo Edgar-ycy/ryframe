@@ -123,11 +123,6 @@ fn dataset_timeout(args: &Value) -> Result<Value> {
     Ok(Value::from(timeout))
 }
 
-fn digest_file(path: &Path) -> Result<Value> {
-    let digest = native::digest::file(path)?;
-    Ok(json!({"bytes":digest.bytes,"sha256":digest.sha256}))
-}
-
 fn configuration_binding(args: &Value) -> Result<Value> {
     exact(args, &["backend", "binding", "directory", "app_env"])?;
     let backend = Path::new(text(&args["backend"], "后端目录")?);
