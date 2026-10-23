@@ -6,7 +6,7 @@ use crate::recovery::clone::native::session::{model, run};
 
 fn identity() -> Value {
     json!({"subject_id":"100", "tenant_id":"system", "username":"operator",
-        "password":"direct-password-sentinel", "client_address":"198.19.20.12"})
+        "client_address":"198.19.20.12"})
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn schedule_actions_are_fixed_and_preserve_string_ids_and_version_zero() {
 }
 
 #[test]
-fn registration_rejects_other_attempt_or_artifact_directory_before_network() {
+fn registration_rejects_ungranted_attempt_and_artifact_directory_before_network() {
     let root = tempfile::tempdir().unwrap();
     let run = root.path().join(".local-tests/copy-session");
     std::fs::create_dir_all(&run).unwrap();
@@ -64,7 +64,7 @@ fn registration_rejects_other_attempt_or_artifact_directory_before_network() {
             "bindings":{"scope_id":"sample", "api_url":"http://127.0.0.1:1",
                 "frontend_url":"http://127.0.0.1:2", "pacing":{}}}});
     std::fs::create_dir_all(run.join("post-copy/attempt-0001")).unwrap();
-    registration.initialize(&request).unwrap();
+    assert!(registration.initialize(&request).is_err());
     request["attempt"] = json!(2);
     assert!(registration.initialize(&request).is_err());
     request["attempt"] = json!(1);
@@ -106,51 +106,30 @@ fn malformed_or_unauthorized_protocol_never_creates_pacing_or_reads_password() {
 }
 
 #[test]
-fn direct_password_is_required_and_preserved_without_entering_authorization_output() {
-    for password in ["direct-password-sentinel", " 中文密码与空格 ", " "] {
-        let mut selected = identity();
-        selected["password"] = json!(password);
-        let before = selected.clone();
-        assert!(model::identity(&selected).is_ok());
-        assert_eq!(selected, before);
-        let response = json!({"data": {
-            "user":{"id":"100", "tenant_id":"system", "username":"operator"},
-            "is_super_admin":false, "permissions":["*"]
-        }});
-        let authorization = model::authorization(&response, &selected).unwrap();
-        assert!(authorization.get("password").is_none());
-        assert!(authorization.get("password_env").is_none());
-        assert_eq!(authorization.as_object().unwrap().len(), 5);
-    }
-    for password in [
-        json!(""),
-        Value::Null,
-        json!(1),
-        json!(false),
-        json!([]),
-        json!({}),
-    ] {
-        let mut selected = identity();
-        selected["password"] = password;
-        assert_eq!(model::identity(&selected), Err("MissingSessionCredentials"));
-    }
+fn public_identity_is_valid_and_authorization_never_contains_credentials() {
+    let selected = identity();
+    assert!(model::identity(&selected).is_ok());
+    let response = json!({"data": {
+        "user":{"id":"100", "tenant_id":"system", "username":"operator"},
+        "is_super_admin":false, "permissions":["*"]
+    }});
+    let authorization = model::authorization(&response, &selected).unwrap();
+    assert!(authorization.get("password").is_none());
+    assert!(authorization.get("password_env").is_none());
+    assert_eq!(authorization.as_object().unwrap().len(), 5);
 }
 
 #[test]
-fn old_password_reference_and_unknown_identity_fields_are_rejected_without_values() {
-    for keep_password in [false, true] {
+fn passwords_references_and_unknown_identity_fields_are_rejected_without_values() {
+    for field in ["password", "password_env"] {
         let mut selected = identity();
-        if !keep_password {
-            selected.as_object_mut().unwrap().remove("password");
-        }
-        selected["password_env"] = json!("PRIVATE_PASSWORD_REFERENCE_SENTINEL");
+        selected[field] = json!("PRIVATE_PASSWORD_REFERENCE_SENTINEL");
         let error = model::identity(&selected).unwrap_err();
         assert_eq!(error, "InvalidSessionRequest");
         assert!(!error.contains("PRIVATE_PASSWORD_REFERENCE_SENTINEL"));
-        assert!(!error.contains("direct-password-sentinel"));
     }
     let mut selected = identity();
-    selected.as_object_mut().unwrap().remove("password");
+    selected.as_object_mut().unwrap().remove("username");
     assert_eq!(model::identity(&selected), Err("InvalidSessionRequest"));
     let mut selected = identity();
     selected["extra"] = json!("private-identity-sentinel");

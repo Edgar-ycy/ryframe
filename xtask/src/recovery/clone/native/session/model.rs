@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::data::performance_identities::producer_authorization;
 use crate::local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path};
 
 use super::super::json as json_io;
@@ -12,6 +13,11 @@ pub(crate) struct Registration {
     pub root: PathBuf,
     pub run: PathBuf,
     pub attempt: u64,
+}
+
+pub(crate) struct Initialization {
+    pub artifacts: PathBuf,
+    pub identity: Value,
 }
 
 impl Registration {
@@ -32,7 +38,7 @@ impl Registration {
         })
     }
 
-    pub(crate) fn initialize(&self, request: &Value) -> Result<PathBuf, &'static str> {
+    pub(crate) fn initialize(&self, request: &Value) -> crate::Result<Initialization> {
         exact(
             request,
             &[
@@ -45,6 +51,9 @@ impl Registration {
                 "artifacts",
                 "run_dir",
                 "attempt",
+                "producer_owner",
+                "launch",
+                "process",
             ],
         )?;
         if request["operation"] != "initialize"
@@ -52,8 +61,9 @@ impl Registration {
             || request["run_dir"].as_str() != self.run.to_str()
             || request["attempt"].as_u64() != Some(self.attempt)
         {
-            return Err("SessionRegistrationMismatch");
+            return Err("SessionRegistrationMismatch".into());
         }
+        self.authorize(request)?;
         let frontend = Path::new(request["frontend"].as_str().ok_or("InvalidFrontendPath")?);
         validate_absolute_path(frontend, LocalTestPathKind::ExistingDirectory)
             .map_err(|_| "InvalidFrontendPath")?;
@@ -63,7 +73,7 @@ impl Registration {
             .join(format!("attempt-{:04}", self.attempt))
             .join("pacing");
         if request["artifacts"].as_str() != artifacts.to_str() {
-            return Err("SessionArtifactsMismatch");
+            return Err("SessionArtifactsMismatch".into());
         }
         validate_local_test_path(&artifacts, &self.root, LocalTestPathKind::StateDirectory)
             .map_err(|_| "InvalidSessionArtifacts")?;
@@ -71,7 +81,104 @@ impl Registration {
         exact(&request["config"], &["contract", "bindings"])?;
         exact(&request["config"]["contract"], &["timeout_ms", "pacing"])?;
         bindings(&request["config"]["bindings"])?;
-        Ok(artifacts)
+        let identity = self.identity(request)?;
+        Ok(Initialization {
+            artifacts,
+            identity,
+        })
+    }
+
+    fn authorize(&self, request: &Value) -> crate::Result<()> {
+        let registration = self.run.join("post-copy.json");
+        let source = self.root.join("xtask/src/recovery/clone/native/session.rs");
+        let launch_path = self
+            .run
+            .join("post-copy")
+            .join(format!("attempt-{:04}", self.attempt))
+            .join("session-launch.json");
+        let launch = json_io::read(&launch_path)?;
+        let tool = launch["tool"].clone();
+        let command = vec![
+            tool["path"].as_str().ok_or("SessionToolPath")?.to_owned(),
+            "__copy-session".into(),
+            "--run-dir".into(),
+            self.run.to_string_lossy().into_owned(),
+            "--attempt".into(),
+            self.attempt.to_string(),
+        ];
+        let state = json_io::read(&self.run.join("state.json"))?;
+        let mode = state["attempts"]
+            .as_array()
+            .and_then(|values| values.last())
+            .and_then(|value| value["mode"].as_str())
+            .ok_or("SessionAttemptMode")?;
+        if !matches!(mode, "schedules" | "reconcile") {
+            return Err("SessionAttemptMode".into());
+        }
+        let spec = producer_authorization::Spec {
+            run: &self.run,
+            attempt: self.attempt,
+            stage: "post-copy",
+            mode,
+            producer_kind: "session",
+            operation: "initialize",
+            registration: &registration,
+            source: &source,
+            command: &command,
+            tool: &tool,
+            owner_field: "producer_owner",
+        };
+        let authorization = json!({
+            "operation":request["operation"],
+            "run_dir":request["run_dir"],
+            "attempt":request["attempt"],
+            "producer_owner":request["producer_owner"],
+            "launch":request["launch"],
+            "process":request["process"],
+        });
+        producer_authorization::authorize(&self.root, &spec, &authorization)?;
+        Ok(())
+    }
+
+    fn identity(&self, request: &Value) -> crate::Result<Value> {
+        let registration = json_io::read(&self.run.join("post-copy.json"))?;
+        let source = &registration["source_admin"];
+        exact(
+            source,
+            &[
+                "subject_id",
+                "tenant_id",
+                "username",
+                "password_env",
+                "client_address",
+            ],
+        )?;
+        for field in ["subject_id", "tenant_id", "username", "client_address"] {
+            if request["identity"][field] != source[field] {
+                return Err("SessionIdentityMismatch".into());
+            }
+        }
+        let descriptor = &registration["api_environment"];
+        let path = PathBuf::from(
+            descriptor["path"]
+                .as_str()
+                .ok_or("SessionConfigurationPath")?,
+        );
+        validate_local_test_path(&path, &self.root, LocalTestPathKind::ExistingFile)?;
+        if producer_authorization::binding(&path)? != *descriptor {
+            return Err("SessionConfigurationDrift".into());
+        }
+        let private = json_io::read(&path)?;
+        let key = source["password_env"]
+            .as_str()
+            .ok_or("SessionCredentialKey")?;
+        let password = private["environment"][key]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or("MissingSessionCredentials")?;
+        let mut identity = request["identity"].clone();
+        identity["password"] = json!(password);
+        Ok(identity)
     }
 }
 
@@ -91,13 +198,7 @@ pub(crate) fn decimal(value: &str) -> Option<u64> {
 pub(crate) fn identity(value: &Value) -> Result<(), &'static str> {
     exact(
         value,
-        &[
-            "subject_id",
-            "tenant_id",
-            "username",
-            "password",
-            "client_address",
-        ],
+        &["subject_id", "tenant_id", "username", "client_address"],
     )?;
     value["subject_id"]
         .as_str()
@@ -111,9 +212,6 @@ pub(crate) fn identity(value: &Value) -> Result<(), &'static str> {
         .is_none_or(|value| value.trim().is_empty())
     {
         return Err("InvalidSessionIdentity");
-    }
-    if value["password"].as_str().is_none_or(str::is_empty) {
-        return Err("MissingSessionCredentials");
     }
     let address = value["client_address"]
         .as_str()

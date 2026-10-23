@@ -364,21 +364,20 @@ def _node(backend: Path, run: Path, registered: dict) -> dict | None:
             or owner["manifest_sha256"] != manifest["sha256"]):
         raise ValueError("Node controller 与 attempt 不一致")
     kind = launch["producer_kind"]
-    identity_producer = kind in {"identity-apply", "identity-verify"}
-    tool_key, source_key = ("tool", "source") if identity_producer else ("node", "script")
+    native = kind != "existing"
+    tool_key, source_key = ("tool", "source") if native else ("node", "script")
     exact(launch, {"format_version", "kind", "run_manifest", "registration", "controller", "attempt",
                    "producer_kind", "command", tool_key, source_key})
-    identity_owner_recorded = "identity_lock_owner" in process
-    if identity_owner_recorded and not identity_producer:
-        raise ValueError("非身份 Node 收据不能登记 identity lock owner")
-    if identity_producer and not identity_owner_recorded:
-        raise ValueError("原生身份生产者收据必须记录锁 owner")
+    owner_key = "identity_lock_owner" if kind.startswith("identity-") else "producer_owner"
+    owner_recorded = owner_key in process
+    if native and not owner_recorded:
+        raise ValueError("原生生产者收据必须记录 owner")
     exact(process, {"format_version", "kind", "launch", "identity"}
-          | ({"identity_lock_owner"} if identity_owner_recorded else set()))
-    if (identity_owner_recorded
-            and (not isinstance(process["identity_lock_owner"], str)
-                 or IDENTITY_RELEASE_ID.fullmatch(process["identity_lock_owner"]) is None)):
-        raise ValueError("身份 Node 收据 identity lock owner 格式无效")
+          | ({owner_key} if owner_recorded else set()))
+    if (owner_recorded
+            and (not isinstance(process[owner_key], str)
+                 or IDENTITY_RELEASE_ID.fullmatch(process[owner_key]) is None)):
+        raise ValueError("原生生产者 owner 格式无效")
     if (kind not in PHASES or PHASES[kind][0] != stage or attempt["mode"] not in PHASES[kind][1]
             or KINDS.get(kind) is None or launch["format_version"] != 1
             or launch["kind"] != "devex-post-producer-launch" or launch["attempt"] != number
@@ -404,8 +403,9 @@ def _node(backend: Path, run: Path, registered: dict) -> dict | None:
     _regular(script_path, backend, "Node 历史脚本")
     _script_source(attempt, backend, script_path, launch[source_key])
     request = historical_producer_request(backend, run, stage, launch["registration"])
-    command = producer_command(backend, request, run, number, kind, output)
-    if (launch[tool_key] != producer_tool(request, kind) or launch["command"] != command
+    command = producer_command(backend, request, run, number, kind, output,
+                               tool_override=launch[tool_key] if native else None)
+    if ((kind != "session" and launch[tool_key] != producer_tool(request, kind)) or launch["command"] != command
             or any(not isinstance(item, str) or not item or "\0" in item for item in command)):
         raise ValueError("Node 命令未绑定明确 run 和 attempt")
     identity = _identity(process["identity"], "Node 生产者", executable=node_path)

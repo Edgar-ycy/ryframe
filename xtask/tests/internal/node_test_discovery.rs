@@ -34,7 +34,6 @@ fn discovery_covers_every_tracked_test_once() {
         discovered.iter().collect::<BTreeSet<_>>().len(),
         discovered.len()
     );
-    assert!(discovered.contains(&"tools/js/devex_clone_department_bridge.test.mjs".into()));
     assert!(discovered.contains(&"tools/js/devex_clone_existing.test.mjs".into()));
     assert!(!discovered.iter().any(|path| path.ends_with("_fixture.mjs")));
 }

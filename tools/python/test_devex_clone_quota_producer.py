@@ -11,10 +11,11 @@ from devex_clone_post_process import KINDS, PHASES, producer_command
 class QuotaProducerContractTests(unittest.TestCase):
     def test_quota_kinds_bind_only_seed_modes_identity_plan_and_sha(self):
         root = Path.cwd()
-        request = {'node': {'path': 'node'}, 'identity_plan': {'path': str(root / 'plan.json'), 'sha256': 'a' * 64}}
+        request = {'identity_tool': {'path': str(root / 'xtask'), 'sha256': 'b' * 64},
+                   'identity_plan': {'path': str(root / 'plan.json'), 'sha256': 'a' * 64}}
         for mode in ('plan', 'apply', 'reconcile'):
             kind = 'quota-' + mode
-            self.assertEqual(KINDS[kind], 'devex_clone_quota_bridge.mjs')
+            self.assertEqual(KINDS[kind], 'xtask/src/data/performance_identities/clone_bridge.rs')
             self.assertEqual(PHASES[kind], ('seed-runtime', {'quotas-' + mode}))
             argv = producer_command(root, request, root / 'run', 4, kind, root / 'output')
             self.assertEqual(argv[2:], ['--run-dir', str(root / 'run'), '--attempt', '4', '--quota-mode', mode,
@@ -26,11 +27,14 @@ class QuotaProducerContractTests(unittest.TestCase):
         root = Path.cwd()
         seed = {'identity_plan': {'path': 'fixed'}}
         post = {'pacing': {'contract': {'delay': 1}, 'bindings': {'python': 'fixed'}},
-                'frontend_root': str(root / 'frontend'), 'source_admin': {'tenant_id': 'system'}}
+                'frontend_root': str(root / 'frontend'), 'source_admin': {
+                    'subject_id': '1', 'tenant_id': 'system', 'username': 'admin',
+                    'client_address': '198.19.20.1'}}
         bridge = Bridge.__new__(Bridge)
         bridge.context = SimpleNamespace(request=seed, backend=root, directory_root=root / 'run',
             selected={'api_url': 'http://127.0.0.1:9000', 'frontend_url': 'http://127.0.0.1:4000'},
             target_config={'scope_id': 'fixture'}, output=root / 'run/seed-runtime/attempt-0004')
+        bridge.producer_owner = None
         bridge.call = Mock(return_value={'subject_id': '1'})
         tenants = ['system', *['tenant-' + str(index) for index in range(10)]]
         self.assertEqual(bridge.login(post_request=post, tenant_ids=tenants), {'subject_id': '1'})

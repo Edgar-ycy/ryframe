@@ -133,9 +133,6 @@ def identity_projection(backend, request, *, allow_absent):
 def template_identities(backend, request):
     """从已确认身份账本选择每租户第一个固定用户，不接受计划外主体。"""
     plan = identity_plan(backend, request)
-    from devex_clone_seed import private_configuration
-
-    private = private_configuration(backend, plan)
     projection = identity_projection(backend, request, allow_absent=False)
     if projection["state"] not in {"prepared", "verified"}:
         raise ValueError("部门模板需要已确认的固定身份账本")
@@ -154,7 +151,7 @@ def template_identities(backend, request):
         subject_id = ledger["users"].get(user["user_slot"])
         identity = {"subject_id": snowflake(subject_id), "tenant_id": group["tenant_id"],
                     "username": user["username"],
-                    "password": private["passwords"][user["credential_slot"]],
+                    "credential_slot": user["credential_slot"],
                     "client_address": user["client_address"]}
         identities.append(identity)
     if len(identities) != 10 or len({item["subject_id"] for item in identities}) != 10:

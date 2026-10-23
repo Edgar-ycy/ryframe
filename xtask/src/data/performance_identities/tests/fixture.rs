@@ -152,6 +152,12 @@ impl IdentitySession for FakeSession {
             )
         })
     }
+    fn template_data(&mut self) -> IdentityFuture<'_, Value> {
+        Box::pin(async { Err("测试身份流程不读取内存模板".into()) })
+    }
+    fn token(&self) -> Option<&str> {
+        Some("fixture-token")
+    }
     fn close(&mut self) -> IdentityFuture<'_, ()> {
         Box::pin(async {
             assert!(!self.closed);

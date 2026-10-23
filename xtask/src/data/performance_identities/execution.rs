@@ -16,6 +16,8 @@ pub(super) trait IdentitySession {
     fn login(&mut self) -> IdentityFuture<'_, ()>;
     fn request<'a>(&'a mut self, step: &'a Value) -> IdentityFuture<'a, Value>;
     fn template<'a>(&'a mut self, path: &'a Path) -> IdentityFuture<'a, Value>;
+    fn template_data(&mut self) -> IdentityFuture<'_, Value>;
+    fn token(&self) -> Option<&str>;
     fn close(&mut self) -> IdentityFuture<'_, ()>;
 }
 pub(super) trait Context {

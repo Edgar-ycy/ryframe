@@ -21,6 +21,8 @@ mod execution_tests;
 #[path = "performance_identities/tests/producer.rs"]
 mod producer_tests;
 
+#[path = "performance_identities/clone_bridge.rs"]
+mod clone_bridge;
 #[path = "performance_identities/evidence.rs"]
 mod evidence;
 #[path = "performance_identities/execution.rs"]
@@ -35,6 +37,8 @@ mod native;
 pub(crate) mod plan;
 #[path = "performance_identities/producer.rs"]
 mod producer;
+#[path = "performance_identities/producer_authorization.rs"]
+pub(crate) mod producer_authorization;
 #[path = "performance_identities/receipt.rs"]
 mod receipt;
 #[path = "performance_identities/run_lock.rs"]
@@ -44,6 +48,9 @@ pub(crate) mod state;
 
 /// 私有入口只接收有界 stdin，不接受配置环境变量或业务路径参数。
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = clone_bridge::run_hidden_if_requested() {
+        return Some(code);
+    }
     if let Some(code) = producer::run_hidden_if_requested() {
         return Some(code);
     }

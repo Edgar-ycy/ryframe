@@ -44,6 +44,15 @@ class ProducerLineageTests(unittest.TestCase):
         selected.start()
         self.addCleanup(selected.stop)
         self.backend = Path(__file__).resolve().parents[2]
+        suffix = ".exe" if os.name == "nt" else ""
+        tool = self.backend / "target" / "debug" / f"xtask{suffix}"
+        tool_digest = file_digest(tool)
+        native = {"format_version": 1, "kind": "ryframe-native-rate-limit-tool",
+                  "path": str(tool), "bytes": tool_digest["bytes"],
+                  "sha256": tool_digest["sha256"]}
+        binding_patch = patch("rate_limit_client.tool_binding", return_value=native)
+        binding_patch.start()
+        self.addCleanup(binding_patch.stop)
         temporary_root = self.backend / ".local-tests" / "python-unit"
         temporary_root.mkdir(parents=True, exist_ok=True)
         temporary = WorkspaceDirectory(dir=temporary_root)
@@ -240,7 +249,7 @@ class ProducerLineageTests(unittest.TestCase):
 
         for label, launch_change, process_change, message in (
             ("wrong-kind", {"producer_kind": "quota-plan"},
-             {"identity_lock_owner": "12345678-1234-4abc-8def-1234567890ab"}, "字段"),
+             {"identity_lock_owner": "12345678-1234-4abc-8def-1234567890ab"}, "owner"),
             ("wrong-format", {}, {"identity_lock_owner": "not-a-uuid"}, "格式无效"),
             ("unknown-field", {}, {"unexpected": True}, "字段"),
         ):

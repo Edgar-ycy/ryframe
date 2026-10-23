@@ -18,15 +18,16 @@ from devex_clone_target_storage import actual_windows_argv
 from full_stack_process import process_identity, terminate_owned_process
 from restore_reference_plan import plan_hash
 
-KINDS = {"session": "devex_clone_session_bridge.mjs", "existing": "devex_clone_existing.mjs",
+KINDS = {"session": "xtask/src/recovery/clone/native/session.rs", "existing": "devex_clone_existing.mjs",
          "identity-apply": "xtask/src/data/performance_identities/producer.rs",
          "identity-verify": "xtask/src/data/performance_identities/producer.rs",
-         "quota-plan": "devex_clone_quota_bridge.mjs", "quota-apply": "devex_clone_quota_bridge.mjs",
-         "quota-reconcile": "devex_clone_quota_bridge.mjs",
-         "department-plan": "devex_clone_department_bridge.mjs",
-         "department-apply": "devex_clone_department_bridge.mjs",
-         "department-reconcile": "devex_clone_department_bridge.mjs",
-         "department-verify": "devex_clone_department_bridge.mjs"}
+         "quota-plan": "xtask/src/data/performance_identities/clone_bridge.rs",
+         "quota-apply": "xtask/src/data/performance_identities/clone_bridge.rs",
+         "quota-reconcile": "xtask/src/data/performance_identities/clone_bridge.rs",
+         "department-plan": "xtask/src/data/performance_identities/clone_bridge.rs",
+         "department-apply": "xtask/src/data/performance_identities/clone_bridge.rs",
+         "department-reconcile": "xtask/src/data/performance_identities/clone_bridge.rs",
+         "department-verify": "xtask/src/data/performance_identities/clone_bridge.rs"}
 PHASES = {"session": ("post-copy", {"schedules", "reconcile"}), "existing": ("post-copy", {"verify"}),
           "identity-apply": ("seed-runtime", {"identities-apply"}),
           "identity-verify": ("seed-runtime", {"identities-verify"}),
@@ -89,12 +90,18 @@ def original_attempt(attempt):
     return {**attempt, "status": "running", "finished_at": None, "result": None, "error_type": None}
 
 
-def producer_command(backend, request, directory, number, kind, output):
+def native_kind(kind):
+    return kind != "existing"
+
+
+def producer_command(backend, request, directory, number, kind, output, *, tool_override=None):
     if kind not in KINDS:
         raise ValueError("Node 生产者类型未登记")
-    native = kind in {"identity-apply", "identity-verify"}
+    native = native_kind(kind)
     script = producer_source(backend, kind)
-    command = [producer_tool(request, kind)["path"], "__identity-producer" if native else str(script),
+    tool = producer_tool(request, kind) if tool_override is None else tool_override
+    hidden = "__copy-session" if kind == "session" else "__identity-producer" if kind.startswith("identity-") else "__identity-bridge"
+    command = [tool["path"], hidden if native else str(script),
                "--run-dir", str(directory), "--attempt", str(number)]
     if kind == "existing":
         command.extend(["--backend-dir", str(backend), "--plan", request["reference_plan"]["path"],
@@ -115,13 +122,20 @@ def producer_command(backend, request, directory, number, kind, output):
 
 
 def producer_source(backend, kind):
-    if kind in {"identity-apply", "identity-verify"}:
+    if native_kind(kind):
         return Path(backend) / KINDS[kind]
     return Path(backend) / "tools/js" / KINDS[kind]
 
 
 def producer_tool(request, kind):
-    return request["identity_tool" if kind in {"identity-apply", "identity-verify"} else "node"]
+    if kind == "session":
+        from rate_limit_tool import tool_binding
+
+        value = tool_binding()
+        if value is None:
+            raise ValueError("原生复制会话缺少协调器工具绑定")
+        return {key: value[key] for key in ("path", "sha256")}
+    return request["identity_tool" if native_kind(kind) else "node"]
 
 
 def inspect_producer(backend, directory, attempt):
@@ -141,12 +155,13 @@ def inspect_producer(backend, directory, attempt):
         raise ValueError("Node 生产者缺少内核身份收据，不能猜测或继续")
     intent, value = read_json(intent_path), read_json(path)
     kind = intent["producer_kind"]
-    identity_producer = kind in {"identity-apply", "identity-verify"}
-    tool_key, source_key = ("tool", "source") if identity_producer else ("node", "script")
+    native = native_kind(kind)
+    tool_key, source_key = ("tool", "source") if native else ("node", "script")
     exact(intent, {"format_version", "kind", "run_manifest", "registration", "controller", "attempt", "producer_kind", "command", tool_key, source_key})
-    identity_owner_recorded = identity_producer and "identity_lock_owner" in value
+    owner_key = "identity_lock_owner" if kind.startswith("identity-") else "producer_owner"
+    owner_recorded = native and owner_key in value
     exact(value, {"format_version", "kind", "launch", "identity"}
-          | ({"identity_lock_owner"} if identity_owner_recorded else set()))
+          | ({owner_key} if owner_recorded else set()))
     request = historical_producer_request(backend, directory, stage, intent["registration"])
     if (kind not in PHASES or stage != PHASES[kind][0] or attempt["mode"] not in PHASES[kind][1]
             or intent["format_version"] != 1 or intent["kind"] != "devex-post-producer-launch"
@@ -163,8 +178,12 @@ def inspect_producer(backend, directory, attempt):
             or controller["owner"]["directory"] != str(directory)
             or controller["owner"]["manifest_sha256"] != intent["run_manifest"]["sha256"]):
         raise ValueError("Node 生产者控制器不属于原始阶段")
-    command = producer_command(backend, request, directory, number, kind, output)
-    if (intent["command"] != command or intent[tool_key] != producer_tool(request, kind)
+    command = producer_command(
+        backend, request, directory, number, kind, output,
+        tool_override=intent[tool_key] if native else None)
+    persisted_tool = kind != "session"
+    if (intent["command"] != command
+            or (persisted_tool and intent[tool_key] != producer_tool(request, kind))
             or intent[source_key]["path"] != str(producer_source(backend, kind))):
         raise ValueError("Node 参数或工具不属于固定 run 和 attempt")
     # 历史执行保留原摘要，但清理不能要求后来更新或移除的工具字节仍留在磁盘。
@@ -175,13 +194,13 @@ def inspect_producer(backend, directory, attempt):
     if type(intent[source_key]["bytes"]) is not int or intent[source_key]["bytes"] <= 0:
         raise ValueError("Node 历史脚本摘要结构无效")
     exact(value["identity"], {"pid", "started", "executable"})
-    if (identity_owner_recorded
-            and (not isinstance(value["identity_lock_owner"], str)
+    if (owner_recorded
+            and (not isinstance(value[owner_key], str)
                  or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
-                                     value["identity_lock_owner"]))):
-        raise ValueError("身份 Node 收据缺少固定 identity lock owner")
-    if identity_producer and not identity_owner_recorded:
-        raise ValueError("原生身份生产者收据必须记录锁 owner")
+                                     value[owner_key]))):
+        raise ValueError("原生生产者收据缺少固定 owner")
+    if native and not owner_recorded:
+        raise ValueError("原生生产者收据必须记录 owner")
     if Path(value["identity"]["executable"]).resolve() != Path(intent[tool_key]["path"]).resolve():
         raise ValueError("Node 内核 executable 与登记工具不同")
     actual = process_identity(value["identity"]["pid"])
@@ -478,7 +497,7 @@ class Producer:
                 or read_json(context.directory_root / "run.lock/owner.json") != controller["owner"]):
             raise ValueError("Node 启动控制器未持当前 run 锁")
         command = producer_command(context.backend, context.request, context.directory_root, number, kind, context.output)
-        native = kind in {"identity-apply", "identity-verify"}
+        native = native_kind(kind)
         tool = producer_tool(context.request, kind)
         external_file(tool)
         tool_key, source_key = ("tool", "source") if native else ("node", "script")
@@ -490,7 +509,8 @@ class Producer:
         self.log = (context.output / "session.stderr.log").open("xb")
         self.child = None
         self.identity = None
-        self.identity_lock_owner = str(uuid.uuid4()) if native else None
+        self.identity_lock_owner = str(uuid.uuid4()) if kind.startswith("identity-") else None
+        self.producer_owner = str(uuid.uuid4()) if native and self.identity_lock_owner is None else None
         self.tool_guard = None
         try:
             environment = context.private["target_api"]
@@ -511,6 +531,8 @@ class Producer:
                        "launch": binding(context.output / "session-launch.json"), "identity": self.identity}
             if self.identity_lock_owner is not None:
                 receipt["identity_lock_owner"] = self.identity_lock_owner
+            if self.producer_owner is not None:
+                receipt["producer_owner"] = self.producer_owner
             write_json(context.output / "session-process.json", receipt)
             if actual_argv(self.identity) != command:
                 raise ValueError("Node 生产者实际 run/attempt 参数不符")
@@ -547,6 +569,10 @@ class Producer:
         release = {"operation": "start", "run_dir": str(self.context.directory_root), "attempt": number}
         if self.identity_lock_owner is not None:
             release.update(identity_lock_owner=self.identity_lock_owner,
+                           launch=binding(self.context.output / "session-launch.json"),
+                           process=binding(self.context.output / "session-process.json"))
+        elif self.producer_owner is not None:
+            release.update(producer_owner=self.producer_owner,
                            launch=binding(self.context.output / "session-launch.json"),
                            process=binding(self.context.output / "session-process.json"))
         stdout, _ = self.child.communicate((json.dumps(release) + "\n").encode(), timeout=timeout)

@@ -28,9 +28,14 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
             "clone 的帮助、离线 plan/verify、bridge 与 maintenance 由 Rust 原生入口处理".into(),
         );
     }
+    let executable = std::env::current_exe()?;
+    let binding = crate::check::python_suite::binding(&executable)?
+        .ok_or("clone 原生生产者要求无链接的本机 xtask 工具")?;
+    let native_tool = serde_json::from_str::<Value>(&binding)?;
     let payload = serde_json::to_string(&json!({
         "format_version": 1,
         "kind": "ryframe-xtask-recovery-clone",
+        "native_tool": native_tool,
         "request": {
             "backend_dir": text(root, "后端目录")?,
             "command": command.name(),

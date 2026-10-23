@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone
 import devex_clone_protocol as protocol
 import devex_clone_run_cli as cli
+from restore_build import file_digest
 
 
 class CloneProtocolTests(unittest.TestCase):
@@ -33,11 +34,21 @@ class CloneProtocolTests(unittest.TestCase):
         self.new_run = self.directory / "new-run"
         self.file = self.directory / "input.json"
         self.file.write_text("{}\n", encoding="utf-8")
+        executable = Path(sys.executable).resolve()
+        digest = file_digest(executable)
+        self.native_tool = {
+            "format_version": 1,
+            "kind": "ryframe-native-rate-limit-tool",
+            "path": str(executable),
+            "bytes": digest["bytes"],
+            "sha256": digest["sha256"],
+        }
 
     def payload(self, command, options, write):
         return {
             "format_version": 1,
             "kind": protocol.PROTOCOL_KIND,
+            "native_tool": self.native_tool,
             "request": {
                 "backend_dir": str(self.backend),
                 "command": command,
@@ -188,9 +199,11 @@ class CloneProtocolTests(unittest.TestCase):
 
         output = StringIO()
         with patch.dict(os.environ, {protocol.PROTOCOL_ENV: source}), \
+                patch("rate_limit_tool.install_binding") as install, \
                 patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, \
                 redirect_stdout(output):
             self.assertEqual(devex_clone.main([]), 0)
+        install.assert_called_once()
         dispatch.assert_called_once()
         self.assertEqual(json.loads(output.getvalue()), {"status": "status"})
 

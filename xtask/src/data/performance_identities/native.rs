@@ -9,6 +9,7 @@ use crate::{
     http_session::{RequestHook, RequestMetadata, Session},
     session_pacing::PreparationHook,
 };
+use base64::Engine;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -27,6 +28,10 @@ pub(super) struct NativeContext {
 }
 impl NativeContext {
     pub(super) fn new(plan: &Value, root: &Path, mode: &str) -> Result<Self> {
+        Self::new_at(plan, root.join(format!("{mode}-{}", uuid::Uuid::new_v4())))
+    }
+
+    pub(super) fn new_at(plan: &Value, artifacts: PathBuf) -> Result<Self> {
         if std::env::var("APP_ENV").ok().as_deref() != Some("test") {
             return Err("身份执行要求 APP_ENV=test 与已绑定的隔离配置文件".into());
         }
@@ -51,7 +56,7 @@ impl NativeContext {
             plan: plan.clone(),
             config,
             catalog,
-            artifacts: root.join(format!("{mode}-{}", uuid::Uuid::new_v4())),
+            artifacts,
             baseline: None,
         })
     }
@@ -175,32 +180,25 @@ impl IdentitySession for NativeSession {
     }
     fn template<'a>(&'a mut self, path: &'a Path) -> IdentityFuture<'a, Value> {
         Box::pin(async move {
-            let operation = self
-                .catalog
-                .get("get_system_users_import_template")
-                .ok_or("契约缺少模板下载")?;
-            if operation["method"] != "GET" {
-                return Err("模板下载必须为 GET".into());
-            }
-            let route = text(operation, "path")?;
-            let metadata = RequestMetadata {
-                operation: "get_system_users_import_template".into(),
-                method: "GET".into(),
-                route: route.into(),
-            };
-            let token = self.session.token().ok_or("模板下载缺少当前会话")?;
-            self.hook.before(&metadata).await?;
-            let result = download(&self.config, &self.identity, token, route, path).await;
-            let completed = self.hook.complete().await;
-            let digest = match (result, completed) {
-                (Err(error), _) => return Err(error),
-                (Ok(_), Err(error)) => return Err(error.into()),
-                (Ok(value), Ok(())) => value,
-            };
+            let value = self.download_template().await?;
+            let content =
+                base64::engine::general_purpose::STANDARD.decode(text(&value, "base64")?)?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)?;
+            file.write_all(&content)?;
+            file.sync_all()?;
             Ok(serde_json::to_value(
-                crate::devex::import_samples::template_receipt(path, &digest)?,
+                crate::devex::import_samples::template_receipt(path, text(&value, "sha256")?)?,
             )?)
         })
+    }
+    fn template_data(&mut self) -> IdentityFuture<'_, Value> {
+        Box::pin(async { self.download_template().await })
+    }
+    fn token(&self) -> Option<&str> {
+        self.session.token()
     }
     fn close(&mut self) -> IdentityFuture<'_, ()> {
         Box::pin(async {
@@ -226,13 +224,33 @@ impl IdentitySession for NativeSession {
         })
     }
 }
-async fn download(
-    config: &Value,
-    identity: &Value,
-    token: &str,
-    route: &str,
-    path: &Path,
-) -> Result<String> {
+impl NativeSession {
+    async fn download_template(&mut self) -> Result<Value> {
+        let operation = self
+            .catalog
+            .get("get_system_users_import_template")
+            .ok_or("契约缺少模板下载")?;
+        if operation["method"] != "GET" {
+            return Err("模板下载必须为 GET".into());
+        }
+        let route = text(operation, "path")?;
+        let metadata = RequestMetadata {
+            operation: "get_system_users_import_template".into(),
+            method: "GET".into(),
+            route: route.into(),
+        };
+        let token = self.session.token().ok_or("模板下载缺少当前会话")?;
+        self.hook.before(&metadata).await?;
+        let result = download(&self.config, &self.identity, token, route).await;
+        let completed = self.hook.complete().await;
+        match (result, completed) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error.into()),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+}
+async fn download(config: &Value, identity: &Value, token: &str, route: &str) -> Result<Value> {
     let api = url::Url::parse(text(&config["bindings"], "api_url")?)?;
     let url = api.join(route)?;
     if url.origin() != api.origin() {
@@ -256,6 +274,18 @@ async fn download(
     if !response.status().is_success() {
         return Err("真实模板下载失败".into());
     }
+    let media_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or("模板下载缺少媒体类型")?
+        .to_owned();
+    if !media_type
+        .to_ascii_lowercase()
+        .starts_with("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    {
+        return Err("模板下载媒体类型无效".into());
+    }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| "模板响应读取失败")? {
         if bytes.len() + chunk.len() > 16 * 1024 * 1024 {
@@ -263,11 +293,11 @@ async fn download(
         }
         bytes.extend_from_slice(&chunk);
     }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    Ok(evidence::hash(bytes))
+    let digest = evidence::hash(&bytes);
+    Ok(json!({
+        "base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+        "bytes": bytes.len(),
+        "media_type": media_type,
+        "sha256": digest,
+    }))
 }

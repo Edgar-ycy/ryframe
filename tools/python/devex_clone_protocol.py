@@ -304,10 +304,13 @@ def decode(source: str):
         value = json.loads(source, object_pairs_hook=_strict_object)
     except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as error:
         raise CloneProtocolError("clone 私有协议不是有效 JSON") from error
-    _exact(value, {"format_version", "kind", "request"}, "根")
+    _exact(value, {"format_version", "kind", "native_tool", "request"}, "根")
     if (type(value["format_version"]) is not int or value["format_version"] != 1
             or value["kind"] != PROTOCOL_KIND):
         raise CloneProtocolError("clone 私有协议版本或类型不受支持")
+    from rate_limit_tool import parse_binding
+
+    native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
     request = value["request"]
     _exact(request, {"backend_dir", "command", "effect", "options", "write"}, "request")
     command = _enum(request["command"], COMMANDS, "command")
@@ -330,4 +333,5 @@ def decode(source: str):
         raise CloneProtocolError("clone 私有协议 write 与副作用分类不匹配")
     backend = _backend(request["backend_dir"])
     _validate_paths(backend, command, decoded)
-    return backend, SimpleNamespace(command=command, write=request["write"], **decoded)
+    return backend, SimpleNamespace(
+        command=command, write=request["write"], native_tool=native_tool, **decoded)

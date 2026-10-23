@@ -36,7 +36,7 @@ class ProducerTests(unittest.TestCase):
                         'reference_plan': {'path': str(self.directory / 'plan.json')},
                         'dataset': {'path': str(self.directory / 'dataset.json')}}
         write_json(self.directory / 'post-copy.json', self.request)
-        self.number = begin(self.directory, 'post-copy', 'schedules', {})
+        self.number = begin(self.directory, 'post-copy', 'verify', {})
         with run_lock(self.directory) as owner:
             bind_controller_attempt(self.directory, self.number, owner)
         self.output = self.directory / 'post-copy/attempt-0001'
@@ -54,7 +54,7 @@ class ProducerTests(unittest.TestCase):
             return SimpleNamespace(request=self.request, descriptor=expected_registration)
         patch('devex_clone_post.registration', side_effect=registration).start()
 
-    def record(self, kind='session'):
+    def record(self, kind='existing'):
         command = process.producer_command(self.backend, self.request, self.directory, 1, kind, self.output)
         self.intent = {'format_version': 1, 'kind': 'devex-post-producer-launch', 'run_manifest': binding(self.directory / 'manifest.json'),
             'registration': binding(self.directory / 'post-copy.json'), 'controller': binding(self.directory / 'controller-0001.json'),
@@ -174,7 +174,7 @@ class ProducerTests(unittest.TestCase):
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, output=self.output,
                                   request=self.request, request_binding=binding(self.directory / 'post-copy.json'))
         with self.assertRaises((FileNotFoundError, ValueError)):
-            process.Producer(context, 'session')
+            process.Producer(context, 'existing')
 
     def test_initialization_cleanup_failure_preserves_original_identity_error(self):
         from types import SimpleNamespace
@@ -191,7 +191,7 @@ class ProducerTests(unittest.TestCase):
                 original = process.process_identity
                 with patch.object(process, 'process_identity', side_effect=lambda pid: None if pid == child_pid else original(pid)):
                     with self.assertRaisesRegex(ValueError, '内核工具身份不符'):
-                        process.Producer(context, 'session')
+                        process.Producer(context, 'existing')
         self.assertEqual(read_json(self.output / 'session-cleanup-error.json')['error_type'], 'RuntimeError')
 
     def test_failed_identity_cleanup_does_not_block_on_reader_stream_lock(self):
@@ -208,6 +208,7 @@ class ProducerTests(unittest.TestCase):
         entered.wait(timeout=1)
         producer = process.Producer.__new__(process.Producer)
         producer.identity, producer.log = self.identity, io.BytesIO()
+        producer.tool_guard = None
         producer.child = SimpleNamespace(poll=lambda: None, stdin=io.BytesIO(), stdout=reader)
         started = time.monotonic()
         try:

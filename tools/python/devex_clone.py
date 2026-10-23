@@ -239,6 +239,9 @@ def main(argv=None) -> int:
         print("开发复制脚本是私有实现，不接受公开 argv", file=sys.stderr)
         return 2
     def clone_dispatch(args, backend):
+        from rate_limit_tool import install_binding
+
+        install_binding(json.dumps(args.native_tool, ensure_ascii=False))
         if args.command == "plan":
             result = write_plan(backend, args.input, args.output)
         elif args.command == "verify":

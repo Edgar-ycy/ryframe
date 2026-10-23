@@ -184,7 +184,9 @@ impl State {
         registration: &Registration,
         request: &Value,
     ) -> Result<Value, SessionError> {
-        let artifacts = registration.initialize(request).map_err(error)?;
+        let initialization = registration
+            .initialize(request)
+            .map_err(|_| error("SessionAuthorizationFailed"))?;
         let app_env = std::env::var("APP_ENV").map_err(|_| error("MissingSessionEnvironment"))?;
         if !matches!(app_env.as_str(), "dev" | "test") {
             return Err(error("InvalidSessionEnvironment"));
@@ -193,13 +195,13 @@ impl State {
             .map_err(|_| error("InvalidSessionCatalog"))?;
         let catalog = crate::devex::runtime_configuration::operation_catalog(&document)
             .map_err(|_| error("InvalidSessionCatalog"))?;
-        let session = Session::new(&request["config"], catalog, &request["identity"])?;
+        let session = Session::new(&request["config"], catalog, &initialization.identity)?;
         self.hook = Some(
             PreparationHook::new(
                 &registration.root,
                 &request["config"],
-                &request["identity"],
-                &artifacts,
+                &initialization.identity,
+                &initialization.artifacts,
                 &app_env,
             )
             .await?,
@@ -215,7 +217,7 @@ impl State {
         let response = session
             .request(&json!({"operation":"get_auth_context"}), hook)
             .await?;
-        let auth = model::authorization(&response, &request["identity"]).map_err(error)?;
+        let auth = model::authorization(&response, &initialization.identity).map_err(error)?;
         self.ready = true;
         Ok(auth)
     }

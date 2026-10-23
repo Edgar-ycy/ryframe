@@ -61,16 +61,18 @@ class Bridge(Producer):
             if tenant_ids is None:
                 raise ValueError('模板身份只能随明确租户集合初始化')
             values['template_identities'] = template_identities
-        identity = request['source_admin']
-        if tenant_ids is not None:
-            plan = read_json(bound_file(self.context.backend, self.context.request['identity_plan']))
-            from devex_clone_seed import private_configuration
-
-            private = private_configuration(self.context.backend, plan)
-            identity = {**private['system_admin'], 'subject_id': identity['subject_id']}
+        identity = {key: request['source_admin'][key]
+                    for key in ('subject_id', 'tenant_id', 'username', 'client_address')}
+        grant = {}
+        if self.producer_owner is not None:
+            grant = {'producer_owner': self.producer_owner,
+                     'launch': binding(self.context.output / 'session-launch.json'),
+                     'process': binding(self.context.output / 'session-process.json')}
         return self.call('initialize', backend=str(self.context.backend), frontend=request['frontend_root'],
                          config=config, identity=identity, artifacts=str(self.context.output / 'pacing'),
-                         run_dir=str(self.context.directory_root), attempt=int(self.context.output.name.removeprefix('attempt-')), **values)
+                         run_dir=str(self.context.directory_root),
+                         attempt=int(self.context.output.name.removeprefix('attempt-')),
+                         **grant, **values)
 
 
 def validate_authorization(context, auth):
