@@ -9,7 +9,7 @@ import re
 import shutil
 import sys
 from typing import Callable
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from devex_clone_capture import read_json
 from process_environment import configured
@@ -31,9 +31,6 @@ from reference_fixture_browser_process import (
 )
 from reference_fixture_browser_publish import publish_terminal_success
 from reference_fixture_browser_responses import preview_responses
-from reference_fixture_browser_security import (
-    browser_configuration, browser_environment, secret_values,
-)
 from reference_fixture_browser_tools import ToolConfiguration
 from restore_build import file_digest
 from restore_frontend_build import validate_frontend_build
@@ -86,6 +83,80 @@ class SourceGuard:
                              + f"{self.root}：" + ", ".join(changed[:5]))
         if capture_inventory(self.root) != self.inventory:
             raise ValueError("业务 crate 浏览器期间源码发生变化：" + str(self.root))
+
+
+SECRET_HINTS = ("PASSWORD", "SECRET", "TOKEN", "ACCESS_KEY", "CREDENTIAL")
+
+
+def _secret_values(private: dict, bootstrap: dict) -> tuple[str, ...]:
+    """日志脱敏仍读取已绑定秘密；凭据传递由 Rust 短生命周期代理负责。"""
+    values = set()
+    for descriptor in bootstrap["secret_files"].values():
+        raw = Path(descriptor["path"]).read_text(encoding="utf-8")
+        stripped = raw.strip()
+        if stripped:
+            values.add(stripped)
+        for line in raw.splitlines():
+            if line.strip().lower().startswith("password="):
+                password = line.split("=", 1)[1].strip()
+                if password:
+                    values.add(password)
+    for key, value in private.items():
+        upper = key.upper()
+        if value and any(hint in upper for hint in SECRET_HINTS):
+            values.add(value)
+        if value and upper.endswith(("URL", "URI", "ENDPOINT")):
+            parsed = urlsplit(value)
+            if parsed.username is not None or parsed.password is not None:
+                values.add(value)
+                values.update(unquote(item) for item in (parsed.username, parsed.password) if item)
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def _browser_environment(private: dict, binding: dict) -> dict:
+    """只向子进程传递环境选择及已登记的第三方工具路径。"""
+    if not isinstance(private.get("APP_ENV"), str) or not private["APP_ENV"]:
+        raise ValueError("业务 crate 浏览器缺少 APP_ENV 环境选择")
+    return configured({
+        "APP_ENV": private["APP_ENV"],
+        "COREPACK_ENABLE_NETWORK": "0", "PYTHONUTF8": "1",
+        "COREPACK_HOME": binding["tools"]["corepack_home"],
+        **{name: private[name] for name in ("TEMP", "TMP") if name in private},
+    })
+
+
+def _browser_configuration(binding: dict, credential_endpoint: str) -> dict:
+    """只持久化非敏感绑定；密码由 Rust 代理保存在内存中。"""
+    parsed = urlsplit(credential_endpoint)
+    if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"}
+            or parsed.port is None or parsed.path != "/v1/credentials"
+            or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment):
+        raise ValueError("业务 crate 浏览器凭据端点必须是本机受管 HTTP 地址")
+    request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
+    values = {
+        "scopeId": binding["scope_id"], "tenantId": binding["identity"]["tenant_id"],
+        "username": binding["identity"]["username"],
+        "credentialEndpoint": credential_endpoint,
+        "backendDir": binding["backend"]["path"],
+        "runtimeDir": str(Path(binding["runtime"]["path"]).parent),
+        "python": binding["tools"]["python"]["path"],
+        "requestCapacity": request["capacity"], "requestWindowSeconds": request["window_secs"],
+        "loginCapacity": login["capacity"], "loginWindowSeconds": login["window_secs"],
+        "loginBudgetState": binding["login_budget"]["path"],
+        "port": urlsplit(binding["endpoints"]["frontend"]).port,
+        "serverMode": binding["server"], "fixture": "business", "runId": binding["run_id"],
+        "channel": "chrome",
+    }
+    response_audit = binding.get("response_audit")
+    if binding["server"] == "preview":
+        if not isinstance(response_audit, dict) or set(response_audit) != {
+                "path", "initial_state", "first_writer"}:
+            raise ValueError("业务 crate preview 缺少静态响应审计绑定")
+        values["previewResponseAudit"] = response_audit["path"]
+    elif response_audit is not None:
+        raise ValueError("业务 crate dev 不得绑定生产静态响应审计")
+    return values
 
 
 def _bound(path: Path) -> dict:
@@ -212,7 +283,8 @@ def _input_guards(binding: dict) -> tuple:
 
 def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
           run_id: str, server: str, *, require_fresh: bool,
-          process_state: str = "running", read_only: bool = False) -> tuple[dict, dict]:
+          process_state: str = "running", read_only: bool = False,
+          credential_endpoint: str | None = None) -> tuple[dict, dict]:
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", run_id) is None:
         raise ValueError("业务 crate 浏览器 run id 必须是小写字母、数字或连字符")
     if server not in {"dev", "preview"}:
@@ -300,15 +372,15 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     bootstrap = read_json(bootstrap_file)
     password_file = Path(bootstrap["secret_files"]["reset-admin-password.txt"]["path"])
     password_guard = artifact_snapshot(password_file)
-    password = password_file.read_text(encoding="utf-8").strip()
     password_guard.assert_unchanged()
-    configuration = browser_configuration(binding, password)
+    configuration = (_browser_configuration(binding, credential_endpoint)
+                     if credential_endpoint is not None else None)
     return binding, {"private": private, "frontend": frontend, "runtime": runtime,
                      "outputs": outputs, "source_guards": source_guards,
                      "input_guards": (*_input_guards(binding), password_guard),
                      "tool_configuration": ToolConfiguration.capture(frontend),
                      "browser_configuration": configuration,
-                     "secrets": secret_values(private, bootstrap)}
+                     "secrets": _secret_values(private, bootstrap)}
 
 
 def _assert_guards(context: dict) -> None:
@@ -337,7 +409,7 @@ def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_
 
 
 def _build_environment(context: dict, binding: dict) -> dict:
-    return browser_environment(context["private"], binding)
+    return _browser_environment(context["private"], binding)
 
 
 def _preview_build(binding: dict, context: dict,
@@ -489,7 +561,7 @@ def _publish_failure(error: BaseException, stage: str, binding: dict, path: Path
 
 
 def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
-                binding_path: Path) -> dict:
+                binding_path: Path, credential_endpoint: str) -> dict:
     _, execution, _ = api.bootstrap(backend, environment_path)
     runtime = api.output(execution, output_path, new=False)
     path = _binding_path(execution, runtime, binding_path, new=False)
@@ -500,7 +572,8 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
         raise ValueError("业务 crate 浏览器绑定缺少 run id 或 server")
     _binding_path(execution, runtime, path, new=False, run_id=run_id)
     expected, context = _plan(
-        api, backend, environment_path, output_path, run_id, server, require_fresh=True
+        api, backend, environment_path, output_path, run_id, server, require_fresh=True,
+        credential_endpoint=credential_endpoint,
     )
     if binding != expected:
         raise ValueError("业务 crate 浏览器绑定与当前源码、运行时或环境不一致")
@@ -539,7 +612,7 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
             raise ValueError("业务 crate 登录预算在浏览器首次写入前已经出现")
         if server == "preview" and outputs["response_audit"].exists():
             raise ValueError("业务 crate 静态响应收据在 preview 首次写入前已经出现")
-        environment = browser_environment(context["private"], binding)
+        environment = _browser_environment(context["private"], binding)
         processes["browser"] = _frontend_command(
             binding, context["frontend"], binding["commands"][2 if server == "preview" else 0],
             environment, outputs["browser_log"],

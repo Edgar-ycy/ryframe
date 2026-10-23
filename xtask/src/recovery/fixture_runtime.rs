@@ -11,6 +11,9 @@ use crate::{
 
 const SCRIPT: &str = "tools/python/reference_fixture_runtime.py";
 
+#[path = "fixture_runtime/browser.rs"]
+mod browser;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateFixtureRuntimeInvocation {
     pub(crate) script: &'static str,
@@ -22,8 +25,24 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         println!("{FIXTURE_RUNTIME_USAGE}");
         return Ok(());
     }
-    let invocation = private_invocation_at(command, root)?;
-    run_with_env_removed(
+    let credentials = if matches!(command, FixtureRuntimeCommand::Browser(_)) {
+        Some(browser::CredentialBroker::start(
+            &command
+                .runtime()
+                .ok_or("fixture runtime 浏览器操作缺少运行路径")?
+                .environment,
+        )?)
+    } else {
+        None
+    };
+    let endpoint = credentials
+        .as_ref()
+        .map(browser::CredentialBroker::endpoint);
+    let invocation = match endpoint {
+        Some(endpoint) => private_invocation_with_endpoint(command, root, Some(endpoint))?,
+        None => private_invocation_at(command, root)?,
+    };
+    let result = run_with_env_removed(
         root,
         "python",
         &[
@@ -34,12 +53,27 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         ],
         &[],
         &[],
-    )
+    );
+    if let Some(credentials) = credentials {
+        let broker = credentials.finish(result.is_ok());
+        if result.is_ok() {
+            broker?;
+        }
+    }
+    result
 }
 
 pub(crate) fn private_invocation_at(
     command: &FixtureRuntimeCommand,
     root: &Path,
+) -> Result<PrivateFixtureRuntimeInvocation> {
+    private_invocation_with_endpoint(command, root, None)
+}
+
+fn private_invocation_with_endpoint(
+    command: &FixtureRuntimeCommand,
+    root: &Path,
+    credential_endpoint: Option<&str>,
 ) -> Result<PrivateFixtureRuntimeInvocation> {
     let runtime = command
         .runtime()
@@ -55,6 +89,12 @@ pub(crate) fn private_invocation_at(
     });
     if let Some(binding) = command.browser_binding() {
         protocol["browser_binding"] = json!(path_text(binding, "浏览器绑定")?);
+    }
+    if let Some(endpoint) = credential_endpoint {
+        if !matches!(command, FixtureRuntimeCommand::Browser(_)) {
+            return Err("浏览器凭据端点只允许用于 browser 操作".into());
+        }
+        protocol["credential_endpoint"] = json!(endpoint);
     }
     if let FixtureRuntimeCommand::Bind { run_id, server, .. } = command {
         protocol["run_id"] = json!(run_id);

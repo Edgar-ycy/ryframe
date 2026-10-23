@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 from ci_full_stack_resources import build_binaries
 from devex_clone_capture import read_json, write_json
@@ -225,6 +226,7 @@ class RuntimeRequest:
     browser_binding: Path | None = None
     run_id: str | None = None
     server: str | None = None
+    credential_endpoint: str | None = None
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -280,6 +282,8 @@ def _request_from_protocol(protocol: object) -> RuntimeRequest:
         fields.update({"browser_binding", "run_id", "server"})
     elif operation in BROWSER_CONSUMERS:
         fields.add("browser_binding")
+        if operation == "browser":
+            fields.add("credential_endpoint")
     values = _exact_protocol(protocol, fields)
     write = values["write"]
     if type(write) is not bool or write != (operation in WRITING_OPERATIONS):
@@ -294,6 +298,7 @@ def _request_from_protocol(protocol: object) -> RuntimeRequest:
                          if "browser_binding" in values else None),
         run_id=values.get("run_id"),
         server=values.get("server"),
+        credential_endpoint=values.get("credential_endpoint"),
     )
     _validate_browser_request(request)
     return request
@@ -311,6 +316,19 @@ def _validate_browser_request(request: RuntimeRequest) -> None:
             raise RuntimeProtocolError("浏览器绑定文件名与 run id 不一致")
     elif request.run_id is not None or request.server is not None:
         raise RuntimeProtocolError("非绑定操作不得包含 run id 或 server")
+    if request.operation == "browser":
+        value = request.credential_endpoint
+        if not isinstance(value, str):
+            raise RuntimeProtocolError("浏览器操作缺少有效的本机凭据端点")
+        parsed = urlsplit(value)
+        if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
+                or parsed.port is None or parsed.path != "/v1/credentials"
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment
+                or any(character in value for character in ("\n", "\r", "\0"))):
+            raise RuntimeProtocolError("浏览器操作缺少有效的本机凭据端点")
+    elif request.credential_endpoint is not None:
+        raise RuntimeProtocolError("非浏览器执行操作不得包含凭据端点")
 
 
 def execute(request: RuntimeRequest) -> dict:
@@ -324,7 +342,7 @@ def execute(request: RuntimeRequest) -> dict:
                             request.browser_binding, request.run_id, request.server)
     if request.operation == "browser":
         return run_browser(_browser_api(), backend, request.environment, request.output,
-                           request.browser_binding)
+                           request.browser_binding, request.credential_endpoint)
     if request.operation in {"browser-verify", "browser-close"}:
         return verify_browser(_browser_api(), backend, request.environment, request.output,
                               request.browser_binding,

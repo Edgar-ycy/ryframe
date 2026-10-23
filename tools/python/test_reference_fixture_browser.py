@@ -17,13 +17,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reference_fixture_browser as browser
 import reference_fixture_browser_process as browser_process
 import reference_fixture_browser_publish as terminal_publish
-import reference_fixture_browser_security as security
 import reference_fixture_browser_tools as browser_tools
 import reference_fixture_environment as fixture_environment
 import reference_fixture_runtime as runtime
 from process_environment import configured as safe_process_environment
 from devex_clone_capture import write_json
 from workspace_directory import WorkspaceDirectory
+
+CREDENTIAL_ENDPOINT = "http://127.0.0.1:49152/v1/credentials"
 
 
 class StableGuard:
@@ -132,7 +133,6 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             return {"PATH": str(self.root), "COMSPEC": str(self.tools["launcher.exe"]), **values}
 
         stack.enter_context(patch.object(browser, "configured", side_effect=safe))
-        stack.enter_context(patch.object(security, "configured", side_effect=safe))
         return stack
 
     def bind(self, server="preview", run_id="r24-business"):
@@ -237,7 +237,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(browser, "validate_frontend_build", return_value=({}, receipt)), \
                 patch.object(browser, "verify_browser_evidence", return_value={}):
             binding, _ = self.bind()
-            result = browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+            result = browser.run_browser(
+                self.api, self.backend, self.bootstrap, self.output, binding,
+                CREDENTIAL_ENDPOINT)
         self.assertEqual([call[0] for call in calls], [
             ["build", "--real"],
             ["exec", "node", "scripts/restore-build.mjs", "verify", "--source-root", str(self.frontend)],
@@ -252,7 +254,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                                  or name == "PLAYWRIGHT_CHANNEL" for name in environment))
             self.assertNotIn("Secret123", json.dumps(environment))
         configured = read(self.frontend / ".local-tests/frontend-tools.json")["real_browser"]
-        self.assertEqual(configured["password"], "Admin!Secret123")
+        self.assertEqual(configured["credentialEndpoint"], CREDENTIAL_ENDPOINT)
+        self.assertNotIn("password", configured)
+        self.assertNotIn("Admin!Secret123", json.dumps(configured))
         self.assertEqual(configured["runtimeDir"], str(self.output))
         self.assertEqual(configured["previewResponseAudit"],
                          str(self.output / "browser-r24-business-preview-responses.json"))
@@ -274,7 +278,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
                 patch.object(browser, "verify_browser_evidence", return_value={}):
             binding, _ = self.bind("dev", "r24-business-dev")
-            result = browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+            result = browser.run_browser(
+                self.api, self.backend, self.bootstrap, self.output, binding,
+                CREDENTIAL_ENDPOINT)
         self.assertEqual(calls, [["check", "--stage", "browser", "--real", "--fixture",
                                   "business", "--server", "dev"]])
         self.assertIsNone(result["build"])
@@ -284,8 +290,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         with self.patches():
             binding, context = browser._plan(
                 self.api, self.backend, self.bootstrap, self.output, "r24-business", "preview",
-                require_fresh=True)
-            values = security.browser_environment(context["private"], binding)
+                require_fresh=True, credential_endpoint=CREDENTIAL_ENDPOINT)
+            values = browser._browser_environment(context["private"], binding)
         self.assertEqual({key: value for key, value in values.items() if key.startswith("APP_")},
                          {"APP_ENV": "test"})
         self.assertFalse(any(name.startswith("RYFRAME_") for name in values))
@@ -297,7 +303,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         target = self.frontend / ".local-tests/frontend-tools.json"
         original = {"api_contract": {"backend_commit": "a" * 40},
                     "browser_smoke": {"channel": "chromium"},
-                    "real_browser": {"restore": {"obsolete": True}, "password": "old"}}
+                    "real_browser": {"restore": {"obsolete": True}}}
         target.write_text(json.dumps(original), encoding="utf-8")
         before = browser_tools.ToolConfiguration.capture(self.frontend)
         replace = browser_tools.os.replace
@@ -308,11 +314,12 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             return replace(source, destination)
 
         with patch.object(browser_tools.os, "replace", side_effect=atomic) as replaced:
-            guard = before.publish({"password": "new", "fixture": "business"})
+            guard = before.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT,
+                                    "fixture": "business"})
         replaced.assert_called_once()
         guard.assert_unchanged()
         self.assertEqual(read(target), {**original, "real_browser": {
-            "password": "new", "fixture": "business"}})
+            "credentialEndpoint": CREDENTIAL_ENDPOINT, "fixture": "business"}})
         self.assertFalse(list(target.parent.glob("*.lock")))
         self.assertFalse(list(target.parent.glob("*.pending")))
 
@@ -321,26 +328,28 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         absent = browser_tools.ToolConfiguration.capture(self.frontend)
         target.write_text('{"browser_smoke":{}}', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "并发创建"):
-            absent.publish({"password": "not-printed"})
+            absent.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT})
         before = browser_tools.ToolConfiguration.capture(self.frontend)
         target.write_text('{"browser_smoke":{"channel":"chrome"}}', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "漂移"):
-            before.publish({"password": "not-printed"})
+            before.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT})
         self.assertEqual(read(target), {"browser_smoke": {"channel": "chrome"}})
 
-    def test_unknown_tool_write_keeps_pending_and_never_exposes_password(self):
+    def test_unknown_tool_write_keeps_pending_and_never_persists_password(self):
         target = self.frontend / ".local-tests/frontend-tools.json"
         before = browser_tools.ToolConfiguration.capture(self.frontend)
         with patch.object(browser_tools.os, "link", side_effect=OSError("Admin!Secret123")):
             with self.assertRaisesRegex(ValueError, "禁止自动重放") as raised:
-                before.publish({"password": "Admin!Secret123"})
+                before.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT})
         self.assertNotIn("Admin!Secret123", str(raised.exception))
         self.assertTrue(target.with_name(target.name + ".lock").is_file())
         pending = list(target.parent.glob(".*.pending"))
         self.assertEqual(len(pending), 1)
-        self.assertEqual(read(pending[0])["real_browser"]["password"], "Admin!Secret123")
+        self.assertEqual(read(pending[0])["real_browser"]["credentialEndpoint"],
+                         CREDENTIAL_ENDPOINT)
+        self.assertNotIn("Admin!Secret123", pending[0].read_text(encoding="utf-8"))
         with self.assertRaisesRegex(ValueError, "未确认写入"):
-            before.publish({"password": "replacement"})
+            before.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT})
 
     def test_tool_write_visible_then_interrupted_keeps_evidence_and_blocks_replay(self):
         target = self.frontend / ".local-tests/frontend-tools.json"
@@ -353,12 +362,15 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
 
         with patch.object(browser_tools.os, "link", side_effect=published_then_interrupted):
             with self.assertRaisesRegex(ValueError, "禁止自动重放"):
-                before.publish({"password": "Admin!Secret123"})
-        self.assertEqual(read(target)["real_browser"]["password"], "Admin!Secret123")
+                before.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT})
+        self.assertEqual(read(target)["real_browser"]["credentialEndpoint"],
+                         CREDENTIAL_ENDPOINT)
+        self.assertNotIn("Admin!Secret123", target.read_text(encoding="utf-8"))
         self.assertTrue(target.with_name(target.name + ".lock").exists())
         self.assertEqual(len(list(target.parent.glob(".*.pending"))), 1)
         with self.assertRaisesRegex(ValueError, "未确认写入"):
-            browser_tools.ToolConfiguration.capture(self.frontend).publish({"password": "next"})
+            browser_tools.ToolConfiguration.capture(self.frontend).publish({
+                "credentialEndpoint": CREDENTIAL_ENDPOINT})
 
     def test_tool_write_rechecks_drift_after_pending_flush(self):
         target = self.frontend / ".local-tests/frontend-tools.json"
@@ -372,7 +384,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
 
         with patch.object(browser_tools.os, "fsync", side_effect=concurrent_change):
             with self.assertRaisesRegex(ValueError, "禁止自动重放"):
-                before.publish({"password": "secret"})
+                before.publish({"credentialEndpoint": CREDENTIAL_ENDPOINT})
         self.assertEqual(read(target), {"browser_smoke": {"channel": "chrome"}})
         self.assertFalse(target.with_name(target.name + ".lock").exists())
 
@@ -380,7 +392,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         poisoned = {"RYFRAME_E2E_PASSWORD": "poisoned", "PLAYWRIGHT_CHANNEL": "edge",
                     "APP_DATABASE_PASSWORD": "poisoned", "RYFRAME_RESET_ADMIN_PASSWORD": "poisoned"}
         with self.patches(), patch.dict(os.environ, poisoned), \
-                patch.object(security, "configured", side_effect=safe_process_environment):
+                patch.object(browser, "configured", side_effect=safe_process_environment):
             self.private.pop("RYFRAME_RESET_ADMIN_PASSWORD", None)
             # Bootstrap 仍须绑定其当前输入；凭据只能来自已登记文件。
             value = read(self.bootstrap)
@@ -390,9 +402,11 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 json.dumps({"environment": self.private}), encoding="utf-8")
             binding, context = browser._plan(
                 self.api, self.backend, self.bootstrap, self.output, "legacy-ignored", "dev",
-                require_fresh=True)
-            values = security.browser_environment(context["private"], binding)
-        self.assertEqual(context["browser_configuration"]["password"], "Admin!Secret123")
+                require_fresh=True, credential_endpoint=CREDENTIAL_ENDPOINT)
+            values = browser._browser_environment(context["private"], binding)
+        self.assertEqual(context["browser_configuration"]["credentialEndpoint"],
+                         CREDENTIAL_ENDPOINT)
+        self.assertNotIn("password", context["browser_configuration"])
         self.assertEqual(context["browser_configuration"]["channel"], "chrome")
         self.assertNotIn("poisoned", json.dumps(values))
 
@@ -409,7 +423,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute):
             binding, _ = self.bind("dev", "drift")
             with self.assertRaisesRegex(ValueError, "漂移"):
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
         self.assertEqual(read(self.frontend / ".local-tests/frontend-tools.json"),
                          {"browser_smoke": {}})
         failure = read(self.output / "browser-drift-failure.json")
@@ -422,9 +438,13 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         with self.patches(), patch.object(browser, "_frontend_command", execute):
             binding, _ = self.bind()
             with self.assertRaises(subprocess.CalledProcessError) as raised:
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
             with self.assertRaisesRegex(ValueError, "禁止重放"):
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
         self.assertEqual(raised.exception.returncode, 19)
         failure = read(self.output / "browser-r24-business-failure.json")
         self.assertEqual((failure["stage"], failure["returncode"]), ("build", 19))
@@ -450,7 +470,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(browser, "_publish_json", side_effect=fail_intent):
             with self.assertRaisesRegex(OSError, "not published"):
                 browser.run_browser(
-                    self.api, self.backend, self.bootstrap, self.output, binding
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT
                 )
         failure = read(outputs["failure"])
         self.assertEqual(failure["stage"], "intent")
@@ -461,7 +482,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         execute.assert_not_called()
         with self.patches(), self.assertRaisesRegex(ValueError, "禁止重放"):
             browser.run_browser(
-                self.api, self.backend, self.bootstrap, self.output, binding
+                self.api, self.backend, self.bootstrap, self.output, binding,
+                CREDENTIAL_ENDPOINT
             )
 
     def test_visible_intent_with_late_publication_error_is_bound_in_failure_receipt(self):
@@ -482,7 +504,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(browser, "_publish_json", side_effect=publish_then_fail):
             with self.assertRaisesRegex(OSError, "directory sync failed"):
                 browser.run_browser(
-                    self.api, self.backend, self.bootstrap, self.output, binding
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT
                 )
         failure = read(outputs["failure"])
         self.assertEqual(failure["stage"], "intent")
@@ -511,7 +534,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(browser, "verify_browser_evidence", return_value={}):
             binding, _ = self.bind("dev", "r24-business-dev")
             with self.assertRaisesRegex(ValueError, "late artifact drift"):
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
         self.assertFalse(outputs["result"].exists())
         self.assertTrue(outputs["failure"].is_file())
         write_json(outputs["result"], {"status": "restored"})
@@ -557,7 +582,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(browser, "_publish_json", side_effect=failure_unavailable), \
                 patch.object(terminal_publish, "_unlink_pending", side_effect=OSError("unlink failed")):
             with self.assertRaisesRegex(RuntimeError, "失败证据保存失败"):
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
         self.assertTrue(outputs["result"].is_file())
         self.assertFalse(outputs["failure"].exists())
         self.assertEqual(len(list(self.output.glob(
@@ -584,7 +611,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(terminal_publish, "_unlink_pending", side_effect=committed_then_exit):
             binding, _ = self.bind("dev", "r24-commit")
             with self.assertRaisesRegex(SystemExit, "99"):
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
         outputs = browser.browser_outputs(
             self.frontend, self.output, "r24-commit", "dev"
         )
@@ -648,7 +677,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             self.review.unlink()
             write_json(self.review, review)
             with self.assertRaisesRegex(ValueError, "摘要已变化"):
-                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding,
+                    CREDENTIAL_ENDPOINT)
         self.assertFalse((self.output / "browser-r24-business-intent.json").exists())
 
     def test_binding_rejects_an_occupied_reviewed_frontend_port(self):

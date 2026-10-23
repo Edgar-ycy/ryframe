@@ -372,7 +372,6 @@ fn node_and_python_callers_have_no_second_configuration_implementation() {
         "devex_clone_target_binding.py",
         "devex_clone_source_proof.py",
         "reference_fixture_browser.py",
-        "reference_fixture_browser_security.py",
         "restore_source_binding.py",
     ] {
         let source = fs::read_to_string(root.join("tools/python").join(caller)).unwrap();
@@ -381,6 +380,12 @@ fn node_and_python_callers_have_no_second_configuration_implementation() {
             "{caller} must use the thin Rust client"
         );
     }
+    assert!(
+        !root
+            .join("tools/python/reference_fixture_browser_security.py")
+            .exists(),
+        "浏览器安全协调必须由 Rust fixture runtime 提供"
+    );
 }
 
 #[test]

@@ -193,3 +193,30 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         with patch.object(runtime, "verify_browser", return_value=result) as verify:
             self.assertEqual(runtime.execute(request), result)
         self.assertTrue(verify.call_args.kwargs["closed"])
+
+    def test_browser_private_protocol_requires_only_a_non_secret_loopback_endpoint(self):
+        binding = self.reference / "runtime-r1/binding.json"
+        request = {
+            "backend_dir": str(self.backend),
+            "environment": str(self.bootstrap),
+            "format_version": 1,
+            "operation": "browser",
+            "output": str(self.reference / "runtime-r1"),
+            "write": True,
+            "browser_binding": str(binding),
+            "credential_endpoint": "http://127.0.0.1:49152/v1/credentials",
+        }
+        parsed = runtime._request_from_protocol(request)
+        self.assertEqual(parsed.credential_endpoint, request["credential_endpoint"])
+        self.assertNotIn("password", json.dumps(request).lower())
+        for value in (
+                "http://example.test:49152/v1/credentials",
+                "http://127.0.0.1:49152/other",
+                "http://127.0.0.1:49152/v1/credentials\nprivate"):
+            invalid = {**request, "credential_endpoint": value}
+            with self.assertRaises(runtime.RuntimeProtocolError):
+                runtime._request_from_protocol(invalid)
+        missing = dict(request)
+        missing.pop("credential_endpoint")
+        with self.assertRaises(runtime.RuntimeProtocolError):
+            runtime._request_from_protocol(missing)
