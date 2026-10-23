@@ -2,11 +2,12 @@
 use super::super::json as documents;
 use crate::{
     Result,
-    local_test_path::{LocalTestPathKind, validate_local_test_path},
+    local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -132,4 +133,81 @@ impl super::Configuration {
         unchanged(&snapshots)?;
         Ok(configuration)
     }
+}
+
+pub(crate) fn configuration_value(
+    backend: &Path,
+    directory: &Path,
+    app_env: &str,
+) -> Result<Value> {
+    if !matches!(app_env, "dev" | "test") {
+        return Err("参考配置环境只允许dev或test".into());
+    }
+    validate_absolute_path(directory, LocalTestPathKind::ExistingDirectory)?;
+    let backend =
+        super::super::target_verify::input::request_configuration::canonical_path(backend)?;
+    let directory =
+        super::super::target_verify::input::request_configuration::canonical_path(directory)?;
+    let local = backend.join(".local-tests");
+    if !directory.is_dir()
+        || linked(&directory)?
+        || directory != backend.join("config") && !directory.starts_with(local)
+    {
+        return Err("参考配置目录必须是项目config或后端受管.local-tests目录".into());
+    }
+    let environment = format!("app.{app_env}.toml");
+    let mut files = serde_json::Map::new();
+    for (index, name) in ["app.toml", environment.as_str()].iter().enumerate() {
+        let file = directory.join(name);
+        if index == 0 && !file.exists() {
+            continue;
+        }
+        if !file.is_file() || linked(&file)? {
+            return Err("参考配置文件缺失或经过链接".into());
+        }
+        files.insert((*name).to_owned(), {
+            let digest = super::super::digest::file(&file)?;
+            json!({"bytes": digest.bytes, "sha256": digest.sha256})
+        });
+    }
+    let value = json!({"app_env":app_env,"directory":directory,"files":files});
+    let sha = super::super::digest::plan_hash(&value)?;
+    Ok(json!({"app_env":app_env,"directory":directory,"files":value["files"],"sha256":sha}))
+}
+
+pub(crate) fn runtime_configuration(
+    root: &Path,
+    environment: &std::collections::BTreeMap<String, String>,
+    runtime: &Value,
+    role: &str,
+) -> Result<(Value, std::collections::BTreeMap<String, Value>)> {
+    if *environment != BTreeMap::from([("APP_ENV".into(), "test".into())]) {
+        return Err("源导出只允许 APP_ENV=test；其他配置必须绑定 TOML 文件".into());
+    }
+    let declared = runtime
+        .get(format!("{role}_config_dir"))
+        .ok_or("源运行收据缺少角色配置目录")?;
+    let (directory, files) =
+        super::super::target_verify::input::request_configuration::configuration_files(
+            root,
+            environment,
+            Some(declared),
+        )?;
+    let sha = super::super::target_verify::input::request_configuration::configuration_identity(
+        &directory, &files,
+    )?;
+    if runtime[format!("{role}_configuration_sha256")].as_str() != Some(sha.as_str()) {
+        return Err("源 TOML 配置与运行收据摘要不同；请核对绑定文件".into());
+    }
+    let table = crate::rate_limit::load_app_table(root, Some(&directory), "test")
+        .map_err(|_| "源 TOML 配置无法加载；请检查所选环境文件与字段类型")?;
+    if super::super::target_verify::input::request_configuration::configuration_files(
+        root,
+        environment,
+        Some(declared),
+    )? != (directory, files.clone())
+    {
+        return Err("源 TOML 配置在读取期间变化".into());
+    }
+    Ok((serde_json::to_value(table)?, files))
 }

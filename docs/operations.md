@@ -127,7 +127,7 @@ cargo xtask data backup status
 
 参考夹具环境计划、配置和预检收据守卫由正式绑定的 Rust 工具执行；Python 仍负责准备编排、secret set 轮换及 bootstrap 文件生命周期。seed close/rebind 的模型和证据守卫也由正式绑定的 Rust 工具执行；核验不授权远端写入或重放。
 
-`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、原生 Rust S3 客户端和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <new-file> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要；原生 S3 客户端直接读取计划绑定的受控明文配置，不启动 AWS CLI 子进程，也不通过环境变量传递访问密钥。凭据值不得进入计划或公开收据。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由隔离业务 crate 生成资源验收覆盖。
+`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、原生 Rust S3 客户端和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <new-file> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要；原生 S3 客户端直接读取计划绑定的受控明文配置，不启动 AWS CLI 子进程，也不通过环境变量传递访问密钥。凭据值不得进入计划或公开收据。工具不创建或扫描数据库，源目标均需事先初始化。 参考计划的源对象配置仅从绑定 runtime 的 `api_config_dir`、`api_configuration_sha256` 和 `APP_ENV=test` 推导；目标对象配置从 fresh 请求必需的 `config_dir` 及 `configuration_sha256` 推导。两侧公开配置只包含端点、region 和 `app_env/directory/files/sha256` 文件绑定；生成前核对 TOML 与私有请求的端点、region、访问密钥及秘密密钥完全一致，返回前复核配置、runtime 与 arm 文件，任何缺失或漂移均拒绝，不创建或修补配置。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由隔离业务 crate 生成资源验收覆盖。
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 

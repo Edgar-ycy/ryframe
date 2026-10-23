@@ -297,7 +297,15 @@ fn source_input_bindings(root: &Path, runtime_dir: &Path) -> SourceInputBindings
             root,
             json!({"kind": "devex-clone-tool-build"}),
         ),
-        runtime: bind("runtime.json", runtime_dir, json!({"runtime": true})),
+        runtime: bind(
+            "runtime.json",
+            runtime_dir,
+            json!({
+                "backend_root": super::workspace::root_dir(),
+                "api_config_dir": runtime_dir.join("config"),
+                "api_configuration_sha256": super::recovery_inputs_support::object_configuration(&runtime_dir.join("config"), "source"),
+            }),
+        ),
         api: bind("api.json", runtime_dir, json!({"role": "api"})),
         worker: bind("worker.json", runtime_dir, json!({"role": "worker"})),
         producers: bind("producers.json", root, json!({"processes": []})),
@@ -657,7 +665,8 @@ fn target_request(
         &json!({"kind": "devex-clone-tool-build"}),
     );
     let maintenance_binding = binding(&maintenance);
-    fs::create_dir_all(root.join("config")).unwrap();
+    let configuration_sha256 =
+        super::recovery_inputs_support::object_configuration(&root.join("config"), "target");
     json!({
         "format_version": 1,
         "kind": "devex-clone-fresh-target",
@@ -676,7 +685,7 @@ fn target_request(
             "databases": databases,
         },
         "maintenance_build": maintenance_binding,
-        "configuration_sha256": "c".repeat(64),
+        "configuration_sha256": configuration_sha256,
         "tools": {"mysql": tool_binding},
         "storage": {"rustfs": {}, "redis": {}},
         "reset": {},

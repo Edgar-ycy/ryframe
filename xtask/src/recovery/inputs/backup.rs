@@ -187,13 +187,91 @@ fn validate_source_identity(
             .get("source_request")
             .ok_or("source-export 缺少请求")?,
     )?;
-    if request.value.get("source") != plan.get("source")
-        || request.value.get("tools") != plan.get("tools")
+    let projection = super::reference_configuration::SourceProjection::load(backend, &request)?;
+    if Some(&projection.source) != plan.get("source")
+        || Some(&projection.tools) != plan.get("tools")
     {
         return Err("正式备份与共享导出的库存、配置、构建或运行代次不同".into());
     }
     let (_, generation) =
         super::document::bound_file(backend, generation, "备份 source-generation")?;
     object(&generation.value, "备份 source-generation")?;
+    projection.assert_unchanged(backend, &request)?;
+    generation.assert_unchanged()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        recovery_inputs_fixture::Fixture,
+        recovery_inputs_support::{binding, hash, read_value},
+    };
+    use serde_json::json;
+
+    #[test]
+    fn source_identity_rejects_changed_reference_and_private_credentials_without_writes() {
+        let fixture = Fixture::new();
+        let receipt = read_value(&fixture.backup_receipt);
+        let export = &receipt["result"]["source_export"];
+        let generation = &receipt["result"]["source_generation"];
+        validate_source_identity(
+            &fixture.backend,
+            &fixture.reference_value,
+            export,
+            generation,
+        )
+        .unwrap();
+        for (section, field, replacement) in [
+            ("source", "scope_id", json!("another-source")),
+            (
+                "tools",
+                "mysql",
+                json!({"path":fixture.root.join("other.exe"),"sha256":"a".repeat(64)}),
+            ),
+            (
+                "tools",
+                "mysqldump",
+                json!({"path":fixture.reference_value["tools"]["mysqldump"]["path"],"sha256":"a".repeat(64)}),
+            ),
+            (
+                "source",
+                "s3",
+                fixture.reference_value["target"]["s3"].clone(),
+            ),
+        ] {
+            let mut changed = fixture.reference_value.clone();
+            changed[section][field] = replacement;
+            assert!(
+                validate_source_identity(&fixture.backend, &changed, export, generation).is_err()
+            );
+            assert!(!fixture.output.exists());
+        }
+        let path = fixture.root.join("source-request.json");
+        let original = std::fs::read(&path).unwrap();
+        let mut request = read_value(&path);
+        request["source"]["s3"]["secret_key"] = json!("different-private-secret");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let mut changed = export.clone();
+        changed["source_request"] = binding(&path);
+        changed.as_object_mut().unwrap().remove("identity_sha256");
+        changed["identity_sha256"] = json!(hash(&changed));
+        let before = std::fs::read(&path).unwrap();
+        let error = validate_source_identity(
+            &fixture.backend,
+            &fixture.reference_value,
+            &changed,
+            generation,
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("object_storage.secret_key与绑定私有请求不一致"));
+        assert!(!error.contains("different-private-secret"));
+        assert!(!error.contains("source-secret"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!fixture.output.exists());
+        std::fs::write(path, original).unwrap();
+    }
 }

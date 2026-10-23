@@ -13,6 +13,28 @@ fn reference_product_and_bindings_native_chains_succeed() {
     let reference = fixture.reference_value.clone();
     assert_eq!(reference, fixture.reference_value);
     assert_eq!(reference["target_side"], "base");
+    let serialized = serde_json::to_string(&reference).unwrap();
+    for secret in [
+        "access_key",
+        "secret_key",
+        "source-access",
+        "source-secret",
+        "target-access",
+        "target-secret",
+    ] {
+        assert!(!serialized.contains(secret));
+    }
+    for (side, directory) in [
+        ("source", fixture.root.join("source-runtime").join("config")),
+        ("target", fixture.root.join("config")),
+    ] {
+        let binding = &reference[side]["s3"]["configuration"];
+        assert_eq!(binding["app_env"], "test");
+        assert_eq!(
+            fs::canonicalize(binding["directory"].as_str().unwrap()).unwrap(),
+            fs::canonicalize(directory).unwrap()
+        );
+    }
     let source_request = read_json(&fixture.root.join("source-request.json"));
     assert_eq!(source_request["tools"].as_object().unwrap().len(), 3);
     assert!(source_request["tools"].get("node").is_some());
@@ -231,4 +253,24 @@ fn document_rejects_duplicate_keys_and_invalid_utf8() {
         fs::write(&path, bytes).unwrap();
         assert!(document::read(&path, &fixture.backend, "输入").is_err());
     }
+}
+
+#[test]
+fn reference_configuration_drift_rejects_before_publication() {
+    let fixture = Fixture::new();
+    let mut options = fixture.reference_options(None);
+    options.work_dir = fixture.root.join("work").join("configuration-drift");
+    for directory in [
+        fixture.root.join("source-runtime").join("config"),
+        fixture.root.join("config"),
+    ] {
+        let path = directory.join("app.test.toml");
+        let original = fs::read(&path).unwrap();
+        fs::write(&path, b"[object_storage]\nsecret_key='changed'\n").unwrap();
+        assert!(reference::build(&fixture.backend, &options).is_err());
+        assert!(!fixture.output.exists());
+        assert!(!options.work_dir.exists());
+        fs::write(path, original).unwrap();
+    }
+    reference::build(&fixture.backend, &options).unwrap();
 }

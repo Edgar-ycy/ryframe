@@ -16,6 +16,7 @@ pub(in crate::recovery) mod inventory;
 pub(crate) mod product;
 pub(crate) mod publish;
 pub(crate) mod reference;
+mod reference_configuration;
 mod source;
 mod target;
 pub(crate) mod target_plan;

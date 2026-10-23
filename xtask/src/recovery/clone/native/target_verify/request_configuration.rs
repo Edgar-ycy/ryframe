@@ -147,7 +147,7 @@ pub(crate) fn configuration_identity(
     }))
 }
 
-fn canonical_path(path: &Path) -> Result<PathBuf> {
+pub(crate) fn canonical_path(path: &Path) -> Result<PathBuf> {
     let path = fs::canonicalize(path).map_err(|_| "配置路径无法解析")?;
     let text = path.to_str().ok_or("配置路径必须为 UTF-8")?;
     #[cfg(windows)]
