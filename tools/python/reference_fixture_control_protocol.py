@@ -66,13 +66,21 @@ def private_arguments(
     schemas: dict[str, tuple[tuple[str, ...], tuple[str, ...], bool | str]],
     *,
     positional_operation: bool,
+    raw: str | None = None,
     argv: list[str] | None = None,
 ) -> list[str]:
-    """只从显式 JSON 参数重建经过精确约束的内部 argv。"""
+    """只从有界 stdin JSON 重建经过精确约束的内部 argv。"""
     arguments = sys.argv[1:] if argv is None else argv
-    if len(arguments) != 2 or arguments[0] != "--protocol-json":
-        raise FixtureControlProtocolError("参考夹具控制只接受 --protocol-json <JSON> 参数")
-    raw = arguments[1]
+    if arguments:
+        raise FixtureControlProtocolError("参考夹具控制不接受命令行参数，只从 stdin 读取 JSON")
+    if raw is None:
+        payload = sys.stdin.buffer.read(65537)
+        if len(payload) > 65536:
+            raise FixtureControlProtocolError("参考夹具控制私有协议缺失、为空或过长")
+        try:
+            raw = payload.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise FixtureControlProtocolError("参考夹具控制私有协议必须是 UTF-8") from error
     if not isinstance(raw, str) or not raw or len(raw) > 65536:
         raise FixtureControlProtocolError("参考夹具控制私有协议缺失、为空或过长")
     if any(mark in raw for mark in ("\n", "\r", "\0")):
@@ -141,11 +149,12 @@ def run_private(
     main: Callable[[list[str]], None],
     *,
     positional_operation: bool,
+    raw: str | None = None,
 ) -> int:
     """运行固定实现，并保持参数错误 2、任务错误 1 与中断语义。"""
     try:
         arguments = private_arguments(
-            domain, schemas, positional_operation=positional_operation
+            domain, schemas, positional_operation=positional_operation, raw=raw
         )
     except FixtureControlProtocolError:
         print("reference_fixture_control_protocol_error：私有控制请求无效。", file=sys.stderr)

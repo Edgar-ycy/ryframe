@@ -1,7 +1,8 @@
 use std::{
     fs,
+    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use regex::Regex;
@@ -11,7 +12,7 @@ use crate::{
     Result,
     cli::{FIXTURE_CONTROL_PROTOCOL_KIND, FIXTURE_CONTROL_USAGE, FixtureControlCommand},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_env_removed,
+    process::run_with_stdin,
     recovery::clone::native::{
         digest,
         json::{self as native_json, exact, text},
@@ -55,17 +56,14 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         _ => {}
     }
     let invocation = private_invocation_at(command, root)?;
-    run_with_env_removed(
+    let mut input = tempfile::tempfile()?;
+    input.write_all(invocation.protocol.as_bytes())?;
+    input.seek(SeekFrom::Start(0))?;
+    run_with_stdin(
         root,
         "python",
-        &[
-            "-B",
-            invocation.script,
-            "--protocol-json",
-            invocation.protocol.as_str(),
-        ],
-        &[],
-        &[],
+        &["-B", invocation.script],
+        Stdio::from(input),
     )
 }
 

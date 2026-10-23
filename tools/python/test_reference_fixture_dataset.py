@@ -14,7 +14,6 @@ sys.path.insert(0, str(BACKEND / "scripts"))
 
 import reference_fixture_dataset as dataset
 from reference_fixture_control_protocol import run_private
-PROTOCOL_KEY = "RYFRAME_REFERENCE_FIXTURE_CONTROL"
 from workspace_directory import WorkspaceDirectory
 
 
@@ -201,11 +200,10 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         observed = []
 
         def load_dependencies():
-            observed.append(sys.argv[1:] == ["--protocol-json", raw])
+            observed.append(sys.argv[1:] == [])
 
         with (
-            patch.dict(os.environ, {PROTOCOL_KEY: raw}),
-            patch.object(sys, "argv", ["reference_fixture_dataset.py", "--protocol-json", raw]),
+            patch.object(sys, "argv", ["reference_fixture_dataset.py"]),
             patch.object(dataset, "_load_business_dependencies", side_effect=load_dependencies),
             patch.object(dataset, "main") as main,
         ):
@@ -215,10 +213,10 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
                     dataset.PROTOCOL_SCHEMAS,
                     dataset._private_main,
                     positional_operation=True,
+                    raw=raw,
                 ),
                 0,
             )
-            self.assertIn(PROTOCOL_KEY, os.environ)
         self.assertEqual(observed, [True])
         main.assert_called_once()
 

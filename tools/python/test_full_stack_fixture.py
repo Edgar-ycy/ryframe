@@ -264,8 +264,8 @@ class FullStackFixtureTests(unittest.TestCase):
             "prepare",
             fixture.PROTOCOL_SCHEMAS,
             positional_operation=False,
+            raw=raw,
             argv=[],
-            environment={protocol.PROTOCOL_KEY: raw},
         )
         self.assertEqual(
             arguments,
@@ -287,23 +287,20 @@ class FullStackFixtureTests(unittest.TestCase):
         observed = []
 
         def main(_arguments):
-            observed.append(protocol.PROTOCOL_KEY in os.environ)
+            observed.append(sys.argv[1:] == [])
 
-        with (
-            patch.dict(os.environ, {protocol.PROTOCOL_KEY: raw}),
-            patch.object(sys, "argv", ["prepare_full_stack_fixture.py"]),
-        ):
+        with patch.object(sys, "argv", ["prepare_full_stack_fixture.py"]):
             self.assertEqual(
                 protocol.run_private(
                     "prepare",
                     fixture.PROTOCOL_SCHEMAS,
                     main,
                     positional_operation=False,
+                    raw=raw,
                 ),
                 0,
             )
-            self.assertIn(protocol.PROTOCOL_KEY, os.environ)
-        self.assertEqual(observed, [False])
+        self.assertEqual(observed, [True])
 
 
 if __name__ == "__main__":
