@@ -45,37 +45,16 @@ docker compose -f deploy/compose.prod.yml up -d
 
 ## 依赖与任务排障
 
-### 限流拒绝
-
-区分租户配额、账号策略和基础设施故障。只在确认业务容量允许后调整配置，不删除限流键或绕过租户边界。
-
-### 数据库副本与读回退
-
-检查复制延迟、连接健康和 read consistency。授权、任务、导出与状态变更必须回到主库；不要把强一致读临时改为副本读。
-
-### 后台任务
-
-检查 lease、heartbeat、attempt、公开错误和死信状态。数据库会拒绝重复领取；修复原因后使用受控重试，不直接改任务终态。
-
-### 定时调度
-
-核对表达式、时区、misfire 策略和下一次运行时间。避免同一业务任务由多个 scheduler 重复创建。
-
-### 消息中心投递
-
-检查 outbox、分发任务、目标受众和多语言参数。先恢复幂等消费，再处理积压；不要跳过租户或权限过滤。
-
-### OpenTelemetry 导出器
-
-导出失败不应阻断业务请求。检查 endpoint、TLS、超时和队列丢弃指标，恢复后确认 traceparent 继续传播。
-
-### 数据库连接容量
-
-按控制库、租户目标和 Worker 分别统计池使用量。优先处理泄漏、慢查询和错误并发，再调整池上限；总连接预算不得超过数据库限制。
-
-### 磁盘容量
-
-检查 `target`、日志、临时 XLSX、上传暂存和本地对象目录。只删除已确认的构建缓存或已过期产物，保留最新调试符号和 reset ledger。
+| 现象 | 核对与处理 |
+| --- | --- |
+| 限流拒绝 | 区分租户配额、账号策略和基础设施故障。只在确认业务容量允许后调整配置，不删除限流键或绕过租户边界。 |
+| 数据库副本与读回退 | 检查复制延迟、连接健康和 read consistency。授权、任务、导出与状态变更必须回到主库；不要把强一致读临时改为副本读。 |
+| 后台任务 | 检查 lease、heartbeat、attempt、公开错误和死信状态。数据库会拒绝重复领取；修复原因后使用受控重试，不直接改任务终态。 |
+| 定时调度 | 核对表达式、时区、misfire 策略和下一次运行时间。避免同一业务任务由多个 scheduler 重复创建。 |
+| 消息中心投递 | 检查 outbox、分发任务、目标受众和多语言参数。先恢复幂等消费，再处理积压；不要跳过租户或权限过滤。 |
+| OpenTelemetry 导出器 | 导出失败不应阻断业务请求。检查 endpoint、TLS、超时和队列丢弃指标，恢复后确认 traceparent 继续传播。 |
+| 数据库连接容量 | 按控制库、租户目标和 Worker 分别统计池使用量。优先处理泄漏、慢查询和错误并发，再调整池上限；总连接预算不得超过数据库限制。 |
+| 磁盘容量 | 检查 `target`、日志、临时 XLSX、上传暂存和本地对象目录。只删除已确认的构建缓存或已过期产物，保留最新调试符号和 reset ledger。 |
 
 ## 备份失败或过期
 
@@ -132,6 +111,8 @@ cargo xtask data backup status
 测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 runner 的 `.local-tests/playwright-real/restore-<drill-id>.json`，测试明细和运行收据副本使用同一前缀相邻保存。证明明确记录备份来源、后端产品与执行来源、适配合同、产品前端、测试 runner 和当前后端核验器 SHA；测试明细同时绑定演练、目标计划、运行收据、双端来源与测试时间，并保存唯一 STOP source-generation 与派生 dataset-lineage 的完整文件描述；证明保存这两份文件的 SHA-256。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配、明细不一致或数据验证尚未完成时不生成成功证明。最终 `restore verify` 必须同时收到三份相邻证据、原目标计划和 runner 根目录；维护 CLI 会从登记库构造权威上下文，由当前干净后端从 runtime launch 绑定的 registration 读取本侧参考计划，重新核验目标计划、运行中三进程、完整构建来源、runner 以及全部摘要，再登记成功。数据血缘必须与同一备份的 STOP、START、当前 source-runtime 全部一致；另一份独立 lineage 或另一侧参考计划不能替代此链。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。最终核验使用统一 data 入口在编译时绑定当前后端 SHA；直接运行旧维护二进制会失败。解释器必须在工具文件配置中以已验证的绝对路径登记。核验器会以隔离模式重新执行 Python 环境检查，绑定解释器文件身份与摘要，限制输出和运行时间，并在前后再次核对解释器及双端 Git 来源。
 
 ### 参考环境的外部验收驱动
+
+参考夹具环境计划、配置和预检收据守卫由正式绑定的 Rust 工具执行；Python 仍负责准备编排、secret set 轮换及 bootstrap 文件生命周期。seed close/rebind 的模型和证据守卫也由正式绑定的 Rust 工具执行；核验不授权远端写入或重放。
 
 `cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、原生 Rust S3 客户端和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <new-file> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要；原生 S3 客户端直接读取计划绑定的受控明文配置，不启动 AWS CLI 子进程，也不通过环境变量传递访问密钥。凭据值不得进入计划或公开收据。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由隔离业务 crate 生成资源验收覆盖。
 
@@ -243,8 +224,8 @@ fixture 启动后，执行器独占创建三个 TLS 角色配置目录。Redis �
 
 ```json
 {
-  "metrics_bearer_token": "<与运行中 API、Worker 一致的明文指标令牌>",
-  "scope_id": "<本次正式恢复的 scope>",
+  "metrics_bearer_token": "<plaintext metrics token matching the running API and Worker>",
+  "scope_id": "<scope of this formal recovery>",
   "api_config_dir": "D:/workspace/backend/.local-tests/restore/api-config",
   "worker_config_dir": "D:/workspace/backend/.local-tests/restore/worker-config"
 }

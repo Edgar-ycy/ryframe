@@ -47,37 +47,16 @@ Immediately revoke the token family and current session, and check the user's au
 
 ## Dependency and Task Troubleshooting
 
-### Rate-limit Rejections
-
-Distinguish tenant quotas, account policies, and infrastructure failures. Adjust configuration only after confirming that business capacity permits it; do not delete rate-limit keys or bypass tenant boundaries.
-
-### Database Replicas and Read Fallback
-
-Check replication lag, connection health, and read consistency. Authorization, tasks, exports, and state changes must return to the primary database; do not temporarily replace strongly consistent reads with replica reads.
-
-### Background Tasks
-
-Check lease, heartbeat, attempt, public errors, and dead-letter state. The database rejects duplicate claims. After fixing the cause, use controlled retries rather than directly editing a task's terminal state.
-
-### Scheduled Execution
-
-Check the expression, time zone, misfire policy, and next run time. Avoid multiple schedulers creating the same business task repeatedly.
-
-### Message Center Delivery
-
-Check the outbox, dispatch tasks, target audience, and multilingual parameters. Restore idempotent consumption before processing the backlog; do not skip tenant or permission filtering.
-
-### OpenTelemetry Exporters
-
-Export failures should not block business requests. Check endpoint, TLS, timeout, and queue-drop metrics, and confirm traceparent propagation continues after recovery.
-
-### Database Connection Capacity
-
-Measure pool usage separately for the control database, tenant targets, and Worker. Address leaks, slow queries, and incorrect concurrency before increasing pool limits; the total connection budget must not exceed database limits.
-
-### Disk Capacity
-
-Check `target`, logs, temporary XLSX files, upload staging, and local object directories. Delete only confirmed build caches or expired artifacts, retaining the latest debug symbols and reset ledgers.
+| Symptom | Checks and handling |
+| --- | --- |
+| Rate-limit Rejections | Distinguish tenant quotas, account policies, and infrastructure failures. Adjust configuration only after confirming that business capacity permits it; do not delete rate-limit keys or bypass tenant boundaries. |
+| Database Replicas and Read Fallback | Check replication lag, connection health, and read consistency. Authorization, tasks, exports, and state changes must return to the primary database; do not temporarily replace strongly consistent reads with replica reads. |
+| Background Tasks | Check lease, heartbeat, attempt, public errors, and dead-letter state. The database rejects duplicate claims. After fixing the cause, use controlled retries rather than directly editing a task's terminal state. |
+| Scheduled Execution | Check the expression, time zone, misfire policy, and next run time. Avoid multiple schedulers creating the same business task repeatedly. |
+| Message Center Delivery | Check the outbox, dispatch tasks, target audience, and multilingual parameters. Restore idempotent consumption before processing the backlog; do not skip tenant or permission filtering. |
+| OpenTelemetry Exporters | Export failures should not block business requests. Check endpoint, TLS, timeout, and queue-drop metrics, and confirm traceparent propagation continues after recovery. |
+| Database Connection Capacity | Measure pool usage separately for the control database, tenant targets, and Worker. Address leaks, slow queries, and incorrect concurrency before increasing pool limits; the total connection budget must not exceed database limits. |
+| Disk Capacity | Check `target`, logs, temporary XLSX files, upload staging, and local object directories. Delete only confirmed build caches or expired artifacts, retaining the latest debug symbols and reset ledgers. |
 
 ## Failed or Expired Backups
 
@@ -134,6 +113,8 @@ Register the bindings file, runtime receipt, strict target plan, current clean c
 After all core recovery scenarios pass, together with console, network, and axe assertions, results are written to the runner's `.local-tests/playwright-real/restore-<drill-id>.json`; test details and a runtime receipt copy are saved alongside it with the same prefix. Proof explicitly records backup source, backend product and execution source, adapter contract, product frontend, test runner, and current backend verifier SHA. Test details also bind the drill, target plan, runtime receipt, both source trees, and test time, retaining complete file descriptions for the unique STOP source-generation and derived dataset-lineage; proof stores both files' SHA-256 digests. Existing results are not overwritten. Failures, skips, retries, missing scenarios, source mismatches, inconsistent details, or incomplete data verification prevent success proof generation. Final `restore verify` requires all three adjacent evidence files, the original target plan, and runner root together. The maintenance CLI constructs authoritative context from the registration database. From the registration bound by runtime launch, the current clean backend reads this side's reference plan, revalidates the target plan, all three running processes, complete build provenance, runner, and every digest, then registers success. Data lineage must match STOP, START, and current source-runtime for the same backup; a separate lineage or the other side's reference plan cannot substitute for this chain. This step still rechecks readiness and recovery time; browser success does not establish final successful recovery registration. Final verification uses the unified data entry point, binding the current backend SHA at compile time; directly running an old maintenance binary fails. Register the verified interpreter by absolute path in tool file configuration. The verifier reruns Python environment checks in isolated mode, binds interpreter file identity and digest, limits output and runtime, and rechecks the interpreter and both Git source trees before and after execution.
 
 ### External Acceptance Driver for the Reference Environment
+
+The formally bound Rust tool executes reference-fixture environment-plan, configuration, and preflight-receipt guards; Python still orchestrates preparation, secret set rotation, and bootstrap file lifecycles. The formally bound Rust tool also executes seed close/rebind model and evidence guards; verification does not authorize remote writes or replay.
 
 `cargo xtask check recovery` invokes private native MySQL, mysqldump, the native Rust S3 client, and Node stage programs to prepare drill data and external backups. Reference plans can only be derived through `inputs reference` from a published shared export, the corresponding side's arm, and the complete fresh-target before-image; source, tool, and target fields must not be assembled manually. The entry point pins source and tool digests, target side, fresh ownership, and an independent working directory. By default it previews only on standard output; `--output <new-file> --write` publishes without overwriting existing files. MySQL uses the explicit client configuration file and digest in the plan. The native S3 client reads the controlled plaintext configuration bound by the plan directly; it does not start an AWS CLI subprocess or pass access keys through environment variables. Credential values remain excluded from plans and public receipts. The tools do not create or scan databases; both source and target require prior initialization. The reference scale is system plus ten ordinary tenants, at least 100,000 actual post records, and at least 1 GiB of registered uploaded objects, distributed across shared and dedicated targets; for example, 256 objects of 4 MiB each. Post records belong to the control database; tenant business-table copying is separately covered by generated-resource acceptance using an isolated business crate.
 

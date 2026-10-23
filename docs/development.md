@@ -50,14 +50,11 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 数据范围字段用 `#[resource(..., owner_field = "owner_id")]` 声明；字段必须是同一结构体中保存用户 ID 的 `i64` 或 `Option<i64>`，租户业务和控制库全局业务都可声明，后者仍保持系统租户专用访问。生成器把该值写入 `resources.json` 和 OpenAPI `access.owner_field`，创建时总写入当前用户（可空字段为 `Some(user_id)`），标准更新不接受改值。列表、详情、锁定更新和删除按当前角色数据范围过滤：全部数据不过滤，本人匹配当前用户，部门、部门及子部门或自定义部门范围展开为可访问 owner 集合；无范围时为空或不存在。租户业务读取锁定当前投影，控制库范围读取走主库。 `owner_field` 不能替代 `tenant_id`、RBAC 或服务端授权，也不提供任意表达式过滤或逐行共享 ACL；转移归属或额外共享需要明确扩展。省略时不按创建人过滤；字段缺失、类型错误、名称为空或含空白、重复属性都会在宏展开或生成预检时拒绝。
 
-模型驱动新建从 `ResourceModel` 生成 CRUD、迁移和受管资产；已有数据库用 `schema-import` 只读反向生成模型、CRUD 和迁移；运行目标已有表和业务行时，模型与历史迁移匹配后还必须显式 adopt，adopt 只登记结构，不执行建表 DDL 或改写业务行。`generator.source` 或 `--connection` 只决定结构来源，可取 `primary`、`sources.<name>` 或 `tenant_data.targets.<target-key>`；`storage` 或 `--database` 单独决定运行范围 `control|tenant`，二者不会自动映射。`source="local"` 在 control 范围读 primary，在 tenant 范围读 `tenant_data.default_target`，后者必须是 MySQL 目标；import 示例使用显式 primary。
-
-资源生成前先编写并登记模型。
+模型驱动新建从 `ResourceModel` 生成 CRUD、迁移和受管资产；已有数据库用 `schema-import` 只读反向生成模型、CRUD 和迁移；运行目标已有表和业务行时，模型与历史迁移匹配后还必须显式 adopt，adopt 只登记结构，不执行建表 DDL 或改写业务行。`generator.source` 或 `--connection` 只决定结构来源，可取 `primary`、`sources.<name>` 或 `tenant_data.targets.<target-key>`；`storage` 或 `--database` 单独决定运行范围 `control|tenant`，二者不会自动映射。`source="local"` 在 control 范围读 primary，在 tenant 范围读 `tenant_data.default_target`，后者必须是 MySQL 目标；import 示例使用显式 primary。 资源生成前先编写并登记模型。
 
 ```powershell
 cargo generate -- new-business order-business
 cargo generate -- new-business order-business --write
-
 cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
@@ -110,9 +107,7 @@ cargo generate -- resource --package order-business --model Order --write
 
 ## 集成验证
 
-共享真实 MySQL 测试的固定 opt-in 为后端根目录 `.local-tests/mysql/config`；目录缺失时明确跳过且未验收，已有目录及各层必须普通无链接。`app.test.toml` 必须存在，公共 `app.toml` 可以缺省；已存在的配置必须是普通无链接文件，缺少环境文件、无权读取或配置非法直接失败。通过 `AppConfig::load(directory, Environment::Test)` 加载完整 `database.primary`，地址、密码、连接池、超时及 TLS CA/证书/私钥均来自文件；普通测试保留配置 TLS 模式并拒绝 Disabled，显式 TLS 用例使用 Required。fixture 一次加载配置，用文件 `scope_id`、净化测试名、PID 和序号生成唯一 schema，不再读取旧 MySQL 项目环境配置。可运行 `mysql_real_protocol` 测试目标。MySQL、Redis 及 TLS 出站测试的文件配置与统一 CI 入口已整合，文件协议和回环 fixture 回归已通过；真实 MySQL、Redis 与存储服务仍未实际验收，局部回归不代表完整集成门禁通过。
-
-fixture 在同一条管理连接上持有会话锁，记录实例 UUID、连接编号、schema 和不可覆盖的计划与 journal；业务池每条新物理连接均核对该实例及 schema。证据位于 `.local-tests/mysql/fixtures`，不包含密码或连接串。只有测试成功、业务连接池关闭、归属与文件身份仍一致、全局连接列表可见且没有活动业务连接时才精确删除本次 schema。测试账号须直接拥有全局 `PROCESS` 或 `ALL PRIVILEGES`，仅从角色继承的权限暂不用于证明全局可见性。测试失败、panic、连接或 DDL 结果未知、证据变化及权限不足均保留数据库和证据；先核对现场，不按库名前缀清理，不自动重放或声称回滚。
+共享真实 MySQL 测试的固定 opt-in 为后端根目录 `.local-tests/mysql/config`；目录缺失时明确跳过且未验收，已有目录及各层必须普通无链接。`app.test.toml` 必须存在，公共 `app.toml` 可以缺省；已存在的配置必须是普通无链接文件，缺少环境文件、无权读取或配置非法直接失败。通过 `AppConfig::load(directory, Environment::Test)` 加载完整 `database.primary`，地址、密码、连接池、超时及 TLS CA/证书/私钥均来自文件；普通测试保留配置 TLS 模式并拒绝 Disabled，显式 TLS 用例使用 Required。fixture 一次加载配置，用文件 `scope_id`、净化测试名、PID 和序号生成唯一 schema，不再读取旧 MySQL 项目环境配置。可运行 `mysql_real_protocol` 测试目标。MySQL、Redis 及 TLS 出站测试的文件配置与统一 CI 入口已整合，文件协议和回环 fixture 回归已通过；真实 MySQL、Redis 与存储服务仍未实际验收，局部回归不代表完整集成门禁通过。 fixture 在同一条管理连接上持有会话锁，记录实例 UUID、连接编号、schema 和不可覆盖的计划与 journal；业务池每条新物理连接均核对该实例及 schema。证据位于 `.local-tests/mysql/fixtures`，不包含密码或连接串。只有测试成功、业务连接池关闭、归属与文件身份仍一致、全局连接列表可见且没有活动业务连接时才精确删除本次 schema。测试账号须直接拥有全局 `PROCESS` 或 `ALL PRIVILEGES`，仅从角色继承的权限暂不用于证明全局可见性。测试失败、panic、连接或 DDL 结果未知、证据变化及权限不足均保留数据库和证据；先核对现场，不按库名前缀清理，不自动重放或声称回滚。
 
 完整集成门禁会验证 MySQL required TLS，以及 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。本地需有 `openssl`，并在回环地址提供隔离的 MySQL 与 Redis；服务按版本和协议要求选择平台，测试显式选择独立 Redis 实例和数据库。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一 `scope_id` 隔离并精确删除。运行前必须配置后端根目录的 `.local-tests/integration/ci.toml`，填写 `format_version=1`、`run_id`、`artifact_root`、`redis_config_dir`、`openssl_program`，并准备显式测试目录 `.local-tests/mysql/config` 与 `.local-tests/service-tests/redis/config`；字段与路径限制见[运维指南的 TLS 证书](operations.md#tls-证书)。运行入口与 CI 相同：
 
@@ -123,15 +118,11 @@ cargo xtask check ci integration
 
 Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务，不再启动 Python 门禁脚本。上述文件的 `openssl_program` 支持明确值 `"openssl"`（使用操作系统 PATH），或无链接的普通可执行文件绝对路径、以后端根目录解析且禁止 `ParentDir` 的相对路径；找不到工具或证书命令失败时，诊断会保留 OpenSSL 日志路径和实际退出原因。相关测试结束或失败后停止 fixture 监听，仅在发布输入与所有权核对安全时清理临时证书；部分发布、外来文件、来源漂移或清理未确认时保留配置及证书现场。实际产物目录在该文件的 `artifact_root` 下排他创建并输出，历史目录不会覆盖。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个已运行测试的最近日志。隔离测试配置中的 Redis host 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接拒绝启动，避免误连共享 Redis。Linux DevEx cgroup 内存门禁同样完全由 Rust xtask 执行：公开 `run` 只允许 Linux GitHub Actions 的非 root runner，创建新的 `.local-tests` 证据目录并记录精确 run、attempt、nonce、源码 SHA 和 runner uid/gid，再通过 `sudo -n` 执行 prepare、test、cleanup；Cargo 由另一个永久降权到原 runner 身份的 Rust 子进程启动。门禁只使用本次创建的 `/sys/fs/cgroup/ryframe-devex-ci-*`，要求 `/sys/fs/cgroup` 是明确的 cgroup2 挂载且已启用 memory controller，不改父 controller 或限额。`cleanup` 只读取同一计划、内核 device/inode 和进程登记，确认 freeze 后按需写 `cgroup.kill`，遇到未知或复用 PID 时拒绝终止并保留现场。证据文件只创建或追加，`--plan` 只展示同一任务图，不启动 sudo、不创建目录。
 
-真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。
+真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。 Worker 探针和控制收据守卫由正式绑定的 Rust 工具执行；Python 仍持有锁，负责进程生命周期和恢复编排。启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
 
-历史保留期夹具通过 `cargo xtask check recovery fixture retention` 的 Rust 实现执行。`plan-history` 只读绑定当前租户、迁移、配置、服务器及全部任务尝试；`historical-expired --plan-sha256 <摘要> --write` 仅在 Worker 已停止且事务内前后像一致时平移 169 小时，保留 168 小时策略。`export-backup --write` 在精确租户写入 fence 下实际导出并验证摘要，明确不代表恢复成功；中断、部分写入或确认丢失均保留证据，先核实数据库和导出文件，不能自动重放。
-
-复制阶段的原生事务门入口为 `cargo xtask check recovery fixture retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>`，仅接受已登记且 Worker 已停止的隔离运行。标准输入每行发送 `{"operation":"wait-blocked"}` 或 `{"operation":"release"}`，标准输出保留 `held`、`blocked`、`released` 的逐行 JSON 协议；EOF 或异常退出会回收锁连接。复制门与历史保留期操作均由 Rust 执行。CI 四库初始化同样由 Rust 的 `__ci-databases` 私有入口执行：协调器通过有界 stdin JSON 绑定当前 Job、显式配置目录及规划时捕获的配置快照；连接字段、TLS、容器归属、客户端凭据文件和配置发布只由 Rust 校验和执行，不再保留 Python MySQL helper。凭据仅进入私有管道和受限目录文件，不进入 argv、环境或公开日志；容器内客户端固定使用 3306，保留显式 TLS 参数。建库前先持久化 `creation-unknown` 收据，只有四库创建成功才写入 `created`；失败、取消或进程中断均保留现场且禁止自动重放。已有同名资源仍失败，不使用 `IF NOT EXISTS`；API 和 Worker 分别使用已校验的实例编号与固定编号 2。
+历史保留期夹具通过 `cargo xtask check recovery fixture retention` 的 Rust 实现执行。`plan-history` 只读绑定当前租户、迁移、配置、服务器及全部任务尝试；`historical-expired --plan-sha256 <摘要> --write` 仅在 Worker 已停止且事务内前后像一致时平移 169 小时，保留 168 小时策略。`export-backup --write` 在精确租户写入 fence 下实际导出并验证摘要，明确不代表恢复成功；中断、部分写入或确认丢失均保留证据，先核实数据库和导出文件，不能自动重放。 复制阶段的原生事务门入口为 `cargo xtask check recovery fixture retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>`，仅接受已登记且 Worker 已停止的隔离运行。标准输入每行发送 `{"operation":"wait-blocked"}` 或 `{"operation":"release"}`，标准输出保留 `held`、`blocked`、`released` 的逐行 JSON 协议；EOF 或异常退出会回收锁连接。复制门与历史保留期操作均由 Rust 执行。CI 四库初始化同样由 Rust 的 `__ci-databases` 私有入口执行：协调器通过有界 stdin JSON 绑定当前 Job、显式配置目录及规划时捕获的配置快照；连接字段、TLS、容器归属、客户端凭据文件和配置发布只由 Rust 校验和执行，不再保留 Python MySQL helper。凭据仅进入私有管道和受限目录文件，不进入 argv、环境或公开日志；容器内客户端固定使用 3306，保留显式 TLS 参数。建库前先持久化 `creation-unknown` 收据，只有四库创建成功才写入 `created`；失败、取消或进程中断均保留现场且禁止自动重放。已有同名资源仍失败，不使用 `IF NOT EXISTS`；API 和 Worker 分别使用已校验的实例编号与固定编号 2。
 
 全栈 `prepare`、`start`、`collect` 与登录预算导出由 Rust 协调，业务夹具工作树复制、双仓来源复核、资源生成顺序、只读检查和 xtask 预热也由 Rust 执行；原 Python 协调入口已经删除。全栈 CI 的四角色构建与构建来源采集由 Rust 直接执行：按 Cargo JSON 中当前 Workspace 的唯一二进制产物取路径，构建前后复核双方来源、业务夹具、模型及产物摘要；已有清单或证据时拒绝覆盖。运行登记、长驻监督进程和 Worker 归属核验继续由有界 stdin 底层端口复用，不在该端口决定阶段或自动重试。源码组合签发与 Release 归档校验复用既有 Rust 实现，不再保留重复的 Python 实现。对象存储后端、目录、端点和凭据取自已绑定的明文文件配置。对象桶创建调用原生 Rust S3 客户端，先保存写入未知收据，创建响应与独立 HEAD 核验均成功后才标记完成。目录权限及实例编号改写共用 Rust 文件协议，凭据不进入子进程环境或公开日志。
-
-Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
 
 复制前的 `source_to_seed` 目标复核由 Rust 编排数据库、对象和 Redis 的只读观察；完整初始化历史及恢复谱系仍由现有只读核验器提供，`seed_to_arm` 继续使用完整状态机。复核绑定初始化收据、完整文件树、配置、工具和实际进程身份，并在外部观察前后核对固定输入；MySQL 原始输出通过同一个持有句柄采集和复读，不重新按路径打开。只有全部检查及锁释放后的复查通过，才在新的 attempt 观察目录将完整 JSON 写入并同步同目录临时文件，再以不覆盖方式发布 `verify.json`。失败保留原始观察及 `failure.json`，不自动重放或清理未知写入；复核通过也不等于已经完成复制或取得恢复验收资格。
 
@@ -147,13 +138,10 @@ Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收
 [development]
 config_dir = ".local-tests/dev-config"
 verify_tenant_targets = ["shared-control"]
-
 [workspace]
 frontend_dir = "../web"
-
 [generator]
 config_dir = "config"
-
 [verification]
 python_program = ".local-tests/python/Scripts/python.exe"
 ```
