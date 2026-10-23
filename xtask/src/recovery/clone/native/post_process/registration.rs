@@ -123,7 +123,7 @@ mod tests {
             &run,
             "amend",
             &json!({"status":"post_copy_amended","registration":descriptor,
-            "sequence":1,"predecessor":base,"runtime_directory":run.join("post-copy/runtime-0001"),
+            "sequence":1,"predecessor":base,"runtime_directory":run.join("post-copy").join("runtime-0001"),
             "remote_writes":0,"worker_must_remain_stopped":true,"restore_qualified":false}),
         );
         assert_ne!(json::read(&path).unwrap(), corrected);
