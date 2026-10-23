@@ -1,7 +1,7 @@
 use std::{
     fs,
-    io::{Seek, SeekFrom, Write},
-    path::Path,
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
     process::Stdio,
 };
 
@@ -18,22 +18,142 @@ use crate::{
 const SCRIPT: &str = "tools/js/devex_prepare_identities.mjs";
 const MAX_PROTOCOL_BYTES: usize = 32 * 1024;
 
+#[path = "performance_identities/plan.rs"]
+pub(crate) mod plan;
+#[path = "performance_identities/state.rs"]
+pub(crate) mod state;
+
+/// 私有入口只接收有界 stdin，不接受配置环境变量或业务路径参数。
+pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().map(String::as_str) != Some("__prepare-identities") {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    let command = if arguments.len() == 1
+        && std::io::stdin()
+            .take((MAX_PROTOCOL_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .is_ok()
+    {
+        private_command(&bytes, &root_dir())
+    } else {
+        Err("身份准备私有入口不接受参数".into())
+    };
+    Some(match command {
+        Err(_) => {
+            eprintln!("identity_preparation_protocol_error：身份准备私有协议无效。");
+            2
+        }
+        Ok(command) => match run(&command) {
+            Ok(()) => 0,
+            Err(_) => {
+                eprintln!(
+                    "identity_preparation_failed：身份准备失败，请核对计划与账本；不自动重放。"
+                );
+                1
+            }
+        },
+    })
+}
+
+pub(crate) fn private_command(bytes: &[u8], root: &Path) -> Result<PerformanceIdentitiesCommand> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err("身份准备私有协议超过 32 KiB".into());
+    }
+    let source = std::str::from_utf8(bytes).map_err(|_| "身份准备私有协议不是 UTF-8")?;
+    let value = crate::recovery::clone::native::json::parse_fragment(source, "身份私有协议")?;
+    if value["format_version"] != 1 || value["write"] != true {
+        return Err("身份协议版本或写入授权无效".into());
+    }
+    let path = |key| -> Result<PathBuf> {
+        let value = value[key].as_str().ok_or("身份路径必须为字符串")?;
+        if value.is_empty() || value.contains(['\n', '\r', '\0']) {
+            return Err("身份路径含非法字符".into());
+        }
+        Ok(PathBuf::from(value))
+    };
+    let command = match value["operation"].as_str() {
+        Some("plan") => {
+            crate::recovery::clone::native::json::exact(
+                &value,
+                &[
+                    "format_version",
+                    "operation",
+                    "environment",
+                    "output",
+                    "write",
+                ],
+                "身份计划协议",
+            )?;
+            PerformanceIdentitiesCommand::Plan {
+                environment: path("environment")?,
+                output: path("output")?,
+            }
+        }
+        Some(operation @ ("apply" | "verify")) => {
+            crate::recovery::clone::native::json::exact(
+                &value,
+                &["format_version", "operation", "plan", "state_dir", "write"],
+                "身份执行协议",
+            )?;
+            if operation == "apply" {
+                PerformanceIdentitiesCommand::Apply {
+                    plan: path("plan")?,
+                    state_dir: path("state_dir")?,
+                }
+            } else {
+                PerformanceIdentitiesCommand::Verify {
+                    plan: path("plan")?,
+                    state_dir: path("state_dir")?,
+                }
+            }
+        }
+        _ => return Err("身份准备阶段无效".into()),
+    };
+    private_invocation_at(&command, root)?;
+    Ok(command)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateIdentityInvocation {
-    pub(crate) script: &'static str,
     pub(crate) protocol: String,
 }
 
 pub(super) fn run(command: &PerformanceIdentitiesCommand) -> Result<()> {
     let root = root_dir();
+    if let PerformanceIdentitiesCommand::Plan {
+        environment,
+        output,
+    } = command
+    {
+        let summary = plan::write(environment, output, &root).map_err(|error| {
+            format!("identity_preparation_failed：离线身份计划失败：{error}；请核对环境清单、来源摘要与输出路径；未执行业务写入")
+        })?;
+        println!("{}", serde_json::to_string(&summary)?);
+        return Ok(());
+    }
     let invocation = private_invocation_at(command, &root)?;
+    let (path, state_dir, verify) = match command {
+        PerformanceIdentitiesCommand::Apply { plan, state_dir } => (plan, state_dir, false),
+        PerformanceIdentitiesCommand::Verify { plan, state_dir } => (plan, state_dir, true),
+        PerformanceIdentitiesCommand::Plan { .. } => unreachable!("离线计划已返回"),
+    };
+    let prepared = crate::recovery::clone::native::json::read(path)?;
+    plan::validate(&prepared)?;
+    if prepared != plan::create(&prepared["environment"], &root)? {
+        return Err("身份计划与确定性账号模型不同；未启动身份生产者".into());
+    }
+    if verify {
+        state::verify_input(&prepared, state_dir, &root)?;
+    }
     // 使用有界且已到 EOF 的独立输入，不继承终端，也不把协议放进环境或日志。
     let input_directory = root.join(".local-tests");
     fs::create_dir_all(&input_directory)?;
     let mut input = tempfile::tempfile_in(input_directory)?;
     input.write_all(invocation.protocol.as_bytes())?;
     input.seek(SeekFrom::Start(0))?;
-    run_with_stdin(&root, "node", &[invocation.script], Stdio::from(input))
+    run_with_stdin(&root, "node", &[SCRIPT], Stdio::from(input))
 }
 
 pub(crate) fn private_invocation_at(
@@ -69,7 +189,6 @@ pub(crate) fn private_invocation_at(
         }
     };
     Ok(PrivateIdentityInvocation {
-        script: SCRIPT,
         protocol: serialize_protocol(protocol)?,
     })
 }

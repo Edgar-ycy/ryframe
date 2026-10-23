@@ -15,6 +15,9 @@ pub(crate) mod model;
 use model::Registration;
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = crate::data::performance_identities::run_hidden_if_requested() {
+        return Some(code);
+    }
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
     if arguments.first().map(String::as_str) != Some("__copy-session") {
         return None;
