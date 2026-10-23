@@ -266,3 +266,53 @@ fn checkpoint_process_binds_original_attempt_controller_manifest_and_actual_hand
     );
     reject(&invoke(&fixture.request("checkpoint", input)));
 }
+
+#[test]
+fn lineage_generation_models_use_existing_bound_protocol_without_writes() {
+    let fixture = Fixture::new();
+    let parameters = json!({"action":"lineage","input":{"action":"pending","input":{
+        "attempts":[{"number":68,"stage":"seed-runtime","mode":"source-generation-start",
+            "status":"failed","result":null,"error_type":"ValueError"}],"previous":67}}});
+    let mut request: Value =
+        serde_json::from_slice(&fixture.request("coordinator", parameters.clone())).unwrap();
+    request["operation"] = json!("generation-guard");
+    let before = fixture.files();
+    let output = invoke(&serde_json::to_vec(&request).unwrap());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        response["result"],
+        json!({"verified":true,"value":{"pending":true},
+        "remote_writes":0,"automatic_retry_permitted":false})
+    );
+    assert_eq!(before, fixture.files());
+    fixture.write("parameters.json", &json!({"changed":true}));
+    reject(&invoke(&serde_json::to_vec(&request).unwrap()));
+}
+
+#[test]
+fn lineage_model_rejections_redact_inputs_and_never_authorize_retry() {
+    let fixture = Fixture::new();
+    let input = json!({"action":"lineage","input":{"action":"request","input":{
+        "previous":{},"request":{"format_version":1,"kind":"secret-credential"},"external":true}}});
+    let mut request: Value =
+        serde_json::from_slice(&fixture.request("coordinator", input)).unwrap();
+    request["operation"] = json!("generation-guard");
+    let before = fixture.files();
+    let output = invoke(&serde_json::to_vec(&request).unwrap());
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        response["result"]["value"]["rejected"],
+        "C68 谱系恢复请求与失败代次不同"
+    );
+    assert_eq!(response["result"]["remote_writes"], 0);
+    assert_eq!(response["result"]["automatic_retry_permitted"], false);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret-credential"));
+    assert!(output.stderr.is_empty());
+    assert_eq!(before, fixture.files());
+}

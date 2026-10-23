@@ -9,7 +9,6 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from workspace_directory import WorkspaceDirectory
 import devex_clone_seed_generation as generation
@@ -86,7 +85,17 @@ class LineageRecoveryTests(unittest.TestCase):
                 "stage": "seed-runtime",
                 "mode": "source-generation-start",
                 "error_type": "ValueError",
-                "frames": recovery.FAILED_FRAMES,
+                "frames": [
+                    {"file": "scripts/" + file + ".py", "function": function, "line": line}
+                    for file, function, line in (
+                        ("devex_clone_run", "execute", 717),
+                        ("devex_clone_seed_runtime", "execute_seed", 341),
+                        ("devex_clone_seed_generation", "execute_generation", 369),
+                        ("restore_source_lineage", "derive_dataset_lineage", 405),
+                        ("restore_source_lineage", "_dataset_facts", 107),
+                        ("restore_reference_plan", "validate_plan", 68),
+                    )
+                ],
                 "controller": self.controller,
             },
         )
@@ -181,23 +190,12 @@ class LineageRecoveryTests(unittest.TestCase):
             )
             yield
 
-    def test_pending_and_failed_tail_only_match_exact_c68_shape(self):
-        self.assertTrue(recovery.pending([self.failed]))
-        self.assertTrue(recovery.failed_tail(self.failed, 67))
-        for field, value in (
-            ("number", 69),
-            ("stage", "other"),
-            ("mode", "source-generation-stop"),
-            ("status", "running"),
-            ("result", {"published": True}),
-            ("error_type", "RuntimeError"),
-        ):
-            changed = {**self.failed, field: value}
-            with self.subTest(field=field):
-                self.assertFalse(recovery.pending([changed]))
-                self.assertFalse(recovery.failed_tail(changed, 67))
-        self.assertFalse(recovery.pending([]))
-        self.assertFalse(recovery.failed_tail(self.failed, 66))
+    def test_native_model_requires_bound_tool_without_compilation_fallback(self):
+        with patch("rate_limit_tool.tool_binding", return_value=None), patch.object(
+            generation, "_generation_model"
+        ) as invoke, self.assertRaisesRegex(ValueError, "禁止临时编译"):
+            recovery.pending([])
+        invoke.assert_not_called()
 
     def test_lineage_failure_accepts_exact_readonly_evidence(self):
         before = {str(path): path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}

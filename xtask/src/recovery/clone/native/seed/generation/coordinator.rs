@@ -5,6 +5,8 @@ use crate::{
 };
 use serde_json::{Value, json};
 
+#[path = "lineage.rs"]
+mod lineage;
 #[path = "coordinator_receipts.rs"]
 mod receipts;
 #[cfg(test)]
@@ -35,6 +37,7 @@ pub(super) fn dispatch(value: &Value) -> Result<Value> {
     document::exact(value, &["action", "input"], "生成编排模型")?;
     let args = &value["input"];
     match value["action"].as_str() {
+        Some("lineage") => lineage::dispatch(args),
         Some("preflight-plan") => preflight_plan(args),
         Some("preflight-finish") => preflight_finish(args),
         Some("inputs") => inputs(args),

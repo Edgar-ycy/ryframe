@@ -4,7 +4,6 @@ from __future__ import annotations
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 
 import copy
-import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -20,48 +19,31 @@ from source_inventory import git
 
 
 FAILED_ATTEMPT = 68
-RECOVERY_ATTEMPT = 69
-RETRY_ATTEMPT = 70
 FAILED_HEAD = "6b58001aa320e3fe7f1de62b100654b0f2a51edc"
 FAILED_TREE = "2c63b19a658f0b0a69bf3855f0cb343046c7539c"
 FAILED_FILES = 10_233
 FAILED_BYTES = 1_081_069_032
 FAILED_MANIFEST = "4cffdac03ff9d83566f56f7ea3114766fdc3acf86e566cd24944a8378567899b"
-FAILED_FRAMES = [
-    {"file": "scripts/" + file + ".py", "function": function, "line": line}
-    for file, function, line in (
-        ("devex_clone_run", "execute", 717),
-        ("devex_clone_seed_runtime", "execute_seed", 341),
-        ("devex_clone_seed_generation", "execute_generation", 369),
-        ("restore_source_lineage", "derive_dataset_lineage", 405),
-        ("restore_source_lineage", "_dataset_facts", 107),
-        ("restore_reference_plan", "validate_plan", 68),
-    )
-]
 STATUS = "seed_source_generation_replay_authorized"
-_TAIL = (
-    (61, "cache-target", "stop", "passed", None),
-    (62, "storage-target", "stop", "failed", "ValueError"),
-    (63, "storage-target", "stop", "passed", None),
-    (64, "storage-target", "restart", "failed", "CalledProcessError"),
-    (65, "storage-target", "restart", "passed", None),
-    (66, "cache-target", "restart", "passed", None),
-    (67, "seed-runtime", "source-generation-start", "failed", "ValueError"),
-    (68, "seed-runtime", "source-generation-start", "failed", "ValueError"),
-)
+
+
+def _model(action: str, arguments: dict, backend: Path | None = None) -> dict:
+    from devex_clone_seed_generation import _generation_model
+    from rate_limit_tool import tool_binding
+
+    if tool_binding() is None:
+        raise ValueError("谱系恢复必须由正式入口绑定原生工具，禁止临时编译回退")
+    return _generation_model(backend or Path(__file__).resolve().parents[2], "lineage",
+                             {"action": action, "input": arguments})
 
 
 def pending(attempts: list) -> bool:
     """只识别等待 C69 的固定 C68；不据此证明可重试。"""
-    return bool(attempts and attempts[-1].get("number") == FAILED_ATTEMPT
-                and tuple(attempts[-1].get(key) for key in ("stage", "mode", "status", "result", "error_type"))
-                == ("seed-runtime", "source-generation-start", "failed", None, "ValueError"))
+    return _model("pending", {"attempts": attempts, "previous": None})["pending"]
 
 
 def failed_tail(row: dict, previous: int) -> bool:
-    return (previous == FAILED_ATTEMPT - 1 and row.get("number") == FAILED_ATTEMPT
-            and tuple(row.get(key) for key in ("stage", "mode", "status", "result", "error_type"))
-            == ("seed-runtime", "source-generation-start", "failed", None, "ValueError"))
+    return _model("pending", {"attempts": [row], "previous": previous})["pending"]
 
 
 def _manifest_summary(directory: Path) -> dict:
@@ -75,25 +57,10 @@ def _history(backend: Path, directory: Path, attempts: list) -> tuple[dict, tupl
     from devex_clone_seed_generation_prelaunch import closed, receipt_reregistration_failure
 
     archive = closed(backend, directory, attempts)
-    if archive is None or archive["recovery"].get("number") != 60:
-        raise ValueError("C68 谱系失败缺少固定 C60 封存边界")
-    index = attempts.index(archive["recovery"])
-    tail = attempts[index + 1:index + 1 + len(_TAIL)]
-    if (len(tail) != len(_TAIL)
-            or any(tuple(row.get(key) for key in ("number", "stage", "mode", "status", "error_type")) != shape
-                   for row, shape in zip(tail, _TAIL, strict=True))):
-        raise ValueError("C68 谱系失败不属于 C60 后的固定相邻资源续作")
-    if any(row.get("result") is not None for row in tail if row["status"] == "failed"):
-        raise ValueError("C68 谱系失败历史包含意外发布结果")
-    reference = archive["recovery"]["sources"]
-    verify_execution_source(reference, "C60 封存控制器")
+    tail = _model("history", {"attempts": attempts, "archive": archive}, backend)["tail"]
+    verify_execution_source(archive["recovery"]["sources"], "C60 封存控制器")
     for row in tail:
         verify_execution_source(row["sources"], "C68 续作控制器")
-        snapshot = row["sources"]["snapshot"]
-        if (not snapshot["clean"] or snapshot["files"]
-                or snapshot["patch_sha256"] != hashlib.sha256(b"").hexdigest()
-                or row["sources"]["fingerprints"]["product"] != reference["fingerprints"]["product"]):
-            raise ValueError("C68 续作改变了产品来源或不是干净提交")
     receipt_reregistration_failure(backend, directory, tail[-2], tail[-3])
     return archive, tuple(tail)
 
@@ -106,39 +73,27 @@ def _source(backend: Path, directory: Path, attempts: list, request: dict, tail:
     from devex_clone_storage import registered_storage_binding
     from reference_fixture_successor import _source_with_loader
 
-    registrations = [row for row in attempts if (row["stage"], row["mode"], row["status"])
-                     == ("seed-runtime", "source-register", "passed")]
-    rebinds = [row for row in attempts if (row["stage"], row["mode"], row["status"])
-               == ("seed-runtime", "source-rebind", "passed")]
-    if (len(registrations) != 1 or registrations[0]["result"] != request["source_registration"]
-            or len(rebinds) != 1 or rebinds[0]["result"] != request["source_rebind"]):
-        raise ValueError("C68 谱系失败没有继承唯一 C52 与重绑定")
-    rebound_path = bound_file(backend, rebinds[0]["result"])
-    if rebound_path != directory / "results" / f"{rebinds[0]['number']:04d}.json":
+    selected = _model("select-source", {"attempts": attempts, "request": request}, backend)
+    rebind = selected["rebind"]
+    rebound_path = bound_file(backend, rebind["result"])
+    if rebound_path != directory / "results" / f"{rebind['number']:04d}.json":
         raise ValueError("C68 重绑定收据不属于同一复制运行")
     rebound = read_json(rebound_path)
-    prefix = [row for row in attempts if row["number"] < rebinds[0]["number"]]
+    prefix = selected["prefix"]
     guard("rebind-receipt", {"value": rebound, "descriptor": request["source_registration"],
           "original": rebound.get("original_storage"), "prefix": prefix}, backend=backend,
           label="C68 重绑定来源及完整历史前缀")
-    if rebound["review_successor"] != request["review_successor"]:
-        raise ValueError("C68 重绑定没有冻结相同 C52、successor 与完整历史")
     source = _source_with_loader(backend, request["review_successor"], live_storage=False, loader=_registered_source)
-    if (source["directory"] != directory
-            or source["review_successor"]["source_result"] != request["source_registration"]
-            or source["review_successor_binding"] != request["review_successor"]
-            or rebound["original_storage"] != source["storage"]["storage"]):
-        raise ValueError("C68 请求与原 C52 或 successor 不同")
     transition(backend, rebound["original_storage"], rebound["current_storage"])
     storage = registered_storage_binding(backend, directory, "target", before=FAILED_ATTEMPT)
     cache = registered_cache_binding(
         backend, directory, before=FAILED_ATTEMPT,
         frozen=(request["source_registration"], request["review_successor"]),
     )
-    if (storage != request["current_storage"] or storage is None or storage["attempt"] != 65
-            or cache is None or cache["attempt"] != tail[-3]["number"]
-            or cache["restart_result"] != tail[-3]["result"]):
-        raise ValueError("C68 请求没有绑定固定 C65 RustFS 与 C66 Redis 代次")
+    _model("source", {"source": {"directory": str(source["directory"]), **{key: source[key] for key in (
+               "review_successor", "review_successor_binding", "storage")}},
+           "directory": str(directory), "request": request, "rebound": rebound,
+           "storage": storage, "cache": cache, "cache_record": tail[-3]}, backend)
     transition(backend, rebound["current_storage"], storage)
     result = copy.deepcopy(source)
     result["storage"]["storage"] = copy.deepcopy(storage)
@@ -164,21 +119,15 @@ def _request(backend: Path, output: Path, request_path: Path | None) -> tuple[di
     if binding(selected) != descriptor:
         raise ValueError("C69 当前请求在读取期间变化")
     exact(request, REQUEST_FIELDS)
-    if (type(request["format_version"]) is not int or request["format_version"] != 1
-            or request["kind"] != "devex-clone-seed-source-generation"):
-        raise ValueError("C68 谱系恢复请求与失败代次不同")
     for field in ("source_registration", "source_rebind", "review_successor", "backend_build", "source_environment"):
         bound_file(backend, request[field])
     bound_file(Path(request["execution_backend"]), request["maintenance_build"])
-    changes = {key for key in request if request[key] != internal[key]}
-    if request_path is not None:
-        if changes != {"backend_build", "maintenance_build"}:
-            raise ValueError("C69 当前请求必须成对重新登记 API/Worker 与维护构建收据")
+    checked = _model("request", {"previous": internal, "request": request,
+                     "external": request_path is not None}, backend)
+    if checked["reregister"]:
         from devex_clone_seed_generation import _reregistered_builds
 
         _reregistered_builds(backend, internal, request)
-    elif changes:
-        raise ValueError("C68 内部请求在读取期间变化")
     return request, descriptor, internal_descriptor, internal
 
 
@@ -225,16 +174,8 @@ def pending_lineage_request(
         "product_backend": None if product_backend is None else str(product_backend),
         "source_environment": binding(environment_path),
     }
-    if any(previous[field] != value for field, value in unchanged.items()):
-        raise ValueError("C69 重新登记请求改变了构建收据以外的字段")
-    request = copy.deepcopy(previous)
-    request.update(
-        backend_build=binding(runtime_path),
-        maintenance_build=binding(maintenance_path),
-    )
-    if (request["backend_build"] == previous["backend_build"]
-            or request["maintenance_build"] == previous["maintenance_build"]):
-        raise ValueError("C69 必须成对重新登记新的 API/Worker 与维护构建收据")
+    request = _model("reregister-request", {"previous": previous, "unchanged": unchanged,
+        "backend_build": binding(runtime_path), "maintenance_build": binding(maintenance_path)}, backend)["request"]
     from devex_clone_seed_generation import _reregistered_builds
 
     _reregistered_builds(backend, previous, request)
@@ -260,17 +201,10 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
     """用已证明的 C52/C56/C65 来源重算正式请求，避开失败尾的普通读取策略。"""
     from devex_clone_seed_generation_runtime import registered_inputs
     from devex_clone_tools import verify_evidence
-    from process_environment import configured
 
-    expected = {"format_version": 1, "kind": "devex-clone-seed-source-generation", "id": request["id"],
-                "source_registration": source["review_successor"]["source_result"],
-                "review_successor": source["review_successor_binding"], "source_rebind": source["source_rebind"],
-                "current_storage": source["storage"]["storage"], "execution_backend": request["execution_backend"],
-                "expected_backend_sha": request["expected_backend_sha"], "adapter_contract": request["adapter_contract"],
-                "product_backend": request["product_backend"], "backend_build": request["backend_build"],
-                "maintenance_build": request["maintenance_build"], "source_environment": request["source_environment"]}
-    if request != expected or source.get("source_generation") is not None:
-        raise ValueError("C68 谱系恢复请求不是重绑定后的首个正式生成请求")
+    _model("request-source", {"request": request, "source": {
+        key: source.get(key) for key in ("review_successor", "review_successor_binding",
+                                       "source_rebind", "storage", "source_generation")}}, backend)
     execution, build = registered_inputs(backend, request, reconstruct=False)
     maintenance = verify_evidence(execution, bound_file(execution, request["maintenance_build"]))
     private = read_json(bound_file(backend, request["source_environment"]))
@@ -356,13 +290,7 @@ def lineage_failure(backend: Path, directory: Path, attempts: list, *, request_p
         raise ValueError("C68 控制器不属于固定复制运行")
     failure_path = local_path(backend, str(directory / "failure-0068.json"))
     failure = binding(failure_path)
-    expected_failure = {"format_version": 1, "kind": "devex-stage-failure", "attempt": FAILED_ATTEMPT,
-                        "stage": "seed-runtime", "mode": "source-generation-start",
-                        "error_type": "ValueError", "frames": FAILED_FRAMES, "controller": controller}
-    failure_value = read_json(failure_path)
-    if (type(failure_value.get("format_version")) is not int
-            or failure_value != expected_failure):
-        raise ValueError("C68 失败栈没有证明 runtime.start 前的固定谱系校验位置")
+    _model("failure", {"failure": read_json(failure_path), "controller": controller}, backend)
     require_recorded_producer_stopped(owner_identity)
     output = local_path(backend, str(directory / "g0068"))
     if ({item.name for item in output.iterdir()} != {"before", "runtime", "intent.json", "request.json"}
@@ -379,16 +307,8 @@ def lineage_failure(backend: Path, directory: Path, attempts: list, *, request_p
     for absent in (directory / "results/0068.json", directory / "seed-runtime/attempt-0068"):
         local_path(backend, str(absent), new=True)
     intent = read_json(output / "intent.json")
-    exact(intent, {"format_version", "kind", "request", "runtime_directory", "operations"})
-    operations = intent["operations"]
-    if (type(intent["format_version"]) is not int or intent["format_version"] != 1
-            or intent["kind"] != "seed-source-runtime-intent"
-            or intent["request"] != binding(output / "request.json")
-            or intent["runtime_directory"] != str(output / "runtime")
-            or set(operations) != {"api", "worker"}
-            or any(not isinstance(value, str) or len(value) != 32 for value in operations.values())
-            or len(set(operations.values())) != 2):
-        raise ValueError("C68 启动意图与固定请求、目录或双角色 operation 不同")
+    _model("intent", {"intent": intent, "request": binding(output / "request.json"),
+                        "runtime": str(output / "runtime")}, backend)
     request, request_descriptor, internal_request, historical_request = _request(
         backend, output, request_path
     )
@@ -425,12 +345,10 @@ def authorize(backend: Path, directory: Path, request_path: Path, number: int, p
     from devex_clone_seed_generation_runtime import GenerationRuntime
     from full_stack_runtime import register_runtime
 
-    if number != RECOVERY_ATTEMPT or not pending(prefix):
-        raise ValueError("谱系恢复只接受 C68 后唯一相邻 C69")
+    _model("authorize-stage", {"number": number, "prefix": prefix}, backend)
     facts = lineage_failure(backend, directory, prefix, request_path=request_path, run=run)
     coordinator = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
-    if coordinator["fingerprints"]["product"] != facts["failed"]["sources"]["fingerprints"]["product"]:
-        raise ValueError("C69 恢复改变了 seed 产品来源")
+    _model("authorize-product", {"coordinator": coordinator, "failed": facts["failed"]}, backend)
     output = local_path(backend, str(directory / "seed-runtime/attempt-0069"), new=True)
     runtime = GenerationRuntime(backend, directory, output, facts["request"], facts["source"], run)
     runtime.preflight()
@@ -494,38 +412,21 @@ def authorize(backend: Path, directory: Path, request_path: Path, number: int, p
         raise ValueError("C69 恢复目录包含启动意图、进程证据或未知文件")
     manifest = _manifest_summary(output)
     checkpoint()
-    return {"status": STATUS, "request": facts["request_descriptor"], "failed_start": FAILED_ATTEMPT,
-            "failure_proof": facts["proof"], "history_length": len(prefix), "history_sha256": plan_hash(prefix),
-            "coordinator_source": coordinator,
-            **{key: facts["request"][key] for key in ("source_registration", "source_rebind", "review_successor", "current_storage")},
-            "runtime": binding(runtime.runtime / "runtime.json"), "before": facts["before"], "after": after,
-            "evidence_manifest": manifest,
-            "source_generation_published": False, "replay_allowed": True, "remote_writes": 0,
-            "restore_qualified": False}
+    return _model("receipt", {"facts": {key: facts[key] for key in (
+        "request", "request_descriptor", "proof", "before")}, "prefix": prefix,
+        "coordinator": coordinator, "runtime": binding(runtime.runtime / "runtime.json"),
+        "after": after, "manifest": manifest}, backend)["receipt"]
 
 
 def replay_authority(backend: Path, directory: Path, attempts: list, *, run=subprocess.run) -> dict | None:
     """验证唯一 C69 授权；其后只能出现 C70 实际 START。"""
     from devex_clone_seed_generation_runtime import GenerationRuntime
 
-    matches = [(index, row) for index, row in enumerate(attempts)
-               if row.get("number") == RECOVERY_ATTEMPT
-               and (row.get("stage"), row.get("mode")) == ("seed-runtime", "source-generation-recover")]
-    if not matches:
+    plan = _model("replay-plan", {"attempts": attempts}, backend)
+    record = plan["record"]
+    if record is None:
         return None
-    if len(matches) != 1:
-        raise ValueError("C69 谱系恢复不能重复")
-    position, record = matches[0]
-    if position + 1 < len(attempts):
-        successor = attempts[position + 1]
-        if (type(successor.get("number")) is not int
-                or successor["number"] != RETRY_ATTEMPT
-                or (successor.get("stage"), successor.get("mode"))
-                != ("seed-runtime", "source-generation-start")):
-            raise ValueError("C69 后首个阶段必须是唯一 C70 seed-runtime/source-generation-start")
-    if record.get("status") == "running":
-        return None
-    if record.get("status") != "passed" or record.get("error_type") is not None or record.get("result") is None:
+    if plan["fallback"]:
         from devex_clone_seed_generation_lineage_retry import authority, completed
 
         recovered = completed(backend, directory, attempts)
@@ -544,22 +445,15 @@ def replay_authority(backend: Path, directory: Path, attempts: list, *, run=subp
         _generation_evidence(backend, "lineage-receipt", {"receipt": record["result"]})
     except ValueError:
         raise ValueError("C69 谱系恢复结果的字段类型或完整目录摘要无效；保留现场，禁止重放") from None
-    prefix = [row for row in attempts if row["number"] < RECOVERY_ATTEMPT]
+    prefix = plan["prefix"]
     facts = lineage_failure(
         backend, directory, attempts, request_path=Path(receipt["request"]["path"]),
         run=run, require_idle=False)
     verify_execution_source(record["sources"], "C69 谱系恢复控制器")
     request = facts["request"]
-    expected = {"status": STATUS, "request": facts["request_descriptor"], "failed_start": FAILED_ATTEMPT,
-                "failure_proof": facts["proof"], "history_length": len(prefix), "history_sha256": plan_hash(prefix),
-                "coordinator_source": record["sources"],
-                **{key: request[key] for key in ("source_registration", "source_rebind", "review_successor", "current_storage")},
-                "runtime": receipt["runtime"], "before": facts["before"], "after": receipt["after"],
-                "evidence_manifest": receipt["evidence_manifest"],
-                "source_generation_published": False, "replay_allowed": True, "remote_writes": 0,
-                "restore_qualified": False}
-    if receipt != expected or record["sources"]["fingerprints"]["product"] != facts["failed"]["sources"]["fingerprints"]["product"]:
-        raise ValueError("C69 谱系恢复没有绑定 C68、完整历史或同一产品来源")
+    _model("verify-receipt", {"receipt": receipt, "facts": {key: facts[key] for key in (
+        "request", "request_descriptor", "proof", "before", "failed")},
+        "prefix": prefix, "record": record}, backend)
     output = local_path(backend, str(directory / "seed-runtime/attempt-0069"))
     if ({item.name for item in output.iterdir()} != {"runtime", "after"}
             or any(linked(item) for item in output.iterdir())
