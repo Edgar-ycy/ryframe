@@ -1,14 +1,11 @@
 import contextlib
 import copy
-import functools
-import http.server
 import io
 import json
 import os
 import shutil
 import subprocess
 import sys
-import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -44,29 +41,6 @@ def private_request(operation: str, **values) -> restore_runtime.RuntimeRequest:
         **values,
     }
     return restore_runtime.decode_request(json.dumps(protocol))
-
-
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *_args):
-        pass
-
-
-def response_handler(routes):
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            status, content_type, body, headers = routes.get(self.path, (404, "text/plain", b"missing", {}))
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            for key, value in headers.items():
-                self.send_header(key, value)
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_args):
-            pass
-
-    return Handler
 
 
 class RestoreRuntimeTests(unittest.TestCase):
@@ -313,14 +287,6 @@ class RestoreRuntimeTests(unittest.TestCase):
             )
         return authority, receipt, bindings_path
 
-    def start_server(self, handler):
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(lambda: (server.shutdown(), thread.join(timeout=5)))
-        return server
-
     def test_json_documents_are_regular_bounded_utf8_strict_and_stable(self):
         document = self.root / "document.json"
         document.write_text('{"value": 1}', encoding="utf-8")
@@ -517,19 +483,23 @@ class RestoreRuntimeTests(unittest.TestCase):
                     restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
                 path.write_bytes(original)
 
-    def test_full_verification_checks_api_worker_and_all_frontend_bytes(self):
-        api = self.start_server(
-            response_handler({"/readyz": (200, "application/json", json.dumps(READY).encode(), {})})
-        )
-        worker = self.start_server(response_handler({"/readyz": (200, "text/plain", b"", {})}))
-        frontend = self.start_server(functools.partial(QuietHandler, directory=str(self.frontend / "dist")))
-        authority = self.authority(
-            api_endpoint=f"http://127.0.0.1:{api.server_port}/readyz",
-            worker_endpoint=f"http://127.0.0.1:{worker.server_port}/readyz",
-            frontend_endpoint=f"http://127.0.0.1:{frontend.server_port}",
-        )
-        authority, build_path, _frontend_path, bindings = self.prepare(authority)
-        with self.runtime_patches(fake_probes=False):
+    def test_full_verification_binds_native_probe_results_to_the_runtime_receipt(self):
+        # 真实 HTTP 与全部公开产物字节由 Rust runtime::probes 测试覆盖；
+        # 此处仍覆盖尚由 Python 执行的绑定、编排及最终结果投影。
+        authority, build_path, _frontend_path, bindings = self.prepare()
+
+        def native_observation(command, payload, _runner, *, may_write):
+            self.assertEqual(command, "__source-evidence")
+            self.assertEqual(set(payload), {"operation", "write", "arguments"})
+            self.assertEqual(payload["operation"], "runtime-probe")
+            self.assertIs(payload["write"], False)
+            self.assertIs(may_write, False)
+            value = READY if payload["arguments"]["role"] == "api" else {"status": "verified"}
+            return subprocess.CompletedProcess([], 0), {"ok": True, "result": {"value": value}}
+
+        with self.runtime_patches(fake_probes=False), patch.object(
+            restore_runtime, "tool_binding", return_value={"bound": True}
+        ), patch.object(restore_runtime, "native_invoke", side_effect=native_observation) as native:
             receipt = restore_runtime.bind(
                 self.backend,
                 self.backend,
@@ -539,6 +509,11 @@ class RestoreRuntimeTests(unittest.TestCase):
                 bindings,
             )
             result = restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
+        self.assertEqual([call.args[1]["arguments"] for call in native.call_args_list], [
+            {"role": "api", "url": authority["api_endpoint"]},
+            {"role": "worker", "url": authority["worker_endpoint"]},
+            {"role": "frontend", "url": authority["frontend_endpoint"], "files": receipt["frontend"]["files"]},
+        ] * 2)
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["runtime_receipt_sha256"], "f" * 64)
         self.assertEqual(result["api_readiness"], READY)

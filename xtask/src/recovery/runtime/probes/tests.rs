@@ -233,3 +233,139 @@ fn cancellation_drops_the_inflight_connection_and_never_returns_success() {
         )),
     }
 }
+
+fn site_responses(responses: Vec<(&str, Vec<u8>)>) -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let responses: Vec<_> = responses
+        .into_iter()
+        .map(|(path, body)| (path.to_owned(), body))
+        .collect();
+    let handle = thread::spawn(move || {
+        let mut paths = Vec::new();
+        for (expected, body) in responses {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(std::time::Instant::now() < deadline, "探针未请求登记资源");
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("探针测试监听失败：{error}"),
+                }
+            };
+            // Windows accept 会继承监听器的非阻塞模式；请求读取使用有界阻塞。
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0];
+            while !request.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap().to_owned();
+            assert_eq!(path, expected);
+            paths.push(path);
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream
+                .write_all(header.as_bytes())
+                .and_then(|()| stream.write_all(&body));
+        }
+        paths
+    });
+    (format!("http://{address}"), handle)
+}
+
+fn production_files() -> Value {
+    let mut files = Vec::new();
+    for (path, body) in [
+        ("index.html", b"<main>runtime</main>".as_slice()),
+        ("app.js", b"\x00RyFrame fixture\xff".as_slice()),
+        (".vite/manifest.json", b"{}".as_slice()),
+        (
+            "build-identity.json",
+            br#"{"frontend_commit":"fixture"}"#.as_slice(),
+        ),
+    ] {
+        files.push(
+            json!({"path":path,"bytes":body.len(),"sha256":hex::encode(Sha256::digest(body))}),
+        );
+    }
+    json!(files)
+}
+
+#[test]
+fn three_role_runtime_probes_verify_readiness_and_every_public_frontend_artifact() {
+    // 对应原 Python 完整运行核验中的真实网络部分；绑定与进程复核仍由原调用方覆盖。
+    let (api, api_request) = server(
+        200,
+        "application/json",
+        &serde_json::to_vec(&ready()).unwrap(),
+        "",
+    );
+    let (worker, worker_request) = server(200, "text/plain", b"", "");
+    let (frontend, frontend_requests) = site_responses(vec![
+        ("/index.html", b"<main>runtime</main>".to_vec()),
+        ("/app.js", b"\x00RyFrame fixture\xff".to_vec()),
+        (
+            "/build-identity.json",
+            br#"{"frontend_commit":"fixture"}"#.to_vec(),
+        ),
+    ]);
+    assert_eq!(
+        request(&json!({"role":"api","url":format!("{api}/readyz")})).unwrap(),
+        ready()
+    );
+    assert_eq!(
+        request(&json!({"role":"worker","url":format!("{worker}/readyz")})).unwrap(),
+        json!({"status":"verified"})
+    );
+    assert_eq!(
+        request(&json!({"role":"frontend","url":frontend,"files":production_files()})).unwrap(),
+        json!({"status":"verified"})
+    );
+    for received in [api_request.join().unwrap(), worker_request.join().unwrap()] {
+        assert!(received.starts_with("GET /readyz HTTP/1.1\r\n"));
+    }
+    assert_eq!(
+        frontend_requests.join().unwrap(),
+        ["/index.html", "/app.js", "/build-identity.json"]
+    );
+}
+
+#[test]
+fn later_frontend_artifact_tampering_never_passes_on_the_strength_of_the_index() {
+    for actual in [
+        b"\x00RyFrame fixture\xfe".as_slice(),
+        b"\x00RyFrame fixture".as_slice(),
+        b"\x00RyFrame fixture\xffextra".as_slice(),
+    ] {
+        let (url, handle) = site_responses(vec![
+            ("/index.html", b"<main>runtime</main>".to_vec()),
+            ("/app.js", actual.to_vec()),
+        ]);
+        assert!(request(&json!({"role":"frontend","url":url,"files":production_files()})).is_err());
+        assert_eq!(handle.join().unwrap(), ["/index.html", "/app.js"]);
+    }
+    let (url, handle) = site_responses(vec![
+        ("/index.html", b"<main>runtime</main>".to_vec()),
+        ("/app.js", b"\x00RyFrame fixture\xff".to_vec()),
+        (
+            "/build-identity.json",
+            br#"{"frontend_commit":"changed"}"#.to_vec(),
+        ),
+    ]);
+    assert!(request(&json!({"role":"frontend","url":url,"files":production_files()})).is_err());
+    assert_eq!(
+        handle.join().unwrap(),
+        ["/index.html", "/app.js", "/build-identity.json"]
+    );
+}
