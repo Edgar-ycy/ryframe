@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "files": [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    "xtask/Cargo.toml",
+    "xtask/build.rs",
+    "xtask/source-inventory.json"
+  ],
+  "trees": [
+    "architecture",
+    "crates",
+    "vendor",
+    "xtask/assets",
+    "xtask/src"
+  ],
+  "excluded_directories": [
+    ".git",
+    ".local-tests",
+    "__pycache__",
+    "node_modules",
+    "target"
+  ]
+}

@@ -253,32 +253,30 @@ fn describe_binds_real_executable_and_all_compiled_source_bytes() {
         executable["sha256"],
         hex::encode(Sha256::digest(fs::read(actual_path).unwrap()))
     );
-    let expected = [
-        (
-            "xtask/src/frontend_origin.rs",
-            include_bytes!("../src/frontend_origin.rs").as_slice(),
-        ),
-        (
-            "xtask/src/main.rs",
-            include_bytes!("../src/main.rs").as_slice(),
-        ),
-        (
-            "xtask/Cargo.toml",
-            include_bytes!("../Cargo.toml").as_slice(),
-        ),
-        ("Cargo.lock", include_bytes!("../../Cargo.lock").as_slice()),
-        (
-            "rust-toolchain.toml",
-            include_bytes!("../../rust-toolchain.toml").as_slice(),
-        ),
-    ];
     let sources = value["sources"].as_array().unwrap();
-    assert_eq!(sources.len(), expected.len());
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    for (source, (path, bytes)) in sources.iter().zip(expected) {
+    assert!(sources.len() > 100);
+    for required in [
+        "xtask/src/recovery/full_stack/worker/mod.rs",
+        "Cargo.toml",
+        "xtask/build.rs",
+        "xtask/source-inventory.json",
+        "crates/ryframe-config/src/lib.rs",
+    ] {
+        assert!(
+            sources.iter().any(|source| source["path"] == required),
+            "缺少 {required}"
+        );
+    }
+    let mut previous = "";
+    for source in sources {
         assert_eq!(source.as_object().unwrap().len(), 2);
-        assert_eq!(source["path"], path);
-        assert_eq!(source["sha256"], hex::encode(Sha256::digest(bytes)));
-        assert_eq!(fs::read(root.join(path)).unwrap(), bytes);
+        let path = source["path"].as_str().unwrap();
+        assert!(path > previous);
+        previous = path;
+        assert_eq!(
+            source["sha256"],
+            hex::encode(Sha256::digest(fs::read(root.join(path)).unwrap()))
+        );
     }
 }

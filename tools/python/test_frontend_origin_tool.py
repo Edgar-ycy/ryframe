@@ -19,6 +19,7 @@ import frontend_origin_tool as tool
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).absolute().parents[2]
+SOURCES = ("Cargo.lock", "xtask/source-inventory.json", "xtask/src/frontend_origin.rs", "xtask/src/main.rs")
 SECRET = "PRIVATE-SENTINEL-DO-NOT-PRINT"
 INVALID = next(iter(tool.SAFE_ERRORS))
 
@@ -37,12 +38,12 @@ class ExecutableSuffixTests(unittest.TestCase):
 
 
 class MetadataProtocolTests(unittest.TestCase):
-    def test_metadata_keeps_64_kib_limit_independent_of_long_responses(self):
+    def test_metadata_keeps_bounded_inventory_limit_independent_of_long_responses(self):
         value = {
             "format_version": 1,
             "kind": "frontend-origin-tool",
             "executable": {"path": "D:/fixture.exe", "sha256": "0" * 64},
-            "sources": [{"path": name, "sha256": "0" * 64} for name in tool.SOURCES],
+            "sources": [{"path": name, "sha256": "0" * 64} for name in SOURCES],
         }
         raw = encoded(value)
         boundary = raw + b" " * (tool.METADATA_LIMIT - len(raw))
@@ -53,7 +54,7 @@ class MetadataProtocolTests(unittest.TestCase):
     def test_response_budget_preserves_input_and_file_capacity(self):
         from restore_frontend_paths import MAX_BYTES
 
-        self.assertEqual(tool.METADATA_LIMIT, 64 * 1024)
+        self.assertEqual(tool.METADATA_LIMIT, 4 * 1024 * 1024)
         self.assertEqual(tool.STDERR_LIMIT, 64 * 1024)
         self.assertEqual(tool.INPUT_LIMIT, 64 * 1024 * 1024)
         self.assertGreaterEqual(tool.RESPONSE_LIMIT, tool.INPUT_LIMIT * 3 + 1024)
@@ -70,10 +71,10 @@ class ProviderRejectionTests(unittest.TestCase):
         self.binding = self.root / tool.BINDING
         self.binding.parent.mkdir()
         sources = []
-        for name in tool.SOURCES:
+        for name in SOURCES:
             file = self.root / name
             file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_bytes(name.encode())
+            file.write_bytes(encoded({"format_version":1,"files":list(SOURCES),"trees":[],"excluded_directories":[]}) if name == tool.POLICY else name.encode())
             sources.append({"path": name, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()})
         self.metadata = {
             "format_version": 1,
@@ -146,7 +147,7 @@ class ProviderRejectionTests(unittest.TestCase):
             lambda value: value["executable"].update(sha256="A" * 64),
             lambda value: value.update(sources={}),
             lambda value: value["sources"].reverse(),
-            lambda value: value["sources"].pop(),
+            lambda value: value["sources"].pop(1),
             lambda value: value["sources"][0].update(path="../xtask/src/frontend_origin.rs"),
             lambda value: value["sources"][0].update(sha256=1),
             lambda value: value["sources"][0].update(extra=SECRET),
@@ -157,6 +158,20 @@ class ProviderRejectionTests(unittest.TestCase):
             self.save(value)
             exchange, _ = self.reject("绑定 UTF8/JSON")
             exchange.assert_not_called()
+
+    def test_source_set_rejects_additions_and_omitted_compiled_files(self):
+        policy_file = self.root / tool.POLICY
+        policy_file.write_bytes(encoded({"format_version":1,"files":["Cargo.lock",tool.POLICY],"trees":["xtask/src"],"excluded_directories":[]}))
+        self.assertEqual(tool._source_paths(), list(SOURCES))
+        extra = self.root / "xtask/src/new_worker.rs"
+        extra.write_text("new worker", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            tool._verify_source_set(self.metadata)
+        extra.unlink()
+        omitted = copy.deepcopy(self.metadata)
+        omitted["sources"].pop()
+        with self.assertRaises(ValueError):
+            tool._verify_source_set(omitted)
 
     def test_executable_relative_parentdir_wrong_type_and_non_native_paths_are_rejected(self):
         bad = [
@@ -256,7 +271,7 @@ class ProviderRejectionTests(unittest.TestCase):
         self.assertEqual(self.binding.read_bytes(), before)
 
     def test_all_five_current_source_hashes_are_required_before_invocation(self):
-        for name in tool.SOURCES:
+        for name in SOURCES:
             path = self.root / name
             before = path.read_bytes()
             path.write_bytes(before + b" changed")
@@ -270,8 +285,8 @@ class ProviderRejectionTests(unittest.TestCase):
         exchange, _ = self.reject("程序身份或 SHA-256")
         exchange.assert_not_called()
         self.executable.write_bytes(b"MZ fixture never executed")
-        (self.root / tool.SOURCES[0]).unlink()
-        exchange, _ = self.reject("frontend_origin.rs")
+        (self.root / SOURCES[0]).unlink()
+        exchange, _ = self.reject(SOURCES[0])
         exchange.assert_not_called()
 
     def reject_link(self, path):
@@ -290,7 +305,7 @@ class ProviderRejectionTests(unittest.TestCase):
         self.reject_link(self.executable)
 
     def test_linked_source_is_rejected_with_known_link_cleanup(self):
-        self.reject_link(self.root / tool.SOURCES[0])
+        self.reject_link(self.root / SOURCES[0])
 
     def test_unknown_reparse_attribute_is_rejected(self):
         original = os.lstat
@@ -316,7 +331,7 @@ class ProviderRejectionTests(unittest.TestCase):
         exchange.assert_not_called()
 
     def test_binding_source_and_program_changes_during_call_fail_closed(self):
-        for path in (self.binding, self.root / tool.SOURCES[0], self.executable):
+        for path in (self.binding, self.root / SOURCES[0], self.executable):
             before = path.read_bytes()
 
             def changed(_path, _request):
@@ -327,7 +342,7 @@ class ProviderRejectionTests(unittest.TestCase):
             path.write_bytes(before)
 
     def test_source_drift_is_checked_even_after_invocation_timeout(self):
-        source = self.root / tool.SOURCES[0]
+        source = self.root / SOURCES[0]
 
         def changed_then_timeout(_path, _request):
             source.write_bytes(b"changed")
@@ -337,7 +352,7 @@ class ProviderRejectionTests(unittest.TestCase):
 
     def test_identical_bytes_with_changed_file_identity_still_fail_closed(self):
         original = tool._state
-        for selected in (self.binding, self.root / tool.SOURCES[0], self.executable):
+        for selected in (self.binding, self.root / SOURCES[0], self.executable):
             changed = False
 
             def state(path):

@@ -149,23 +149,11 @@ fn describe() -> Result<Value, &'static str> {
     let description_path = &path;
     let executable_hash = hash_executable(&mut executable)?;
     let path = description_path.to_str().ok_or(EXECUTABLE_PATH)?;
-    let sources = [
-        (
-            "xtask/src/frontend_origin.rs",
-            include_bytes!("frontend_origin.rs").as_slice(),
-        ),
-        ("xtask/src/main.rs", include_bytes!("main.rs").as_slice()),
-        (
-            "xtask/Cargo.toml",
-            include_bytes!("../Cargo.toml").as_slice(),
-        ),
-        ("Cargo.lock", include_bytes!("../../Cargo.lock").as_slice()),
-        (
-            "rust-toolchain.toml",
-            include_bytes!("../../rust-toolchain.toml").as_slice(),
-        ),
-    ]
-    .map(|(path, bytes)| json!({"path": path, "sha256": hex::encode(Sha256::digest(bytes))}));
+    let sources: Value = serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/frontend-origin-sources.json"
+    )))
+    .map_err(|_| EXECUTABLE_READ)?;
     Ok(json!({
         "format_version": 1,
         "kind": "frontend-origin-tool",

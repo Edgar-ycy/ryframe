@@ -1,4 +1,14 @@
 use super::*;
+const SOURCES: [&str; 7] = [
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    "xtask/Cargo.toml",
+    "xtask/source-inventory.json",
+    "xtask/src/frontend_origin.rs",
+    "xtask/src/main.rs",
+];
+
 use crate::process::{PreservedFailure, failure_exit_code};
 
 fn fixture() -> (tempfile::TempDir, Description) {
@@ -18,10 +28,15 @@ fn fixture() -> (tempfile::TempDir, Description) {
     for relative in SOURCES {
         let path = root.path().join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, relative.as_bytes()).unwrap();
+        let bytes = if relative == "xtask/source-inventory.json" {
+            serde_json::to_vec(&serde_json::json!({"format_version":1,"files":SOURCES,"trees":["xtask/src"],"excluded_directories":[]})).unwrap()
+        } else {
+            relative.as_bytes().to_vec()
+        };
+        fs::write(&path, &bytes).unwrap();
         sources.push(Source {
             path: relative.into(),
-            sha256: files::hash(relative.as_bytes()),
+            sha256: files::hash(&bytes),
         });
     }
     let description = Description {
@@ -52,6 +67,12 @@ fn prepared_fixture(root: &Path, description: &Description, evidence: &Path) -> 
         binding,
         held,
         evidence: evidence.to_owned(),
+        source_root: root.to_owned(),
+        source_paths: description
+            .sources
+            .iter()
+            .map(|source| source.path.clone())
+            .collect(),
     }
 }
 
@@ -462,4 +483,18 @@ fn lock_parent_replacement_cannot_authorize_removal_in_foreign_directory() {
             }
         }
     }
+}
+
+#[test]
+fn added_source_and_omitted_worker_entry_cannot_authorize_old_binding() {
+    let (root, description) = fixture();
+    let directory = evidence(root.path());
+    let origin = prepared_fixture(root.path(), &description, &directory);
+    fs::write(root.path().join("xtask/src/new_worker.rs"), "new worker").unwrap();
+    assert!(origin.verify().is_err());
+    assert!(directory.join("failure.json").is_file());
+    fs::remove_file(root.path().join("xtask/src/new_worker.rs")).unwrap();
+    let mut omitted = description;
+    omitted.sources.pop();
+    assert!(validate_current(root.path(), &omitted, &omitted.executable.path).is_err());
 }

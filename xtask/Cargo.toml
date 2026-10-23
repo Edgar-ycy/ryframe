@@ -44,6 +44,12 @@ nix = { version = "=0.29.0", default-features = false, features = ["fs", "signal
 processkit = { version = "=3.3.4", default-features = false, features = ["stats", "process-control"] }
 winsafe = { version = "=0.0.19", default-features = false, features = ["kernel"] }
 
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] }
+hex = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

@@ -16,9 +16,9 @@ from restore_frontend_paths import descriptor, failure, json_object, ordinary, r
 
 ROOT = Path(__file__).absolute().parents[2]
 BINDING = ".local-tests/frontend-origin-tool.json"
-SOURCES = ("xtask/src/frontend_origin.rs", "xtask/src/main.rs", "xtask/Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+POLICY = "xtask/source-inventory.json"
 TIMEOUT = 10
-METADATA_LIMIT = 64 * 1024
+METADATA_LIMIT = 4 * 1024 * 1024
 STDERR_LIMIT = 64 * 1024
 INPUT_LIMIT = 64 * 1024 * 1024
 # URL 规范化与 JSON 转义预留三倍字节预算，另保留固定协议开销。
@@ -99,16 +99,56 @@ def _metadata(raw: bytes, label: str) -> dict:
             or value["kind"] != "frontend-origin-tool"
             or not hex_value(executable["sha256"], 64)
             or not isinstance(value["sources"], list)
-            or len(value["sources"]) != len(SOURCES)
+            or not value["sources"]
         ):
             raise ValueError
-        for item, name in zip(value["sources"], SOURCES):
+        previous = ""
+        for item in value["sources"]:
             item = exact(item, {"path", "sha256"}, label)
-            if item["path"] != name or not hex_value(item["sha256"], 64):
+            if (not isinstance(item["path"], str) or item["path"] <= previous
+                or any(char in item["path"] for char in "\\:\0\r\n")
+                or any(part in ("", ".", "..") for part in item["path"].split("/"))
+                or not hex_value(item["sha256"], 64)):
                 raise ValueError
+            previous = item["path"]
+        if POLICY not in [item["path"] for item in value["sources"]]:
+            raise ValueError
         return value
     except (ValueError, TypeError, KeyError):
         raise _error(label, "绑定 UTF8/JSON、精确字段、版本、来源顺序或摘要无效") from None
+
+
+def _source_paths() -> list[str]:
+    policy = exact(json_object(_snapshot(ROOT / POLICY)[1], POLICY), {"format_version", "files", "trees", "excluded_directories"}, POLICY)
+    if type(policy["format_version"]) is not int or policy["format_version"] != 1:
+        raise ValueError("来源规则版本无效")
+    for key in ("files", "trees", "excluded_directories"):
+        if not isinstance(policy[key], list) or any(not isinstance(name, str) or not name or any(c in name for c in "\\:\0\r\n") or any(p in ("", ".", "..") for p in name.split("/")) for name in policy[key]):
+            raise ValueError("来源规则路径无效")
+    paths = set()
+    def walk(relative):
+        file = ROOT / relative
+        info = file.lstat()
+        if file.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("来源链接无效")
+        if file.is_dir():
+            for child in file.iterdir():
+                if child.name not in policy["excluded_directories"]:
+                    walk(relative + "/" + child.name)
+        else:
+            _path(str(file), relative)
+            paths.add(relative)
+    for name in policy["files"] + policy["trees"]:
+        walk(name)
+    return sorted(paths)
+
+
+def _verify_source_set(value):
+    try:
+        if _source_paths() != [item["path"] for item in value["sources"]]:
+            raise ValueError
+    except (OSError, ValueError, TypeError, KeyError):
+        raise _error(str(ROOT / POLICY), "完整来源文件集合漂移") from None
 
 
 def _unchanged(inputs: list) -> None:
@@ -171,6 +211,7 @@ def _verified_tool():
         if source[2] != item["sha256"]:
             raise _error(str(path), "源码 SHA-256 与编译来源不符，二进制已过时") from None
         inputs.append((path, source))
+    _verify_source_set(value)
     executable = value["executable"]
     path, alias = _executable_paths(executable["path"], str(binding))
     before = _program_state(path, alias, executable["sha256"])
@@ -179,11 +220,13 @@ def _verified_tool():
         with protect_binary_invocation(protected):
             try:
                 _unchanged(inputs)
+                _verify_source_set(value)
                 if _program_state(path, alias, executable["sha256"]) != before:
                     raise _error(str(path), "获取保护期间程序发生漂移") from None
                 yield path
             finally:
                 _unchanged(inputs)
+                _verify_source_set(value)
                 if _program_state(path, alias, executable["sha256"]) != before:
                     raise _error(str(path), "调用期间程序发生身份或内容漂移") from None
     except _ToolFailure:

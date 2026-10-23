@@ -16,15 +16,11 @@ use super::{
 };
 use crate::Result;
 
-pub(super) const SOURCES: [&str; 5] = [
-    "xtask/src/frontend_origin.rs",
-    "xtask/src/main.rs",
-    "xtask/Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
-];
-const INVALID: &str = "origin 工具绑定无效：核对当前程序、五项编译来源和固定绑定文件，保留失败证据后重新编译同一来源工具。";
-const LIMIT: u64 = 1024 * 1024;
+#[path = "../../frontend_origin/sources.rs"]
+mod source_inventory;
+
+const INVALID: &str = "origin 工具绑定无效：核对当前程序、完整编译来源清单和固定绑定文件，保留失败证据后重新编译同一来源工具。";
+const LIMIT: u64 = 4 * 1024 * 1024;
 const DESCRIBE_ARGUMENTS: [&str; 2] = ["__frontend-origin", "describe"];
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -47,12 +43,17 @@ pub(crate) struct OriginBinding {
     pub(super) binding: HeldFile,
     held: Vec<HeldFile>,
     evidence: PathBuf,
+    source_root: PathBuf,
+    source_paths: Vec<String>,
 }
 
 impl OriginBinding {
     pub(crate) fn verify(&self) -> Result<()> {
         let result = (|| {
             self.binding.verify()?;
+            if source_inventory::discover(&self.source_root)? != self.source_paths {
+                return Err(INVALID.into());
+            }
             for file in &self.held {
                 file.verify()?;
             }
@@ -98,6 +99,12 @@ pub(super) fn prepare(root: &Path, evidence: &Path) -> Result<OriginBinding> {
         binding,
         held,
         evidence: evidence.to_owned(),
+        source_root: root.to_owned(),
+        source_paths: description
+            .sources
+            .iter()
+            .map(|source| source.path.clone())
+            .collect(),
     })
 }
 
@@ -116,12 +123,19 @@ fn parse(bytes: &[u8]) -> Result<Description> {
         || description.kind != "frontend-origin-tool"
         || !description.executable.path.is_absolute()
         || !files::digest_valid(&description.executable.sha256)
-        || description.sources.len() != SOURCES.len()
+        || description.sources.is_empty()
     {
         return Err(INVALID.into());
     }
-    for (source, expected) in description.sources.iter().zip(SOURCES) {
-        if source.path != expected || !files::digest_valid(&source.sha256) {
+    for (index, source) in description.sources.iter().enumerate() {
+        if !files::digest_valid(&source.sha256)
+            || source.path.contains(['\\', ':', '\0', '\r', '\n'])
+            || source
+                .path
+                .split('/')
+                .any(|part| matches!(part, "" | "." | ".."))
+            || index > 0 && description.sources[index - 1].path >= source.path
+        {
             return Err(INVALID.into());
         }
     }
@@ -175,6 +189,14 @@ fn validate_current(
     files::no_links(program)?;
     if fs::canonicalize(&description.executable.path).map_err(|_| INVALID)?
         != fs::canonicalize(program).map_err(|_| INVALID)?
+    {
+        return Err(INVALID.into());
+    }
+    let actual = source_inventory::discover(root).map_err(|_| INVALID)?;
+    if !actual.iter().map(String::as_str).eq(description
+        .sources
+        .iter()
+        .map(|source| source.path.as_str()))
     {
         return Err(INVALID.into());
     }
