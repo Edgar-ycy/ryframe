@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
+#[path = "frontend_origin/source_guard.rs"]
 mod source_guard;
 
 const INPUT_LIMIT: usize = 64 * 1024 * 1024;
