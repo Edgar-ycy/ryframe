@@ -91,7 +91,7 @@ fn valid_files_ignore_disabled_environment_and_publish_exact_role_bytes() {
     assert_eq!(selected["bytes"], BASE.len());
     assert_eq!(
         selected["sha256"],
-        format!("{:x}", Sha256::digest(BASE.as_bytes()))
+        hex::encode(Sha256::digest(BASE.as_bytes()))
     );
     assert!(files.iter().any(|file| file["present"] == false));
     let isolated = root.path().join("isolated");
