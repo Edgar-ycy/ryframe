@@ -104,6 +104,11 @@ fn valid_files_ignore_disabled_environment_and_publish_exact_role_bytes() {
         );
     }
     published.verify().unwrap();
+    assert!(
+        inputs.publish(&isolated).is_err(),
+        "已有发布目录必须拒绝，不能重建或覆盖"
+    );
+    inputs.verify().unwrap();
     fs::write(isolated.join(REDIS).join("app.test.toml"), "changed").unwrap();
     assert!(published.verify().is_err());
     assert!(isolated.join(MYSQL).is_dir(), "漂移现场必须保留");
@@ -179,8 +184,16 @@ fn merged_roles_accept_exact_loopbacks_and_keep_optional_base_binding() {
         write_roles(root.path());
         for role in [MYSQL, REDIS] {
             let directory = root.path().join(role);
-            fs::write(directory.join("app.toml"), BASE.replace("127.0.0.1", host)).unwrap();
-            fs::write(directory.join("app.test.toml"), "# selected overlay\n").unwrap();
+            let base = format!(
+                "# raw base\r\n{}",
+                BASE.replace("127.0.0.1", host).replace('\n', "\r\n")
+            );
+            fs::write(directory.join("app.toml"), base).unwrap();
+            fs::write(
+                directory.join("app.test.toml"),
+                "# selected overlay\r\n\r\n",
+            )
+            .unwrap();
         }
         let captured = Activation::load(root.path(), true).unwrap();
         let mut environment = BTreeMap::new();
@@ -192,6 +205,21 @@ fn merged_roles_accept_exact_loopbacks_and_keep_optional_base_binding() {
                 .iter()
                 .all(|file| file["present"] == true)
         );
+        let isolated = root.path().join("isolated");
+        fs::create_dir(&isolated).unwrap();
+        let published = captured.publish(&isolated).unwrap();
+        for role in [MYSQL, REDIS] {
+            for name in ["app.toml", "app.test.toml"] {
+                assert_eq!(
+                    fs::read(root.path().join(role).join(name)).unwrap(),
+                    fs::read(isolated.join(role).join(name)).unwrap()
+                );
+            }
+        }
+        fs::write(isolated.join(MYSQL).join("unknown.toml"), "unknown-write").unwrap();
+        assert!(published.verify().is_err());
+        assert!(isolated.join(MYSQL).join("unknown.toml").exists());
+        captured.verify().unwrap();
         fs::remove_file(root.path().join(MYSQL).join("app.toml")).unwrap();
         assert!(captured.verify().is_err());
     }

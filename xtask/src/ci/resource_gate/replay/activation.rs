@@ -80,9 +80,26 @@ impl Activation {
         let mut roles = Vec::new();
         for (relative, role) in [(MYSQL, &self.mysql), (REDIS, &self.redis)] {
             let directory = root.join(relative);
-            if let Some(captured) = &role.captured {
+            if role.captured.is_some() {
                 files::create_parents(directory.parent().expect("固定角色路径"))?;
-                let content = captured.derived_files(&captured.selected)?;
+                // 发布绑定的原始字节，不能使用会重新序列化selected的派生文件接口。
+                let mut content = BTreeMap::new();
+                for name in ["app.toml", "app.test.toml"] {
+                    let path = role.directory.join(name);
+                    match role.images.get(&path) {
+                        Some(Some(image)) => {
+                            content.insert(name.to_owned(), image.bytes.clone());
+                        }
+                        Some(None) => {}
+                        None => {
+                            return Err(diagnostic(
+                                &path,
+                                "发布角色",
+                                "捕获集合缺少配置文件绑定；保留现场",
+                            ));
+                        }
+                    }
+                }
                 roles.push((
                     directory.clone(),
                     Some(OwnedConfiguration::create(&directory, &content)?),
