@@ -23,7 +23,7 @@ pub(super) fn validate(root: &Path, fixture: &Value, output: &Path) -> Result<Pa
             .ok_or("夹具执行目录缺失")?,
     );
     validate_local_test_path(execution, root, LocalTestPathKind::ExistingDirectory)?;
-    let boundary = execution.join(".local-tests/reference-fixture");
+    let boundary = execution.join(".local-tests").join("reference-fixture");
     let checked = (|| -> Result<()> {
         validate_local_test_path(output, root, LocalTestPathKind::NewDirectory)?;
         validate_local_test_path(output, execution, LocalTestPathKind::NewDirectory)?;

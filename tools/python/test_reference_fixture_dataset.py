@@ -189,7 +189,8 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         review["scopes"]["base"]["worker_ready_url"] = "http://127.0.0.1:18080/readyz"
         self.review.write_text(json.dumps(review), encoding="utf-8")
         self.bootstrap.write_text(
-            json.dumps({"plan": {"review": dataset._bound(self.review)}}),
+            json.dumps({"plan": {"review": dataset._bound(self.review)},
+                        "administrator_credentials": dataset._bound(self.credentials)}),
             encoding="utf-8",
         )
 
