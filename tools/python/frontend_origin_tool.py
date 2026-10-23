@@ -125,6 +125,8 @@ def _source_paths() -> list[str]:
     for key in ("files", "trees", "excluded_directories"):
         if not isinstance(policy[key], list) or any(not isinstance(name, str) or not name or any(c in name for c in "\\:\0\r\n") or any(p in ("", ".", "..") for p in name.split("/")) for name in policy[key]):
             raise ValueError("来源规则路径无效")
+    if policy["excluded_directories"]:
+        raise ValueError("来源规则不得按目录名排除文件")
     paths = set()
     def walk(relative):
         file = ROOT / relative
@@ -133,8 +135,7 @@ def _source_paths() -> list[str]:
             raise ValueError("来源链接无效")
         if file.is_dir():
             for child in file.iterdir():
-                if child.name not in policy["excluded_directories"]:
-                    walk(relative + "/" + child.name)
+                walk(relative + "/" + child.name)
         else:
             _path(str(file), relative)
             paths.add(relative)

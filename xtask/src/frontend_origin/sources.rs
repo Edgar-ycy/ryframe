@@ -19,7 +19,8 @@ fn policy(root: &Path) -> io::Result<Policy> {
     }
     let value: Policy = serde_json::from_slice(&bytes)?;
     if value.format_version != 1
-        || [&value.files, &value.trees, &value.excluded_directories]
+        || !value.excluded_directories.is_empty()
+        || [&value.files, &value.trees]
             .into_iter()
             .flatten()
             .any(|path| !valid_path(path))
@@ -52,12 +53,7 @@ fn ordinary(path: &Path) -> io::Result<fs::Metadata> {
     Ok(info)
 }
 
-fn walk(
-    root: &Path,
-    relative: &str,
-    excluded: &BTreeSet<String>,
-    output: &mut BTreeSet<String>,
-) -> io::Result<()> {
+fn walk(root: &Path, relative: &str, output: &mut BTreeSet<String>) -> io::Result<()> {
     let path = root.join(relative);
     let info = ordinary(&path)?;
     if info.is_file() {
@@ -69,9 +65,7 @@ fn walk(
                 .file_name()
                 .into_string()
                 .map_err(|_| io::Error::other("来源文件名不是 UTF-8"))?;
-            if !excluded.contains(&name) {
-                walk(root, &format!("{relative}/{name}"), excluded, output)?;
-            }
+            walk(root, &format!("{relative}/{name}"), output)?;
         }
     } else {
         return Err(io::Error::other("来源不是普通文件或目录"));
@@ -81,10 +75,9 @@ fn walk(
 
 pub fn discover(root: &Path) -> io::Result<Vec<String>> {
     let policy = policy(root)?;
-    let excluded = policy.excluded_directories.into_iter().collect();
     let mut paths = BTreeSet::new();
     for item in policy.files.into_iter().chain(policy.trees) {
-        walk(root, &item, &excluded, &mut paths)?;
+        walk(root, &item, &mut paths)?;
     }
     Ok(paths.into_iter().collect())
 }
@@ -102,7 +95,7 @@ mod tests {
         let root = tempfile::tempdir_in(base).unwrap();
         fs::create_dir_all(root.path().join("xtask/src/worker")).unwrap();
         fs::write(root.path().join("xtask/src/worker/control.rs"), "worker").unwrap();
-        fs::write(root.path().join(POLICY), r#"{"format_version":1,"files":["xtask/source-inventory.json"],"trees":["xtask/src"],"excluded_directories":["target"]}"#).unwrap();
+        fs::write(root.path().join(POLICY), r#"{"format_version":1,"files":["xtask/source-inventory.json"],"trees":["xtask/src"],"excluded_directories":[]}"#).unwrap();
         root
     }
 
@@ -136,11 +129,30 @@ mod tests {
     }
 
     #[test]
-    fn declared_output_directories_are_excluded_without_ignoring_new_sources() {
+    fn nested_directory_names_cannot_hide_sources() {
         let root = fixture();
-        let before = discover(root.path()).unwrap();
         fs::create_dir(root.path().join("xtask/src/target")).unwrap();
         fs::write(root.path().join("xtask/src/target/cache"), "cache").unwrap();
-        assert_eq!(discover(root.path()).unwrap(), before);
+        assert!(
+            discover(root.path())
+                .unwrap()
+                .contains(&"xtask/src/target/cache".to_owned())
+        );
+    }
+
+    #[test]
+    fn directory_exclusions_are_rejected() {
+        let root = fixture();
+        let path = root.path().join(POLICY);
+        let raw = fs::read_to_string(&path).unwrap();
+        fs::write(
+            &path,
+            raw.replace(
+                "\"excluded_directories\":[]",
+                "\"excluded_directories\":[\"target\"]",
+            ),
+        )
+        .unwrap();
+        assert!(discover(root.path()).is_err());
     }
 }

@@ -173,6 +173,17 @@ class ProviderRejectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             tool._verify_source_set(omitted)
 
+    def test_source_policy_rejects_exclusions_and_tracks_nested_target(self):
+        policy_file = self.root / tool.POLICY
+        policy_file.write_bytes(encoded({"format_version":1,"files":["Cargo.lock",tool.POLICY],"trees":["xtask/src"],"excluded_directories":["target"]}))
+        with self.assertRaisesRegex(ValueError, "不得按目录名排除"):
+            tool._source_paths()
+        policy_file.write_bytes(encoded({"format_version":1,"files":["Cargo.lock",tool.POLICY],"trees":["xtask/src"],"excluded_directories":[]}))
+        nested = self.root / "xtask/src/target"
+        nested.mkdir()
+        (nested / "cache").write_text("cache", encoding="utf-8")
+        self.assertIn("xtask/src/target/cache", tool._source_paths())
+
     def test_executable_relative_parentdir_wrong_type_and_non_native_paths_are_rejected(self):
         bad = [
             None,

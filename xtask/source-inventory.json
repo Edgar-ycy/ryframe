@@ -16,11 +16,5 @@
     "xtask/assets",
     "xtask/src"
   ],
-  "excluded_directories": [
-    ".git",
-    ".local-tests",
-    "__pycache__",
-    "node_modules",
-    "target"
-  ]
+  "excluded_directories": []
 }
