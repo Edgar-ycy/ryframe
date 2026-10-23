@@ -1,7 +1,6 @@
 """配额 bridge 的固定参数与原 post 会话初始化兼容职责，不执行 HTTP。"""
 from pathlib import Path
 from types import SimpleNamespace
-import os
 import unittest
 from unittest.mock import Mock
 
@@ -11,12 +10,13 @@ from devex_clone_post_process import KINDS, PHASES, producer_command
 
 class QuotaProducerContractTests(unittest.TestCase):
     def setUp(self):
-        root = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
-        tool = root / 'target/debug' / ('xtask.exe' if os.name == 'nt' else 'xtask')
-        from restore_build import file_digest
-        digest = file_digest(tool)
+        from rate_limit_tool import tool_binding, verified_tool
+        selected = tool_binding()
+        self.assertIsNotNone(selected, "必须显式绑定本次编译的原生工具")
+        with verified_tool(selected):
+            native = {key: selected[key] for key in ("path", "bytes", "sha256")}
         previous = __import__('devex_clone_post_process')._TEST_TOOL
-        __import__('devex_clone_post_process')._TEST_TOOL = {"path": str(tool), **digest}
+        __import__('devex_clone_post_process')._TEST_TOOL = native
         self.addCleanup(setattr, __import__('devex_clone_post_process'), '_TEST_TOOL', previous)
     def test_quota_kinds_bind_only_seed_modes_identity_plan_and_sha(self):
         root = Path(__file__).resolve().parents[2]
