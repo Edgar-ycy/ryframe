@@ -1,18 +1,12 @@
-"""迁移测试的受限 MySQL 会话：只连接明确的本机隔离目标，不提供任意 SQL CLI。"""
+"""CI 全栈数据库准备的配置校验与受管客户端参数，不持有交互式数据库会话。"""
 from __future__ import annotations
 
 import json
 import os
 from contextlib import contextmanager, ExitStack
-import queue
 import re
-import subprocess
-import threading
-import time
-import uuid
 from pathlib import Path
 
-from rate_limit_client import load_app_table
 from workspace_directory import WorkspaceDirectory
 
 
@@ -43,34 +37,6 @@ def identifier(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_]{1,64}", value):
         raise ValueError("测试数据库标识无效")
     return value
-
-
-def bindings(backend: Path, target_key: str = "shared", *, config_dir: Path | None = None) -> tuple[dict, dict]:
-    if target_key not in {"shared", "dedicated-a", "dedicated-b"}:
-        raise ValueError("仅接受全栈测试明确登记的目标")
-    if os.environ.get("APP_ENV") != "test":
-        raise ValueError("迁移测试只接受 APP_ENV=test 的文件配置")
-    settings = load_app_table(backend, {"APP_ENV": "test"}, config_dir=config_dir)
-    control, configured_targets = configured_databases(settings)
-    targets = [target for target in configured_targets
-               if target.get("key") == target_key]
-    mode = "shared" if target_key == "shared" else "dedicated"
-    if len(targets) != 1 or targets[0].get("kind") != "mysql" or targets[0].get("mode") != mode:
-        raise ValueError("测试需要唯一明确登记且模式一致的 MySQL 目标")
-    target = dict(targets[0])
-    for binding in (control, target):
-        validate_binding(binding)
-        if binding["tls_mode"] not in ("disabled", "preferred", "required"):
-            raise ValueError("此隔离 gate 尚不支持需要 CA/主机名参数的 MySQL TLS 模式")
-        binding["_scope_id"] = settings.get("scope_id")
-        binding["_client_dir"] = str(backend / ".local-tests/mysql-client")
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            binding["_container_id"] = load_control(backend)["mysql_container_id"]
-        else:
-            binding["_mysql_client"] = load_control(backend)["mysql_client"]
-    if int(control["port"]) != int(target["port"]) or control["database"] == target["database"]:
-        raise ValueError("故障 gate 仅接受同一 MySQL 实例上的两个不同隔离 schema")
-    return control, target
 
 
 def configured_databases(settings: dict) -> tuple[dict, list[dict]]:
@@ -178,109 +144,3 @@ def _client_command(binding: dict, client: str, options: str, resources: ExitSta
             option_file.chmod(0o600)
             output.write(options)
         return [str(executable), f"--defaults-file={option_file}"], binding["port"], ""
-
-
-@contextmanager
-def invocation(binding: dict):
-    with client_invocation(binding, "mysql") as (command, environment, prefix):
-        yield command + ["--batch", "--raw", "--unbuffered", "--skip-column-names",
-                         "--skip-reconnect", "--connect-timeout=5"], environment, prefix
-
-
-class MysqlSession:
-    def __init__(self, binding: dict):
-        self._resources = ExitStack()
-        self._password = binding.get("password", "")
-        try:
-            command, environment, prefix = self._resources.enter_context(invocation(binding))
-            self.process = subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, encoding="utf-8", bufsize=1,
-                                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            if prefix:
-                self.process.stdin.write(prefix)
-                self.process.stdin.flush()
-        except BaseException:
-            try:
-                if hasattr(self, "process"):
-                    self.process.kill()
-                    self.process.communicate()
-            finally:
-                self._resources.close()
-            raise
-        self.lines, self.errors = queue.Queue(), []
-        self.readers = [threading.Thread(target=target, daemon=True) for target in (self._read, self._errors)]
-        for reader in self.readers:
-            reader.start()
-
-    def _read(self):
-        for line in self.process.stdout:
-            self.lines.put(line.rstrip("\r\n"))
-        self.lines.put(None)
-
-    def _errors(self):
-        for line in self.process.stderr:
-            detail = line.rstrip()
-            if self._password:
-                escaped = client_options(self._password).splitlines()[1][10:-1]
-                for secret in sorted({self._password, escaped, *self._password.splitlines()}, key=len, reverse=True):
-                    if secret:
-                        detail = detail.replace(secret, "<redacted>")
-            self.errors.append(detail)
-            self.errors = self.errors[-8:]
-
-    def execute(self, sql: str, timeout: float = 10) -> list[dict]:
-        sentinel = "gate-" + uuid.uuid4().hex
-        self.process.stdin.write(sql.rstrip(";\n") + f";\nSELECT '{sentinel}';\n")
-        self.process.stdin.flush()
-        deadline, result = time.monotonic() + timeout, []
-        while True:
-            try:
-                line = self.lines.get(timeout=max(0.001, deadline - time.monotonic()))
-            except queue.Empty as error:
-                raise TimeoutError("MySQL gate 会话没有返回已提交语句的确认") from error
-            if line is None:
-                raise RuntimeError("MySQL gate 会话退出：" + " | ".join(self.errors))
-            if line == sentinel:
-                return result
-            result.append(json.loads(line))
-            if time.monotonic() >= deadline:
-                raise TimeoutError("MySQL gate 会话超时")
-
-    def close(self):
-        try:
-            self._close_process()
-        finally:
-            self._resources.close()
-
-    def _close_process(self):
-        try:
-            if self.process.poll() is None:
-                self.execute("ROLLBACK", timeout=5)
-                self.process.stdin.close()
-                self.process.wait(timeout=5)
-        finally:
-            if self.process.poll() is None:
-                self.process.kill()
-                self.process.wait(timeout=5)
-            for reader in self.readers:
-                reader.join(timeout=5)
-            for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
-                stream.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        self.close()
-
-
-def ownership(session: MysqlSession, schema: str, scope: str, kind: str) -> str:
-    identifier(schema)
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}", scope) or kind not in {"control", "tenant-data"}:
-        raise ValueError("ownership 参数无效")
-    rows = session.execute(f"SELECT JSON_OBJECT('scope',scope_id,'marker',marker,'server',@@server_uuid) "
-                           f"FROM `{schema}`.ryframe_resource_ownership WHERE resource_kind='{kind}'")
-    if len(rows) != 1 or rows[0].get("scope") != scope or rows[0].get("marker") != f"ryframe-owner:v1:{scope}:{kind}":
-        raise ValueError("MySQL scope 或 ownership marker 不匹配")
-    return rows[0]["server"]
