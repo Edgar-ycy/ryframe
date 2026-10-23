@@ -137,3 +137,59 @@ fn verified_inventory_receipt_content_is_not_returned_to_stdout() {
     );
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[test]
+fn migration_protocol_refuses_private_bad_output_and_binds_successful_operation() {
+    let backend = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let parent = backend.join(".local-tests/target-evidence-process");
+    std::fs::create_dir_all(&parent).unwrap();
+    let directory = tempfile::tempdir_in(parent).unwrap();
+    let request = json!({"format_version":1,"operation":"migration-operations",
+        "backend":backend,"target":directory.path(),"executable":"fixture-migrate.exe"});
+    let output = invoke(
+        &["__target-evidence"],
+        &serde_json::to_vec(&request).unwrap(),
+    );
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let operations = value["result"]["operations"].clone();
+    let path = directory.path().join(format!(
+        "{}-{}.command.json",
+        operations[0]["stage"].as_str().unwrap(),
+        "0".repeat(32)
+    ));
+    let secret = "fixture-private-migration-output";
+    let bytes = serde_json::to_vec(&json!({"command":operations[0]["command"],"returncode":0,
+        "stdout":secret,"error_type":null,"stderr":""}))
+    .unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let request = json!({"format_version":1,"operation":"migration-prefix",
+        "backend":backend,"target":directory.path(),"operations":operations,"complete":false});
+    let output = invoke(
+        &["__target-evidence"],
+        &serde_json::to_vec(&request).unwrap(),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["error"]["remote_writes"], 0);
+    assert_eq!(response["error"]["automatic_retry"], false);
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let mut receipt: Value = serde_json::from_slice(&bytes).unwrap();
+    receipt["stdout"] = request["operations"][0]["stdout"].clone();
+    let bytes = serde_json::to_vec(&receipt).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let request = json!({"format_version":1,"operation":"migration-operation-record",
+        "backend":backend,"target":directory.path(),"migration_operation":request["operations"][0]});
+    let output = invoke(
+        &["__target-evidence"],
+        &serde_json::to_vec(&request).unwrap(),
+    );
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["result"]["bytes"], bytes.len());
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}

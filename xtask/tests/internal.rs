@@ -286,6 +286,8 @@ mod target_proof_native_tests;
 mod target_publication_native_tests;
 #[path = "internal/target_reset_native.rs"]
 mod target_reset_native_tests;
+#[path = "internal/target_resume_prefix.rs"]
+mod target_resume_prefix_tests;
 #[path = "internal/target_stage_protocol.rs"]
 mod target_stage_protocol;
 #[path = "internal/target_storage_model.rs"]

@@ -66,6 +66,13 @@ fn safe_message(error: &dyn std::error::Error) -> &str {
         "reset plan 命令收据与固定清单不一致",
         "初始库存文件不属于本代次",
         "初始库存原始文件或摘要变化",
+        "迁移前缀命令、退出状态或成功输出无效",
+        "迁移前缀包含未知命令收据",
+        "迁移前缀包含重复命令收据",
+        "迁移收据越过首个缺失操作，不能证明连续前缀",
+        "迁移续作没有完成固定序列",
+        "迁移前缀的首个缺失操作必须是只读 verify",
+        "续作操作没有产生唯一成功命令收据",
     ];
     let reason = error.to_string();
     DIAGNOSTICS
@@ -88,6 +95,9 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
         "reset-plan" => &["path", "executable", "plan"][..],
         "history" => &[][..],
         "initial-inventory" => &["receipt", "resumed"][..],
+        "migration-operations" => &["executable"][..],
+        "migration-prefix" => &["operations", "complete"][..],
+        "migration-operation-record" => &["migration_operation"][..],
         _ => return Err("未知目标证据操作".into()),
     };
     let mut fields = vec!["format_version", "operation", "backend", "target"];
@@ -104,6 +114,20 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
         crate::local_test_path::LocalTestPathKind::ExistingDirectory,
     )?;
     match operation {
+        "migration-operations" => {
+            super::resume_prefix::operations(json_io::text(&value["executable"], "迁移程序")?)
+        }
+        "migration-prefix" => super::resume_prefix::prefix(
+            backend,
+            target,
+            &value["operations"],
+            value["complete"]
+                .as_bool()
+                .ok_or("迁移完成标志必须是布尔值")?,
+        ),
+        "migration-operation-record" => {
+            super::resume_prefix::operation_record(backend, target, &value["migration_operation"])
+        }
         "reset-completed" => super::reset::completed(
             backend,
             target,

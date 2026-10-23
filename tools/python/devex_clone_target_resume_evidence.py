@@ -13,7 +13,7 @@ from devex_clone_export import cli_executable
 from devex_clone_model import exact, linked, local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import (KEYS, execution_binary_bindings, prepared_target_files,
+from devex_clone_target_binding import (execution_binary_bindings, prepared_target_files,
                                         request_binding, target_files, validate_initialization_delta,
                                         validate_reset_manifest)
 from devex_clone_target_runtime_evidence import (fixture_restart_generation,
@@ -41,73 +41,6 @@ INITIALIZED_FIELDS = {"format_version", "status", "id", "scope_id", "completed_a
 class TargetEvidenceHooks:
     resume_records: Callable[..., dict]
     prepare_artifact: Callable[[str], bool]
-
-
-def migration_operations(maintenance: dict) -> list[dict]:
-    """返回首次初始化与续作共同使用的唯一迁移顺序。"""
-    executable = cli_executable(maintenance, "migrate")
-    scopes = [("control", None), *(("tenant-data", key) for key in sorted(KEYS))]
-    result = []
-    for scope, target in scopes:
-        for action in ("up", "verify"):
-            suffix = [scope, action] if target is None else [scope, action, "--target", target]
-            name = f"{scope}-{action}" if target is None else f"{scope}-{target}-{action}"
-            stage_parts = [scope] if target is None else [scope, "--target", target]
-            stdout = f"scope={scope} "
-            if target is not None:
-                stdout += f"target={target} "
-            stdout += "migration=completed schema=verified\n" if action == "up" \
-                else "migration_ledger=current schema=verified\n"
-            result.append({"id": name, "stage": "migrate-" + "-".join(stage_parts) + "-" + action,
-                           "command": [executable, *suffix], "write": action == "up",
-                           "stdout": stdout})
-    return result
-
-
-def _validate_command_receipt(path: Path, operation: dict) -> dict:
-    value = read_json(path)
-    exact(value, COMMAND_FIELDS)
-    if (value["command"] != operation["command"] or type(value["returncode"]) is not int
-            or value["returncode"] != 0 or value["error_type"] is not None
-            or value["stderr"] != "" or not isinstance(value["stdout"], str)
-            or value["stdout"].replace("\r\n", "\n") != operation["stdout"]):
-        raise ValueError("迁移前缀命令、退出状态或成功输出无效")
-    return binding(path)
-
-
-def _command_receipts(output: Path, operations: list[dict]) -> dict[str, dict]:
-    receipts = {}
-    patterns = {item["id"]: re.compile(re.escape(item["stage"]) + r"-([a-f0-9]{32})\.command\.json")
-                for item in operations}
-    for path in sorted(output.glob("migrate-*.command.json")):
-        matches = [item for item in operations if patterns[item["id"]].fullmatch(path.name)]
-        if len(matches) != 1:
-            raise ValueError("迁移前缀包含未知命令收据")
-        operation = matches[0]
-        if operation["id"] in receipts:
-            raise ValueError("迁移前缀包含重复命令收据")
-        receipts[operation["id"]] = _validate_command_receipt(path, operation)
-    return receipts
-
-
-def migration_prefix(output: Path, operations: list[dict], *, complete: bool = False) -> dict:
-    """核验收据恰好构成固定序列的唯一连续前缀。"""
-    receipts = _command_receipts(output, operations)
-    prefix = []
-    for operation in operations:
-        receipt = receipts.get(operation["id"])
-        if receipt is None:
-            break
-        prefix.append({"id": operation["id"], "receipt": receipt})
-    if set(receipts) != {item["id"] for item in prefix}:
-        raise ValueError("迁移收据越过首个缺失操作，不能证明连续前缀")
-    if complete:
-        if len(prefix) != len(operations):
-            raise ValueError("迁移续作没有完成固定序列")
-    elif (not prefix or len(prefix) == len(operations)
-          or operations[len(prefix)]["write"]):
-        raise ValueError("迁移前缀的首个缺失操作必须是只读 verify")
-    return {"completed": prefix, "next_index": len(prefix)}
 
 
 def _stage_record(output: Path, stage: str, kind: str, expected: dict) -> dict:
@@ -528,8 +461,8 @@ def migration_resume_state(backend: Path, output: Path, request_descriptor: dict
     creation = _creation_evidence(output, request)
     prepare_resume_names = _prepare_resume_stage_names(hooks, backend, output, request_descriptor)
     reset = _reset_evidence(backend, output, request, prepared["generation"])
-    operations = migration_operations(prepared["generation"]["maintenance"])
-    prefix = migration_prefix(output, operations)
+    operations = evidence("migration-operations", backend, output, executable=cli_executable(prepared["generation"]["maintenance"], "migrate"))["operations"]
+    prefix = evidence("migration-prefix", backend, output, operations=operations, complete=False)
     prior = _failed_readonly_resume_records(
         backend, output, request, request_descriptor, binding(failure_path), prepared_files,
         binding(output / "initialize.started.json"), creation, reset, operations,
@@ -606,14 +539,6 @@ def _validate_owned_resources(backend: Path, request: dict, value: dict, *,
         raise ValueError("迁移续作的 Redis owner 前像无效")
 
 
-def _operation_record(output: Path, operation: dict) -> dict:
-    paths = list(output.glob(operation["stage"] + "-*.command.json"))
-    pattern = re.compile(re.escape(operation["stage"]) + r"-([a-f0-9]{32})\.command\.json")
-    if len(paths) != 1 or pattern.fullmatch(paths[0].name) is None:
-        raise ValueError("续作操作没有产生唯一成功命令收据")
-    return _validate_command_receipt(paths[0], operation)
-
-
 def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
                                 hooks: TargetEvidenceHooks) -> bool:
     all_confirmations = list(output.glob("resume-initialize-*.confirmed.json"))
@@ -679,8 +604,8 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
         return False
     evidence("initial-inventory", backend, output, receipt=initialized["inventory"]["receipt"],
                                    resumed=True)
-    operations = migration_operations(initialized["generation"]["maintenance"])
-    prefix = migration_prefix(output, operations, complete=True)["completed"]
+    operations = evidence("migration-operations", backend, output, executable=cli_executable(initialized["generation"]["maintenance"], "migrate"))["operations"]
+    prefix = evidence("migration-prefix", backend, output, operations=operations, complete=True)["completed"]
     resumed_ids = [item.get("id") for item in value["resumed_operations"]]
     split = len(value["original_prefix"])
     if not 0 < split < len(operations) or operations[split]["write"]:

@@ -467,9 +467,8 @@ def initialize_databases(backend: Path, request: dict, original: dict, resources
                       env=resources.environment, timeout=1800)
     completed = evidence("reset-completed", backend, resources.output, manifest=manifest, sha=sha)
     confirmed(resources.output, "reset", completed)
-    from devex_clone_target_resume_evidence import migration_operations
-
-    for operation in migration_operations(maintenance):
+    for operation in evidence("migration-operations", backend, resources.output,
+                              executable=cli_executable(maintenance, "migrate"))["operations"]:
         unchanged(backend, request, original, resources, run)
         resources.command(operation["stage"], operation["command"], timeout=1800)
     return completed

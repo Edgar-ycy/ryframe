@@ -17,6 +17,7 @@ pub(crate) mod proof;
 pub(crate) mod publication;
 pub(crate) mod redis;
 pub(crate) mod reset;
+pub(crate) mod resume_prefix;
 pub(crate) mod storage;
 pub(crate) mod tree;
 

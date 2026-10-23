@@ -16,6 +16,8 @@ import devex_clone_target_inventory_resume as inventory_resume
 import devex_clone_target_prepared_files as prepared_evidence
 import devex_clone_target_resume as target_resume
 import devex_clone_target_resume_evidence as target_evidence
+from devex_clone_target_evidence import evidence as native_evidence
+from devex_clone_export import cli_executable
 import devex_clone_target_resources as target_resources
 from artifact_digests import filesystem_path
 from devex_clone_capture import read_json, write_json
@@ -174,7 +176,7 @@ class TargetResumeTests(unittest.TestCase):
 
     def use_long_path_fixture(self):
         temporary = WorkspaceDirectory(
-            Path(__file__).resolve().parents[2] / ".local-tests/python-unit",
+            Path(__file__).resolve().parents[2] / ".local-tests",
             prefix="resume-long-",
         )
         self.addCleanup(temporary.cleanup)
@@ -183,6 +185,7 @@ class TargetResumeTests(unittest.TestCase):
         suffix = len(str(Path(".local-tests") / "new-generation")) + 1
         label = "中文 空格-"
         padding = 167 - len(str(base)) - suffix - 1 - len(label)
+        self.assertGreaterEqual(padding, 0, "长路径夹具的父目录已超过精确边界")
         root = base / (label + "x" * padding)
         root.mkdir()
         self.f = Fixture(root, self)
@@ -757,7 +760,7 @@ class TargetResumeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "重复命令收据"):
             migration_resume_state(self.f.root, self.f.output, descriptor)
         duplicate.unlink()
-        future = target_evidence.migration_operations(self.f.maintenance)[4]
+        future = native_evidence("migration-operations", self.f.root, self.f.output, executable=cli_executable(self.f.maintenance, "migrate"))["operations"][4]
         write_json(self.f.output / (future["stage"] + "-" + "e" * 32 + ".command.json"), {
             "command": future["command"], "returncode": 0, "error_type": None,
             "stdout": future["stdout"], "stderr": "",
@@ -1051,7 +1054,7 @@ class TargetResumeTests(unittest.TestCase):
 
         calls = [call[1:] for call in f.calls if Path(call[0]).stem == "migrate"]
         self.assertEqual(calls.count(["tenant-data", "verify", "--target", "dedicated-a"]), 2)
-        for operation in target_evidence.migration_operations(f.maintenance)[0:3]:
+        for operation in native_evidence("migration-operations", f.root, f.output, executable=cli_executable(f.maintenance, "migrate"))["operations"][0:3]:
             self.assertEqual(calls.count(operation["command"][1:]), 1)
         successor = next(read_json(path) for path in f.output.glob(
             "resume-initialize-*.intent.json") if "predecessor" in read_json(path))

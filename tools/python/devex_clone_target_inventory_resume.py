@@ -194,8 +194,7 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
     from devex_clone_target import (FAILURE_FIELDS, PREPARE_FIELDS,
                                     initialization_failure_path)
     from devex_clone_target_resume_evidence import (_creation_evidence, _initialization_paths,
-                                                    _reset_evidence, migration_operations,
-                                                    migration_prefix)
+                                                    _reset_evidence)
 
     backend, output = backend.resolve(strict=True), local_path(backend, str(output))
     files_before = target_files(output, ignored={"initialize.lock"},
@@ -238,8 +237,9 @@ def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict
         read_json(output / "reset-plan.json"),
         cli_executable(prepared["generation"]["maintenance"], "reset"), request,
         {item["path"] for item in files_before})
-    operations = migration_operations(prepared["generation"]["maintenance"])
-    completed = migration_prefix(output, operations, complete=True)["completed"]
+    operations = evidence("migration-operations", backend, output,
+                          executable=cli_executable(prepared["generation"]["maintenance"], "migrate"))["operations"]
+    completed = evidence("migration-prefix", backend, output, operations=operations, complete=True)["completed"]
     required = _initialization_paths(output, creation, reset, completed)
     required.add(failure_path.name)
     required.update(retries["files"])

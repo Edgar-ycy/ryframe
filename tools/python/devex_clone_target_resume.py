@@ -11,8 +11,8 @@ from devex_clone_model import local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import execution_binary_bindings
-from devex_clone_target_resume_evidence import (migration_prefix, migration_resume_state,
-                                                 _operation_record)
+from devex_clone_target_resume_evidence import migration_resume_state
+from devex_clone_target_evidence import evidence
 from devex_clone_target_state import generation_lock, now
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_runtime_evidence import fixture_restart_generation
@@ -121,7 +121,8 @@ def _run_operation(output: Path, resources, operation: dict, index: int,
     finally:
         active["command_receipts"] = _operation_receipts(output, operation)
     active["phase"] = "command-receipt-verify"
-    receipt = _operation_record(output, operation)
+    receipt = evidence("migration-operation-record", resources.backend, output,
+                       migration_operation=operation)
     trusted = tree_claim.claim_one(output, trusted, Path(receipt["path"]))
     confirmed_path = output / f"resume-migrate-{attempt}-{index:02d}.confirmed.json"
     confirmation = {
@@ -278,7 +279,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                     storage_runtime=resources.storage_runtime_binding,
                     cache_runtime=resources.cache_runtime_binding
                 )
-            migration_prefix(output, state["operations"], complete=True)
+            evidence("migration-prefix", backend, output, operations=state["operations"], complete=True)
             inventory_directory = output / f"inventory-resume-{attempt}"
             tree_claim.unchanged(output, trusted)
             initial, inventory_files = inventory(
