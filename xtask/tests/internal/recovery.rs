@@ -1,10 +1,7 @@
-use std::path::Path;
-
 use super::cli::{
-    ExistingReferenceSide, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
-    RecoveryReferenceCommand,
+    ExistingReferenceSide, FreshTargetOperation, FreshTargetOptions, RecoveryReferenceCommand,
 };
-use super::recovery::{fresh_target_protocol, full_stack_arguments, reference};
+use super::recovery::{fresh_target_protocol, reference};
 
 #[test]
 fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
@@ -29,38 +26,6 @@ fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
     assert_eq!(document["request"]["write"], false);
     assert_eq!(document["request"]["plan"], plan.to_str().unwrap());
     std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
-fn full_stack_stages_use_typed_arguments() {
-    for (command, operation) in [
-        (FullStackCommand::Prepare, "prepare"),
-        (FullStackCommand::Start, "start"),
-        (FullStackCommand::Collect, "collect"),
-    ] {
-        assert_eq!(
-            full_stack_arguments(&command, "D:/当前 后端").unwrap(),
-            vec!["--operation", operation, "--backend-root", "D:/当前 后端"]
-        );
-    }
-    let value = full_stack_arguments(
-        &FullStackCommand::RateLimit {
-            tool_config_file: Path::new("D:/临时/browser-tool.json").to_path_buf(),
-        },
-        "D:/当前 后端",
-    )
-    .unwrap();
-    assert_eq!(
-        value,
-        vec![
-            "--operation",
-            "rate-limit",
-            "--backend-root",
-            "D:/当前 后端",
-            "--tool-config-file",
-            "D:/临时/browser-tool.json"
-        ]
-    );
 }
 
 #[test]
@@ -92,7 +57,7 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
 fn private_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     assert!(
-        root.join("tools/python/ci_full_stack.py").is_file(),
+        root.join("xtask/src/recovery/full_stack.rs").is_file(),
         "全栈恢复私有脚本不在当前检出中"
     );
     assert!(!root.join("tools/python/full_stack_artifacts.py").exists());
@@ -101,10 +66,7 @@ fn private_recovery_scripts_exist_in_checkout() {
     assert!(root.join("tools/python/restore_source.py").is_file());
     assert!(!root.join("tools/js/restore_reference_dataset.mjs").exists());
     assert!(root.join("xtask/src/recovery/dataset_prepare.rs").is_file());
-    assert!(
-        root.join("tools/python/prepare_full_stack_fixture.py")
-            .is_file()
-    );
+    assert!(root.join("xtask/src/recovery/fixture_prepare.rs").is_file());
     assert!(
         root.join("tools/python/reference_fixture_source_pair.py")
             .is_file()

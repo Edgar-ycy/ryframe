@@ -3,7 +3,7 @@
 #[path = "databases/client.rs"]
 mod client;
 #[path = "databases/files.rs"]
-mod files;
+pub(crate) mod files;
 #[path = "databases/model.rs"]
 mod model;
 #[path = "databases/prepare.rs"]
@@ -12,6 +12,9 @@ mod prepare;
 #[path = "databases/tests.rs"]
 mod tests;
 
+#[path = "databases/snapshot.rs"]
+pub(crate) mod snapshot;
+
 use crate::devex::runtime_native::process::Cancellation;
 use serde_json::{Value, json};
 use std::io::Read;
@@ -19,6 +22,12 @@ use std::io::Read;
 type Checked<T> = Result<T, &'static str>;
 const LIMIT: usize = 4 * 1024 * 1024;
 const MARKER: &str = "__ci-databases";
+
+pub(crate) fn load_control(root: &std::path::Path) -> crate::Result<Value> {
+    model::control(root).map_err(|code| {
+        format!("全栈控制文件无效：{code}；检查 .local-tests/full-stack-control.json").into()
+    })
+}
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
@@ -49,6 +58,7 @@ fn dispatch(operation: &str, input: &[u8]) -> Checked<Value> {
     )
     .map_err(|_| "protocol_request")?;
     match operation {
+        "private-directory" | "instance-text" => files::dispatch(operation, value),
         "control" => {
             let request: model::ControlRequest =
                 serde_json::from_value(value).map_err(|_| "protocol_request")?;

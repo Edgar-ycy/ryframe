@@ -4,14 +4,11 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 use super::{
     cli::{
         CheckCommand, Command, FixtureExpectedSources, FixturePrepareCommand,
         FixturePrepareOptions, RecoveryCommand, parse,
     },
-    recovery::fixture_prepare::private_invocation_at,
     workspace::{default_frontend_dir, root_dir},
 };
 
@@ -117,31 +114,4 @@ fn rejects_invalid_or_ambiguous_requests_before_dispatch() {
 
     fs::create_dir(&fixture.output).unwrap();
     assert!(parsed(valid).is_err());
-}
-
-#[test]
-fn private_protocol_fixes_paths_and_hides_the_public_request_from_argv() {
-    let fixture = Fixture::new();
-    let options = FixturePrepareOptions {
-        output_dir: fixture.output.clone(),
-        expected_sources: Some(FixtureExpectedSources {
-            backend_sha: "a".repeat(40),
-            frontend_sha: "b".repeat(40),
-        }),
-    };
-    let invocation =
-        private_invocation_at(&options, &root_dir(), &default_frontend_dir().unwrap()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/prepare_full_stack_fixture.py"
-    );
-    let document: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(document["format_version"], 1);
-    assert_eq!(document["kind"], "ryframe-reference-fixture-control");
-    assert_eq!(document["domain"], "prepare");
-    assert_eq!(document["operation"], "prepare");
-    assert_eq!(document["output_dir"], text(&fixture.output));
-    assert_eq!(document["expected_backend_sha"], "a".repeat(40));
-    assert_eq!(document["expected_frontend_sha"], "b".repeat(40));
-    assert!(document["write"].as_bool().unwrap());
 }

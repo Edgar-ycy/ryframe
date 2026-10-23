@@ -79,8 +79,8 @@ def _test_configuration(execution: Path, output: Path, targets: list[dict], sett
     if directory.exists() or linked(directory):
         raise ValueError("夹具测试配置目录已存在，拒绝覆盖")
     output.mkdir(parents=True, exist_ok=True)
-    from ci_full_stack_databases import _private_directory
-    _private_directory(directory)
+    from full_stack_ci_support import configuration_directory
+    configuration_directory(directory)
     shutil.copyfile(source, directory / "app.toml")
     (directory / "app.toml").chmod(0o600)
     sections = ["\n".join(f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in settings.items() if not isinstance(value, dict))]

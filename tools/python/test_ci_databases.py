@@ -1,100 +1,15 @@
 """CI 协调器协议测试；MySQL 校验和进程场景由 ci::databases 的 Rust 测试覆盖。"""
-import json
-import os
 import sys
 import tomllib
 import unittest
-from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import ci_full_stack_databases as databases
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMP = ROOT / '.local-tests/python-unit'
 TEMP.mkdir(parents=True, exist_ok=True)
-
-
-class NativeCiDatabaseProtocolTests(unittest.TestCase):
-    def test_frozen_plan_uses_private_request_and_explicit_configuration(self):
-        with WorkspaceDirectory(TEMP, prefix='ci-protocol-') as root:
-            source = Path(root) / 'input'
-            source.mkdir()
-            (source / 'app.toml').write_text('[tenant_data]\n', encoding='utf-8')
-            (source / 'app.test.toml').write_text('scope_id="ci-42-3"\n', encoding='utf-8')
-            settings = {'scope_id': 'ci-42-3', 'database': {'primary': {'password': 'private-password'}}}
-            context = {'APP_ENV': 'test', 'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '3'}
-            output = Path(root) / 'output'
-            with patch.object(databases, 'load_app_table', return_value=settings) as loader, patch.object(databases, '_native') as native:
-                native.return_value = {'scope_id': 'ci-42-3'}
-                plan = databases.plan_databases(context.__getitem__, ROOT, output, config_dir=source, container_id='a' * 64)
-                loader.assert_called_once_with(ROOT, {'APP_ENV': 'test'}, config_dir=source)
-                self.assertEqual(native.call_args.args[0], 'plan')
-                self.assertNotIn('private-password', repr(plan))
-                (source / 'app.test.toml').write_text('scope_id="foreign"', encoding='utf-8')
-                settings['database']['primary']['password'] = 'changed'
-                native.return_value = {'config_dir': str(output / 'config')}
-                self.assertEqual(databases.prepare_databases(context.__getitem__, ROOT, output, plan=plan), output / 'config')
-                request = native.call_args.args[1]
-                self.assertEqual(request['settings']['database']['primary']['password'], 'private-password')
-                self.assertIn('ci-42-3', request['environment_text'])
-                self.assertNotIn('foreign', request['environment_text'])
-                with self.assertRaisesRegex(ValueError, '执行目录'):
-                    databases.prepare_databases(context.__getitem__, ROOT, output / 'other', plan=plan)
-            self.assertFalse(output.exists())
-
-    def test_missing_explicit_directory_never_loads_defaults(self):
-        with patch.object(databases, 'load_app_table') as loader, self.assertRaisesRegex(ValueError, '显式绑定'):
-            databases.prepare_databases(lambda key: 'test', ROOT, ROOT / '.local-tests/unused')
-        loader.assert_not_called()
-
-    def process(self, response, code=0):
-        process = Mock(returncode=code)
-        process.communicate.return_value = (json.dumps(response).encode(), None)
-        return process
-
-    def test_credentials_are_only_in_stdin_and_host_overrides_are_not_forwarded(self):
-        process = self.process({'ok': True, 'result': {'scope_id': 'ci-42-3'}})
-        with patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=process) as launch, patch.dict(os.environ, {'APP_DATABASE_PASSWORD': 'host-secret', 'MYSQL_PWD': 'host-secret'}):
-            result = databases._native('plan', {'password': 'private-password'})
-        self.assertEqual(result, {'scope_id': 'ci-42-3'})
-        self.assertEqual(launch.call_args.args[0], ['bound-xtask', '__ci-databases', 'plan'])
-        self.assertNotIn('host-secret', str(launch.call_args))
-        self.assertNotIn('private-password', str(launch.call_args))
-        self.assertIn(b'private-password', process.communicate.call_args.args[0])
-
-    def test_unknown_write_is_not_retried_and_public_error_is_preserved(self):
-        process = self.process({'ok': False, 'error': {'code': 'creation_unknown', 'message': '创建结果未知，禁止自动重放'}}, 1)
-        with patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=process) as launch, self.assertRaisesRegex(RuntimeError, '创建结果未知'):
-            databases._native('prepare', {})
-        self.assertEqual(launch.call_count, 1)
-
-    def test_malformed_or_inconsistent_protocol_is_rejected(self):
-        for response, code in [({'ok': True, 'result': {}}, 1), ({'ok': False, 'error': 'secret'}, 1), ({'other': True}, 0)]:
-            with self.subTest(response=response), patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=self.process(response, code)), self.assertRaises(RuntimeError):
-                databases._native('plan', {})
-
-    def test_timeout_requests_cancellation_before_kill_without_replay(self):
-        process = self.process({})
-        process.communicate.side_effect = [databases.subprocess.TimeoutExpired('hidden', 180), (b'', None)]
-        with patch.object(databases, 'verified_tool', return_value=nullcontext('bound-xtask')), patch.object(databases.subprocess, 'Popen', return_value=process) as launch, self.assertRaises(databases.subprocess.TimeoutExpired):
-            databases._native('prepare', {})
-        process.send_signal.assert_called_once()
-        process.kill.assert_not_called()
-        self.assertEqual(launch.call_count, 1)
-
-    def test_oversized_request_is_rejected_before_launch(self):
-        with patch.object(databases.subprocess, 'Popen') as launch, self.assertRaises(ValueError):
-            databases._native('plan', {'password': 'x' * databases.LIMIT})
-        launch.assert_not_called()
-
-    def test_shared_worker_override_retains_nested_fields(self):
-        for key in ('snowflake_worker_id', '"snowflake_worker_id"', "'snowflake_worker_id'"):
-            parsed = tomllib.loads(databases._instance_text(f'{key}=3\n[app]\nsnowflake_worker_id=99\n', 2))
-            self.assertEqual(parsed['snowflake_worker_id'], 2)
-            self.assertEqual(parsed['app']['snowflake_worker_id'], 99)
 
 
 class CiDatabaseWorkflowTests(unittest.TestCase):

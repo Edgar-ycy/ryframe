@@ -3,11 +3,10 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        CloneCommand, FreshTargetCommand, FreshTargetOptions, FullStackCommand, RecoveryCommand,
-        SeedSourceOptions,
+        CloneCommand, FreshTargetCommand, FreshTargetOptions, RecoveryCommand, SeedSourceOptions,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::{run_owned_with_env, run_with_env_removed},
+    process::run_with_env_removed,
     workspace::root_dir,
 };
 
@@ -28,6 +27,8 @@ pub(crate) mod fixture_control;
 pub(crate) mod fixture_prepare;
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
+#[path = "recovery/full_stack.rs"]
+pub(crate) mod full_stack;
 #[path = "recovery/inputs/mod.rs"]
 pub(crate) mod inputs;
 #[path = "recovery/monitoring.rs"]
@@ -53,7 +54,7 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
         }
         RecoveryCommand::FixtureControl(command) => fixture_control::run(command, &root_dir()),
         RecoveryCommand::FixtureRuntime(command) => fixture_runtime::run(command, &root_dir()),
-        RecoveryCommand::FullStack(command) => run_full_stack(command),
+        RecoveryCommand::FullStack(command) => full_stack::run(command, &root_dir()),
         RecoveryCommand::Monitoring(command) => monitoring::run(command, &root_dir()),
         RecoveryCommand::DatasetPrepare(command) => dataset_prepare::run(command, &root_dir()),
     }
@@ -178,57 +179,6 @@ pub(crate) fn fresh_target_protocol(options: &FreshTargetOptions) -> Result<Stri
             "write": options.write,
         }
     }))?)
-}
-
-fn run_full_stack(command: &FullStackCommand) -> Result<()> {
-    match command {
-        FullStackCommand::Help => {
-            println!("cargo xtask check recovery full-stack <prepare|rate-limit|start|collect>");
-            return Ok(());
-        }
-        FullStackCommand::RateLimitHelp => {
-            println!(
-                "cargo xtask check recovery full-stack rate-limit --tool-config-file <绝对文件>"
-            );
-            return Ok(());
-        }
-        _ => {}
-    }
-    let backend = path_argument(&root_dir(), "后端目录")?;
-    let arguments = full_stack_arguments(command, &backend)?;
-    run_owned_with_env(
-        &root_dir(),
-        "python",
-        &[strings(&["-B", "tools/python/ci_full_stack.py"]), arguments].concat(),
-        &[],
-    )
-}
-
-pub(crate) fn full_stack_arguments(
-    command: &FullStackCommand,
-    backend: &str,
-) -> Result<Vec<String>> {
-    let operation = match command {
-        FullStackCommand::Prepare => "prepare",
-        FullStackCommand::Start => "start",
-        FullStackCommand::Collect => "collect",
-        FullStackCommand::RateLimit { .. } => "rate-limit",
-        FullStackCommand::Help | FullStackCommand::RateLimitHelp => {
-            return Err("full-stack 帮助不启动私有阶段程序".into());
-        }
-    };
-    let mut arguments = strings(&["--operation", operation, "--backend-root", backend]);
-    if let FullStackCommand::RateLimit { tool_config_file } = command {
-        arguments.extend([
-            "--tool-config-file".to_owned(),
-            path_argument(tool_config_file, "工具配置文件")?,
-        ]);
-    }
-    Ok(arguments)
-}
-
-fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(ToString::to_string).collect()
 }
 
 fn path_argument(path: &Path, label: &str) -> Result<String> {

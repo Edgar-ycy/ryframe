@@ -103,7 +103,7 @@ def runtime_contract(backend: Path, directory: Path, *, api_config_dir: Path | N
 
 def prepare_runtime_configuration(backend: Path, directory: Path, source_config_dir: Path) -> None:
     """显式登记阶段复制已选配置；只读验证和预览不调用本入口。"""
-    from ci_full_stack_databases import _instance_text, _private_directory
+    from full_stack_ci_support import instance_text, configuration_directory
 
     if not source_config_dir.is_absolute() or source_config_dir.is_symlink():
         raise ValueError("运行配置来源必须是明确的无链接绝对目录")
@@ -117,7 +117,7 @@ def prepare_runtime_configuration(backend: Path, directory: Path, source_config_
         destination = directory / name
         if destination.exists() or destination.is_symlink():
             raise ValueError("运行配置快照已存在，拒绝覆盖或自动重放")
-        _private_directory(destination)
+        configuration_directory(destination)
         for source in files:
             if source.is_symlink() or not source.is_file():
                 raise ValueError("配置来源必须是无链接的普通文件")
@@ -125,7 +125,7 @@ def prepare_runtime_configuration(backend: Path, directory: Path, source_config_
             shutil.copyfile(source, target)
             target.chmod(0o600)
         environment = destination / "app.test.toml"
-        environment.write_text(_instance_text(environment.read_text(encoding="utf-8"), worker_id), encoding="utf-8")
+        environment.write_text(instance_text(environment.read_text(encoding="utf-8"), worker_id), encoding="utf-8")
     if {path.name: file_digest(path) for path in files} != before:
         raise ValueError("来源配置在快照期间漂移；保留快照并停止登记")
 
@@ -138,9 +138,9 @@ def register_runtime(backend: Path, directory: Path, *, source_config_dir: Path 
     if source_config_dir is not None:
         if api_config_dir is not None or worker_config_dir is not None:
             raise ValueError("来源配置复制与已绑定双配置目录不能同时指定")
-        from ci_full_stack_databases import _private_directory
+        from full_stack_ci_support import configuration_directory
         configuration = directory.parent / f"{directory.name}-configuration"
-        _private_directory(configuration)
+        configuration_directory(configuration)
         prepare_runtime_configuration(backend, configuration, source_config_dir)
         api_config_dir, worker_config_dir = configuration / "config", configuration / "worker-config"
     contract = runtime_contract(backend, directory, api_config_dir=api_config_dir, worker_config_dir=worker_config_dir)

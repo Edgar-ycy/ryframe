@@ -282,3 +282,52 @@ fn instance_id_rewrite_only_changes_top_level_for_all_key_spellings() {
 #[cfg(test)]
 #[path = "process_tests.rs"]
 mod process_tests;
+
+#[test]
+fn file_protocol_rejects_unknown_fields_relative_paths_and_replay() {
+    let root = temporary();
+    let path = root.path().join("private");
+    assert!(dispatch("private-directory", br#"{"path":"relative"}"#).is_err());
+    let input = serde_json::to_vec(&json!({"path":path,"extra":"private-password"})).unwrap();
+    assert!(dispatch("private-directory", &input).is_err());
+    assert!(!path.exists());
+    let input = serde_json::to_vec(&json!({"path":path})).unwrap();
+    assert_eq!(
+        dispatch("private-directory", &input).unwrap()["state"],
+        "created"
+    );
+    assert!(dispatch("private-directory", &input).is_err());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+}
+
+#[test]
+fn instance_protocol_validates_type_range_and_syntax_without_exposing_secrets() {
+    for id in [json!(true), json!(-1), json!(1024), json!("2")] {
+        let input =
+            serde_json::to_vec(&json!({"text":"password='private-password'","worker_id":id}))
+                .unwrap();
+        let (code, value) = response(dispatch("instance-text", &input));
+        assert_eq!(code, 1);
+        assert!(!value.to_string().contains("private-password"));
+    }
+    let input = serde_json::to_vec(
+        &json!({"text":"snowflake_worker_id=3\n[app]\nsnowflake_worker_id=99\n","worker_id":2}),
+    )
+    .unwrap();
+    let result = dispatch("instance-text", &input).unwrap();
+    let table: toml::Table = toml::from_str(result["text"].as_str().unwrap()).unwrap();
+    assert_eq!(table["snowflake_worker_id"].as_integer(), Some(2));
+    assert_eq!(table["app"]["snowflake_worker_id"].as_integer(), Some(99));
+    let input =
+        serde_json::to_vec(&json!({"text":"password='private-password'\n[broken","worker_id":2}))
+            .unwrap();
+    let (_, value) = response(dispatch("instance-text", &input));
+    assert!(!value.to_string().contains("private-password"));
+}

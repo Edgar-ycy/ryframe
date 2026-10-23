@@ -6,6 +6,42 @@ use std::{
     path::Path,
 };
 
+pub(super) fn dispatch(operation: &str, value: serde_json::Value) -> Checked<serde_json::Value> {
+    use serde::Deserialize;
+    use serde_json::json;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Directory {
+        path: std::path::PathBuf,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Instance {
+        text: String,
+        worker_id: u64,
+    }
+    match operation {
+        "private-directory" => {
+            let request: Directory =
+                serde_json::from_value(value).map_err(|_| "protocol_request")?;
+            validate_absolute_path(&request.path, LocalTestPathKind::NewDirectory)
+                .map_err(|_| "config_path")?;
+            private_directory(&request.path)?;
+            Ok(json!({"state":"created"}))
+        }
+        "instance-text" => {
+            let request: Instance =
+                serde_json::from_value(value).map_err(|_| "protocol_request")?;
+            if request.worker_id > 1023 {
+                return Err("instance_id");
+            }
+            let _: toml::Table = toml::from_str(&request.text).map_err(|_| "config_invalid")?;
+            Ok(json!({"text":super::prepare::instance_text(&request.text, request.worker_id)?}))
+        }
+        _ => Err("protocol_operation"),
+    }
+}
+
 pub(super) fn read(path: &Path, limit: usize) -> Checked<Vec<u8>> {
     validate_absolute_path(path, LocalTestPathKind::ExistingFile).map_err(|_| "config_path")?;
     let file = fs::File::open(path).map_err(|_| "config_read")?;
@@ -19,7 +55,7 @@ pub(super) fn read(path: &Path, limit: usize) -> Checked<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(super) fn private_directory(path: &Path) -> Checked<()> {
+pub(crate) fn private_directory(path: &Path) -> Checked<()> {
     let builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {

@@ -285,7 +285,6 @@ fn native_and_python_callers_share_the_rust_configuration_authority() {
     assert!(python.contains("__rate-limit"));
     assert!(!python.contains("import tomllib"));
     for caller in [
-        "ci_full_stack.py",
         "devex_clone_target_binding.py",
         "devex_clone_source_proof.py",
         "reference_fixture_browser.py",

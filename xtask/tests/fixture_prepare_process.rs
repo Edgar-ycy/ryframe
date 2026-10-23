@@ -79,7 +79,7 @@ fn invoke(arguments: &[String]) -> std::process::Output {
 }
 
 #[test]
-fn invalid_arguments_exit_two_before_python_starts() {
+fn invalid_arguments_exit_two_before_native_preparation() {
     let fixture = Fixture::new();
     let mut missing = fixture.valid();
     missing.retain(|value| value != "--write");
@@ -94,7 +94,7 @@ fn invalid_arguments_exit_two_before_python_starts() {
 }
 
 #[test]
-fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn formal_mismatch_ignores_inherited_protocol_and_never_creates_output() {
     let fixture = Fixture::new();
     let result = invoke(&fixture.valid());
     let stdout = String::from_utf8(result.stdout).unwrap();
@@ -104,18 +104,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
         Some(1),
         "stdout={stdout}\nstderr={stderr}"
     );
-    assert!(
-        stdout.contains("tools/python/prepare_full_stack_fixture.py"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("--output-dir"), "{stdout}");
-    assert!(
-        !stdout.contains(fixture.output.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(
-        stderr.contains("reference_fixture_prepare_failed"),
-        "{stderr}"
-    );
+    assert!(!stdout.contains("prepare_full_stack_fixture.py"));
+    assert!(!stderr.contains("untrusted inherited value"));
     assert!(!fixture.output.exists());
 }
