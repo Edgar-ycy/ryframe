@@ -72,6 +72,22 @@ class FileConfigurationTests(unittest.TestCase):
         with self.assertRaises((ValueError, FileNotFoundError)):
             binding.configuration_digest(self.f.root, self.f.root / "config")
 
+    def test_native_configuration_checks_use_the_same_selected_file_digest(self):
+        selected = self.f.review["scopes"]["seed"]
+        original = self.f.request["configuration_sha256"]
+        unused = self.f.configuration / "app.prod.toml"
+        unused.write_text('scope_id="unused"\n', encoding="utf-8")
+        self.assertEqual(binding.configuration_digest(self.f.root, self.f.configuration), original)
+        binding.redis_configuration(self.f.root, self.f.request, selected,
+                                    environment={"APP_ENV": "test"})
+        unused.write_text('scope_id="changed-unused"\n', encoding="utf-8")
+        binding.redis_configuration(self.f.root, self.f.request, selected,
+                                    environment={"APP_ENV": "test"})
+        self.override('[jobs]\nhealth_port=19211\n')
+        with self.assertRaisesRegex(ValueError, "摘要"):
+            binding.redis_configuration(self.f.root, self.f.request, selected,
+                                        environment={"APP_ENV": "test"})
+
     def test_redis_errors_identify_file_field(self):
         selected = self.f.review["scopes"]["seed"]
         for field, value in (("host", '"other-host"'), ("port", '"16390"'),

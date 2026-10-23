@@ -96,12 +96,7 @@ impl Client {
             &context.environment,
             declared,
         )?;
-        let configuration = serde_json::json!({
-            "environment": {"APP_ENV": "test"}, "config_directory": directory,
-            "files": files.iter().map(|(key, value)| (key.clone(), value["sha256"].clone()))
-                .collect::<std::collections::BTreeMap<_, _>>(),
-        });
-        if super::input::request_configuration::python_configuration_hash(&configuration)?
+        if super::input::request_configuration::configuration_identity(&directory, &files)?
             != context.request["configuration_sha256"]
                 .as_str()
                 .unwrap_or_default()

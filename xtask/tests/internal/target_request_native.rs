@@ -117,16 +117,8 @@ impl Fixture {
             self.request.get("configuration_directory"),
         )
         .unwrap();
-        let env = self
-            .environment
-            .iter()
-            .filter(|(key, _)| key.as_str() == "APP_ENV")
-            .collect::<BTreeMap<_, _>>();
-        let hashes = files
-            .iter()
-            .map(|(key, value)| (key, &value["sha256"]))
-            .collect::<BTreeMap<_, _>>();
-        self.request["configuration_sha256"] = json!(request_configuration::python_configuration_hash(&json!({"environment": env, "config_directory": manifest::path_text(&directory, "配置目录").unwrap(), "files": hashes})).unwrap());
+        self.request["configuration_sha256"] =
+            json!(request_configuration::configuration_identity(&directory, &files).unwrap());
     }
 
     fn validate(&self) -> Result<request::Binding> {
@@ -761,4 +753,108 @@ fn cli_request_binding_rejects_duplicate_physical_targets_tool_drift_and_unknown
         )
         .is_err()
     );
+}
+
+#[test]
+fn application_identity_uses_selected_files_while_full_toml_snapshot_detects_changes() {
+    let fixture = Fixture::new();
+    let before = fixture.generation();
+    let unused = fixture.backend.join("config/app.prod.toml");
+    fs::write(&unused, "unused=true\n").unwrap();
+    let with_unused = fixture.generation();
+    assert_eq!(
+        before["configuration_sha256"],
+        with_unused["configuration_sha256"]
+    );
+    assert_ne!(
+        before["configuration"]["files"],
+        with_unused["configuration"]["files"]
+    );
+    fs::write(&unused, "unused=false\n").unwrap();
+    let after = fixture.generation();
+    assert_eq!(
+        before["configuration_sha256"],
+        after["configuration_sha256"]
+    );
+    assert_ne!(
+        with_unused["configuration"]["files"],
+        after["configuration"]["files"]
+    );
+    let selected = fixture.backend.join("config/app.test.toml");
+    let mut content = fs::read_to_string(&selected).unwrap();
+    content.push_str("\n");
+    fs::write(&selected, content).unwrap();
+    let binding = fixture.validate().unwrap();
+    assert!(
+        request_configuration::validate(
+            &fixture.backend,
+            &fixture.request,
+            &binding,
+            &fixture.environment,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn old_all_toml_application_digest_is_rejected_without_compatibility_fallback() {
+    let mut fixture = Fixture::new();
+    fs::write(
+        fixture.backend.join("config/app.prod.toml"),
+        "unused=true\n",
+    )
+    .unwrap();
+    let (directory, files) = request_configuration::configuration_files(
+        &fixture.backend,
+        &fixture.environment,
+        fixture.request.get("configuration_directory"),
+    )
+    .unwrap();
+    let all = files
+        .iter()
+        .map(|(key, value)| (key.clone(), value["sha256"].clone()))
+        .collect::<BTreeMap<_, _>>();
+    fixture.request["configuration_sha256"] = json!(
+        request_configuration::python_configuration_hash(&json!({
+            "environment":{"APP_ENV":"test"},"config_directory":directory,"files":all,
+        }))
+        .unwrap()
+    );
+    let binding = fixture.validate().unwrap();
+    assert!(
+        request_configuration::validate(
+            &fixture.backend,
+            &fixture.request,
+            &binding,
+            &fixture.environment,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn application_identity_matches_python_producer_fixture_and_requires_selected_file() {
+    let mut files = BTreeMap::from([
+        (
+            "app.toml".into(),
+            json!({"bytes":1,"sha256":"a".repeat(64)}),
+        ),
+        (
+            "app.test.toml".into(),
+            json!({"bytes":1,"sha256":"b".repeat(64)}),
+        ),
+        (
+            "tools.toml".into(),
+            json!({"bytes":1,"sha256":"c".repeat(64)}),
+        ),
+    ]);
+    let directory = Path::new("D:/fixture/config");
+    assert_eq!(
+        request_configuration::configuration_identity(directory, &files).unwrap(),
+        "cfbb98e4f6c1e9de0d785fd6601c5fb248e081f68ea0b4c75eb9f133d6803e37"
+    );
+    files.remove("app.toml");
+    assert!(request_configuration::configuration_identity(directory, &files).is_ok());
+    files.remove("app.test.toml");
+    assert!(request_configuration::configuration_identity(directory, &files).is_err());
 }

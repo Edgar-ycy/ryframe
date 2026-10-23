@@ -1,12 +1,15 @@
 //! 当前 fresh 初始化调用方的文件配置检查，禁止从环境覆盖连接或凭据。
 
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use serde_json::{Value, json};
 
 use super::super::json as json_io;
 use super::{binding, evidence_model::check, input::request};
 use crate::Result;
+
+const CONFIGURATION_CHANGED: &str =
+    "目标应用配置摘要与登记不同或读取期间变化；请核对绑定 TOML，禁止自动重放";
 
 pub(super) fn validate(backend: &Path, args: &Value, reset: bool) -> Result<Value> {
     json_io::exact(
@@ -19,6 +22,13 @@ pub(super) fn validate(backend: &Path, args: &Value, reset: bool) -> Result<Valu
     let environment = json_io::text(&args["app_env"], "APP_ENV")?;
     let directory = binding::config_directory(backend, request)?;
     let path = Path::new(json_io::text(&directory["path"], "config_dir")?);
+    let selected_environment = BTreeMap::from([("APP_ENV".into(), environment.to_owned())]);
+    let (canonical_directory, files) = super::input::request_configuration::configuration_files(
+        backend,
+        &selected_environment,
+        Some(&directory["path"]),
+    )
+    .map_err(|_| CONFIGURATION_CHANGED)?;
     let table = crate::rate_limit::load_app_table(backend, Some(path), environment)
         .map_err(|_| "目标文件配置无法读取；请检查 APP_ENV 与 config_dir 下的 TOML 文件")?;
     let table = serde_json::to_value(table)?;
@@ -64,11 +74,27 @@ pub(super) fn validate(backend: &Path, args: &Value, reset: bool) -> Result<Valu
             return Err(format!("所选配置文件的 redis.{field} 未显式匹配本侧配置").into());
         }
     }
+    if super::input::request_configuration::configuration_identity(&canonical_directory, &files)?
+        != request["configuration_sha256"].as_str().unwrap_or_default()
+    {
+        return Err(CONFIGURATION_CHANGED.into());
+    }
+    if super::input::request_configuration::configuration_files(
+        backend,
+        &selected_environment,
+        Some(&directory["path"]),
+    )
+    .map_err(|_| CONFIGURATION_CHANGED)?
+        != (canonical_directory, files)
+    {
+        return Err(CONFIGURATION_CHANGED.into());
+    }
     Ok(json!({"status":"file_configuration_verified"}))
 }
 
 pub(super) fn diagnostic(reason: &str) -> Option<&'static str> {
     const MESSAGES: &[&str] = &[
+        CONFIGURATION_CHANGED,
         "目标文件配置无法读取；请检查 APP_ENV 与 config_dir 下的 TOML 文件",
         "所选配置文件的 reset.legacy_mysql_exclusive 必须为 true，与请求保持一致",
         "所选配置文件的 reset.legacy_redis_exclusive 必须为 true，与请求保持一致",

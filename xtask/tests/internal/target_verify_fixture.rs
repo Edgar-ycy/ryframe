@@ -126,21 +126,8 @@ impl Fixture {
             self.request.get("configuration_directory"),
         )
         .unwrap();
-        let environment = self
-            .environment
-            .iter()
-            .filter(|(key, _)| key.as_str() == "APP_ENV")
-            .collect::<BTreeMap<_, _>>();
-        let files = files
-            .iter()
-            .map(|(key, value)| (key, &value["sha256"]))
-            .collect::<BTreeMap<_, _>>();
-        self.request["configuration_sha256"] = json!(
-            request_configuration::python_configuration_hash(
-                &json!({"environment":environment,"config_directory":directory,"files":files})
-            )
-            .unwrap()
-        );
+        self.request["configuration_sha256"] =
+            json!(request_configuration::configuration_identity(&directory, &files).unwrap());
     }
 
     pub(super) fn stage(&self) -> StageRequest<'_> {

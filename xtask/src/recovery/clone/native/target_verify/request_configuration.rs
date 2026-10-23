@@ -27,9 +27,7 @@ pub(crate) fn validate(
     let declared = request.get("configuration_directory");
     let (directory, files) = configuration_files(root, environment, declared)?;
     let app_environment = BTreeMap::from([("APP_ENV", "test")]);
-    let configuration_hash = python_configuration_hash(
-        &json!({"environment": app_environment, "config_directory": manifest::path_text(&directory, "配置目录")?, "files": files.iter().map(|(key, value)| (key.clone(), value["sha256"].clone())).collect::<BTreeMap<_, _>>()}),
-    )?;
+    let configuration_hash = configuration_identity(&directory, &files)?;
     if request["configuration_sha256"].as_str() != Some(configuration_hash.as_str()) {
         return Err("目标配置文件或所选 APP_ENV 与登记摘要不同；请重新核对配置并生成新请求".into());
     }
@@ -118,6 +116,27 @@ pub(crate) fn configuration_files(
         return Err("目标配置目录缺少 app.test.toml；请创建明确选择的测试环境文件，app.toml 为可选公共默认值".into());
     }
     Ok((directory, files))
+}
+
+/// 应用身份只摘要实际加载的公共文件和已选 test 环境文件。
+/// 全部 TOML 快照继续由 configuration_files 返回，供读取前后像守卫使用。
+pub(crate) fn configuration_identity(
+    directory: &Path,
+    files: &BTreeMap<String, Value>,
+) -> Result<String> {
+    if !files.contains_key("app.test.toml") {
+        return Err("应用配置身份缺少必需 app.test.toml".into());
+    }
+    let selected = files
+        .iter()
+        .filter(|(key, _)| matches!(key.as_str(), "app.toml" | "app.test.toml"))
+        .map(|(key, value)| (key.clone(), value["sha256"].clone()))
+        .collect::<BTreeMap<_, _>>();
+    python_configuration_hash(&json!({
+        "environment": {"APP_ENV": "test"},
+        "config_directory": manifest::path_text(directory, "配置目录")?,
+        "files": selected,
+    }))
 }
 
 fn canonical_path(path: &Path) -> Result<PathBuf> {
