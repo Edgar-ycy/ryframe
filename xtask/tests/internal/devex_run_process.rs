@@ -12,25 +12,7 @@ fn native_step_keeps_only_app_env_from_project_protocol_environment() {
         runner_frontend: temp.path(),
         target: temp.path(),
     };
-    let environment = BTreeMap::from([
-        ("APP_ENV".into(), "poison".into()),
-        ("APP_DATABASE_PASSWORD".into(), "must-not-leak".into()),
-        ("VITE_API_URL".into(), "must-not-leak".into()),
-        ("SNOWFLAKE_WORKER_ID".into(), "must-not-leak".into()),
-        ("RYFRAME_DEVEX_CONCURRENCY".into(), "poison".into()),
-        ("RYFRAME_DEVEX_CACHE".into(), "warm".into()),
-        ("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256".into(), "a".repeat(64)),
-        (
-            "RYFRAME_DEVEX_DRIVER_FINGERPRINT".into(),
-            format!("sha256:{}", "d".repeat(64)),
-        ),
-        (
-            "RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT".into(),
-            format!("sha256:{}", "e".repeat(64)),
-        ),
-        ("RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(), "{}".into()),
-        ("CARGO_BUILD_JOBS".into(), "1".into()),
-    ]);
+    let environment = project_protocol_environment();
     let input = super::super::super::runtime_native::Input {
         backend: temp.path().into(),
         frontend: temp.path().into(),
@@ -182,4 +164,26 @@ fn save_step_passes_validated_case_and_output_as_arguments() {
         )
         .is_err()
     );
+}
+
+fn project_protocol_environment() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("APP_ENV".into(), "poison".into()),
+        ("APP_DATABASE_PASSWORD".into(), "must-not-leak".into()),
+        ("VITE_API_URL".into(), "must-not-leak".into()),
+        ("SNOWFLAKE_WORKER_ID".into(), "must-not-leak".into()),
+        ("RYFRAME_DEVEX_CONCURRENCY".into(), "poison".into()),
+        ("RYFRAME_DEVEX_CACHE".into(), "warm".into()),
+        ("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256".into(), "a".repeat(64)),
+        (
+            "RYFRAME_DEVEX_DRIVER_FINGERPRINT".into(),
+            format!("sha256:{}", "d".repeat(64)),
+        ),
+        (
+            "RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT".into(),
+            format!("sha256:{}", "e".repeat(64)),
+        ),
+        ("RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(), "{}".into()),
+        ("CARGO_BUILD_JOBS".into(), "1".into()),
+    ])
 }

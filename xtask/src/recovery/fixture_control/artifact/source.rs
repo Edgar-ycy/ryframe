@@ -145,6 +145,10 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
         Some("business") => verify_business(root, evidence, &pair)?,
         _ => return Err("未知全栈来源类型".into()),
     }
+    verify_source_identity(&pair)
+}
+
+fn verify_source_identity(pair: &Value) -> Result<()> {
     if pair["format_version"] != 1 {
         return Err("全栈源码组合版本无效".into());
     }

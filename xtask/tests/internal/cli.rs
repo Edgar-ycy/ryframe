@@ -250,6 +250,10 @@ fn parses_check_task_graph_and_internal_groups() {
     assert!(
         parse_command(&["check", "recovery", "inputs", "reference", "--side", "base",]).is_err()
     );
+}
+
+#[test]
+fn parses_resource_gate_replay_and_rejects_duplicate_check_options() {
     assert_eq!(
         parse_command(&[
             "check",

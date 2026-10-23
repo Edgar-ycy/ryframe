@@ -37,86 +37,7 @@ use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
-    if let Some(code) = recovery::full_stack::worker::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::fixture_control::environment::protocol::run_hidden_if_requested()
-    {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::clone::native::cache::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::clone::native::post_process::protocol::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::fixture_runtime::protocol::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) =
-        recovery::fixture_control::services::lifecycle::protocol::run_hidden_if_requested()
-    {
-        std::process::exit(code);
-    }
-    if let Some(code) = ci::databases::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::source::evidence::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) =
-        recovery::fixture_control::services::history::protocol::run_hidden_if_requested()
-    {
-        std::process::exit(code);
-    }
-    if let Some(code) =
-        recovery::clone::native::target_verify::evidence_protocol::run_hidden_if_requested()
-    {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::clone::native::seed::protocol::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::dataset_prepare::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(result) = devex::memory::run_trampoline_if_requested() {
-        if let Err(error) = result {
-            eprintln!("DevEx cgroup 执行跳板失败：{error}");
-            std::process::exit(125);
-        }
-        unreachable!("成功的 exec 不会返回");
-    }
-    if let Some(code) = devex::runtime_native::entry::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::clone::native::s3::protocol::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::clone::native::session::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = frontend_origin::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = devex::job_evidence::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = recovery::monitoring::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = rate_limit::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(code) = devex::import_samples::run_hidden_if_requested() {
-        std::process::exit(code);
-    }
-    if let Some(result) = devex::cgroup::run_hidden_if_requested() {
-        if let Err(error) = result {
-            eprintln!("DevEx cgroup 内部阶段失败：{error}");
-            std::process::exit(125);
-        }
+    if run_hidden_handlers() {
         return;
     }
 
@@ -186,5 +107,96 @@ fn dispatch_data(command: DataCommand) -> Result<()> {
         }
         DataCommand::Migrate(command) => migration::run(&command),
         command => data::run(&command),
+    }
+}
+
+fn run_hidden_handlers() -> bool {
+    run_recovery_hidden_handlers();
+    #[cfg(target_os = "linux")]
+    if let Some(result) = devex::memory::run_trampoline_if_requested() {
+        if let Err(error) = result {
+            eprintln!("DevEx cgroup 执行跳板失败：{error}");
+            std::process::exit(125);
+        }
+        unreachable!("成功的 exec 不会返回");
+    }
+    if let Some(code) = devex::runtime_native::entry::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::clone::native::s3::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::clone::native::session::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = frontend_origin::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = devex::job_evidence::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::monitoring::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = rate_limit::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = devex::import_samples::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(result) = devex::cgroup::run_hidden_if_requested() {
+        if let Err(error) = result {
+            eprintln!("DevEx cgroup 内部阶段失败：{error}");
+            std::process::exit(125);
+        }
+        return true;
+    }
+
+    false
+}
+
+fn run_recovery_hidden_handlers() {
+    if let Some(code) = recovery::full_stack::worker::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::fixture_control::environment::protocol::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::clone::native::cache::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::clone::native::post_process::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::fixture_runtime::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) =
+        recovery::fixture_control::services::lifecycle::protocol::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
+    if let Some(code) = ci::databases::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::source::evidence::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) =
+        recovery::fixture_control::services::history::protocol::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
+    if let Some(code) =
+        recovery::clone::native::target_verify::evidence_protocol::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::clone::native::seed::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::dataset_prepare::run_hidden_if_requested() {
+        std::process::exit(code);
     }
 }
