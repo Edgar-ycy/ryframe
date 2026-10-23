@@ -133,3 +133,43 @@ fn start_gate_accepts_only_one_exact_authorization_and_never_echoes_input() {
         assert!(!error.contains("private-start-secret"));
     }
 }
+
+#[test]
+fn shared_source_and_clone_password_loader_uses_current_credentials_without_bootstrap() {
+    use crate::recovery::dataset_prepare::model;
+    use std::fs;
+    let root = crate::workspace::root_dir();
+    fs::create_dir_all(root.join(".local-tests")).unwrap();
+    let temporary = tempfile::tempdir_in(root.join(".local-tests")).unwrap();
+    let config = temporary.path().join("config");
+    fs::create_dir(&config).unwrap();
+    let bytes = b"scope_id='verify-current-only'\n";
+    fs::write(config.join("app.test.toml"), bytes).unwrap();
+    let mut binding = json!({"app_env":"test","directory":config,"files":{"app.test.toml":{"bytes":bytes.len(),"sha256":model::sha(bytes)}}});
+    binding["sha256"] = json!(model::hash(&binding).unwrap());
+    let binding_file = temporary.path().join("configuration.json");
+    fs::write(&binding_file, serde_json::to_vec(&binding).unwrap()).unwrap();
+    let credentials = temporary.path().join("administrator.toml");
+    let bytes =
+        b"[administrator]\ntenant_id='system'\nusername='admin'\npassword='Current!Changed123'\n";
+    fs::write(&credentials, bytes).unwrap();
+    let dataset = json!({"admin":{"tenant_id":"system","username":"admin"},
+        "administrator_credentials":{"path":credentials,"bytes":bytes.len(),"sha256":model::sha(bytes)}});
+    let mut snapshots = Vec::new();
+    let mut configuration_snapshots = Vec::new();
+    assert_eq!(
+        common::password(
+            &root,
+            &root,
+            &binding_file,
+            &dataset,
+            &mut snapshots,
+            &mut configuration_snapshots
+        )
+        .unwrap(),
+        "Current!Changed123"
+    );
+    common::unchanged(&root, &snapshots, &configuration_snapshots).unwrap();
+    fs::write(&credentials, b"private-drift").unwrap();
+    assert!(common::unchanged(&root, &snapshots, &configuration_snapshots).is_err());
+}

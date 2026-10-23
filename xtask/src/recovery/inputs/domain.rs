@@ -175,36 +175,7 @@ pub(crate) fn validate_plan(plan: &Value, backend: &Path) -> Result<()> {
         return Err("参考恢复目标必须显式选择 base 或 candidate".into());
     }
     if let Some(dataset) = root.get("dataset") {
-        let dataset = exact(
-            dataset,
-            &[
-                "timeout_seconds",
-                "request_interval_ms",
-                "api_validation_posts",
-                "post_batch_rows",
-                "tenant_targets",
-                "records",
-                "object_count",
-                "object_bytes",
-                "admin",
-                "configuration",
-            ],
-            "数据准备计划",
-        )?;
-        exact(
-            dataset.get("admin").unwrap(),
-            &["tenant_id", "username"],
-            "数据准备管理员",
-        )?;
-        let timeout = integer(dataset.get("timeout_seconds").unwrap(), "数据准备时限")?;
-        if !(1..=604_800).contains(&timeout) {
-            return Err("数据准备必须显式设置 1 至 604800 秒的阶段时限".into());
-        }
-        crate::recovery::clone::native::s3::app_configuration::load(
-            backend,
-            dataset.get("configuration").unwrap(),
-            &mut Vec::new(),
-        )?;
+        validate_dataset_credentials(dataset, backend)?;
     }
     let local = backend.join(".local-tests");
     validate_local_optional(
@@ -458,4 +429,49 @@ pub(crate) fn mode_for_key(key: &str) -> Result<(&'static str, &'static str)> {
         .iter()
         .find_map(|(name, kind, mode)| (*name == key).then_some((*kind, *mode)))
         .ok_or_else(|| "新目标必须精确包含四个逻辑数据库".into())
+}
+
+fn validate_dataset_credentials(dataset: &Value, backend: &Path) -> Result<()> {
+    let dataset = exact(
+        dataset,
+        &[
+            "timeout_seconds",
+            "request_interval_ms",
+            "api_validation_posts",
+            "post_batch_rows",
+            "tenant_targets",
+            "records",
+            "object_count",
+            "object_bytes",
+            "admin",
+            "configuration",
+            "administrator_credentials",
+        ],
+        "数据准备计划",
+    )?;
+    exact(
+        dataset.get("admin").unwrap(),
+        &["tenant_id", "username"],
+        "数据准备管理员",
+    )?;
+    crate::recovery::clone::native::session::credentials::load_account(
+        backend,
+        dataset.get("administrator_credentials").unwrap(),
+        dataset.get("admin").unwrap()["tenant_id"]
+            .as_str()
+            .ok_or("管理员租户缺失")?,
+        dataset.get("admin").unwrap()["username"]
+            .as_str()
+            .ok_or("管理员用户名缺失")?,
+    )?;
+    let timeout = integer(dataset.get("timeout_seconds").unwrap(), "数据准备时限")?;
+    if !(1..=604_800).contains(&timeout) {
+        return Err("数据准备必须显式设置 1 至 604800 秒的阶段时限".into());
+    }
+    crate::recovery::clone::native::s3::app_configuration::load(
+        backend,
+        dataset.get("configuration").unwrap(),
+        &mut Vec::new(),
+    )?;
+    Ok(())
 }

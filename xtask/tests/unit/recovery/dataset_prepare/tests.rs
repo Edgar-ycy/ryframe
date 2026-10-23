@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::fs;
 
 fn plan() -> Value {
-    let mut value = json!({"id":"restore-case","work_dir":"unused","source":{"scope_id":"source-case","api_url":"http://127.0.0.1:3000","frontend_url":"http://127.0.0.1:4174","databases":[{"key":"shared","mode":"shared"},{"key":"dedicated","mode":"dedicated"}]},"target":{"scope_id":"target-case","api_url":"http://127.0.0.1:3001","frontend_url":"http://127.0.0.1:4175"},"dataset":{"tenant_targets":["shared","shared","shared","shared","shared","shared","shared","shared","shared","dedicated"],"request_interval_ms":1000,"api_validation_posts":2,"post_batch_rows":1000,"records":100_000,"object_count":256,"object_bytes":4194304,"admin":{"tenant_id":"system","username":"admin"},"configuration":{"app_env":"test","directory":"unused","files":{},"sha256":""}}});
+    let mut value = json!({"id":"restore-case","work_dir":"unused","source":{"scope_id":"source-case","api_url":"http://127.0.0.1:3000","frontend_url":"http://127.0.0.1:4174","databases":[{"key":"shared","mode":"shared"},{"key":"dedicated","mode":"dedicated"}]},"target":{"scope_id":"target-case","api_url":"http://127.0.0.1:3001","frontend_url":"http://127.0.0.1:4175"},"dataset":{"tenant_targets":["shared","shared","shared","shared","shared","shared","shared","shared","shared","dedicated"],"request_interval_ms":1000,"api_validation_posts":2,"post_batch_rows":1000,"records":100_000,"object_count":256,"object_bytes":4194304,"admin":{"tenant_id":"system","username":"admin"},"administrator_credentials":{"path":"unused","bytes":1,"sha256":"a".repeat(64)},"configuration":{"app_env":"test","directory":"unused","files":{},"sha256":""}}});
     for side in ["source", "target"] {
         value[side]["s3"] = json!({"endpoint":"http://127.0.0.1:9000","region":"us-east-1","configuration":value["dataset"]["configuration"]});
     }
@@ -144,17 +144,18 @@ fn protocol_exact_fields_paths_modes_and_input_mutation_fail_closed() {
     let mut plan = plan();
     plan["work_dir"] = json!(temp.path());
     plan["dataset"]["configuration"] = configuration(temp.path());
+    plan["dataset"]["administrator_credentials"] = credentials(temp.path());
     let plan_path = temp.path().join("plan.json");
     let preflight_path = temp.path().join("preflight.json");
     fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
     fs::write(&preflight_path,serde_json::to_vec(&json!({"format_version":1,"kind":"restore-reference-dataset-preflight","plan_sha256":model::hash(&plan).unwrap(),"side":"source","scope_id":"source-case","actions":{"business":"empty_source_verified"}})).unwrap()).unwrap();
     let request = json!({"backend_dir":root,"format_version":1,"kind":super::KIND,"plan":plan_path,"preflight":preflight_path,"verify_existing":null,"side":"source","write":true});
     let inputs = model::Inputs::read(&request, &root).unwrap();
-    assert_eq!(inputs.password, "fixture-memory-only-password");
+    assert_eq!(inputs.password, "Current!Changed123");
     assert!(
         !serde_json::to_string(&plan)
             .unwrap()
-            .contains("fixture-memory-only-password")
+            .contains("Initial!Only123")
     );
     inputs.unchanged().unwrap();
     for (key, value) in [
@@ -170,13 +171,13 @@ fn protocol_exact_fields_paths_modes_and_input_mutation_fail_closed() {
     }
     fs::write(preflight_path, b"{}").unwrap();
     assert!(inputs.unchanged().is_err());
-    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 3);
+    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 4);
 }
 
 fn configuration(directory: &std::path::Path) -> Value {
     let config = directory.join("config");
     fs::create_dir(&config).unwrap();
-    let bytes = b"[bootstrap]\nadmin_password='fixture-memory-only-password'\n[object_storage]\naccess_key='fixture-memory-only-access'\nsecret_key='fixture-memory-only-secret'\n";
+    let bytes = b"[bootstrap]\nadmin_password='Initial!Only123'\n[object_storage]\naccess_key='fixture-memory-only-access'\nsecret_key='fixture-memory-only-secret'\n";
     fs::write(config.join("app.test.toml"), bytes).unwrap();
     let mut value = json!({"app_env":"test","directory":config,"files":{"app.test.toml":{"bytes":bytes.len(),"sha256":model::sha(bytes)}}});
     value["sha256"] = json!(model::hash(&value).unwrap());
@@ -189,13 +190,14 @@ fn config_binding_loads_password_only_in_memory_and_redacts_failure() {
     let binding = configuration(temp.path());
     let mut snapshots = Vec::new();
     assert_eq!(
-        super::configuration::password(&root, &binding, &mut snapshots).unwrap(),
-        "fixture-memory-only-password"
+        super::configuration::initial(&root, &binding, "Current!Changed123", &mut snapshots)
+            .unwrap(),
+        "Initial!Only123"
     );
     assert!(
         !serde_json::to_string(&binding)
             .unwrap()
-            .contains("fixture-memory-only-password")
+            .contains("Initial!Only123")
     );
     let objects =
         json!({"endpoint":"http://127.0.0.1:9000","region":"us-east-1","configuration":binding});
@@ -205,7 +207,7 @@ fn config_binding_loads_password_only_in_memory_and_redacts_failure() {
             .is_ok()
     );
     for secret in [
-        "fixture-memory-only-password",
+        "Initial!Only123",
         "fixture-memory-only-access",
         "fixture-memory-only-secret",
     ] {
@@ -217,9 +219,10 @@ fn config_binding_loads_password_only_in_memory_and_redacts_failure() {
         b"[bootstrap]\nadmin_password='another-memory-only-password'\n",
     )
     .unwrap();
-    let error = super::configuration::password(&root, &binding, &mut Vec::new())
-        .unwrap_err()
-        .to_string();
+    let error =
+        super::configuration::initial(&root, &binding, "Current!Changed123", &mut Vec::new())
+            .unwrap_err()
+            .to_string();
     assert!(error.contains("摘要"));
     assert!(!error.contains("memory-only-password"));
     let error =
@@ -233,9 +236,10 @@ fn config_binding_loads_password_only_in_memory_and_redacts_failure() {
     let bytes = fs::read(&file).unwrap();
     let mut invalid = json!({"app_env":"test","directory":file.parent().unwrap(),"files":{"app.test.toml":{"bytes":bytes.len(),"sha256":model::sha(&bytes)}}});
     invalid["sha256"] = json!(model::hash(&invalid).unwrap());
-    let error = super::configuration::password(&root, &invalid, &mut Vec::new())
-        .unwrap_err()
-        .to_string();
+    let error =
+        super::configuration::initial(&root, &invalid, "Current!Changed123", &mut Vec::new())
+            .unwrap_err()
+            .to_string();
     assert!(!error.contains("private-unclosed"));
 }
 #[test]
@@ -251,3 +255,39 @@ fn duplicate_protocol_keys_and_noncanonical_ids_are_rejected() {
 
 #[path = "../../../../src/recovery/dataset_prepare/tests_http.rs"]
 mod http;
+
+fn credentials(directory: &std::path::Path) -> Value {
+    let file = directory.join("administrator.toml");
+    let bytes =
+        b"[administrator]\ntenant_id='system'\nusername='admin'\npassword='Current!Changed123'\n";
+    fs::write(&file, bytes).unwrap();
+    json!({"path":file,"bytes":bytes.len(),"sha256":model::sha(bytes)})
+}
+
+#[test]
+fn verify_existing_inputs_require_only_current_password_without_bootstrap_fields() {
+    let root = crate::workspace::root_dir();
+    let temporary = directory();
+    let mut plan = plan();
+    plan["work_dir"] = json!(temporary.path());
+    let config = temporary.path().join("config");
+    fs::create_dir(&config).unwrap();
+    let bytes = b"[object_storage]\naccess_key='fixture-access'\nsecret_key='fixture-secret'\n";
+    fs::write(config.join("app.test.toml"), bytes).unwrap();
+    let mut binding = json!({"app_env":"test","directory":config,"files":{"app.test.toml":{"bytes":bytes.len(),"sha256":model::sha(bytes)}}});
+    binding["sha256"] = json!(model::hash(&binding).unwrap());
+    plan["dataset"]["configuration"] = binding;
+    plan["dataset"]["administrator_credentials"] = credentials(temporary.path());
+    let plan_file = temporary.path().join("plan.json");
+    let dataset_file = temporary.path().join("dataset.json");
+    fs::write(&plan_file, serde_json::to_vec(&plan).unwrap()).unwrap();
+    fs::write(&dataset_file, serde_json::to_vec(&dataset(&plan)).unwrap()).unwrap();
+    for side in ["source", "target"] {
+        let request = json!({"backend_dir":root,"format_version":1,"kind":super::KIND,
+            "plan":plan_file,"preflight":null,"side":side,"verify_existing":dataset_file,"write":true});
+        let inputs = model::Inputs::read(&request, &root).unwrap();
+        assert_eq!(inputs.password, "Current!Changed123");
+        assert!(inputs.initial_password.is_none());
+        inputs.unchanged().unwrap();
+    }
+}

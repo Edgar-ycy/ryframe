@@ -108,12 +108,18 @@ pub(super) fn password(
     protocol_root: &Path,
     configuration_root: &Path,
     binding_path: &Path,
+    dataset: &Value,
     snapshots: &mut Vec<Snapshot>,
     configuration_snapshots: &mut Vec<(PathBuf, Vec<u8>)>,
 ) -> Result<String> {
     let (snapshot, binding) =
         Snapshot::read(protocol_root, binding_path, 1024 * 1024, "应用配置绑定")?;
-    let password = configuration::password(configuration_root, &binding, configuration_snapshots)?;
+    crate::recovery::clone::native::s3::app_configuration::load(
+        configuration_root,
+        &binding,
+        configuration_snapshots,
+    )?;
+    let password = configuration::current(configuration_root, dataset, configuration_snapshots)?;
     snapshots.push(snapshot);
     Ok(password)
 }
@@ -158,4 +164,27 @@ pub(super) fn unchanged(
 pub(super) fn write_result(value: &Value) -> Result<()> {
     println!("{}", serde_json::to_string(value)?);
     Ok(())
+}
+
+pub(super) fn reference_dataset(
+    root: &Path,
+    descriptor: &Value,
+    snapshots: &mut Vec<(PathBuf, Vec<u8>)>,
+) -> Result<Value> {
+    let path = crate::recovery::clone::native::lifecycle::manifest::bound_file(
+        root,
+        descriptor,
+        "原参考计划",
+        true,
+    )?;
+    let bytes = fs::read(&path)?;
+    if super::super::model::sha(&bytes) != descriptor["sha256"]
+        || bytes.len() as u64 != descriptor["bytes"].as_u64().ok_or("原参考计划长度缺失")?
+    {
+        return Err("原参考计划读取期间变化".into());
+    }
+    let reference = documents::parse_fragment(std::str::from_utf8(&bytes)?, "原参考计划")?;
+    snapshots.push((path, bytes));
+    crate::recovery::clone::native::s3::app_configuration::unchanged(snapshots)?;
+    Ok(reference["dataset"].clone())
 }

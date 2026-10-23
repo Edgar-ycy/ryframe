@@ -216,8 +216,11 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     let temporary = tempfile::tempdir_in(&parent).unwrap();
     let root = super::super::super::portable_path(temporary.path());
     let review = ready(review(&root));
+    let execution = root.join("fixture/backend");
+    let reference = execution.join(".local-tests").join("reference-fixture");
+    std::fs::create_dir_all(&reference).unwrap();
     let fixture = json!({"format_version":1,"fixture":"business","status":"ready","sources":{"backend":{"head":"abc"}},
-        "paths":{"backend":"business","frontend":"frontend"}});
+        "paths":{"backend":execution,"frontend":root.join("fixture/frontend")}});
     let maintenance = json!({"format_version":1,"kind":"devex-clone-tool-build","resources_modified":false,
         "artifacts":{"reset":{"executable":"reset"},"migrate":{"executable":"migrate"},"tenant-data":{"executable":"tenant"}}});
     let documents = [
@@ -236,7 +239,28 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     let mut unsigned = plan.clone();
     unsigned.as_object_mut().unwrap().remove("sha256");
     assert_eq!(plan["sha256"], digest::plan_hash(&unsigned).unwrap());
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 3);
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
+    let output = reference.join("environment-seed-r1");
+    let (code, allowed) = request(
+        "prepare-output",
+        json!({"backend":backend,"plan":plan,"output":output}),
+    );
+    assert_eq!(code, 0, "{allowed}");
+    assert!(!output.exists());
+    let wrong = root.join("coordinator-only-environment");
+    let (code, denied) = request(
+        "prepare-output",
+        json!({"backend":backend,"plan":plan,"output":wrong}),
+    );
+    assert_ne!(code, 0);
+    assert!(
+        denied["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(reference.to_str().unwrap())
+    );
+    assert!(!wrong.exists());
+    assert!(std::fs::read_dir(&reference).unwrap().next().is_none());
     assert_eq!(
         request("planned-inputs", json!({"backend":backend,"plan":plan})).0,
         0
@@ -259,4 +283,64 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     )
     .unwrap();
     assert_ne!(request("plan", args).0, 0);
+}
+
+#[test]
+fn administrator_credentials_constructs_distinct_strong_private_toml_and_rejects_extra_fields() {
+    let initial = "Initial!Only123";
+    let (code, value) = request(
+        "administrator-credentials",
+        json!({"admin_password":initial}),
+    );
+    assert_eq!(code, 0);
+    let table: toml::Table = toml::from_str(value["result"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(table.len(), 1);
+    let account = table["administrator"].as_table().unwrap();
+    assert_eq!(account.len(), 3);
+    assert_eq!(account["tenant_id"].as_str(), Some("system"));
+    assert_eq!(account["username"].as_str(), Some("admin"));
+    let password = account["password"].as_str().unwrap();
+    assert_ne!(password, initial);
+    assert_eq!(
+        request("reset-password", json!({"admin_password":password})).0,
+        0
+    );
+    let (code, value) = request(
+        "administrator-credentials",
+        json!({"admin_password":initial,"password":"private-sentinel"}),
+    );
+    assert_ne!(code, 0);
+    assert!(!value.to_string().contains(initial));
+    assert!(!value.to_string().contains("private-sentinel"));
+}
+
+#[test]
+fn environment_output_belongs_to_both_coordinator_and_execution_without_writes() {
+    let coordinator = crate::workspace::root_dir();
+    let parent = coordinator.join(".local-tests/environment-output-native");
+    std::fs::create_dir_all(&parent).unwrap();
+    let temporary = tempfile::tempdir_in(&parent).unwrap();
+    let execution = temporary.path().join("fixture/backend");
+    let reference = execution.join(".local-tests").join("reference-fixture");
+    std::fs::create_dir_all(&reference).unwrap();
+    let fixture = json!({"format_version":1,"fixture":"business","status":"ready",
+        "sources":{"backend":{"head":"abc"}},"paths":{"backend":execution,"frontend":temporary.path().join("fixture/frontend")}});
+    let valid = reference.join("environment-seed-r1");
+    assert_ne!(coordinator, execution);
+    let before = std::fs::read_dir(temporary.path()).unwrap().count();
+    assert_eq!(
+        super::super::output::validate(&coordinator, &fixture, &valid).unwrap(),
+        valid
+    );
+    assert!(!valid.exists());
+    let wrong = temporary.path().join("coordinator-only");
+    let error = super::super::output::validate(&coordinator, &fixture, &wrong)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(reference.to_str().unwrap()));
+    assert!(!wrong.exists());
+    assert_eq!(std::fs::read_dir(temporary.path()).unwrap().count(), before);
+    assert!(std::fs::read_dir(&reference).unwrap().next().is_none());
+    std::fs::create_dir(&valid).unwrap();
+    assert!(super::super::output::validate(&coordinator, &fixture, &valid).is_err());
 }

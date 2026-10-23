@@ -68,6 +68,7 @@ pub(super) fn run(args: &[OsString]) -> Result<()> {
         &root,
         &root,
         &common::path(&args, "--configuration")?,
+        &plan["dataset"],
         &mut snapshots,
         &mut configuration_snapshots,
     )?;

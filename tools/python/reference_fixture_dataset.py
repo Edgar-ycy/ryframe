@@ -116,7 +116,7 @@ def _configuration(execution: Path, runtime: Path, verified: dict) -> dict:
     return {**result, "sha256": plan_hash(result)}
 
 
-def _dataset(review: dict, configuration: dict) -> dict:
+def _dataset(review: dict, configuration: dict, administrator_credentials: dict) -> dict:
     approved = review["dataset"]
     return {
         "timeout_seconds": 43_200,
@@ -132,6 +132,7 @@ def _dataset(review: dict, configuration: dict) -> dict:
             "username": "admin",
         },
         "configuration": configuration,
+        "administrator_credentials": administrator_credentials,
     }
 
 
@@ -170,6 +171,12 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
         raise ValueError("夹具审阅计划摘要已变化")
     validate_review(review)
     configuration = _configuration(execution, runtime, verified)
+    credentials = read_json(bootstrap_file).get("administrator_credentials")
+    if not isinstance(credentials, dict) or set(credentials) != {"path", "bytes", "sha256"}:
+        raise ValueError("夹具缺少预先绑定的当前管理员凭据")
+    credentials_file = local_path(execution, credentials["path"])
+    if credentials_file != bootstrap_file.parent / "administrator.toml" or linked(credentials_file) or _bound(credentials_file) != credentials:
+        raise ValueError("夹具当前管理员凭据路径或摘要变化")
     source = _side(review["scopes"]["seed"], configuration)
     target_scope = review["scopes"][side]
     target = _side(target_scope, configuration)
@@ -193,7 +200,7 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
             name: {key: tools[name][key] for key in ("path", "sha256")}
             for name in ("mysql", "mysqldump")
         },
-        "dataset": _dataset(review, configuration),
+        "dataset": _dataset(review, configuration, credentials),
         "fixture_bindings": {
             "bootstrap": _bound(bootstrap_file),
             "runtime": verified["runtime"],

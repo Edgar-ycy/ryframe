@@ -45,16 +45,19 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.tool = self.backend / "tool.exe"
         self.tool.parent.mkdir(parents=True, exist_ok=True)
         self.tool.write_bytes(b"tool")
-        self.bootstrap = self.backend / ".local-tests/bootstrap.json"
+        self.bootstrap = self.execution / ".local-tests/bootstrap.json"
         self.review = self.backend / ".local-tests/review.json"
         self.bootstrap.parent.mkdir(parents=True, exist_ok=True)
+        self.review.parent.mkdir(parents=True, exist_ok=True)
         self.review.write_text(json.dumps(self._review()), encoding="utf-8")
-        self.bootstrap.write_text(json.dumps({"plan": {"review": dataset._bound(self.review)}}), encoding="utf-8")
+        self.credentials = self.bootstrap.parent / "administrator.toml"
+        self.credentials.write_text("[administrator]\ntenant_id='system'\nusername='admin'\npassword='Current!Changed123'\n", encoding="utf-8")
+        self.bootstrap.write_text(json.dumps({"plan": {"review": dataset._bound(self.review)}, "administrator_credentials": dataset._bound(self.credentials)}), encoding="utf-8")
         (self.runtime / "source-pair.json").write_text(json.dumps({"sources": {"backend": {"head": "a" * 40}}}), encoding="utf-8")
-        self.private = {"APP_ENV": "test", "access_key": "fixture-access", "secret_key": "fixture-secret", "admin_password":"fixture-admin-password"}
+        self.private = {"APP_ENV": "test", "access_key": "fixture-access", "secret_key": "fixture-secret", "admin_password":"Initial!Only123"}
         config=self.runtime / "config"
         config.mkdir()
-        (config / "app.test.toml").write_text('[bootstrap]\nadmin_password="fixture-admin-password"\n[object_storage]\naccess_key="fixture-access"\nsecret_key="fixture-secret"\n',encoding="utf-8")
+        (config / "app.test.toml").write_text('[bootstrap]\nadmin_password="Initial!Only123"\n[object_storage]\naccess_key="fixture-access"\nsecret_key="fixture-secret"\n',encoding="utf-8")
         dataset.write_json(self.runtime / "runtime.json", {"api_config_dir":str(config)})
         self.verified={"scope_id":"fixture-seed-r1","runtime":dataset._bound(self.runtime / "runtime.json")}
         self.configuration=dataset._configuration(self.execution,self.runtime,self.verified)
@@ -106,12 +109,42 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertEqual(value["dataset"]["tenant_targets"], self._review()["dataset"]["tenant_targets"])
         self.assertEqual(set(value["tools"]), {"mysql", "mysqldump"})
         self.assertEqual(value["dataset"]["configuration"], self.configuration)
+        self.assertEqual(value["dataset"]["administrator_credentials"], dataset._bound(self.credentials))
+        self.assertNotIn("Current!Changed123", json.dumps(value))
         self.assertNotIn(self.private["admin_password"], json.dumps(value))
         self.assertNotIn(self.private["access_key"], json.dumps(value))
         self.assertNotIn(self.private["secret_key"], json.dumps(value))
         self.assertNotIn("password", value["dataset"]["admin"])
         self.assertNotIn("owner_password", value["dataset"])
         self.assertNotIn("password_env", value["dataset"]["admin"])
+
+    def test_target_schema_requires_exact_current_credentials_binding_before_native_validation(self):
+        import restore_reference_target as target
+        value = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+        for field in ("administrator_credentials", "path", "bytes", "sha256", "password"):
+            changed = copy.deepcopy(value)
+            if field == "administrator_credentials":
+                del changed["dataset"][field]
+            elif field == "password":
+                changed["dataset"]["administrator_credentials"][field] = "private-sentinel"
+            else:
+                del changed["dataset"]["administrator_credentials"][field]
+            with self.subTest(field=field), patch.object(target, "validate_plan") as native:
+                with self.assertRaises(ValueError):
+                    target._plan(changed, self.execution)
+                native.assert_not_called()
+
+    def test_missing_or_changed_prebound_current_credentials_fail_without_stage_execution(self):
+        original = self.bootstrap.read_text(encoding="utf-8")
+        document = json.loads(original)
+        del document["administrator_credentials"]
+        self.bootstrap.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "当前管理员凭据"):
+            dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+        self.bootstrap.write_text(original, encoding="utf-8")
+        self.credentials.write_text("changed-private-sentinel", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "凭据路径或摘要变化"):
+            dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
 
     def test_side_uses_only_config_binding_and_rejects_inline_credentials(self):
         ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
@@ -137,7 +170,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         review["dataset"].update({"tenant_targets": ["shared"] * 8 + ["dedicated-a", "dedicated-b"],
                                   "records": 200_000, "object_count": 512,
                                   "object_bytes": 2 * 1024 * 1024, "request_interval_ms": 1500})
-        result = dataset._dataset(review, self.configuration)
+        result = dataset._dataset(review, self.configuration, dataset._bound(self.credentials))
         for key, expected in review["dataset"].items():
             self.assertEqual(result[key], expected)
         result["tenant_targets"].append("shared")
@@ -149,14 +182,15 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
                 review = self._review()
                 del review["dataset"][key]
                 with self.assertRaises(KeyError):
-                    dataset._dataset(review, self.configuration)
+                    dataset._dataset(review, self.configuration, dataset._bound(self.credentials))
 
     def test_build_plan_rejects_overlapping_api_and_worker_probe(self):
         review = self._review()
         review["scopes"]["base"]["worker_ready_url"] = "http://127.0.0.1:18080/readyz"
         self.review.write_text(json.dumps(review), encoding="utf-8")
         self.bootstrap.write_text(
-            json.dumps({"plan": {"review": dataset._bound(self.review)}}),
+            json.dumps({"plan": {"review": dataset._bound(self.review)},
+                        "administrator_credentials": dataset._bound(self.credentials)}),
             encoding="utf-8",
         )
 

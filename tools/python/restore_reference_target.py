@@ -48,8 +48,9 @@ def _plan(plan: dict, backend: Path) -> None:
     if "dataset" in plan:
         exact(plan["dataset"], {"timeout_seconds", "request_interval_ms", "api_validation_posts",
                                "post_batch_rows", "tenant_targets", "records", "object_count",
-                               "object_bytes", "admin", "configuration"})
+                               "object_bytes", "admin", "configuration", "administrator_credentials"})
         exact(plan["dataset"]["admin"], {"tenant_id", "username"})
+        exact(plan["dataset"]["administrator_credentials"], {"path", "bytes", "sha256"})
     exact(plan["tools"], {"mysql", "mysqldump"})
     for tool in plan["tools"].values():
         exact(tool, {"path", "sha256"})
