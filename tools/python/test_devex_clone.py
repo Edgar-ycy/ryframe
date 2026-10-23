@@ -355,32 +355,34 @@ TenantDataTableDescriptor { table: \"biz_order\", tenant_column: \"tenant_id\", 
         denied = subprocess.run([*command, *arguments], capture_output=True, text=True, encoding="utf-8", timeout=15)
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(output.exists())
-        def environment(name, options, write):
-            value = dict(os.environ)
-            value["RYFRAME_XTASK_RECOVERY_CLONE"] = json.dumps({
-                "format_version": 1,
-                "kind": "ryframe-xtask-recovery-clone",
+        def private_input(name, options, write):
+            from io import BytesIO
+            from types import SimpleNamespace
+            from rate_limit_tool import tool_binding
+            value = {"format_version": 1, "kind": "ryframe-xtask-recovery-clone",
+                "native_tool": tool_binding(),
                 "request": {"backend_dir": str(self.backend), "command": name,
                             "effect": devex_clone_protocol.effect(name, options),
-                            "options": options, "write": write},
-            })
-            return value
+                            "options": options, "write": write}}
+            return SimpleNamespace(buffer=BytesIO(json.dumps(value).encode("utf-8")))
         protocol_file = self.backend / "tools/python/devex_clone_protocol.py"
         prepared_output = StringIO()
-        with patch.dict(os.environ, environment(
-                "plan", {"input": str(filename), "output": str(output)}, True), clear=True), \
+        with patch("sys.stdin", private_input(
+                "plan", {"input": str(filename), "output": str(output)}, True)), \
                 patch.object(devex_clone_protocol, "__file__", str(protocol_file)), \
+                patch("rate_limit_tool.install_binding"), \
                 redirect_stdout(prepared_output):
-            self.assertEqual(devex_clone.main([]), 0)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         prepared = json.loads(prepared_output.getvalue())
         self.assertFalse(prepared["execution_authorized"])
         before = {path: file_digest(path) for path in self.backend.rglob("*") if path.is_file()}
         verified_output = StringIO()
-        with patch.dict(os.environ, environment(
-                "verify", {"plan": str(output)}, False), clear=True), \
+        with patch("sys.stdin", private_input(
+                "verify", {"plan": str(output)}, False)), \
                 patch.object(devex_clone_protocol, "__file__", str(protocol_file)), \
+                patch("rate_limit_tool.install_binding"), \
                 redirect_stdout(verified_output):
-            self.assertEqual(devex_clone.main([]), 0)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         verified = json.loads(verified_output.getvalue())
         self.assertEqual(before, {path: file_digest(path) for path in self.backend.rglob("*") if path.is_file()})
         self.assertEqual(prepared, verified)

@@ -93,7 +93,7 @@ fn malformed_or_unsafe_requests_exit_two_before_starting_python() {
 }
 
 #[test]
-fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn valid_request_uses_private_stdin_and_hides_paths_from_argv() {
     let fixture = Fixture::new();
     let arguments = status_arguments(&fixture.directory);
     let result = invoke(&arguments);
@@ -101,6 +101,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     let stdout = String::from_utf8_lossy(&result.stdout);
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(stdout.contains("tools/python/devex_clone.py"), "{stdout}");
+    assert!(stdout.contains("--private-stdin"), "{stdout}");
     assert!(!stdout.contains("--run-dir"), "{stdout}");
     assert!(
         !stdout.contains(fixture.directory.to_str().unwrap()),

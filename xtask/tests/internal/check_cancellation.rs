@@ -238,6 +238,11 @@ fn cancellation_rejects_followup_command_before_spawn() {
     })
     .unwrap_err();
     assert!(process::is_process_cancellation(error.as_ref()));
+    let error = process::with_process_cancellation(&cancellation, || {
+        process::command_output_with_input(&root, "ryframe-nonexistent-command", &[], b"request")
+    })
+    .unwrap_err();
+    assert!(process::is_process_cancellation(error.as_ref()));
     fs::remove_dir_all(root).unwrap();
 }
 

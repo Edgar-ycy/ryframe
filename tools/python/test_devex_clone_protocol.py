@@ -1,6 +1,6 @@
 """clone 公开参数收归 Rust 后，私有 Python 协议的严格边界。"""
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import StringIO, BytesIO
 import itertools
 import json
 import os
@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -179,62 +180,92 @@ class CloneProtocolTests(unittest.TestCase):
                 protocol.decode(source)
 
         source = json.dumps(bridge)
-        with patch.dict(os.environ, {protocol.PROTOCOL_ENV: source}, clear=True), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
-            self.assertEqual(devex_clone.main([]), 2)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
         dispatch.assert_not_called()
 
-    def test_main_pops_all_private_protocols_before_dispatch(self):
+    def test_main_transmits_request_without_child_environment(self):
         source = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False))
-
         def dispatched(request, backend):
             self.assertEqual(backend, self.backend)
-            for name in (
-                cli.FRESH_TARGET_PROTOCOL_ENV,
-                cli.SEED_SOURCE_PROTOCOL_ENV,
-                protocol.PROTOCOL_ENV,
-            ):
-                self.assertNotIn(name, os.environ)
+            self.assertNotIn(source, os.environ.values())
+            child = subprocess.run([sys.executable, "-c", "import os,json; print(json.dumps(dict(os.environ)))"],
+                                   capture_output=True, text=True, check=True)
+            self.assertNotIn(source, json.loads(child.stdout).values())
             return {"status": request.command}
-
-        output = StringIO()
-        with patch.dict(os.environ, {protocol.PROTOCOL_ENV: source}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch("rate_limit_tool.install_binding") as install, \
-                patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, \
-                redirect_stdout(output):
-            self.assertEqual(devex_clone.main([]), 0)
+                patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, redirect_stdout(StringIO()):
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         install.assert_called_once()
         dispatch.assert_called_once()
-        self.assertEqual(json.loads(output.getvalue()), {"status": "status"})
 
-    def test_main_rejects_argv_and_conflicting_protocols(self):
-        source = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False))
-        with patch.dict(os.environ, {}, clear=True), redirect_stderr(StringIO()):
-            self.assertEqual(devex_clone.main(["status", "--run-dir", str(self.run)]), 2)
-        with patch.dict(os.environ, {
-            protocol.PROTOCOL_ENV: source,
-            cli.FRESH_TARGET_PROTOCOL_ENV: "{}",
-        }), patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
-            self.assertEqual(devex_clone.main([]), 2)
-        dispatch.assert_not_called()
+    def test_main_rejects_invalid_transport_before_dispatch_or_writes(self):
+        source = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False)).encode()
+        before = {p: p.read_bytes() for p in self.directory.rglob("*") if p.is_file()}
+        for raw in [b"", b"x" * 65537, b"\xff", b"{}", source + b"{}",
+                    source.replace(b'"format_version": 1', b'"format_version": true'),
+                    source.replace(b'"format_version": 1', b'"format_version": 1,"format_version":1'),
+                    source.replace(protocol.PROTOCOL_KIND.encode(), b"unknown"),
+                    source.replace(b'"status"', b'"status","command":"status"', 1)]:
+            with self.subTest(raw=raw[:50]), patch("sys.stdin", SimpleNamespace(buffer=BytesIO(raw))), \
+                    patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
+                self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
+            dispatch.assert_not_called()
+        for arguments in [[], ["status"], ["--private-stdin", "status"], ["--private-stdin", "--private-stdin"]]:
+            with patch("sys.stdin") as stream, patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
+                self.assertEqual(devex_clone.main(arguments), 2)
+            stream.buffer.read.assert_not_called()
+            dispatch.assert_not_called()
+        for legacy in ["RYFRAME_XTASK_RECOVERY_FRESH_TARGET", "RYFRAME_XTASK_RECOVERY_SEED_SOURCE",
+                       "RYFRAME_XTASK_RECOVERY_CLONE", "RYFRAME_XTASK_RECOVERY_CLONE_STAGE"]:
+            with patch.dict(os.environ, {legacy: source.decode()}), \
+                    patch("sys.stdin", SimpleNamespace(buffer=BytesIO(b""))), \
+                    patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
+                self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
+            dispatch.assert_not_called()
+        self.assertEqual(before, {p: p.read_bytes() for p in self.directory.rglob("*") if p.is_file()})
+
+    def test_stage_kind_uses_existing_decoder_and_dispatch_once(self):
+        value = {"format_version": 1, "kind": cli.STAGE_PROTOCOL_KIND,
+                 "request": {"backend_dir": str(self.backend), "run_dir": str(self.run),
+                             "stage": "copy", "mode": "run", "operation": "run",
+                             "attempt": 7, "write": True}}
+        source = json.dumps(value).encode()
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source))), \
+                patch.object(cli, "dispatch_stage_operation", return_value={"status": "fixture"}) as dispatch, \
+                patch.object(cli, "dispatch") as ordinary, redirect_stdout(StringIO()):
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
+        dispatch.assert_called_once()
+        self.assertEqual(dispatch.call_args.args[0].attempt, 7)
+        self.assertTrue(dispatch.call_args.args[0].write)
+        ordinary.assert_not_called()
+        for raw in [source.replace(b'"attempt": 7', b'"attempt": 0'),
+                    source.replace(b'"write": true', b'"write": false'),
+                    source + b" " * (32769 - len(source))]:
+            with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(raw))), \
+                    patch.object(cli, "dispatch_stage_operation") as dispatch, redirect_stderr(StringIO()):
+                self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
+            dispatch.assert_not_called()
+
+    def test_cancelled_or_exited_dispatch_is_not_retried(self):
+        source = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False)).encode()
+        for error in [KeyboardInterrupt(), SystemExit(7)]:
+            with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source))), \
+                    patch("rate_limit_tool.install_binding"), \
+                    patch.object(cli, "dispatch", side_effect=error) as dispatch, \
+                    self.assertRaises(type(error)):
+                devex_clone.main(["--private-stdin"])
+            dispatch.assert_called_once()
 
     def test_direct_process_accepts_only_the_private_protocol(self):
         script = Path(devex_clone.__file__).resolve()
         source = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False))
-        environment = {
-            key: value for key, value in os.environ.items()
-            if key not in {cli.FRESH_TARGET_PROTOCOL_ENV, cli.SEED_SOURCE_PROTOCOL_ENV,
-                           protocol.PROTOCOL_ENV}
-        }
-
-        def run(arguments=(), clone_protocol=None, extra=None):
-            current = dict(environment)
-            if clone_protocol is not None:
-                current[protocol.PROTOCOL_ENV] = clone_protocol
-            current.update(extra or {})
+        def run(arguments=("--private-stdin",), clone_protocol=None):
             return subprocess.run(
                 [sys.executable, "-X", "utf8", "-B", str(script), *arguments], cwd=self.backend,
-                env=current, capture_output=True, text=True, encoding="utf-8", check=False,
+                input=clone_protocol or "", capture_output=True, text=True, encoding="utf-8", check=False,
             )
 
         valid = run(clone_protocol=source)
@@ -243,7 +274,7 @@ class CloneProtocolTests(unittest.TestCase):
         for result in (
             run(("status", "--run-dir", str(self.run))),
             run(clone_protocol="{}"),
-            run(clone_protocol=source, extra={cli.FRESH_TARGET_PROTOCOL_ENV: "{}"}),
+            run(clone_protocol=source + "{}"),
         ):
             self.assertEqual(result.returncode, 2, result.stderr)
 

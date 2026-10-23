@@ -6,15 +6,12 @@ use crate::{
         CloneCommand, FreshTargetCommand, FreshTargetOptions, RecoveryCommand, SeedSourceOptions,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_env_removed,
+    process::{protocol_stdin, run_with_stdin},
     workspace::root_dir,
 };
 
-const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
-const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
 const RUNTIME_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_RUNTIME_PROTOCOL";
 const SOURCE_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_SOURCE_PROTOCOL";
-const CLONE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_CLONE";
 
 #[path = "recovery/clone.rs"]
 pub(crate) mod clone;
@@ -60,19 +57,21 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
 }
 
+fn clone_stdin(payload: &str) -> Result<std::process::Stdio> {
+    if payload.len() > 64 * 1024 {
+        return Err("复制私有协议超过 64 KiB".into());
+    }
+    protocol_stdin(Some(payload.as_bytes()))
+}
+
 fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
     let root = root_dir();
     let payload = seed_source_protocol_at(options, &root)?;
-    run_with_env_removed(
+    run_with_stdin(
         &root,
         "python",
-        &["-B", "tools/python/devex_clone.py"],
-        &[(SEED_SOURCE_PROTOCOL_ENV, payload.as_str())],
-        &[
-            FRESH_TARGET_PROTOCOL_ENV,
-            SEED_SOURCE_PROTOCOL_ENV,
-            CLONE_PROTOCOL_ENV,
-        ],
+        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
+        clone_stdin(&payload)?,
     )
 }
 
@@ -98,16 +97,11 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
     }
     let root = root_dir();
     let payload = clone::protocol(command, &root)?;
-    run_with_env_removed(
+    run_with_stdin(
         &root,
         "python",
-        &["-B", "tools/python/devex_clone.py"],
-        &[(CLONE_PROTOCOL_ENV, payload.as_str())],
-        &[
-            FRESH_TARGET_PROTOCOL_ENV,
-            SEED_SOURCE_PROTOCOL_ENV,
-            CLONE_PROTOCOL_ENV,
-        ],
+        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
+        clone_stdin(&payload)?,
     )
 }
 
@@ -146,16 +140,11 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         return Ok(());
     };
     let payload = fresh_target_protocol(options)?;
-    run_with_env_removed(
+    run_with_stdin(
         &root_dir(),
         "python",
-        &["-B", "tools/python/devex_clone.py"],
-        &[(FRESH_TARGET_PROTOCOL_ENV, payload.as_str())],
-        &[
-            FRESH_TARGET_PROTOCOL_ENV,
-            SEED_SOURCE_PROTOCOL_ENV,
-            CLONE_PROTOCOL_ENV,
-        ],
+        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
+        clone_stdin(&payload)?,
     )
 }
 

@@ -244,7 +244,7 @@ pub(crate) fn command_output(dir: &Path, executable: &str, args: &[&str]) -> Res
 }
 
 pub(crate) fn command_output_quiet(dir: &Path, executable: &str, args: &[&str]) -> Result<String> {
-    command_output_impl(dir, executable, args, &[], false, false)
+    command_output_impl(dir, executable, args, &[], (false, false), None)
 }
 
 pub(crate) fn command_output_with_env(
@@ -253,7 +253,7 @@ pub(crate) fn command_output_with_env(
     args: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<String> {
-    command_output_impl(dir, executable, args, environment, true, true)
+    command_output_impl(dir, executable, args, environment, (true, true), None)
 }
 
 fn command_output_impl(
@@ -261,8 +261,8 @@ fn command_output_impl(
     executable: &str,
     args: &[&str],
     environment: &[(&str, &str)],
-    visible: bool,
-    configure_cache: bool,
+    (visible, configure_cache): (bool, bool),
+    input: Option<&[u8]>,
 ) -> Result<String> {
     let started = Instant::now();
     let logged = process_log_active();
@@ -280,7 +280,7 @@ fn command_output_impl(
     command
         .args(&args)
         .current_dir(dir)
-        .stdin(Stdio::null())
+        .stdin(protocol_stdin(input)?)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let output = command_output_result(command)?;
@@ -321,14 +321,7 @@ pub(crate) fn command_output_with_input_timeout(
     configure_cargo_cache(executable, &mut command);
     configure_environment(&mut command, executable, environment, &[]);
     command.args(&args).current_dir(dir);
-    if let Some(input) = input {
-        let mut file = tempfile::tempfile()?;
-        file.write_all(input)?;
-        file.seek(SeekFrom::Start(0))?;
-        command.stdin(Stdio::from(file));
-    } else {
-        command.stdin(Stdio::null());
-    }
+    command.stdin(protocol_stdin(input)?);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command_output_result_with_timeout(command, timeout).map_err(|error| {
         format!(
@@ -337,6 +330,27 @@ pub(crate) fn command_output_with_input_timeout(
         )
         .into()
     })
+}
+
+/// 为一次性私有协议准备可关闭的 stdin，不使用环境变量或写入线程。
+pub(crate) fn protocol_stdin(input: Option<&[u8]>) -> Result<Stdio> {
+    let Some(input) = input else {
+        return Ok(Stdio::null());
+    };
+    let mut file = tempfile::tempfile()?;
+    file.write_all(input)?;
+    file.seek(SeekFrom::Start(0))?;
+    Ok(Stdio::from(file))
+}
+
+/// 捕获长时私有阶段的输出，沿用进程树取消规则，不设置总运行期限。
+pub(crate) fn command_output_with_input(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    input: &[u8],
+) -> Result<String> {
+    command_output_impl(dir, executable, args, &[], (true, true), Some(input))
 }
 
 pub(crate) fn resolved_executable(root: &Path, executable: &str) -> Result<OsString> {

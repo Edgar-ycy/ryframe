@@ -8,7 +8,6 @@ import stat
 from types import SimpleNamespace
 
 
-PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_CLONE"
 PROTOCOL_KIND = "ryframe-xtask-recovery-clone"
 COMMANDS = {
     "plan", "verify", "init", "status", "stage", "runtime", "recover",
@@ -295,9 +294,27 @@ def _cache(options):
             "operation": operation, "request": request}
 
 
+def read_private_stdin(stream):
+    """有界读取唯一 UTF-8 请求；按既有 kind 选择解码器前先拒绝重复字段。"""
+    raw = stream.read(64 * 1024 + 1)
+    if not isinstance(raw, bytes) or not raw or len(raw) > 64 * 1024:
+        raise CloneProtocolError("复制私有 stdin 为空或超过 64 KiB")
+    try:
+        source = raw.decode("utf-8", errors="strict")
+        value = json.loads(source, object_pairs_hook=_strict_object)
+    except (UnicodeError, ValueError, TypeError, RecursionError) as error:
+        raise CloneProtocolError("复制私有 stdin 不是严格 UTF-8 JSON") from error
+    if (not isinstance(value, dict) or type(value.get("format_version")) is not int
+            or value["format_version"] != 1 or not isinstance(value.get("kind"), str)):
+        raise CloneProtocolError("复制私有 stdin 版本或类型无效")
+    if value["kind"] == "ryframe-xtask-recovery-clone-stage" and len(raw) > 32 * 1024:
+        raise CloneProtocolError("阶段私有 stdin 超过 32 KiB")
+    return value["kind"], source
+
+
 def decode(source: str):
     """解码唯一版本的 clone 请求，并构造既有阶段函数所需的命名参数。"""
-    if (not isinstance(source, str) or not source or len(source) > 64 * 1024
+    if (not isinstance(source, str) or not source or len(source.encode("utf-8")) > 64 * 1024
             or any(character in source for character in ("\r", "\n", "\0"))):
         raise CloneProtocolError("clone 私有协议为空、过长或包含换行/NUL")
     try:

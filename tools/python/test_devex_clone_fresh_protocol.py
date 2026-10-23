@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import StringIO, BytesIO
 import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -69,30 +70,30 @@ class FreshTargetProtocolTests(unittest.TestCase):
         output = StringIO()
 
         def dispatched(_request, _backend):
-            self.assertNotIn(cli.FRESH_TARGET_PROTOCOL_ENV, os.environ)
+            self.assertNotIn(source, os.environ.values())
             return {"status": "fresh_target_unregistered"}
 
-        with patch.dict(os.environ, {cli.FRESH_TARGET_PROTOCOL_ENV: source}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, \
                 redirect_stdout(output):
-            self.assertEqual(devex_clone.main([]), 0)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         dispatch.assert_called_once()
         self.assertEqual(json.loads(output.getvalue())["status"], "fresh_target_unregistered")
 
-        with patch.dict(os.environ, {cli.FRESH_TARGET_PROTOCOL_ENV: source}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch.object(cli, "dispatch", side_effect=ValueError("domain")), \
                 redirect_stderr(StringIO()):
-            self.assertEqual(devex_clone.main([]), 1)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 1)
 
     def test_private_protocol_rejects_argv_and_malformed_input_with_code_two(self):
         source = json.dumps(self.payload())
-        with patch.dict(os.environ, {cli.FRESH_TARGET_PROTOCOL_ENV: source}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
             self.assertEqual(devex_clone.main(["status"]), 2)
         dispatch.assert_not_called()
-        with patch.dict(os.environ, {cli.FRESH_TARGET_PROTOCOL_ENV: "{}"}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(b"{}"))), \
                 patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
-            self.assertEqual(devex_clone.main([]), 2)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
         dispatch.assert_not_called()
 
     def test_old_fresh_target_argv_is_not_a_private_program_entry(self):

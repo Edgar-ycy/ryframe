@@ -7,15 +7,12 @@ from devex_clone_capture import read_json
 from devex_clone_model import local_path
 from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
 
-FRESH_TARGET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET"
 FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
 FRESH_TARGET_OPERATIONS = {
     "prepare", "resume-prepare", "initialize", "resume-initialize",
     "reconcile-preflight", "verify", "status",
 }
-SEED_SOURCE_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE"
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
-STAGE_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_CLONE_STAGE"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
     "source-register", "source-rebind", "source-generation-start",
@@ -135,7 +132,7 @@ def _seed_protocol_path(value, name, *, optional=False):
 
 def decode_seed_source_protocol(source: str):
     """严格解码正式 seed 来源链请求；路径的最终 ownership 由 dispatch 再核验。"""
-    if (not isinstance(source, str) or not source or len(source) > 32 * 1024
+    if (not isinstance(source, str) or not source or len(source.encode("utf-8")) > 32 * 1024
             or any(character in source for character in ("\r", "\n", "\0"))):
         raise SeedSourceProtocolError("seed source 私有协议为空、过长或包含换行/NUL")
     try:
@@ -201,7 +198,7 @@ def _stage_path(value, label):
 
 def decode_clone_stage_protocol(source: str):
     """严格解码 Rust 生命周期状态机交给未迁移资源编排的单一请求。"""
-    if (not isinstance(source, str) or not source or len(source) > 32 * 1024
+    if (not isinstance(source, str) or not source or len(source.encode("utf-8")) > 32 * 1024
             or any(character in source for character in ("\r", "\n", "\0"))):
         raise StageProtocolError("clone stage 私有协议为空、过长或包含换行/NUL")
     try:

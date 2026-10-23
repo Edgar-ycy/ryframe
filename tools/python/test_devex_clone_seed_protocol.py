@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import StringIO, BytesIO
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -89,20 +90,20 @@ class SeedSourceProtocolTests(unittest.TestCase):
 
         def dispatched(request, backend):
             self.assertEqual(backend, self.backend)
-            self.assertNotIn(cli.SEED_SOURCE_PROTOCOL_ENV, os.environ)
+            self.assertNotIn(source, os.environ.values())
             return {"status": request.operation}
 
-        with patch.dict(os.environ, {cli.SEED_SOURCE_PROTOCOL_ENV: source}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch.object(cli, "dispatch", side_effect=dispatched) as dispatch, \
                 redirect_stdout(output):
-            self.assertEqual(devex_clone.main([]), 0)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         dispatch.assert_called_once()
         self.assertEqual(json.loads(output.getvalue())["status"], "source-generation-status")
 
-        with patch.dict(os.environ, {cli.SEED_SOURCE_PROTOCOL_ENV: source}), \
+        with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch.object(cli, "dispatch", side_effect=ValueError("domain")), \
                 redirect_stderr(StringIO()):
-            self.assertEqual(devex_clone.main([]), 1)
+            self.assertEqual(devex_clone.main(["--private-stdin"]), 1)
 
     def test_explicit_main_argv_is_rejected(self):
         arguments = [
@@ -116,19 +117,10 @@ class SeedSourceProtocolTests(unittest.TestCase):
 
     def test_direct_process_uses_only_the_private_protocol_and_stable_exit_codes(self):
         script = Path(devex_clone.__file__).resolve()
-        environment = {
-            key: value for key, value in os.environ.items()
-            if key not in {cli.SEED_SOURCE_PROTOCOL_ENV, cli.FRESH_TARGET_PROTOCOL_ENV}
-        }
-
-        def run(arguments=(), protocol=None, extra=None):
-            current = dict(environment)
-            if protocol is not None:
-                current[cli.SEED_SOURCE_PROTOCOL_ENV] = protocol
-            current.update(extra or {})
+        def run(arguments=("--private-stdin",), protocol=None):
             return subprocess.run(
                 [sys.executable, "-X", "utf8", "-B", str(script), *arguments], cwd=self.backend,
-                env=current, capture_output=True, text=True, encoding="utf-8", check=False,
+                input=protocol or "", capture_output=True, text=True, encoding="utf-8", check=False,
             )
 
         valid = run(protocol=self.encoded())
@@ -146,7 +138,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
             run(protocol="{}"),
             run(protocol=repeated),
             run(protocol=json.dumps(unknown)),
-            run(protocol=self.encoded(), extra={cli.FRESH_TARGET_PROTOCOL_ENV: "{}"}),
+            run(protocol=self.encoded() + "{}"),
         ):
             self.assertEqual(result.returncode, 2, result.stderr)
 

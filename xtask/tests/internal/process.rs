@@ -512,6 +512,35 @@ fn python_output_runner_applies_the_same_utf8_policy() {
 }
 
 #[test]
+fn stdin_capture_transports_utf8_once_without_environment_and_preserves_failure() {
+    let request = "{\"kind\":\"私有请求\",\"format_version\":1}";
+    let script = "import json,os,sys; raw=sys.stdin.buffer.read(); print(json.dumps([raw.decode('utf-8'), raw.decode('utf-8') in os.environ.values(),sys.argv[1:]]))";
+    let output = super::process::command_output_with_input(
+        Path::new("."),
+        "python",
+        &["-c", script],
+        request.as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(output.trim()).unwrap(),
+        serde_json::json!([request, false, []])
+    );
+    let directory = tool_program_directory();
+    let marker = directory.path().join("once.txt");
+    let script = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_bytes(p.read_bytes()+b'x' if p.exists() else b'x'); sys.stdin.buffer.read(); sys.exit(7)";
+    let error = super::process::command_output_with_input(
+        Path::new("."),
+        "python",
+        &["-c", script, marker.to_str().unwrap()],
+        b"request",
+    )
+    .unwrap_err();
+    assert_eq!(failure_exit_code(error.as_ref()), Some(7));
+    assert_eq!(fs::read(marker).unwrap(), b"x");
+}
+
+#[test]
 fn child_usage_and_task_failure_exit_codes_are_preserved() {
     for code in [2, 7] {
         let statement = format!("exit {code}");

@@ -16,7 +16,6 @@ use crate::{
     process,
 };
 
-const STAGE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_CLONE_STAGE";
 pub(crate) struct StageRequest<'a> {
     pub(crate) backend: &'a Path,
     pub(crate) run_dir: &'a Path,
@@ -288,11 +287,11 @@ fn finish_unstarted_failure(
 
 pub(crate) fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result<Value> {
     let payload = protocol(request, operation)?;
-    let output = process::command_output_with_env(
+    let output = process::command_output_with_input(
         backend,
         "python",
-        &["-B", "tools/python/devex_clone.py"],
-        &[(STAGE_PROTOCOL_ENV, payload.as_str())],
+        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
+        payload.as_bytes(),
     )
     .map_err(|error| -> String { format!("阶段资源编排子进程失败：{}", error) })?;
     let value = json_io::parse_fragment(output.trim(), "阶段资源编排输出")?;

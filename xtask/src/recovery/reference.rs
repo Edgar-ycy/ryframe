@@ -12,13 +12,10 @@ use crate::{
         RecoveryReferenceCommand, ReferencePlanAction, ReferencePlanOptions, ReferenceTargetInputs,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_stdin_env_removed,
+    process::run_with_stdin,
 };
 
 const SCRIPT: &str = "tools/python/restore_reference.py";
-const INPUTS_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_INPUTS";
-const FRESH_TARGET_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
-const SEED_SOURCE_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
 
 pub(crate) const USAGE: &str = "cargo xtask check recovery plan --plan <.local-tests 内参考计划> [--target-plan <现有目标计划> | --backup-receipt <文件> --comparison-sources <文件> --arm-input <文件> --fresh-target-verify <文件> --product-plan <文件> [--output <新文件> --write]]\n  cargo xtask check recovery check-dataset --plan <参考计划>\n  cargo xtask check recovery check-existing --plan <参考计划> [--side source|target]\n  cargo xtask check recovery dataset --plan <参考计划> --write\n  cargo xtask check recovery backup --plan <参考计划> --inventory <文件> --source-generation <文件> --source-export-result <文件> --write\n  cargo xtask check recovery restore --plan <参考计划> --backup-root <目录> --record <文件> --target-plan <文件> --runtime-registration <文件> --write\n  cargo xtask check recovery copy --plan <参考计划> --backup-root <目录> --copy-id <ID> --write\n  cargo xtask check recovery damage --plan <参考计划> --backup-root <目录> --artifact <相对路径> [--missing] --write";
 
@@ -37,17 +34,11 @@ pub(super) fn run(command: &RecoveryReferenceCommand, root: &Path) -> Result<()>
     input.seek(SeekFrom::Start(0))?;
     let binding = crate::check::python_suite::binding(&std::env::current_exe()?)?
         .ok_or("参考恢复要求可核验的当前原生工具，拒绝临时编译回退")?;
-    run_with_stdin_env_removed(
+    run_with_stdin(
         root,
         "python",
         &["-B", SCRIPT, "--native-tool", &binding, "--stdin"],
         Stdio::from(input),
-        &[
-            "RYFRAME_XTASK_RECOVERY_REFERENCE",
-            INPUTS_PROTOCOL_KEY,
-            FRESH_TARGET_PROTOCOL_KEY,
-            SEED_SOURCE_PROTOCOL_KEY,
-        ],
     )
 }
 
