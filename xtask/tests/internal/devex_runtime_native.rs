@@ -3,6 +3,8 @@ use super::*;
 mod boundaries;
 #[path = "devex_runtime_native_evidence.rs"]
 mod evidence;
+#[path = "devex_runtime_native_homepage.rs"]
+mod homepage_contract;
 #[path = "devex_runtime_native_imports.rs"]
 mod import_requests;
 #[path = "devex_runtime_native_migration.rs"]
