@@ -24,7 +24,7 @@ ryframe-application（业务用例、事务、状态机、端口）
 ryframe（API、Worker、迁移与依赖装配）
 ```
 
-HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。组合根通过 `APP_ENV=dev|test|prod` 选择必须存在的 `config/app.<environment>.toml`，与公共 `config/app.toml` 合并；密码、JWT、监控、Redis 和存储凭据使用明文字段，初始管理员密码来自 `[bootstrap] admin_password`。根字段 `snowflake_worker_id` 在同一部署的各实例间必须不同。应用 `--config-dir <directory>` 默认 `config`，相对当前工作目录解析；生成器的 CLI、Builder `.configuration_directory(path)` 及可选 `[generator] config_dir` 相对后端 Workspace 根目录解析。生成器优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件不接受环境变量覆盖。本地化通过 TOML 的 `app.locales_dir` 指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；生产加载资源失败时严格拒绝启动，开发环境允许内嵌回退。配置保存后热切换、失败时回滚旧代次是已确定的 dev 行为要求，当前文件配置链路尚未实现，不能作为现有能力依赖。部署四角色模板与私有配置目录已集成并通过资产结构及 CI 工具测试；真实容器、镜像和整链仍未验收，局部检查不代表整体门禁。
+HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。组合根通过 `APP_ENV=dev|test|prod` 选择必须存在的 `config/app.<environment>.toml`，与公共 `config/app.toml` 合并；密码、JWT、监控、Redis 和存储凭据使用明文字段，初始管理员密码来自 `[bootstrap] admin_password`。根字段 `snowflake_worker_id` 在同一部署的各实例间必须不同。应用 `--config-dir <directory>` 默认 `config`，相对当前工作目录解析；生成器的 CLI、Builder `.configuration_directory(path)` 及可选 `[generator] config_dir` 相对后端 Workspace 根目录解析。生成器优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件不接受环境变量覆盖。本地化通过 TOML 的 `app.locales_dir` 指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；生产加载资源失败时严格拒绝启动，开发环境允许内嵌回退。开发监督器已实现按代次保存完整私有文件配置、配置保存后切换及失败回滚；端口与实例编号变化复用既有二进制，回滚使用旧代次的配置、端口和编号。停止状态不确定时保留现场并拒绝启动第二个 Worker。真实服务整链验收仍待完成，不能用定向测试代替，使用方法见开发指南。部署四角色模板与私有配置目录已集成并通过资产结构及 CI 工具测试；真实容器、镜像和整链仍未验收，局部检查不代表整体门禁。
 
 ## 模块定位
 
