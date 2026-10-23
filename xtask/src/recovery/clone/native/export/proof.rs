@@ -304,17 +304,8 @@ fn runtime_configuration(
             &context.environment,
             Some(declared),
         )?;
-    // runtime_contract 的摘要只绑定实际加载的公共文件与已选环境文件；
-    // files 仍保留目录中全部 TOML，用于本次核验前后像，而非扩大生产者摘要口径。
-    let selected = files
-        .iter()
-        .filter(|(key, _)| matches!(key.as_str(), "app.toml" | "app.test.toml"))
-        .map(|(key, value)| (key.clone(), value["sha256"].clone()))
-        .collect::<BTreeMap<_, _>>();
-    let payload = json!({"environment": {"APP_ENV": "test"},
-        "config_directory": directory, "files": selected});
-    let sha = super::super::target_verify::input::request_configuration::python_configuration_hash(
-        &payload,
+    let sha = super::super::target_verify::input::request_configuration::configuration_identity(
+        &directory, &files,
     )?;
     if runtime[format!("{role}_configuration_sha256")].as_str() != Some(sha.as_str()) {
         return Err("源 TOML 配置与运行收据摘要不同；请核对绑定文件".into());
