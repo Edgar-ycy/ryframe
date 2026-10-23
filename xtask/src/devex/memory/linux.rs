@@ -19,6 +19,7 @@ use super::MemoryReading;
 
 const CGROUP_ROOT_ENV: &str = "RYFRAME_DEVEX_CGROUP_ROOT";
 const TRAMPOLINE_GROUP_ENV: &str = "RYFRAME_DEVEX_CGROUP_TRAMPOLINE";
+const IN_PLACE_TRAMPOLINE_ARG0: &str = "__ryframe_devex_cgroup_in_place";
 const GROUP_PREFIX: &str = "ryframe-devex-";
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -56,15 +57,45 @@ fn run_trampoline(group: OsString) -> Result<()> {
     let group = validate_owned_group(Path::new(&group))?;
     join_and_verify(&group)?;
 
-    let mut arguments = env::args_os().skip(1);
-    let program = arguments.next().ok_or("cgroup 执行跳板缺少目标程序")?;
-    let mut command = Command::new(program);
-    command.args(arguments).env_remove(TRAMPOLINE_GROUP_ENV);
-    let error = command.exec();
+    let error = target_command(env::args_os())?.exec();
     Err(format!("无法 exec 目标程序：{error}").into())
 }
 
-fn trampoline_command(command: Command, group: &Path, executable: &Path) -> Result<Command> {
+fn target_command(arguments: impl IntoIterator<Item = OsString>) -> Result<Command> {
+    let mut arguments = arguments.into_iter();
+    let in_place = arguments.next().as_deref() == Some(OsStr::new(IN_PLACE_TRAMPOLINE_ARG0));
+    let program = if in_place {
+        env::current_exe()?.into_os_string()
+    } else {
+        arguments.next().ok_or("cgroup 执行跳板缺少目标程序")?
+    };
+    let mut command = Command::new(program);
+    command.args(arguments);
+    for (key, _) in env::vars_os() {
+        let name = key.to_string_lossy().to_ascii_uppercase();
+        if name.starts_with("RYFRAME_")
+            || name.starts_with("VITE_")
+            || name.starts_with("SNOWFLAKE_")
+            || (name.starts_with("APP_") && name != "APP_ENV")
+        {
+            command.env_remove(key);
+        }
+    }
+    Ok(command)
+}
+
+fn trampoline_command(mut command: Command, group: &Path, executable: &Path) -> Result<Command> {
+    if command.get_program() == executable.as_os_str() {
+        // 原生入口已绑定 stdin 文件；保留整个 Command，避免重建时丢失句柄或偏移量。
+        // argv[0] 只区分跳板模式，结构化输入仍由原 stdin 传递。
+        command.arg0(IN_PLACE_TRAMPOLINE_ARG0);
+        command.env(TRAMPOLINE_GROUP_ENV, group);
+        command.env(
+            CGROUP_ROOT_ENV,
+            group.parent().ok_or("cgroup 隔离组缺少委托父目录")?,
+        );
+        return Ok(command);
+    }
     let program = command.get_program().to_owned();
     let arguments = command.get_args().map(OsStr::to_owned).collect::<Vec<_>>();
     let directory = command.get_current_dir().map(Path::to_owned);
@@ -219,3 +250,7 @@ impl Drop for Cgroup {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "linux_tests.rs"]
+mod tests;

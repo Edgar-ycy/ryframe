@@ -110,8 +110,13 @@ fn save(path: &std::path::Path, samples: &[Value]) {
 fn child_command(role: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["--exact", "devex_memory_tests::memory_child", "--nocapture"])
-        .env("RYFRAME_DEVEX_MEMORY_CHILD", role)
+        .args([
+            "--exact",
+            "devex_memory_tests::memory_child",
+            "--nocapture",
+            "--skip",
+            &format!("__memory_role_{role}"),
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     command
@@ -119,7 +124,9 @@ fn child_command(role: &str) -> Command {
 
 #[test]
 fn memory_child() {
-    let Ok(role) = std::env::var("RYFRAME_DEVEX_MEMORY_CHILD") else {
+    let Some(role) =
+        std::env::args().find_map(|arg| arg.strip_prefix("__memory_role_").map(str::to_owned))
+    else {
         return;
     };
     assert!(
@@ -243,4 +250,44 @@ fn linux_cgroup_fails_closed_and_reaps_descendants_that_outlive_command() {
     assert!(status.success());
     assert!(matches!(reading, MemoryReading::Unavailable { .. }));
     assert_eq!(fs::read_dir(root).unwrap().count(), before);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT"]
+fn linux_cgroup_native_stdin_preserves_protocol_errors_and_cleans_its_group() {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let root = std::env::var_os("RYFRAME_DEVEX_CGROUP_ROOT").expect("缺少显式 cgroup 委托目录");
+    let entries = || {
+        fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let before = entries();
+    for (bytes, reason) in [
+        (Vec::new(), "runtime_protocol_input"),
+        (b"{".to_vec(), "runtime_protocol_input"),
+        (vec![b'x'; 65537], "runtime_protocol_input_limit"),
+    ] {
+        let mut input = tempfile::tempfile().unwrap();
+        input.write_all(&bytes).unwrap();
+        input.seek(SeekFrom::Start(0)).unwrap();
+        let output = tempfile::NamedTempFile::new().unwrap();
+        let executable = std::path::PathBuf::from(env!("CARGO_BIN_EXE_xtask"));
+        let mut command = Command::new(&executable);
+        command
+            .arg("__devex-runtime")
+            .stdin(input)
+            .stdout(Stdio::null())
+            .stderr(output.reopen().unwrap())
+            .env_remove("RYFRAME_DEVEX_CGROUP_ROOT");
+        let (status, reading) =
+            memory::linux::execute_with_trampoline(command, executable).unwrap();
+        assert_eq!(status.code(), Some(2));
+        assert!(fs::read_to_string(output.path()).unwrap().contains(reason));
+        assert!(matches!(reading, MemoryReading::Measured { .. }));
+        assert_eq!(entries(), before);
+    }
 }
