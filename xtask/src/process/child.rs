@@ -41,6 +41,44 @@ impl ChildGroup {
 }
 
 impl ManagedChild {
+    /// 仅查询本句柄所拥有的整树成员，为持久监督器保存真实创建身份。
+    pub(crate) fn member_pids(&self) -> Result<Vec<u32>> {
+        #[cfg(windows)]
+        {
+            Ok(self
+                .group()
+                .members_info()?
+                .into_iter()
+                .map(|member| member.pid())
+                .collect())
+        }
+        #[cfg(unix)]
+        {
+            let mut members = Vec::new();
+            for entry in std::fs::read_dir("/proc")? {
+                let entry = entry?;
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|v| v.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                    continue;
+                };
+                let fields = stat
+                    .rsplit_once(')')
+                    .map(|(_, v)| v.split_whitespace().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                if fields.get(2).and_then(|v| v.parse::<u32>().ok()) == Some(self.process_group_id)
+                {
+                    members.push(pid);
+                }
+            }
+            Ok(members)
+        }
+    }
     pub(crate) fn id(&self) -> u32 {
         #[cfg(windows)]
         {

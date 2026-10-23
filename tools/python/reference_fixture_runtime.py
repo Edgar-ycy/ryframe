@@ -62,27 +62,12 @@ def _run(command: list[str], *, cwd: Path, capture_output: bool) -> subprocess.C
                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
 
-WORKER_ENTRY = "tools/python/full_stack_worker.py"
-
-
-def _worker_entry(execution: Path) -> Path:
-    path = execution / WORKER_ENTRY
-    if linked(path) or not path.is_file():
-        raise ValueError("夹具运行树缺少正式的 Worker 控制入口")
-    return path
-
-
 def _worker_control(execution: Path, output: Path, operation: str) -> str:
     """Worker 必须由正式全栈监督器启动并登记进程树；浏览器用例按该入口停止或崩溃 Worker。"""
     if operation not in {"start", "stop", "status"}:
         raise ValueError("夹具 Worker 控制操作无效")
-    completed = _run([sys.executable, "-X", "utf8", str(_worker_entry(execution)), operation,
-                      "--backend-root", str(execution), "--runtime-dir", str(output)],
-                     cwd=execution, capture_output=True)
-    try:
-        value = json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise ValueError("Worker 控制入口未返回可解析的运行收据") from error
+    from full_stack_worker_native import invoke
+    value = invoke("control", action=operation, backend=str(execution), directory=str(output), timeout=60)
     contract = read_json(output / "runtime.json")
     state = value.get("state") if isinstance(value, dict) else None
     if (not isinstance(value, dict) or value.get("operation") != operation

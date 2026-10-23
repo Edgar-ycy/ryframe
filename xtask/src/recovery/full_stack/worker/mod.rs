@@ -1,22 +1,55 @@
-//! 外部 Worker 的只读控制守卫；写入、锁及进程监督仍由原控制器持有。
+//! 外部 Worker 的原生控制、独立监督与有界收据协议。
+mod controller;
 mod documents;
+mod guard;
+mod launch;
+mod operation;
 mod probes;
+mod process;
 mod receipts;
+mod supervisor;
 #[cfg(test)]
 mod tests;
+mod tree;
 
 use crate::{Result, recovery::clone::native::json as strict};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 
+pub(crate) fn control_command(
+    backend: &std::path::Path,
+    directory: &std::path::Path,
+    action: &str,
+    timeout: f64,
+) -> Result<std::process::Command> {
+    launch::command(
+        "control",
+        &json!({"backend":backend,"directory":directory,"action":action,"timeout":timeout}),
+        directory,
+    )
+}
+
 const LIMIT: usize = 1024 * 1024;
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args.first().map(String::as_str) != Some("__full-stack-worker") {
+    if !matches!(
+        args.first().map(String::as_str),
+        Some("__full-stack-worker" | "__full-stack-worker-detached")
+    ) {
         return None;
     }
     let result = (|| {
+        if args[0] == "__full-stack-worker-detached" {
+            if args.len() != 2 || args[1].len() > 32768 {
+                return Err("Worker monitor 参数无效".into());
+            }
+            let value = strict::parse_fragment(&args[1], "Worker monitor 参数")?;
+            if value["operation"] != "monitor" {
+                return Err("Worker detached 只允许 monitor".into());
+            }
+            return execute(args[1].as_bytes());
+        }
         if args.len() != 1 {
             return Err("Worker 原生守卫只接受有界标准输入".into());
         }
@@ -79,6 +112,11 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
     match request["operation"].as_str() {
         Some("probe") => probes::execute(&request["arguments"]),
         Some("validate") => receipts::execute(&request["arguments"]),
+        Some("control") => controller::execute(&request["arguments"]),
+        Some("monitor") => supervisor::monitor(&request["arguments"]),
+        Some("supervise") => supervisor::run(&request["arguments"]),
+        #[cfg(windows)]
+        Some("detach") => launch::detach_platform(&request["arguments"]),
         _ => reject("未知 Worker 原生守卫操作"),
     }
 }

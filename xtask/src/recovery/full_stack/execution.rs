@@ -47,6 +47,9 @@ impl<'a> Native<'a> {
     }
 
     fn support(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if matches!(operation, "worker-start" | "worker-stop") {
+            return self.worker_control(operation);
+        }
         let executable = std::env::current_exe()?;
         let bytes = fs::read(&executable)?;
         let tool = json!({"format_version":1,"kind":"ryframe-native-rate-limit-tool","path":executable,
@@ -73,7 +76,7 @@ impl<'a> Native<'a> {
         self.environment(&mut command);
         command.env("APP_ENV", "test");
         // 既有持久 supervisor 必须继续脱离一次性调用者的 Job 生命周期。
-        let persistent = matches!(operation, "api-launch" | "worker-start");
+        let persistent = operation == "api-launch";
         let cleanup = operation.ends_with("-stop");
         let output = capture(
             command,
@@ -95,6 +98,35 @@ impl<'a> Native<'a> {
                 "全栈底层 {operation} 未确认完成；保留来源、进程及操作收据，不重放"
             )
             .into());
+        }
+        Ok(value["result"].clone())
+    }
+
+    fn worker_control(&mut self, operation: &str) -> Result<Value> {
+        let mut command = Command::new(std::env::current_exe()?);
+        command.arg("__full-stack-worker");
+        self.environment(&mut command);
+        command.env("APP_ENV", "test");
+        let request = serde_json::to_vec(
+            &json!({"format_version":1,"kind":"ryframe-full-stack-worker","operation":"control","arguments":{"backend":self.context.root,"directory":self.context.output,"action":operation.trim_start_matches("worker-"),"timeout":180}}),
+        )?;
+        let output = capture(
+            command,
+            &self.context.root,
+            &request,
+            Duration::from_secs(210),
+            (operation != "worker-stop").then_some(&self.cancel),
+            true,
+            false,
+        )?;
+        let value =
+            crate::recovery::clone::native::json::parse_fragment(&output, "Worker 原生控制响应")?;
+        if value["ok"] != true
+            || value
+                .as_object()
+                .is_none_or(|v| v.len() != 2 || !v.contains_key("result"))
+        {
+            return Err("Worker 原生控制未确认；保留收据，不自动重放".into());
         }
         Ok(value["result"].clone())
     }

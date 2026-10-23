@@ -21,6 +21,11 @@ use crate::{
 
 #[path = "fixture_control/artifact.rs"]
 mod artifact;
+
+/// 全栈进程控制复用物理验收的文件配置、产物和源码权威核验。
+pub(crate) fn verify_full_stack_runtime(root: &Path, directory: &Path) -> Result<Value> {
+    artifact::runtime::verify(root, directory).map(|binding| binding.receipt)
+}
 #[path = "fixture_control/dataset.rs"]
 mod dataset;
 #[path = "fixture_control/environment.rs"]

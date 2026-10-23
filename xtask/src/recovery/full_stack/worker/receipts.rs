@@ -176,7 +176,9 @@ fn child(
     }
     if let Some(candidate) = candidate {
         child(candidate, owner, request, None)?;
-        if value["candidate_sha256"] != doc::hash(candidate)? {
+        if value["candidate_sha256"] != doc::hash(candidate)?
+            || value["identity"] != candidate["identity"]
+        {
             return reject("Worker 启动监督授权没有绑定当前候选进程");
         }
     }

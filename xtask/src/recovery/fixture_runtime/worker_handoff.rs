@@ -1,15 +1,17 @@
-//! 复用既有 full_stack_worker 的独立监督交接；不更改通用 ChildGroup 的隔离策略。
+//! 原生 Worker 独立监督交接；不更改浏览器命令的 ChildGroup 隔离策略。
 //!
 //! Worker 引擎已有 owner/request/candidate/supervisor/result 和完整成员监督器。
 //! 它的 start 控制器是短命进程，实际服务必须继续归原独立监督器所有。
 //! 因此仅此已登记服务交接使用单独的、可回收的控制器句柄；其他依赖和
 //! 浏览器命令继续使用 ChildGroup。接受交接前由 Rust 复核运行时、产品、
 //! 树和全部存活身份，不把任意后台子进程当作成功服务。
-use super::{dependency::Python, model::*};
+use super::{
+    dependency::{Dependencies, Python},
+    model::*,
+};
 use crate::{Result, recovery::clone::native::resources::common};
 use serde_json::{Value, json};
 use std::{
-    io::{Seek, SeekFrom, Write},
     process::{Child, Stdio},
     time::{Duration, Instant},
 };
@@ -23,24 +25,19 @@ impl Drop for Controller {
         let _ = self.0.wait();
     }
 }
-pub(super) fn start(api: &Python, args: &Value) -> Result<Value> {
+pub(super) fn start(api: &mut Python, args: &Value) -> Result<Value> {
+    api.call("verify", args.clone())?;
     let output = path(&args["output"])?;
     let (runtime, runtime_guard) = document(&output.join("runtime.json"))?;
     let scope = text(&runtime["scope_id"])?;
     check(!scope.is_empty(), "Worker交接缺少已登记scope")?;
-    let mut native_tool = bound(&std::env::current_exe()?)?;
-    native_tool["format_version"] = json!(1);
-    native_tool["kind"] = json!("ryframe-native-rate-limit-tool");
-    let mut input = tempfile::tempfile_in(api.root.join(".local-tests"))?;
-    input.write_all(&serde_json::to_vec(
-        &json!({"operation":"worker","arguments":args,"native_tool":native_tool}),
-    )?)?;
-    input.seek(SeekFrom::Start(0))?;
-    let mut command = api.command();
-    command
-        .stdin(input)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    let mut command = crate::recovery::full_stack::worker::control_command(
+        &path(&args["backend"])?,
+        &output,
+        "start",
+        60.0,
+    )?;
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
     let mut controller = Controller(command.spawn()?);
     let stdout = controller.0.stdout.take().ok_or("Worker交接缺少输出")?;
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -68,7 +65,10 @@ pub(super) fn start(api: &Python, args: &Value) -> Result<Value> {
     )?;
     let response: Value = serde_json::from_slice(&bytes).map_err(|_| "Worker交接响应无效")?;
     check(
-        response == json!({"ok":true,"value":"running"}),
+        response["ok"] == true
+            && response["result"]["state"] == "running"
+            && response["result"]["operation"] == "start"
+            && response["result"]["scope_id"] == scope,
         "Worker交接未返回运行状态",
     )?;
     verify(&output, scope)?;

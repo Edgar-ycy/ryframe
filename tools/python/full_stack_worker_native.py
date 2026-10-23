@@ -1,4 +1,4 @@
-"""Worker 原生只读守卫的有界传输；不接管锁、不重试或重放写入。"""
+"""Python 调用方使用的 Worker 有界 stdin 传输；状态机和进程控制全部由 Rust 持有。"""
 from __future__ import annotations
 
 import json
@@ -31,7 +31,7 @@ def invoke(operation, **arguments):
             if executable is None:
                 raise ValueError("Worker 控制要求正式入口绑定原生工具；禁止临时编译回退")
             result = run_native([executable, "__full-stack-worker"], input=payload,
-                                env=configured({}), stdout=subprocess.PIPE,
+                                env=configured({"APP_ENV": "test"}), stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, timeout=195, check=False, **options)
         if len(result.stdout) > 1024 * 1024:
             raise ValueError("Worker 原生响应超过 1 MiB")
@@ -48,14 +48,3 @@ def invoke(operation, **arguments):
             or set(response) != {"ok", "result"} or response["ok"] is not True):
         raise RuntimeError("Worker 原生响应无效；保留现场，不自动清理或重放")
     return response["result"]
-
-
-def validate(mode, operation, **values):
-    from artifact_digests import file_digest
-    arguments = dict(mode=mode, directory=str(operation["path"].parent),
-                     source=operation["owner"].get("source_sha256"), owner=operation["owner"],
-                     request=operation["request"], value=None, candidate=None, supervisor=None,
-                     runtime_sha256=file_digest(operation["path"].parent / "runtime.json")["sha256"],
-                     backend=None, runtime=None)
-    arguments.update(values)
-    return invoke("validate", **arguments)

@@ -60,9 +60,6 @@ def execute(value):
     if operation == 'register':
         from full_stack_runtime import register_runtime
         return register_runtime(backend, directory)
-    if operation in {'worker-start', 'worker-stop'}:
-        from full_stack_worker import control
-        return control(operation.removeprefix('worker-'), backend, directory, timeout=180)
     if operation in {'api-launch', 'api-probe', 'api-stop', 'api-port-free'}:
         return api(operation, backend, directory)
     raise ValueError('未知全栈底层操作')
@@ -74,18 +71,18 @@ def api(operation, backend, directory):
     from full_stack_process import read_process, process_identity, assert_identity
     from process_sockets import verify_listener
     if operation == 'api-port-free':
-        from full_stack_worker import wait_for_port_free
+        from full_stack_worker_native import invoke
         from rate_limit_client import load_app_table
         table = load_app_table(backend, {'APP_ENV':'test'}, config_dir=directory / 'config')
-        wait_for_port_free(f"http://127.0.0.1:{table['app']['port']}/readyz")
+        invoke('probe', action='wait-free', url=f"http://127.0.0.1:{table['app']['port']}/readyz", timeout=5)
         return {'state':'free'}
     receipt = verify_runtime(backend, directory)
     if operation == 'api-launch':
-        from full_stack_worker import ensure_port_free
+        from full_stack_worker_native import invoke
         from rate_limit_client import load_app_table
         table = load_app_table(backend, {'APP_ENV':'test'}, config_dir=Path(receipt['api_config_dir']))
         url = f"http://127.0.0.1:{table['app']['port']}/readyz"
-        ensure_port_free(url)
+        invoke('probe', action='free', url=url, timeout=0)
         if any((directory / name).exists() for name in ('api.json', 'api-tree.json')):
             raise ValueError('已有 API 进程收据，拒绝重复启动')
         with (directory / 'api.log').open('ab') as log:
