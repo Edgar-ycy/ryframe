@@ -10,6 +10,10 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+#[path = "seed/current.rs"]
+mod current;
+pub(crate) use current::Current;
+
 #[path = "seed/history.rs"]
 pub(crate) mod history;
 #[path = "seed/identity.rs"]
@@ -154,6 +158,9 @@ pub(crate) fn latest<'a>(
     Ok(record)
 }
 
+#[cfg(test)]
+#[path = "seed/current_tests.rs"]
+mod current_tests;
 #[cfg(test)]
 #[path = "seed/fixture.rs"]
 mod fixture;

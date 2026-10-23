@@ -16,6 +16,7 @@ use std::{
 struct Observed {
     requests: Vec<Value>,
     closed: usize,
+    fail_close: bool,
 }
 
 struct Script {
@@ -98,10 +99,17 @@ impl IdentitySession for FakeSession {
     fn close(&mut self) -> IdentityFuture<'_, ()> {
         Box::pin(async {
             self.observed.borrow_mut().closed += 1;
-            Ok(())
+            if self.observed.borrow().fail_close {
+                Err("测试关闭失败".into())
+            } else {
+                Ok(())
+            }
         })
     }
 }
+
+#[path = "conversation_tests.rs"]
+mod conversation_tests;
 
 #[test]
 fn quota_controller_keeps_full_before_image_rotates_token_and_blocks_replay() {

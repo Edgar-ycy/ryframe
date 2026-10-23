@@ -183,6 +183,7 @@ pub(super) fn run(command: &PerformanceIdentitiesCommand) -> Result<()> {
         command.operation(),
         &uuid::Uuid::new_v4().to_string(),
         None,
+        &mut |_| Ok(()),
     )?;
     println!("{}", serde_json::to_string(&summary)?);
     Ok(())
@@ -194,7 +195,9 @@ pub(super) fn execute_at(
     mode: &str,
     owner: &str,
     expected_raw_sha256: Option<&str>,
+    checkpoint: &mut dyn FnMut(&str) -> Result<()>,
 ) -> Result<Value> {
+    checkpoint("before-load")?;
     let root = root_dir();
     let bytes = evidence::regular(path)?.ok_or("身份计划文件不存在")?;
     if expected_raw_sha256.is_some_and(|expected| evidence::hash(&bytes) != expected) {
@@ -209,14 +212,18 @@ pub(super) fn execute_at(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(execution::execute(
+    checkpoint("before-execute")?;
+    let result = runtime.block_on(execution::execute(
         &prepared,
         state_dir,
         mode,
         owner,
         &mut context,
-        &mut |_| Ok(()),
-    ))
+        checkpoint,
+    ));
+    let value = result?;
+    checkpoint("after-execute")?;
+    Ok(value)
 }
 
 pub(crate) fn private_invocation_at(

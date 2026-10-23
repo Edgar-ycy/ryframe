@@ -159,12 +159,15 @@ pub(super) fn run_hidden_if_requested() -> Option<i32> {
             return Err("身份生产者启动授权超过 32 KiB".into());
         }
         let token = registration.authorize(&root, &evidence::parse(&bytes)?)?;
+        let current =
+            crate::recovery::clone::native::seed::Current::load(&root, &registration.run)?;
         super::execute_at(
             &registration.plan,
             &registration.state,
             &registration.mode,
             &token,
             Some(&registration.plan_sha256),
+            &mut |_| current.check(&root),
         )
     })();
     Some(match result {

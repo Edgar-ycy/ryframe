@@ -227,9 +227,33 @@ fn granted_producer_rechecks_exact_plan_bytes_before_loading_any_configuration()
         "apply",
         &uuid::Uuid::new_v4().to_string(),
         Some(&"a".repeat(64)),
+        &mut |_| Ok(()),
     )
     .unwrap_err()
     .to_string();
     assert!(failure.contains("原始字节在授权后变化"));
     assert!(!state.exists());
+}
+
+#[test]
+fn stopped_seed_guard_prevents_loading_private_configuration_or_creating_any_ledger() {
+    let fixture = Fixture::new();
+    let target = fixture.run.join("seed-runtime/identities");
+    let mut phases = Vec::new();
+    let error = super::execute_at(
+        &fixture.run.join("missing-private-plan.json"),
+        &target,
+        "apply",
+        &uuid::Uuid::new_v4().to_string(),
+        None,
+        &mut |phase| {
+            phases.push(phase.to_owned());
+            Err("seed 已失效".into())
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert_eq!(phases, vec!["before-load"]);
+    assert!(error.contains("seed 已失效"));
+    assert!(!target.exists());
 }

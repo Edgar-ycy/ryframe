@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Native seed producers bind execution and publication boundaries to the fixed registration, post-copy evidence, plan, and live controller; quota and department protocols recheck the current generation for each operation. Interrupted input or output still closes held sessions, logout remains possible after later source drift, and simultaneous business and cleanup failures retain a failed result.
+
 - Seed registration file validation and create-new publication now run in the bound Rust tool, checking the current attempt, live controller, target lock, and latest post-copy generation; the Python registration writer is removed. Native evidence validation covers identity publication, fixed handoffs, failed starts, and exact stops. Existing orchestration still owns the complete runtime resource guards, and successful registration grants neither Worker startup nor recovery eligibility.
 
 - Native source-object capture and target-object revalidation now use a Rust S3 read port with file-bound credentials and SigV4 signatures, without launching AWS CLI or passing AWS credentials to subprocesses. Public request and export evidence excludes credential values while retaining the private request digest and public-projection verification. Conditional ETags/versions, complete pagination, metadata and ownership checks, streaming exclusive files, and interruption evidence are preserved; redirects, partial responses, and unknown object policies are rejected. Offline capture verification requires callers to specify the transport provenance explicitly; Python capture and copy entry points that have not yet migrated continue to verify their actual tool provenance independently.
