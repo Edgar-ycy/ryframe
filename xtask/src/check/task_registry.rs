@@ -73,7 +73,7 @@ pub(crate) enum TaskExecutor {
     BackendPolicyChecks,
     SnapshotPrepare,
     PythonTests,
-    NodeTests,
+    BackendSources,
     MigrationHistory,
     WorkspaceGates,
     BackendWorkspaceGates,
@@ -327,16 +327,16 @@ const CHECK_TASKS: [TaskDefinition; 25] = [
         &[]
     ),
     task_definition!(
-        NodeTests,
-        "node.tests",
-        "run_node_tests",
-        "集中发现并执行仓库 Node 测试",
+        BackendSources,
+        "backend.sources",
+        "check_backend_sources",
+        "检查后端不存在自维护 JavaScript 或 TypeScript 源文件",
         Backend,
-        Test,
+        Static,
         Backend,
         None,
         &[],
-        &[".local-tests 中的测试临时目录"],
+        &[],
         &[]
     ),
     task_definition!(

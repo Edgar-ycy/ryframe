@@ -33,7 +33,7 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
             "policy.complete",
             "contract.snapshots-prepare",
             "python.tests",
-            "node.tests",
+            "backend.sources",
             "migration.history",
             "rust.workspace-gates",
             "contract.snapshots-verify",
@@ -72,7 +72,7 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
         .collect::<Vec<_>>();
     assert_eq!(migrations.len(), 1, "完整任务图只能执行一次迁移历史检查");
     assert_eq!(migrations[0].id, "migration.history");
-    assert_eq!(migrations[0].dependencies, ["node.tests"]);
+    assert_eq!(migrations[0].dependencies, ["backend.sources"]);
     assert_eq!(
         migrations[0].executor.static_arguments(),
         Some(["--require-frozen"].as_slice())

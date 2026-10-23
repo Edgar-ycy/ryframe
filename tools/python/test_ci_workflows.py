@@ -8,6 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiWorkflowTests(unittest.TestCase):
+    def test_backend_preflight_does_not_install_or_execute_node(self) -> None:
+        import yaml
+
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        steps = workflow["jobs"]["plan"]["steps"]
+        self.assertFalse(any("actions/setup-node@" in step.get("uses", "") for step in steps))
+        self.assertTrue(any("cargo xtask check ci preflight" in step.get("run", "") for step in steps))
+
     def test_real_service_jobs_prepare_explicit_file_configuration(self) -> None:
         import tomllib
         import yaml

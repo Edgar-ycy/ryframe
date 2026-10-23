@@ -11,13 +11,13 @@ use crate::{
 };
 
 use super::super::{
+    backend_sources::check_backend_sources,
     cargo_command::{
         ci_test_jobs_from, default_test_jobs_from, workspace_clippy_args, workspace_test_args,
     },
     context::VerifyExecutionContext,
     feature::{check_feature_registry, feature_matrix_with_jobs},
     model::BackendSnapshotProfile,
-    node_suite::run_node_tests,
     plan::{CheckPlanMode, CheckTaskPlan},
     policy_tasks::{PolicyProfile, PolicyTaskInvocation, policy_tasks},
     resource::resource_workspace_compilation,
@@ -94,7 +94,7 @@ pub(crate) fn execute_registered_task(
             run_policy_checks(context, policy_profile(mode))
         }
         TaskExecutor::PythonTests => super::super::python_suite::run(&context.root),
-        TaskExecutor::NodeTests => run_node_tests(&context.root),
+        TaskExecutor::BackendSources => check_backend_sources(&context.root),
         TaskExecutor::MigrationHistory => run_migration_history(context, mode),
         TaskExecutor::WorkspaceGates => run_workspace_gates(context, mode, state, true),
         TaskExecutor::BackendWorkspaceGates => run_workspace_gates(context, mode, state, false),

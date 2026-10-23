@@ -74,6 +74,8 @@ mod build_source;
 #[path = "../src/data.rs"]
 mod data;
 
+#[path = "internal/backend_sources.rs"]
+mod backend_sources_tests;
 #[path = "internal/build.rs"]
 mod build_tests;
 #[path = "internal/check_architecture.rs"]
@@ -211,8 +213,6 @@ mod monitoring_runtime_tests;
 mod monitoring_security_tests;
 #[path = "internal/monitoring.rs"]
 mod monitoring_tests;
-#[path = "internal/node_test_discovery.rs"]
-mod node_tests_tests;
 #[path = "internal/performance_identities.rs"]
 mod performance_identities_tests;
 #[path = "internal/process.rs"]

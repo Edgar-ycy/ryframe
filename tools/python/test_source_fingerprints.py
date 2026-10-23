@@ -69,16 +69,22 @@ class SourceFingerprintsTests(unittest.TestCase):
         with patch.object(sources, "current_execution_source", return_value=registered), self.assertRaises(ValueError):
             sources.require_current_execution_source(ROOT, registered)
 
-    def test_indirect_and_dynamic_node_imports_belong_to_complete_tool_domain(self):
+    def test_native_session_and_pacing_belong_to_complete_tool_domain(self):
         value = inventory()
-        helpers = ["tools/js/request.mjs"]
+        helpers = ["xtask/src/http_session.rs", "xtask/src/session_pacing.rs"]
+        for directory in ("xtask/src/http_session", "xtask/src/session_pacing"):
+            helpers.extend(path.relative_to(ROOT).as_posix() for path in (ROOT / directory).rglob("*.rs"))
+        for path in helpers:
+            self.assertTrue((ROOT / path).is_file(), path)
         value["files"] = sorted(value["files"] + [{"path": path, "sha256": "a" * 64} for path in helpers], key=lambda item: item["path"])
-        original = sources.fingerprints(value)
+        original = source_inventory.build_source_domains(value, "backend")
         for path in helpers:
             changed = copy.deepcopy(value)
             next(item for item in changed["files"] if item["path"] == path)["sha256"] = "f" * 64
-            self.assertNotEqual(sources.fingerprints(changed)["test_tools"], original["test_tools"])
-            self.assertEqual(sources.fingerprints(changed)["product"], original["product"])
+            observed = source_inventory.build_source_domains(changed, "backend")
+            self.assertNotEqual(observed["tools"], original["tools"])
+            self.assertEqual(observed["product"], original["product"])
+            self.assertNotEqual(observed["full"], original["full"])
 
     def test_execution_source_records_snapshot_worktree_and_domains(self):
         value = sources.execution_source(inventory())

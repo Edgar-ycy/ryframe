@@ -52,7 +52,7 @@ def producer_registration(backend, directory, stage, *, cleanup=False):
     elif stage == "seed-runtime":
         from devex_clone_seed import registered
     else:
-        raise ValueError("Node 生产者阶段未登记")
+        raise ValueError("原生生产者阶段未登记")
     return registered(backend, directory, cleanup=cleanup), binding(directory / "seed-runtime.json")
 
 
@@ -79,10 +79,10 @@ def actual_argv(identity):
     if os.name == "nt":
         return actual_windows_argv(SimpleNamespace(runner=subprocess.run), identity)
     if process_identity(identity["pid"]) != identity:
-        raise ValueError("读取 Node 参数前内核身份发生变化")
+        raise ValueError("读取原生参数前内核身份发生变化")
     command = Path(f'/proc/{identity["pid"]}/cmdline').read_bytes().rstrip(b"\0").split(b"\0")
     if process_identity(identity["pid"]) != identity:
-        raise ValueError("读取 Node 参数期间内核身份发生变化")
+        raise ValueError("读取原生参数期间内核身份发生变化")
     return [os.fsdecode(item) for item in command]
 
 
@@ -90,22 +90,16 @@ def original_attempt(attempt):
     return {**attempt, "status": "running", "finished_at": None, "result": None, "error_type": None}
 
 
-def native_kind(kind):
-    return kind in KINDS
-
-
 def producer_command(backend, request, directory, number, kind, output, *, tool_override=None,
                      configuration=None):
     if kind not in KINDS:
-        raise ValueError("Node 生产者类型未登记")
-    native = native_kind(kind)
-    script = producer_source(backend, kind)
+        raise ValueError("原生生产者类型未登记")
     tool = producer_tool(request, kind) if tool_override is None else tool_override
     hidden = ("__copy-session" if kind == "session" else
               "__recovery-existing-clone" if kind == "existing" else
               "__identity-producer" if kind.startswith("identity-") else
               "__identity-bridge")
-    command = [tool["path"], hidden if native else str(script),
+    command = [tool["path"], hidden,
                "--run-dir", str(directory), "--attempt", str(number)]
     if kind == "existing":
         if configuration is None:
@@ -129,9 +123,7 @@ def producer_command(backend, request, directory, number, kind, output, *, tool_
 
 
 def producer_source(backend, kind):
-    if native_kind(kind):
-        return Path(backend) / KINDS[kind]
-    return Path(backend) / "tools/js" / KINDS[kind]
+    return Path(backend) / KINDS[kind]
 
 
 def producer_tool(request, kind):
@@ -143,34 +135,33 @@ def producer_tool(request, kind):
             label = "复制会话" if kind == "session" else "已有数据生产者"
             raise ValueError(f"原生{label}缺少协调器工具绑定")
         return {key: value[key] for key in ("path", "sha256")}
-    return request["identity_tool" if native_kind(kind) else "node"]
+    return request["identity_tool"]
 
 
 def inspect_producer(backend, directory, attempt):
     stage = attempt["stage"]
     if stage not in STAGES:
-        raise ValueError("Node 生产者历史不属于明确阶段")
+        raise ValueError("原生生产者历史不属于明确阶段")
     number = attempt["number"]
     output = directory / stage / f"attempt-{number:04d}"
     intent_path, path = output / "session-launch.json", output / "session-process.json"
     if not intent_path.exists() and not path.exists():
         if output.exists() and any((output / name).exists() for name in ("session.stderr.log", "session.stdout.log")):
-            raise ValueError("Node 生产者证据不完整，缺少明确启动收据")
+            raise ValueError("原生生产者证据不完整，缺少明确启动收据")
         return None
     if linked(output) or linked(intent_path) or linked(path):
-        raise ValueError("Node 生产者证据不能是链接")
+        raise ValueError("原生生产者证据不能是链接")
     if not intent_path.exists() or not path.exists():
-        raise ValueError("Node 生产者缺少内核身份收据，不能猜测或继续")
+        raise ValueError("原生生产者缺少内核身份收据，不能猜测或继续")
     intent, value = read_json(intent_path), read_json(path)
     kind = intent["producer_kind"]
-    native = native_kind(kind)
-    tool_key, source_key = ("tool", "source") if native else ("node", "script")
+    tool_key, source_key = "tool", "source"
     intent_fields = {"format_version", "kind", "run_manifest", "registration", "controller", "attempt", "producer_kind", "command", tool_key, source_key}
     if kind == "existing":
         intent_fields.add("configuration")
     exact(intent, intent_fields)
     owner_key = "identity_lock_owner" if kind.startswith("identity-") else "producer_owner"
-    owner_required = native and kind != "existing"
+    owner_required = kind != "existing"
     owner_recorded = owner_required and owner_key in value
     exact(value, {"format_version", "kind", "launch", "identity"}
           | ({owner_key} if owner_recorded else set()))
@@ -181,7 +172,7 @@ def inspect_producer(backend, directory, attempt):
             or value["launch"] != binding(intent_path) or intent["attempt"] != number
             or intent["run_manifest"] != binding(directory / "manifest.json")
             or (stage != "post-copy" and intent["registration"] != binding(directory / (stage + ".json")))):
-        raise ValueError("Node 生产者不属于本 run 的明确阶段和固定登记")
+        raise ValueError("原生生产者不属于本 run 的明确阶段和固定登记")
     controller_path = bound_file(backend, intent["controller"])
     controller = read_json(controller_path)
     if (controller_path != directory / f"controller-{number:04d}.json"
@@ -189,7 +180,7 @@ def inspect_producer(backend, directory, attempt):
             or controller.get("attempt") != number or controller.get("attempt_sha256") != plan_hash(original_attempt(attempt))
             or controller["owner"]["directory"] != str(directory)
             or controller["owner"]["manifest_sha256"] != intent["run_manifest"]["sha256"]):
-        raise ValueError("Node 生产者控制器不属于原始阶段")
+        raise ValueError("原生生产者控制器不属于原始阶段")
     configuration = None
     if kind == "existing":
         configuration = bound_file(backend, intent["configuration"])
@@ -199,20 +190,20 @@ def inspect_producer(backend, directory, attempt):
             raise ValueError("原生已有数据配置绑定不属于当前 attempt")
     command = producer_command(
         backend, request, directory, number, kind, output,
-        tool_override=intent[tool_key] if native else None,
+        tool_override=intent[tool_key],
         configuration=configuration)
     persisted_tool = kind not in {"session", "existing"}
     if (intent["command"] != command
             or (persisted_tool and intent[tool_key] != producer_tool(request, kind))
             or intent[source_key]["path"] != str(producer_source(backend, kind))):
-        raise ValueError("Node 参数或工具不属于固定 run 和 attempt")
+        raise ValueError("原生参数或工具不属于固定 run 和 attempt")
     # 历史执行保留原摘要，但清理不能要求后来更新或移除的工具字节仍留在磁盘。
     exact(intent[tool_key], {"path", "sha256"})
     exact(intent[source_key], {"path", "bytes", "sha256"})
     digest(intent[tool_key]["sha256"])
     digest(intent[source_key]["sha256"])
     if type(intent[source_key]["bytes"]) is not int or intent[source_key]["bytes"] <= 0:
-        raise ValueError("Node 历史脚本摘要结构无效")
+        raise ValueError("原生历史源码摘要结构无效")
     exact(value["identity"], {"pid", "started", "executable"})
     if (owner_recorded
             and (not isinstance(value[owner_key], str)
@@ -222,11 +213,11 @@ def inspect_producer(backend, directory, attempt):
     if owner_required and not owner_recorded:
         raise ValueError("原生生产者收据必须记录 owner")
     if Path(value["identity"]["executable"]).resolve() != Path(intent[tool_key]["path"]).resolve():
-        raise ValueError("Node 内核 executable 与登记工具不同")
+        raise ValueError("原生内核 executable 与登记工具不同")
     actual = process_identity(value["identity"]["pid"])
     if actual == value["identity"]:
         if actual_argv(actual) != command:
-            raise ValueError("Node 实际参数不属于固定 run 和 attempt")
+            raise ValueError("原生实际参数不属于固定 run 和 attempt")
         alive = True
     elif actual is None:
         alive = False
@@ -238,7 +229,7 @@ def inspect_producer(backend, directory, attempt):
           and int(actual["started"]) > int(value["identity"]["started"])):
         alive = False
     else:
-        raise ValueError("Node 内核身份不能证明为已结束的原创建代次")
+        raise ValueError("原生内核身份不能证明为已结束的原创建代次")
     return {"receipt": binding(path), "value": value, "controller": controller, "alive": alive,
             "producer_kind": kind, "request": request}
 
@@ -249,7 +240,7 @@ def require_quiet(backend, directory, current_number=None):
             continue
         observed = inspect_producer(backend, directory, attempt)
         if observed and observed["alive"]:
-            raise ValueError("旧 Node 生产者仍在运行，先显式 recover-session，再核对未知意图")
+            raise ValueError("旧原生生产者仍在运行，先显式 recover-session，再核对未知意图")
 
 
 def _identity_lock_snapshot(path):
@@ -400,7 +391,7 @@ def _identity_expected_lock(identity, owner_token, plan_sha256):
 
 
 def recover_identity_lock(backend, request, identity, owner_token):
-    """固定 Node 死亡后只发布永久 release 记录；绝不按 pathname 删除锁。"""
+    """固定原生生产者退出后只发布永久 release 记录；绝不按 pathname 删除锁。"""
     root = local_path(backend, request["identity_state"])
     if str(root.resolve()) != request["identity_state"]:
         raise ValueError("身份锁根目录不是生产者绑定的规范绝对路径")
@@ -436,7 +427,7 @@ def recover_identity_lock(backend, request, identity, owner_token):
     if first is None:
         return False
     if _identity_lock_value(first[1]) != value or first[1] != expected:
-        raise ValueError("身份锁不属于已确认死亡的固定 Node、计划和 owner，保留现场")
+        raise ValueError("身份锁不属于已确认死亡的固定原生、计划和 owner，保留现场")
     second = _identity_lock_snapshot(path)
     if second != first:
         raise ValueError("身份锁 claim 前被替换或修改，保留现场")
@@ -465,7 +456,7 @@ def recover_session(backend, directory, number, descriptor):
     if (current_attempt["number"] != number or stage not in STAGES
             or current_attempt["mode"] != "recover-session" or current_attempt["status"] != "running"
             or read_json(directory / "run.lock/owner.json")["identity"] != process_identity(os.getpid())):
-        raise ValueError("Node 回收必须持当前 run 锁并属于明确恢复阶段")
+        raise ValueError("原生回收必须持当前 run 锁并属于明确恢复阶段")
     attempts = [item for item in state["attempts"] if item["stage"] == stage
                 and path == directory / stage / f'attempt-{item["number"]:04d}' / "session-process.json"]
     if len(attempts) != 1 or attempts[0]["number"] >= number or attempts[0]["status"] == "running":
@@ -475,18 +466,18 @@ def recover_session(backend, directory, number, descriptor):
     if observed is None or observed["receipt"] != descriptor:
         raise ValueError("明确生产者收据发生变化")
     if process_identity(observed["controller"]["owner"]["identity"]["pid"]) is not None:
-        raise ValueError("原控制进程仍存在或 PID 已复用，不能回收其 Node")
+        raise ValueError("原控制进程仍存在或 PID 已复用，不能回收其原生")
     output = directory / stage / f"attempt-{number:04d}"
     output.mkdir()
     write_json(output / "session-recovery-intent.json", {"producer": descriptor, "identity": observed["value"]["identity"],
-               "action": "terminate_exact_node", "copy_requires_reconciliation": True})
+               "action": "terminate_exact_producer", "copy_requires_reconciliation": True})
     current = inspect_producer(backend, directory, attempt)
     if current != observed or bound_file(backend, descriptor) != path:
-        raise ValueError("回收窗口内 Node 生产者证据变化")
+        raise ValueError("回收窗口内原生生产者证据变化")
     if current["alive"]:
         terminate_owned_process(current["value"]["identity"])
     if bound_file(backend, descriptor) != path or process_identity(current["value"]["identity"]["pid"]) is not None:
-        raise ValueError("Node 生产者回收后身份仍不确定")
+        raise ValueError("原生生产者回收后身份仍不确定")
     if current["producer_kind"] in {"identity-apply", "identity-verify"}:
         recover_identity_lock(backend, current["request"], current["value"]["identity"],
                               current["value"]["identity_lock_owner"])
@@ -505,21 +496,20 @@ class Producer:
         if (kind not in PHASES or attempt["number"] != number or attempt["status"] != "running"
                 or attempt["stage"] != PHASES[kind][0] or attempt["mode"] not in PHASES[kind][1]
                 or context.output != context.directory_root / attempt["stage"] / f"attempt-{number:04d}"):
-            raise ValueError("Node 启动必须属于当前运行阶段")
+            raise ValueError("原生启动必须属于当前运行阶段")
         current_request, current_binding = producer_registration(
             context.backend, context.directory_root, attempt["stage"])
         if context.request_binding != current_binding or context.request != current_request:
-            raise ValueError("Node 启动必须使用当前阶段已发布的固定登记")
+            raise ValueError("原生启动必须使用当前阶段已发布的固定登记")
         controller_path = context.directory_root / f"controller-{number:04d}.json"
         controller = read_json(controller_path)
         if (controller["attempt_sha256"] != plan_hash(attempt)
                 or controller["owner"]["identity"] != process_identity(os.getpid())
                 or read_json(context.directory_root / "run.lock/owner.json") != controller["owner"]):
-            raise ValueError("Node 启动控制器未持当前 run 锁")
-        native = native_kind(kind)
+            raise ValueError("原生启动控制器未持当前 run 锁")
         tool = producer_tool(context.request, kind)
         external_file(tool)
-        tool_key, source_key = ("tool", "source") if native else ("node", "script")
+        tool_key, source_key = "tool", "source"
         configuration = None
         configuration_descriptor = None
         if kind == "existing":
@@ -546,24 +536,22 @@ class Producer:
         self.identity = None
         self.identity_lock_owner = str(uuid.uuid4()) if kind.startswith("identity-") else None
         self.producer_owner = (str(uuid.uuid4())
-                               if native and kind != "existing" and self.identity_lock_owner is None
+                               if kind != "existing" and self.identity_lock_owner is None
                                else None)
         self.tool_guard = None
         try:
-            environment = context.private["target_api"]
-            if native:
-                from artifact_digests import protect_binary_invocation
-                from process_environment import configured
+            from artifact_digests import protect_binary_invocation
+            from process_environment import configured
 
-                environment = configured({"APP_ENV": "test"})
-                self.tool_guard = protect_binary_invocation(tool)
-                self.tool_guard.__enter__()
+            environment = configured({"APP_ENV": "test"})
+            self.tool_guard = protect_binary_invocation(tool)
+            self.tool_guard.__enter__()
             self.child = subprocess.Popen(command, cwd=context.backend, env=environment,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             self.identity = process_identity(self.child.pid)
             if self.identity is None or Path(self.identity["executable"]).resolve() != Path(command[0]).resolve():
-                raise ValueError("Node 生产者内核工具身份不符")
+                raise ValueError("原生生产者内核工具身份不符")
             receipt = {"format_version": 1, "kind": "devex-post-producer",
                        "launch": binding(context.output / "session-launch.json"), "identity": self.identity}
             if self.identity_lock_owner is not None:
@@ -572,7 +560,7 @@ class Producer:
                 receipt["producer_owner"] = self.producer_owner
             write_json(context.output / "session-process.json", receipt)
             if actual_argv(self.identity) != command:
-                raise ValueError("Node 生产者实际 run/attempt 参数不符")
+                raise ValueError("原生生产者实际 run/attempt 参数不符")
         except BaseException as original:
             try:
                 self.close()
@@ -586,7 +574,7 @@ class Producer:
                 if self.child.poll() is None:
                     identity = self.identity
                     if identity is None:
-                        raise ValueError("缺少 Node 创建身份，保留现场，不按 PID 终止")
+                        raise ValueError("缺少原生创建身份，保留现场，不按 PID 终止")
                     terminate_owned_process(identity)
                 self.child.wait(timeout=10)
         finally:
@@ -614,7 +602,7 @@ class Producer:
                            process=binding(self.context.output / "session-process.json"))
         stdout, _ = self.child.communicate((json.dumps(release) + "\n").encode(), timeout=timeout)
         if self.child.returncode:
-            raise ValueError("既有数据 Node 验证失败，保留独立日志")
+            raise ValueError("既有数据原生验证失败，保留独立日志")
         return stdout
 
 

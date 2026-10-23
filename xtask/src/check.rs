@@ -2,6 +2,8 @@
 
 #[path = "check/architecture.rs"]
 pub(crate) mod architecture;
+#[path = "check/backend_sources.rs"]
+mod backend_sources;
 #[path = "check/cargo_command.rs"]
 mod cargo_command;
 #[path = "check/change_surface.rs"]
@@ -24,8 +26,6 @@ pub(crate) mod language;
 pub(crate) mod metrics;
 #[path = "check/model.rs"]
 mod model;
-#[path = "check/node_suite.rs"]
-mod node_suite;
 #[path = "check/permission_routes.rs"]
 pub(crate) mod permission_routes;
 #[path = "check/plan.rs"]
@@ -55,6 +55,8 @@ mod task_registry;
 #[path = "check/trivy.rs"]
 pub(crate) mod trivy;
 
+#[allow(unused_imports)]
+pub(crate) use backend_sources::check_backend_sources;
 pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]
 pub(crate) use cargo_command::{
@@ -93,8 +95,6 @@ pub(crate) use feature::{
 pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
-#[allow(unused_imports)]
-pub(crate) use node_suite::{discover_node_tests, run_node_tests};
 #[allow(unused_imports)]
 pub(crate) use plan::{
     CheckPlanMode, CheckTaskPlan, build_task_plan, plan, render_task_plan, select_check_mode,

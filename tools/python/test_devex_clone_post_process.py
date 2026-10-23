@@ -1,8 +1,7 @@
-"""Node 残留生产者的明确收据、内核身份和故障窗口，不连接外部服务。"""
+"""原生生产者的明确收据、内核身份和故障窗口，不连接外部服务。"""
 import copy
 import io
 import os
-import shutil
 from pathlib import Path
 import sys
 import threading
@@ -28,13 +27,13 @@ class ProducerTests(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'id': 'fixture-only'})
         initialize_state(self.directory)
-        node = shutil.which('node')
-        if node is None:
-            self.skipTest('Node.js 不在 CI PATH 中')
-        node = Path(node).resolve()
-        self.request = {'node': {'path': str(node), 'sha256': file_digest(node)['sha256']},
-                        'reference_plan': {'path': str(self.directory / 'plan.json')},
+        tool = Path(sys.executable).resolve()
+        self.tool = {'path': str(tool), 'sha256': file_digest(tool)['sha256']}
+        self.request = {'reference_plan': {'path': str(self.directory / 'plan.json')},
                         'dataset': {'path': str(self.directory / 'dataset.json')}}
+        self.configuration_dir = self.directory / 'configuration'
+        self.configuration_dir.mkdir()
+        (self.configuration_dir / 'app.test.toml').write_text('# 测试配置\n', encoding='utf-8')
         write_json(self.directory / 'post-copy.json', self.request)
         self.number = begin(self.directory, 'post-copy', 'verify', {})
         with run_lock(self.directory) as owner:
@@ -44,8 +43,9 @@ class ProducerTests(unittest.TestCase):
         self.controller = read_json(self.directory / 'controller-0001.json')
         self.controller['owner']['identity'] = {**self.controller['owner']['identity'], 'pid': 2147482999}
         write_receipt(self.directory / 'controller-0001.json', self.controller)
-        self.identity = {'pid': 2147483000, 'started': 'fixture-child', 'executable': str(node)}
+        self.identity = {'pid': 2147483000, 'started': 'fixture-child', 'executable': str(tool)}
         self.addCleanup(patch.stopall)
+        patch.object(process, 'producer_tool', return_value=self.tool).start()
         patch('devex_clone_post.registered', return_value=self.request).start()
         expected_registration = binding(self.directory / 'post-copy.json')
         def registration(_backend, _directory, *, descriptor=None, **_):
@@ -55,10 +55,15 @@ class ProducerTests(unittest.TestCase):
         patch('devex_clone_post.registration', side_effect=registration).start()
 
     def record(self, kind='existing'):
-        command = process.producer_command(self.backend, self.request, self.directory, 1, kind, self.output)
+        from restore_reference_plan import configuration_binding
+        configuration = self.output / 'existing-configuration.json'
+        write_json(configuration, configuration_binding(self.backend, self.configuration_dir))
+        command = process.producer_command(self.backend, self.request, self.directory, 1, kind, self.output,
+                                           configuration=configuration)
         self.intent = {'format_version': 1, 'kind': 'devex-post-producer-launch', 'run_manifest': binding(self.directory / 'manifest.json'),
             'registration': binding(self.directory / 'post-copy.json'), 'controller': binding(self.directory / 'controller-0001.json'),
-            'attempt': 1, 'producer_kind': kind, 'command': command, 'node': self.request['node'], 'script': binding(Path(command[1]))}
+            'attempt': 1, 'producer_kind': kind, 'command': command, 'tool': self.tool, 'source': binding(process.producer_source(self.backend, kind)),
+            'configuration': binding(configuration)}
         write_json(self.output / 'session-launch.json', self.intent)
         self.value = {'format_version': 1, 'kind': 'devex-post-producer', 'launch': binding(self.output / 'session-launch.json'), 'identity': self.identity}
         write_json(self.output / 'session-process.json', self.value)
@@ -168,7 +173,7 @@ class ProducerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '原控制进程仍存在'):
             self.recovery(descriptor, lambda pid: self.controller['owner']['identity'] if pid == self.controller['owner']['identity']['pid'] else None)
 
-    def test_node_launch_without_current_controller_lock_is_rejected(self):
+    def test_native_launch_without_current_controller_lock_is_rejected(self):
         from types import SimpleNamespace
 
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, output=self.output,
@@ -181,6 +186,10 @@ class ProducerTests(unittest.TestCase):
 
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, output=self.output,
             request=self.request, request_binding=binding(self.directory / 'post-copy.json'), private={'target_api': {}})
+        runtime = self.directory / 'runtime'
+        runtime.mkdir()
+        write_json(runtime / 'runtime.json', {'api_config_dir': str(self.configuration_dir)})
+        context.runtime = runtime
         def failed_cleanup(instance):
             instance.log.close()
             raise RuntimeError('cleanup')

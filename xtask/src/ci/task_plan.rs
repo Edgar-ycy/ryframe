@@ -15,7 +15,7 @@ const PREFLIGHT_TASKS: &[TaskExecutor] = &[
     TaskExecutor::CargoFormat,
     TaskExecutor::PythonEnvironment,
     TaskExecutor::PythonTests,
-    TaskExecutor::NodeTests,
+    TaskExecutor::BackendSources,
     TaskExecutor::PolicyChecks,
     TaskExecutor::PermissionRoutes,
     TaskExecutor::MigrationHistory,

@@ -346,7 +346,7 @@ finally:
 }
 
 #[test]
-fn node_and_python_callers_have_no_second_configuration_implementation() {
+fn native_and_python_callers_share_the_rust_configuration_authority() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask 必须位于后端工作区");
@@ -360,10 +360,10 @@ fn node_and_python_callers_have_no_second_configuration_implementation() {
             .join("tools/python/test_full_stack_rate_limit_config.py")
             .exists()
     );
-    let node = fs::read_to_string(root.join("tools/js/pacing.mjs")).unwrap();
-    assert!(node.contains("__rate-limit"));
-    assert!(!node.contains("pythonInvocation"));
-    assert!(!node.contains("full_stack_rate_limit_config.py"));
+    let native = fs::read_to_string(root.join("xtask/src/session_pacing.rs")).unwrap();
+    assert!(native.contains("crate::rate_limit::authority(root, config_dir, app_env)"));
+    assert!(!native.contains("std::process"));
+    assert!(!native.contains("toml::"));
     let python = fs::read_to_string(root.join("tools/python/rate_limit_client.py")).unwrap();
     assert!(python.contains("__rate-limit"));
     assert!(!python.contains("import tomllib"));

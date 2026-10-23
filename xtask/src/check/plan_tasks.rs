@@ -36,7 +36,7 @@ fn full_tasks(scope: CheckScope) -> Vec<TaskExecutor> {
         },
         TaskExecutor::SnapshotPrepare,
         TaskExecutor::PythonTests,
-        TaskExecutor::NodeTests,
+        TaskExecutor::BackendSources,
         TaskExecutor::MigrationHistory,
         if scope == CheckScope::Backend {
             TaskExecutor::BackendWorkspaceGates
