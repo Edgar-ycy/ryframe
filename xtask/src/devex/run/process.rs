@@ -142,6 +142,9 @@ fn step_command(
     if step.program == "cargo" {
         command.env("CARGO_TARGET_DIR", target.as_ref());
     }
+    command
+        .env_remove("RYFRAME_DEVEX_TARGET_ROOT")
+        .env_remove("RYFRAME_FAST_CHECK_CACHE_ROOT");
     Ok(command)
 }
 

@@ -119,7 +119,7 @@ impl DevexSuite {
             Self::ResourceGate => Ok(SuiteDefinition {
                 steps: exact_variant(variant, "auto", RESOURCE_GATE, self)?,
                 features: &["resource"],
-                environment: &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}")],
+                environment: &[],
                 remove_environment: &[],
                 requirement: SuiteRequirement::FrontendFiles,
                 requires_frontend: true,
@@ -127,11 +127,7 @@ impl DevexSuite {
             Self::RustGate => Ok(SuiteDefinition {
                 steps: exact_variant(variant, "default", RUST_GATE, self)?,
                 features: &[],
-                environment: &[
-                    ("CARGO_INCREMENTAL", "0"),
-                    ("RUSTC_WRAPPER", "sccache"),
-                    ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
-                ],
+                environment: &[("CARGO_INCREMENTAL", "0"), ("RUSTC_WRAPPER", "sccache")],
                 remove_environment: &["SCCACHE_RECACHE"],
                 requirement: SuiteRequirement::Executable("sccache"),
                 requires_frontend: true,
@@ -147,12 +143,7 @@ impl DevexSuite {
             Self::FrontendFast => Ok(SuiteDefinition {
                 steps: exact_variant(variant, "default", FRONTEND_FAST, self)?,
                 features: &[],
-                environment: &[
-                    ("CI", "true"),
-                    ("FORCE_COLOR", "0"),
-                    ("NO_COLOR", "1"),
-                    ("RYFRAME_FAST_CHECK_CACHE_ROOT", "{target}/frontend"),
-                ],
+                environment: &[("CI", "true"), ("FORCE_COLOR", "0"), ("NO_COLOR", "1")],
                 remove_environment: &[],
                 requirement: SuiteRequirement::Frontend,
                 requires_frontend: true,

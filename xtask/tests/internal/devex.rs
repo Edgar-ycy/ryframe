@@ -180,10 +180,7 @@ fn suite_sample_policy_rejects_semantic_cache_mismatches() {
 fn gate_suite_definitions_preserve_audited_execution_contracts() {
     let gate = DevexSuite::ResourceGate.definition("auto").unwrap();
     assert!(gate.steps[0].args.contains(&"{target}/driver"));
-    assert_eq!(
-        gate.environment,
-        &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),]
-    );
+    assert!(gate.environment.is_empty());
     assert!(gate.steps[0].args.contains(&"--targeted"));
     assert!(gate.steps[0].args.contains(&"--decision-file"));
     assert!(gate.steps[0].args.contains(&"--jobs"));
@@ -209,6 +206,17 @@ fn gate_suite_definitions_preserve_audited_execution_contracts() {
             .contains(&"RYFRAME_CI_FRONTEND_REF")
     );
     assert_eq!(DevexSuite::RustGate.minimum_runs("default"), 20);
+    assert_eq!(
+        rust_gate.environment,
+        &[("CARGO_INCREMENTAL", "0"), ("RUSTC_WRAPPER", "sccache")]
+    );
+    assert_eq!(
+        DevexSuite::FrontendFast
+            .definition("default")
+            .unwrap()
+            .environment,
+        &[("CI", "true"), ("FORCE_COLOR", "0"), ("NO_COLOR", "1")]
+    );
 }
 
 #[test]
@@ -334,6 +342,16 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
     let environment = filter_environment([
         (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
         (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
+        (OsString::from("CARGO_BUILD_JOBS"), OsString::from("7")),
+        (OsString::from("CI"), OsString::from("true")),
+        (
+            OsString::from("RYFRAME_DEVEX_TARGET_ROOT"),
+            OsString::from("ignored-target"),
+        ),
+        (
+            OsString::from("RYFRAME_FAST_CHECK_CACHE_ROOT"),
+            OsString::from("ignored-cache"),
+        ),
         (OsString::from("RYFRAME_VERIFY_JOBS"), OsString::from("8")),
         (OsString::from("RUSTFLAGS"), OsString::from("-Cdebuginfo=0")),
         (
@@ -360,6 +378,20 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
     ]);
     assert_eq!(environment.get("CARGO_INCREMENTAL").unwrap(), "0");
     assert_eq!(environment.get("CARGO_NET_OFFLINE").unwrap(), "true");
+    assert_eq!(environment.get("CARGO_BUILD_JOBS").unwrap(), "7");
+    assert_eq!(environment.get("CI").unwrap(), "true");
+    assert!(!environment.contains_key("RYFRAME_DEVEX_TARGET_ROOT"));
+    assert!(!environment.contains_key("RYFRAME_FAST_CHECK_CACHE_ROOT"));
+    let mut poisoned = environment.clone();
+    poisoned.insert("RYFRAME_DEVEX_TARGET_ROOT".into(), "another-root".into());
+    poisoned.insert(
+        "RYFRAME_FAST_CHECK_CACHE_ROOT".into(),
+        "another-cache".into(),
+    );
+    assert_eq!(
+        filter_environment(poisoned.into_iter().map(|(k, v)| (k.into(), v.into()))),
+        environment
+    );
     assert!(!environment.contains_key("RYFRAME_VERIFY_JOBS"));
     assert!(environment.contains_key("RUSTFLAGS"));
     assert_eq!(
