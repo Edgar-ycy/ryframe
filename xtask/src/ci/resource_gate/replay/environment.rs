@@ -12,7 +12,6 @@ use serde_json::Value;
 use super::{path::normalized_path, sha256_json};
 
 pub(super) const FIXED_VERIFY_JOBS: &str = "12";
-pub(super) const FIXED_TEST_JOBS: &str = "4";
 pub(super) const FIXED_RESOURCE_GATE_TEST_JOBS: &str = "8";
 const RUST_ENVIRONMENT_KEYS: [&str; 18] = [
     "CARGO_BUILD_JOBS",
@@ -171,8 +170,6 @@ pub(crate) fn controlled_environment(
         ("CI", "1"),
         ("CARGO_INCREMENTAL", "0"),
         ("CARGO_TERM_COLOR", "never"),
-        ("RYFRAME_CI_RUST_GATE_PROFILE", "standard"),
-        ("RYFRAME_CI_TEST_JOBS", FIXED_TEST_JOBS),
         (
             "RYFRAME_RESOURCE_GATE_TEST_JOBS",
             FIXED_RESOURCE_GATE_TEST_JOBS,
@@ -199,8 +196,6 @@ pub(crate) fn recorded_environment(
         "CI",
         "CARGO_INCREMENTAL",
         "CARGO_TERM_COLOR",
-        "RYFRAME_CI_RUST_GATE_PROFILE",
-        "RYFRAME_CI_TEST_JOBS",
         "RYFRAME_RESOURCE_GATE_TEST_JOBS",
         "RYFRAME_VERIFY_JOBS",
     ] {

@@ -118,9 +118,15 @@ fn assert_report(document: &Value) {
         document["evidence"]["environment"]["CARGO_INCREMENTAL"],
         "0"
     );
-    assert_eq!(
-        document["evidence"]["environment"]["RYFRAME_CI_RUST_GATE_PROFILE"],
-        "standard"
+    assert!(
+        document["evidence"]["environment"]
+            .get("RYFRAME_CI_RUST_GATE_PROFILE")
+            .is_none()
+    );
+    assert!(
+        document["evidence"]["environment"]
+            .get("RYFRAME_CI_TEST_JOBS")
+            .is_none()
     );
     assert_eq!(document["evidence"]["tools"]["sccache"], "sccache 0.test");
     assert!(

@@ -413,10 +413,7 @@ fn command_expansion_preserves_option_and_unicode_path_argument_boundaries() {
 #[test]
 fn controlled_environment_removes_stale_compiler_and_gate_variables() {
     let mut environment = BTreeMap::from([
-        (
-            "RYFRAME_CI_RUST_GATE_PROFILE".to_owned(),
-            "windows-smoke".into(),
-        ),
+        ("RYFRAME_CI_TEST_JOBS".to_owned(), "64".into()),
         ("RUSTFLAGS".to_owned(), "-Ctarget-cpu=native".into()),
         ("CARGO_INCREMENTAL".to_owned(), "1".into()),
         ("SCCACHE_GHA_ENABLED".to_owned(), "true".into()),
@@ -433,10 +430,8 @@ fn controlled_environment_removes_stale_compiler_and_gate_variables() {
         false,
     )
     .unwrap();
-    assert_eq!(
-        controlled.get("RYFRAME_CI_RUST_GATE_PROFILE").unwrap(),
-        "standard"
-    );
+    assert!(!controlled.contains_key("RYFRAME_CI_RUST_GATE_PROFILE"));
+    assert!(!controlled.contains_key("RYFRAME_CI_TEST_JOBS"));
     assert_eq!(controlled.get("CARGO_INCREMENTAL").unwrap(), "0");
     assert_eq!(controlled.get("RYFRAME_VERIFY_JOBS").unwrap(), "12");
     assert_eq!(
