@@ -20,14 +20,14 @@ class NativeProducerTests(unittest.TestCase):
             path for path in Path(__file__).resolve().parents
             if (path / "Cargo.toml").is_file()
         )
-        suffix = ".exe" if os.name == "nt" else ""
-        self.tool = self.root / "target" / "debug" / f"xtask{suffix}"
-        if not self.tool.is_file():
-            self.skipTest("定向 Rust 测试尚未生成 xtask 二进制")
-        digest = file_digest(self.tool)
-        self.binding = {"path": str(self.tool), "sha256": digest["sha256"]}
+        from rate_limit_tool import tool_binding, verified_tool
+        selected = tool_binding()
+        self.assertIsNotNone(selected, "必须显式绑定本次编译的原生工具")
+        with verified_tool(selected) as tool:
+            self.tool = Path(tool)
+            self.binding = {key: selected[key] for key in ("path", "sha256")}
         previous = process._TEST_TOOL
-        process._TEST_TOOL = {**self.binding, "bytes": digest["bytes"]}
+        process._TEST_TOOL = {**self.binding, "bytes": selected["bytes"]}
         self.addCleanup(setattr, process, "_TEST_TOOL", previous)
 
     def test_existing_native_command_uses_explicit_public_configuration_binding(self):

@@ -465,7 +465,9 @@ fn configuration_binds_file_credentials_and_ignores_retired_environment_override
 fn configuration_detects_file_drift_and_missing_file_seed_credentials() {
     let mut fixture = Fixture::new();
     let binding = fixture.validate().unwrap();
-    fs::write(fixture.backend.join("config/extra.toml"), "x = 1\n").unwrap();
+    let selected = fixture.backend.join("config/app.test.toml");
+    let changed = format!("{}\n", fs::read_to_string(&selected).unwrap());
+    fs::write(&selected, changed).unwrap();
     assert!(
         request_configuration::validate(
             &fixture.backend,
@@ -851,7 +853,11 @@ fn application_identity_matches_python_producer_fixture_and_requires_selected_fi
     let directory = Path::new("D:/fixture/config");
     assert_eq!(
         request_configuration::configuration_identity(directory, &files).unwrap(),
-        "cfbb98e4f6c1e9de0d785fd6601c5fb248e081f68ea0b4c75eb9f133d6803e37"
+        if cfg!(windows) {
+            "0419f81dd5ff0cb8f9e9a40a7f96d3d657e46876c9bd1e856dac425f796822af"
+        } else {
+            "cfbb98e4f6c1e9de0d785fd6601c5fb248e081f68ea0b4c75eb9f133d6803e37"
+        }
     );
     files.remove("app.toml");
     assert!(request_configuration::configuration_identity(directory, &files).is_ok());

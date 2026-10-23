@@ -23,12 +23,12 @@ from restore_reference_plan import plan_hash
 class ExistingTests(unittest.TestCase):
     def setUp(self):
         process = __import__("devex_clone_post_process")
-        tool = Path(__file__).resolve().parents[2] / "target" / "debug" / (
-            "xtask.exe" if os.name == "nt" else "xtask"
-        )
-        from restore_build import file_digest
-        previous = process._TEST_TOOL
-        process._TEST_TOOL = {"path": str(tool), **file_digest(tool)}
+        from rate_limit_tool import tool_binding, verified_tool
+        selected = tool_binding()
+        self.assertIsNotNone(selected, "必须显式绑定本次编译的原生工具")
+        with verified_tool(selected) as tool:
+            previous = process._TEST_TOOL
+            process._TEST_TOOL = {key: selected[key] for key in ("path", "bytes", "sha256")}
         self.addCleanup(setattr, process, "_TEST_TOOL", previous)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
