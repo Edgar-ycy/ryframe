@@ -1,5 +1,6 @@
 """短暂源码检查窗口只复用已核验内容，不以文件时间代替实际摘要。"""
 import os
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -27,22 +28,17 @@ class SourceCheckTests(unittest.TestCase):
         (self.root / "Cargo.toml").write_bytes(b"manifest")
         self.tool = self.root / "tools/python/check.py"
         self.tool.write_bytes(b"tool")
-        self.head, self.index = "a" * 40, b"100644 fixed index"
-        self.snapshot = {"head": self.head, "clean": False, "patch_sha256": "b" * 64, "files": []}
-        self.enterContext(patch.object(source_inventory, "source_snapshot", side_effect=lambda _: dict(self.snapshot)))
-        self.enterContext(patch.object(source_inventory, "worktree_fingerprint", return_value="sha256:" + "c" * 64))
-        self.enterContext(patch.object(source_inventory, "git", side_effect=self.git))
+        (self.root / ".gitignore").write_text(".local-tests/\n", encoding="utf-8")
+        self.git("init", "--quiet")
+        self.git("config", "core.autocrlf", "false")
+        self.git("add", ".")
+        self.git("-c", "user.name=source-unit", "-c", "user.email=source-unit@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture")
+        self.head = self.git("rev-parse", "HEAD").decode().strip()
+        self.snapshot = source_inventory.source_snapshot(self.root)
 
-    def git(self, _root, *args):
-        if args == ("rev-parse", "HEAD"):
-            return self.head.encode()
-        if args == ("ls-files", "--stage", "-z"):
-            return self.index
-        if args == ("ls-files", "--cached", "--others", "--exclude-standard", "-z"):
-            files = [path.relative_to(self.root).as_posix().encode() for path in self.root.rglob("*")
-                     if path.relative_to(self.root).parts[0] != ".local-tests" and (path.is_file() or path.is_symlink())]
-            return b"\0".join(sorted(files)) + b"\0"
-        raise AssertionError(args)
+    def git(self, *arguments):
+        return subprocess.check_output(["git", "-C", str(self.root), *arguments])
 
     def test_no_stage_does_not_add_git_requirements_or_cache_independent_calls(self):
         with patch.object(sources, "capture_inventory", side_effect=AssertionError("extra Git")), sources.source_check(self.root):
@@ -110,25 +106,28 @@ class SourceCheckTests(unittest.TestCase):
                     renamed.rename(self.tool)
 
     def test_head_and_index_modes_are_checked_without_git_diff(self):
-        with sources.artifact_sources(self.root, []):
-            for field, changed in (("head", "f" * 40), ("index", b"100755 same content")):
-                old = getattr(self, field)
-                setattr(self, field, changed)
-                with self.subTest(field=field), self.assertRaisesRegex(ValueError, "Git 模式"), sources.source_check(self.root):
-                    pass
-                setattr(self, field, old)
+        for field in ("head", "index"):
+            with self.subTest(field=field), sources.artifact_sources(self.root, []):
+                if field == "head":
+                    self.git("-c", "user.name=source-unit", "-c", "user.email=source-unit@example.invalid",
+                             "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "drift")
+                else:
+                    self.git("update-index", "--chmod=+x", "tools/python/check.py")
+                try:
+                    with self.assertRaisesRegex(ValueError, "Git 模式"), sources.source_check(self.root):
+                        pass
+                finally:
+                    if field == "head":
+                        self.git("update-ref", "HEAD", self.head)
+                    else:
+                        self.git("update-index", "--chmod=-x", "tools/python/check.py")
 
-    def test_worktree_executable_mode_change_is_detected_even_with_identical_content(self):
-        original = Path.lstat
-        def changed(path):
-            value = original(path)
-            if path != self.tool:
-                return value
-            fields = list(value)
-            fields[0] ^= 0o111
-            return os.stat_result(fields)
+    def test_native_mode_guard_change_is_detected_even_with_identical_content(self):
+        # Windows 不提供 POSIX 可执行位；此处验证调用方拒绝原生 guard 漂移。
         with sources.artifact_sources(self.root, []):
-            with patch.object(Path, "lstat", autospec=True, side_effect=changed):
+            observed = sources.file_inventory(self.root)
+            observed["modes_sha256"] = "0" * 64
+            with patch.object(sources, "file_inventory", return_value=observed):
                 with self.assertRaisesRegex(ValueError, "Git 模式"), sources.source_check(self.root):
                     pass
 
@@ -164,13 +163,13 @@ class SourceCheckTests(unittest.TestCase):
         with sources.source_check(self.root):
             self.assertIsNone(sources.checked_source(self.root))
 
-    def test_link_or_outside_resolved_path_is_rejected(self):
-        original = Path.resolve
+    def test_native_path_rejection_propagates_without_cached_proof(self):
+        # 路径链实际拒绝由原生 symlink/junction 测试覆盖，调用方不得吞掉拒绝。
         with sources.artifact_sources(self.root, []):
-            with patch.object(Path, "resolve", autospec=True, side_effect=lambda value, *args, **kwargs:
-                              self.root.parent / "outside" if value == self.tool else original(value, *args, **kwargs)):
+            with patch.object(sources, "file_inventory", side_effect=ValueError("源码文件越界")):
                 with self.assertRaisesRegex(ValueError, "越界"), sources.source_check(self.root):
                     pass
+            self.assertIsNone(sources.checked_source(self.root))
 
 
 if __name__ == "__main__":

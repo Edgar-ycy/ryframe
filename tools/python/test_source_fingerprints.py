@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 from workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
@@ -487,22 +488,28 @@ class SourceFingerprintsTests(unittest.TestCase):
             restore_build.verify_build(self.root, self.receipt, "c" * 40)
 
     def test_inventory_reads_current_deleted_and_added_files_and_detects_source_race(self):
-        source = self.original["source"]["snapshot"]
+        (self.root / ".gitignore").write_text(".local-tests/\n", encoding="utf-8")
+        def git(*arguments):
+            return subprocess.check_output(["git", "-C", str(self.root), *arguments])
+        git("init", "--quiet")
+        git("config", "core.autocrlf", "false")
         (self.root / "Cargo.toml").write_bytes(b"manifest")
+        (self.root / "deleted.rs").write_bytes(b"deleted")
+        git("add", ".")
+        git("-c", "user.name=source-unit", "-c", "user.email=source-unit@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture")
+        (self.root / "deleted.rs").unlink()
         (self.root / "tools/python").mkdir(parents=True)
         (self.root / "tools/python/check.py").write_bytes(b"tool")
-        paths = b"tools/python/check.py\0deleted.rs\0Cargo.toml\0"
-        def git(_root, *args):
-            return source["head"].encode() if args == ("rev-parse", "HEAD") else paths
-        with patch.object(source_inventory, "git", side_effect=git), \
-                patch.object(source_inventory, "source_snapshot", return_value=source) as snapshot, \
-                patch.object(source_inventory, "worktree_fingerprint", return_value="sha256:" + "a" * 64):
-            value = CAPTURE(self.root)
-            self.assertEqual([item["path"] for item in value["files"]], ["Cargo.toml", "tools/python/check.py"])
-            self.assertEqual(value["files"][0]["sha256"], hashlib.sha256(b"manifest").hexdigest())
-            snapshot.side_effect = [source, {**source, "clean": True}]
-            with self.assertRaisesRegex(ValueError, "完整源码发生变化"):
-                CAPTURE(self.root)
+        source = source_inventory.source_snapshot(self.root)
+        value = CAPTURE(self.root)
+        self.assertEqual([item["path"] for item in value["files"]],
+                         [".gitignore", "Cargo.toml", "tools/python/check.py"])
+        manifest = next(item for item in value["files"] if item["path"] == "Cargo.toml")
+        self.assertEqual(manifest["sha256"], hashlib.sha256(b"manifest").hexdigest())
+        (self.root / "tools/python/check.py").write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "完整源码发生变化"):
+            CAPTURE(self.root, source)
 
 
 if __name__ == "__main__":

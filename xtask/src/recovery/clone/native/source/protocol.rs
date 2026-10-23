@@ -94,11 +94,9 @@ fn observation(args: &Value, action: &str) -> Result<Value> {
     if !root.is_absolute() {
         return Err("源码根目录必须是绝对路径".into());
     }
-    if matches!(action, "source-snapshot" | "capture") {
-        let top = super::text_output(super::git(root, &["rev-parse", "--show-toplevel"])?)?;
-        if std::fs::canonicalize(top)? != std::fs::canonicalize(root)? {
-            return Err("恢复构建必须使用实际 Git 仓库根目录".into());
-        }
+    let top = super::text_output(super::git(root, &["rev-parse", "--show-toplevel"])?)?;
+    if std::fs::canonicalize(top)? != std::fs::canonicalize(root)? {
+        return Err("恢复构建必须使用实际 Git 仓库根目录".into());
     }
     match action {
         "worktree-fingerprint" => Ok(json!(super::worktree_fingerprint(

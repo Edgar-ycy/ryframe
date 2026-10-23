@@ -54,13 +54,18 @@ impl Drop for Fixture {
 }
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
-    let result = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .unwrap();
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(args);
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
+    }
+    let result = command.env("GIT_OPTIONAL_LOCKS", "0").output().unwrap();
     assert!(
         result.status.success(),
         "{}",
@@ -146,18 +151,40 @@ fn git_observation_binds_raw_patch_untracked_bytes_index_modes_and_deleted_files
 fn observation_rejects_non_root_invalid_head_and_non_files() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.0.join("nested")).unwrap();
-    for action in ["capture", "source-snapshot"] {
-        let mut args = json!({"action":action,"root":fixture.0.join("nested")});
+    let actions = [
+        "snapshot",
+        "source-snapshot",
+        "file-inventory",
+        "capture",
+        "worktree-fingerprint",
+    ];
+    let request = |action: &str, root: &Path| {
+        let mut args = json!({"action":action,"root":root});
         if action == "capture" {
             args["source"] = Value::Null;
         }
-        assert!(protocol::request(&args).is_err());
+        if action == "worktree-fingerprint" {
+            args["commit"] = json!("a".repeat(40));
+        }
+        args
+    };
+    for action in actions {
+        assert!(
+            protocol::request(&request(action, &fixture.0.join("nested"))).is_err(),
+            "子目录：{action}"
+        );
     }
     assert!(source_file(&fixture.0, "nested", false).is_err());
     assert!(source_file(&fixture.0, "../outside", true).is_err());
     assert!(source_file(&fixture.0, "missing", true).unwrap().is_none());
     fs::write(fixture.0.join(".git/HEAD"), b"invalid\n").unwrap();
-    assert!(protocol::request(&json!({"action":"snapshot","root":fixture.0})).is_err());
+    // 每个 Git 采集入口都必须拒绝向上发现的父仓库，包含原始 snapshot 入口。
+    for action in actions {
+        assert!(
+            protocol::request(&request(action, &fixture.0)).is_err(),
+            "损坏 HEAD：{action}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -193,4 +220,51 @@ fn intermediate_junction_is_rejected_before_file_read() {
     let observed = source_file(&fixture.0, "linked/Cargo.toml", false);
     fs::remove_dir(&junction).unwrap();
     assert!(observed.is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn executable_mode_changes_are_bound_even_when_content_is_identical() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let path = fixture.0.join("Cargo.toml");
+    let before = fixture.observe("file-inventory");
+    let mode = fs::metadata(&path).unwrap().permissions().mode();
+    fs::set_permissions(&path, fs::Permissions::from_mode(mode ^ 0o111)).unwrap();
+    let after = fixture.observe("file-inventory");
+    assert_eq!(before["files"], after["files"]);
+    assert_ne!(before["modes_sha256"], after["modes_sha256"]);
+}
+
+#[test]
+fn git_environment_override_child_observes_only_explicit_repository() {
+    let fixture = Fixture::new();
+    let snapshot = fixture.observe("source-snapshot");
+    assert_eq!(
+        snapshot["head"].as_str().unwrap(),
+        String::from_utf8(git(&fixture.0, &["rev-parse", "HEAD"]))
+            .unwrap()
+            .trim()
+    );
+    assert_eq!(snapshot["files"][0]["path"], "新增 文件.txt");
+}
+
+#[test]
+fn inherited_git_repository_index_and_config_overrides_cannot_change_source() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact",
+            "recovery::clone::native::source::tests::git::git_environment_override_child_observes_only_explicit_repository",
+            "--nocapture"])
+        .env("GIT_DIR", "not-a-repository")
+        .env("GIT_WORK_TREE", "not-a-worktree")
+        .env("GIT_INDEX_FILE", "not-an-index")
+        .env("GIT_CONFIG_COUNT", "invalid")
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }

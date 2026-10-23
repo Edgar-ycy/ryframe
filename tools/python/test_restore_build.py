@@ -6,7 +6,7 @@ import subprocess
 import sys
 import unittest
 from workspace_directory import WorkspaceDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_build as build
@@ -135,8 +135,8 @@ class RestoreBuildTests(unittest.TestCase):
 
     def test_command_failure_propagates_without_retry_or_publishing_a_receipt(self):
         failure = subprocess.CalledProcessError(1, ["cargo", "build"])
-        with patch.object(build, "write_new") as write, \
-                patch.object(build.subprocess, "run", side_effect=failure) as run:
+        run = Mock(side_effect=failure)
+        with patch.object(build, "write_new") as write:
             with self.assertRaises(subprocess.CalledProcessError) as caught:
                 build.build(self.root, run)
             self.assertIs(caught.exception, failure)

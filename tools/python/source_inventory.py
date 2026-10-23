@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import subprocess
 
+from rate_limit_tool import tool_binding
+
 
 def git(root: Path, *arguments: str) -> bytes:
     return subprocess.check_output(["git", "-C", str(root), *arguments],
@@ -32,6 +34,8 @@ def canonical_digest(value: object) -> str:
 
 
 def _native(action: str, **arguments):
+    if tool_binding() is None:
+        raise ValueError("来源清单缺少已验证原生工具绑定；请通过正式协调器或来源契约入口执行")
     # 沿用协调器的二进制 identity 校验及有界 stdin，不保留 Python 算法回退。
     from native_s3_client import _invoke, _read_response
 
