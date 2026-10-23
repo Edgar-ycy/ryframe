@@ -28,7 +28,7 @@ pub(crate) fn read(bytes: &[u8], input: &Input) -> NativeResult<Value> {
     super::super::runtime_configuration::validate(&config, &input.suite)
         .map_err(|_| Failure::new("runtime_configuration"))?;
     if hash(&config["contract"])? != input.input_sha256
-        || config["bindings"]["source_fingerprints"] != input.source_fingerprints
+        || config["bindings"]["source_fingerprints"] != json!(input.source_fingerprints)
         || config["bindings"]["source_fingerprints"]["runner_frontend"]
             != input.runner_frontend_fingerprint
     {

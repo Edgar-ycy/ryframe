@@ -421,6 +421,7 @@ fn execute_measurement(
         &target,
         session.definition,
         &session.environment,
+        session.runtime_input.as_ref(),
         options.suite,
         &options.variant,
         &label,

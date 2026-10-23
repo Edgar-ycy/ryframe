@@ -154,6 +154,7 @@ pub(super) struct RunSession {
     pub(super) run_dir: PathBuf,
     pub(super) definition: SuiteDefinition,
     pub(super) environment: BTreeMap<String, String>,
+    pub(super) runtime_input: Option<super::runtime_native::Input>,
     pub(super) source_fingerprints: SourceFingerprints,
     pub(super) pairing: Option<PairingMetadata>,
     pub(super) normalizer: PathNormalizer,
@@ -213,16 +214,20 @@ pub(super) fn prepare_run_at(
             environment.remove("SCCACHE_RECACHE");
         }
     }
-    if options.suite.is_runtime() {
-        super::runtime::prepare(
-            backend_root,
-            runner_frontend_root,
-            options.suite,
-            options.cache_state,
-            &mut environment,
-        )?;
-    }
-    let metadata = collect_metadata(MetadataContext {
+    let runtime_input = options
+        .suite
+        .is_runtime()
+        .then(|| {
+            super::runtime::prepare(
+                backend_root,
+                frontend_root,
+                runner_frontend_root,
+                options,
+                &run_dir.join("runtime.json"),
+            )
+        })
+        .transpose()?;
+    let mut metadata = collect_metadata(MetadataContext {
         backend_root,
         frontend_root,
         runner_frontend_root,
@@ -234,18 +239,14 @@ pub(super) fn prepare_run_at(
         pairing: pairing.clone(),
     })?;
     let source_fingerprints = metadata.source_fingerprints();
-    if options.suite.is_runtime() {
-        if source_fingerprints.runner_frontend.as_deref()
-            != environment
-                .get("RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT")
-                .map(String::as_str)
-        {
-            return Err("运行时 runner 前端在准备收据期间发生变化".into());
+    if let Some(input) = &runtime_input {
+        if input.source_fingerprints != source_fingerprints {
+            return Err("运行时源码在准备收据期间发生变化".into());
         }
-        environment.insert(
-            "RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(),
-            serde_json::to_string(&source_fingerprints)?,
-        );
+        metadata.runtime = Some(super::runtime::RuntimeContract {
+            input_sha256: input.input_sha256.clone(),
+            concurrency: input.concurrency,
+        });
     }
     write_metadata(&run_dir, &metadata)?;
     fs::write(run_dir.join("samples.jsonl"), [])?;
@@ -255,6 +256,7 @@ pub(super) fn prepare_run_at(
         run_dir,
         definition,
         environment,
+        runtime_input,
         source_fingerprints,
         pairing,
         normalizer,
@@ -301,6 +303,7 @@ pub(super) fn execute_warmup_with_contract(
             &target,
             session.definition,
             &session.environment,
+            session.runtime_input.as_ref(),
             options.suite,
             &options.variant,
             "warmup",
@@ -361,6 +364,7 @@ fn execute_measurements(
             &target,
             session.definition,
             &session.environment,
+            session.runtime_input.as_ref(),
             options.suite,
             &options.variant,
             &label,
@@ -420,6 +424,7 @@ pub(super) fn execute_sample(
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
+    runtime_input: Option<&super::runtime_native::Input>,
     suite: DevexSuite,
     variant: &str,
     label: &str,
@@ -431,6 +436,7 @@ pub(super) fn execute_sample(
         target,
         definition,
         environment,
+        runtime_input,
         suite,
         variant,
         label,
@@ -446,6 +452,7 @@ pub(super) fn execute_sample_with_contract(
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
+    runtime_input: Option<&super::runtime_native::Input>,
     suite: DevexSuite,
     variant: &str,
     label: &str,
@@ -466,7 +473,11 @@ pub(super) fn execute_sample_with_contract(
             target,
             definition,
             environment,
-            StepInvocation { variant, label },
+            StepInvocation {
+                variant,
+                label,
+                runtime_input,
+            },
         )
     };
     let (status, memory) = if let Some(source) = source.as_deref() {

@@ -29,6 +29,7 @@ pub(crate) struct RunMetadata {
     pub(crate) compile_surface_fingerprint: String,
     #[serde(default)]
     pub(crate) input_fingerprint: String,
+    pub(crate) runtime: Option<super::super::runtime::RuntimeContract>,
     #[serde(default)]
     pub(crate) pairing: Option<PairingMetadata>,
 }
@@ -42,6 +43,7 @@ pub(crate) struct SourceState {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SourceFingerprints {
     pub(crate) backend: String,
     pub(crate) frontend: Option<String>,

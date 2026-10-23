@@ -25,15 +25,28 @@ pub(crate) fn selection(workflow: &Value, variables: &Value) -> NativeResult<Val
 }
 
 pub(crate) struct ArtifactGuard {
-    binding: Option<Value>,
+    binding: Option<job_evidence::artifact::Binding>,
     directory: PathBuf,
 }
 impl ArtifactGuard {
-    pub(crate) fn before(config: &Value, suite: &str, directory: &Path) -> NativeResult<Self> {
+    pub(crate) fn before(
+        config: &Value,
+        input: &super::Input,
+        directory: &Path,
+    ) -> NativeResult<Self> {
+        let suite = &input.suite;
         let needed = config["contract"]["workloads"][suite]
             .as_array()
             .is_some_and(|rows| rows.iter().any(|row| row.get("job").is_some()));
-        let binding = needed.then(artifact_binding).transpose()?;
+        let binding = if needed {
+            let actual = artifact_binding()?;
+            if actual != input.native_tool {
+                return Err(Failure::new("native_tool_binding"));
+            }
+            Some(actual)
+        } else {
+            None
+        };
         if let Some(binding) = &binding {
             artifacts::write(&directory.join("native-tool-before.json"), binding)?;
         }
@@ -53,9 +66,9 @@ impl ArtifactGuard {
         Ok(())
     }
 }
-fn artifact_binding() -> NativeResult<Value> {
+fn artifact_binding() -> NativeResult<job_evidence::artifact::Binding> {
     let path = std::env::current_exe().map_err(|_| Failure::new("native_tool_binding"))?;
-    job_evidence::artifact::binding(&path).map_err(|_| Failure::new("native_tool_binding"))
+    job_evidence::artifact::typed_binding(&path).map_err(|_| Failure::new("native_tool_binding"))
 }
 
 struct WaitRequest {

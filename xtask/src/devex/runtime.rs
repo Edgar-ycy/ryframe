@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::Result;
 
 use super::{
-    model::{CacheState, DevexSuite},
+    model::{CacheState, DevexRunOptions, DevexSuite},
     report::{Distribution, SampleRecord, SampleStatus, distribution},
 };
 
@@ -65,46 +65,78 @@ pub(super) struct ScenarioSummary {
     pub(super) execution_p95_ms: Option<Distribution>,
 }
 
+/// 报告只保存无凭据的测量契约；不再借进程环境保存协议字段。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeContract {
+    pub(crate) input_sha256: String,
+    pub(crate) concurrency: u64,
+}
+
 pub(super) fn prepare(
     root: &Path,
+    frontend_root: &Path,
     runner_frontend_root: &Path,
-    suite: DevexSuite,
-    cache: CacheState,
-    environment: &mut BTreeMap<String, String>,
-) -> Result<()> {
+    options: &DevexRunOptions,
+    output: &Path,
+) -> Result<super::runtime_native::Input> {
     let path = root.join(".local-tests/devex/runtime.json");
     let config: serde_json::Value = serde_json::from_slice(
         &fs::read(&path)
             .map_err(|error| format!("运行时测量需要显式隔离配置 {}：{error}", path.display()))?,
     )?;
     let projected = super::runtime_native::configuration::selection_config(&config)?;
-    super::runtime_input::validate(root, &projected, suite, environment)?;
+    let concurrency = if options.suite == DevexSuite::RuntimeHomepage {
+        0
+    } else {
+        match options.variant.as_str() {
+            "10" => 10,
+            "50" => 50,
+            "100" => 100,
+            _ => return Err("运行时并发变体必须是 10、50 或 100".into()),
+        }
+    };
+    let app_env = match std::env::var("APP_ENV") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => "dev".into(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err("APP_ENV 必须是 UTF-8 环境名称".into());
+        }
+    };
+    super::runtime_input::validate(root, &projected, options.suite, concurrency, &app_env)?;
     let contract = config.get("contract").ok_or("运行时配置缺少 contract")?;
-    // contract 只包含固定负载、数据集、硬件环境和服务参数，不含端点、scope、凭据或源码 SHA。
-    let hash = Sha256::digest(serde_json::to_vec(contract)?)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let driver_root = crate::workspace::root_dir();
-    let driver_fingerprint =
-        super::metadata::collect_source_fingerprints(&driver_root, None)?.backend;
+    // contract 不含端点、scope、凭据或源码 SHA。
+    let input_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(contract)?));
+    let driver = crate::workspace::root_dir();
+    let driver_fingerprint = super::metadata::collect_source_fingerprints(&driver, None)?.backend;
     let runner_frontend_fingerprint =
         super::metadata::collect_source_fingerprints(runner_frontend_root, None)?.backend;
-    environment.insert("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256".into(), hash);
-    environment.insert("RYFRAME_DEVEX_CACHE".into(), cache.as_str().into());
-    environment.insert(
-        super::job_evidence::artifact::ENVIRONMENT_KEY.into(),
-        super::job_evidence::artifact::current_binding()?,
-    );
-    environment.insert(
-        "RYFRAME_DEVEX_DRIVER_FINGERPRINT".into(),
+    let mut source_fingerprints =
+        super::metadata::collect_source_fingerprints(root, Some(frontend_root))?;
+    source_fingerprints.runner_frontend = Some(runner_frontend_fingerprint.clone());
+    let input = super::runtime_native::Input {
+        backend: root.into(),
+        frontend: frontend_root.into(),
+        runner_frontend: runner_frontend_root.into(),
+        driver,
+        output: output.into(),
+        suite: options
+            .suite
+            .as_str()
+            .strip_prefix("runtime-")
+            .ok_or("必须选择运行时 suite")?
+            .into(),
+        cache: options.cache_state.as_str().into(),
+        concurrency,
+        input_sha256,
         driver_fingerprint,
-    );
-    environment.insert(
-        "RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT".into(),
         runner_frontend_fingerprint,
-    );
-    Ok(())
+        source_fingerprints,
+        app_env,
+        native_tool: super::job_evidence::artifact::current_binding()?,
+    };
+    input.validate()?;
+    Ok(input)
 }
 
 pub(super) fn read(

@@ -145,6 +145,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         commands,
         compile_surface_fingerprint,
         input_fingerprint,
+        runtime: None,
         pairing: context.pairing,
     })
 }

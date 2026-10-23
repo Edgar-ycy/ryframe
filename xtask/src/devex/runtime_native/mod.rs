@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 
 /// 所有来源由控制器显式传入；进程环境不构成第二套输入。
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
     pub backend: PathBuf,
@@ -38,7 +38,8 @@ pub(crate) struct Input {
     pub input_sha256: String,
     pub driver_fingerprint: String,
     pub runner_frontend_fingerprint: String,
-    pub source_fingerprints: Value,
+    pub source_fingerprints: super::metadata::SourceFingerprints,
+    pub native_tool: super::job_evidence::artifact::Binding,
     pub app_env: String,
 }
 
@@ -49,6 +50,16 @@ impl Input {
             || (self.suite != "homepage"
                 && (!matches!(self.concurrency, 10 | 50 | 100) || self.cache != "warm"))
             || !matches!(self.app_env.as_str(), "dev" | "test")
+            || (self.suite == "homepage" && self.concurrency != 0)
+            || !self.native_tool.valid()
+            || !configuration::fingerprint(&self.source_fingerprints.backend)
+            || self
+                .source_fingerprints
+                .frontend
+                .as_deref()
+                .is_none_or(|value| !configuration::fingerprint(value))
+            || self.source_fingerprints.runner_frontend.as_deref()
+                != Some(&self.runner_frontend_fingerprint)
             || !configuration::digest(&self.input_sha256)
             || !configuration::fingerprint(&self.driver_fingerprint)
             || !configuration::fingerprint(&self.runner_frontend_fingerprint)
@@ -82,7 +93,7 @@ pub(crate) async fn execute(input: &Input, cancel: &process::Cancellation) -> Na
             .map_err(|_| Failure::new("identity_selection"))?;
     artifacts::write(&directory.join("identity-selection.json"), &receipt)?;
     let mut provenance = provenance::Guard::before(&config, input, &directory, cancel).await?;
-    let mut native = jobs::ArtifactGuard::before(&config, &input.suite, &directory)?;
+    let mut native = jobs::ArtifactGuard::before(&config, input, &directory)?;
     let pacing = pacing::Pacing::new(&config, input, &directory);
     let mut pacing = match pacing {
         Ok(pacing) => pacing,

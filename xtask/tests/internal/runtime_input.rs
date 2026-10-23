@@ -33,7 +33,8 @@ api_window_secs = 60
 struct Fixture {
     directory: TempDir,
     config: Value,
-    environment: BTreeMap<String, String>,
+    concurrency: u64,
+    app_env: String,
 }
 
 impl Fixture {
@@ -53,15 +54,11 @@ impl Fixture {
             serde_json::to_vec(&openapi()).unwrap(),
         )
         .unwrap();
-        let environment = BTreeMap::from([
-            ("APP_ENV".into(), "test".into()),
-            ("RYFRAME_DEVEX_CONCURRENCY".into(), "10".into()),
-            ("RYFRAME_RUNTIME_INPUT_PASSWORD".into(), SECRET.into()),
-        ]);
         let mut fixture = Self {
             directory,
             config: config(),
-            environment,
+            concurrency: 10,
+            app_env: "test".into(),
         };
         fixture.refresh_digest();
         fixture
@@ -72,7 +69,13 @@ impl Fixture {
     }
 
     fn check(&self, suite: DevexSuite) -> crate::Result<()> {
-        runtime_input::validate(self.root(), &self.config, suite, &self.environment)
+        runtime_input::validate(
+            self.root(),
+            &self.config,
+            suite,
+            self.concurrency,
+            &self.app_env,
+        )
     }
 
     fn error(&self, suite: DevexSuite) -> String {
@@ -86,15 +89,7 @@ impl Fixture {
     }
 
     fn refresh_digest(&mut self) {
-        let authority = crate::rate_limit::authority(
-            self.root(),
-            None,
-            self.environment
-                .get("APP_ENV")
-                .map(String::as_str)
-                .unwrap_or(""),
-        )
-        .unwrap();
+        let authority = crate::rate_limit::authority(self.root(), None, &self.app_env).unwrap();
         let authority = serde_json::to_value(authority).unwrap();
         let bytes = serde_json::to_vec(&authority).unwrap();
         self.config["contract"]["pacing"]["authority_sha256"] =
@@ -216,7 +211,7 @@ fn valid_homepage_api_and_tenants_leave_inputs_and_files_unchanged() {
     let fixture = Fixture::new();
     let files = snapshot(fixture.root());
     let config = fixture.config.clone();
-    let environment = fixture.environment.clone();
+    let app_env = fixture.app_env.clone();
     for suite in [
         DevexSuite::RuntimeHomepage,
         DevexSuite::RuntimeApi,
@@ -226,17 +221,15 @@ fn valid_homepage_api_and_tenants_leave_inputs_and_files_unchanged() {
     }
     assert_eq!(snapshot(fixture.root()), files);
     assert_eq!(fixture.config, config);
-    assert_eq!(fixture.environment, environment);
+    assert_eq!(fixture.app_env, app_env);
 }
 
 #[test]
-fn homepage_uses_cycles_and_ignores_missing_or_invalid_concurrency() {
+fn homepage_uses_cycles_and_ignores_unused_concurrency() {
     let mut fixture = Fixture::new();
-    fixture.environment.remove("RYFRAME_DEVEX_CONCURRENCY");
+    fixture.concurrency = 0;
     fixture.check(DevexSuite::RuntimeHomepage).unwrap();
-    fixture
-        .environment
-        .insert("RYFRAME_DEVEX_CONCURRENCY".into(), SECRET.into());
+    fixture.concurrency = u64::MAX;
     fixture.check(DevexSuite::RuntimeHomepage).unwrap();
     fixture.config["contract"]["cycles"] = json!(11);
     assert!(
@@ -247,36 +240,16 @@ fn homepage_uses_cycles_and_ignores_missing_or_invalid_concurrency() {
 }
 
 #[test]
-fn concurrency_is_required_unsigned_decimal_u64_and_bounded() {
+fn concurrency_is_typed_and_restricted_to_registered_variants() {
     let mut fixture = Fixture::new();
-    fixture.environment.remove("RYFRAME_DEVEX_CONCURRENCY");
-    assert!(fixture.error(DevexSuite::RuntimeApi).contains("10 到 100"));
-    for value in [
-        "",
-        "9",
-        "101",
-        "+10",
-        "-10",
-        " 10",
-        "10 ",
-        "10.0",
-        "1e1",
-        "１０",
-        "10\n",
-        "18446744073709551616",
-        SECRET,
-    ] {
-        fixture
-            .environment
-            .insert("RYFRAME_DEVEX_CONCURRENCY".into(), value.into());
+    for value in [0, 9, 11, 49, 51, 99, 101, u64::MAX] {
+        fixture.concurrency = value;
         for suite in [DevexSuite::RuntimeApi, DevexSuite::RuntimeTenants] {
-            assert!(fixture.error(suite).contains("无符号十进制整数"));
+            assert!(fixture.error(suite).contains("10、50 或 100"));
         }
     }
-    for value in ["10", "50", "100", "0010"] {
-        fixture
-            .environment
-            .insert("RYFRAME_DEVEX_CONCURRENCY".into(), value.into());
+    for value in [10, 50, 100] {
+        fixture.concurrency = value;
         fixture.check(DevexSuite::RuntimeApi).unwrap();
         fixture.check(DevexSuite::RuntimeTenants).unwrap();
     }
@@ -363,18 +336,12 @@ fn authority_digest_tracks_each_selected_file_configuration() {
 }
 
 #[test]
-fn authority_uses_the_explicit_file_directory_and_ignores_legacy_overrides() {
+fn authority_uses_the_explicit_file_directory() {
     let mut fixture = Fixture::new();
     let relative = "中文 隔离配置";
     let directory = fixture.root().join(relative);
     fs::rename(fixture.root().join("config"), &directory).unwrap();
     fixture.config["bindings"]["app_config_dir"] = json!(relative);
-    fixture
-        .environment
-        .insert("APP_CONFIG_DIR".into(), "missing-config".into());
-    fixture
-        .environment
-        .insert("APP_RATE_LIMIT_CAPACITY".into(), "991".into());
     let before = snapshot(fixture.root());
     fixture.check(DevexSuite::RuntimeApi).unwrap();
     fixture.config["bindings"]["app_config_dir"] = json!(directory);
@@ -420,7 +387,7 @@ fn authority_rejects_invalid_explicit_configuration_paths_without_echoing_values
 fn configuration_errors_precede_io_and_keep_constant_details() {
     let mut fixture = Fixture::new();
     fs::remove_file(fixture.root().join("openapi/openapi.json")).unwrap();
-    fixture.environment.remove("RYFRAME_DEVEX_CONCURRENCY");
+    fixture.concurrency = 0;
     fixture.config["schema_version"] = json!(2);
     assert_eq!(
         fixture.error(DevexSuite::RuntimeApi),
@@ -443,7 +410,7 @@ fn configuration_errors_precede_io_and_keep_constant_details() {
 #[test]
 fn authority_failures_keep_safe_document_details_and_hide_values() {
     let mut fixture = Fixture::new();
-    fixture.environment.remove("APP_ENV");
+    fixture.app_env.clear();
     assert_eq!(
         fixture.error(DevexSuite::RuntimeApi),
         concat!(
@@ -451,7 +418,7 @@ fn authority_failures_keep_safe_document_details_and_hide_values() {
             "app_env 必须显式设置为 dev 或 test；请修正请求字段"
         )
     );
-    fixture.environment.insert("APP_ENV".into(), "test".into());
+    fixture.app_env = "test".into();
     fs::write(fixture.root().join("config/app.toml"), format!("[{SECRET}")).unwrap();
     let error = fixture.error(DevexSuite::RuntimeApi);
     assert!(error.starts_with("无法读取运行时测量的实际限流配置：config_document_invalid："));

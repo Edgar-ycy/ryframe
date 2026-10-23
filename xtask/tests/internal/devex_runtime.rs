@@ -39,7 +39,7 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
             .any(|pair| { pair == ["--runner-frontend", "{runner-frontend}"] })
     );
 
-    assert!(super::devex::runtime_native::entry::parse(&[], &Default::default()).is_err());
+    assert!(definition.environment.is_empty());
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn homepage_failure_is_counted_once_across_metrics_and_session_failures_block_su
         serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     metadata["suite"] = json!("runtime-homepage");
     metadata["variant"] = json!("default");
-    metadata["environment"]["RYFRAME_DEVEX_RUNTIME_INPUT_SHA256"] = json!("a".repeat(64));
+    metadata["runtime"] = json!({"input_sha256":"a".repeat(64),"concurrency":0});
     fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let path = run.join("samples.jsonl");
     let mut samples = fs::read_to_string(&path)
@@ -254,7 +254,7 @@ fn partial_queue_measurements_cannot_disappear_from_success_summary() {
     metadata["suite"] = json!("runtime-jobs");
     metadata["variant"] = json!("10");
     metadata["cache_state"] = json!("warm");
-    metadata["environment"]["RYFRAME_DEVEX_RUNTIME_INPUT_SHA256"] = json!("a".repeat(64));
+    metadata["runtime"] = json!({"input_sha256":"a".repeat(64),"concurrency":10});
     fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let path = run.join("samples.jsonl");
     let mut samples = fs::read_to_string(&path)
@@ -412,4 +412,37 @@ fn fixed_suite_whitelist_is_complete_and_closed() {
             .all(|name| DevexSuite::parse(name).is_some())
     );
     assert!(DevexSuite::parse("backend-check").is_none());
+}
+
+#[test]
+fn runtime_reports_require_explicit_contract_and_reject_legacy_environment_fallback() {
+    let run = super::devex_tests::fake_run("runtime-typed-contract", "sha256:same", &[100.0]);
+    let path = run.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    metadata["suite"] = json!("runtime-homepage");
+    metadata["variant"] = json!("default");
+    metadata["environment"]["RYFRAME_DEVEX_RUNTIME_INPUT_SHA256"] = json!("a".repeat(64));
+    metadata["runtime"] = serde_json::Value::Null;
+    fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    assert!(
+        super::devex::summarize(&run)
+            .unwrap_err()
+            .to_string()
+            .contains("契约与 suite 不一致")
+    );
+    for contract in [
+        json!({"input_sha256":"a".repeat(64),"concurrency":10}),
+        json!({"input_sha256":"invalid", "concurrency":0}),
+    ] {
+        metadata["runtime"] = contract;
+        fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(
+            super::devex::summarize(&run)
+                .unwrap_err()
+                .to_string()
+                .contains("负载或并发契约无效")
+        );
+    }
+    fs::remove_dir_all(run).unwrap();
 }

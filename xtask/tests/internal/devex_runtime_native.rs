@@ -32,7 +32,12 @@ fn input(root: &Path) -> Input {
         input_sha256: "a".repeat(64),
         driver_fingerprint: format!("sha256:{}", "d".repeat(64)),
         runner_frontend_fingerprint: format!("sha256:{}", "e".repeat(64)),
-        source_fingerprints: json!({}),
+        source_fingerprints: super::super::metadata::SourceFingerprints {
+            backend: format!("sha256:{}", "b".repeat(64)),
+            frontend: Some(format!("sha256:{}", "f".repeat(64))),
+            runner_frontend: Some(format!("sha256:{}", "e".repeat(64))),
+        },
+        native_tool: super::super::job_evidence::artifact::current_binding().unwrap(),
         app_env: "test".into(),
     }
 }
@@ -67,6 +72,26 @@ fn native_input_rejects_missing_bindings_and_cold_api() {
     value.driver_fingerprint = "sha256:missing".into();
     assert!(value.validate().is_err());
 }
+#[test]
+fn native_input_round_trip_requires_typed_source_and_artifact_bindings() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = input(temp.path());
+    let encoded = serde_json::to_value(&input).unwrap();
+    let parsed: Input = serde_json::from_value(encoded.clone()).unwrap();
+    parsed.validate().unwrap();
+    for field in ["native_tool", "source_fingerprints", "input_sha256"] {
+        let mut missing = encoded.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<Input>(missing).is_err());
+    }
+    let mut invalid = encoded.clone();
+    invalid["concurrency"] = json!("10");
+    assert!(serde_json::from_value::<Input>(invalid).is_err());
+    let mut invalid = encoded;
+    invalid["source_fingerprints"]["unbound"] = json!("value");
+    assert!(serde_json::from_value::<Input>(invalid).is_err());
+}
+
 #[test]
 fn canonical_hash_pointer_and_expansion_preserve_values() {
     assert_eq!(
@@ -616,36 +641,8 @@ fn all_cleanup_failures_remain_visible_alongside_the_original_failure() {
 #[test]
 fn native_entry_uses_bound_executable_and_stdin_instead_of_node_driver() {
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().to_string_lossy().into_owned();
-    let args = [
-        "--suite",
-        "api",
-        "--backend",
-        &root,
-        "--frontend",
-        &root,
-        "--runner-frontend",
-        &root,
-        "--output",
-        &root,
-    ]
-    .map(String::from);
-    let environment = BTreeMap::from([
-        ("RYFRAME_DEVEX_CONCURRENCY".into(), "10".into()),
-        ("RYFRAME_DEVEX_CACHE".into(), "warm".into()),
-        ("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256".into(), "a".repeat(64)),
-        (
-            "RYFRAME_DEVEX_DRIVER_FINGERPRINT".into(),
-            format!("sha256:{}", "d".repeat(64)),
-        ),
-        (
-            "RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT".into(),
-            format!("sha256:{}", "e".repeat(64)),
-        ),
-        ("RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(), "{}".into()),
-        ("APP_ENV".into(), "test".into()),
-    ]);
-    let command = entry::command(&args, &environment).unwrap();
+    let input = input(temp.path());
+    let command = entry::command(&input).unwrap();
     assert_eq!(command.get_program(), std::env::current_exe().unwrap());
     assert_eq!(command.get_args().collect::<Vec<_>>(), vec![entry::MARKER]);
     assert!(!format!("{command:?}").contains("runtime.mjs"));

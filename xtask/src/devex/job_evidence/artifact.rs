@@ -4,20 +4,42 @@ use std::{
     path::Path,
 };
 
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Result;
 
-pub(crate) const ENVIRONMENT_KEY: &str = "RYFRAME_DEVEX_NATIVE_TOOL";
-
-/// 绑定当前控制器产物，子进程不通过 Cargo 临时编译或搜索 PATH 中的同名程序。
-pub(crate) fn current_binding() -> Result<String> {
-    let executable = std::env::current_exe()?;
-    Ok(serde_json::to_string(&binding(&executable)?)?)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Binding {
+    pub(crate) format_version: u8,
+    pub(crate) kind: String,
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) bytes: u64,
+    pub(crate) sha256: String,
 }
 
-pub(crate) fn binding(path: &Path) -> Result<Value> {
+impl Binding {
+    pub(crate) fn valid(&self) -> bool {
+        self.format_version == 1
+            && self.kind == "ryframe-devex-native-tool"
+            && self.path.is_absolute()
+            && self.bytes > 0
+            && self.sha256.len() == 64
+            && self
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+}
+
+/// 绑定当前控制器产物，子进程不通过 Cargo 临时编译或搜索 PATH 中的同名程序。
+pub(crate) fn current_binding() -> Result<Binding> {
+    let executable = std::env::current_exe()?;
+    typed_binding(&executable)
+}
+
+pub(crate) fn typed_binding(path: &Path) -> Result<Binding> {
     let metadata = fs::symlink_metadata(path)?;
     if !path.is_absolute()
         || !metadata.is_file()
@@ -41,7 +63,11 @@ pub(crate) fn binding(path: &Path) -> Result<Value> {
     if bytes != metadata.len() || fs::metadata(path)?.len() != bytes {
         return Err("绑定期间原生任务采集器产物变化".into());
     }
-    Ok(
-        json!({"format_version": 1, "kind": "ryframe-devex-native-tool", "path": path.to_str().ok_or("原生工具路径必须是UTF-8")?, "bytes": bytes, "sha256": hex::encode(hash.finalize())}),
-    )
+    Ok(Binding {
+        format_version: 1,
+        kind: "ryframe-devex-native-tool".into(),
+        path: path.to_path_buf(),
+        bytes,
+        sha256: hex::encode(hash.finalize()),
+    })
 }

@@ -4,20 +4,15 @@ use super::{
     process::Cancellation,
 };
 use std::{
-    collections::BTreeMap,
     io::{Read, Seek, SeekFrom, Write},
-    path::PathBuf,
     process::{Command, Stdio},
 };
 
 pub(crate) const MARKER: &str = "__devex-runtime";
 
 /// 私有原生驱动仍由既有 Job/cgroup 包裹，保留完整命令树内存证据。
-pub(crate) fn command(
-    arguments: &[String],
-    environment: &BTreeMap<String, String>,
-) -> NativeResult<Command> {
-    let input = parse(arguments, environment)?;
+pub(crate) fn command(input: &Input) -> NativeResult<Command> {
+    input.validate()?;
     let mut file = tempfile::tempfile().map_err(|_| Failure::new("runtime_protocol_input"))?;
     let bytes = serde_json::to_vec(&input).map_err(|_| Failure::new("runtime_protocol_input"))?;
     if bytes.len() > 65536 {
@@ -29,7 +24,7 @@ pub(crate) fn command(
     let mut command =
         Command::new(std::env::current_exe().map_err(|_| Failure::new("native_tool_binding"))?);
     command.arg(MARKER).stdin(Stdio::from(file));
-    scrub_environment(&mut command, environment);
+    scrub_environment(&mut command);
     command.env("APP_ENV", &input.app_env);
     Ok(command)
 }
@@ -42,73 +37,60 @@ pub(crate) fn private_environment(name: &str) -> bool {
         || (name.starts_with("APP_") && name != "APP_ENV")
 }
 
-fn scrub_environment(command: &mut Command, environment: &BTreeMap<String, String>) {
-    for (key, _) in std::env::vars_os() {
-        if private_environment(&key.to_string_lossy()) {
-            command.env_remove(key);
-        }
-    }
-    for key in environment.keys() {
-        if private_environment(key) {
-            command.env_remove(key);
-        }
-    }
+pub(crate) fn allowed_environment(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    name.starts_with("CARGO_")
+        || name.starts_with("RUSTUP_")
+        || matches!(
+            name.as_str(),
+            "PATH"
+                | "PATHEXT"
+                | "SYSTEMROOT"
+                | "WINDIR"
+                | "SYSTEMDRIVE"
+                | "COMSPEC"
+                | "TEMP"
+                | "TMP"
+                | "TMPDIR"
+                | "HOME"
+                | "USERPROFILE"
+                | "HOMEDRIVE"
+                | "HOMEPATH"
+                | "LOCALAPPDATA"
+                | "APPDATA"
+                | "PROGRAMDATA"
+                | "PROGRAMFILES"
+                | "PROGRAMFILES(X86)"
+                | "NUMBER_OF_PROCESSORS"
+                | "LD_LIBRARY_PATH"
+                | "DYLD_LIBRARY_PATH"
+                | "LANG"
+                | "LC_ALL"
+                | "TZ"
+                | "RUSTFLAGS"
+                | "CARGO_ENCODED_RUSTFLAGS"
+                | "RUST_BACKTRACE"
+                | "RUST_LIB_BACKTRACE"
+                | "CC"
+                | "CXX"
+                | "CFLAGS"
+                | "CXXFLAGS"
+                | "INCLUDE"
+                | "LIB"
+                | "LIBPATH"
+                | "NO_COLOR"
+                | "FORCE_COLOR"
+                | "TERM"
+        )
 }
 
-pub(crate) fn parse(
-    arguments: &[String],
-    environment: &BTreeMap<String, String>,
-) -> NativeResult<Input> {
-    if arguments.len() != 10 {
-        return Err(Failure::new("runtime_parameters"));
-    }
-    let mut fields = BTreeMap::new();
-    for pair in arguments.as_chunks::<2>().0 {
-        if !matches!(
-            pair[0].as_str(),
-            "--suite" | "--backend" | "--frontend" | "--runner-frontend" | "--output"
-        ) || fields.insert(pair[0].as_str(), pair[1].as_str()).is_some()
-        {
-            return Err(Failure::new("runtime_parameters"));
+fn scrub_environment(command: &mut Command) {
+    command.env_clear();
+    for (key, value) in std::env::vars_os() {
+        if allowed_environment(&key.to_string_lossy()) {
+            command.env(key, value);
         }
     }
-    let parameter = |name| {
-        fields
-            .get(name)
-            .copied()
-            .ok_or_else(|| Failure::new("runtime_parameters"))
-    };
-    let binding = |name| {
-        environment
-            .get(name)
-            .cloned()
-            .ok_or_else(|| Failure::new("runtime_parameters"))
-    };
-    let suite = parameter("--suite")?.to_owned();
-    let input = Input {
-        backend: PathBuf::from(parameter("--backend")?),
-        frontend: PathBuf::from(parameter("--frontend")?),
-        runner_frontend: PathBuf::from(parameter("--runner-frontend")?),
-        driver: crate::workspace::root_dir(),
-        output: PathBuf::from(parameter("--output")?),
-        concurrency: if suite == "homepage" {
-            0
-        } else {
-            binding("RYFRAME_DEVEX_CONCURRENCY")?
-                .parse()
-                .map_err(|_| Failure::new("runtime_parameters"))?
-        },
-        suite,
-        cache: binding("RYFRAME_DEVEX_CACHE")?,
-        input_sha256: binding("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256")?,
-        driver_fingerprint: binding("RYFRAME_DEVEX_DRIVER_FINGERPRINT")?,
-        runner_frontend_fingerprint: binding("RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT")?,
-        source_fingerprints: serde_json::from_str(&binding("RYFRAME_DEVEX_SOURCE_FINGERPRINTS")?)
-            .map_err(|_| Failure::new("runtime_parameters"))?,
-        app_env: binding("APP_ENV")?,
-    };
-    input.validate()?;
-    Ok(input)
 }
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {

@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fs::{self, File},
     io::Read,
     path::Path,
@@ -12,7 +11,7 @@ use crate::{Result, devex::DevexSuite};
 
 const MAX_OPENAPI_BYTES: u64 = 16 * 1024 * 1024;
 const CONFIG: &str = "运行时测量配置无效";
-const CONCURRENCY: &str = "运行时并发数必须是 10 到 100 的无符号十进制整数";
+const CONCURRENCY: &str = "运行时并发数必须是 10、50 或 100";
 const IDENTITY: &str = "运行时身份池或租户分布校验失败";
 const AUTHORITY: &str = "无法读取运行时测量的实际限流配置";
 const OPENAPI: &str = "运行时 OpenAPI 必须是可读取的普通文件";
@@ -27,7 +26,8 @@ pub(crate) fn validate(
     root: &Path,
     config: &Value,
     suite: DevexSuite,
-    environment: &BTreeMap<String, String>,
+    count: u64,
+    app_env: &str,
 ) -> Result<()> {
     let suite = suite
         .as_str()
@@ -35,7 +35,10 @@ pub(crate) fn validate(
         .ok_or("只有运行时场景可以核验测量输入")?;
     super::runtime_configuration::validate(config, suite)
         .map_err(|reason| format!("{CONFIG}：{reason}"))?;
-    let count = concurrency(suite, environment)?;
+    let count = if suite == "homepage" { 0 } else { count };
+    if suite != "homepage" && !matches!(count, 10 | 50 | 100) {
+        return Err(CONCURRENCY.into());
+    }
     super::runtime_selection::validate_suite(config, suite, count)
         .map_err(|reason| format!("{IDENTITY}：{reason}"))?;
     let config_dir = match config["bindings"].get("app_config_dir") {
@@ -46,7 +49,6 @@ pub(crate) fn validate(
             )?))
         }
     };
-    let app_env = environment.get("APP_ENV").map(String::as_str).unwrap_or("");
     let authority = crate::rate_limit::authority(root, config_dir, app_env)
         .map_err(|reason| format!("{AUTHORITY}：{}：{}", reason.code(), reason.message()))?;
     let authority = serde_json::to_value(authority).map_err(|_| AUTHORITY)?;
@@ -62,23 +64,6 @@ pub(crate) fn validate(
         return Err(AUTHORITY_DIGEST.into());
     }
     Ok(())
-}
-
-fn concurrency(suite: &str, environment: &BTreeMap<String, String>) -> Result<u64> {
-    if suite == "homepage" {
-        return Ok(0);
-    }
-    let value = environment
-        .get("RYFRAME_DEVEX_CONCURRENCY")
-        .ok_or(CONCURRENCY)?;
-    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(CONCURRENCY.into());
-    }
-    value
-        .parse::<u64>()
-        .ok()
-        .filter(|count| (10..=100).contains(count))
-        .ok_or_else(|| CONCURRENCY.into())
 }
 
 fn read_openapi(root: &Path) -> Result<Value> {

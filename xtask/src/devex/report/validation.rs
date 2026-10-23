@@ -15,6 +15,27 @@ pub(super) fn validate_execution_contract(metadata: &RunMetadata) -> Result<()> 
         .suite
         .validate_cache_state(metadata.cache_state)
         .map_err(|error| format!("DevEx metadata cache contract 无效：{error}"))?;
+    match (&metadata.runtime, metadata.suite.is_runtime()) {
+        (Some(contract), true) => {
+            let count = if metadata.suite == DevexSuite::RuntimeHomepage {
+                0
+            } else {
+                metadata
+                    .variant
+                    .parse::<u64>()
+                    .map_err(|_| "运行时 metadata 并发变体无效")?
+            };
+            if (metadata.suite != DevexSuite::RuntimeHomepage && !matches!(count, 10 | 50 | 100))
+                || (metadata.suite == DevexSuite::RuntimeHomepage && metadata.variant != "default")
+                || contract.concurrency != count
+                || !super::super::runtime_native::configuration::digest(&contract.input_sha256)
+            {
+                return Err("运行时 metadata 的负载或并发契约无效".into());
+            }
+        }
+        (None, false) => {}
+        _ => return Err("运行时 metadata 契约与 suite 不一致".into()),
+    }
     if metadata.suite == DevexSuite::ResourceGate
         && metadata
             .environment
@@ -67,8 +88,9 @@ fn validate_sample(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> 
         if !metadata.suite.is_runtime()
             || evidence.cache_state != metadata.cache_state
             || metadata
-                .environment
-                .get("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256")
+                .runtime
+                .as_ref()
+                .map(|contract| &contract.input_sha256)
                 != Some(&evidence.input_sha256)
         {
             return Err("运行时样本与 metadata 的负载或冷暖条件不一致".into());

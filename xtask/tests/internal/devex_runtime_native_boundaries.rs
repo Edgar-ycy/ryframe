@@ -90,13 +90,12 @@ fn import_manifest_rejects_duplicate_escaped_foreign_and_changed_samples() {
 #[test]
 fn source_descriptors_and_runner_identity_are_mandatory_before_any_process() {
     let temp = tempfile::tempdir().unwrap();
-    let mut input = input(temp.path());
+    let input = input(temp.path());
     let mut config = pool(10);
     let descriptor =
         json!({"path":temp.path().join("receipt.json"),"bytes":1,"sha256":"a".repeat(64)});
     config["contract"]["environment_sha256"] = json!("b".repeat(64));
-    input.source_fingerprints = json!({"runner_frontend":input.runner_frontend_fingerprint});
-    config["bindings"]["source_fingerprints"] = input.source_fingerprints.clone();
+    config["bindings"]["source_fingerprints"] = json!(input.source_fingerprints);
     config["bindings"]["provenance"] = json!({"python":temp.path().join("python.exe"),"runtime_receipt":descriptor,"target_plan":descriptor,
         "runtime_registration":descriptor,"runtime_launch":descriptor,"environment_document":temp.path().join("environment.json")});
     assert!(provenance::specification(&config, &input).is_ok());
@@ -158,4 +157,30 @@ fn task_client_uses_managed_plaintext_options_without_password_argv_or_environme
         .remove("password");
     invalid["control"]["password_env"] = json!("OLD_SECRET");
     assert!(mysql::command(&invalid).is_err());
+}
+
+#[test]
+fn job_artifact_binding_is_explicit_and_rejects_a_different_controller() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut input = input(temp.path());
+    let config = json!({"contract":{"workloads":{"api":[{"job":{"kind":"export"}}]}}});
+    let mut invalid = input.native_tool.clone();
+    invalid.sha256 = "0".repeat(64);
+    input.native_tool = invalid;
+    let error = jobs::ArtifactGuard::before(&config, &input, temp.path())
+        .err()
+        .unwrap();
+    assert_eq!(error.category, "native_tool_binding");
+    assert!(!temp.path().join("native-tool-before.json").exists());
+    input.native_tool = super::super::super::job_evidence::artifact::current_binding().unwrap();
+    let mut guard = jobs::ArtifactGuard::before(&config, &input, temp.path()).unwrap();
+    guard.after().unwrap();
+    let before: Value =
+        serde_json::from_slice(&fs::read(temp.path().join("native-tool-before.json")).unwrap())
+            .unwrap();
+    let after: Value =
+        serde_json::from_slice(&fs::read(temp.path().join("native-tool-after.json")).unwrap())
+            .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(before, json!(input.native_tool));
 }
