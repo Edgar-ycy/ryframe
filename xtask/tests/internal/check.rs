@@ -21,9 +21,9 @@ use super::check::{
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
     parse_change_surface_policy, policy_tasks, resolve_frontend_dir, resolve_target_dir,
-    resource_test_executable_from_messages, resource_workspace_environment_for_profile,
-    reverse_dependency_closure, select_check_mode, validate_feature_combination,
-    verify_job_budget_from, verify_target_policy_from, workspace_clippy_args, workspace_test_args,
+    resource_test_executable_from_messages, resource_workspace_control, reverse_dependency_closure,
+    select_check_mode, validate_feature_combination, verify_job_budget_from,
+    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
 use super::cli::CheckScope;
 
@@ -367,48 +367,37 @@ fn resource_test_executable_is_read_from_cargo_json_messages() {
 }
 
 #[test]
-fn resource_workspace_environment_uses_selected_frontend_and_target() {
-    assert_eq!(
-        resource_workspace_environment_for_profile(
-            Path::new("workspace/frontend"),
-            Path::new("target/ci/resource"),
-            "4",
-            ResourceWorkspaceProfile::Full,
-        ),
-        [
-            ("CARGO_BUILD_JOBS", "4".to_owned()),
-            (
-                "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR",
-                "workspace/frontend".to_owned(),
-            ),
-            (
-                "RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR",
-                "target/ci/resource".to_owned(),
-            ),
-        ]
-    );
-}
-
-#[test]
-fn only_targeted_resource_workspace_sets_the_lightweight_profile() {
-    let full = resource_workspace_environment_for_profile(
-        Path::new("workspace/frontend"),
-        Path::new("target/ci/resource"),
-        "4",
-        ResourceWorkspaceProfile::Full,
-    );
-    assert!(
-        full.iter()
-            .all(|(key, _)| *key != "RYFRAME_RESOURCE_WORKSPACE_PROFILE")
-    );
-
-    let targeted = resource_workspace_environment_for_profile(
-        Path::new("workspace/frontend"),
-        Path::new("target/ci/resource"),
-        "4",
+fn resource_workspace_control_binds_selected_paths_and_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let frontend = root.path().join("前端 source");
+    let target = root.path().join("target/resource");
+    let directory = resource_workspace_control(
+        root.path(),
+        &frontend,
+        &target,
         ResourceWorkspaceProfile::Targeted,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(directory.path().join("resource-workspace-control.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value["format_version"], 1);
+    assert_eq!(
+        value["frontend_dir"],
+        std::path::absolute(&frontend)
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
     );
-    assert!(targeted.contains(&("RYFRAME_RESOURCE_WORKSPACE_PROFILE", "targeted".to_owned(),)));
+    assert_eq!(
+        value["target_dir"],
+        std::path::absolute(&target)
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(value["profile"], "targeted");
 }
 
 #[test]

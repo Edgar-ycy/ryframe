@@ -1,6 +1,9 @@
 use ryframe_generator::import::{inspect_existing_table, plan_import_models};
 use sea_orm::TransactionTrait;
 
+#[path = "support/resource_workspace.rs"]
+mod resource_workspace_control;
+
 #[path = "mysql_schema_import/business_evolution.rs"]
 mod business_evolution;
 #[path = "mysql_schema_import/cli.rs"]

@@ -59,7 +59,7 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         assert!(delta.iter().any(|change| change.relative == Path::new("crates/cli-import-business/src/resources/table1.rs") && change.before.is_none() && change.after.is_some()));
         require_success(import(&root, &configuration, "table1,table2", true)?)?;
         installed.verify()?;
-        if let Some(frontend) = frontend::Candidate::from_environment()? {
+        if let Some(frontend) = frontend::Candidate::from_control()? {
             frontend.configure(&root)?;
             let mut command = import_command(&root, &configuration, "table1,table2")?;
             command.args(["--sync-frontend", "--write"]);

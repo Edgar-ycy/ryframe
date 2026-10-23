@@ -16,7 +16,7 @@ use crate::{
     cli::CheckScope,
     process::{
         PreservedFailure, ProcessCancellation, failure_exit_code, is_process_cancellation,
-        run_owned, run_owned_with_env, run_pnpm, with_process_cancellation, with_process_log,
+        run_owned, run_pnpm, with_process_cancellation, with_process_log,
     },
 };
 use std::{
@@ -265,11 +265,7 @@ fn require_frontend_dependencies(frontend_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn backend_packages(
-    context: &VerifyExecutionContext,
-    packages: &BTreeSet<String>,
-    snapshots: Option<&super::snapshot::BackendSnapshots>,
-) -> Result<()> {
+fn backend_packages(context: &VerifyExecutionContext, packages: &BTreeSet<String>) -> Result<()> {
     let root = &context.root;
     let registry = load_feature_registry(root)?;
     let compile_jobs = context.jobs.total;
@@ -281,14 +277,7 @@ fn backend_packages(
             context.targets.backend.as_str(),
             jobs,
         );
-        if operation == "test" {
-            let environment = snapshots
-                .map(super::snapshot::BackendSnapshots::workspace_test_environment)
-                .unwrap_or_default();
-            run_owned_with_env(root, "cargo", &args, &environment)?;
-        } else {
-            run_owned(root, "cargo", &args)?;
-        }
+        run_owned(root, "cargo", &args)?;
     }
     for entry in registry
         .iter()

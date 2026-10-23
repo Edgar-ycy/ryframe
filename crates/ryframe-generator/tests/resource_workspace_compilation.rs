@@ -18,10 +18,10 @@ mod business_compilation;
 mod frontend_workspace;
 #[path = "generation_pipeline/fixture.rs"]
 mod generation_pipeline;
+#[path = "support/resource_workspace.rs"]
+mod resource_workspace_control;
 #[path = "resource_contracts/unsigned_compilation.rs"]
 mod unsigned_compilation;
-const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
-const PROFILE_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VerificationProfile {
@@ -40,14 +40,8 @@ impl VerificationProfile {
         }
     }
 
-    fn from_environment() -> Result<Self, String> {
-        let Some(value) = std::env::var_os(PROFILE_ENV) else {
-            return Self::from_value(None);
-        };
-        let value = value.into_string().map_err(|_| {
-            format!("资源 Workspace 验证模式环境变量 {PROFILE_ENV} 不是有效 Unicode")
-        })?;
-        Self::from_value(Some(&value))
+    fn from_control(value: &str) -> Result<Self, String> {
+        Self::from_value((value != "full").then_some(value))
     }
 }
 
@@ -98,8 +92,8 @@ fn verification_profile_defaults_to_full_and_rejects_unknown_values() {
 #[test]
 #[ignore = "需要显式前端目录与已安装依赖，验证实际标准输入协议"]
 fn order_frontend_fixture_protocol_is_repeatable_and_preserves_source() {
-    let source = std::env::var_os(FRONTEND_DIR_ENV).expect("应显式指定前端来源");
-    let source = std::path::absolute(source).unwrap();
+    let (source, _, _) =
+        resource_workspace_control::load().expect("应提供受管资源 Workspace 控制文件");
     let parent = source.join(".local-tests/resource-workspace-contract");
     fs::create_dir_all(&parent).unwrap();
     let scope = tempfile::tempdir_in(parent).unwrap();
@@ -154,8 +148,9 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
 }
 
 fn run_shared_workspace() -> Result<(), String> {
-    let profile = VerificationProfile::from_environment()?;
-    let workspace = prepare_shared_workspace(profile)?;
+    let (frontend_source, profile, target_dir) = resource_workspace_control::load()?;
+    let profile = VerificationProfile::from_control(&profile)?;
+    let workspace = prepare_shared_workspace(profile, frontend_source, target_dir)?;
     generate_resource_slices(&workspace, profile);
     if profile == VerificationProfile::Targeted {
         return Ok(());
@@ -168,7 +163,7 @@ fn run_shared_workspace() -> Result<(), String> {
     assert_backend_checks(&workspace);
     business_compilation::verify(&workspace.backend, &workspace.cargo_target);
     assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
-    generation_pipeline::verify();
+    generation_pipeline::verify(&workspace.frontend_source);
     Ok(())
 }
 
@@ -216,7 +211,11 @@ pub fn capability_descriptor"#;
     fs::write(application, source).expect("应在临时副本登记设备产品能力");
 }
 
-fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorkspace, String> {
+fn prepare_shared_workspace(
+    profile: VerificationProfile,
+    frontend_source: PathBuf,
+    cargo_target: PathBuf,
+) -> Result<SharedWorkspace, String> {
     let current_dir = std::env::current_dir()
         .map_err(|error| format!("无法读取资源 Workspace 当前目录：{error}"))?;
     let backend_source = current_dir
@@ -229,9 +228,6 @@ fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorksp
         })
         .map(Path::to_path_buf)
         .ok_or_else(|| format!("无法从 {} 定位后端 Workspace 根目录", current_dir.display()))?;
-    let frontend_source = std::env::var_os(FRONTEND_DIR_ENV)
-        .map(PathBuf::from)
-        .ok_or("资源 Workspace 验证缺少前端目录环境变量")?;
     if !frontend_source.join("node_modules").is_dir() {
         return Err("前端 node_modules 不存在".into());
     }
@@ -271,9 +267,6 @@ fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorksp
         );
     }
 
-    let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| backend_source.join("target/resource-generator-workspace-check"));
     Ok(SharedWorkspace {
         backend_source,
         frontend_source,

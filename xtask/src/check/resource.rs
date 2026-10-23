@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     Result,
@@ -8,8 +12,6 @@ use crate::{
 use super::context::resolve_target_dir;
 
 const RESOURCE_WORKSPACE_TEST: &str = "resource_workspace_compilation";
-const RESOURCE_WORKSPACE_FRONTEND_DIR: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
-const RESOURCE_WORKSPACE_PROFILE: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResourceWorkspaceProfile {
@@ -85,22 +87,13 @@ fn resource_workspace_compilation_with_profile(
         .to_str()
         .ok_or("资源 Workspace 测试可执行文件路径不是有效 UTF-8")?;
     let shared_target = resolve_target_dir(root, target_dir);
-    let owned_environment = resource_workspace_environment_for_profile(
-        &frontend_dir,
-        &shared_target,
-        jobs.as_str(),
-        profile,
-    );
-    let environment = owned_environment
-        .iter()
-        .map(|(key, value)| (*key, value.as_str()))
-        .collect::<Vec<_>>();
+    let control = resource_workspace_control(root, &frontend_dir, &shared_target, profile)?;
     run_with_env_removed(
-        root,
+        control.path(),
         executable,
         &["--ignored", "--nocapture"],
-        &environment,
-        &[RESOURCE_WORKSPACE_PROFILE],
+        &[("CARGO_BUILD_JOBS", jobs.as_str())],
+        &[],
     )
 }
 
@@ -121,27 +114,49 @@ pub(crate) fn resolve_frontend_dir(root: &Path, frontend_dir: &Path) -> Result<P
     })
 }
 
-pub(crate) fn resource_workspace_environment_for_profile(
+pub(crate) fn resource_workspace_control(
+    root: &Path,
     frontend_dir: &Path,
     shared_target: &Path,
-    jobs: &str,
     profile: ResourceWorkspaceProfile,
-) -> Vec<(&'static str, String)> {
-    let mut environment = vec![
-        ("CARGO_BUILD_JOBS", jobs.to_owned()),
-        (
-            RESOURCE_WORKSPACE_FRONTEND_DIR,
-            frontend_dir.to_string_lossy().into_owned(),
-        ),
-        (
-            "RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR",
-            shared_target.to_string_lossy().into_owned(),
-        ),
-    ];
-    if profile == ResourceWorkspaceProfile::Targeted {
-        environment.push((RESOURCE_WORKSPACE_PROFILE, "targeted".to_owned()));
-    }
-    environment
+) -> Result<tempfile::TempDir> {
+    let parent = root.join(".local-tests/resource-workspace-control");
+    fs::create_dir_all(&parent).map_err(|error| {
+        format!(
+            "无法创建资源 Workspace 控制目录 {}：{error}",
+            parent.display()
+        )
+    })?;
+    let directory = tempfile::Builder::new()
+        .prefix("invocation-")
+        .tempdir_in(&parent)?;
+    let path = directory.path().join("resource-workspace-control.json");
+    let value = serde_json::json!({
+        "format_version": 1,
+        "frontend_dir": absolute_text(frontend_dir, "前端目录")?,
+        "profile": match profile {
+            ResourceWorkspaceProfile::Full => "full",
+            ResourceWorkspaceProfile::Targeted => "targeted",
+        },
+        "target_dir": absolute_text(shared_target, "资源构建目录")?,
+    });
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    serde_json::to_writer(&mut output, &value)?;
+    output.write_all(b"\n")?;
+    output.sync_all()?;
+    Ok(directory)
+}
+
+fn absolute_text(path: &Path, label: &str) -> Result<String> {
+    let path = std::path::absolute(path)
+        .map_err(|error| format!("无法解析资源 Workspace {label} {}：{error}", path.display()))?;
+    path.to_str()
+        .filter(|value| !value.contains(['\r', '\n', '\0']))
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("资源 Workspace {label} 必须是无控制字符的 UTF-8 路径").into())
 }
 
 pub(crate) fn resource_test_executable_from_messages(output: &str) -> Result<PathBuf> {

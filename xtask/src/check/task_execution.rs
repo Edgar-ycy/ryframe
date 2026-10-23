@@ -7,7 +7,7 @@ use super::{
 use crate::{
     Result,
     migration::run_check as run_migration_history_check,
-    process::{run as run_process, run_owned, run_owned_with_env, run_pnpm},
+    process::{run as run_process, run_owned, run_pnpm},
 };
 
 use super::super::{
@@ -172,11 +172,9 @@ fn execute_smart_task(
         return Err("智能检查节点只能出现在智能任务图中".into());
     };
     match executor {
-        TaskExecutor::SmartBackendPackages => backend_packages(
-            context,
-            &selection.backend_packages,
-            state.snapshots.as_ref(),
-        ),
+        TaskExecutor::SmartBackendPackages => {
+            backend_packages(context, &selection.backend_packages)
+        }
         TaskExecutor::SmartPolicyChecks | TaskExecutor::BackendSmartPolicyChecks => {
             run_policy_checks(context, PolicyProfile::Smart)
         }
@@ -288,10 +286,9 @@ fn run_workspace_gates(
     state: &CheckExecutionState,
     include_resource_workspace: bool,
 ) -> Result<()> {
-    let snapshots = state
-        .snapshots
-        .as_ref()
-        .ok_or("Workspace 门禁缺少后端快照")?;
+    if state.snapshots.is_none() {
+        return Err("Workspace 门禁缺少后端快照".into());
+    }
     let budget = context.jobs;
     let test_jobs = match mode {
         TaskExecutionMode::Ci => ci_test_jobs_from(context.test_jobs, cfg!(windows), budget.total)?,
@@ -302,39 +299,30 @@ fn run_workspace_gates(
         budget.total, budget.backend, test_jobs, budget.resource
     );
     if include_resource_workspace {
-        run_workspace_branches(context, snapshots, test_jobs)
+        run_workspace_branches(context, test_jobs)
     } else {
-        run_backend_workspace(context, snapshots, test_jobs)
+        run_backend_workspace(context, test_jobs)
     }
 }
 
-fn run_backend_workspace(
-    context: &VerifyExecutionContext,
-    snapshots: &BackendSnapshots,
-    test_jobs: usize,
-) -> Result<()> {
+fn run_backend_workspace(context: &VerifyExecutionContext, test_jobs: usize) -> Result<()> {
     feature_matrix_with_jobs(
         &context.root,
         context.targets.backend.as_str(),
         context.jobs.backend,
     )?;
-    run_owned_with_env(
+    run_owned(
         &context.root,
         "cargo",
         &workspace_test_args(context.targets.backend.as_str(), test_jobs),
-        &snapshots.workspace_test_environment(),
     )
 }
 
-fn run_workspace_branches(
-    context: &VerifyExecutionContext,
-    snapshots: &BackendSnapshots,
-    test_jobs: usize,
-) -> Result<()> {
+fn run_workspace_branches(context: &VerifyExecutionContext, test_jobs: usize) -> Result<()> {
     run_parallel_tasks(
         &context.root,
         "backend-workspace",
-        || run_backend_workspace(context, snapshots, test_jobs),
+        || run_backend_workspace(context, test_jobs),
         "resource-workspace",
         || {
             resource_workspace_compilation(

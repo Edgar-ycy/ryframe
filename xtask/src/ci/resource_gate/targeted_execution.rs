@@ -8,8 +8,8 @@ use std::{
 
 use crate::{
     Result,
-    check::{BackendSnapshots, VerifyTargetPolicy},
-    process::{command_output_with_env, run_owned, run_owned_with_env, with_process_log},
+    check::VerifyTargetPolicy,
+    process::{command_output, run_owned, with_process_log},
 };
 
 use super::{GateStep, affected_package_args_for_target};
@@ -36,7 +36,6 @@ pub(super) fn execute_targeted_compile_contracts(
     test: &GateStep,
     test_jobs: usize,
     targets: &VerifyTargetPolicy,
-    snapshots: &BackendSnapshots,
 ) -> Result<()> {
     let GateStep::AffectedClippy(clippy_packages) = clippy else {
         return Err("resource gate 定向 Clippy 步骤类型无效".into());
@@ -52,7 +51,7 @@ pub(super) fn execute_targeted_compile_contracts(
         "cargo",
         &affected_package_args_for_target("clippy", clippy_packages, &targets.backend, test_jobs)?,
     )?;
-    execute_targeted_test(root, test, test_jobs, targets, snapshots)
+    execute_targeted_test(root, test, test_jobs, targets)
 }
 
 fn execute_targeted_test(
@@ -60,7 +59,6 @@ fn execute_targeted_test(
     step: &GateStep,
     test_jobs: usize,
     targets: &VerifyTargetPolicy,
-    snapshots: &BackendSnapshots,
 ) -> Result<()> {
     let GateStep::AffectedTest(packages) = step else {
         return Err("resource gate 定向测试步骤类型无效".into());
@@ -71,15 +69,10 @@ fn execute_targeted_test(
         "--no-run".to_owned(),
         "--message-format=json-render-diagnostics".to_owned(),
     ]);
-    let environment = snapshots.workspace_test_environment();
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let environment_refs = environment
-        .iter()
-        .map(|(key, value)| (*key, value.as_str()))
-        .collect::<Vec<_>>();
-    let output = command_output_with_env(root, "cargo", &arg_refs, &environment_refs)?;
+    let output = command_output(root, "cargo", &arg_refs)?;
     let executables = targeted_test_executables_from_messages(&output, &expected_tests)?;
-    run_targeted_test_executables(root, &executables, &environment)
+    run_targeted_test_executables(root, &executables)
 }
 
 pub(crate) fn targeted_test_names_from_args(args: &[String]) -> Result<BTreeSet<String>> {
@@ -135,7 +128,6 @@ pub(crate) fn targeted_test_executables_from_messages(
 fn run_targeted_test_executables(
     root: &Path,
     executables: &BTreeMap<String, PathBuf>,
-    environment: &[(&'static str, String)],
 ) -> Result<()> {
     let logs = root.join("target/verify/logs");
     let results = thread::scope(|scope| {
@@ -148,10 +140,8 @@ fn run_targeted_test_executables(
                     let executable = executable
                         .to_str()
                         .ok_or_else(|| "定向测试可执行文件路径不是有效 UTF-8".to_owned())?;
-                    with_process_log(&label, &log, || {
-                        run_owned_with_env(root, executable, &[], environment)
-                    })
-                    .map_err(|error| error.to_string())
+                    with_process_log(&label, &log, || run_owned(root, executable, &[]))
+                        .map_err(|error| error.to_string())
                 })
             })
             .collect::<Vec<_>>()

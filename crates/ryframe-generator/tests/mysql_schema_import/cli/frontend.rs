@@ -11,14 +11,11 @@ pub(super) struct Candidate {
 }
 
 impl Candidate {
-    pub(super) fn from_environment() -> Result<Option<Self>, String> {
-        let Some(root) = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR") else {
-            eprintln!(
-                "本次仅核验导入后端闭环；跨仓页面校验需显式 RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR"
-            );
+    pub(super) fn from_control() -> Result<Option<Self>, String> {
+        let Ok((root, _, _)) = crate::resource_workspace_control::load() else {
+            eprintln!("本次仅核验导入后端闭环；跨仓页面校验需从受管控制目录启动");
             return Ok(None);
         };
-        let root = PathBuf::from(root);
         let original = SourceSnapshot::capture(&root)?;
         let cache = root.join(".local-tests/mysql-cli-import");
         fs::create_dir_all(&cache).map_err(message)?;

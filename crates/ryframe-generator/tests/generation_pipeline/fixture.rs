@@ -5,13 +5,10 @@ use ryframe_generator::command::{GenerationBuilder, GenerationOperation};
 #[path = "../../src/command/staging/snapshot.rs"]
 mod snapshot;
 
-pub(super) fn verify() {
+pub(super) fn verify(frontend_source: &Path) {
     let backend_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let frontend_source = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("需要显式前端目录");
     let backend_before = snapshot::SourceSnapshot::capture(&backend_source).unwrap();
-    let frontend_before = snapshot::SourceSnapshot::capture(&frontend_source).unwrap();
+    let frontend_before = snapshot::SourceSnapshot::capture(frontend_source).unwrap();
     assert!(
         backend_before
             .input_paths()

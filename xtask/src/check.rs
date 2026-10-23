@@ -108,7 +108,7 @@ pub(crate) use policy_tasks::{
 #[allow(unused_imports)]
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,
-    resource_workspace_compilation, resource_workspace_environment_for_profile,
+    resource_workspace_compilation, resource_workspace_control,
     targeted_resource_workspace_compilation,
 };
 #[allow(unused_imports)]

@@ -11,10 +11,9 @@ use serde::Serialize;
 use crate::{
     Result,
     check::{
-        BackendSnapshotProfile, BackendSnapshots, ci_consumer_contract_against_committed_snapshot,
-        ci_target_policy, preflight_trusted_ref, prepare_backend_snapshots,
-        resource_workspace_compilation, targeted_resource_workspace_compilation,
-        verify_backend_snapshots, verify_job_budget_from,
+        BackendSnapshotProfile, ci_consumer_contract_against_committed_snapshot, ci_target_policy,
+        preflight_trusted_ref, prepare_backend_snapshots, resource_workspace_compilation,
+        targeted_resource_workspace_compilation, verify_backend_snapshots, verify_job_budget_from,
     },
     migration::run_check as run_migration_history,
     process::run_owned,
@@ -296,7 +295,7 @@ fn execute_targeted_plan(
             )
         },
         "resource-gate-contracts",
-        || execute_targeted_contracts(root, frontend_dir, base, packages, &snapshots, execution),
+        || execute_targeted_contracts(root, frontend_dir, base, packages, execution),
     )?;
     verify_backend_snapshots(root, &snapshots)
 }
@@ -306,7 +305,6 @@ fn execute_targeted_contracts(
     frontend_dir: &Path,
     base: Option<&str>,
     packages: std::collections::BTreeSet<String>,
-    snapshots: &BackendSnapshots,
     execution: GateExecution<'_>,
 ) -> Result<()> {
     let mut steps = targeted_contract_steps(packages).into_iter();
@@ -327,7 +325,6 @@ fn execute_targeted_contracts(
                 &test,
                 execution.test_jobs,
                 execution.targets,
-                snapshots,
             )
         },
         "resource-gate-cross-contracts",

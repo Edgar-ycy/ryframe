@@ -8,13 +8,15 @@ use ryframe_generator::{
     render_frontend_assets, render_resources_with_frontend, write_resource, write_resources,
 };
 
+#[path = "support/resource_workspace.rs"]
+mod resource_workspace_control;
+
 #[test]
 fn frontend_renderer_returns_exact_framework_assets_without_writing() {
-    let Some(frontend) = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR") else {
-        eprintln!("跨仓渲染字节验证未执行：需显式 RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR");
+    let Ok((frontend, _, _)) = resource_workspace_control::load() else {
+        eprintln!("跨仓渲染字节验证未执行：需从受管控制目录启动");
         return;
     };
-    let frontend = PathBuf::from(frontend);
     let backend = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let resources = ["notice", "post"]
         .map(|name| load_resource(backend.join(format!("catalog/resources/{name}.toml"))).unwrap());
@@ -53,11 +55,10 @@ fn missing_frontend_fails_before_resource_installation() {
 
 #[test]
 fn frontend_renderer_works_in_source_only_candidate_with_chinese_and_spaces() {
-    let Some(frontend) = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR") else {
-        eprintln!("候选路径渲染验证未执行：需显式 RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR");
+    let Ok((frontend, _, _)) = resource_workspace_control::load() else {
+        eprintln!("候选路径渲染验证未执行：需从受管控制目录启动");
         return;
     };
-    let frontend = PathBuf::from(frontend);
     let parent = frontend.join(".local-tests/frontend-renderer-candidate");
     fs::create_dir_all(&parent).unwrap();
     let temporary = tempfile::tempdir_in(parent).unwrap();
@@ -115,11 +116,10 @@ fn copy_renderer(source: &Path, target: &Path) {
 
 #[test]
 fn explicit_frontend_writes_preserve_selection_and_delete_only_obsolete_assets() {
-    let Some(frontend) = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR") else {
-        eprintln!("跨仓受管写入验证未执行：需显式 RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR");
+    let Ok((frontend, _, _)) = resource_workspace_control::load() else {
+        eprintln!("跨仓受管写入验证未执行：需从受管控制目录启动");
         return;
     };
-    let frontend = PathBuf::from(frontend);
     let backend_parent =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests/frontend-writer");
     let frontend_parent = frontend.join(".local-tests/frontend-writer");

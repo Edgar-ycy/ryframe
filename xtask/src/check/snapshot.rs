@@ -16,25 +16,6 @@ pub(crate) struct BackendSnapshots {
     mysql: Option<PathBuf>,
 }
 
-impl BackendSnapshots {
-    pub(crate) fn workspace_test_environment(&self) -> Vec<(&'static str, String)> {
-        let mut environment = Vec::with_capacity(2);
-        if let Some(openapi) = &self.openapi {
-            environment.push((
-                "RYFRAME_VERIFY_OPENAPI_SNAPSHOT_OUTPUT",
-                snapshot_environment_path(openapi),
-            ));
-        }
-        if let Some(mysql) = &self.mysql {
-            environment.push((
-                "RYFRAME_VERIFY_MYSQL_SNAPSHOT_OUTPUT",
-                snapshot_environment_path(mysql),
-            ));
-        }
-        environment
-    }
-}
-
 impl Drop for BackendSnapshots {
     fn drop(&mut self) {
         if let Some(path) = &self.openapi {
@@ -104,10 +85,6 @@ fn prepare_backend_snapshots_with_prefix(
         .contains(&BackendSnapshotProfile::Mysql)
         .then(|| artifact_dir.join(format!("{prefix}-mysql.sql")));
     Ok(BackendSnapshots { openapi, mysql })
-}
-
-fn snapshot_environment_path(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
 }
 
 pub(crate) fn stage_committed_backend_snapshots(
