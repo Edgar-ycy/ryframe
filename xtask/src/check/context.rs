@@ -17,9 +17,6 @@ pub(crate) const BACKEND_CI_TARGET_DIR: &str = "target/ci/backend";
 pub(crate) const RESOURCE_VERIFY_TARGET_DIR: &str = "target/verify/resource";
 /// CI 临时资源 Workspace 使用的 Cargo 产物目录。
 pub(crate) const RESOURCE_CI_TARGET_DIR: &str = "target/ci/resource";
-/// DevEx 资源门禁为每个样本注入的隔离 target 根目录。
-pub(crate) const DEVEX_TARGET_ROOT_ENV: &str = "RYFRAME_DEVEX_TARGET_ROOT";
-
 /// 单次 verify 内所有 Cargo 子命令共享的 target 选择。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VerifyTargetPolicy {
@@ -116,18 +113,9 @@ pub(crate) fn verify_target_policy_from(
     }
 }
 
-/// CI 子门禁默认复用稳定 target；DevEx 显式注入时改用样本级隔离目录。
+/// CI 子门禁复用稳定 target；需要隔离目录的调用方直接构造目标策略。
 pub(crate) fn ci_target_policy() -> Result<VerifyTargetPolicy> {
-    let override_root = env::var_os(DEVEX_TARGET_ROOT_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    if override_root
-        .as_ref()
-        .is_some_and(|root| !root.is_absolute())
-    {
-        return Err(format!("{DEVEX_TARGET_ROOT_ENV} 必须是绝对路径").into());
-    }
-    Ok(ci_target_policy_from(override_root.as_deref()))
+    Ok(ci_target_policy_from(None))
 }
 
 pub(crate) fn ci_target_policy_from(override_root: Option<&Path>) -> VerifyTargetPolicy {
