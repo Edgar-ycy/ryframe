@@ -1,0 +1,65 @@
+//! 已准备环境只读核验，凭据固定到普通文件与精确摘要。
+use super::*;
+use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
+use crate::recovery::clone::native::{digest, lifecycle::manifest};
+
+pub(super) fn load(backend: &Path, selected: &Path, names: &Value) -> Result<Value> {
+    let (receipt_path, receipt) = context::document(backend, selected)?;
+    let names = names.as_array().ok_or("秘密文件清单必须为数组")?;
+    check(
+        receipt["format_version"] == 1
+            && receipt["kind"] == "reference-fixture-environment"
+            && receipt["status"] == "prepared"
+            && receipt["services_started"] == false
+            && receipt["remote_writes"] == 0
+            && receipt["historical_data_used"] == false
+            && receipt["execution_backend"].is_string()
+            && receipt["environment_sha256"].is_string(),
+        "夹具运行时只能使用尚未启动服务的已准备私有环境",
+    )?;
+    let secrets = receipt["secret_files"]
+        .as_object()
+        .ok_or("夹具秘密文件描述不完整")?;
+    check(
+        names.len() == secrets.len()
+            && names
+                .iter()
+                .all(|name| name.as_str().is_some_and(|name| secrets.contains_key(name))),
+        "夹具秘密文件清单与 bootstrap 不同",
+    )?;
+    let execution = PathBuf::from(text(&receipt, "execution_backend")?);
+    validate_local_test_path(&execution, backend, LocalTestPathKind::ExistingDirectory)?;
+    check(execution.join("Cargo.toml").is_file(), "夹具执行工作树无效")?;
+    let (_, environment) = context::document(
+        backend,
+        &receipt_path
+            .parent()
+            .ok_or("环境收据没有父目录")?
+            .join("environment.json"),
+    )?;
+    json_io::exact(&environment, &["environment"], "夹具私有环境文件")?;
+    let private = &environment["environment"];
+    let values = private.as_object().ok_or("夹具私有环境文件字段无效")?;
+    check(
+        values.values().all(Value::is_string)
+            && digest::plan_hash(private)? == receipt["environment_sha256"],
+        "夹具私有环境与 bootstrap 摘要不一致",
+    )?;
+    check(
+        values
+            .keys()
+            .all(|key| ["APP_ENV", "TEMP", "TMP"].contains(&key.as_str()))
+            && private["APP_ENV"] == "test",
+        "夹具进程环境只允许 APP_ENV 与受管临时目录",
+    )?;
+    for name in names {
+        let name = name.as_str().ok_or("秘密文件名必须为字符串")?;
+        let descriptor = &secrets[name];
+        let path = manifest::bound_file(backend, descriptor, "夹具秘密文件", true)?;
+        check(
+            path.file_name().is_some_and(|file| file == name) && binding(&path)? == *descriptor,
+            "夹具秘密文件与 bootstrap 绑定不一致",
+        )?;
+    }
+    Ok(json!([receipt_path, execution, private, receipt]))
+}

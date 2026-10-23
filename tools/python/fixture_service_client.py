@@ -14,10 +14,10 @@ ROOT = Path(__file__).resolve().parents[2]
 MAX_BYTES = 4 * 1024 * 1024
 
 
-def _invoke(operation: str, arguments: dict):
+def _invoke(operation: str, arguments: dict, *, backend: Path = ROOT):
     payload = json.dumps({"format_version": 1, "operation": operation,
-                          "backend": str(ROOT), "arguments": arguments},
-                         ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                          "backend": str(backend), "arguments": arguments},
+                         ensure_ascii=False, separators=(",", ":"), default=_path_json).encode("utf-8")
     return _request("__fixture-service-history", payload, 30, "invalid_fixture_history")
 
 
@@ -26,8 +26,14 @@ def lifecycle(backend: Path, operation: str, review: Path, environment: Path,
     payload = json.dumps({"format_version": 1, "backend": str(backend), "operation": operation,
                           "review": str(review), "environment": str(environment),
                           "owner": None if owner is None else str(owner), "write": write},
-                         ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                         ensure_ascii=False, separators=(",", ":"), default=_path_json).encode("utf-8")
     return _request("__fixture-service-lifecycle", payload, 1800, "invalid_fixture_lifecycle")
+
+
+def _path_json(value):
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError("原生夹具协议只允许 JSON 与 Path")
 
 
 def _request(marker: str, payload: bytes, timeout: int, error_code: str):
@@ -85,15 +91,3 @@ def validate_initial(state: dict) -> None:
 
 def validate_history(run: Path, state: dict, *, ready: bool = True, settled: bool = True) -> dict:
     return _invoke("history", {"run": str(run), "state": state, "ready": ready, "settled": settled})
-
-
-def reconcilable_failed_close(state: dict, history: dict) -> dict | None:
-    return _invoke("reconcilable-close", {"state": state, "history": history})
-
-
-def close_reconciliation_evidence(run: Path, failed: dict, generation: dict,
-                                  sources: dict, services: dict) -> tuple[dict, dict]:
-    projection = {key: services[key] for key in ("tree", "runtime", "evidence")}
-    return tuple(_invoke("close-evidence", {"run": str(run), "failed": failed,
-                                           "generation": generation, "sources": sources,
-                                           "services": projection}))

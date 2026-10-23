@@ -12,9 +12,9 @@ use std::{
 };
 
 #[derive(Debug)]
-pub(super) struct LifecycleError {
+pub(in crate::recovery::fixture_control::services) struct LifecycleError {
     pub(super) category: &'static str,
-    pub(super) message: &'static str,
+    pub(in crate::recovery::fixture_control::services) message: &'static str,
 }
 impl fmt::Display for LifecycleError {
     fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {

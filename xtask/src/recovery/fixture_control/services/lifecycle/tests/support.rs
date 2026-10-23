@@ -125,7 +125,7 @@ impl FakeRuntime {
             &review,
             &bootstrap,
             owner.as_deref(),
-            true,
+            operation != "status",
         )
     }
     pub(super) fn owner(&self) -> PathBuf {
@@ -177,6 +177,7 @@ impl Runtime for FakeRuntime {
         match operation {
             "context" => Ok(self.fixture.context()),
             "registered" => Ok(self.fixture.services.clone()),
+            "review-successor" => Ok(Value::Null),
             "controller" => Ok(self.controller.clone()),
             "observe" => {
                 self.observes += 1;
@@ -220,6 +221,9 @@ impl Runtime for FakeRuntime {
                     self.new_running = false;
                 } else {
                     self.observation = expected_stopped();
+                    if args["tree"]["operation_id"] == "c".repeat(32) {
+                        self.new_running = false;
+                    }
                 }
                 Ok(json!(true))
             }

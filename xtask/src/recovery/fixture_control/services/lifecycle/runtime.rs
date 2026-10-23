@@ -44,6 +44,7 @@ impl PythonRuntime {
         })
     }
     fn invoke(&self, operation: &str, arguments: Value) -> Result<Value> {
+        super::primitive::validate(&self.backend, operation, &arguments)?;
         check(
             source_snapshot(&self.backend.join("tools/python"))? == self.sources,
             "服务原语入口在运行期间变化",
@@ -133,7 +134,17 @@ fn wait_primitive(
 }
 impl Runtime for PythonRuntime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
-        self.invoke(operation, arguments)
+        if operation == "context" {
+            let backend = self.backend.clone();
+            super::context::load(
+                self,
+                &backend,
+                Path::new(model::text(&arguments, "review")?),
+                Path::new(model::text(&arguments, "environment")?),
+            )
+        } else {
+            self.invoke(operation, arguments)
+        }
     }
     fn now(&self) -> Duration {
         self.started.elapsed()

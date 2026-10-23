@@ -27,7 +27,7 @@ def _context(value, backend):
 
 
 def dispatch(backend, operation, args):
-    from reference_fixture_service_context import context, guard, registered_services, observe_services
+    from reference_fixture_service_context import guard, registered_services, observe_services
     from devex_clone_run_state import controller_observation, recover_run_lock
     from process_environment import configured
     from full_stack_process import process_identity
@@ -35,7 +35,7 @@ def dispatch(backend, operation, args):
     from full_stack_process_monitor import completion_binding
     from devex_clone_cache_process import start, stop
     schemas = {
-        "context": {"review", "environment"}, "registered": {"context", "settled"},
+        "review-successor": {"previous", "review"}, "registered": {"context", "settled"},
         "observe": {"services"}, "controller": {"run"}, "identity": {"pid"},
         "completion": {"tree"}, "tree-stop": {"tree", "crash"},
         "tree-read": {"output", "scope_id"}, "recover-controller": {"run", "owner"},
@@ -46,11 +46,13 @@ def dispatch(backend, operation, args):
     if operation not in schemas or not isinstance(args, dict) or set(args) != schemas[operation]:
         raise ValueError("服务原语字段或操作无效")
     from devex_clone_model import local_path
-    for key in ("output", "run", "review", "environment"):
+    for key in ("output", "run"):
         if key in args:
             local_path(backend, args[key])
-    if operation == "context":
-        return context(backend, Path(args["review"]), Path(args["environment"]))
+    if operation == "review-successor":
+        from reference_fixture_environment import validate_preflight_successor
+        validate_preflight_successor(args["previous"], args["review"])
+        return None
     if operation == "registered":
         return registered_services(_context(args["context"], backend), settled=args["settled"])
     if operation == "observe":

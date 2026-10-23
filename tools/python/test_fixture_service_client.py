@@ -45,6 +45,15 @@ class FixtureServiceClientTests(unittest.TestCase):
         self.assertIsNone(payload["owner"])
         self.assertEqual(run.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
+    def test_path_protocol_preserves_json_types_and_rejects_arbitrary_objects(self):
+        with (patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
+              patch.object(client.subprocess, "run", return_value=subprocess.CompletedProcess(
+                  [], 0, b'{"ok":true,"result":null}', b"")) as run):
+            client._invoke("service-document", {"path": Path("local.json")})
+        self.assertEqual(json.loads(run.call_args.kwargs["input"])["arguments"], {"path": "local.json"})
+        with self.assertRaises(TypeError):
+            client._invoke("service-document", {"path": object()})
+
     def test_invalid_envelopes_duplicates_and_exit_status_never_succeed(self):
         for raw, code in [(b'{"ok":true,"result":null}', 2),
                           (b'{"ok":true,"result":null,"extra":true}', 0),

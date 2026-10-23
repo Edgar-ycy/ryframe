@@ -48,7 +48,7 @@ def _read(backend: Path, value: Path) -> tuple[Path, dict]:
 
 def prepared_environment(backend: Path, value: Path) -> tuple[Path, Path, dict, dict]:
     """读取并复核唯一环境 bootstrap、私有环境摘要及全部秘密文件。"""
-    return load_prepared_environment(backend, value, SECRET_FILES, bound)
+    return load_prepared_environment(backend, value, SECRET_FILES)
 
 
 def _fixture(value: dict) -> None:

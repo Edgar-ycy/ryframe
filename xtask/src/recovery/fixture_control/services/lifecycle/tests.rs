@@ -1,9 +1,13 @@
 use super::*;
 use std::{collections::VecDeque, fs, path::PathBuf};
+#[path = "tests/context.rs"]
+mod context_tests;
 #[path = "tests/recovery.rs"]
 mod recovery;
 #[path = "tests/restart.rs"]
 mod restart_tests;
+#[path = "tests/status.rs"]
+mod status_tests;
 #[path = "tests/support.rs"]
 mod support;
 #[path = "tests/wait.rs"]

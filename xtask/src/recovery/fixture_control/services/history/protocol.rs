@@ -41,11 +41,23 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 
 pub(crate) fn execute(input: &[u8]) -> (i32, Value) {
     match dispatch(input) {
-        Ok(result) => (0, json!({"ok":true,"result":result})),
+        Ok(result) => {
+            let response = json!({"ok":true,"result":result});
+            if response.to_string().len() > LIMIT {
+                failure(Some("夹具私有响应超过 4 MiB；缩小输入，禁止输出原始凭据"))
+            } else {
+                (0, response)
+            }
+        }
         Err(error) => failure(
             error
                 .downcast_ref::<evidence::HistoryError>()
-                .map(|error| error.0),
+                .map(|error| error.0)
+                .or_else(|| {
+                    error
+                        .downcast_ref::<super::super::lifecycle::model::LifecycleError>()
+                        .map(|error| error.message)
+                }),
         ),
     }
 }
@@ -92,14 +104,6 @@ fn dispatch(input: &[u8]) -> Result<Value> {
             )?;
             Ok(Value::Null)
         }
-        "reconcilable-close" => {
-            evidence::exact(args, &["state", "history"])?;
-            Ok(
-                super::reconcilable(&args["state"], &args["history"], "close")
-                    .cloned()
-                    .unwrap_or(Value::Null),
-            )
-        }
         "history" => {
             evidence::exact(args, &["run", "state", "ready", "settled"])?;
             let run = run_path(&request.backend, args)?;
@@ -107,20 +111,8 @@ fn dispatch(input: &[u8]) -> Result<Value> {
             let settled = args["settled"].as_bool().ok_or("settled 必须为布尔值")?;
             validate(&run, &args["state"], ready, settled)
         }
-        "close-evidence" => {
-            evidence::exact(
-                args,
-                &["run", "failed", "generation", "sources", "services"],
-            )?;
-            let run = run_path(&request.backend, args)?;
-            let (proof, controller) = evidence::close_evidence(
-                &run,
-                &args["failed"],
-                &args["generation"],
-                &args["sources"],
-                &args["services"],
-            )?;
-            Ok(json!([proof, controller]))
+        operation if operation.starts_with("service-") => {
+            super::super::lifecycle::query::dispatch(&request.backend, operation, args)
         }
         _ => Err("未知夹具历史操作".into()),
     }

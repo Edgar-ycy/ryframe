@@ -201,6 +201,19 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             environment.revalidate(self.backend, stable, terminal_output)
         self.assertFalse(terminal_output.exists())
 
+    def assert_service_environment_accepts_successor(self, predecessor, selected, review):
+        directory = self.root / ("service-environment-" + str(len(list(self.root.glob("service-environment-*")))))
+        directory.mkdir()
+        bootstrap = directory / "bootstrap.json"
+        bootstrap.write_text(json.dumps({"kind": "reference-fixture-environment", "status": "prepared",
+            "services_started": False, "remote_writes": 0,
+            "plan": {"review": environment.bound(predecessor)}}), encoding="utf-8")
+        (directory / "environment.json").write_text(json.dumps({"environment": {"APP_ENV": "test"}}), encoding="utf-8")
+        path, receipt, private = services.environment(self.backend, selected, review, bootstrap)
+        self.assertEqual(path, bootstrap)
+        self.assertEqual(receipt["plan"]["review"], environment.bound(predecessor))
+        self.assertEqual(private, {"APP_ENV": "test"})
+
     def test_revalidate_preserves_historical_tools_for_ready_successor(self):
         self.review["ready_for_execution"] = False
         self.review["tools"].update({
@@ -223,9 +236,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         environment._preflight_binding(ready)
         observed_ready, _ = successor._ready_review(self.backend, output)
         self.assertEqual(observed_ready, ready)
-        self.assertTrue(
-            services._continued_review(self.backend, environment.bound(pending), output, ready)
-        )
+        self.assert_service_environment_accepts_successor(pending, output, ready)
 
         successor_path = self.root / "historical-ready-successor.json"
         next_observed = copy.deepcopy(observed)
@@ -233,9 +244,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         with patch.object(environment, "_preflight", return_value=next_observed):
             renewed = environment.revalidate(self.backend, output, successor_path)
         environment.validate_preflight_successor(ready, renewed)
-        self.assertTrue(
-            services._continued_review(self.backend, environment.bound(output), successor_path, renewed)
-        )
+        self.assert_service_environment_accepts_successor(output, successor_path, renewed)
         self.assertEqual(renewed["preflight"]["supersedes"], environment.bound(output))
         self.assertEqual(renewed["tools"]["redis_python"], next_observed["redis_python"])
         expanded_preflight = copy.deepcopy(ready)
@@ -254,11 +263,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 drifted_file = self.write(f"rustfs-{field}.json", drifted)
                 with self.assertRaisesRegex(ValueError, "语义不同"):
                     successor._ready_review(self.backend, drifted_file)
-                self.assertFalse(
-                    services._continued_review(
-                        self.backend, environment.bound(pending), drifted_file, drifted
-                    )
-                )
+                with self.assertRaises(ValueError):
+                    self.assert_service_environment_accepts_successor(pending, drifted_file, drifted)
 
         for name in ("node", "mysqld_exporter"):
             for field in ("path", "sha256"):
@@ -268,11 +274,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                     drifted_file = self.write(f"{name}-{field}.json", drifted)
                     with self.assertRaisesRegex(ValueError, "语义不同"):
                         successor._ready_review(self.backend, drifted_file)
-                    self.assertFalse(
-                        services._continued_review(
-                            self.backend, environment.bound(pending), drifted_file, drifted
-                        )
-                    )
+                    with self.assertRaises(ValueError):
+                        self.assert_service_environment_accepts_successor(pending, drifted_file, drifted)
 
         invalid_previous = copy.deepcopy(self.review)
         invalid_previous["ready_for_execution"] = True
@@ -280,11 +283,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         invalid_binding = environment.bound(invalid_path)
         invalid_ready = copy.deepcopy(ready)
         invalid_ready["preflight"]["supersedes"] = invalid_binding
-        self.assertFalse(
-            services._continued_review(
-                self.backend, invalid_binding, output, invalid_ready
-            )
-        )
+        with self.assertRaises(ValueError):
+            self.assert_service_environment_accepts_successor(invalid_path, output, invalid_ready)
 
     def test_review_requires_mysqldump_but_accepts_historical_extra_tools(self):
         for name in (*environment.REVIEW_FILE_TOOLS, "redis_server"):

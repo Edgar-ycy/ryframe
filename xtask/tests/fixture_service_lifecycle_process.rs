@@ -38,6 +38,8 @@ fn request(operation: &str, write: bool, owner: Value) -> Value {
 fn explicit_write_and_owner_are_checked_before_opening_context() {
     for (operation, write, owner, expected) in [
         ("close", false, Value::Null, "--write"),
+        ("status", true, Value::Null, "只读"),
+        ("status", false, json!("credential-marker"), "owner"),
         ("restart", true, Value::Null, "owner"),
         ("close", true, json!("credential-marker"), "owner"),
         ("credential-marker", true, Value::Null, "未知"),

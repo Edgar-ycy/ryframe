@@ -81,7 +81,7 @@ fn history_cannot_open_an_unowned_directory() {
 }
 
 #[test]
-fn initial_prefix_and_pending_failures_do_not_require_service_processes() {
+fn initial_prefix_is_native_and_obsolete_python_evidence_routes_are_rejected() {
     let attempts = [
         ("storage-target", "initial"),
         ("cache-target", "initial"),
@@ -101,7 +101,52 @@ fn initial_prefix_and_pending_failures_do_not_require_service_processes() {
         ),
         &[],
     );
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["result"]["number"], 1);
+    assert_eq!(response["ok"], false);
+}
+
+#[test]
+fn service_path_projection_runs_without_python_and_rejects_unknown_fields() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let review = json!({"future_root":root.join(".local-tests/reference-fixture/future"),"scopes":{"seed":{"backend_dir":root}}});
+    let output = invoke(&request("service-run", json!({"review":review})), &[]);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let response = serde_json::from_slice::<Value>(&output.stdout).unwrap();
+    assert_eq!(
+        PathBuf::from(response["result"].as_str().unwrap()),
+        root.join(".local-tests/reference-fixture/future/service-run")
+    );
+    let output = invoke(
+        &request(
+            "service-run",
+            json!({"review":review,"private":"private-marker"}),
+        ),
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("private-marker"));
+}
+
+#[test]
+fn private_service_response_limit_never_prints_large_credentials() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let directory = tempfile::tempdir_in(root.join(".local-tests")).unwrap();
+    let path = directory.path().join("large-private.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"secret":"private-marker".repeat(300000)})).unwrap(),
+    )
+    .unwrap();
+    let output = invoke(&request("service-document", json!({"path":path})), &[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("private-marker"));
 }

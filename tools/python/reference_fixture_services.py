@@ -19,9 +19,10 @@ from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
-from reference_fixture_environment import validate_current_review_tools, validate_preflight_successor
+from reference_fixture_environment import validate_current_review_tools
 from reference_fixture_service_context import application_settings, service_run
 from reference_fixture_control_protocol import run_private
+from fixture_service_client import _invoke
 from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect
 
 
@@ -30,61 +31,24 @@ def bound(path: Path) -> dict:
 
 
 def document(backend: Path, value: Path) -> tuple[Path, dict]:
-    path = local_path(backend, str(value if value.is_absolute() else backend / value))
-    if linked(path) or not path.is_file():
-        raise ValueError("夹具服务输入必须是受控普通文件")
-    return path, read_json(path)
+    path, document = _invoke("service-document", {"path": value}, backend=backend)
+    return Path(path), document
 
 
-def _continued_review(backend: Path, bootstrap_binding: dict, review_file: Path, review: dict) -> bool:
-    preflight = review.get("preflight")
-    expected = {key: bootstrap_binding.get(key) for key in ("path", "bytes", "sha256")}
-    if not isinstance(preflight, dict) or preflight.get("supersedes") != expected:
-        return False
-    parent = Path(bootstrap_binding["path"])
-    try:
-        parent_file, previous = document(backend, parent)
-    except (FileNotFoundError, ValueError):
-        return False
-    try:
-        validate_preflight_successor(previous, review)
-    except (KeyError, TypeError, ValueError):
-        return False
-    return bound(parent_file) == expected
 
 
 def environment(backend: Path, review_file: Path, review: dict, bootstrap_path: Path) -> tuple[Path, dict, dict]:
-    bootstrap_file, bootstrap = document(backend, bootstrap_path)
-    if (bootstrap.get("kind") != "reference-fixture-environment" or bootstrap.get("status") != "prepared"
-            or bootstrap.get("services_started") is not False or bootstrap.get("remote_writes") != 0):
-        raise ValueError("夹具环境尚未准备完成或已经发生服务副作用")
-    binding = bootstrap.get("plan", {}).get("review")
-    if (not isinstance(binding, dict)
-            or (binding.get("path"), binding.get("bytes"), binding.get("sha256")) != tuple(bound(review_file)[key] for key in ("path", "bytes", "sha256"))
-            and not _continued_review(backend, binding, review_file, review)):
-        raise ValueError("夹具环境未绑定当前审阅收据")
-    environment_file = bootstrap_file.parent / "environment.json"
-    values = read_json(environment_file).get("environment")
-    if not isinstance(values, dict) or any(type(k) is not str or type(v) is not str for k, v in values.items()):
-        raise ValueError("夹具私有环境无效")
-    return bootstrap_file, bootstrap, values
+    path, receipt, private = _invoke("service-environment", {"review_file": review_file, "review": review,
+                                    "environment": bootstrap_path}, backend=backend)
+    return Path(path), receipt, private
 
 
 def _initial_services(state: dict) -> None:
-    expected = (("storage-target", "initial"), ("cache-target", "initial"))
-    actual = tuple((item["stage"], item["mode"], item["status"]) for item in state["attempts"])
-    if actual != tuple((*item, "passed") for item in expected):
-        raise ValueError("对象桶初始化只允许接续同一账本中的完成 RustFS 与 Redis 首代")
+    _invoke("service-initial-prefix", {"state": state})
 
 
 def _bucket_configuration(review: dict, private: dict) -> dict:
-    objects = private.get("object_storage", {})
-    access, secret = objects.get("access_key"), objects.get("secret_key")
-    if not isinstance(access, str) or not access or not isinstance(secret, str) or not secret:
-        raise ValueError("对象桶初始化缺少直接配置的 S3 凭据")
-    objects = review["scopes"]["seed"]["objects"]
-    return {"endpoint": objects["endpoint"], "region": objects["region"],
-            "access_key": access, "secret_key": secret}
+    return _invoke("service-bucket-configuration", {"review": review, "private": private})
 
 
 def _ready_guard(backend: Path, review_file: Path, review: dict, bootstrap_file: Path, bootstrap: dict,

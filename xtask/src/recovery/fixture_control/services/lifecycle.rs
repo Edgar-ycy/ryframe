@@ -18,12 +18,22 @@ use std::{
 
 #[path = "lifecycle/close.rs"]
 mod close;
+#[path = "lifecycle/context.rs"]
+mod context;
 #[path = "lifecycle/ledger.rs"]
 mod ledger;
 #[path = "lifecycle/model.rs"]
-mod model;
+pub(super) mod model;
+#[path = "lifecycle/prepared.rs"]
+mod prepared;
+#[path = "lifecycle/primitive.rs"]
+mod primitive;
+#[path = "lifecycle/projection.rs"]
+mod projection;
 #[path = "lifecycle/protocol.rs"]
 pub(crate) mod protocol;
+#[path = "lifecycle/query.rs"]
+pub(crate) mod query;
 #[path = "lifecycle/reconcile.rs"]
 mod reconcile;
 #[path = "lifecycle/recover.rs"]
@@ -32,6 +42,8 @@ mod recover;
 mod restart;
 #[path = "lifecycle/runtime.rs"]
 pub(crate) mod runtime;
+#[path = "lifecycle/status.rs"]
+mod status;
 #[cfg(test)]
 #[path = "lifecycle/tests.rs"]
 mod tests;
@@ -82,13 +94,16 @@ pub(super) fn execute_with(
     owner: Option<&Path>,
     write: bool,
 ) -> Result<Value> {
-    check(write, "夹具生命周期操作必须显式指定 --write")?;
     check(
-        ["close", "reconcile", "recover", "restart"].contains(&operation),
+        if operation == "status" { !write } else { write },
+        "服务状态只读；生命周期写入必须显式指定 --write",
+    )?;
+    check(
+        ["status", "close", "reconcile", "recover", "restart"].contains(&operation),
         "未知夹具生命周期操作",
     )?;
     check(
-        (operation != "close") == owner.is_some(),
+        (["recover", "reconcile", "restart"].contains(&operation)) == owner.is_some(),
         "recover/reconcile/restart 必须绑定明确 owner；close 不接受 owner",
     )?;
     let value = runtime.call(
@@ -97,6 +112,7 @@ pub(super) fn execute_with(
     )?;
     let context = Context::load(backend, value)?;
     match operation {
+        "status" => status::run(runtime, &context),
         "close" => close::run(runtime, &context),
         "reconcile" => reconcile::run(runtime, &context, owner.ok_or("和解缺少 owner")?),
         "recover" => recover::run(runtime, &context, owner.ok_or("恢复缺少 owner")?),

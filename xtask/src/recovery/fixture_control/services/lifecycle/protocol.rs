@@ -36,7 +36,14 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 
 pub(crate) fn execute(input: &[u8]) -> (i32, Value) {
     match dispatch(input) {
-        Ok(value) => (0, json!({"ok":true,"result":value})),
+        Ok(value) => {
+            let response = json!({"ok":true,"result":value});
+            if response.to_string().len() > 4 * 1024 * 1024 {
+                failure(Some("夹具生命周期响应超过 4 MiB；保留现场，不回显私有内容"))
+            } else {
+                (0, response)
+            }
+        }
         Err(error) => failure(
             error
                 .downcast_ref::<model::LifecycleError>()
@@ -62,13 +69,21 @@ fn dispatch(input: &[u8]) -> Result<Value> {
     crate::recovery::clone::native::json::parse_fragment(raw, "生命周期请求")?;
     let value: Request = serde_json::from_str(raw)?;
     check(value.format_version == 1, "生命周期协议版本无效")?;
-    check(value.write, "生命周期操作必须显式指定 --write")?;
     check(
-        ["close", "recover", "reconcile", "restart"].contains(&value.operation.as_str()),
+        if value.operation == "status" {
+            !value.write
+        } else {
+            value.write
+        },
+        "服务状态只读；生命周期操作必须显式指定 --write",
+    )?;
+    check(
+        ["status", "close", "recover", "reconcile", "restart"].contains(&value.operation.as_str()),
         "未知生命周期操作",
     )?;
     check(
-        (value.operation != "close") == value.owner.is_some(),
+        ["recover", "reconcile", "restart"].contains(&value.operation.as_str())
+            == value.owner.is_some(),
         "生命周期 owner 与操作不一致",
     )?;
     for path in [&value.review, &value.environment] {

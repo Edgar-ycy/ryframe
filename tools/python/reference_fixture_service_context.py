@@ -6,36 +6,18 @@ from pathlib import Path
 import time
 
 from devex_clone_capture import read_json
-from devex_clone_model import linked, local_path
-from devex_clone_run_state import binding, controller_observation, load_state
+from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file, require_closed_port
 from devex_clone_storage_process import inspect_attempt, running
 from devex_clone_storage_request import arguments, directory_identity
 from full_stack_process import process_identity
 from full_stack_process_tree import read_process_tree
 from rate_limit_client import load_app_table
-from restore_reference_plan import plan_hash
-from fixture_service_client import (close_reconciliation_evidence,
-                                               reconcilable_failed_close, validate_history,
-                                               validate_manifest)
+from fixture_service_client import _invoke, lifecycle, validate_history
 
 
 def service_run(review: dict) -> Path:
-    """为一份审阅计划派生唯一服务账本目录。"""
-    try:
-        root = Path(review["future_root"])
-        backend = Path(review["scopes"]["seed"]["backend_dir"])
-    except (KeyError, TypeError) as error:
-        raise ValueError("审阅计划缺少 future_root 或 seed 后端路径") from error
-    allowed = backend / ".local-tests/reference-fixture"
-    if (
-        not root.is_absolute()
-        or not backend.is_absolute()
-        or root.parent != allowed
-        or root.name in {"", ".", ".."}
-    ):
-        raise ValueError("审阅计划 future_root 必须是 业务 crate 参考夹具目录的直接子目录")
-    return root / "service-run"
+    return Path(_invoke("service-run", {"review": review}))
 
 
 def application_settings(bootstrap_file: Path, execution: Path) -> dict:
@@ -43,111 +25,21 @@ def application_settings(bootstrap_file: Path, execution: Path) -> dict:
     return load_app_table(execution, {"APP_ENV": "test"}, config_dir=bootstrap_file.parent / "config")
 
 
-def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[str, ...],
-                              bound) -> tuple[Path, Path, dict, dict]:
-    """严格读取 业务 crate 参考夹具的唯一已准备环境收据。"""
-    backend = backend.resolve(strict=True)
-    requested = value if value.is_absolute() else backend / value
-    receipt_path = local_path(backend, str(requested))
-    if linked(receipt_path) or not receipt_path.is_file():
-        raise ValueError("夹具输入必须是受控目录中的普通文件")
-    receipt = read_json(receipt_path)
-    if (receipt.get("format_version") != 1 or receipt.get("kind") != "reference-fixture-environment"
-            or receipt.get("status") != "prepared" or receipt.get("services_started") is not False
-            or receipt.get("remote_writes") != 0 or receipt.get("historical_data_used") is not False
-            or not isinstance(receipt.get("execution_backend"), str)
-            or not isinstance(receipt.get("secret_files"), dict)
-            or set(receipt["secret_files"]) != set(secret_files)
-            or not isinstance(receipt.get("environment_sha256"), str)):
-        raise ValueError("夹具运行时只能使用尚未启动服务的已准备私有环境")
-    execution = Path(receipt["execution_backend"]).resolve(strict=True)
-    if (linked(execution) or not execution.is_relative_to((backend / ".local-tests").resolve())
-            or not (execution / "Cargo.toml").is_file()):
-        raise ValueError("夹具执行工作树无效")
-    environment_file = receipt_path.parent / "environment.json"
-    if linked(environment_file) or not environment_file.is_file():
-        raise ValueError("夹具私有环境文件缺失或经过链接")
-    document = read_json(environment_file)
-    if not isinstance(document, dict) or set(document) != {"environment"}:
-        raise ValueError("夹具私有环境文件字段无效")
-    environment = document["environment"]
-    if (not isinstance(environment, dict)
-            or any(not isinstance(key, str) or not isinstance(item, str)
-                   for key, item in environment.items())
-            or plan_hash(environment) != receipt["environment_sha256"]):
-        raise ValueError("夹具私有环境与 bootstrap 摘要不一致")
-    if set(environment) - {"APP_ENV", "TEMP", "TMP"} or environment.get("APP_ENV") != "test":
-        raise ValueError("夹具进程环境只允许 APP_ENV 与受管临时目录")
-    for name in secret_files:
-        descriptor = receipt["secret_files"][name]
-        if not isinstance(descriptor, dict) or set(descriptor) != {"path", "bytes", "sha256"}:
-            raise ValueError("夹具秘密文件描述不完整")
-        path = local_path(backend, descriptor["path"] if isinstance(descriptor.get("path"), str) else "")
-        if path.name != name or linked(path) or not path.is_file() or bound(path) != descriptor:
-            raise ValueError("夹具秘密文件与 bootstrap 绑定不一致")
-    return receipt_path, execution, environment, receipt
+def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[str, ...]) -> tuple[Path, Path, dict, dict]:
+    receipt, execution, private, document = _invoke("service-prepared", {"path": value, "secret_files": secret_files}, backend=backend)
+    return Path(receipt), Path(execution), private, document
 
 
 def context(backend: Path, review_path: Path, bootstrap_path: Path) -> dict:
-    from reference_fixture_services import document, environment
-
-    review_file, review = document(backend, review_path)
-    bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
-    run = local_path(backend, str(service_run(review)))
-    manifest_file, manifest = document(backend, run / "manifest.json")
-    validate_manifest(manifest)
-    original = bootstrap.get("plan", {}).get("review")
-    original_review = ({key: original.get(key) for key in ("path", "bytes", "sha256")}
-                       if isinstance(original, dict) else None)
-    if ((manifest["review"] != binding(review_file) and manifest["review"] != original_review)
-            or manifest["bootstrap"] != binding(bootstrap_file)
-            or manifest["execution_backend"] != bootstrap["execution_backend"]
-            or manifest["scope_id"] != review["services"]["rustfs"]["scope_id"]):
-        raise ValueError("夹具服务生命周期未绑定原始审阅、私有环境与执行目录")
-    state_binding = binding(run / "state.json")
-    state = load_state(run)
-    history = validate_history(run, state, ready=False, settled=False)
-    sources = {"review": binding(review_file), "bootstrap": binding(bootstrap_file),
-               "manifest": binding(manifest_file), "state_before": state_binding,
-               "environment": binding(bootstrap_file.parent / "environment.json")}
-    value = {"backend": backend, "run": run, "manifest": manifest, "state": state, "history": history,
-             "sources": sources, "private": private,
-             "documents": {"review": review, "bootstrap": bootstrap, "manifest": manifest}}
-    guard(value)
+    value = _invoke("service-context", {"review": review_path, "environment": bootstrap_path}, backend=backend)
+    value["backend"], value["run"] = Path(value["backend"]), Path(value["run"])
     return value
 
 
 def guard(value: dict, state_binding: dict | None = None) -> None:
-    for key, descriptor in value["sources"].items():
-        expected = state_binding if key == "state_before" and state_binding is not None else descriptor
-        if binding(bound_file(value["backend"], expected)) != expected:
-            raise ValueError("夹具服务生命周期输入在执行期间发生变化")
-        if key in value["documents"] and read_json(Path(expected["path"])) != value["documents"][key]:
-            raise ValueError("夹具服务输入内容与采样摘要不一致")
-    if state_binding is None and load_state(value["run"]) != value["state"]:
-        raise ValueError("夹具服务账本在采样期间变化")
-    if read_json(Path(value["sources"]["environment"]["path"])).get("environment") != value["private"]:
-        raise ValueError("夹具服务私有环境在采样期间变化")
+    _invoke("service-guard", {"value": value, "running": state_binding}, backend=value["backend"])
 
 
-def unknown_recoveries(run: Path) -> list[str]:
-    state = load_state(run)
-    consumed = {read_json(Path(item["result"]["path"])).get("recovery", {}).get("path")
-                for item in state["attempts"] if item["stage"] == "fixture-services"
-                and item["mode"] == "recover" and item["status"] == "passed"}
-    unknown = {path.name for path in run.glob("recovery-*.intent.json")
-               if not (run / ("recovered-" + path.name[len("recovery-"):-len(".intent.json")] + ".json")).is_file()}
-    unknown.update(path.name for path in run.glob("recovered-*.json") if str(path) not in consumed)
-    expected = {f"lifecycle-{item['number']:04d}" for item in state["attempts"]
-                if item["stage"] == "fixture-services" and item["mode"] in {"close", "reconcile", "restart"}}
-    for item in state["attempts"]:
-        if (item["stage"], item["mode"], item["status"]) != ("fixture-services", "recover", "passed"):
-            continue
-        result = read_json(Path(item["result"]["path"]))
-        if result.get("status") == "external_termination_reconciled":
-            expected.add(f"lifecycle-{item['number']:04d}")
-    unknown.update(path.name for path in run.glob("lifecycle-*") if path.name not in expected)
-    return sorted(unknown)
 
 
 def registered_services(value: dict, *, settled: bool = True) -> dict:
@@ -317,108 +209,10 @@ def observe_services(services: dict) -> dict:
 
 
 def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict | None, dict | None]:
-    """让既有 fresh-target 仅沿已验证的夹具服务 lineage 采用新运行身份。"""
-    manifest = read_json(run / "manifest.json")
-    state = load_state(run)
-    history = validate_history(run, state, ready=False, settled=False)
-    review, bootstrap = manifest["review"], manifest["bootstrap"]
-    if history["active_generation"].get("kind") != "initial":
-        restarts = [item for item in state["attempts"]
-                    if (item["stage"], item["mode"], item["status"])
-                    == ("fixture-services", "restart", "passed")
-                    and item["result"] == history["active_generation"]]
-        if len(restarts) != 1:
-            raise ValueError("夹具活跃服务代次缺少唯一已通过 restart 来源")
-        review = restarts[0]["sources"].get("review")
-        bootstrap = restarts[0]["sources"].get("bootstrap")
-        if not isinstance(review, dict) or not isinstance(bootstrap, dict):
-            raise ValueError("夹具 restart 未绑定当前审阅或环境")
-    value = context(backend, Path(review["path"]), Path(bootstrap["path"]))
-    if value["history"]["active_generation"] != history["active_generation"]:
-        raise ValueError("夹具服务代次在解析工具续签期间变化")
-    if value["history"]["active_generation"].get("kind") == "initial":
-        return None, None
-    services = registered_services(value)
-    current = {"storage": {key: services["storage"][key]
-                           for key in ("identity", "sha256", "process_receipt", "launch_receipt")},
-               "redis": services["runtime"]["redis"]}
-    if expected != services["origin"] and expected != current and expected not in _recorded_generations(value, history):
-        raise ValueError("夹具服务重启 lineage 未绑定 fresh-target 的原始或已登记服务代次")
-    storage = {key: services["storage"][key]
-               for key in ("identity", "sha256", "process_receipt", "launch_receipt")}
-    request = services["requests"]["rustfs"]
-    return ({"storage": storage, "data_directory": request["data_directory"],
-             "api_url": request["api_url"], "console_url": request["console_url"],
-             "generation": value["history"]["active_generation"]},
-            {"redis": services["runtime"]["redis"],
-             "generation": value["history"]["active_generation"]})
+    return tuple(_invoke("service-transition", {"run": run, "expected": expected}, backend=backend))
 
 
-def _recorded_generations(value: dict, history: dict) -> list[dict]:
-    """已登记重启代次的存储与 Redis 运行身份；当前活跃代次由调用方单独比对。"""
-    recorded = []
-    for item in value["state"]["attempts"]:
-        if ((item["stage"], item["mode"], item["status"]) != ("fixture-services", "restart", "passed")
-                or item["result"] == history["active_generation"]):
-            continue
-        outer = read_json(bound_file(value["backend"], item["result"]))
-        generation = read_json(bound_file(value["backend"], outer["generation"]))
-        recorded.append({"storage": {key: generation["rustfs"]["storage"][key]
-                                     for key in ("identity", "sha256", "process_receipt", "launch_receipt")},
-                         "redis": generation["redis"]["runtime"]["redis"]})
-    return recorded
 
 
 def status(backend: Path, review: Path, bootstrap: Path) -> dict:
-    value = context(backend, review, bootstrap)
-    controller = controller_observation(value["run"])
-    unsettled = value["history"]["unsettled"]
-    unknown = unknown_recoveries(value["run"])
-    observations = None
-    next_operation = "close"
-    if unknown:
-        next_operation = "reconcile-evidence"
-    elif controller is not None:
-        if not controller["process_matches"] and not controller["process_missing"]:
-            raise ValueError("控制器 PID 已复用，不能等待或恢复无关进程")
-        next_operation = "recover" if controller["process_missing"] else "wait-controller"
-    elif unsettled:
-        failed = reconcilable_failed_close(value["state"], value["history"])
-        if failed is not None:
-            try:
-                services = registered_services(value, settled=False)
-                close_reconciliation_evidence(value["run"], failed,
-                                              value["history"]["active_generation"],
-                                              value["sources"], services)
-            except (FileNotFoundError, IsADirectoryError, KeyError, OSError, TypeError, ValueError):
-                failed = None
-        next_operation = "reconcile" if failed is not None else "reconcile-evidence"
-    elif not value["history"]["initial_complete"]:
-        attempts = value["state"]["attempts"]
-        count = next((index for index, item in enumerate(attempts) if item["stage"] == "fixture-services"), len(attempts))
-        operation = ("rustfs", "redis", "buckets")[count]
-        next_operation = (operation if count and count == len(attempts)
-                          and not (value["run"] / operation).exists() else "reconcile-evidence")
-    else:
-        observations = observe_services(registered_services(value))
-        if observations["termination"] is not None:
-            reconciled = value["history"].get("external_recovery")
-            next_operation = "restart" if reconciled is not None else "recover"
-            reconciliation = {**observations["termination"],
-                              "owner": value["sources"]["state_before"], "receipt": reconciled}
-            observations = ("external-termination-reconciled" if reconciled is not None
-                            else "external-termination-unreconciled")
-        else:
-            reconciliation = None
-        if value["history"]["closed"]:
-            if observations != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
-                raise ValueError("已关闭夹具服务又出现存活进程")
-            next_operation = "restart"
-    if (not isinstance(observations, str)
-            or observations not in {"external-termination-unreconciled", "external-termination-reconciled"}):
-        reconciliation = None
-    guard(value)
-    return {"status": "service_status", "run": str(value["run"]), "controller": controller,
-            "state": value["sources"]["state_before"], "services": observations, "unsettled": unsettled,
-            "unknown_recoveries": unknown, "reconciliation": reconciliation,
-            "next_operation": next_operation, "remote_writes": 0}
+    return lifecycle(backend, "status", review, bootstrap, None, write=False)

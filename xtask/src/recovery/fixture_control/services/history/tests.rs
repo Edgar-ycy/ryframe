@@ -236,3 +236,21 @@ fn bound_evidence_rejects_path_escape_and_content_drift() {
         2
     );
 }
+
+#[test]
+fn failed_close_selection_is_native_without_python_evidence_bridge() {
+    let state = json!({"attempts":[{"number":1,"stage":"fixture-services","mode":"close","status":"failed"}]});
+    let history = json!({"closed":false,"external_recovery":null,"unsettled":[1]});
+    assert_eq!(
+        super::reconcilable(&state, &history, "close").unwrap()["number"],
+        1
+    );
+    assert!(
+        super::reconcilable(
+            &state,
+            &json!({"closed":false,"external_recovery":null,"unsettled":[]}),
+            "close"
+        )
+        .is_none()
+    );
+}

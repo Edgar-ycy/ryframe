@@ -1,11 +1,8 @@
 """保留服务上下文、状态观察和私有 CLI 的有效场景，不访问共享服务。"""
 from __future__ import annotations
 
-from contextlib import ExitStack
-import copy
 import io
 import json
-import os
 from pathlib import Path
 import sys
 import unittest
@@ -18,7 +15,6 @@ from devex_clone_run_state import binding, begin, finish, load_state
 import reference_fixture_service_context as context
 from fixture_service_client import validate_history
 import reference_fixture_services as cli
-import devex_clone_target_cli as target
 
 
 class ServiceContextTests(unittest.TestCase):
@@ -116,16 +112,6 @@ class ServiceContextTests(unittest.TestCase):
                             "rustfs": binding(output / "rustfs-stopped.json")}})
         self.assertTrue(validate_history(self.run, load_state(self.run))["closed"])
 
-    def test_closed_status_reports_explicit_restart_without_writes(self):
-        self.closed_history()
-        before = self.snapshot()
-        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
-        with (patch.object(context, "registered_services", return_value=self.services),
-              patch.object(context, "observe_services", return_value=stopped)):
-            result = context.status(self.backend, self.review, self.bootstrap)
-        self.assertEqual(result["next_operation"], "restart")
-        self.assertEqual(result["state"], binding(self.run / "state.json"))
-        self.assertEqual(before, self.snapshot())
 
     def test_new_requests_reject_closed_service_generations(self):
         self.closed_history()
@@ -135,21 +121,23 @@ class ServiceContextTests(unittest.TestCase):
             build(self.backend, self.bootstrap, self.run, "fresh-seed", "seed")
         self.assertEqual(before, self.snapshot())
 
-    def test_context_accepts_environment_validated_review_successor(self):
-        review_value = read_json(self.review)
-        successor = self.root / "review-successor.json"
-        write_json(successor, review_value)
-        bootstrap_value = read_json(self.bootstrap)
-        private = read_json(self.bootstrap.parent / "environment.json")["environment"]
-        manifest = read_json(self.run / "manifest.json")
-        original = bootstrap_value["plan"]["review"]
-        self.assertEqual(manifest["review"], {key: original[key] for key in ("path", "bytes", "sha256")})
-        with patch("reference_fixture_services.environment",
-                   return_value=(self.bootstrap, bootstrap_value, private)):
-            value = context.context(self.backend, successor, self.bootstrap)
-        self.assertEqual(value["manifest"], manifest)
-        self.assertEqual(value["documents"]["review"], review_value)
 
+
+    def test_context_and_transition_bridges_only_pass_native_protocol(self):
+        value = {"backend": str(self.backend), "run": str(self.run), "private": {"APP_ENV": "test"}}
+        with patch.object(context, "_invoke", return_value=value) as invoke:
+            result = context.context(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["run"], self.run)
+        invoke.assert_called_once_with("service-context", {"review": self.review, "environment": self.bootstrap}, backend=self.backend)
+        with patch.object(context, "_invoke", return_value=[{"generation": "bound"}, None]) as invoke:
+            result = context.runtime_transition(self.backend, self.run, {"storage": "expected"})
+        self.assertEqual(result, ({"generation": "bound"}, None))
+        invoke.assert_called_once_with("service-transition", {"run": self.run, "expected": {"storage": "expected"}}, backend=self.backend)
+
+    def test_status_bridge_uses_read_only_native_execution(self):
+        with patch.object(context, "lifecycle", return_value={"status": "service_status"}) as invoke:
+            self.assertEqual(context.status(self.backend, self.review, self.bootstrap), {"status": "service_status"})
+        invoke.assert_called_once_with(self.backend, "status", self.review, self.bootstrap, None, write=False)
 
     def test_successor_tools_observe_predecessor(self):
         original = {"wsl": {"path": "old"}, "python": {"path": "python"}}
@@ -175,101 +163,12 @@ class ServiceContextTests(unittest.TestCase):
         self.assertEqual(observed["redis"], "stopped")
 
 
-    def test_runtime_transition_uses_active_restart_review(self):
-        generation = {"path": str(self.run / "results/0003.json"), "bytes": 1, "sha256": "a" * 64}
-        review = {"path": str(self.root / "review-successor.json")}
-        bootstrap = {"path": str(self.root / "bootstrap.json")}
-        state = {"attempts": [{"stage": "fixture-services", "mode": "restart", "status": "passed",
-                                "result": generation, "sources": {"review": review, "bootstrap": bootstrap}}]}
-        history = {"active_generation": generation}
-        self.fixture.write(self.run / "manifest.json", {
-            "review": {"path": str(self.review)}, "bootstrap": {"path": str(self.bootstrap)}})
-        services = {"origin": {"storage": {}, "redis": {}}, "storage": {
-            "identity": {}, "sha256": "a", "process_receipt": {}, "launch_receipt": {}},
-            "runtime": {"redis": {}}, "requests": {"rustfs": {
-                "data_directory": {}, "api_url": "http://127.0.0.1:29200",
-                "console_url": "http://127.0.0.1:29201"}}}
-        value = {"history": history}
-        with patch.object(context, "load_state", return_value=state), \
-                patch.object(context, "validate_history", return_value=history), \
-                patch.object(context, "context", return_value=value) as load_context, \
-                patch.object(context, "registered_services", return_value=services):
-            transition = context.runtime_transition(self.backend, self.run, services["origin"])
-        load_context.assert_called_once_with(self.backend, Path(review["path"]), Path(bootstrap["path"]))
-        self.assertEqual(transition[0]["storage"], services["storage"])
 
 
-    def test_runtime_transition_accepts_recorded_generation_receipt(self):
-        proof = self.run / "results/0007-generation.json"
-        self.fixture.write(proof, {
-            "rustfs": {"storage": {"identity": {"pid": 11}, "sha256": "s",
-                                   "process_receipt": {"path": "p"}, "launch_receipt": {"path": "l"},
-                                   "tree": {"path": "t"}}},
-            "redis": {"runtime": {"redis": {"run_id": "r", "pid": 12}}}})
-        outer = self.run / "results/0007-outer.json"
-        self.fixture.write(outer, {"generation": binding(proof)})
-        generation = {"path": str(self.run / "results/0009.json"), "bytes": 1, "sha256": "a" * 64}
-        review = {"path": str(self.root / "review-successor.json")}
-        bootstrap = {"path": str(self.root / "bootstrap.json")}
-        state = {"attempts": [
-            {"stage": "fixture-services", "mode": "restart", "status": "passed", "result": generation,
-             "sources": {"review": review, "bootstrap": bootstrap}},
-            {"stage": "fixture-services", "mode": "restart", "status": "passed",
-             "result": binding(outer), "sources": {}}]}
-        history = {"active_generation": generation}
-        self.fixture.write(self.run / "manifest.json", {
-            "review": {"path": str(self.review)}, "bootstrap": {"path": str(self.bootstrap)}})
-        services = {"origin": {"storage": {}, "redis": {}}, "storage": {
-            "identity": {}, "sha256": "a", "process_receipt": {}, "launch_receipt": {}},
-            "runtime": {"redis": {}}, "requests": {"rustfs": {
-                "data_directory": {}, "api_url": "http://127.0.0.1:29200",
-                "console_url": "http://127.0.0.1:29201"}}}
-        value = {"history": history, "backend": self.backend, "state": state}
-        expected = {"storage": {"identity": {"pid": 11}, "sha256": "s",
-                                "process_receipt": {"path": "p"}, "launch_receipt": {"path": "l"}},
-                    "redis": {"run_id": "r", "pid": 12}}
-        with patch.object(context, "load_state", return_value=state), \
-                patch.object(context, "validate_history", return_value=history), \
-                patch.object(context, "context", return_value=value), \
-                patch.object(context, "registered_services", return_value=services):
-            transition = context.runtime_transition(self.backend, self.run, expected)
-        self.assertEqual(transition[0]["generation"], generation)
-        with patch.object(context, "load_state", return_value=state), \
-                patch.object(context, "validate_history", return_value=history), \
-                patch.object(context, "context", return_value=value), \
-                patch.object(context, "registered_services", return_value=services), \
-                self.assertRaisesRegex(ValueError, "已登记服务代次"):
-            context.runtime_transition(self.backend, self.run,
-                                       {"storage": {"identity": {"pid": 99}}, "redis": {"run_id": "other"}})
 
 
-    def test_status_has_no_writes_and_reports_unique_next_operation(self):
-        before = self.snapshot()
-        with patch.object(context, "registered_services", return_value=self.services), \
-                patch.object(context, "observe_services", return_value={"redis": "running", "rustfs": "running",
-                                                                         "termination": None}):
-            result = context.status(self.backend, self.review, self.bootstrap)
-        self.assertEqual(result["next_operation"], "close")
-        self.assertEqual(before, self.snapshot())
-        self.assertFalse((self.run / "run-control.guard").exists())
 
 
-    def test_status_reports_external_termination_without_writing_or_inventing_shutdown_proof(self):
-        before = self.snapshot()
-        evidence = {"status": "external-termination-unreconciled",
-                    "identities": {role: "missing" for role in ("supervisor", "monitor", "process")},
-                    "normal_shutdown_proof": None,
-                    "evidence": {"rustfs_tree": {"path": "tree"}, "redis_runtime": {"path": "runtime"},
-                                 "rustfs_monitor_ready": {"path": "ready"}}}
-        with patch.object(context, "registered_services", return_value=self.services), \
-                patch.object(context, "observe_services", return_value={"redis": "stopped",
-                    "rustfs": "external-termination-unreconciled", "termination": evidence}):
-            result = context.status(self.backend, self.review, self.bootstrap)
-        self.assertEqual(result["services"], "external-termination-unreconciled")
-        self.assertEqual(result["next_operation"], "recover")
-        self.assertEqual(result["reconciliation"]["owner"], result["state"])
-        self.assertIsNone(result["reconciliation"]["normal_shutdown_proof"])
-        self.assertEqual(before, self.snapshot())
 
 
     def test_external_termination_requires_every_identity_missing_and_redis_stopped(self):
@@ -333,13 +232,6 @@ class ServiceContextTests(unittest.TestCase):
         sleep.assert_called_once_with(0.05)
 
 
-    def test_status_pid_reuse_fails_without_any_file_changes(self):
-        before = self.snapshot()
-        observation = {"owner": {}, "process_matches": False, "process_missing": False}
-        with patch.object(context, "controller_observation", return_value=observation), \
-                self.assertRaisesRegex(ValueError, "PID 已复用"):
-            context.status(self.backend, self.review, self.bootstrap)
-        self.assertEqual(before, self.snapshot())
 
 
     def test_legacy_receipts_do_not_gain_invented_tree_ownership(self):

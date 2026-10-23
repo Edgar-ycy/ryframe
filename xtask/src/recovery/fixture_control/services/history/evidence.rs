@@ -61,7 +61,10 @@ pub(super) fn binding(path: &Path) -> Result<Value> {
     super::super::super::file_binding(path, "夹具历史证据")
 }
 
-pub(super) fn bound(run: &Path, descriptor: &Value) -> Result<Value> {
+pub(in crate::recovery::fixture_control::services) fn bound(
+    run: &Path,
+    descriptor: &Value,
+) -> Result<Value> {
     exact(descriptor, &["path", "bytes", "sha256"])?;
     let path = Path::new(text(descriptor, "path")?);
     check(
