@@ -662,9 +662,7 @@ class SourceRuntimeCliTests(unittest.TestCase):
             "output": str(output),
             "write": True,
         }
-        request = source_cli.private_protocol_request(
-            [], {source_cli.PROTOCOL_KEY: json.dumps(protocol)}
-        )
+        request = source_cli.decode_request(json.dumps(protocol))
         with patch.object(
             source_cli, "execute_source_verification", return_value=result
         ) as execute, patch("builtins.print") as printed:
@@ -674,16 +672,12 @@ class SourceRuntimeCliTests(unittest.TestCase):
 
         protocol["write"] = False
         with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.private_protocol_request(
-                [], {source_cli.PROTOCOL_KEY: json.dumps(protocol)}
-            )
+            source_cli.decode_request(json.dumps(protocol))
         with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.private_protocol_request(["verify"], {})
+            source_cli.private_protocol_request(["verify"])
         protocol["operation"] = "quiesce"
         with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.private_protocol_request(
-                [], {source_cli.PROTOCOL_KEY: json.dumps(protocol)}
-            )
+            source_cli.decode_request(json.dumps(protocol))
 
 
 class SourceProducerStoppedTests(unittest.TestCase):

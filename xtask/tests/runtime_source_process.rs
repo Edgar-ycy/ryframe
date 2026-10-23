@@ -61,27 +61,7 @@ fn write(directory: &Path, name: &str) -> PathBuf {
     path
 }
 
-fn invoke(arguments: &[String], protocol_key: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(arguments)
-        .env(
-            "RYFRAME_RESTORE_RUNTIME_PROTOCOL",
-            "untrusted inherited runtime value",
-        )
-        .env(
-            "RYFRAME_RESTORE_SOURCE_PROTOCOL",
-            "untrusted inherited source value",
-        )
-        .env(protocol_key, "untrusted inherited current value")
-        .env("PYTHONUTF8", "1")
-        .output()
-        .unwrap()
-}
-
-fn invoke_runtime_with_conflicting_python_environment(
-    arguments: &[String],
-    fixture: &Fixture,
-) -> Output {
+fn invoke_with_conflicting_python_environment(arguments: &[String], fixture: &Fixture) -> Output {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(arguments)
         .env(
@@ -124,7 +104,7 @@ fn runtime_status_uses_managed_file_and_rejects_ambient_python_hooks() {
         "--target-plan".into(),
         fixture.target.to_string_lossy().into_owned(),
     ];
-    let result = invoke_runtime_with_conflicting_python_environment(&arguments, &fixture);
+    let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
     let stdout = String::from_utf8(result.stdout.clone()).unwrap();
     assert!(
         stdout.contains("-X utf8 -E -s -B tools/python/restore_runtime.py"),
@@ -140,7 +120,7 @@ fn runtime_status_uses_managed_file_and_rejects_ambient_python_hooks() {
 }
 
 #[test]
-fn source_comparison_verify_replaces_protocol_and_hides_receipt_path_from_argv() {
+fn source_comparison_verify_uses_stdin_ignores_ambient_protocol_and_preserves_files() {
     let fixture = Fixture::new();
     let arguments = vec![
         "check".into(),
@@ -150,10 +130,37 @@ fn source_comparison_verify_replaces_protocol_and_hides_receipt_path_from_argv()
         "--receipt".into(),
         fixture.source_receipt.to_string_lossy().into_owned(),
     ];
-    let result = invoke(&arguments, "RYFRAME_RESTORE_SOURCE_PROTOCOL");
+    let before = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (path.clone(), fs::read(path).unwrap())
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
+    let stdout = String::from_utf8(result.stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("tools/python/restore_source.py --private-stdin"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("tools/python/restore_source.py --private-stdin")
+            .count(),
+        1
+    );
     assert_private_dispatch(
         result,
         "tools/python/restore_source.py",
         &[&fixture.source_receipt],
     );
+    let after = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (path.clone(), fs::read(path).unwrap())
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(before, after);
+    assert!(!fixture.capture.exists());
 }

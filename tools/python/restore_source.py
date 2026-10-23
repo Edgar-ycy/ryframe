@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -60,9 +59,6 @@ def _verify_comparison(args, backend: Path) -> dict:
     }
 
 
-PROTOCOL_KEY = "RYFRAME_RESTORE_SOURCE_PROTOCOL"
-PROTOCOL_PREFIX = "RYFRAME_RESTORE_SOURCE_"
-FOREIGN_PROTOCOL_KEY = "RYFRAME_RESTORE_RUNTIME_PROTOCOL"
 PROTOCOL_KIND = "ryframe-xtask-restore-source"
 PROTOCOL_MAX_BYTES = 16 * 1024
 OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture", "comparison-verify"})
@@ -116,20 +112,22 @@ def _protocol_path(value: object, label: str) -> Path:
 
 def private_protocol_request(
     argv: list[str] | None = None,
-    environment: dict[str, str] | None = None,
+    stream=None,
 ) -> SourceRequest:
     arguments = sys.argv[1:] if argv is None else list(argv)
-    values = os.environ if environment is None else environment
-    if arguments:
-        raise SourceProtocolError("恢复来源脚本是私有实现，不接受命令行参数")
-    unknown = sorted(
-        name for name in values
-        if (name.startswith(PROTOCOL_PREFIX) and name != PROTOCOL_KEY)
-        or name == FOREIGN_PROTOCOL_KEY
-    )
-    if unknown:
-        raise SourceProtocolError("恢复来源私有环境包含未知字段")
-    raw = values.get(PROTOCOL_KEY)
+    if arguments != ["--private-stdin"]:
+        raise SourceProtocolError("恢复来源脚本只接受 --private-stdin")
+    try:
+        data = (sys.stdin.buffer if stream is None else stream).read(PROTOCOL_MAX_BYTES + 1)
+        if not data or len(data) > PROTOCOL_MAX_BYTES:
+            raise SourceProtocolError("恢复来源私有协议为空或过长")
+        raw = data.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise SourceProtocolError("恢复来源私有协议必须是可读取的 UTF-8") from error
+    return decode_request(raw)
+
+
+def decode_request(raw: str) -> SourceRequest:
     if (
         not isinstance(raw, str)
         or not raw
@@ -192,7 +190,6 @@ def execute(request: SourceRequest) -> dict:
 def main(request: SourceRequest | None = None) -> None:
     if request is None:
         request = private_protocol_request()
-    os.environ.pop(PROTOCOL_KEY, None)
     print(json.dumps(execute(request), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
 
