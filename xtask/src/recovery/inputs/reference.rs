@@ -50,7 +50,7 @@ pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<V
         "id": options.id,
         "target_side": options.side.as_str(),
         "work_dir": directory.to_string_lossy(),
-        "tools": source_request.get("tools").ok_or("共享源请求缺少 tools")?,
+        "tools": reference_tools(source_request)?,
         "source": source_request.get("source").ok_or("共享源请求缺少 source")?,
         "target": Value::Object(target),
     });
@@ -66,6 +66,17 @@ pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<V
     arm.manifest.assert_unchanged()?;
     arm.source_request.assert_unchanged()?;
     Ok(plan)
+}
+
+fn reference_tools(source: &Map<String, Value>) -> Result<Value> {
+    let tools = object(
+        source.get("tools").ok_or("共享源请求缺少 tools")?,
+        "共享源工具",
+    )?;
+    Ok(json!({
+        "mysql": tools.get("mysql").ok_or("共享源请求缺少 mysql")?,
+        "mysqldump": tools.get("mysqldump").ok_or("共享源请求缺少 mysqldump")?,
+    }))
 }
 
 fn new_path(backend: &Path, value: &Path, label: &str) -> Result<PathBuf> {

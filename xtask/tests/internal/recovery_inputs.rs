@@ -13,6 +13,14 @@ fn reference_product_and_bindings_native_chains_succeed() {
     let reference = fixture.reference_value.clone();
     assert_eq!(reference, fixture.reference_value);
     assert_eq!(reference["target_side"], "base");
+    let source_request = read_json(&fixture.root.join("source-request.json"));
+    assert_eq!(source_request["tools"].as_object().unwrap().len(), 3);
+    assert!(source_request["tools"].get("node").is_some());
+    assert_eq!(reference["tools"].as_object().unwrap().len(), 2);
+    assert!(reference["tools"].get("node").is_none());
+    for name in ["mysql", "mysqldump"] {
+        assert_eq!(reference["tools"][name], source_request["tools"][name]);
+    }
     assert_eq!(
         reference["target"]["worker_ready_url"],
         "http://127.0.0.1:18081/readyz"
