@@ -357,18 +357,13 @@ def main(argv: list[str]) -> None:
     backend = args.backend_dir.resolve(strict=True)
     if args.operation in {"status", "close", "reconcile", "recover", "restart"}:
         from reference_fixture_service_context import status
-        from reference_fixture_service_lifecycle import close, reconcile, recover, restart
 
         if args.operation == "status":
             result = status(backend, args.review, args.environment)
-        elif args.operation == "close":
-            result = close(backend, args.review, args.environment, write=args.write)
-        elif args.operation == "reconcile":
-            result = reconcile(backend, args.review, args.environment, args.owner_binding, write=args.write)
-        elif args.operation == "recover":
-            result = recover(backend, args.review, args.environment, args.owner_binding, write=args.write)
         else:
-            result = restart(backend, args.review, args.environment, args.owner_binding, write=args.write)
+            from fixture_service_client import lifecycle
+            result = lifecycle(backend, args.operation, args.review, args.environment,
+                               args.owner_binding, write=args.write)
         print(json.dumps(result, ensure_ascii=False))
         return
     action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]

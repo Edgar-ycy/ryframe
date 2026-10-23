@@ -215,3 +215,72 @@ pub(super) fn serializations(value: &str) -> Vec<Vec<u8>> {
     })
     .collect()
 }
+
+/// 保留现存账本的字段顺序；新字段与新阶段使用确定性顺序，不改写旧前像语义。
+pub(in crate::recovery::fixture_control::services) fn updated_serialization(
+    previous: &[u8],
+    next: &Value,
+) -> Result<Vec<u8>> {
+    let previous: Ordered = serde_json::from_slice(previous)?;
+    let value = update_order(previous, next)?;
+    Ok((encode(&value, 0, false, true) + "\n").into_bytes())
+}
+
+fn update_order(previous: Ordered, next: &Value) -> Result<Ordered> {
+    match (previous, next) {
+        (Ordered::Object(fields), Value::Object(values)) => {
+            let mut output = Vec::new();
+            for (key, old) in fields {
+                if let Some(value) = values.get(&key) {
+                    output.push((key, update_order(old, value)?));
+                }
+            }
+            for (key, value) in values {
+                if !output.iter().any(|(present, _)| present == key) {
+                    output.push((key.clone(), serde_json::from_value(value.clone())?));
+                }
+            }
+            Ok(Ordered::Object(output))
+        }
+        (Ordered::Array(items), Value::Array(values)) => {
+            let mut previous = items.into_iter();
+            let output = values
+                .iter()
+                .map(|value| match previous.next() {
+                    Some(old) => update_order(old, value),
+                    None => Ok(serde_json::from_value(value.clone())?),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Ordered::Array(output))
+        }
+        (_, value) => Ok(serde_json::from_value(value.clone())?),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn append_preserves_each_existing_writer_prefix_including_unicode() {
+    let original = r#"{"format_version":1,"manifest":{"z":"中文","a":1},"attempts":[{"number":1,"sources":{"z":"路径","a":2}}]}"#;
+    for previous in serializations(original) {
+        let mut next: Value = serde_json::from_slice(&previous).unwrap();
+        next["attempts"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"number":2,"sources":{}}));
+        let encoded = updated_serialization(&previous, &next).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&encoded).unwrap(), next);
+        let mut prefix: Ordered = serde_json::from_slice(&encoded).unwrap();
+        let Ordered::Object(fields) = &mut prefix else {
+            unreachable!()
+        };
+        let (_, Ordered::Array(items)) = fields
+            .iter_mut()
+            .find(|(key, _)| key == "attempts")
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        items.truncate(1);
+        assert!(serializations(&(encode(&prefix, 0, false, true) + "\n")).contains(&previous));
+    }
+}

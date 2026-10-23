@@ -52,11 +52,12 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 模型驱动新建从 `ResourceModel` 生成 CRUD、迁移和受管资产；已有数据库用 `schema-import` 只读反向生成模型、CRUD 和迁移；运行目标已有表和业务行时，模型与历史迁移匹配后还必须显式 adopt，adopt 只登记结构，不执行建表 DDL 或改写业务行。`generator.source` 或 `--connection` 只决定结构来源，可取 `primary`、`sources.<name>` 或 `tenant_data.targets.<target-key>`；`storage` 或 `--database` 单独决定运行范围 `control|tenant`，二者不会自动映射。`source="local"` 在 control 范围读 primary，在 tenant 范围读 `tenant_data.default_target`，后者必须是 MySQL 目标；import 示例使用显式 primary。
 
+资源生成前先编写并登记模型。
+
 ```powershell
 cargo generate -- new-business order-business
 cargo generate -- new-business order-business --write
 
-# 在资源生成前编写并登记模型
 cargo generate -- resource --package order-business
 cargo generate -- resource --package order-business --model Order --write
 ```
@@ -132,7 +133,7 @@ Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收
 
 复制前的 `source_to_seed` 目标复核由 Rust 编排数据库、对象和 Redis 的只读观察；完整初始化历史及恢复谱系仍由现有只读核验器提供，`seed_to_arm` 继续使用完整状态机。复核绑定初始化收据、完整文件树、配置、工具和实际进程身份，并在外部观察前后核对固定输入；MySQL 原始输出通过同一个持有句柄采集和复读，不重新按路径打开。只有全部检查及锁释放后的复查通过，才在新的 attempt 观察目录将完整 JSON 写入并同步同目录临时文件，再以不覆盖方式发布 `verify.json`。失败保留原始观察及 `failure.json`，不自动重放或清理未知写入；复核通过也不等于已经完成复制或取得恢复验收资格。
 
-参考夹具服务的历史账本校验由 Rust xtask 执行。关闭、控制器恢复、外部终止核对、失败和解及重启必须绑定完整先行账本与原服务代次；旧前像、变化的成员退出证明、未登记阶段或无法解释的恢复文件均不能作为继续执行的依据。校验只读，不会启动服务、回收进程或重放未知写入。校验失败时保留整个服务运行目录，先核对 `state.json`、对应控制器收据与生命周期证据，再选择显式恢复操作；错误响应不包含原始凭据或配置内容。
+参考夹具服务的历史账本校验及 `close`、`recover`、`reconcile`、`restart` 生命周期执行均由 Rust xtask 负责；公开命令与保留的 Python 调用方共用同一执行入口。Rust 持有内核互斥和控制锁，追加阶段与收据，按 Redis → RustFS 顺序关闭，并只回收本次已确认的新进程。剩余 Python 边界仅包括只读服务上下文与状态观察、首次服务准备，以及现有进程树、Redis、RustFS 和控制锁恢复原语；这些原语通过最大 4 MiB 的私有 stdin 请求调用，不负责生命周期决策。原语失败、超时、输出超限或清理结果无法确认时，保留账本、配置及完整现场，禁止自动重放。追加账本保留既有字段顺序，历史前像仍按原始字节摘要校验，不接受语义近似或人工重新排版。关闭、控制器恢复、外部终止核对、失败和解及重启必须绑定完整先行账本与原服务代次；旧前像、变化的成员退出证明、未登记阶段或无法解释的恢复文件均不能作为继续执行的依据。校验只读，不会启动服务、回收进程或重放未知写入。校验失败时保留整个服务运行目录，先核对 `state.json`、对应控制器收据与生命周期证据，再选择显式恢复操作；错误响应不包含原始凭据或配置内容。
 
 ## 框架维护检查
 

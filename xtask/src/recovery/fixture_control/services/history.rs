@@ -6,11 +6,11 @@ use serde_json::{Value, json};
 use crate::{Result, recovery::clone::native::lifecycle::state};
 
 #[path = "history/evidence.rs"]
-mod evidence;
+pub(super) mod evidence;
 #[path = "history/generation.rs"]
 mod generation;
 #[path = "history/prefix.rs"]
-mod prefix;
+pub(super) mod prefix;
 #[path = "history/protocol.rs"]
 pub(crate) mod protocol;
 #[cfg(test)]

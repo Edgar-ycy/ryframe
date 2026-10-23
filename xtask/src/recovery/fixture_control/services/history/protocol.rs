@@ -92,16 +92,13 @@ fn dispatch(input: &[u8]) -> Result<Value> {
             )?;
             Ok(Value::Null)
         }
-        "reconcilable-close" | "reconcilable-restart" => {
+        "reconcilable-close" => {
             evidence::exact(args, &["state", "history"])?;
-            let mode = if request.operation == "reconcilable-close" {
-                "close"
-            } else {
-                "restart"
-            };
-            Ok(super::reconcilable(&args["state"], &args["history"], mode)
-                .cloned()
-                .unwrap_or(Value::Null))
+            Ok(
+                super::reconcilable(&args["state"], &args["history"], "close")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            )
         }
         "history" => {
             evidence::exact(args, &["run", "state", "ready", "settled"])?;
@@ -124,16 +121,6 @@ fn dispatch(input: &[u8]) -> Result<Value> {
                 &args["services"],
             )?;
             Ok(json!([proof, controller]))
-        }
-        "restart-evidence" => {
-            evidence::exact(args, &["run", "failed", "sources", "predecessor"])?;
-            let run = run_path(&request.backend, args)?;
-            evidence::restart_evidence(
-                &run,
-                &args["failed"],
-                &args["sources"],
-                &args["predecessor"],
-            )
         }
         _ => Err("未知夹具历史操作".into()),
     }

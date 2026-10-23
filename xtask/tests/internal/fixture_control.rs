@@ -486,10 +486,14 @@ fn parses_review_request_and_all_service_operations() {
         if operation != "status" {
             values.push("--write".to_owned());
         }
+        let parsed = parse_control(command("services", Some(operation), values)).unwrap();
         assert!(matches!(
-            parse_control(command("services", Some(operation), values)).unwrap(),
+            parsed,
             FixtureControlCommand::Services(FixtureServicesCommand::Run(_))
         ));
+        if matches!(operation, "close" | "reconcile" | "recover" | "restart") {
+            assert!(private_invocation_at(&parsed, &root_dir()).is_err());
+        }
     }
 }
 

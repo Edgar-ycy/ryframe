@@ -3,6 +3,7 @@ from contextlib import nullcontext
 import io
 import json
 import os
+from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -28,6 +29,21 @@ class FixtureServiceClientTests(unittest.TestCase):
         self.assertEqual(json.loads(call.kwargs["input"])["arguments"], {"value": {}})
         self.assertEqual(call.kwargs["stderr"], subprocess.DEVNULL)
         self.assertNotIn("shell", call.kwargs)
+
+    def test_lifecycle_bridge_passes_exact_native_request_and_explicit_write(self):
+        with (patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
+              patch.object(client.subprocess, "run", return_value=subprocess.CompletedProcess(
+                  [], 0, b'{"ok":true,"result":{"status":"services_closed"}}', b"")) as run):
+            result = client.lifecycle(client.ROOT, "close", Path("review"), Path("environment"),
+                                      None, write=True)
+        self.assertEqual(result["status"], "services_closed")
+        self.assertEqual(run.call_args.args[0], ["native-xtask.exe", "__fixture-service-lifecycle"])
+        payload = json.loads(run.call_args.kwargs["input"])
+        self.assertEqual(set(payload), {"format_version", "backend", "operation", "review",
+                                       "environment", "owner", "write"})
+        self.assertIs(payload["write"], True)
+        self.assertIsNone(payload["owner"])
+        self.assertEqual(run.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
     def test_invalid_envelopes_duplicates_and_exit_status_never_succeed(self):
         for raw, code in [(b'{"ok":true,"result":null}', 2),

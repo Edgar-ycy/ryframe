@@ -53,6 +53,29 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         FixtureControlCommand::SourcePair(command) => return source_pair::run(command, root),
         FixtureControlCommand::Review(command) => return review::run(command, root),
         FixtureControlCommand::Artifact(command) => return artifact::run(command, root),
+        FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
+            if matches!(
+                options.operation,
+                crate::cli::FixtureServiceOperation::Close
+                    | crate::cli::FixtureServiceOperation::Recover
+                    | crate::cli::FixtureServiceOperation::Reconcile
+                    | crate::cli::FixtureServiceOperation::Restart
+            ) =>
+        {
+            services::fields(
+                &crate::cli::FixtureServicesCommand::Run(options.clone()),
+                root,
+            )?;
+            let value = services::lifecycle::execute(
+                root,
+                options.operation.as_str(),
+                &options.review,
+                &options.environment,
+                options.owner_binding.as_deref(),
+                true,
+            )?;
+            return print_json(&value);
+        }
         FixtureControlCommand::Retention(command) => return retention::run(command, root),
         _ => {}
     }
@@ -83,6 +106,13 @@ pub(crate) fn private_invocation_at(
             | FixtureControlCommand::Retention(_)
     ) {
         return Err("该夹具操作由 Rust 原生实现".into());
+    }
+    if matches!(command, FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
+        if matches!(options.operation, crate::cli::FixtureServiceOperation::Close
+            | crate::cli::FixtureServiceOperation::Recover | crate::cli::FixtureServiceOperation::Reconcile
+            | crate::cli::FixtureServiceOperation::Restart))
+    {
+        return Err("该服务生命周期由 Rust 原生执行，不生成 Python 编排请求".into());
     }
     let (script, fields) = match command {
         FixtureControlCommand::Artifact(_) => unreachable!("原生导出物理验收已提前返回"),
