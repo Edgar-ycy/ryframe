@@ -468,13 +468,20 @@ fn supervisor_registers_stops_and_reaps_a_short_lived_process_tree() {
         environment: minimal_windows_environment(),
         log: runtime.join("webhook.log"),
     };
+    let input = format!("{}\n", protocol.encode().unwrap());
     let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("__monitoring-supervisor")
-        .env(supervisor::ENVIRONMENT_KEY, protocol.encode().unwrap())
-        .stdin(Stdio::null())
+        .env_clear()
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
         .unwrap();
     let tree = wait_tree(&runtime);
     let product_pid = tree["process"]["pid"].as_u64().unwrap() as u32;
@@ -520,13 +527,20 @@ fn supervisor_records_natural_exit_and_missing_process_without_faking_success() 
         environment: minimal_windows_environment(),
         log: runtime.join("prometheus.log"),
     };
+    let input = format!("{}\n", protocol.encode().unwrap());
     let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("__monitoring-supervisor")
-        .env(supervisor::ENVIRONMENT_KEY, protocol.encode().unwrap())
-        .stdin(Stdio::null())
+        .env_clear()
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
         .unwrap();
     let tree = wait_tree(&runtime);
     let proof = supervisor::wait_stopped(&tree, Duration::from_secs(10)).unwrap();

@@ -104,3 +104,17 @@ fn read_only_and_result_commands_fail_closed_without_starting_python() {
         assert!(!stderr.contains("monitoring_protocol_error"), "{stderr}");
     }
 }
+
+#[test]
+fn supervisor_ignores_retired_environment_protocol_and_requires_bounded_stdin() {
+    let secret = "retired-monitoring-secret";
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("__monitoring-supervisor")
+        .env("RYFRAME_MONITORING_SUPERVISOR", secret)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("私有协议为空"), "{stderr}");
+    assert!(!stderr.contains(secret), "{stderr}");
+}

@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::OpenOptions,
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
     thread,
@@ -18,8 +19,8 @@ use crate::{
     },
 };
 
-pub(crate) const ENVIRONMENT_KEY: &str = "RYFRAME_MONITORING_SUPERVISOR";
 const CONTROL_POLL: Duration = Duration::from_millis(25);
+const MAX_PROTOCOL_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Protocol {
@@ -118,7 +119,11 @@ impl Protocol {
     }
 }
 
-pub(crate) type Invocation = (PathBuf, Vec<String>, Vec<(&'static str, String)>);
+pub(crate) struct Invocation {
+    pub(crate) executable: PathBuf,
+    pub(crate) arguments: Vec<String>,
+    pub(crate) stdin: Vec<u8>,
+}
 
 pub(crate) fn supervisor_invocation(protocol: &Protocol) -> Result<Invocation> {
     let executable = std::env::current_exe()?;
@@ -129,11 +134,25 @@ pub(crate) fn supervisor_invocation_with_executable(
     protocol: &Protocol,
     executable: &Path,
 ) -> Result<Invocation> {
-    Ok((
-        executable.to_path_buf(),
-        vec!["__monitoring-supervisor".into()],
-        vec![(ENVIRONMENT_KEY, protocol.encode()?)],
-    ))
+    let mut stdin = protocol.encode()?.into_bytes();
+    stdin.push(b'\n');
+    Ok(Invocation {
+        executable: executable.to_path_buf(),
+        arguments: vec!["__monitoring-supervisor".into()],
+        stdin,
+    })
+}
+
+pub(crate) fn read_protocol_from_stdin() -> Result<Protocol> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take((MAX_PROTOCOL_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.is_empty() || bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err("监控 supervisor 私有协议为空或超过 1 MiB".into());
+    }
+    let source = std::str::from_utf8(&bytes).map_err(|_| "监控 supervisor 私有协议不是 UTF-8")?;
+    Protocol::decode(source)
 }
 
 pub(crate) fn run(protocol: &Protocol) -> Result<()> {

@@ -153,10 +153,9 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         return Some(2);
     }
     let result = match command.as_ref() {
-        "__monitoring-supervisor" if extra.is_none() => std::env::var(supervisor::ENVIRONMENT_KEY)
-            .map_err(|_| "监控 supervisor 缺少私有协议".into())
-            .and_then(|value| supervisor::Protocol::decode(&value))
-            .and_then(|protocol| supervisor::run(&protocol)),
+        "__monitoring-supervisor" if extra.is_none() => {
+            supervisor::read_protocol_from_stdin().and_then(|protocol| supervisor::run(&protocol))
+        }
         "__monitoring-webhook" => extra
             .ok_or_else(|| "监控 webhook 缺少私有协议".into())
             .and_then(|value| webhook::Protocol::decode(&value))

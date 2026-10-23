@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -251,16 +252,20 @@ fn launch_role(
         log: paths["processes"].join(format!("{role}.log")),
     };
     let invocation = runtime.invocation(&protocol)?;
-    let (executable, args, env) = invocation;
-    let mut process = Command::new(executable);
+    let mut process = Command::new(invocation.executable);
     process
-        .args(args)
+        .args(invocation.arguments)
         .env_clear()
-        .envs(env)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let mut supervisor_process = process.spawn()?;
+    let mut input = supervisor_process
+        .stdin
+        .take()
+        .ok_or("监控 supervisor 缺少标准输入管道")?;
+    input.write_all(&invocation.stdin)?;
+    drop(input);
     let tree_path = supervisor::tree_path_for(&paths["processes"], role);
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
