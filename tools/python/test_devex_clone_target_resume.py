@@ -160,7 +160,7 @@ class TargetResumeTests(unittest.TestCase):
     def use_long_path_fixture(self):
         temporary = WorkspaceDirectory(
             Path(__file__).resolve().parents[2] / ".local-tests",
-            prefix="resume-long-",
+            prefix="",
         )
         self.addCleanup(temporary.cleanup)
         base = Path(temporary.name)
@@ -599,35 +599,6 @@ class TargetResumeTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Redis"):
                     self.validate_current_prepare_tree(descriptor)
 
-    def test_migration_resume_allows_only_volatile_proc_stat_changes(self):
-        f = self.f
-        descriptor = self.interrupt_migration_prefix(3)
-        prepared = {item["path"] for item in read_json(
-            f.output.parent / "prepared-files.json")["files"]}
-        receipts = []
-        for path in f.output.glob("redis-kernel-*.command.json"):
-            value = read_json(path)
-            if (path.name not in prepared
-                    and value["command"][-2:] == ["/usr/bin/cat", "/proc/200/stat"]):
-                receipts.append(path)
-        self.assertEqual(len(receipts), 15)
-        changed = read_json(receipts[-1])
-        fields = changed["stdout"].removesuffix("\n").rpartition(") ")[2].split(" ")
-        fields[0], fields[11], fields[12] = "R", "41", "73"
-        volatile = "200 (redis-server) " + " ".join(fields) + "\n"
-        changed["stdout"] = volatile
-        replace_json(receipts[-1], changed)
-        self.assertTrue(migration_resume_state(f.root, f.output, descriptor)["resumable"])
-
-        for stdout in (volatile.replace("200 (", "201 (", 1),
-                       volatile.replace("(redis-server)", "(other)"),
-                       volatile.rsplit("67890", 1)[0] + "67891\n"):
-            with self.subTest(stdout=stdout):
-                changed["stdout"] = stdout
-                replace_json(receipts[-1], changed)
-                with self.assertRaisesRegex(ValueError, "Redis"):
-                    migration_resume_state(f.root, f.output, descriptor)
-
     def test_prepared_tree_rejects_unclaimed_prepare_history_files(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
@@ -743,36 +714,6 @@ class TargetResumeTests(unittest.TestCase):
         self.assertFalse(any(f.output.glob("resume-initialize-*.intent.json")))
         self.assertEqual(len(f.calls), calls)
 
-    def test_migration_resume_rejects_duplicate_or_noncontiguous_receipts(self):
-        descriptor = self.interrupt_migration_prefix(3)
-        original = next(self.f.output.glob("migrate-control-up-*.command.json"))
-        duplicate = self.f.output / ("migrate-control-up-" + "f" * 32 + ".command.json")
-        duplicate.write_bytes(original.read_bytes())
-        with self.assertRaisesRegex(ValueError, "重复命令收据"):
-            migration_resume_state(self.f.root, self.f.output, descriptor)
-        duplicate.unlink()
-        future = native_evidence("migration-operations", self.f.root, self.f.output, executable=cli_executable(self.f.maintenance, "migrate"))["operations"][4]
-        write_json(self.f.output / (future["stage"] + "-" + "e" * 32 + ".command.json"), {
-            "command": future["command"], "returncode": 0, "error_type": None,
-            "stdout": future["stdout"], "stderr": "",
-        })
-        with self.assertRaisesRegex(ValueError, "越过首个缺失操作"):
-            migration_resume_state(self.f.root, self.f.output, descriptor)
-
-    def test_migration_resume_rejects_tampered_observation_stdout(self):
-        f = self.f
-        descriptor = self.interrupt_migration_prefix(3)
-        baseline = {item["path"] for item in read_json(
-            f.output.parent / "prepared-files.json")["files"]}
-        receipt = next(path for path in f.output.glob("mysql-shared-*.command.json")
-                       if path.name not in baseline)
-        value = read_json(receipt)
-        value["stdout"] = value["stdout"] + "unexpected"
-        replace_json(receipt, value)
-
-        with self.assertRaisesRegex(ValueError, "MySQL.*输出多重集"):
-            migration_resume_state(f.root, f.output, descriptor)
-
     def test_migration_resume_rejects_unbound_prepared_predecessor(self):
         f = self.f
         descriptor = self.interrupt_migration_prefix(3)
@@ -813,48 +754,6 @@ class TargetResumeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "唯一命令收据"):
             migration_resume_state(self.f.root, self.f.output, descriptor)
         self.assertEqual(len(self.f.calls), calls)
-
-    def test_migration_resume_requires_complete_reset_and_exact_failure(self):
-        descriptor = self.interrupt_migration_prefix(3)
-        report = next((self.f.output / "reset-state").glob("*.report.json"))
-        value = read_json(report)
-        value["phases"]["release"]["status"] = "running"
-        report.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "reset 有未完成阶段"):
-            migration_resume_state(self.f.root, self.f.output, descriptor)
-
-    def test_migration_resume_binds_reset_plan_stdout_document_hash(self):
-        f = self.f
-        descriptor = self.interrupt_migration_prefix(3)
-        receipt = next(path for path in f.output.glob("reset-plan-*.command.json")
-                       if not path.name.startswith("reset-plan-confirm-"))
-        value = read_json(receipt)
-        original = '\"environment\": \"test\"'
-        self.assertIn(original, value["stdout"])
-        value["stdout"] = value["stdout"].replace(
-            original, '\"environment\" : \"test\"', 1
-        )
-        replace_json(receipt, value)
-
-        with self.assertRaisesRegex(ValueError, "固定清单"):
-            migration_resume_state(f.root, f.output, descriptor)
-
-    def test_migration_resume_requires_exact_previous_reset_ledger(self):
-        f = self.f
-        descriptor = self.interrupt_migration_prefix(3)
-        previous = next((f.output / "reset-state").glob(".*.ledger.json.previous"))
-        original = previous.read_bytes()
-        previous.unlink()
-        with self.assertRaises((FileNotFoundError, ValueError)):
-            migration_resume_state(f.root, f.output, descriptor)
-        previous.write_bytes(original)
-        value = read_json(previous)
-        value["phases"]["release"] = {
-            "status": "complete", "completed_at": "2026-09-04T00:00:00Z"
-        }
-        replace_json(previous, value)
-        with self.assertRaisesRegex(ValueError, "直接前像"):
-            migration_resume_state(f.root, f.output, descriptor)
 
     def test_inventory_resume_rejects_unknown_failure_artifact(self):
         f = self.f

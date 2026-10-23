@@ -11,6 +11,9 @@ use std::{
     path::Path,
 };
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn receipt(backend: &Path, target: &Path, name: &str) -> Result<Value> {
     let mut value = read(backend, &target.join(name))?;
     json_io::exact(
