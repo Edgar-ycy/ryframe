@@ -13,6 +13,7 @@ import test_devex_clone as clone_fixture
 import devex_clone_export as export
 import devex_clone_source_proof as proof
 from restore_build import ROLES, build_command, file_digest
+from rate_limit_client import load_app_table
 from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
 from restore_reference_plan import BUCKETS, configuration_binding, plan_hash
@@ -34,14 +35,14 @@ class SourceFixture:
         client = self.local / "client.cnf"
         client.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n")
         source = {"scope_id": self.scope, "runtime_dir": str(self.runtime_dir), "api_url": "http://127.0.0.1:18210",
-                  "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
-                         "access_key": "access-fixture", "secret_key": "secret-fixture"}, "databases": []}
+                  "s3": {}, "databases": []}
         for row in self.case.value["source"]["databases"]:
             source["databases"].append({**{key: row[key] for key in ("key", "kind", "mode", "server_uuid", "database")},
                                         "defaults_file": str(client), "defaults_sha256": file_digest(client)["sha256"]})
         self.write_config(source)
-        source["s3"] = {"endpoint": source["s3"]["endpoint"], "region": source["s3"]["region"],
-                        "configuration": configuration_binding(self.backend, self.backend / "config")}
+        objects = load_app_table(self.backend, {"APP_ENV": "test"}, config_dir=self.backend / "config")["object_storage"]
+        source["s3"] = {field: objects[field] for field in ("endpoint", "region", "access_key", "secret_key")}
+        self.object_configuration = configuration_binding(self.backend, self.backend / "config")
         tool = self.local / "external.exe"
         tool.write_bytes(b"fixed-external-fixture")
         source_inventory = {
@@ -221,7 +222,7 @@ class SourceFixture:
         self.native_requests.append(copy.deepcopy(request))
         assert request["format_version"] == 1
         assert request["scope_id"] == self.scope
-        assert request["configuration_binding"] == self.request["source"]["s3"]["configuration"]
+        assert request["configuration_binding"] == self.object_configuration
         assert request["bucket"] in BUCKETS
         assert not any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"])
         if "__s3-inspect" in command:
