@@ -149,37 +149,7 @@ impl<'a> Session<'a> {
         {
             return Err(Failure::new("binary_operation_forbidden"));
         }
-        let mut url = endpoint(&self.config["bindings"]["api_url"])?;
-        let route = route(
-            operation["path"]
-                .as_str()
-                .ok_or_else(|| Failure::new("invalid_operation"))?,
-            step,
-        )?;
-        url = url
-            .join(&route)
-            .map_err(|_| Failure::new("request_route"))?;
-        if let Some(query) = step["query"].as_object() {
-            for (key, value) in query {
-                if !value.is_null() {
-                    url.query_pairs_mut().append_pair(key, &scalar(value));
-                }
-            }
-        }
-        let mut headers = self.headers(step, name)?;
-        let method =
-            Method::from_bytes(method.as_bytes()).map_err(|_| Failure::new("invalid_operation"))?;
-        let mut request = self.client.request(method, url);
-        if let Some(files) = step.get("multipart") {
-            request = request.multipart(multipart(files, self.samples)?);
-        } else if let Some(body) = step.get("body") {
-            headers.insert("content-type", HeaderValue::from_static("application/json"));
-            request = request.json(body);
-        }
-        let request = request
-            .headers(headers)
-            .build()
-            .map_err(|_| Failure::new("request_configuration"))?;
+        let request = self.prepare_request(step, name, operation, method)?;
         pacing
             .before(&self.identity, name, operation, cancel)
             .await?;
@@ -232,6 +202,45 @@ impl<'a> Session<'a> {
             );
         }
         Ok(result)
+    }
+    fn prepare_request(
+        &self,
+        step: &Value,
+        name: &str,
+        operation: &Value,
+        method: &str,
+    ) -> NativeResult<reqwest::Request> {
+        let mut url = endpoint(&self.config["bindings"]["api_url"])?;
+        let route = route(
+            operation["path"]
+                .as_str()
+                .ok_or_else(|| Failure::new("invalid_operation"))?,
+            step,
+        )?;
+        url = url
+            .join(&route)
+            .map_err(|_| Failure::new("request_route"))?;
+        if let Some(query) = step["query"].as_object() {
+            for (key, value) in query {
+                if !value.is_null() {
+                    url.query_pairs_mut().append_pair(key, &scalar(value));
+                }
+            }
+        }
+        let mut headers = self.headers(step, name)?;
+        let method =
+            Method::from_bytes(method.as_bytes()).map_err(|_| Failure::new("invalid_operation"))?;
+        let mut request = self.client.request(method, url);
+        if let Some(files) = step.get("multipart") {
+            request = request.multipart(multipart(files, self.samples)?);
+        } else if let Some(body) = step.get("body") {
+            headers.insert("content-type", HeaderValue::from_static("application/json"));
+            request = request.json(body);
+        }
+        request
+            .headers(headers)
+            .build()
+            .map_err(|_| Failure::new("request_configuration"))
     }
     fn headers(&self, step: &Value, operation: &str) -> NativeResult<HeaderMap> {
         let mut headers = HeaderMap::new();
