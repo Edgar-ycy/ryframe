@@ -146,7 +146,7 @@ def _source_snapshot(path: Path, value: dict) -> dict:
             elif (not Path(reported).is_absolute()
                   or not Path(reported).is_relative_to(ROOT) and Path(reported) not in ROOT.parents):
                 raise ValueError
-            raise _error(reported, "来源核验失败（" + response["category"] + "），完整来源发生漂移") from None
+            raise _error(reported, "编译来源核验失败（" + response["category"] + "），程序与绑定的编译来源不一致或发生漂移") from None
         exact(response, {"format_version", "kind", "source_count", "sha256"}, label)
         if (type(code) is not int or code != 0
             or type(response["format_version"]) is not int or response["format_version"] != 1

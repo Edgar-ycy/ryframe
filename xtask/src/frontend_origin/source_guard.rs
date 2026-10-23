@@ -241,7 +241,10 @@ fn snapshot(
 
 fn ordinary(path: &Path, directory: bool) -> Result<PathBuf> {
     if !path.is_absolute()
-        || path.to_str().is_none_or(|v| v.contains(['\0', '\r', '\n']))
+        || path.to_str().is_none_or(|v| {
+            v.contains(['\0', '\r', '\n'])
+                || v.split(['/', '\\']).any(|part| matches!(part, "." | ".."))
+        })
         || path
             .components()
             .any(|c| matches!(c, Component::ParentDir | Component::CurDir))

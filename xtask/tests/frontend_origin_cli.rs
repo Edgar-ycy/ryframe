@@ -300,6 +300,16 @@ fn verify_sources_uses_compiled_root_and_snapshot_without_writing_checkout() {
         first,
         fixture.invoke(&["__frontend-origin", "verify-sources"], &raw, 0)
     );
+    let mut canonical_request = request.clone();
+    canonical_request["root"] = json!(fs::canonicalize(root).unwrap());
+    assert_eq!(
+        first,
+        fixture.invoke(
+            &["__frontend-origin", "verify-sources"],
+            &serde_json::to_vec(&canonical_request).unwrap(),
+            0
+        )
+    );
     let mut wrong_root = request.clone();
     // 同名同字节 fixture 也不得冒充编译根；不修改正在验证的真实 checkout。
     for source in description["sources"].as_array().unwrap() {
@@ -324,6 +334,19 @@ fn verify_sources_rejects_strict_protocol_errors_at_metadata_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let request = json!({"format_version":1,"root":root,"sources":description["sources"]});
     let raw = serde_json::to_string(&request).unwrap();
+    for alias in [
+        format!("{}/./", root.display()),
+        format!("{}/xtask/..", root.display()),
+    ] {
+        let mut aliased = request.clone();
+        aliased["root"] = json!(alias);
+        let value = fixture.invoke(
+            &["__frontend-origin", "verify-sources"],
+            &serde_json::to_vec(&aliased).unwrap(),
+            2,
+        );
+        assert_eq!(value["category"], "path");
+    }
     for bytes in [
         raw.replacen('{', "{\"format_version\":1,", 1).into_bytes(),
         raw.replace("\"format_version\":1", "\"format_version\":true")

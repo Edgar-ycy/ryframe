@@ -75,6 +75,49 @@ fn wrong_root_with_identical_file_names_and_bytes_is_rejected() {
 }
 
 #[test]
+fn raw_root_dot_and_parent_aliases_are_rejected_even_for_same_physical_root() {
+    let fixture = Fixture::new();
+    let root = fixture.root().to_str().unwrap();
+    let parent = fixture.root().parent().unwrap().to_str().unwrap();
+    let leaf = fixture.root().file_name().unwrap().to_str().unwrap();
+    let aliases = vec![format!("{parent}/./{leaf}"), format!("{root}/xtask/..")];
+    #[cfg(windows)]
+    let aliases = {
+        let mut values = aliases;
+        values.extend([format!("{parent}\\.\\{leaf}"), format!("{root}\\xtask\\..")]);
+        values
+    };
+    for alias in aliases {
+        assert_eq!(
+            fs::canonicalize(&alias).unwrap(),
+            fs::canonicalize(fixture.root()).unwrap()
+        );
+        let raw = serde_json::json!({"format_version":1,"root":alias,"sources":fixture.sources})
+            .to_string();
+        let request = parse(&mut Cursor::new(raw)).unwrap();
+        assert_eq!(request.root.to_str().unwrap(), alias);
+        assert_eq!(
+            verify(&request, fixture.root(), &fixture.sources, |_, _| {})
+                .unwrap_err()
+                .category,
+            "path"
+        );
+    }
+    // 即使在 Unix 上反斜杠不是路径分隔符，协议也拒绝这类词法跳转。
+    assert!(ordinary(Path::new(&format!("{root}\\.\\xtask")), true).is_err());
+}
+
+#[test]
+fn ordinary_and_canonical_absolute_roots_keep_drive_or_device_prefixes_valid() {
+    let fixture = Fixture::new();
+    let canonical = fs::canonicalize(fixture.root()).unwrap();
+    let mut request = fixture.request();
+    request.root = canonical.clone();
+    assert_eq!(ordinary(&request.root, true).unwrap(), canonical);
+    assert!(verify(&request, fixture.root(), &fixture.sources, |_, _| {}).is_ok());
+}
+
+#[test]
 fn additions_removals_and_omitted_or_changed_binding_fail_closed() {
     let fixture = Fixture::new();
     let extra = fixture.root().join("xtask/src/extra.sql");

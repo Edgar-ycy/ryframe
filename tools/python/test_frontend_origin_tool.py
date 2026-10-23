@@ -452,6 +452,7 @@ class SourceSnapshotProtocolTests(unittest.TestCase):
             tool._source_snapshot(self.path, self.metadata)
         self.assertIn(path, str(caught.exception))
         self.assertIn("identity", str(caught.exception))
+        self.assertIn("编译来源", str(caught.exception))
         self.assertIn("重新编译", str(caught.exception))
 
 
