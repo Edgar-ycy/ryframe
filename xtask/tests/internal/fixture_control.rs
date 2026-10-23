@@ -227,10 +227,11 @@ fn rejects_invalid_artifact_identifiers_writes_and_path_contracts() {
 }
 
 #[test]
-fn parses_retention_operations_and_serializes_private_values() {
+fn parses_retention_operations_without_python_dispatch() {
     let fixture = Fixture::new();
     for (operation, expected_write) in [
         ("inspect", false),
+        ("hold-copy", false),
         ("plan-history", false),
         ("verify-cleaned", false),
         ("export-backup", true),
@@ -243,23 +244,14 @@ fn parses_retention_operations_and_serializes_private_values() {
         assert!(matches!(
             command,
             FixtureControlCommand::Retention(FixtureRetentionCommand::Inspect(_))
+                | FixtureControlCommand::Retention(FixtureRetentionCommand::HoldCopy(_))
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::PlanHistory(_))
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::VerifyCleaned(_))
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::ExportBackup(_))
         ));
-        let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-        assert_eq!(
-            invocation.script,
-            "tools/python/full_stack_migration_history.py"
-        );
-        let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-        assert_eq!(protocol["domain"], "retention");
-        assert_eq!(protocol["operation"], operation);
-        assert_eq!(protocol["runtime_dir"], text(&fixture.controlled_dir));
-        assert_eq!(protocol["tenant"], "tenant-0123abcd");
-        assert_eq!(protocol["migration"], "9223372036854775807");
-        assert_eq!(protocol["write"], expected_write);
-        assert!(protocol.get("arguments").is_none());
+        assert!(private_invocation_at(&command, &root_dir()).is_err());
+        assert_eq!(command.operation(), operation);
+        assert_eq!(command.writes(), expected_write);
     }
 
     let mut historical = fixture.retention_options();
@@ -274,10 +266,16 @@ fn parses_retention_operations_and_serializes_private_values() {
         command,
         FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired { .. })
     ));
-    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["plan_sha256"], "a".repeat(64));
-    assert_eq!(protocol["write"], true);
+    assert!(private_invocation_at(&command, &root_dir()).is_err());
+    let FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired {
+        options,
+        plan_sha256,
+    }) = command
+    else {
+        panic!("应为原生保留期操作");
+    };
+    assert_eq!(options.migration, i64::MAX);
+    assert_eq!(plan_sha256, "a".repeat(64));
 }
 
 #[test]

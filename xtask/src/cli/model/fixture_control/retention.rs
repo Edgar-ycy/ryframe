@@ -11,6 +11,7 @@ pub(crate) struct FixtureRetentionOptions {
 pub(crate) enum FixtureRetentionCommand {
     Help,
     Inspect(FixtureRetentionOptions),
+    HoldCopy(FixtureRetentionOptions),
     PlanHistory(FixtureRetentionOptions),
     HistoricalExpired {
         options: FixtureRetentionOptions,
@@ -25,6 +26,7 @@ impl FixtureRetentionCommand {
         match self {
             Self::Help => "help",
             Self::Inspect(_) => "inspect",
+            Self::HoldCopy(_) => "hold-copy",
             Self::PlanHistory(_) => "plan-history",
             Self::HistoricalExpired { .. } => "historical-expired",
             Self::ExportBackup(_) => "export-backup",

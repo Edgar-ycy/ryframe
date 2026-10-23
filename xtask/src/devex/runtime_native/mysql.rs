@@ -38,6 +38,16 @@ impl Mysql {
         timeout: Duration,
     ) -> EvidenceResult<Self> {
         let (command, options) = command(binding)?;
+        Self::open_command(command, options, &[], cancel, timeout)
+    }
+
+    pub(crate) fn open_command(
+        command: Command,
+        options: tempfile::NamedTempFile,
+        prefix: &[u8],
+        cancel: Cancellation,
+        timeout: Duration,
+    ) -> EvidenceResult<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -63,7 +73,7 @@ impl Mysql {
         let input = child.stdin.take().ok_or("mysql-pipes")?;
         let output = BufReader::new(child.stdout.take().ok_or("mysql-pipes")?);
         drop(_entered);
-        Ok(Self {
+        let mut session = Self {
             runtime,
             child,
             input: Some(input),
@@ -74,7 +84,30 @@ impl Mysql {
             failed: false,
             #[cfg(any(windows, unix))]
             group,
-        })
+        };
+        // 先由 RAII 接管完整进程树，再写容器凭据前缀；管道早退也必须回收。
+        if !prefix.is_empty() {
+            session.runtime.block_on(async {
+                let input = session.input.as_mut().ok_or("mysql-pipes")?;
+                tokio::time::timeout(
+                    timeout,
+                    session.cancel.during(async {
+                        input
+                            .write_all(prefix)
+                            .await
+                            .map_err(|_| super::failure::Failure::new("mysql-stdin-write"))?;
+                        input
+                            .flush()
+                            .await
+                            .map_err(|_| super::failure::Failure::new("mysql-stdin-write"))
+                    }),
+                )
+                .await
+                .map_err(|_| "mysql-init-timeout")?
+                .map_err(|error| error.category)
+            })?;
+        }
+        Ok(session)
     }
     fn execute(&mut self, statement: &str) -> EvidenceResult<Vec<Value>> {
         if self.failed {

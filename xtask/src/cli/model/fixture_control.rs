@@ -36,6 +36,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  dataset plan --environment <文件> --runtime <目录> --work-dir <新目录> --output <新文件> --side base|candidate --write\n",
     "  dataset prepare --environment <文件> --runtime <目录> --plan <文件> --side base|candidate --write\n",
     "  retention <inspect|plan-history|verify-cleaned> --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>\n",
+    "  retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>（stdin: wait-blocked/release）\n",
     "  retention historical-expired --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64> --plan-sha256 <SHA256> --write\n",
     "  retention export-backup --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64> --write\n",
     "  environment plan --review <文件> --fixture <文件> --maintenance-build <文件> [--side seed|base|candidate]\n",

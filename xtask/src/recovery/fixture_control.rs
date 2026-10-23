@@ -53,6 +53,7 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         FixtureControlCommand::SourcePair(command) => return source_pair::run(command, root),
         FixtureControlCommand::Review(command) => return review::run(command, root),
         FixtureControlCommand::Artifact(command) => return artifact::run(command, root),
+        FixtureControlCommand::Retention(command) => return retention::run(command, root),
         _ => {}
     }
     let invocation = private_invocation_at(command, root)?;
@@ -79,6 +80,7 @@ pub(crate) fn private_invocation_at(
         FixtureControlCommand::SourcePair(_)
             | FixtureControlCommand::Review(_)
             | FixtureControlCommand::Artifact(_)
+            | FixtureControlCommand::Retention(_)
     ) {
         return Err("该夹具操作由 Rust 原生实现".into());
     }
@@ -92,10 +94,7 @@ pub(crate) fn private_invocation_at(
             "tools/python/reference_fixture_environment.py",
             environment::fields(command, root)?,
         ),
-        FixtureControlCommand::Retention(command) => (
-            "tools/python/full_stack_migration_history.py",
-            retention::fields(command, root)?,
-        ),
+        FixtureControlCommand::Retention(_) => unreachable!("原生保留期验收已提前返回"),
         FixtureControlCommand::Review(_) => unreachable!("原生审阅续签已提前返回"),
         FixtureControlCommand::Request(command) => (
             "tools/python/reference_fixture_request.py",

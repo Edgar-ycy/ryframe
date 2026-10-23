@@ -18,6 +18,7 @@ pub(super) fn parse(args: &[String]) -> Result<FixtureRetentionCommand, CliError
     if is_help(values)
         && [
             "inspect",
+            "hold-copy",
             "plan-history",
             "historical-expired",
             "export-backup",
@@ -29,6 +30,9 @@ pub(super) fn parse(args: &[String]) -> Result<FixtureRetentionCommand, CliError
     }
     match operation.as_str() {
         "inspect" => readonly(values, "retention inspect").map(FixtureRetentionCommand::Inspect),
+        "hold-copy" => {
+            readonly(values, "retention hold-copy").map(FixtureRetentionCommand::HoldCopy)
+        }
         "plan-history" => {
             readonly(values, "retention plan-history").map(FixtureRetentionCommand::PlanHistory)
         }

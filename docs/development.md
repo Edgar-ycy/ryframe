@@ -124,6 +124,10 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。
 
+历史保留期夹具通过 `cargo xtask check recovery fixture retention` 的 Rust 实现执行。`plan-history` 只读绑定当前租户、迁移、配置、服务器及全部任务尝试；`historical-expired --plan-sha256 <摘要> --write` 仅在 Worker 已停止且事务内前后像一致时平移 169 小时，保留 168 小时策略。`export-backup --write` 在精确租户写入 fence 下实际导出并验证摘要，明确不代表恢复成功；中断、部分写入或确认丢失均保留证据，先核实数据库和导出文件，不能自动重放。
+
+复制阶段的原生事务门入口为 `cargo xtask check recovery fixture retention hold-copy --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>`，仅接受已登记且 Worker 已停止的隔离运行。标准输入每行发送 `{"operation":"wait-blocked"}` 或 `{"operation":"release"}`，标准输出保留 `held`、`blocked`、`released` 的逐行 JSON 协议；EOF 或异常退出会回收锁连接。
+
 Worker 启动控制器中断后，`status` 或 `reconcile` 会核对原启动收据。启动失败收据先于监督进程退出时，核对会等待该进程退出及完整成员回收证明，再归档原失败记录；不会自动重新启动 Worker。等待超时、PID 复用或关闭证明不完整时保留现场，按原日志及收据排查，不能直接删除控制锁。进程级 Worker 测试失败时，隔离现场副本保存在 `.local-tests/python-failures/`，包含原运行收据和日志。
 
 复制前的 `source_to_seed` 目标复核由 Rust 编排数据库、对象和 Redis 的只读观察；完整初始化历史及恢复谱系仍由现有只读核验器提供，`seed_to_arm` 继续使用完整状态机。复核绑定初始化收据、完整文件树、配置、工具和实际进程身份，并在外部观察前后核对固定输入；MySQL 原始输出通过同一个持有句柄采集和复读，不重新按路径打开。只有全部检查及锁释放后的复查通过，才在新的 attempt 观察目录将完整 JSON 写入并同步同目录临时文件，再以不覆盖方式发布 `verify.json`。失败保留原始观察及 `failure.json`，不自动重放或清理未知写入；复核通过也不等于已经完成复制或取得恢复验收资格。

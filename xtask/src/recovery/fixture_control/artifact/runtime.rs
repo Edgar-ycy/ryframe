@@ -6,13 +6,13 @@ use crate::{
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-pub(super) struct Binding {
+pub(crate) struct Binding {
     pub receipt: Value,
     pub table: toml::Table,
     pub scope: String,
 }
 
-pub(super) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
+pub(crate) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
     let receipt = read_json(&directory.join("runtime.json"), "全栈运行收据", 64 * 1024)?;
     exact_object(
         &receipt,

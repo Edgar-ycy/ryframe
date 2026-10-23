@@ -301,30 +301,21 @@ fn artifact_native_process_ignores_legacy_credential_protocol_environment() {
 }
 
 #[test]
-fn retention_request_uses_private_protocol_without_forwarded_values() {
+fn retention_native_failure_does_not_forward_arguments_or_credentials() {
     let fixture = Fixture::new();
-    let result = invoke(&fixture.retention_inspect());
+    let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(fixture.retention_inspect())
+        .env("APP_ENV", "test")
+        .env("APP_DATABASE_PASSWORD", "untrusted-secret")
+        .output()
+        .unwrap();
     assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/full_stack_migration_history.py"),
-        "{stdout}"
-    );
-    for private in [
-        "--runtime-dir",
-        "--tenant",
-        "--migration",
-        "tenant-0123abcd",
-        "123",
-    ] {
-        assert!(!stdout.contains(private), "{stdout}");
-    }
-    assert!(
-        stderr.contains("reference_fixture_retention_failed"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("runtime.json"), "{stderr}");
+    assert!(!stderr.contains("untrusted-secret"));
+    assert!(!stderr.contains("tools/python"));
 }
 
 #[test]
