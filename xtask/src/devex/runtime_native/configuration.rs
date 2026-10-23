@@ -41,7 +41,7 @@ pub(crate) fn read(bytes: &[u8], input: &Input) -> NativeResult<Value> {
     Ok(config)
 }
 
-/// 复用既有纯槽位模型；密码仅在内存投影为固定哨兵，永不从环境读取。
+/// 校验私有文件中的身份绑定，纯槽位模型直接使用文件字段。
 pub(crate) fn selection_config(config: &Value) -> NativeResult<Value> {
     let mut projected = config.clone();
     let pools = projected["bindings"]["identity_pools"]
@@ -65,8 +65,6 @@ pub(crate) fn selection_config(config: &Value) -> NativeResult<Value> {
             {
                 return Err(Failure::new("file_identity_binding"));
             }
-            fields.remove("password");
-            fields.insert("password_env".into(), json!("BOUND_FILE_PASSWORD"));
         }
     }
     Ok(projected)
@@ -85,36 +83,10 @@ pub(crate) fn identities(
         super::super::runtime_selection::workload(&projected, suite, workflow, count)
     }
     .map_err(|_| Failure::new("identity_selection"))?;
-    let pool = if suite == "homepage" {
-        &config["contract"]["homepage"]["identity_pool"]
-    } else {
-        &config["contract"]["workloads"][suite]
-            .as_array()
-            .ok_or_else(|| Failure::new("identity_selection"))?
-            .iter()
-            .find(|row| row["name"] == workflow)
-            .ok_or_else(|| Failure::new("identity_selection"))?["identity_pool"]
-    };
-    let name = pool
-        .as_str()
-        .ok_or_else(|| Failure::new("identity_selection"))?;
-    let actual = config["bindings"]["identity_pools"][name]
-        .as_array()
-        .ok_or_else(|| Failure::new("identity_selection"))?;
     selected["identities"]
         .as_array()
-        .ok_or_else(|| Failure::new("identity_selection"))?
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
-            let mut row = row.clone();
-            row.as_object_mut()
-                .ok_or_else(|| Failure::new("identity_selection"))?
-                .remove("password_env");
-            row["password"] = actual[index]["password"].clone();
-            Ok(row)
-        })
-        .collect()
+        .cloned()
+        .ok_or_else(|| Failure::new("identity_selection"))
 }
 
 pub(crate) fn catalog(root: &Path) -> NativeResult<BTreeMap<String, Value>> {

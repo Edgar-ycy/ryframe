@@ -23,7 +23,7 @@ pub(super) fn config(count: usize, tenants: usize, system: bool, selections: &[u
                     format!("actual-{}", slot["tenant_slot"].as_str().expect("逻辑租户"))
                 },
                 "username": format!("user-{}", index + 1),
-                "password_env": "RYFRAME_SELECTION_TEST_PASSWORD",
+                "password": "RYFRAME_SELECTION_TEST_PASSWORD",
             })
         })
         .collect::<Vec<_>>();

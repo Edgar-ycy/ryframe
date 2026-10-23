@@ -134,7 +134,7 @@ fn config() -> Value {
             json!({
                 "tenant_id": format!("actual-{}", slot["tenant_slot"].as_str().unwrap()),
                 "username": format!("user-{}", index + 1),
-                "password_env": "RYFRAME_RUNTIME_INPUT_PASSWORD",
+                "password": "RYFRAME_RUNTIME_INPUT_PASSWORD",
             })
         })
         .collect::<Vec<_>>();

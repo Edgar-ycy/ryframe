@@ -242,7 +242,7 @@ impl PoolState {
 
 fn select_identity(slot: &Value, identity: &Value, state: &mut PoolState) -> SelectionResult {
     if !exact(slot, &["tenant_slot", "user_slot", "client_address"])
-        || !exact(identity, &["tenant_id", "username", "password_env"])
+        || !exact(identity, &["tenant_id", "username", "password"])
     {
         return Err(BINDING);
     }
@@ -251,7 +251,7 @@ fn select_identity(slot: &Value, identity: &Value, state: &mut PoolState) -> Sel
     let address = text(slot, "client_address")?;
     let tenant = text(identity, "tenant_id")?;
     let username = text(identity, "username")?;
-    let password = text(identity, "password_env")?;
+    let password = text(identity, "password")?;
     if !valid_name(tenant_slot)
         || !valid_name(user_slot)
         || !valid_address(address)
@@ -263,10 +263,6 @@ fn select_identity(slot: &Value, identity: &Value, state: &mut PoolState) -> Sel
         || js_trim(username).is_empty()
         || username.encode_utf16().count() > 64
         || password.is_empty()
-        || !password.as_bytes()[0].is_ascii_uppercase()
-        || !password
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
     {
         return Err(BINDING);
     }

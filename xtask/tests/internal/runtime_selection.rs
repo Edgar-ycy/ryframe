@@ -154,8 +154,8 @@ fn original_invalid_pool_cases_fail_closed() {
             TENANT,
         ),
         (
-            "/bindings/identity_pools/readers/1/password_env",
-            json!("secret-value"),
+            "/bindings/identity_pools/readers/1/password",
+            json!(""),
             BINDING,
         ),
         ("/bindings/identity_pools/readers/1", json!({}), BINDING),
@@ -215,7 +215,7 @@ fn contract_hash_and_redacted_receipt() {
     let encoded = receipt.to_string();
     for forbidden in [
         "actual-tenant",
-        "password_env",
+        "password",
         "RYFRAME_SELECTION",
         "username",
         "tenant_id",
@@ -542,7 +542,7 @@ fn pool_slot_and_binding_keys_are_exact_and_types_do_not_coerce() {
         object.remove(&key);
         assert_eq!(selection::workload(&config, "api", "list", 1), Err(reason));
     }
-    for key in ["tenant_id", "username", "password_env"] {
+    for key in ["tenant_id", "username", "password"] {
         for value in [Value::Null, json!(true), json!(1), json!([]), json!({})] {
             let pointer = format!("/bindings/identity_pools/readers/0/{key}");
             let invalid = changed(&base, &pointer, value);
@@ -562,16 +562,7 @@ fn names_and_actual_tenant_and_password_boundaries_are_preserved() {
             "tenant_id",
             vec!["".into(), "a".repeat(65), "租户".into(), "tenant\n".into()],
         ),
-        (
-            "password_env",
-            vec![
-                "".into(),
-                "a".into(),
-                "A-".into(),
-                "1A".into(),
-                "A\n".into(),
-            ],
-        ),
+        ("password", vec!["".into()]),
     ] {
         for value in values {
             let pointer = format!("/bindings/identity_pools/readers/0/{field}");
@@ -590,10 +581,10 @@ fn names_and_actual_tenant_and_password_boundaries_are_preserved() {
         );
         assert!(selection::workload(&valid, "api", "list", 1).is_ok());
     }
-    for value in ["A".to_owned(), "A_0".into(), "A".repeat(1000)] {
+    for value in ["a".to_owned(), "private-密码!".into(), "A".repeat(1000)] {
         let valid = changed(
             &base,
-            "/bindings/identity_pools/readers/0/password_env",
+            "/bindings/identity_pools/readers/0/password",
             json!(value),
         );
         assert!(selection::workload(&valid, "api", "list", 1).is_ok());

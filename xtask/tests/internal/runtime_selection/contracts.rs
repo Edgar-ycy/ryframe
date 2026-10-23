@@ -79,7 +79,7 @@ fn constructor_tenant_has_normal_distribution_and_redacted_receipt() {
             "actual-constructor",
             "actual-tenant",
             "username",
-            "password_env",
+            "password",
         ] {
             assert!(!encoded.contains(forbidden));
         }
