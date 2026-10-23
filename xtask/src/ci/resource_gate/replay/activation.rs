@@ -294,4 +294,5 @@ fn binding(path: &Path, image: Option<&Image>) -> Value {
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/unit/ci/resource_gate/replay/activation/tests.rs"]
 mod tests;
