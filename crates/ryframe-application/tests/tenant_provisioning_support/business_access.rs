@@ -10,21 +10,15 @@ use ryframe_application::{
 
 use super::{Call, actor, params, policy_template, service};
 
-const CHILD: &str = "RYFRAME_BUSINESS_ACCESS_CHILD";
-
 #[test]
 fn business_role_defaults_and_global_boundary_are_isolated_from_other_tests() {
-    if std::env::var_os(CHILD).is_some() {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(verify_policy());
-        return;
-    }
     let output = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "tenant_provisioning::business_access::business_role_defaults_and_global_boundary_are_isolated_from_other_tests", "--nocapture"])
-        .env(CHILD, "1")
+        .args([
+            "--ignored",
+            "--exact",
+            "tenant_provisioning::business_access::business_access_policy_child",
+            "--nocapture",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -38,6 +32,16 @@ fn business_role_defaults_and_global_boundary_are_isolated_from_other_tests() {
         "子进程必须实际执行策略测试"
     );
     assert!(!is_business_permission("order:order:list"));
+}
+
+#[test]
+#[ignore = "只由隔离策略父测试以精确测试名启动"]
+fn business_access_policy_child() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(verify_policy());
 }
 
 async fn verify_policy() {
