@@ -64,6 +64,12 @@ fn parse_source(
     template: bool,
     response: &mut AstResponse,
 ) {
+    let Ok(source_text) = std::str::from_utf8(source) else {
+        response
+            .errors
+            .push(format!("Rust AST 源码不是有效 UTF-8：{path}"));
+        return;
+    };
     let Some(tree) = parser.parse(source, None) else {
         response
             .errors
@@ -77,16 +83,16 @@ fn parse_source(
         return;
     }
     if !template {
-        functions(path, source, tree.root_node(), &mut response.functions);
+        functions(path, source_text, tree.root_node(), &mut response.functions);
     }
     unsafe_tokens(path, tree.root_node(), &mut response.unsafe_syntax);
 }
 
-fn text<'a>(node: Node<'_>, source: &'a [u8]) -> &'a str {
-    std::str::from_utf8(&source[node.byte_range()]).expect("Rust 标识符必须为 UTF-8")
+fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
+    &source[node.byte_range()]
 }
 
-fn functions(path: &str, source: &[u8], root: Node<'_>, records: &mut Vec<FunctionRecord>) {
+fn functions(path: &str, source: &str, root: Node<'_>, records: &mut Vec<FunctionRecord>) {
     let mut stack = vec![(root, Vec::<String>::new())];
     while let Some((node, scopes)) = stack.pop() {
         let mut child_scopes = scopes.clone();
@@ -269,6 +275,27 @@ mod tests {
         assert_eq!(ordinary.errors.len(), 1);
         assert!(ordinary.functions.is_empty());
         assert!(ordinary.unsafe_syntax.is_empty());
+    }
+
+    #[test]
+    fn invalid_utf8_in_comments_is_rejected_for_sources_and_templates() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        for template in [false, true] {
+            let mut response = AstResponse::default();
+            parse_source(
+                &mut parser,
+                "src/lib.rs",
+                b"// \xff\nfn valid() {}\n",
+                template,
+                &mut response,
+            );
+            assert_eq!(response.errors, ["Rust AST 源码不是有效 UTF-8：src/lib.rs"]);
+            assert!(response.functions.is_empty());
+            assert!(response.unsafe_syntax.is_empty());
+        }
     }
 
     #[test]
