@@ -112,7 +112,7 @@ pub(super) fn identity_projection(
     )
 }
 
-fn template_identities(backend: &Path, run: &Path, request: &Value) -> Result<Value> {
+pub(super) fn template_identities(backend: &Path, run: &Path, request: &Value) -> Result<Value> {
     let plan = identity_plan(backend, request)?;
     let projected = identity_projection(backend, run, request, false)?;
     if !matches!(projected["state"].as_str(), Some("prepared" | "verified")) {

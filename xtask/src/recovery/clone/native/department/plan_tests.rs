@@ -12,7 +12,7 @@ fn rehash(value: &mut Value) {
     value["plan_sha256"] = json!(digest::plan_hash(value).unwrap());
 }
 
-fn fixture() -> (Fixture, Value) {
+pub(super) fn fixture() -> (Fixture, Value) {
     let mut fixture = Fixture::new();
     fixture.plan["environment"] = json!({"plan_id":"history-plan"});
     for (index, group) in fixture.plan["groups"]
@@ -53,7 +53,7 @@ fn invoke(f: &Fixture, request: &Value, method: &str) -> crate::Result<Value> {
     )
 }
 
-fn department_plan(f: &Fixture, request: &Value) -> Value {
+pub(super) fn department_plan(f: &Fixture, request: &Value) -> Value {
     document::write_new(
         &f.run.join("seed-runtime.json"),
         &json!({"fixture":"registration"}),

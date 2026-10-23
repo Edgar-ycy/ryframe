@@ -52,7 +52,7 @@ fn plan_binding(run: &Path) -> Result<Value> {
     common::binding(&run.join("seed-runtime/department-plan.json"))
 }
 
-fn attempt_path(backend: &Path, run: &Path, action: &Value, path: &Path) -> Result<()> {
+pub(super) fn attempt_path(backend: &Path, run: &Path, action: &Value, path: &Path) -> Result<()> {
     let slot = document::text(&action["target"]["slot"], "部门目标槽")?;
     if !Regex::new(r"^tenant-(?:0[1-9]|10)$")?.is_match(slot)
         || path.parent() != Some(run.join("seed-runtime/departments").join(slot).as_path())

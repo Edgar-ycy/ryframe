@@ -421,6 +421,7 @@ class DepartmentTests(unittest.TestCase):
         self.assertTrue(confirmed["api_response_proven"])
         self.assertFalse(any(attempt.glob("reconcile-*.json")))
 
+
     def test_template_path_drift_and_inconsistent_page_metadata_fail_before_write(self):
         self.run_mode("departments-plan")
         tenant = self.targets[0]["tenant_id"]
@@ -453,29 +454,6 @@ class DepartmentTests(unittest.TestCase):
             self.assertEqual(marker.read_bytes(), b'{"state":"unknown"}')
 
 
-    def test_existing_unrelated_departments_are_preserved_and_fixed_root_is_added(self):
-        tenant = self.targets[0]["tenant_id"]
-        self.bridge.rows[tenant] = [
-            {"id": "6998", "name": "既有根", "parent_id": None, "ancestors": "", "sort": 0,
-             "status": "1", "remark": None, "created_at": "2026-09-05T00:00:00Z"},
-            {"id": "6999", "name": "既有子项", "parent_id": "6998", "ancestors": "6998", "sort": 1,
-             "status": "1", "remark": None, "created_at": "2026-09-05T00:00:00Z"},
-        ]
-        self.complete()
-        names = {item["name"] for item in self.bridge.rows[tenant]}
-        self.assertEqual(names, {"既有根", "既有子项", self.targets[0]["body"]["name"]})
-        action = model.validate_plan(self.backend, self.directory, self.request)["actions"][0]
-        self.assertEqual(action["before"]["total"], 2)
-
-    def test_mismatched_or_duplicate_fixed_departments_never_get_written(self):
-        row = {"id": "7000", "name": self.targets[0]["body"]["name"], "parent_id": None,
-               "ancestors": "0", "sort": 0, "status": "0", "remark": None,
-               "created_at": "2026-09-05T00:00:00Z"}
-        self.bridge.rows[self.targets[0]["tenant_id"]] = [row]
-        with self.assertRaises(ValueError):
-            self.run_mode("departments-plan")
-        self.assertFalse(any(item[0] == "create" for item in self.bridge.calls))
-
     def test_tampered_confirmation_and_latest_failed_verify_close_identity_gate(self):
         self.prepared_identity()
         self.complete()
@@ -491,31 +469,6 @@ class DepartmentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.department_evidence(self.backend, self.directory, self.request)
 
-    def test_permissions_intent_and_prepared_entry_tampering_fail_closed(self):
-        target = self.targets[0]
-        wildcard = {"subject_id": "9", "tenant_id": target["tenant_id"],
-                    "username": target["admin"]["username"], "is_super_admin": False,
-                    "permissions": ["*"]}
-        with self.assertRaises(ValueError):
-            model.authorization(target, wildcard, write=True, directory=self.directory)
-        wildcard.update(is_super_admin=True, permissions=["*", "system:dept:list", "system:dept:add"])
-        with self.assertRaises(ValueError):
-            model.authorization(target, wildcard, write=True, directory=self.directory)
-        template_identity = model.template_identities(self.backend, self.request)[0]
-        expected = model.principal(template_identity)
-        template_auth = {**expected, "is_super_admin": False,
-                         "permissions": [model.TEMPLATE_PERMISSION]}
-        self.assertEqual(model.template_authorization(target, template_auth, expected, directory=self.directory), expected)
-        for permissions in ([], ["*", model.TEMPLATE_PERMISSION]):
-            with self.assertRaises(ValueError):
-                model.template_authorization(target, {**template_auth, "permissions": permissions}, expected, directory=self.directory)
-        self.prepared_identity()
-        root = Path(self.request["identity_state"])
-        ledger = read_json(root / "ledger.json")
-        ledger["entries"][3]["id"] = ledger["entries"][0]["id"]
-        (root / "ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
-        with self.assertRaises(ValueError):
-            model.identity_projection(self.backend, self.request, allow_absent=False)
 
     def test_final_evidence_validates_every_attempt_and_one_idempotency_key(self):
         self.run_mode("departments-plan")
@@ -547,6 +500,9 @@ class DepartmentTests(unittest.TestCase):
             model.department_evidence(self.backend, self.directory, self.request)
 
     def test_department_producer_commands_bind_all_four_modes_without_secrets(self):
+        source = self.backend / process.KINDS["department-plan"]
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("// 固定生产者来源夹具\n", encoding="utf-8")
         output = self.directory / "seed-runtime/attempt-0042"
         for mode in ("plan", "apply", "reconcile", "verify"):
             command = process.producer_command(self.backend, self.request, self.directory, 42,
@@ -714,95 +670,6 @@ class DepartmentTests(unittest.TestCase):
                 self.assertRaises(ValueError):
             department.execute_departments(self.context, self.request, "departments-plan")
 
-    def test_failed_adoption_chain_rejects_unknown_intermediate_output(self):
-        candidate, observed, current_identity = self.failed_plan_retry()
-        def producer(_backend, _directory, attempt):
-            return observed if attempt["number"] == candidate else None
-        with patch.object(department, "inspect_producer", side_effect=producer), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None):
-            adopted = department.execute_departments(self.context, self.request, "departments-plan")
-        failed_output = self.context.output
-        failed_number = load_state(self.directory)["attempts"][-1]["number"]
-        finish(self.directory, failed_number, result=adopted, error=OSError("外层发布失败"))
-        self.write_failure(failed_number)
-        write_json(failed_output / "unknown.json", {"remote_writes": 0})
-        self.remove_run_lock()
-        retry_identity = {"pid": 993, "started": "444", "executable": "python"}
-        self.start_plan_retry(self.execution_sources(), retry_identity)
-        with patch.object(department, "inspect_producer", side_effect=producer), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: retry_identity if pid == retry_identity["pid"] else None), \
-                self.assertRaises(ValueError):
-            department.execute_departments(self.context, self.request, "departments-plan")
-
-    def test_failed_plan_adoption_rejects_missing_or_tampered_before_evidence(self):
-        _, observed, current_identity = self.failed_plan_retry()
-        plan = read_json(model.plan_path(self.directory))
-        evidence = Path(plan["actions"][0]["before_evidence"]["path"])
-        evidence.unlink()
-        with patch.object(department, "inspect_producer", return_value=observed), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None), \
-                self.assertRaises((FileNotFoundError, ValueError)):
-            department.execute_departments(self.context, self.request, "departments-plan")
-
-    def test_failed_plan_adoption_rejects_changed_before_evidence(self):
-        _, observed, current_identity = self.failed_plan_retry()
-        plan = read_json(model.plan_path(self.directory))
-        evidence = Path(plan["actions"][0]["before_evidence"]["path"])
-        value = read_json(evidence)
-        value["list"]["authorization"]["subject_id"] = "999999"
-        evidence.write_text(json.dumps(value), encoding="utf-8")
-        with patch.object(department, "inspect_producer", return_value=observed), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None), \
-                self.assertRaises(ValueError):
-            department.execute_departments(self.context, self.request, "departments-plan")
-
-    def test_failed_plan_adoption_rejects_cross_attempt_evidence(self):
-        _, observed, current_identity = self.failed_plan_retry()
-        plan_path = model.plan_path(self.directory)
-        plan = read_json(plan_path)
-        source = Path(plan["actions"][0]["before_evidence"]["path"])
-        crossed = self.context.output / source.name
-        shutil.copyfile(source, crossed)
-        plan["actions"][0]["before_evidence"] = binding(crossed)
-        plan["plan_sha256"] = plan_hash({key: value for key, value in plan.items()
-                                         if key != "plan_sha256"})
-        plan_path.write_text(json.dumps(plan), encoding="utf-8")
-        with patch.object(department, "inspect_producer", return_value=observed), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None), \
-                self.assertRaises(ValueError):
-            department.execute_departments(self.context, self.request, "departments-plan")
-
-    def test_failed_plan_adoption_rejects_action_evidence(self):
-        _, observed, current_identity = self.failed_plan_retry()
-        action_root = model.prerequisite_path(self.directory).parent / "tenant-01"
-        action_root.mkdir()
-        with patch.object(department, "inspect_producer", return_value=observed), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None), \
-                self.assertRaises(ValueError):
-            department.execute_departments(self.context, self.request, "departments-plan")
-
-    def test_failed_plan_adoption_rejects_product_change(self):
-        _, observed, current_identity = self.failed_plan_retry(current_product="8")
-        with patch.object(department, "inspect_producer", return_value=observed), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None), \
-                self.assertRaises(ValueError):
-            department.execute_departments(self.context, self.request, "departments-plan")
-
-    def test_failed_plan_adoption_rejects_live_original_producer(self):
-        _, observed, current_identity = self.failed_plan_retry()
-        observed = {**observed, "alive": True}
-        with patch.object(department, "inspect_producer", return_value=observed), \
-                patch.object(department, "process_identity",
-                             side_effect=lambda pid: current_identity if pid == current_identity["pid"] else None), \
-                self.assertRaises(ValueError):
-            department.execute_departments(self.context, self.request, "departments-plan")
 
     def test_close_timeout_does_not_send_a_second_out_of_order_close(self):
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, output=self.directory,

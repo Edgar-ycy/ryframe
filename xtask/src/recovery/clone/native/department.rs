@@ -1,4 +1,4 @@
-//! 部门采用链的只读证据闭集；不运行外部命令，不改变既有阶段生命周期。
+//! 部门阶段、受管证据与采用链；外部命令和会话仍由统一控制器调度。
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -6,6 +6,10 @@ use serde_json::{Value, json};
 use super::{digest, json as document, resources::common};
 use crate::Result;
 
+#[path = "department/adoption.rs"]
+mod adoption;
+#[path = "department/adoption_receipts.rs"]
+mod adoption_receipts;
 #[path = "department/artifacts.rs"]
 mod artifacts;
 #[path = "department/evidence.rs"]
@@ -20,6 +24,8 @@ mod plan;
 mod receipts;
 #[path = "department/workbook.rs"]
 mod workbook;
+#[path = "department/workflow.rs"]
+mod workflow;
 
 pub(crate) fn dispatch(backend: &Path, run: &Path, args: &Value) -> Result<Value> {
     document::exact(args, &["backend_root", "parameters"], "部门证据工作区绑定")?;
@@ -166,3 +172,11 @@ mod projection_tests;
 #[cfg(test)]
 #[path = "department/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "department/workflow_tests.rs"]
+mod workflow_tests;
+
+#[cfg(test)]
+#[path = "department/adoption_tests.rs"]
+mod adoption_tests;

@@ -14,7 +14,12 @@ pub(super) fn dispatch(backend: &Path, run: &Path, args: &Value) -> Result<Value
     Ok(result)
 }
 
-fn execute(backend: &Path, run: &Path, method: &Value, args_value: &Value) -> Result<Value> {
+pub(super) fn execute(
+    backend: &Path,
+    run: &Path,
+    method: &Value,
+    args_value: &Value,
+) -> Result<Value> {
     match document::text(method, "部门模型操作")? {
         "page-data" => {
             exact_args(args_value, &["response"])?;
@@ -80,7 +85,7 @@ fn execute(backend: &Path, run: &Path, method: &Value, args_value: &Value) -> Re
         "department-evidence" | "authorize-identity" => {
             evidence::dispatch(backend, run, method, args_value)
         }
-        _ => Err("未知部门模型操作".into()),
+        method => super::workflow::dispatch(backend, run, method, args_value),
     }
 }
 

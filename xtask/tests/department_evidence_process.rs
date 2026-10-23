@@ -232,3 +232,53 @@ fn real_protocol_rejects_junction_evidence_without_touching_link_target() {
     assert_eq!(fs::read(target.join("preserve.txt")).unwrap(), b"unchanged");
     assert!(!fixture.output.join("adoption-guard.json").exists());
 }
+
+#[test]
+fn workflow_protocol_preserves_unknown_intent_and_never_automatically_replays() {
+    let fixture = Fixture::new();
+    let backend = fixture.run.parent().unwrap().parent().unwrap();
+    fs::create_dir_all(fixture.run.join("seed-runtime/departments")).unwrap();
+    fs::write(fixture.run.join("seed-runtime/department-plan.json"), b"{}").unwrap();
+    let action = json!({"target":{"slot":"tenant-01","tenant_id":"101"}});
+    let input = fixture.run.join("workflow-input.json");
+    let arguments = json!({"action":action,"target":{"tenant_id":"101"}});
+    fs::write(&input, serde_json::to_vec(&arguments).unwrap()).unwrap();
+    let first = fixture.invoke(&fixture.model_payload("begin-action", input_binding(&input)));
+    assert!(first.status.success());
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let attempt = PathBuf::from(first["result"]["attempt"].as_str().unwrap());
+    fs::write(attempt.join("intent.json"), b"{\"state\":\"unknown\"}").unwrap();
+    let before = fs::read(attempt.join("intent.json")).unwrap();
+    let retry = fixture.invoke(&fixture.model_payload("begin-action", input_binding(&input)));
+    assert_eq!(retry.status.code(), Some(1));
+    let rejected: Value = serde_json::from_slice(&retry.stdout).unwrap();
+    assert_eq!(rejected["error"]["automatic_retry_permitted"], false);
+    assert_eq!(fs::read(attempt.join("intent.json")).unwrap(), before);
+    assert_eq!(fs::read_dir(attempt.parent().unwrap()).unwrap().count(), 1);
+    assert!(backend.is_dir());
+}
+
+#[test]
+fn workflow_protocol_rejects_foreign_slot_and_extra_payload_without_action_directory() {
+    let fixture = Fixture::new();
+    let input = fixture.run.join("workflow-input.json");
+    for slot in ["../foreign", "tenant-11", "tenant-01/../../foreign"] {
+        fs::write(
+            &input,
+            serde_json::to_vec(&json!({"action":{"target":{"slot":slot}},"target":{}})).unwrap(),
+        )
+        .unwrap();
+        let output = fixture.invoke(&fixture.model_payload("begin-action", input_binding(&input)));
+        assert_eq!(output.status.code(), Some(1));
+        assert!(!fixture.run.join("seed-runtime/departments").exists());
+    }
+    fs::write(
+        &input,
+        b"{\"action\":{},\"target\":{},\"password\":\"must-not-leak\"}",
+    )
+    .unwrap();
+    let output = fixture.invoke(&fixture.model_payload("begin-action", input_binding(&input)));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-leak"));
+    assert!(output.stderr.is_empty());
+}
