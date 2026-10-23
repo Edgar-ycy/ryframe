@@ -260,3 +260,32 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     .unwrap();
     assert_ne!(request("plan", args).0, 0);
 }
+
+#[test]
+fn administrator_credentials_constructs_distinct_strong_private_toml_and_rejects_extra_fields() {
+    let initial = "Initial!Only123";
+    let (code, value) = request(
+        "administrator-credentials",
+        json!({"admin_password":initial}),
+    );
+    assert_eq!(code, 0);
+    let table: toml::Table = toml::from_str(value["result"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(table.len(), 1);
+    let account = table["administrator"].as_table().unwrap();
+    assert_eq!(account.len(), 3);
+    assert_eq!(account["tenant_id"].as_str(), Some("system"));
+    assert_eq!(account["username"].as_str(), Some("admin"));
+    let password = account["password"].as_str().unwrap();
+    assert_ne!(password, initial);
+    assert_eq!(
+        request("reset-password", json!({"admin_password":password})).0,
+        0
+    );
+    let (code, value) = request(
+        "administrator-credentials",
+        json!({"admin_password":initial,"password":"private-sentinel"}),
+    );
+    assert_ne!(code, 0);
+    assert!(!value.to_string().contains(initial));
+    assert!(!value.to_string().contains("private-sentinel"));
+}

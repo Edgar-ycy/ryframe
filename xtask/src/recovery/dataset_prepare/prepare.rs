@@ -68,13 +68,17 @@ async fn create_clients(
     catalog: &std::collections::BTreeMap<String, Value>,
 ) -> Result<Vec<Client>> {
     let plan = &inputs.plan;
-    let mut admin = Client::new(plan, "source", 0, catalog, &inputs.password)?;
-    admin.login().await?;
+    let initial = inputs
+        .initial_password
+        .as_deref()
+        .ok_or("fresh 数据准备缺少初始化密码")?;
+    let mut admin = Client::new(plan, "source", 0, catalog, initial)?;
+    admin.activate(inputs, 0, directory).await?;
     let version = plan_version(&mut admin, plan).await?;
     let mut clients = vec![admin];
     for index in 1..11 {
         inputs.unchanged()?;
-        let body = json!({"tenant_id":model::tenant(plan,index),"name":format!("恢复参考租户{index}"),"admin_username":"owner","admin_password":inputs.password,"data_target_key":plan["dataset"]["tenant_targets"][index-1],"plan_version_id":version["id"],"max_users":20,"max_roles":10,"max_storage_mb":512,"max_requests_per_min":60_000});
+        let body = json!({"tenant_id":model::tenant(plan,index),"name":format!("恢复参考租户{index}"),"admin_username":"owner","admin_password":initial,"data_target_key":plan["dataset"]["tenant_targets"][index-1],"plan_version_id":version["id"],"max_users":20,"max_roles":10,"max_storage_mb":512,"max_requests_per_min":60_000});
         clients[0]
             .request(&json!({"operation":"post_platform_tenants","body":body}))
             .await?;
@@ -82,8 +86,8 @@ async fn create_clients(
             directory,
             &json!({"kind":"tenant","tenant_id":model::tenant(plan,index)}),
         )?;
-        let mut client = Client::new(plan, "source", index, catalog, &inputs.password)?;
-        client.login().await?;
+        let mut client = Client::new(plan, "source", index, catalog, initial)?;
+        client.activate(inputs, index, directory).await?;
         clients.push(client);
     }
     Ok(clients)

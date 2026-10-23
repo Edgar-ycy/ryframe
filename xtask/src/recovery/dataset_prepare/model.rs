@@ -18,6 +18,7 @@ pub(super) struct Inputs {
     pub preflight: Option<Value>,
     pub dataset: Option<Value>,
     pub password: String,
+    pub initial_password: Option<String>,
     snapshots: Vec<(PathBuf, Vec<u8>)>,
 }
 impl Inputs {
@@ -64,11 +65,17 @@ impl Inputs {
         if let Some(value) = &dataset {
             validate_dataset(&plan, value)?;
         }
-        let password = super::configuration::password(
-            root,
-            &plan["dataset"]["configuration"],
-            &mut snapshots,
-        )?;
+        let password = super::configuration::current(root, &plan["dataset"], &mut snapshots)?;
+        let initial_password = if preflight.is_some() {
+            Some(super::configuration::initial(
+                root,
+                &plan["dataset"]["configuration"],
+                &password,
+                &mut snapshots,
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             root: root.into(),
             plan_path,
@@ -77,6 +84,7 @@ impl Inputs {
             preflight,
             dataset,
             password,
+            initial_password,
             snapshots,
         })
     }
@@ -87,11 +95,7 @@ impl Inputs {
                 return Err("数据集计划、预检或原收据在执行期间发生变化".into());
             }
         }
-        super::configuration::password(
-            &self.root,
-            &self.plan["dataset"]["configuration"],
-            &mut Vec::new(),
-        )?;
+        super::configuration::current(&self.root, &self.plan["dataset"], &mut Vec::new())?;
         Ok(())
     }
     pub fn dataset_sha(&self) -> Result<String> {
@@ -186,6 +190,11 @@ pub(super) fn specification(plan: &Value) -> Result<()> {
         &s["configuration"],
         &["app_env", "directory", "files", "sha256"],
         "数据集配置绑定",
+    )?;
+    documents::exact(
+        &s["administrator_credentials"],
+        &["path", "bytes", "sha256"],
+        "当前管理员凭据绑定",
     )?;
     let targets = s["tenant_targets"]
         .as_array()

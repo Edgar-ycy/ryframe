@@ -75,6 +75,10 @@ impl Server {
                     .unwrap()
                     .push((headers.clone(), body.clone()));
                 let (status, body) = handler(&headers, &body);
+                // 状态零表示服务端已处理请求但主动断开响应。
+                if status == 0 {
+                    continue;
+                }
                 write!(socket,"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nSet-Cookie: ryframe_csrf=csrf; Path=/\r\nConnection: close\r\n\r\n",body.len()).unwrap();
                 socket.write_all(&body).unwrap();
             }
@@ -100,6 +104,8 @@ fn catalog() -> std::collections::BTreeMap<String, Value> {
     [
         ("get_auth_csrf", "GET", "/csrf"),
         ("post_auth_login", "POST", "/login"),
+        ("get_auth_context", "GET", "/context"),
+        ("put_auth_profile_password", "PUT", "/password"),
         ("post_auth_refresh", "POST", "/refresh"),
         ("post_auth_logout", "POST", "/logout"),
         ("post_system_posts", "POST", "/posts"),
@@ -140,7 +146,9 @@ fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_f
         if headers.starts_with("POST /logout ") {
             assert!(!headers.to_ascii_lowercase().contains("authorization:"));
         }
-        let data = if headers.starts_with("POST /login ") {
+        let data = if headers.starts_with("GET /context ") {
+            full_context(headers)
+        } else if headers.starts_with("POST /login ") {
             let claims = json!({"sub":"9007199254740993","tenant_id":tenant,"username":if tenant == "system" {"admin"} else {"owner"},"token_type":"access","user_authorization_version":7});
             let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
             json!({"access_token":format!("header.{payload}.signature")})
@@ -182,6 +190,18 @@ fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_f
             .all(|subject| subject["user_authorization_version"] == 7)
     );
     let calls = server.requests.lock().unwrap();
+    assert!(
+        !calls
+            .iter()
+            .any(|(headers, _)| headers.starts_with("PUT /password "))
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(headers, _)| headers.starts_with("GET /context "))
+            .count(),
+        11
+    );
     assert_eq!(
         calls
             .iter()
@@ -215,7 +235,9 @@ fn runtime() -> tokio::runtime::Runtime {
 #[test]
 fn dataset_http_records_each_post_refreshes_and_checks_exact_count() {
     let server = Server::new(|headers, body| {
-        let response = if headers.starts_with("POST /posts ") {
+        let response = if headers.starts_with("GET /context ") {
+            json!({"code":200,"data":full_context(headers)})
+        } else if headers.starts_with("POST /posts ") {
             let value: Value = serde_json::from_slice(body).unwrap();
             assert!(value["sort"].as_u64().unwrap() <= 999);
             json!({"code":200,"data":{"id":(value["code"].as_str().unwrap().rsplit('-').next().unwrap().parse::<u64>().unwrap()+1).to_string(),"code":value["code"],"name":value["name"]}})
@@ -271,6 +293,12 @@ fn dataset_http_upload_and_download_preserve_exact_bytes_and_no_retry() {
     let content = prepare::sample_content("fixture", 1, 1024);
     let expected = content.clone();
     let server = Server::new(move |headers, body| {
+        if headers.starts_with("GET /context ") {
+            return (
+                200,
+                serde_json::to_vec(&json!({"code":200,"data":full_context(headers)})).unwrap(),
+            );
+        }
         if headers.starts_with("POST /upload ") {
             assert!(body.windows(expected.len()).any(|v| v == expected));
             assert!(
@@ -319,7 +347,9 @@ fn dataset_http_upload_and_download_preserve_exact_bytes_and_no_retry() {
 #[test]
 fn pacing_covers_every_request_and_invalid_post_result_never_publishes_record() {
     let server = Server::new(|headers, _| {
-        let value = if headers.starts_with("POST /posts ") {
+        let value = if headers.starts_with("GET /context ") {
+            json!({"data":full_context(headers)})
+        } else if headers.starts_with("POST /posts ") {
             json!({"data":{"id":"1","code":"wrong"}})
         } else {
             json!({"data":{"access_token":"token"}})
@@ -362,7 +392,9 @@ fn empty_capability_version_accepts_optional_catalog_and_rejects_invalid_before_
     ] {
         let valid = capabilities.is_array();
         let server = Server::new(move |headers, _| {
-            let data = if headers.starts_with("GET /capabilities ") {
+            let data = if headers.starts_with("GET /context ") {
+                full_context(headers)
+            } else if headers.starts_with("GET /capabilities ") {
                 capabilities.clone()
             } else if headers.starts_with("POST /plans ") {
                 json!({"id":"12"})
@@ -384,12 +416,12 @@ fn empty_capability_version_accepts_optional_catalog_and_rejects_invalid_before_
         assert_eq!(result.is_ok(), valid);
         let calls = server.requests.lock().unwrap();
         if valid {
-            assert_eq!(calls.len(), 6);
-            let body: Value = serde_json::from_slice(&calls[4].1).unwrap();
+            assert_eq!(calls.len(), 7);
+            let body: Value = serde_json::from_slice(&calls[5].1).unwrap();
             assert_eq!(body["capabilities"], json!([]));
-            assert!(calls[5].0.starts_with("POST /plans/12/versions/1/publish "));
+            assert!(calls[6].0.starts_with("POST /plans/12/versions/1/publish "));
         } else {
-            assert_eq!(calls.len(), 3);
+            assert_eq!(calls.len(), 4);
             assert!(
                 !calls
                     .iter()
@@ -402,7 +434,9 @@ fn empty_capability_version_accepts_optional_catalog_and_rejects_invalid_before_
 #[test]
 fn exact_post_count_mismatch_keeps_creation_evidence_without_success() {
     let server = Server::new(|headers, _| {
-        let data = if headers.starts_with("POST /posts ") {
+        let data = if headers.starts_with("GET /context ") {
+            full_context(headers)
+        } else if headers.starts_with("POST /posts ") {
             json!({"id":"1","code":"case-0","name":"恢复样本0"})
         } else if headers.starts_with("GET /posts?") {
             json!({"total":99})
@@ -439,3 +473,21 @@ fn exact_post_count_mismatch_keeps_creation_evidence_without_success() {
     );
     assert!(!temp.path().join("result.json").exists());
 }
+
+fn full_context(headers: &str) -> Value {
+    let tenant = headers
+        .lines()
+        .find_map(|line| {
+            line.split_once(':')
+                .filter(|(name, _)| name.eq_ignore_ascii_case("x-tenant-id"))
+        })
+        .map(|(_, value)| value.trim())
+        .unwrap_or("system");
+    json!({"user":{"id":"9007199254740993","tenant_id":tenant,"username":if tenant == "system" {"admin"} else {"owner"},
+        "password_change_required":false,"tenant_name":"参考租户","dept_name":null,"nickname":"参考管理员","email":"","phone":"","avatar":null,"preferred_locale":null},
+        "password_change_required":false,"is_super_admin":true,"permissions":["*"],"roles":["admin"],
+        "authorization_epoch":"1","runtime_epoch":"1","capabilities":[],"business_data":{"state":"active","placement_generation":"1"},"menus":[]})
+}
+
+#[path = "../../../tests/unit/recovery/dataset_prepare/activation.rs"]
+mod activation;

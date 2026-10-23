@@ -75,7 +75,7 @@ username = "admin"
 password = "<current-password-after-first-change>"
 ```
 
-post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、`username`、`client_address` 四项元数据；另以 `administrator_credentials` 登记该 TOML 的 `path`、`bytes` 和 `sha256` 文件绑定，不把密码写入请求、公开登记或收据。文件中的租户和用户名必须与元数据一致，文件及各级路径不得经过链接或越出当前后端的 `.local-tests`。注册和会话启动在读取前后核对文件绑定；内容或绑定变化、字段错误和 TOML 解析失败均拒绝继续，诊断不回显文件原文。登录后还要求权威会话的 `password_change_required` 明确为 `false`，为 `true` 或字段缺失时拒绝进入业务动作。此密码独立于 `bootstrap.admin_password`，工具不自动改密、不回退初始化密码，也不重放业务写入。未完成首次改密时，先完成明确的账号流程，不能将初始化密码作为当前凭据登记。
+post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、`username`、`client_address` 四项元数据；另以 `administrator_credentials` 登记该 TOML 的 `path`、`bytes` 和 `sha256` 文件绑定，不把密码写入请求、公开登记或收据。文件中的租户和用户名必须与元数据一致，文件及各级路径不得经过链接或越出当前后端的 `.local-tests`。注册和会话启动在读取前后核对文件绑定；内容或绑定变化、字段错误和 TOML 解析失败均拒绝继续，诊断不回显文件原文。登录后还要求权威会话顶层及 `user` 内的 `password_change_required` 一致明确为 `false`，为 `true`、字段缺失或互相矛盾时拒绝进入业务动作。此密码独立于 `bootstrap.admin_password`，工具不自动改密、不回退初始化密码，也不重放业务写入。未完成首次改密时，先完成明确的账号流程，不能将初始化密码作为当前凭据登记。
 
 继续通过 `cargo xtask check recovery clone post-copy --run-dir <run> --operation register --request <request.json> --write` 显式登记；后续产生写入的操作仍需 `--write`。`api_environment` 绑定文件仅允许 `{"environment":{"APP_ENV":"test"}}`，不再传递管理员凭据或其他项目配置；地址、Worker 模式和 CORS 等设置来自各自绑定的应用 TOML。amendment 仅可在既有停止证明和失败核对流程后重新绑定环境选择文件，不能借环境字段修改项目配置。
 
@@ -150,6 +150,10 @@ cargo xtask data backup status
 正式双侧恢复分别使用 `target_side: base` 与 `target_side: candidate` 的参考计划和独立工作目录。通过 `cargo xtask check recovery plan --plan <side-reference-plan> --backup-receipt <same-backup.json> --comparison-sources <two-version-source-manifest> --arm-input <side-published-arm-result> --fresh-target-verify <side-observation-directory/verify.json> --product-plan <product-restore-plan-file>` 推导完整目标计划；加 `--output <new-target-plan-file> --write` 才发布。它把 base 固定映射到 b0、candidate 固定映射到 b1，并绑定同一共享导出、原备份摘要、本侧初始化与完整 ownership、探针、前端 SHA 和产品恢复计划。目标计划分别记录维护初始化的 `maintenance_execution` 与比较产品的 `product_execution`；双侧可共享候选维护工具，B0 产品运行仍必须使用已登记适配源码和对应构建。产品计划的 `fault_at` 必须使用 UTC `Z` 格式，小数位按实际精度保留 0、3 或 6 位，保证经过产品序列化后仍逐字段一致。`plan --plan <side-reference-plan> --target-plan <published-target-plan>` 重新核对全部绑定；未知字段、侧别混用、证据漂移或输出覆盖都会失败。
 
 已有数据可以在原计划不变的前提下复验。先用 `cargo xtask check recovery check-existing --plan <original-plan-json> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `cargo xtask check recovery dataset-prepare --plan <original-plan-json> --verify-existing <original-dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。计划、预检和原数据收据必须是当前后端 `.local-tests` 内的绝对现有文件，入口拒绝链接、越界和隐式覆盖。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
+
+fresh 参考夹具环境准备会在源 bootstrap 输出目录独占创建私有 `administrator.toml`，内容严格为 `[administrator]` 下的 `tenant_id = "system"`、`username = "admin"` 和 `password`。当前密码由 Rust 随机生成并与 `bootstrap.admin_password` 不同；两份配置必须在生成参考计划前固定。公开 bootstrap 收据与参考计划的 `dataset.administrator_credentials` 只保存该文件的 `path`、`bytes` 和 `sha256`，不包含明文。初始化密码仅用于 fresh 系统管理员及十个新租户 owner 的受限登录；每个账号先核对受限 context，落盘独占 intent，再发一次改密请求，记录确认后丢弃旧会话，使用显式当前密码重新登录并验证同一主体、首次改密状态和必要权限，最后发布激活完成收据。十一账号只在这个隔离夹具内共用该当前密码。
+
+改密超时、响应中断、服务端错误、确认落盘失败或遗留 intent 都必须保留现场并停止，不能重新发送改密、尝试旧密码、清除数据库标志或改写凭据文件补签。已有数据的 target/source 核验及 source/clone 原生复验只读取绑定的当前凭据；遇受限会话直接失败，绝不自动改密。
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
 

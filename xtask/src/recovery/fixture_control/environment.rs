@@ -130,3 +130,7 @@ fn insert_inputs(
     );
     Ok(())
 }
+
+pub(in crate::recovery) fn validate_password(password: &str) -> Result<()> {
+    guards::reset_password(&serde_json::json!({"admin_password": password}))
+}

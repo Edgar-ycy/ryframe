@@ -147,3 +147,28 @@ pub(super) fn text(args: &Value) -> Result<Value> {
     toml::from_str::<toml::Table>(&text)?;
     Ok(json!({"text":text}))
 }
+
+/// 当前凭据在准备配置时生成，初始化密码只用于首次受限登录。
+pub(super) fn administrator(args: &Value) -> Result<Value> {
+    native_json::exact(args, &["admin_password"], "夹具当前凭据构造")?;
+    super::guards::reset_password(args)?;
+    let initial = args["admin_password"].as_str().ok_or("初始化密码缺失")?;
+    let password = loop {
+        let candidate = format!(
+            "Aa1!{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        super::validate_password(&candidate)?;
+        if candidate != initial {
+            break candidate;
+        }
+    };
+    let text = toml::to_string(&toml::toml! {
+        [administrator]
+        tenant_id = "system"
+        username = "admin"
+        password = password
+    })?;
+    Ok(json!({"text": text}))
+}

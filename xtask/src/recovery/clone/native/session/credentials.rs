@@ -7,15 +7,32 @@ use std::{fs, path::Path};
 const REJECTED: &str = "管理员凭据校验失败；检查后端 .local-tests 内的 TOML 路径、文件绑定及 administrator.tenant_id/username/password；password 必须是首次改密后的当前凭据";
 
 pub(crate) fn load(root: &Path, descriptor: &Value, identity: &Value) -> Result<String> {
-    read(root, descriptor, identity).map_err(|_| REJECTED.into())
+    super::model::identity(identity).map_err(|_| REJECTED)?;
+    load_account(
+        root,
+        descriptor,
+        identity["tenant_id"].as_str().ok_or(REJECTED)?,
+        identity["username"].as_str().ok_or(REJECTED)?,
+    )
 }
 
-fn read(root: &Path, descriptor: &Value, identity: &Value) -> Result<String> {
+pub(crate) fn load_account(
+    root: &Path,
+    descriptor: &Value,
+    tenant: &str,
+    username: &str,
+) -> Result<String> {
+    read(root, descriptor, tenant, username).map_err(|_| REJECTED.into())
+}
+
+fn read(root: &Path, descriptor: &Value, tenant: &str, username: &str) -> Result<String> {
+    if tenant != "system" || username.trim().is_empty() {
+        return Err(REJECTED.into());
+    }
     crate::local_test_path::validate_absolute_path(
         root,
         crate::local_test_path::LocalTestPathKind::ExistingDirectory,
     )?;
-    super::model::identity(identity)?;
     super::super::json::exact(descriptor, &["path", "bytes", "sha256"], "管理员凭据绑定")?;
     if descriptor["bytes"]
         .as_u64()
@@ -43,10 +60,8 @@ fn read(root: &Path, descriptor: &Value, identity: &Value) -> Result<String> {
         || !["tenant_id", "username", "password"]
             .iter()
             .all(|key| administrator.contains_key(*key))
-        || administrator.get("tenant_id").and_then(toml::Value::as_str)
-            != identity["tenant_id"].as_str()
-        || administrator.get("username").and_then(toml::Value::as_str)
-            != identity["username"].as_str()
+        || administrator.get("tenant_id").and_then(toml::Value::as_str) != Some(tenant)
+        || administrator.get("username").and_then(toml::Value::as_str) != Some(username)
     {
         return Err(REJECTED.into());
     }
@@ -147,6 +162,12 @@ mod tests {
             load(&f.root, &descriptor, &f.identity).unwrap(),
             "Current!Changed123"
         );
+        assert_eq!(
+            load_account(&f.root, &descriptor, "system", "admin").unwrap(),
+            "Current!Changed123"
+        );
+        assert!(load_account(&f.root, &descriptor, "other", "admin").is_err());
+        assert!(load_account(&f.root, &descriptor, "system", "other").is_err());
         let args = json!({"backend":f.root,"identity":f.identity,
             "administrator_credentials":descriptor});
         assert_eq!(validate_request(&args).unwrap(), Value::Null);

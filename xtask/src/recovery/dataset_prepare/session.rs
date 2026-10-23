@@ -6,6 +6,9 @@ use crate::{
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 
+#[path = "session/activation.rs"]
+mod activation;
+
 pub(super) struct Pacer {
     interval: Duration,
     previous: Option<tokio::time::Instant>,
@@ -112,10 +115,9 @@ impl Client {
         })
     }
     pub async fn login(&mut self) -> Result<()> {
-        self.session
-            .login(&mut self.pacer)
-            .await
-            .map_err(Into::into)
+        self.session.login(&mut self.pacer).await?;
+        self.context(false).await?;
+        Ok(())
     }
     pub async fn request(&mut self, step: &Value) -> Result<Value> {
         self.session

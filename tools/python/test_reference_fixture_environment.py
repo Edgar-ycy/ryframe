@@ -439,6 +439,11 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 continue
             self.assertIn(f'key = "{item["key"]}"', targets)
             self.assertIn(f'database = "{item["database"]}"', targets)
+        current = tomllib.loads((self.root / "output/administrator.toml").read_text(encoding="utf-8"))["administrator"]
+        self.assertEqual(set(current), {"tenant_id", "username", "password"})
+        self.assertEqual((current["tenant_id"], current["username"]), ("system", "admin"))
+        self.assertNotEqual(current["password"], settings["bootstrap"]["admin_password"])
+        environment._validate_reset_password({"admin_password": current["password"]})
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
 
         # 目标代次、运行登记与复制运行环境必须来自同一份 APP_* 配置；只有非 APP_ 的

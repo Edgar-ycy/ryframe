@@ -102,6 +102,7 @@ fn dispatch(bytes: &[u8]) -> Result<Value> {
         }
         "configuration-settings" => super::configuration::settings(args),
         "configuration-text" => super::configuration::text(args),
+        "administrator-credentials" => super::configuration::administrator(args),
         "plan" => super::plan::create(args),
         "planned-inputs" => super::plan::inputs(args),
         _ => Err(Box::new(GuardError("未知夹具环境操作"))),

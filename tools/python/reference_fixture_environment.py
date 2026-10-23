@@ -413,6 +413,13 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     targets, settings = configuration["targets"], configuration["settings"]
     environment = {"APP_ENV": "test", "TEMP": str(output / "tmp"), "TMP": str(output / "tmp")}
     _test_configuration(execution, output, targets, settings, database_credentials)
+    credentials = output / "administrator.toml"
+    text = environment_native("administrator-credentials", {"admin_password": values["admin_password"]})["text"]
+    with credentials.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    credentials.chmod(0o600)
     return environment, files
 
 
@@ -455,6 +462,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
         receipt = {"format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
                    "plan": result, "execution_backend": str(execution), "configuration_sha256": configuration,
                    "config_dir": str(output / TEST_CONFIG_DIRECTORY),
+                   "administrator_credentials": bound(output / "administrator.toml"),
                    "maintenance": bound(maintenance_file), "maintenance_source": maintenance["source"],
                    "secret_files": secrets, "environment_sha256": plan_hash(environment),
                    "services_started": False, "remote_writes": 0, "historical_data_used": False}

@@ -80,10 +80,17 @@ pub(super) fn run(args: &[OsString]) -> Result<()> {
     }
     let mut snapshots = vec![lineage_snapshot, contract_snapshot, manifest_snapshot];
     let mut configuration_snapshots = Vec::new();
+    let configuration_root = common::path(&args, "--configuration-root")?;
+    let reference = common::reference_dataset(
+        &configuration_root,
+        &lineage["reference_plan"],
+        &mut configuration_snapshots,
+    )?;
     let password = common::password(
         &root,
-        &common::path(&args, "--configuration-root")?,
+        &configuration_root,
         &common::path(&args, "--configuration")?,
+        &reference,
         &mut snapshots,
         &mut configuration_snapshots,
     )?;
