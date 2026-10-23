@@ -1,6 +1,6 @@
 //! 受限 JSON HTTP 会话；授权、进程控制和请求节奏由调用方注入。
 
-use std::{collections::BTreeMap, future::Future, pin::Pin, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
 use reqwest::{Client, Request};
 use serde_json::{Value, json};
@@ -30,24 +30,24 @@ pub(crate) struct RequestMetadata {
     pub route: String,
 }
 
-pub type HookFuture<'a> = Pin<Box<dyn Future<Output = Result<(), SessionError>> + Send + 'a>>;
-
+#[async_trait::async_trait]
 pub trait RequestHook: Send {
-    fn before<'a>(&'a mut self, metadata: &'a RequestMetadata) -> HookFuture<'a>;
-    fn complete<'a>(&'a mut self) -> HookFuture<'a>;
+    async fn before(&mut self, metadata: &RequestMetadata) -> Result<(), SessionError>;
+    async fn complete(&mut self) -> Result<(), SessionError>;
 }
 
 #[cfg(test)]
 pub(crate) struct NoopHook;
 
 #[cfg(test)]
+#[async_trait::async_trait]
 impl RequestHook for NoopHook {
-    fn before<'a>(&'a mut self, _metadata: &'a RequestMetadata) -> HookFuture<'a> {
-        Box::pin(async { Ok(()) })
+    async fn before(&mut self, _metadata: &RequestMetadata) -> Result<(), SessionError> {
+        Ok(())
     }
 
-    fn complete<'a>(&'a mut self) -> HookFuture<'a> {
-        Box::pin(async { Ok(()) })
+    async fn complete(&mut self) -> Result<(), SessionError> {
+        Ok(())
     }
 }
 

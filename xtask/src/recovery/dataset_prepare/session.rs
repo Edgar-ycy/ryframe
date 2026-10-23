@@ -1,7 +1,7 @@
 use super::model;
 use crate::{
     Result,
-    http_session::{HookFuture, RequestHook, RequestMetadata, Session},
+    http_session::{RequestHook, RequestMetadata, Session},
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
@@ -24,15 +24,17 @@ impl Pacer {
         self.previous = Some(tokio::time::Instant::now());
     }
 }
+#[async_trait::async_trait]
 impl RequestHook for Pacer {
-    fn before<'a>(&'a mut self, _: &'a RequestMetadata) -> HookFuture<'a> {
-        Box::pin(async move {
-            self.wait().await;
-            Ok(())
-        })
+    async fn before(
+        &mut self,
+        _: &RequestMetadata,
+    ) -> std::result::Result<(), crate::http_session::SessionError> {
+        self.wait().await;
+        Ok(())
     }
-    fn complete<'a>(&'a mut self) -> HookFuture<'a> {
-        Box::pin(async { Ok(()) })
+    async fn complete(&mut self) -> std::result::Result<(), crate::http_session::SessionError> {
+        Ok(())
     }
 }
 pub(super) struct Client {

@@ -5,28 +5,26 @@ use super::{
 };
 use crate::Result;
 use serde_json::{Value, json};
-use std::{future::Future, path::Path, pin::Pin};
+use std::path::Path;
 
 #[path = "execution/apply.rs"]
 mod apply;
 #[path = "execution/verify.rs"]
 mod verify;
-pub(super) type IdentityFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + 'a>>;
+#[async_trait::async_trait(?Send)]
 pub(super) trait IdentitySession {
-    fn login(&mut self) -> IdentityFuture<'_, ()>;
-    fn request<'a>(&'a mut self, step: &'a Value) -> IdentityFuture<'a, Value>;
-    fn template<'a>(&'a mut self, path: &'a Path) -> IdentityFuture<'a, Value>;
-    fn template_data(&mut self) -> IdentityFuture<'_, Value>;
+    async fn login(&mut self) -> Result<()>;
+    async fn request(&mut self, step: &Value) -> Result<Value>;
+    async fn template(&mut self, path: &Path) -> Result<Value>;
+    async fn template_data(&mut self) -> Result<Value>;
     fn token(&self) -> Option<&str>;
-    fn close(&mut self) -> IdentityFuture<'_, ()>;
+    async fn close(&mut self) -> Result<()>;
 }
+#[async_trait::async_trait(?Send)]
 pub(super) trait Context {
-    fn password<'a>(&'a mut self, slot: &'a str) -> IdentityFuture<'a, String>;
-    fn inspect<'a>(&'a mut self, phase: &'a str) -> IdentityFuture<'a, Value>;
-    fn session<'a>(
-        &'a mut self,
-        identity: &'a Value,
-    ) -> IdentityFuture<'a, Box<dyn IdentitySession>>;
+    async fn password(&mut self, slot: &str) -> Result<String>;
+    async fn inspect(&mut self, phase: &str) -> Result<Value>;
+    async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>>;
 }
 pub(super) async fn execute(
     plan: &Value,

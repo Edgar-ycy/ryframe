@@ -1,6 +1,6 @@
 use super::{
     evidence,
-    execution::{Context, IdentityFuture, IdentitySession},
+    execution::{Context, IdentitySession},
     plan,
 };
 use crate::Result;
@@ -84,45 +84,37 @@ pub(crate) struct FakeContext {
     pub(crate) data: Rc<RefCell<FakeData>>,
     pub(crate) plan: Value,
 }
+#[async_trait::async_trait(?Send)]
 impl Context for FakeContext {
-    fn password<'a>(&'a mut self, slot: &'a str) -> IdentityFuture<'a, String> {
-        Box::pin(async move {
-            let private = plan::load(&self.plan, &crate::workspace::root_dir())?;
-            Ok(private["passwords"][slot].as_str().unwrap().to_owned())
-        })
+    async fn password(&mut self, slot: &str) -> Result<String> {
+        let private = plan::load(&self.plan, &crate::workspace::root_dir())?;
+        Ok(private["passwords"][slot].as_str().unwrap().to_owned())
     }
-    fn inspect<'a>(&'a mut self, _: &'a str) -> IdentityFuture<'a, Value> {
-        Box::pin(async move {
-            let mut data = self.data.borrow_mut();
-            data.inspections += 1;
-            if data.fail_inspection == Some(data.inspections) {
-                return Err("测试 ownership 失败".into());
-            }
-            Ok(
-                json!({"scope_id":self.plan["environment"]["scope_id"],"server_uuid":self.plan["environment"]["database"]["server_uuid"],"api_process":{"generation":if data.drift_inspection==Some(data.inspections){2}else{1}}}),
-            )
-        })
+    async fn inspect(&mut self, _: &str) -> Result<Value> {
+        let mut data = self.data.borrow_mut();
+        data.inspections += 1;
+        if data.fail_inspection == Some(data.inspections) {
+            return Err("测试 ownership 失败".into());
+        }
+        Ok(
+            json!({"scope_id":self.plan["environment"]["scope_id"],"server_uuid":self.plan["environment"]["database"]["server_uuid"],"api_process":{"generation":if data.drift_inspection==Some(data.inspections){2}else{1}}}),
+        )
     }
-    fn session<'a>(
-        &'a mut self,
-        identity: &'a Value,
-    ) -> IdentityFuture<'a, Box<dyn IdentitySession>> {
-        Box::pin(async move {
-            self.data.borrow_mut().sessions += 1;
-            let group = self.plan["groups"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|group| group["tenant_id"] == identity["tenant_id"])
-                .unwrap()
-                .clone();
-            Ok(Box::new(FakeSession {
-                data: self.data.clone(),
-                identity: identity.clone(),
-                group,
-                closed: false,
-            }) as Box<dyn IdentitySession>)
-        })
+    async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>> {
+        self.data.borrow_mut().sessions += 1;
+        let group = self.plan["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|group| group["tenant_id"] == identity["tenant_id"])
+            .unwrap()
+            .clone();
+        Ok(Box::new(FakeSession {
+            data: self.data.clone(),
+            identity: identity.clone(),
+            group,
+            closed: false,
+        }) as Box<dyn IdentitySession>)
     }
 }
 struct FakeSession {
@@ -131,44 +123,41 @@ struct FakeSession {
     group: Value,
     closed: bool,
 }
+#[async_trait::async_trait(?Send)]
 impl IdentitySession for FakeSession {
-    fn login(&mut self) -> IdentityFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
+    async fn login(&mut self) -> Result<()> {
+        Ok(())
     }
-    fn request<'a>(&'a mut self, step: &'a Value) -> IdentityFuture<'a, Value> {
-        Box::pin(async move { self.respond(step).map(|data| json!({"data":data})) })
+    async fn request(&mut self, step: &Value) -> Result<Value> {
+        self.respond(step).map(|data| json!({"data":data}))
     }
-    fn template<'a>(&'a mut self, path: &'a Path) -> IdentityFuture<'a, Value> {
-        Box::pin(async move {
-            fs::write(path, b"isolated-template").unwrap();
-            let department =
-                if self.data.borrow().different_template && self.group["slot"] == "tenant-02" {
-                    "不同部门"
-                } else {
-                    "总部/业务部"
-                };
-            Ok(
-                json!({"template_sha256":evidence::hash("isolated-template"),"department_path":department,"department_sha256":evidence::hash(department)}),
-            )
-        })
+    async fn template(&mut self, path: &Path) -> Result<Value> {
+        fs::write(path, b"isolated-template").unwrap();
+        let department =
+            if self.data.borrow().different_template && self.group["slot"] == "tenant-02" {
+                "不同部门"
+            } else {
+                "总部/业务部"
+            };
+        Ok(
+            json!({"template_sha256":evidence::hash("isolated-template"),"department_path":department,"department_sha256":evidence::hash(department)}),
+        )
     }
-    fn template_data(&mut self) -> IdentityFuture<'_, Value> {
-        Box::pin(async { Err("测试身份流程不读取内存模板".into()) })
+    async fn template_data(&mut self) -> Result<Value> {
+        Err("测试身份流程不读取内存模板".into())
     }
     fn token(&self) -> Option<&str> {
         Some("fixture-token")
     }
-    fn close(&mut self) -> IdentityFuture<'_, ()> {
-        Box::pin(async {
-            assert!(!self.closed);
-            self.closed = true;
-            let mut data = self.data.borrow_mut();
-            data.closed += 1;
-            if data.fail_close_at == Some(data.closed) {
-                return Err("测试 close 证据失败".into());
-            }
-            Ok(())
-        })
+    async fn close(&mut self) -> Result<()> {
+        assert!(!self.closed);
+        self.closed = true;
+        let mut data = self.data.borrow_mut();
+        data.closed += 1;
+        if data.fail_close_at == Some(data.closed) {
+            return Err("测试 close 证据失败".into());
+        }
+        Ok(())
     }
 }
 impl FakeSession {
