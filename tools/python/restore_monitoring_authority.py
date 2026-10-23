@@ -126,7 +126,7 @@ def monitoring_preflight(backend: Path, runtime_path: Path, target_path: Path) -
         "监控预检启动请求",
     )
     environment = exact_fields(
-        request["environment"], {"document", "variables", "sha256"}, "监控预检运行环境"
+        request["environment"], {"document", "configurations"}, "监控预检运行环境"
     )
     result = {
         "format_version": 1,

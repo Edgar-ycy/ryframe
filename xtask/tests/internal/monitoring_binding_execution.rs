@@ -100,7 +100,9 @@ impl Setup {
         let environment = fixture.backend.join(".local-tests/environment.json");
         write_json(
             &environment,
-            &json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret"}),
+            &json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret",
+                "api_config_dir": fixture.backend.join(".local-tests/api"),
+                "worker_config_dir": fixture.backend.join(".local-tests/worker")} ),
         );
         let mut authority = fixture.value["authority"].clone();
         authority["environment"] = descriptor(&environment);
@@ -249,7 +251,8 @@ fn credential_and_execution_guard_reject_drift_and_unknown_binding_fields() {
 
 #[test]
 fn monitoring_private_settings_reject_old_wrappers_keys_types_scope_and_secret_drift() {
-    let valid = json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret"});
+    let valid = json!({"scope_id": "restore-scope", "metrics_bearer_token": "secret",
+        "api_config_dir": std::env::current_dir().unwrap(), "worker_config_dir": std::env::current_dir().unwrap()});
     let mut invalid = vec![
         json!({"environment": valid}),
         json!({"scope_id": "other-scope", "metrics_bearer_token": "secret"}),
@@ -260,6 +263,25 @@ fn monitoring_private_settings_reject_old_wrappers_keys_types_scope_and_secret_d
         json!({"scope_id": "restore-scope", "metrics_bearer_token": " secret "}),
         json!({"scope_id": "restore-scope"}),
     ];
+    for value in &mut invalid {
+        if value.get("environment").is_none() {
+            for key in ["api_config_dir", "worker_config_dir"] {
+                value[key] = valid[key].clone();
+            }
+        }
+    }
+    for key in ["api_config_dir", "worker_config_dir"] {
+        for directory in [
+            json!("relative"),
+            json!(false),
+            json!(""),
+            json!("bad\0path"),
+        ] {
+            let mut value = valid.clone();
+            value[key] = directory;
+            invalid.push(value);
+        }
+    }
     for key in crate::monitoring_security_tests::RETIRED_MONITORING_KEYS {
         for key in [key.to_owned(), key.to_ascii_lowercase()] {
             let mut extra = valid.clone();

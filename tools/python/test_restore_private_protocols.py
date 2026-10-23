@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_runtime
 import restore_source
+from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA_A = "a" * 40
@@ -119,7 +120,7 @@ def source_protocol(operation: str) -> dict:
 def private_environment() -> dict[str, str]:
     values = {
         name: value for name, value in os.environ.items()
-        if not name.startswith(restore_runtime.PROTOCOL_PREFIX)
+        if not name.startswith("RYFRAME_RESTORE_RUNTIME_")
         and not name.startswith(restore_source.PROTOCOL_PREFIX)
     }
     values["PYTHONIOENCODING"] = "utf-8"
@@ -130,9 +131,7 @@ class RestorePrivateProtocolTests(unittest.TestCase):
     def test_runtime_decodes_every_operation_without_argv(self):
         for operation in sorted(restore_runtime.OPERATIONS):
             with self.subTest(operation=operation):
-                request = restore_runtime.private_protocol_request(
-                    [], {restore_runtime.PROTOCOL_KEY: json.dumps(runtime_protocol(operation))}
-                )
+                request = restore_runtime.decode_request(json.dumps(runtime_protocol(operation)))
                 self.assertEqual(request.operation, operation)
                 self.assertEqual(
                     request.namespace().write,
@@ -159,24 +158,27 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             with self.subTest(module=module.__name__, case="unknown"):
                 invalid = {**payload, "unknown": "value"}
                 with self.assertRaises(ValueError):
-                    module.private_protocol_request([], {module.PROTOCOL_KEY: json.dumps(invalid)})
+                    self.decode(module, json.dumps(invalid))
             with self.subTest(module=module.__name__, case="write"):
                 invalid = {**payload, "write": True}
                 with self.assertRaises(ValueError):
-                    module.private_protocol_request([], {module.PROTOCOL_KEY: json.dumps(invalid)})
+                    self.decode(module, json.dumps(invalid))
             with self.subTest(module=module.__name__, case="duplicate"):
                 raw = json.dumps(payload)[:-1] + ',"operation":"status"}'
                 with self.assertRaises(ValueError):
-                    module.private_protocol_request([], {module.PROTOCOL_KEY: raw})
-            with self.subTest(module=module.__name__, case="foreign-protocol"):
+                    self.decode(module, raw)
+            if module is restore_source:
                 with self.assertRaises(ValueError):
-                    module.private_protocol_request(
-                        [],
-                        {
-                            module.PROTOCOL_KEY: json.dumps(payload),
-                            module.FOREIGN_PROTOCOL_KEY: "untrusted",
-                        },
-                    )
+                    module.private_protocol_request([], {
+                        module.PROTOCOL_KEY: json.dumps(payload),
+                        module.FOREIGN_PROTOCOL_KEY: "untrusted",
+                    })
+
+    @staticmethod
+    def decode(module, raw):
+        if module is restore_runtime:
+            return module.decode_request(raw)
+        return module.private_protocol_request([], {module.PROTOCOL_KEY: raw})
 
     def test_runtime_rejects_invalid_adapter_generation_timeout_and_sha(self):
         build = runtime_protocol("build")
@@ -186,16 +188,12 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             {"adapter_contract": "legacy-stable-readiness-b0-v1"},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                restore_runtime.private_protocol_request(
-                    [], {restore_runtime.PROTOCOL_KEY: json.dumps({**build, **changes})}
-                )
+                restore_runtime.decode_request(json.dumps({**build, **changes}))
         for operation, name, value in (("stop", "generation", 0), ("start", "timeout", 0)):
             payload = runtime_protocol(operation)
             payload[name] = value
             with self.assertRaises(ValueError):
-                restore_runtime.private_protocol_request(
-                    [], {restore_runtime.PROTOCOL_KEY: json.dumps(payload)}
-                )
+                restore_runtime.decode_request(json.dumps(payload))
 
     def test_source_recovery_requires_explicit_write_and_exact_bound_paths(self):
         payload = source_protocol("verify-recover")
@@ -207,10 +205,7 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 )
 
     def test_protocol_is_removed_before_business_dispatch(self):
-        for module, payload in (
-            (restore_runtime, runtime_protocol("status")),
-            (restore_source, source_protocol("comparison-verify")),
-        ):
+        for module, payload in ((restore_source, source_protocol("comparison-verify")),):
             raw = json.dumps(payload)
 
             def execute(_request, key=module.PROTOCOL_KEY):
@@ -223,6 +218,25 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 module, "execute", side_effect=execute
             ), patch("builtins.print"):
                 module.main()
+
+    def test_runtime_file_protocol_preserves_stdin_and_ignores_ambient_protocol(self):
+        with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
+            path = Path(directory) / "请求 file.json"
+            path.write_text(json.dumps(runtime_protocol("status")), encoding="utf-8")
+            with patch.dict(os.environ, {"RYFRAME_RESTORE_RUNTIME_PROTOCOL": "retired"}), patch.object(
+                sys, "stdin", object()
+            ) as input_stream:
+                request = restore_runtime.private_protocol_request(["--request-file", str(path)])
+                self.assertEqual(request.operation, "status")
+                self.assertIs(sys.stdin, input_stream)
+            for args in ([], ["--request-file", str(path), "extra"], ["--environment", str(path)]):
+                with self.assertRaises(ValueError):
+                    restore_runtime.private_protocol_request(args)
+            for raw in ("{}", "x" * (restore_runtime.PROTOCOL_MAX_BYTES + 1),
+                        json.dumps({**runtime_protocol("status"), "environment": {}})):
+                path.write_text(raw, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    restore_runtime.private_protocol_request(["--request-file", str(path)])
 
     def test_direct_script_argv_is_rejected_with_parameter_exit_code(self):
         for script in (ROOT / "tools/python/restore_runtime.py", ROOT / "tools/python/restore_source.py"):
@@ -251,7 +265,7 @@ class RestorePrivateProtocolTests(unittest.TestCase):
         cases = (
             (
                 ROOT / "tools/python/restore_runtime.py",
-                restore_runtime.PROTOCOL_KEY,
+                None,
                 runtime,
             ),
             (
@@ -262,17 +276,19 @@ class RestorePrivateProtocolTests(unittest.TestCase):
         )
         for script, key, protocol in cases:
             environment = private_environment()
-            environment[key] = json.dumps(protocol)
-            result = subprocess.run(
-                [sys.executable, "-B", str(script)],
-                cwd=ROOT,
-                env=environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                check=False,
-            )
+            arguments = [sys.executable, "-X", "utf8", "-B", str(script)]
+            with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
+                if key is None:
+                    path = Path(directory) / "request.json"
+                    path.write_text(json.dumps(protocol), encoding="utf-8")
+                    arguments += ["--request-file", str(path)]
+                else:
+                    environment[key] = json.dumps(protocol)
+                result = subprocess.run(
+                    arguments, cwd=ROOT, env=environment,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", check=False,
+                )
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("Traceback", result.stderr)
 

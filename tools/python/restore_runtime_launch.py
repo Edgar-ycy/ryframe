@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
+import tomllib
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from process_environment import configured
-from devex_clone_source_proof import verify_api_address_environment
+from devex_clone_inventory import configuration
 from process_sockets import endpoint
 from restore_build import repository
 from restore_frontend_build import FRONTEND_RECEIPT
@@ -37,43 +36,65 @@ def _environment_document(coordinator: Path, facts: dict):
     document = read_json_document(Path(descriptor["path"]))
     if _document_descriptor(document) != descriptor:
         raise ValueError("恢复运行目标环境与 target plan 描述不一致")
-    value = exact_fields(document.value, {"environment"}, "恢复运行目标环境")
-    private = value["environment"]
-    if not isinstance(private, dict) or any(
-        not isinstance(key, str) or not isinstance(item, str) for key, item in private.items()
-    ):
-        raise ValueError("恢复运行目标环境必须是固定文本映射")
+    private = exact_fields(document.value, {
+        "metrics_bearer_token", "scope_id", "api_config_dir", "worker_config_dir",
+    }, "恢复运行私有配置")
+    if any(not isinstance(value, str) or not value or value != value.strip()
+           or any(ord(char) < 32 or 0x7F <= ord(char) <= 0x9F for char in value) for value in private.values()):
+        raise ValueError("恢复运行私有配置必须使用非空明文字符串")
     if not document.path.is_relative_to((coordinator / ".local-tests").resolve(strict=True)):
-        raise ValueError("恢复运行目标环境必须位于协调器忽略目录")
+        raise ValueError("恢复运行私有配置必须位于协调器忽略目录")
     return document, private
 
 
 def _environment(authority: dict, execution: Path, document, private: dict) -> dict:
-    if (
-        private.get("APP_ENV") != "test"
-        or private.get("APP_SCOPE_ID") != authority["scope_id"]
-        or private.get("APP_JOBS_MODE") != "external"
+    if private["scope_id"] != authority["scope_id"] or any(
+        urlsplit(authority[field]).scheme != "http"
+        for field in ("api_endpoint", "worker_endpoint", "frontend_endpoint")
     ):
-        raise ValueError("恢复运行要求 test 环境、匹配 scope 且使用 external Worker")
-    verify_api_address_environment(
-        execution, authority["api_endpoint"].removesuffix("/readyz"), private
-    )
-    _family, worker_host, worker_port = endpoint(authority["worker_endpoint"])
-    if (
-        private.get("APP_JOBS_HEALTH_HOST") != worker_host
-        or private.get("APP_JOBS_HEALTH_PORT") != str(worker_port)
-        or any(
-            urlsplit(authority[field]).scheme != "http"
-            for field in ("api_endpoint", "worker_endpoint", "frontend_endpoint")
-        )
-    ):
-        raise ValueError("恢复运行端点没有绑定当前 API、Worker 或本机 HTTP 配置")
-    values = sorted(private.items())
-    return {
-        "document": _document_descriptor(document),
-        "variables": [name for name, _value in values],
-        "sha256": hashlib.sha256(canonical_digest(values).encode("utf-8")).hexdigest(),
-    }
+        raise ValueError("恢复运行私有配置必须匹配 scope 和本机 HTTP 端点")
+    snapshots, identifiers = {}, []
+    for role in ("api", "worker"):
+        directory = Path(private[f"{role}_config_dir"])
+        if not directory.is_absolute():
+            raise ValueError("恢复运行角色配置目录必须是绝对路径")
+        snapshot = configuration(execution, {"APP_ENV": "test"}, {},
+                                 evidence_root=document.path.parent, config_dir=directory)
+        merged = {}
+        for name in ("app.toml", "app.test.toml"):
+            if name not in snapshot["files"]:
+                continue
+            try:
+                with (directory / name).open("rb") as stream:
+                    value = tomllib.load(stream)
+            except (OSError, ValueError):
+                raise ValueError("恢复运行角色配置文件无法读取或 TOML 无效") from None
+            for key, item in value.items():
+                if isinstance(item, dict) and isinstance(merged.get(key), dict):
+                    merged[key].update(item)
+                else:
+                    merged[key] = item
+        jobs, app, monitor = (merged.get(key, {}) for key in ("jobs", "app", "monitor"))
+        if any(not isinstance(value, dict) for value in (jobs, app, monitor)):
+            raise ValueError("恢复运行角色配置表类型无效")
+        _family, host, port = endpoint(authority[f"{role}_endpoint"])
+        actual = (app.get("host"), app.get("port")) if role == "api" else (
+            jobs.get("health_host"), jobs.get("health_port"))
+        worker_id = merged.get("snowflake_worker_id")
+        if (merged.get("scope_id") != private["scope_id"] or jobs.get("mode") != "external"
+                or monitor.get("metrics_bearer_token") != private["metrics_bearer_token"]
+                or actual != (host, port) or type(actual[1]) is not int
+                or type(worker_id) is not int or not 0 <= worker_id <= 1023):
+            raise ValueError("恢复运行角色配置与 scope、指标令牌、端点或实例编号不匹配")
+        if configuration(execution, {"APP_ENV": "test"}, {},
+                         evidence_root=document.path.parent, config_dir=directory) != snapshot:
+            raise ValueError("恢复运行角色配置在读取期间变化")
+        snapshots[role] = snapshot
+        identifiers.append(worker_id)
+    if len(set(identifiers)) != 2:
+        raise ValueError("恢复运行 API 与 Worker 的实例编号必须不同")
+    document.assert_unchanged()
+    return {"document": _document_descriptor(document), "configurations": snapshots}
 
 
 def _tools(coordinator: Path) -> dict:
@@ -287,7 +308,7 @@ def validate_request(value: object) -> dict:
     )
     server = _descriptor(tools["frontend_server"], "前端服务工具")
     environment = exact_fields(
-        request["environment"], {"document", "variables", "sha256"}, "恢复运行环境"
+        request["environment"], {"document", "configurations"}, "恢复运行环境"
     )
     _descriptor(environment["document"], "恢复运行环境文件")
     if (
@@ -296,13 +317,21 @@ def validate_request(value: object) -> dict:
         or HEX_40.fullmatch(tools["coordinator_head"]) is None
         or not isinstance(tools["inventory_sha256"], str)
         or HEX_64.fullmatch(tools["inventory_sha256"]) is None
-        or not isinstance(environment["variables"], list)
-        or environment["variables"] != sorted(set(environment["variables"]))
-        or not isinstance(environment["sha256"], str)
-        or HEX_64.fullmatch(environment["sha256"]) is None
         or Path(server["path"]).name != "restore_frontend_server.py"
     ):
         raise ValueError("恢复运行工具或环境来源无效")
+    configurations = exact_fields(environment["configurations"], {"api", "worker"}, "运行角色配置")
+    for snapshot in configurations.values():
+        exact_fields(snapshot, {"directory", "files", "environment_sha256"}, "运行配置快照")
+        if (not isinstance(snapshot["directory"], str) or not Path(snapshot["directory"]).is_absolute()
+                or not isinstance(snapshot["files"], dict) or "app.test.toml" not in snapshot["files"]
+                or HEX_64.fullmatch(str(snapshot["environment_sha256"])) is None):
+            raise ValueError("恢复运行配置快照无效")
+        for name, descriptor in snapshot["files"].items():
+            if Path(name).name != name or not name.endswith(".toml"):
+                raise ValueError("恢复运行配置快照文件名无效")
+            exact_fields(descriptor, {"bytes", "sha256"}, "角色配置文件")
+            _descriptor({"path": str(Path(snapshot["directory"]) / name), **descriptor}, "角色配置文件")
     same_backend = authority["backend_product_sha"] == authority["backend_execution_sha"]
     if same_backend != (roots["backend_product"] == roots["backend_execution"]):
         raise ValueError("恢复运行产品与执行来源路径不符合适配关系")
@@ -314,10 +343,12 @@ def commands(request: dict) -> dict[str, list[str]]:
     authority, roots, tools = request["authority"], request["roots"], request["tools"]
     _family, host, port = endpoint(authority["frontend_endpoint"])
     return {
-        "api": [request["artifacts"]["api"]["executable"]],
-        "worker": [request["artifacts"]["worker"]["executable"]],
+        "api": [request["artifacts"]["api"]["executable"], "--config-dir",
+                request["environment"]["configurations"]["api"]["directory"]],
+        "worker": [request["artifacts"]["worker"]["executable"], "--config-dir",
+                   request["environment"]["configurations"]["worker"]["directory"]],
         "frontend": [
-            str(Path(sys.executable).resolve(strict=True)),
+            str(Path(sys.executable).resolve(strict=True)), "-X", "utf8", "-E", "-s", "-B",
             tools["frontend_server"]["path"],
             "__serve",
             "--frontend",
@@ -332,27 +363,19 @@ def commands(request: dict) -> dict[str, list[str]]:
     }
 
 
-def launch_environment(request: dict, role: str) -> dict[str, str]:
+def verify_configuration(request: dict) -> None:
     request = validate_request(request)
+    document, private = _environment_document(
+        Path(request["tools"]["coordinator_root"]),
+        {"fresh_target": {"environment": request["environment"]["document"]}},
+    )
+    if _environment(request["authority"], Path(request["roots"]["backend_execution"]),
+                    document, private) != request["environment"]:
+        raise ValueError("恢复运行私有配置与启动请求不一致")
+
+
+def launch_environment(request: dict, role: str) -> dict[str, str]:
     if role not in ROLES:
         raise ValueError("未知恢复运行角色")
-    environment = read_json_document(Path(request["environment"]["document"]["path"]))
-    if _document_descriptor(environment) != request["environment"]["document"]:
-        raise ValueError("恢复运行目标环境文件已经变化")
-    private = exact_fields(environment.value, {"environment"}, "恢复运行目标环境")["environment"]
-    values = sorted(private.items()) if isinstance(private, dict) else []
-    if (
-        any(not isinstance(key, str) or not isinstance(value, str) for key, value in values)
-        or request["environment"]["variables"] != [name for name, _value in values]
-        or request["environment"]["sha256"]
-        != hashlib.sha256(canonical_digest(values).encode("utf-8")).hexdigest()
-    ):
-        raise ValueError("恢复运行目标环境与启动请求不一致")
-    if role != "frontend":
-        result = configured(private)
-        result["SNOWFLAKE_WORKER_ID"] = "1" if role == "api" else "2"
-        environment.assert_unchanged()
-        return result
-    result = configured({"PYTHONUTF8": "1"})
-    environment.assert_unchanged()
-    return result
+    verify_configuration(request)
+    return configured({"APP_ENV": "test"} if role != "frontend" else {})

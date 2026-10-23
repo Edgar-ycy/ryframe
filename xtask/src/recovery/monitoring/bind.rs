@@ -287,9 +287,22 @@ fn load_private_settings(
     }
     let object = exact(
         &document.value,
-        &["metrics_bearer_token", "scope_id"],
+        &[
+            "metrics_bearer_token",
+            "scope_id",
+            "api_config_dir",
+            "worker_config_dir",
+        ],
         "监控私有配置",
     )?;
+    for role in ["api_config_dir", "worker_config_dir"] {
+        let directory = object[role]
+            .as_str()
+            .ok_or("监控角色配置目录必须是绝对路径")?;
+        if !Path::new(directory).is_absolute() || directory.chars().any(char::is_control) {
+            return Err("监控角色配置目录必须是无控制字符的绝对路径".into());
+        }
+    }
     let token = object["metrics_bearer_token"]
         .as_str()
         .ok_or("监控指标凭据必须是明文字符串")?;

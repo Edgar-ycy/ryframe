@@ -239,13 +239,17 @@ A dead controller is recovered explicitly through the same entry point's `recove
 
 Record the timeline, affected tenants, request or task IDs, root cause, handling, and verification results. Configuration structures remain the authority for configuration fields, and deployment assets for metrics and alerts; this document does not maintain duplicate inventories.
 
-In monitoring bindings, `environment` remains a descriptor of the formal launch's private configuration file. The file must contain plaintext `metrics_bearer_token` and `scope_id` fields directly, for example:
+In monitoring bindings, `environment` remains a descriptor of the formal launch's private configuration file. The file must contain the plaintext `metrics_bearer_token`, `scope_id`, `api_config_dir`, and `worker_config_dir` fields directly, for example:
 
 ```json
 {
   "metrics_bearer_token": "<plaintext metrics token matching the running API and Worker>",
-  "scope_id": "<scope of this formal recovery>"
+  "scope_id": "<scope of this formal recovery>",
+  "api_config_dir": "D:/workspace/backend/.local-tests/restore/api-config",
+  "worker_config_dir": "D:/workspace/backend/.local-tests/restore/worker-config"
 }
 ```
 
-The file accepts only these two string fields. Old environment-variable keys, the old `environment` wrapper, extra fields, non-string values, and mismatching scopes or tokens are rejected, with no fallback to the parent process environment. Its path, digest, and contents remain bound to the original formal launch; do not create or replace the file solely for monitoring. Prometheus continues to read the same token through protected `metrics-token.txt` and `credentials_file`. Scope, role, and runtime paths use fixed arguments or the supervisor stdin protocol. Every monitoring subprocess clears project and credential environment variables, retaining only an OS allowlist and fixed loopback proxy settings. The managed preflight stdin file is created under the backend `.local-tests` and deleted after exit; preflight failures do not forward raw subprocess diagnostics.
+The file accepts only these four string fields. Old environment-variable keys, the old `environment` wrapper, extra fields, non-string values, and mismatching scopes or tokens are rejected, with no fallback to the parent process environment. Its path, digest, and contents remain bound to the original formal launch; do not create or replace the file solely for monitoring. Prometheus continues to read the same token through protected `metrics-token.txt` and `credentials_file`. Scope, role, and runtime paths use fixed arguments or the supervisor stdin protocol. Every monitoring subprocess clears project and credential environment variables, retaining only an OS allowlist and fixed loopback proxy settings. The managed preflight stdin file is created under the backend `.local-tests` and deleted after exit; preflight failures do not forward raw subprocess diagnostics.
+
+API and Worker each receive their absolute configuration directory through `--config-dir` and select the required `app.test.toml` with `APP_ENV=test`; optional common `app.toml` is loaded first. The files must match the private document’s scope and metrics token, the registered API/Worker endpoints, and external job mode. Their `snowflake_worker_id` values must be valid and distinct. Launch receipts bind directory paths and configuration file digests without copying credentials; later changes, file additions or removals fail verification. Runtime subprocesses inherit only necessary OS variables and the explicit `APP_ENV` selector for backend roles. The Rust coordinator passes its strict control request in a managed file under the backend `.local-tests`, retains it until the Python stage exits, and checks deletion; stdin remains available for the existing authority context. Environment-based control requests and role-specific project overrides are no longer read.

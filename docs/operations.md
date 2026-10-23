@@ -237,13 +237,17 @@ fixture 启动后，执行器独占创建三个 TLS 角色配置目录。Redis �
 
 记录时间线、影响租户、请求或任务 ID、根因、处置和验证结果。配置字段以配置结构为准，指标和告警以部署资产为准，不在本文维护重复清单。
 
-监控绑定中的 `environment` 保留为正式启动私有配置文件的描述符，文件内容必须直接写明文 `metrics_bearer_token` 和 `scope_id`，例如：
+监控绑定中的 `environment` 保留为正式启动私有配置文件的描述符，文件内容必须直接写明文 `metrics_bearer_token`、`scope_id`、`api_config_dir` 和 `worker_config_dir`，例如：
 
 ```json
 {
   "metrics_bearer_token": "<与运行中 API、Worker 一致的明文指标令牌>",
-  "scope_id": "<本次正式恢复的 scope>"
+  "scope_id": "<本次正式恢复的 scope>",
+  "api_config_dir": "D:/workspace/backend/.local-tests/restore/api-config",
+  "worker_config_dir": "D:/workspace/backend/.local-tests/restore/worker-config"
 }
 ```
 
-该文件只接受这两个字符串字段；旧环境变量键、旧 `environment` 包装、额外字段、非字符串、scope 或令牌不匹配均被拒绝，不读取父进程环境作为回退。文件路径、摘要和内容持续绑定原正式启动来源，不能仅为监控另建或替换该文件。Prometheus 继续通过受保护的 `metrics-token.txt` 和 `credentials_file` 读取同一令牌；scope、角色及运行路径通过固定参数或 supervisor 标准输入协议传递。所有监控子进程清空项目与凭据环境，仅白名单保留操作系统变量和固定的回环代理设置；预检 stdin 的受管文件位于后端 `.local-tests`，退出后自动删除，预检错误不透传子进程原始诊断。
+该文件只接受这四个字符串字段；旧环境变量键、旧 `environment` 包装、额外字段、非字符串、scope 或令牌不匹配均被拒绝，不读取父进程环境作为回退。文件路径、摘要和内容持续绑定原正式启动来源，不能仅为监控另建或替换该文件。Prometheus 继续通过受保护的 `metrics-token.txt` 和 `credentials_file` 读取同一令牌；scope、角色及运行路径通过固定参数或 supervisor 标准输入协议传递。所有监控子进程清空项目与凭据环境，仅白名单保留操作系统变量和固定的回环代理设置；预检 stdin 的受管文件位于后端 `.local-tests`，退出后自动删除，预检错误不透传子进程原始诊断。
+
+API 与 Worker 各自通过 `--config-dir` 接收绝对配置目录，并使用 `APP_ENV=test` 选择必需的 `app.test.toml`；可选公共 `app.toml` 先加载。文件中的 scope、指标令牌必须与私有文档一致，API、Worker 端点必须匹配登记值，任务模式必须为 external；两侧 `snowflake_worker_id` 必须有效且互不相同。启动收据绑定目录路径和配置文件摘要，不复制凭据；后续文件修改、增加或删除均导致核验失败。恢复运行子进程只继承必要 OS 变量，后端角色另显式设置 `APP_ENV`。Rust 协调器将严格控制请求写入后端 `.local-tests` 的受管文件，保留至 Python 阶段退出并检查删除；stdin 继续用于现有权威上下文。旧环境控制请求与按角色覆盖的项目环境字段均不再读取。

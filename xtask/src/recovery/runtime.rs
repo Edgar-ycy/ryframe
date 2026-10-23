@@ -10,10 +10,10 @@ use crate::{
         RuntimeSources, RuntimeStartOptions, RuntimeVerifyOptions,
     },
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
-    process::run_with_env_removed,
 };
 
-use super::{RUNTIME_PROTOCOL_ENV as PROTOCOL_KEY, SOURCE_PROTOCOL_ENV};
+#[path = "runtime/process.rs"]
+mod process;
 
 const SCRIPT: &str = "tools/python/restore_runtime.py";
 const MAX_PROTOCOL_BYTES: usize = 16 * 1024;
@@ -30,13 +30,7 @@ pub(super) fn run(command: &RuntimeCommand, root: &Path, frontend: &Path) -> Res
         return Ok(());
     }
     let invocation = private_invocation_at(command, root, frontend)?;
-    run_with_env_removed(
-        root,
-        "python",
-        &["-B", invocation.script],
-        &[(PROTOCOL_KEY, invocation.protocol.as_str())],
-        &[PROTOCOL_KEY, SOURCE_PROTOCOL_ENV],
-    )
+    process::run(root, &invocation)
 }
 
 fn print_help(operation: Option<crate::cli::RuntimeOperation>) {

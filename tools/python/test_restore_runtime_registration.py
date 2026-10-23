@@ -224,15 +224,11 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
             "write": False,
         }
         with self.assertRaises(restore_runtime.RuntimeProtocolError):
-            restore_runtime.private_protocol_request(
-                [], {restore_runtime.PROTOCOL_KEY: json.dumps(protocol)}
-            )
+            restore_runtime.decode_request(json.dumps(protocol))
 
         expected = {"status": "runtime_registered_not_started"}
         protocol["write"] = True
-        request = restore_runtime.private_protocol_request(
-            [], {restore_runtime.PROTOCOL_KEY: json.dumps(protocol)}
-        )
+        request = restore_runtime.decode_request(json.dumps(protocol))
         with patch.object(
             registration, "execute", return_value=expected
         ) as execute, redirect_stdout(io.StringIO()) as output:

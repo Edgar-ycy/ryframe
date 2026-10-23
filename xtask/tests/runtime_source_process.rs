@@ -7,8 +7,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 struct Fixture {
@@ -34,24 +32,8 @@ impl Fixture {
         let capture = directory.join("Python 环境.json");
         fs::write(
             directory.join("sitecustomize.py"),
-            r#"import json
-import os
-import sys
-from pathlib import Path
-
-capture = os.environ.get("RYFRAME_RUNTIME_TEST_CAPTURE")
-if capture:
-    protocol = json.loads(os.environ["RYFRAME_RESTORE_RUNTIME_PROTOCOL"])
-    Path(capture).write_text(json.dumps({
-        "dont_write_bytecode": sys.flags.dont_write_bytecode,
-        "foreign_protocol": os.environ.get("RYFRAME_RESTORE_SOURCE_PROTOCOL"),
-        "python_encoding_keys": sorted(name for name in os.environ
-                                        if name.upper() in {"PYTHONUTF8", "PYTHONIOENCODING"}),
-        "python_io_encoding": os.environ.get("PYTHONIOENCODING"),
-        "python_utf8": os.environ.get("PYTHONUTF8"),
-        "target_plan": protocol.get("target_plan"),
-        "utf8_mode": sys.flags.utf8_mode,
-    }, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+            r#"from pathlib import Path
+Path(__file__).with_name("Python 环境.json").write_text("ambient-hook-executed", encoding="utf-8")
 "#,
         )
         .unwrap();
@@ -130,7 +112,7 @@ fn assert_private_dispatch(result: Output, script: &str, hidden_paths: &[&Path])
 }
 
 #[test]
-fn runtime_status_replaces_inherited_protocol_and_hides_evidence_paths_from_argv() {
+fn runtime_status_uses_managed_file_and_rejects_ambient_python_hooks() {
     let fixture = Fixture::new();
     let arguments = vec![
         "check".into(),
@@ -145,7 +127,7 @@ fn runtime_status_replaces_inherited_protocol_and_hides_evidence_paths_from_argv
     let result = invoke_runtime_with_conflicting_python_environment(&arguments, &fixture);
     let stdout = String::from_utf8(result.stdout.clone()).unwrap();
     assert!(
-        stdout.contains("-X utf8 -B tools/python/restore_runtime.py"),
+        stdout.contains("-X utf8 -E -s -B tools/python/restore_runtime.py"),
         "{stdout}"
     );
     assert_private_dispatch(
@@ -153,20 +135,7 @@ fn runtime_status_replaces_inherited_protocol_and_hides_evidence_paths_from_argv
         "tools/python/restore_runtime.py",
         &[&fixture.registration, &fixture.target],
     );
-    let capture: Value = serde_json::from_slice(&fs::read(&fixture.capture).unwrap()).unwrap();
-    assert_eq!(capture["utf8_mode"], 1);
-    assert_eq!(capture["dont_write_bytecode"], 1);
-    assert_eq!(capture["python_utf8"], "1");
-    assert_eq!(capture["python_io_encoding"], "utf-8");
-    assert_eq!(
-        capture["python_encoding_keys"],
-        serde_json::json!(["PYTHONIOENCODING", "PYTHONUTF8"])
-    );
-    assert_eq!(capture["foreign_protocol"], Value::Null);
-    assert_eq!(
-        capture["target_plan"],
-        fixture.target.to_str().expect("测试路径必须是 UTF-8")
-    );
+    assert!(!fixture.capture.exists());
     assert!(!fixture.directory.join("__pycache__").exists());
 }
 

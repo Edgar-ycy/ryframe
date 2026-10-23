@@ -88,8 +88,7 @@ class MonitoringAuthorityTests(unittest.TestCase):
                 "kind": "restore-runtime-launch-request",
                 "environment": {
                     "document": {"path": "C:/evidence/environment.json", "bytes": 2, "sha256": "e" * 64},
-                    "variables": [],
-                    "sha256": "f" * 64,
+                    "configurations": {"api": {}, "worker": {}},
                 },
             }
         )

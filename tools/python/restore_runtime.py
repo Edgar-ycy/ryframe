@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
-import os
 import sys
 from types import SimpleNamespace
 import urllib.error
@@ -513,6 +512,8 @@ def verify(
     *,
     product_backend: Path | None = None,
 ) -> dict:
+    from restore_runtime_launch import verify_configuration
+
     receipt = _validate_runtime_receipt(receipt)
     authority = validate_authority(authority)
     paths = receipt["paths"]
@@ -525,6 +526,7 @@ def verify(
         receipt, bindings_path
     )
     launch = launch_document.value
+    verify_configuration(launch["request"])
     record, manifest = require_bindings(bindings.value)
     resolved = resolve_runtime_sources(
         coordinator,
@@ -599,6 +601,7 @@ def verify(
     )
     if repeated != resolved:
         raise ValueError("恢复运行核验期间源码发生变化")
+    verify_configuration(launch["request"])
     return {
         "format_version": 1,
         "kind": "restore-runtime-verification",
@@ -619,9 +622,6 @@ def verify(
     }
 
 
-PROTOCOL_KEY = "RYFRAME_RESTORE_RUNTIME_PROTOCOL"
-PROTOCOL_PREFIX = "RYFRAME_RESTORE_RUNTIME_"
-FOREIGN_PROTOCOL_KEY = "RYFRAME_RESTORE_SOURCE_PROTOCOL"
 PROTOCOL_KIND = "ryframe-xtask-restore-runtime"
 PROTOCOL_MAX_BYTES = 16 * 1024
 OPERATIONS = frozenset(
@@ -706,22 +706,24 @@ def _decode_protocol(raw: str) -> dict:
     return value
 
 
-def private_protocol_request(
-    argv: list[str] | None = None,
-    environment: dict[str, str] | None = None,
-) -> RuntimeRequest:
+def private_protocol_request(argv: list[str] | None = None) -> RuntimeRequest:
     arguments = sys.argv[1:] if argv is None else list(argv)
-    values = os.environ if environment is None else environment
-    if arguments:
-        raise RuntimeProtocolError("恢复运行脚本是私有实现，不接受命令行参数")
-    unknown = sorted(
-        name for name in values
-        if (name.startswith(PROTOCOL_PREFIX) and name != PROTOCOL_KEY)
-        or name == FOREIGN_PROTOCOL_KEY
-    )
-    if unknown:
-        raise RuntimeProtocolError("恢复运行私有环境包含未知字段")
-    raw = values.get(PROTOCOL_KEY)
+    if len(arguments) != 2 or arguments[0] != "--request-file":
+        raise RuntimeProtocolError("恢复运行仅接受受管请求文件参数")
+    try:
+        path = _protocol_path(arguments[1], "请求文件")
+        document = read_json_document(path)
+        request = decode_request(document.raw.decode("utf-8"))
+        if (".." in path.parts or path.resolve(strict=True) != path
+                or not path.is_relative_to(request.values["backend_dir"] / ".local-tests")):
+            raise ValueError("请求文件不在后端受管目录")
+        document.assert_unchanged()
+        return request
+    except (OSError, ValueError):
+        raise RuntimeProtocolError("恢复运行受管请求文件无效") from None
+
+
+def decode_request(raw: str) -> RuntimeRequest:
     if (
         not isinstance(raw, str)
         or not raw
@@ -853,7 +855,6 @@ def execute(request: RuntimeRequest) -> dict:
 def main(request: RuntimeRequest | None = None) -> None:
     if request is None:
         request = private_protocol_request()
-    os.environ.pop(PROTOCOL_KEY, None)
     print(json.dumps(execute(request), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
 

@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import restore_runtime_generation as generation_model
 import restore_runtime_evidence as evidence_model
@@ -100,8 +99,11 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
                     "bytes": 1,
                     "sha256": "a" * 64,
                 },
-                "variables": [],
-                "sha256": "b" * 64,
+                "configurations": {
+                    role: {"directory": str(self.base / role), "files": {
+                        "app.test.toml": {"bytes": 1, "sha256": "b" * 64},
+                    }, "environment_sha256": "c" * 64} for role in ("api", "worker")
+                },
             },
         }
         self.documents = tuple(Mock(assert_unchanged=Mock()) for _ in range(3))
@@ -162,7 +164,7 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
                 )
             )
             stack.enter_context(patch.object(generation_model, "commands", return_value=command_map))
-            stack.enter_context(patch.object(lifecycle, "launch_environment", return_value=os.environ.copy()))
+            stack.enter_context(patch.object(lifecycle, "launch_environment", return_value=launch_model.configured({"APP_ENV": "test"})))
             stack.enter_context(patch.object(lifecycle, "_wait_ready"))
             stack.enter_context(patch.object(lifecycle, "verify_listener"))
             stack.enter_context(patch.object(lifecycle, "require_closed_port"))
@@ -438,7 +440,9 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
                 self.authority, changed, resolved, backend_build, frontend_build
             )
         environment_path = self.base / "launch-environment.json"
-        environment_path.write_text('{"environment":{"APP_ENV":"test"}}', encoding="utf-8")
+        private = {"scope_id": "runtime-test", "metrics_bearer_token": "private-token",
+                   "api_config_dir": str(self.base / "api"), "worker_config_dir": str(self.base / "worker")}
+        environment_path.write_text(json.dumps(private), encoding="utf-8")
         environment = read_json_document(environment_path)
         facts["fresh_target"] = {
             "environment": {
@@ -448,7 +452,7 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             }
         }
         document, private = launch_model._environment_document(self.coordinator, facts)
-        self.assertEqual(private, {"APP_ENV": "test"})
+        self.assertEqual(private["scope_id"], "runtime-test")
         environment_path.write_text('{"environment":{}}', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "描述不一致"):
             launch_model._environment_document(self.coordinator, facts)

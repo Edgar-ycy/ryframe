@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_build
 import restore_frontend_build
 import restore_runtime
+import restore_runtime_launch
 import restore_runtime_evidence
 import source_inventory
 from artifact_digests import filesystem_path
@@ -42,9 +43,7 @@ def private_request(operation: str, **values) -> restore_runtime.RuntimeRequest:
         "write": operation in restore_runtime.WRITING_OPERATIONS,
         **values,
     }
-    return restore_runtime.private_protocol_request(
-        [], {restore_runtime.PROTOCOL_KEY: json.dumps(protocol)}
-    )
+    return restore_runtime.decode_request(json.dumps(protocol))
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -255,6 +254,7 @@ class RestoreRuntimeTests(unittest.TestCase):
     @contextlib.contextmanager
     def runtime_patches(self, *, fake_probes):
         with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(restore_runtime_launch, "verify_configuration"))
             stack.enter_context(patch.object(restore_build, "source_snapshot", return_value=SOURCE))
             stack.enter_context(
                 patch.object(
@@ -594,6 +594,20 @@ class RestoreRuntimeTests(unittest.TestCase):
         ), self.assertRaisesRegex(ValueError, "进程已退出、重启"):
             restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
 
+    def test_configuration_is_rechecked_before_probes_and_after_verification(self):
+        authority, receipt, bindings = self.bind_receipt()
+        for outcome, calls in ((ValueError("配置已漂移"), 1),
+                               ([None, ValueError("核验期间配置漂移")], 2)):
+            with self.runtime_patches(fake_probes=True), patch.object(
+                restore_runtime_launch, "verify_configuration", side_effect=outcome,
+            ) as verify_config, patch.object(restore_runtime, "_probe_api", return_value=READY) as probe:
+                with self.assertRaisesRegex(ValueError, "配置.*漂移"):
+                    restore_runtime.verify(
+                        receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64,
+                    )
+                self.assertEqual(verify_config.call_count, calls)
+                self.assertEqual(probe.call_count, calls - 1)
+
     def test_private_protocol_requires_exact_write_and_rejects_direct_argv(self):
         common = {
             "backend_dir": str(self.backend),
@@ -628,14 +642,12 @@ class RestoreRuntimeTests(unittest.TestCase):
             ) as build_call, \
                     patch.object(restore_runtime, "bind") as bind_call, patch.object(restore_runtime, "write_new") as write:
                 with self.assertRaises(restore_runtime.RuntimeProtocolError):
-                    restore_runtime.private_protocol_request(
-                        [], {restore_runtime.PROTOCOL_KEY: json.dumps(protocol)}
-                    )
+                    restore_runtime.decode_request(json.dumps(protocol))
                 build_call.assert_not_called()
                 bind_call.assert_not_called()
                 write.assert_not_called()
         with self.assertRaises(restore_runtime.RuntimeProtocolError):
-            restore_runtime.private_protocol_request(["build"], {})
+            restore_runtime.private_protocol_request(["build"])
 
     def test_bind_request_delegates_receipt_write_to_the_locked_operation(self):
         output = self.backend / ".local-tests/runtime.json"
