@@ -34,7 +34,7 @@ pub(super) fn run(command: &SourceCommand, root: &Path) -> Result<()> {
     run_with_stdin(
         root,
         "python",
-        &["-B", invocation.script, "--private-stdin"],
+        &["-E", "-B", invocation.script, "--private-stdin"],
         protocol_stdin(Some(invocation.protocol.as_bytes()))?,
     )
 }
