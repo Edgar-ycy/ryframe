@@ -74,6 +74,10 @@ enum Failure {
     MissingRoot,
     MissingUser,
     Contradictory,
+    AfterContext {
+        root: Option<bool>,
+        user: Option<bool>,
+    },
 }
 fn activation_server(
     failure: Failure,
@@ -108,32 +112,7 @@ fn activation_server(
             }
             context["user"]["password_change_required"] =
                 context["password_change_required"].clone();
-            if matches!(failure, Failure::MissingRoot) {
-                context
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("password_change_required");
-            }
-            if matches!(failure, Failure::MissingUser) {
-                context["user"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("password_change_required");
-            }
-            if matches!(failure, Failure::Contradictory) {
-                context["user"]["password_change_required"] = json!(changed.contains(&tenant));
-            }
-            if changed.contains(&tenant) && matches!(failure, Failure::Wildcard) {
-                context["is_super_admin"] = json!(false);
-                context["permissions"] = json!(["*"]);
-            }
-            if changed.contains(&tenant) && matches!(failure, Failure::Subject) {
-                context["user"]["id"] = json!("7");
-            }
-            if changed.contains(&tenant) && matches!(failure, Failure::Permission) {
-                context["is_super_admin"] = json!(false);
-                context["permissions"] = json!([]);
-            }
+            alter_context(&mut context, failure, changed.contains(&tenant));
             context
         } else if headers.starts_with("PUT /password ") {
             assert!(changed.insert(tenant), "改密不得重放");
@@ -414,4 +393,134 @@ fn verify_only_current_credentials_do_not_require_bootstrap_or_create_activation
             .next()
             .is_none()
     );
+}
+
+fn alter_context(context: &mut Value, failure: Failure, changed: bool) {
+    if matches!(failure, Failure::MissingRoot) {
+        context
+            .as_object_mut()
+            .unwrap()
+            .remove("password_change_required");
+    }
+    if matches!(failure, Failure::MissingUser) {
+        context["user"]
+            .as_object_mut()
+            .unwrap()
+            .remove("password_change_required");
+    }
+    if matches!(failure, Failure::Contradictory) {
+        context["user"]["password_change_required"] = json!(changed);
+    }
+    if changed && matches!(failure, Failure::Wildcard) {
+        context["is_super_admin"] = json!(false);
+        context["permissions"] = json!(["*"]);
+    }
+    if changed && matches!(failure, Failure::Subject) {
+        context["user"]["id"] = json!("7");
+    }
+    if changed && matches!(failure, Failure::Permission) {
+        context["is_super_admin"] = json!(false);
+        context["permissions"] = json!([]);
+    }
+    if let Failure::AfterContext { root, user } = failure {
+        if changed {
+            for (object, flag) in [("", root), ("/user", user)] {
+                let fields = context
+                    .pointer_mut(object)
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap();
+                if let Some(flag) = flag {
+                    fields.insert("password_change_required".into(), json!(flag));
+                } else {
+                    fields.remove("password_change_required");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn confirmed_change_with_incomplete_or_contradictory_context_never_completes_or_changes_again() {
+    for (root, user) in [
+        (None, Some(false)),
+        (Some(false), None),
+        (Some(true), Some(false)),
+        (Some(false), Some(true)),
+        (Some(true), Some(true)),
+    ] {
+        let server = activation_server(Failure::AfterContext { root, user }, None);
+        let fixture = InputsFixture::new(&server);
+        runtime().block_on(async {
+            assert!(
+                fixture
+                    .client(0)
+                    .activate(&fixture.inputs, 0, &fixture.directory)
+                    .await
+                    .is_err()
+            );
+            let mut current =
+                Client::new(&fixture.inputs.plan, "source", 0, &catalog(), CURRENT).unwrap();
+            current.pacer = Pacer::new(0);
+            assert!(current.login().await.is_err());
+        });
+        assert!(
+            fixture
+                .directory
+                .join("activation-00.intent.json")
+                .is_file()
+        );
+        assert!(
+            fixture
+                .directory
+                .join("activation-00.confirmed.json")
+                .is_file()
+        );
+        assert!(
+            !fixture
+                .directory
+                .join("activation-00.completed.json")
+                .exists()
+        );
+        assert_eq!(
+            server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(headers, _)| headers.starts_with("PUT /password "))
+                .count(),
+            1
+        );
+        fixture.assert_private();
+    }
+}
+
+#[test]
+fn ordinary_current_login_requires_both_false_flags_and_does_not_change_password() {
+    let server = activation_server(Failure::None, None);
+    let fixture = InputsFixture::new(&server);
+    runtime().block_on(async {
+        fixture
+            .client(0)
+            .activate(&fixture.inputs, 0, &fixture.directory)
+            .await
+            .unwrap();
+        let before = server.requests.lock().unwrap().len();
+        let mut current =
+            Client::new(&fixture.inputs.plan, "source", 0, &catalog(), CURRENT).unwrap();
+        current.pacer = Pacer::new(0);
+        current.login().await.unwrap();
+        let calls = server.requests.lock().unwrap();
+        assert_eq!(calls.len() - before, 3);
+        assert!(calls[before].0.starts_with("GET /csrf "));
+        assert!(calls[before + 1].0.starts_with("POST /login "));
+        assert!(calls[before + 2].0.starts_with("GET /context "));
+        assert!(
+            !calls[before..]
+                .iter()
+                .any(|(headers, _)| headers.starts_with("PUT /password "))
+        );
+    });
+    fixture.assert_private();
 }
