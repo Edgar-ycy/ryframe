@@ -547,6 +547,7 @@ class PipeFailureTests(unittest.TestCase):
 
     def test_source_probe_has_no_new_total_deadline_and_cancellation_reaps_without_retry(self):
         process = self.process()
+        process.poll.return_value = None
         process.wait.side_effect = [KeyboardInterrupt(), 0]
         with patch.object(tool.subprocess, "Popen", return_value=process) as launch:
             with self.assertRaises(KeyboardInterrupt):
