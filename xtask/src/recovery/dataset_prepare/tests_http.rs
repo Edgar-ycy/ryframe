@@ -484,10 +484,51 @@ fn full_context(headers: &str) -> Value {
         .map(|(_, value)| value.trim())
         .unwrap_or("system");
     json!({"user":{"id":"9007199254740993","tenant_id":tenant,"username":if tenant == "system" {"admin"} else {"owner"},
-        "password_change_required":false,"tenant_name":"参考租户","dept_name":null,"nickname":"参考管理员","email":"","phone":"","avatar":null,"preferred_locale":null},
+        "tenant_name":"参考租户","dept_name":null,"nickname":"参考管理员","email":"","phone":"","avatar":null,"preferred_locale":null},
         "password_change_required":false,"is_super_admin":true,"permissions":["*"],"roles":["admin"],
         "authorization_epoch":"1","runtime_epoch":"1","capabilities":[],"business_data":{"state":"active","placement_generation":"1"},"menus":[]})
 }
 
 #[path = "../../../tests/unit/recovery/dataset_prepare/activation.rs"]
 mod activation;
+
+#[test]
+fn context_fixture_uses_the_published_session_context_and_user_schemas() {
+    let document: Value = serde_json::from_slice(
+        &std::fs::read(crate::workspace::root_dir().join("openapi/openapi.json")).unwrap(),
+    )
+    .unwrap();
+    let schemas = &document["components"]["schemas"];
+    let context = &schemas["SessionContextVo"];
+    assert_eq!(
+        context["properties"]["password_change_required"]["type"],
+        "boolean"
+    );
+    assert!(
+        context["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("password_change_required"))
+    );
+    let reference = context["properties"]["user"]["$ref"].as_str().unwrap();
+    let user = &schemas[reference.rsplit('/').next().unwrap()];
+    let fixture = full_context("");
+    assert_eq!(
+        fixture["user"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        user["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !user["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("password_change_required")
+    );
+}

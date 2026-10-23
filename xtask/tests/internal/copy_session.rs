@@ -12,7 +12,7 @@ fn identity() -> Value {
 #[test]
 fn authorization_requires_exact_identity_and_actual_schedule_permissions() {
     let identity = identity();
-    let mut response = json!({"data": {"user":{"id":"100", "tenant_id":"system", "username":"operator", "password_change_required":false},
+    let mut response = json!({"data": {"user":{"id":"100", "tenant_id":"system", "username":"operator"},
         "password_change_required":false, "is_super_admin":false, "permissions":["monitor:schedule:list","monitor:schedule:edit"]}});
     assert!(model::authorization(&response, &identity).is_ok());
     response["data"]["permissions"] = json!(["monitor:schedule:list"]);
@@ -110,7 +110,7 @@ fn public_identity_is_valid_and_authorization_never_contains_credentials() {
     let selected = identity();
     assert!(model::identity(&selected).is_ok());
     let response = json!({"data": {
-        "user":{"id":"100", "tenant_id":"system", "username":"operator", "password_change_required":false},
+        "user":{"id":"100", "tenant_id":"system", "username":"operator"},
         "password_change_required":false, "is_super_admin":false, "permissions":["*"]
     }});
     let authorization = model::authorization(&response, &selected).unwrap();
@@ -186,7 +186,7 @@ fn bindings_allow_optional_literal_configuration_directory_and_reject_old_or_unk
 #[test]
 fn current_credentials_require_authoritative_password_change_completion() {
     let selected = identity();
-    let base = json!({"data":{"user":{"id":"100","tenant_id":"system","username":"operator","password_change_required":false},
+    let base = json!({"data":{"user":{"id":"100","tenant_id":"system","username":"operator"},
         "password_change_required":false,"is_super_admin":true,"permissions":["*"]}});
     assert!(model::authorization(&base, &selected).is_ok());
     for value in [Value::Null, json!(true), json!("false"), json!(0)] {
@@ -206,26 +206,4 @@ fn current_credentials_require_authoritative_password_change_completion() {
         model::authorization(&missing, &selected),
         Err("SessionPasswordChangeRequired")
     );
-}
-
-#[test]
-fn authorization_requires_both_password_flags_present_and_consistent() {
-    let identity = json!({"subject_id":"100","tenant_id":"system","username":"operator","client_address":"198.19.20.1"});
-    let base = json!({"data":{"user":{"id":"100","tenant_id":"system","username":"operator","password_change_required":false},
-        "password_change_required":false,"is_super_admin":false,"permissions":["*"]}});
-    for field in ["/data", "/data/user"] {
-        for value in [json!(true), Value::Null, json!("false"), json!(0)] {
-            let mut response = base.clone();
-            response.pointer_mut(field).unwrap()["password_change_required"] = value;
-            assert!(model::authorization(&response, &identity).is_err());
-        }
-        let mut response = base.clone();
-        response
-            .pointer_mut(field)
-            .unwrap()
-            .as_object_mut()
-            .unwrap()
-            .remove("password_change_required");
-        assert!(model::authorization(&response, &identity).is_err());
-    }
 }

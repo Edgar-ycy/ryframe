@@ -75,7 +75,7 @@ username = "admin"
 password = "<current-password-after-first-change>"
 ```
 
-post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、`username`、`client_address` 四项元数据；另以 `administrator_credentials` 登记该 TOML 的 `path`、`bytes` 和 `sha256` 文件绑定，不把密码写入请求、公开登记或收据。文件中的租户和用户名必须与元数据一致，文件及各级路径不得经过链接或越出当前后端的 `.local-tests`。注册和会话启动在读取前后核对文件绑定；内容或绑定变化、字段错误和 TOML 解析失败均拒绝继续，诊断不回显文件原文。登录后还要求权威会话顶层及 `user` 内的 `password_change_required` 一致明确为 `false`，为 `true`、字段缺失或互相矛盾时拒绝进入业务动作。此密码独立于 `bootstrap.admin_password`，工具不自动改密、不回退初始化密码，也不重放业务写入。未完成首次改密时，先完成明确的账号流程，不能将初始化密码作为当前凭据登记。
+post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、`username`、`client_address` 四项元数据；另以 `administrator_credentials` 登记该 TOML 的 `path`、`bytes` 和 `sha256` 文件绑定，不把密码写入请求、公开登记或收据。文件中的租户和用户名必须与元数据一致，文件及各级路径不得经过链接或越出当前后端的 `.local-tests`。注册和会话启动在读取前后核对文件绑定；内容或绑定变化、字段错误和 TOML 解析失败均拒绝继续，诊断不回显文件原文。登录后还要求权威 `SessionContext` 顶层的 `password_change_required` 明确为布尔值 `false`，为 `true`、字段缺失或类型错误时拒绝进入业务动作。此密码独立于 `bootstrap.admin_password`，工具不自动改密、不回退初始化密码，也不重放业务写入。未完成首次改密时，先完成明确的账号流程，不能将初始化密码作为当前凭据登记。
 
 继续通过 `cargo xtask check recovery clone post-copy --run-dir <run> --operation register --request <request.json> --write` 显式登记；后续产生写入的操作仍需 `--write`。`api_environment` 绑定文件仅允许 `{"environment":{"APP_ENV":"test"}}`，不再传递管理员凭据或其他项目配置；地址、Worker 模式和 CORS 等设置来自各自绑定的应用 TOML。amendment 仅可在既有停止证明和失败核对流程后重新绑定环境选择文件，不能借环境字段修改项目配置。
 

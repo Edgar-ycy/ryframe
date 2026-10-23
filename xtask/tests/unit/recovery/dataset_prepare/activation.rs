@@ -64,6 +64,23 @@ impl InputsFixture {
 }
 
 #[derive(Clone, Copy)]
+enum InvalidFlag {
+    Missing,
+    Null,
+    Text,
+    Number,
+    Opposite,
+}
+
+const INVALID_FLAGS: [InvalidFlag; 5] = [
+    InvalidFlag::Missing,
+    InvalidFlag::Null,
+    InvalidFlag::Text,
+    InvalidFlag::Number,
+    InvalidFlag::Opposite,
+];
+
+#[derive(Clone, Copy)]
 enum Failure {
     None,
     Disconnected,
@@ -71,13 +88,8 @@ enum Failure {
     Subject,
     Permission,
     Wildcard,
-    MissingRoot,
-    MissingUser,
-    Contradictory,
-    AfterContext {
-        root: Option<bool>,
-        user: Option<bool>,
-    },
+    BeforeContext(InvalidFlag),
+    AfterContext(InvalidFlag),
 }
 fn activation_server(
     failure: Failure,
@@ -110,8 +122,6 @@ fn activation_server(
                 context["permissions"] = json!([]);
                 context["roles"] = json!([]);
             }
-            context["user"]["password_change_required"] =
-                context["password_change_required"].clone();
             alter_context(&mut context, failure, changed.contains(&tenant));
             context
         } else if headers.starts_with("PUT /password ") {
@@ -335,12 +345,9 @@ fn wildcard_permissions_authorize_without_super_admin_flag() {
 }
 
 #[test]
-fn both_password_flags_are_required_and_must_agree_before_any_password_mutation() {
-    for failure in [
-        Failure::MissingRoot,
-        Failure::MissingUser,
-        Failure::Contradictory,
-    ] {
+fn authoritative_root_password_flag_is_required_before_any_password_mutation() {
+    for invalid in INVALID_FLAGS {
+        let failure = Failure::BeforeContext(invalid);
         let server = activation_server(failure, None);
         let fixture = InputsFixture::new(&server);
         assert!(
@@ -396,21 +403,6 @@ fn verify_only_current_credentials_do_not_require_bootstrap_or_create_activation
 }
 
 fn alter_context(context: &mut Value, failure: Failure, changed: bool) {
-    if matches!(failure, Failure::MissingRoot) {
-        context
-            .as_object_mut()
-            .unwrap()
-            .remove("password_change_required");
-    }
-    if matches!(failure, Failure::MissingUser) {
-        context["user"]
-            .as_object_mut()
-            .unwrap()
-            .remove("password_change_required");
-    }
-    if matches!(failure, Failure::Contradictory) {
-        context["user"]["password_change_required"] = json!(changed);
-    }
     if changed && matches!(failure, Failure::Wildcard) {
         context["is_super_admin"] = json!(false);
         context["permissions"] = json!(["*"]);
@@ -422,34 +414,31 @@ fn alter_context(context: &mut Value, failure: Failure, changed: bool) {
         context["is_super_admin"] = json!(false);
         context["permissions"] = json!([]);
     }
-    if let Failure::AfterContext { root, user } = failure {
-        if changed {
-            for (object, flag) in [("", root), ("/user", user)] {
-                let fields = context
-                    .pointer_mut(object)
-                    .unwrap()
+    let invalid = match failure {
+        Failure::BeforeContext(flag) if !changed => Some(flag),
+        Failure::AfterContext(flag) if changed => Some(flag),
+        _ => None,
+    };
+    if let Some(flag) = invalid {
+        match flag {
+            InvalidFlag::Missing => {
+                context
                     .as_object_mut()
-                    .unwrap();
-                if let Some(flag) = flag {
-                    fields.insert("password_change_required".into(), json!(flag));
-                } else {
-                    fields.remove("password_change_required");
-                }
+                    .unwrap()
+                    .remove("password_change_required");
             }
+            InvalidFlag::Null => context["password_change_required"] = Value::Null,
+            InvalidFlag::Text => context["password_change_required"] = json!("false"),
+            InvalidFlag::Number => context["password_change_required"] = json!(0),
+            InvalidFlag::Opposite => context["password_change_required"] = json!(changed),
         }
     }
 }
 
 #[test]
-fn confirmed_change_with_incomplete_or_contradictory_context_never_completes_or_changes_again() {
-    for (root, user) in [
-        (None, Some(false)),
-        (Some(false), None),
-        (Some(true), Some(false)),
-        (Some(false), Some(true)),
-        (Some(true), Some(true)),
-    ] {
-        let server = activation_server(Failure::AfterContext { root, user }, None);
+fn confirmed_change_with_invalid_root_flag_never_completes_or_changes_again() {
+    for invalid in INVALID_FLAGS {
+        let server = activation_server(Failure::AfterContext(invalid), None);
         let fixture = InputsFixture::new(&server);
         runtime().block_on(async {
             assert!(
@@ -497,7 +486,7 @@ fn confirmed_change_with_incomplete_or_contradictory_context_never_completes_or_
 }
 
 #[test]
-fn ordinary_current_login_requires_both_false_flags_and_does_not_change_password() {
+fn ordinary_current_login_requires_false_root_flag_and_does_not_change_password() {
     let server = activation_server(Failure::None, None);
     let fixture = InputsFixture::new(&server);
     runtime().block_on(async {

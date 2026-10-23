@@ -89,7 +89,6 @@ impl Client {
         if context["user"]["tenant_id"] != self.identity["tenant_id"]
             || context["user"]["username"] != self.identity["username"]
             || context["password_change_required"].as_bool() != Some(required)
-            || context["user"]["password_change_required"].as_bool() != Some(required)
         {
             return Err("数据集会话身份或首次改密状态不符；已有数据核验不会自动改密".into());
         }
