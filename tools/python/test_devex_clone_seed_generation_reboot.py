@@ -31,10 +31,10 @@ class RebootObservationTests(unittest.TestCase):
         self.root.mkdir()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.verification = self.root / "verification"
-        for name in ("before", "audit", runtime.STAGING_DIRECTORY):
+        for name in ("before", "audit", "source-tools"):
             (self.verification / name).mkdir(parents=True, exist_ok=True)
         for name in (runtime.INTENT, runtime.PROCESS, runtime.READY, runtime.STDOUT,
-                     runtime.STDERR, runtime.COMPLETION):
+                     runtime.STDERR, runtime.COMPLETION, runtime.CONFIGURATION):
             (self.verification / name).write_text("{}", encoding="utf-8")
         (self.verification / "failed.json").write_text(
             '{"status": "failed", "error": "ValueError"}', encoding="utf-8")
@@ -45,6 +45,11 @@ class RebootObservationTests(unittest.TestCase):
         value = reboot.failed_prefix(self.verification)
         self.assertEqual(value["manifest"], sorted(runtime.FAILED_ROOT_ENTRIES))
         self.assertEqual(value["producer"]["intent"]["bytes"], 2)
+        configuration = self.verification / runtime.CONFIGURATION
+        configuration.unlink()
+        with self.assertRaises(ValueError):
+            reboot.failed_prefix(self.verification)
+        configuration.write_text("{}", encoding="utf-8")
         (self.verification / "after").mkdir()
         with self.assertRaises(ValueError):
             reboot.failed_prefix(self.verification)

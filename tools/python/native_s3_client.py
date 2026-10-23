@@ -98,6 +98,9 @@ def _read_response(result, response) -> tuple[dict, dict]:
             raise NativeS3NotFound(returncode=result.returncode)
         return response["result"], {"returncode": result.returncode, "error_type": None}
     if _known_rejection(result, response):
+        if (response["error"].get("category") == "SourceEvidenceRejected"
+                and isinstance(response["error"].get("message"), str)):
+            raise ValueError(response["error"]["message"])
         raise NativeS3InvocationError(
             "request_rejected", returncode=result.returncode,
             error_type=response["error"].get("category"),
@@ -113,8 +116,9 @@ def _invoke(command_name: str, request: dict, runner, *, may_write: bool):
     payload = json.dumps(
         request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    if not payload or len(payload) > MAX_PROTOCOL_BYTES:
-        raise ValueError("原生对象私有协议请求为空或超过 1 MiB")
+    limit = 16 * MAX_PROTOCOL_BYTES if command_name == "__source-evidence" else MAX_PROTOCOL_BYTES
+    if not payload or len(payload) > limit:
+        raise ValueError(f"原生私有协议请求为空或超过 {limit // MAX_PROTOCOL_BYTES} MiB")
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     result = None
     try:
@@ -150,7 +154,7 @@ def _invoke(command_name: str, request: dict, runner, *, may_write: bool):
             "native_tool_unavailable", returncode=None, error_type=type(error).__name__,
             remote_write_may_have_occurred=False,
         ) from None
-    if len(result.stdout) > MAX_PROTOCOL_BYTES:
+    if len(result.stdout) > limit:
         raise NativeS3InvocationError(
             "needs_reconciliation", returncode=result.returncode,
             error_type="ProtocolOutputTooLarge", remote_write_may_have_occurred=may_write,

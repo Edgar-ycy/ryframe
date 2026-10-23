@@ -14,6 +14,9 @@ use super::{RUNTIME_PROTOCOL_ENV, SOURCE_PROTOCOL_ENV as PROTOCOL_KEY};
 const SCRIPT: &str = "tools/python/restore_source.py";
 const MAX_PROTOCOL_BYTES: usize = 16 * 1024;
 
+#[path = "source/evidence.rs"]
+pub(crate) mod evidence;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateSourceInvocation {
     pub(crate) script: &'static str,

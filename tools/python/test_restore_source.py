@@ -9,6 +9,7 @@ import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from workspace_directory import WorkspaceDirectory
 import restore_build
 import restore_reference
 import restore_source as source
@@ -255,6 +256,51 @@ class SourceDispatchTests(unittest.TestCase):
         )
         write.assert_not_called()
 
+class SourcePrivateConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = Path(__file__).resolve().parents[2]
+        temporary = WorkspaceDirectory(dir=self.backend / '.local-tests/python-unit', prefix='source-private-')
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / 'verification'
+        self.directory.mkdir()
+
+    def test_native_environment_contains_no_application_secret(self):
+        value = producer._native_environment(
+            {
+                "APP_ENV": "test",
+                "RYFRAME_PASSWORD": "secret",
+            }
+        )
+        self.assertEqual(value["APP_ENV"], "test")
+        self.assertNotIn("RYFRAME_PASSWORD", value)
+
+    def test_configuration_binding_contains_only_path_and_digest(self):
+        directory = self.directory.parent / "private-config"
+        directory.mkdir()
+        secrets = (
+            "private-admin-password",
+            "private-access-key",
+            "private-secret-key",
+            "private-session-token",
+        )
+        (directory / "app.toml").write_text("[application]\nname='unit'\n", encoding="utf-8")
+        (directory / "app.test.toml").write_text(
+            "[bootstrap]\nadmin_password='private-admin-password'\n"
+            "[object_storage]\naccess_key='private-access-key'\n"
+            "secret_key='private-secret-key'\nsession_token='private-session-token'\n",
+            encoding="utf-8",
+        )
+        from restore_reference_plan import configuration_binding, validate_configuration_binding
+        value = configuration_binding(self.backend, directory, "test")
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        self.assertEqual(set(value), {"app_env", "directory", "files", "sha256"})
+        self.assertEqual(set(value["files"]), {"app.toml", "app.test.toml"})
+        for secret in secrets:
+            self.assertNotIn(secret, encoded)
+        invalid = {**value, "secret_key": "private-secret-key"}
+        with self.assertRaisesRegex(ValueError, "无凭据文件绑定") as failure:
+            validate_configuration_binding(invalid, self.backend)
+        self.assertNotIn("private-secret-key", str(failure.exception))
 
 
 if __name__ == "__main__":

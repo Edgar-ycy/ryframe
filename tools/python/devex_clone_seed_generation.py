@@ -1,6 +1,8 @@
 """在原复制账本内发布冻结 seed 的只读运行后继；原 C52 文件保持不可变。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+
 import copy
 from contextlib import contextmanager
 import os
@@ -430,12 +432,20 @@ def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:
 
 def _reboot_image(archive: dict, current: dict, segment: dict) -> None:
     """主机重启后的新代次：只允许声明的会话写入，缓存身份按新代次归一化。"""
-    from restore_source_runtime_model import image_write_effects
 
     expected = copy.deepcopy(archive["image"])
     expected["storage"] = {"rustfs": copy.deepcopy(segment["storage"]["storage"]),
                            "redis": copy.deepcopy(segment["cache"]["redis"])}
-    image_write_effects(expected, current)
+    native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'write-effects',
+            "write": False,
+            "arguments": {
+                'before': expected,
+                'after': current,
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
 
 
 def execute_generation(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:

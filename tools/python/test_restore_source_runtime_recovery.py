@@ -2,6 +2,8 @@
 
 import contextlib
 import copy
+import subprocess
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
 import json
 from pathlib import Path
 import sys
@@ -69,7 +71,16 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
         self.resources = CacheResources(f.lineage_value, f.subjects)
         self.namespace = self.resources.selected["redis"]["namespace"]
         self.output = f.generation / "verification/source-runtime.json"
-        self.plan = runtime.authorization_cache_plan(self.namespace, f.subjects)
+        self.plan = native_response(*native_invoke(
+            "__source-evidence", {
+                "operation": 'cache-plan',
+                "write": False,
+                "arguments": {
+                    'namespace': self.namespace,
+                    'subjects': f.subjects,
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"]
 
     def resources_factory(self, _backend, _facts, output, _run):
         self.resources.output = output

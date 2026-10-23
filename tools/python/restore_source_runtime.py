@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+
 import copy
 import datetime as dt
 import hashlib
@@ -20,12 +22,6 @@ from devex_clone_source_proof import bound_file
 from restore_reference_io import ExternalTools
 from restore_reference_plan import identifier, plan_hash
 from restore_runtime_evidence import artifact_snapshot, exact_fields, timestamp
-from restore_source_runtime_model import (
-    authorization_cache_plan,
-    image_write_effects,
-    validate_login_audit,
-    validate_node_result,
-)
 from restore_source_runtime_producer import (
     COMPLETION,
     CONFIGURATION,
@@ -37,7 +33,6 @@ from restore_source_runtime_producer import (
     run_source_producer,
     verify_source_producer,
 )
-from restore_source_runtime_staging import DIRECTORY as STAGING_DIRECTORY
 
 
 FORMAT_VERSION = 3
@@ -50,7 +45,7 @@ RECEIPT_FIELDS = {
 RECOVERED_RECEIPT_FIELDS = RECEIPT_FIELDS | {"recovery"}
 PRODUCER_BINDING_FIELDS = {"intent", "process", "ready", "stdout", "stderr", "completion"}
 ROOT_ENTRIES = {
-    "before", "after", "audit", STAGING_DIRECTORY, INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
+    "before", "after", "audit", "source-tools", INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
     CONFIGURATION, "cache-cleanup.json", "source-runtime.json",
 }
 RECOVERY_INTENT = "source-verification-recovery-intent.json"
@@ -58,7 +53,7 @@ RECOVERY_RECEIPT = "source-verification-recovery.json"
 RECOVERY_AUDIT = "recovery-audit"
 RECOVERED_ROOT_ENTRIES = ROOT_ENTRIES | {"failed.json", RECOVERY_INTENT, RECOVERY_RECEIPT, RECOVERY_AUDIT}
 FAILED_ROOT_ENTRIES = {
-    "before", "audit", STAGING_DIRECTORY, INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
+    "before", "audit", "source-tools", INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
     CONFIGURATION, "failed.json",
 }
 RECOVERY_INTENT_FIELDS = {
@@ -179,9 +174,22 @@ def _login_after(
     old_descriptor = _new_file(audit / "login-after-old.tsv", previous_bytes)
     new_descriptor = _new_file(audit / "login-after-new.tsv", (added + ("\n" if added else "")).encode())
     completed_at = _timestamp()
-    verified = validate_login_audit(
-        old, previous_bytes, upper, _login_rows(added), lineage, subjects, started_at, completed_at
-    )
+    verified = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'login-audit',
+            "write": False,
+            "arguments": {
+                'old_before': (old).hex(),
+                'old_after': (previous_bytes).hex(),
+                'upper_id': upper,
+                'new_rows': _login_rows(added),
+                'lineage': lineage,
+                'subjects': subjects,
+                'started_at': started_at,
+                'completed_at': completed_at,
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     receipt = {
         "format_version": 1,
         "kind": "restore-source-login-audit",
@@ -278,7 +286,16 @@ def _cache_before(resources, plan: list[dict]) -> tuple[list[dict], list[str]]:
 
 
 def _cache_observation(resources, namespace: str, subjects: list[dict]) -> tuple[dict, list[str]]:
-    plan = authorization_cache_plan(namespace, subjects)
+    plan = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'cache-plan',
+            "write": False,
+            "arguments": {
+                'namespace': namespace,
+                'subjects': subjects,
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     before, comparisons = _cache_before(resources, plan)
     return {
         "namespace": namespace,
@@ -550,9 +567,18 @@ def execute_source_verification(
                     coordinator_source=facts["coordinator_source"],
                     execution_sha=facts["request"]["expected_backend_sha"], popen=popen,
                 )
-                verified_node = validate_node_result(
-                    node_result, facts["lineage"], start, facts["receipt"]["dataset_lineage"]
-                )
+                verified_node = native_response(*native_invoke(
+                    "__source-evidence", {
+                        "operation": 'result',
+                        "write": False,
+                        "arguments": {
+                            'value': node_result,
+                            'lineage': facts["lineage"],
+                            'start': start,
+                            'lineage_descriptor': facts["receipt"]["dataset_lineage"],
+                        },
+                    }, subprocess.run, may_write=False,
+                ))[0]["value"]
                 checkpoint()
                 audit = _login_after(
                     resources, database, expected_directory / "audit", old_rows, upper_id,
@@ -572,7 +598,16 @@ def execute_source_verification(
                     backend, after, facts["selected"], facts["source"]["request"],
                     source_registration=facts["receipt"]["source_registration"],
                 )
-            effects = image_write_effects(before_value["image"], after_value["image"])
+            effects = native_response(*native_invoke(
+                "__source-evidence", {
+                    "operation": 'write-effects',
+                    "write": False,
+                    "arguments": {
+                        'before': before_value["image"],
+                        'after': after_value["image"],
+                    },
+                }, subprocess.run, may_write=False,
+            ))[0]["value"]
             if (
                 cleanup["deleted"] + len(cleanup["expired_snapshot_keys"])
                 != effects["authorization_cache"]["created_and_removed_keys"]
@@ -603,10 +638,22 @@ def _validate_stored_login_audit(
     old = (directory / "audit/login-before.tsv").read_bytes()
     old_after = (directory / "audit/login-after-old.tsv").read_bytes()
     added = (directory / "audit/login-after-new.tsv").read_text(encoding="utf-8").strip()
-    verified = validate_login_audit(
-        old, old_after, int(audit["verified"]["upper_id"]), _login_rows(added), lineage,
-        subjects, started_at, audit["completed_at"],
-    )
+    verified = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'login-audit',
+            "write": False,
+            "arguments": {
+                'old_before': (old).hex(),
+                'old_after': (old_after).hex(),
+                'upper_id': int(audit["verified"]["upper_id"]),
+                'new_rows': _login_rows(added),
+                'lineage': lineage,
+                'subjects': subjects,
+                'started_at': started_at,
+                'completed_at': audit["completed_at"],
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     if audit["verified"] != verified:
         raise ValueError("来源登录审计派生结果发生变化")
     return audit
@@ -634,9 +681,18 @@ def _verify_recovery_prefix(backend: Path, directory: Path, facts: dict) -> dict
         coordinator_source=facts["coordinator_source"],
         execution_sha=facts["request"]["expected_backend_sha"], historical_coordinator=True,
     )
-    verified_node = validate_node_result(
-        stdout, facts["lineage"], facts["start_descriptor"], facts["receipt"]["dataset_lineage"]
-    )
+    verified_node = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'result',
+            "write": False,
+            "arguments": {
+                'value': stdout,
+                'lineage': facts["lineage"],
+                'start': facts["start_descriptor"],
+                'lineage_descriptor': facts["receipt"]["dataset_lineage"],
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     producer_intent = read_json(directory / INTENT)
     audit = _validate_stored_login_audit(
         backend, directory, binding(directory / "audit/login-audit.json"), facts["lineage"],
@@ -800,7 +856,16 @@ def execute_source_verification_recovery(
                 source_registration=facts["receipt"]["source_registration"],
             )
             _recheck_login_rows(resources, _control_database(facts), directory, prefix["audit"])
-        effects = image_write_effects(prefix["before"]["image"], after["image"])
+        effects = native_response(*native_invoke(
+            "__source-evidence", {
+                "operation": 'write-effects',
+                "write": False,
+                "arguments": {
+                    'before': prefix["before"]["image"],
+                    'after': after["image"],
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"]
         if len(cleanup["after"]) != 33:
             raise ValueError("来源验收恢复缓存清理没有完整解释 33 个计划键")
         recovery = {
@@ -915,7 +980,16 @@ def _validate_cache_before(before: object, plan: list[dict], expired: list[str])
 
 def _validate_cache_observation(value: object, subjects: list[dict]) -> dict:
     cache = exact_fields(value, {"namespace", "subjects", "plan", "before"}, "恢复授权缓存前像")
-    plan = authorization_cache_plan(cache["namespace"], subjects)
+    plan = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'cache-plan',
+            "write": False,
+            "arguments": {
+                'namespace': cache["namespace"],
+                'subjects': subjects,
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     if cache["subjects"] != subjects or cache["plan"] != plan:
         raise ValueError("来源验收恢复 intent 的授权缓存计划不同")
     before = cache["before"]
@@ -935,7 +1009,16 @@ def _verify_cache_receipt(backend: Path, directory: Path, descriptor: dict, subj
     exact_fields(value, {"format_version", "kind", "status", "namespace", "before", "deleted",
                          "expired_snapshot_keys", "after", "execution", "cleaned_at"},
                  "来源授权缓存清理")
-    plan = authorization_cache_plan(value["namespace"], subjects)
+    plan = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'cache-plan',
+            "write": False,
+            "arguments": {
+                'namespace': value["namespace"],
+                'subjects': subjects,
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     expected_keys = _cache_keys(plan)
     expected_snapshots = [item["keys"]["snapshot"] for item in plan]
     expired = value["expired_snapshot_keys"]
@@ -1119,9 +1202,18 @@ def verify_source_runtime(backend: Path, descriptor: dict, *, live: bool) -> dic
             raise ValueError("来源运行收据的生产者文件绑定已变化")
     if receipt["verification"] != binding(directory / STDOUT):
         raise ValueError("来源运行收据没有绑定 Node stdout")
-    verified_node = validate_node_result(
-        stdout, facts["lineage"], receipt["source_generation"], receipt["dataset_lineage"]
-    )
+    verified_node = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'result',
+            "write": False,
+            "arguments": {
+                'value': stdout,
+                'lineage': facts["lineage"],
+                'start': receipt["source_generation"],
+                'lineage_descriptor': receipt["dataset_lineage"],
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     _validate_stored_login_audit(
         backend, directory, receipt["login_audit"], facts["lineage"],
         verified_node["subjects"], receipt["started_at"],
@@ -1139,7 +1231,16 @@ def verify_source_runtime(backend: Path, descriptor: dict, *, live: bool) -> dic
     )
     if before["image"] != facts["running"]["image"]:
         raise ValueError("来源验收前像与 start 运行像不同")
-    effects = image_write_effects(before["image"], after["image"])
+    effects = native_response(*native_invoke(
+        "__source-evidence", {
+            "operation": 'write-effects',
+            "write": False,
+            "arguments": {
+                'before': before["image"],
+                'after': after["image"],
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     if (
         receipt["write_effects"] != effects
         or len(cleanup["after"]) != 33
