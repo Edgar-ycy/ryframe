@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::{
+    io::{Seek, SeekFrom, Write},
+    path::Path,
+    process::Stdio,
+};
 
 use serde_json::{Value, json};
 
@@ -8,11 +12,10 @@ use crate::{
         RecoveryReferenceCommand, ReferencePlanAction, ReferencePlanOptions, ReferenceTargetInputs,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_env_removed,
+    process::run_with_stdin_env_removed,
 };
 
 const SCRIPT: &str = "tools/python/restore_reference.py";
-const PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_REFERENCE";
 const INPUTS_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_INPUTS";
 const FRESH_TARGET_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
 const SEED_SOURCE_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
@@ -25,13 +28,16 @@ pub(super) fn run(command: &RecoveryReferenceCommand, root: &Path) -> Result<()>
         return Ok(());
     }
     let payload = protocol_at(command, root)?;
-    run_with_env_removed(
+    let mut input = tempfile::tempfile()?;
+    input.write_all(payload.as_bytes())?;
+    input.seek(SeekFrom::Start(0))?;
+    run_with_stdin_env_removed(
         root,
         "python",
-        &["-B", SCRIPT],
-        &[(PROTOCOL_KEY, payload.as_str())],
+        &["-B", SCRIPT, "--stdin"],
+        Stdio::from(input),
         &[
-            PROTOCOL_KEY,
+            "RYFRAME_XTASK_RECOVERY_REFERENCE",
             INPUTS_PROTOCOL_KEY,
             FRESH_TARGET_PROTOCOL_KEY,
             SEED_SOURCE_PROTOCOL_KEY,

@@ -127,6 +127,16 @@ pub(crate) fn run_with_stdin(
     run_with_stdio(dir, executable, args, &[], &[], input)
 }
 
+pub(crate) fn run_with_stdin_env_removed(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    input: Stdio,
+    removed_environment: &[&str],
+) -> Result<()> {
+    run_with_stdio(dir, executable, args, &[], removed_environment, input)
+}
+
 fn run_with_stdio(
     dir: &Path,
     executable: &str,

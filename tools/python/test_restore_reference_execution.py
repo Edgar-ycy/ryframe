@@ -66,12 +66,10 @@ class RestoreExecutionTests(unittest.TestCase):
         for extra in (["--target-plan", "one", "--target-plan=two"], ["--target-p", "unused"],
                       ["--copy-id", "other"], ["--artifact", "other"], ["--missing"]):
             argv = ["restore", "--plan", "unused", "--backend-dir", str(self.backend), *extra]
-            environment = {reference.PROTOCOL_KEY: "{}"}
             with patch.object(reference, "read_json") as read, \
                     self.assertRaises(reference.ReferenceProtocolError):
-                reference.private_protocol_request(argv=argv, environment=environment)
+                reference.private_protocol_request(argv=argv)
             read.assert_not_called()
-            self.assertNotIn(reference.PROTOCOL_KEY, environment)
 
     def test_record_plan_must_match_every_embedded_field_even_when_hash_is_updated(self):
         changes = [lambda value: value.update(id="other"), lambda value: value.update(frontend_sha="e" * 40),

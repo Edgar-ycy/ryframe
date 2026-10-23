@@ -273,8 +273,6 @@ def damage(work: Path, root: Path, manifest: dict, relative: str, missing: bool)
     return {"backup_id": manifest["id"], "artifact": relative, "injected": "missing" if missing else "corrupt"}
 
 
-PROTOCOL_KEY = "RYFRAME_XTASK_RECOVERY_REFERENCE"
-PROTOCOL_PREFIX = "RYFRAME_XTASK_RECOVERY_"
 OPERATIONS = frozenset(("plan", "check-dataset", "check-existing", "dataset", "backup",
                         "restore", "copy", "damage"))
 WRITING_OPERATIONS = frozenset(("dataset", "backup", "restore", "copy", "damage"))
@@ -360,33 +358,17 @@ def _operation_fields(request: dict, operation: str) -> set[str]:
     return base | additions[operation]
 
 
-def private_protocol_request(argv: list[str] | None = None,
-                             environment: dict[str, str] | None = None) -> ReferenceRequest:
+def private_protocol_request(argv: list[str] | None = None) -> ReferenceRequest:
     arguments = sys.argv[1:] if argv is None else argv
-    if arguments == ["--stdin"]:
-        raw = sys.stdin.buffer.read(65_537)
-        if len(raw) > 65_536:
-            raise ReferenceProtocolError("reference 私有协议超过64KiB")
-        try:
-            protocol = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_protocol_object)
-        except (ValueError, UnicodeError) as error:
-            raise ReferenceProtocolError("reference stdin私有协议无效") from error
-        return _request_from_protocol(protocol)
-    values = os.environ if environment is None else environment
-    raw = values.pop(PROTOCOL_KEY, None)
-    if arguments:
-        raise ReferenceProtocolError("reference 私有脚本不接受命令行参数")
-    if any(name.startswith(PROTOCOL_PREFIX) for name in values):
-        raise ReferenceProtocolError("reference 私有环境含未知或串线协议")
-    if (not isinstance(raw, str) or not raw or len(raw) > 65_536
-            or any(character in raw for character in ("\n", "\r", "\0"))):
-        raise ReferenceProtocolError("reference 私有协议缺失、为空、过长或含控制字符")
+    if arguments != ["--stdin"]:
+        raise ReferenceProtocolError("reference 私有脚本只接受 --stdin")
+    raw = sys.stdin.buffer.read(65_537)
+    if len(raw) > 65_536:
+        raise ReferenceProtocolError("reference 私有协议超过64KiB")
     try:
-        protocol = json.loads(raw, object_pairs_hook=_unique_protocol_object)
-    except ReferenceProtocolError:
-        raise
-    except (TypeError, json.JSONDecodeError) as error:
-        raise ReferenceProtocolError("reference 私有协议不是有效 JSON") from error
+        protocol = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_protocol_object)
+    except (ValueError, UnicodeError) as error:
+        raise ReferenceProtocolError("reference stdin私有协议无效") from error
     return _request_from_protocol(protocol)
 
 

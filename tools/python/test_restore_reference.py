@@ -281,15 +281,11 @@ class ReferenceTests(unittest.TestCase):
             reference._request_from_protocol(parent_jump)
         raw = json.dumps(protocol).replace('"side": "target"',
                                            '"side": "target", "side": "source"')
-        environment = {reference.PROTOCOL_KEY: raw}
+        with patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw.encode()))), \
+                self.assertRaises(reference.ReferenceProtocolError):
+            reference.private_protocol_request(argv=["--stdin"])
         with self.assertRaises(reference.ReferenceProtocolError):
-            reference.private_protocol_request(argv=[], environment=environment)
-        self.assertNotIn(reference.PROTOCOL_KEY, environment)
-        environment = {reference.PROTOCOL_KEY: json.dumps(protocol),
-                       "RYFRAME_XTASK_RECOVERY_INPUTS": "unexpected"}
-        with self.assertRaises(reference.ReferenceProtocolError):
-            reference.private_protocol_request(argv=[], environment=environment)
-        self.assertNotIn(reference.PROTOCOL_KEY, environment)
+            reference.private_protocol_request(argv=[])
 
     def test_dataset_requires_explicit_bounded_stage_timeout(self):
         self.plan["dataset"] = {"timeout_seconds": 21600}

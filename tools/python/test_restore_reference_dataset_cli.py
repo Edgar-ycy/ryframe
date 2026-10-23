@@ -26,16 +26,14 @@ class DatasetCliTests(unittest.TestCase):
         value = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference", "request": {
             "backend_dir": str(root), "format_version": 1, "operation": "check-existing",
             "plan": str(root / ".local-tests/plan.json"), "side": "source", "write": False}}
-        environment = {reference.PROTOCOL_KEY: "untrusted"}
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(value).encode()))))
-            request = reference.private_protocol_request(["--stdin"], environment)
+            request = reference.private_protocol_request(["--stdin"])
         self.assertEqual(request.command, "check-existing")
         self.assertEqual(request.side, "source")
-        self.assertEqual(environment[reference.PROTOCOL_KEY], "untrusted")
         for raw in (b'{"write":true,"write":false}', b'\xff', b'x' * 65537):
             with patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw))), self.assertRaises(reference.ReferenceProtocolError):
-                reference.private_protocol_request(["--stdin"], {})
+                reference.private_protocol_request(["--stdin"])
 
 
 if __name__ == "__main__":

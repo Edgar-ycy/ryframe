@@ -257,12 +257,10 @@ class TargetPlanTests(unittest.TestCase):
                                ("plan", ["--output", "unused"]), ("dataset", ["--target-plan", "unused"]),
                                ("restore", ["--arm-input", "unused"])):
             argv = [command, "--backend-dir", str(self.backend), "--plan", "unused", *extra]
-            environment = {reference.PROTOCOL_KEY: "{}"}
             with patch.object(reference, "read_json") as read, \
                     self.assertRaises(reference.ReferenceProtocolError):
-                reference.private_protocol_request(argv=argv, environment=environment)
+                reference.private_protocol_request(argv=argv)
             read.assert_not_called()
-            self.assertNotIn(reference.PROTOCOL_KEY, environment)
 
     def test_plan_cli_with_cold_bytecode_prefix_does_not_create_any_file(self):
         plan = self.write("reference-plan.json", self.plan)
@@ -272,11 +270,13 @@ class TargetPlanTests(unittest.TestCase):
                                "request": {"format_version": 1, "operation": "plan",
                                            "backend_dir": str(self.backend), "plan": str(plan),
                                            "write": False}})
-        environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(reference.PROTOCOL_PREFIX)}
-        environment.update({reference.PROTOCOL_KEY: protocol, "PYTHONPYCACHEPREFIX": str(cache)})
-        result = subprocess.run([sys.executable, "-B", str(Path(reference.__file__).absolute())],
-                                cwd=self.backend, env=environment, capture_output=True, check=True)
+        environment = dict(os.environ)
+        environment.update({"RYFRAME_XTASK_RECOVERY_REFERENCE": "untrusted",
+                            "RYFRAME_XTASK_RECOVERY_INPUTS": "untrusted",
+                            "PYTHONPYCACHEPREFIX": str(cache)})
+        result = subprocess.run([sys.executable, "-B", str(Path(reference.__file__).absolute()), "--stdin"],
+                                cwd=self.backend, env=environment, input=protocol.encode(),
+                                capture_output=True, check=True)
         self.assertEqual(json.loads(result.stdout)["id"], self.plan["id"])
         self.assertFalse(cache.exists())
         self.assertEqual(before, {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")})
