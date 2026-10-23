@@ -600,7 +600,24 @@ fn stage_python_preflight_uses_the_typed_resource_protocol() {
         mode: "run",
         attempt: None,
     };
-    stage::StageRunner::preflight(&stage::PythonRunner::new(&fixture.backend), &request).unwrap();
+    let mut protocol: Value =
+        serde_json::from_str(&stage::protocol(&request, "preflight").unwrap()).unwrap();
+    // libtest 不承载原生私有入口；适配夹具显式绑定同次构建的正式 xtask。
+    let native = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+        .unwrap()
+        .unwrap();
+    protocol["native_tool"] = serde_json::from_str(&native).unwrap();
+    let output = crate::process::command_output_with_input(
+        &fixture.backend,
+        "python",
+        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
+        &serde_json::to_vec(&protocol).unwrap(),
+    )
+    .unwrap();
+    let value: Value = serde_json::from_str(output.trim()).unwrap();
+    assert_eq!(value["status"], "stage_operation_preflight_ready");
+    assert_eq!(value["stage"], "export");
+    assert_eq!(value["mode"], "run");
     assert!(!fixture.run.join("run.lock").exists());
     assert_eq!(fixture.state()["attempts"], json!([]));
 }
