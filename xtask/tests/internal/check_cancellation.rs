@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::{Read, Seek, SeekFrom},
     path::Path,
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -12,38 +13,72 @@ use super::{check::run_parallel_tasks, process, process_liveness};
 static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
 
 const HELPER: &str = "check_cancellation_tests::parallel_gate_descendant_helper";
-const ROLE: &str = "RYFRAME_XTASK_PARALLEL_TEST_ROLE";
-const TREE_DIR: &str = "RYFRAME_XTASK_PARALLEL_TEST_TREE_DIR";
-const PARENT_EXIT: &str = "RYFRAME_XTASK_PARALLEL_TEST_PARENT_EXIT";
+const MAX_REQUEST_BYTES: u64 = 16 * 1024;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelperRequest {
+    role: HelperRole,
+    tree: std::path::PathBuf,
+    parent_exit: bool,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum HelperRole {
+    Parent,
+    Child,
+    Grandchild,
+}
+
+impl HelperRole {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Parent => "parent",
+            Self::Child => "child",
+            Self::Grandchild => "grandchild",
+        }
+    }
+
+    fn next(self) -> Option<Self> {
+        match self {
+            Self::Parent => Some(Self::Child),
+            Self::Child => Some(Self::Grandchild),
+            Self::Grandchild => None,
+        }
+    }
+}
+
+fn read_helper_request(reader: impl Read) -> super::Result<HelperRequest> {
+    let mut bytes = Vec::new();
+    reader.take(MAX_REQUEST_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_REQUEST_BYTES {
+        return Err("并行门禁测试请求超过 16 KiB 限制".into());
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
 
 #[test]
 #[ignore = "仅由并行完整门禁回收测试作为子进程调用"]
 fn parallel_gate_descendant_helper() {
-    let role = std::env::var(ROLE).expect("辅助进程应具有角色");
-    let tree =
-        std::path::PathBuf::from(std::env::var_os(TREE_DIR).expect("辅助进程应具有记录目录"));
+    let request = read_helper_request(std::io::stdin().lock()).expect("应能读取受限辅助请求");
+    let role = request.role.label();
+    let tree = request.tree;
     fs::write(
         tree.join(format!("{role}.pid")),
         std::process::id().to_string(),
     )
     .expect("应能记录辅助进程 PID");
-    let next = match role.as_str() {
-        "parent" => Some("child"),
-        "child" => Some("grandchild"),
-        "grandchild" => None,
-        _ => panic!("未知的并行回收辅助角色：{role}"),
-    };
+    let next = request.role.next();
     if let Some(next) = next {
-        let mut child = Command::new(std::env::current_exe().expect("应能定位测试程序"))
-            .args([HELPER, "--exact", "--ignored", "--nocapture"])
-            .env(ROLE, next)
-            .env(TREE_DIR, &tree)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("应能启动下一层辅助进程");
-        if role == "parent" && std::env::var_os(PARENT_EXIT).is_some() {
+        let mut child = helper_command(&HelperRequest {
+            role: next,
+            tree: tree.clone(),
+            parent_exit: request.parent_exit,
+        })
+        .spawn()
+        .expect("应能启动下一层辅助进程");
+        if matches!(request.role, HelperRole::Parent) && request.parent_exit {
             wait_for_file(&tree.join("ready"));
             // fixture 主线程先退出，后台等待线程随宿主结束，留下待 Job/进程组回收的后代。
             thread::spawn(move || {
@@ -59,6 +94,29 @@ fn parallel_gate_descendant_helper() {
 }
 
 #[test]
+fn parallel_helper_protocol_rejects_unknown_missing_trailing_and_oversized_requests() {
+    for invalid in [
+        r#"{"role":"unknown","tree":"tree","parent_exit":false}"#,
+        r#"{"role":"parent","tree":"tree"}"#,
+        r#"{"role":"parent","tree":"tree","parent_exit":false,"extra":true}"#,
+        r#"{"role":"parent","tree":"tree","parent_exit":false} {}"#,
+        "",
+    ] {
+        assert!(
+            read_helper_request(invalid.as_bytes()).is_err(),
+            "{invalid}"
+        );
+    }
+    let oversized = vec![b' '; MAX_REQUEST_BYTES as usize + 1];
+    assert!(
+        read_helper_request(oversized.as_slice())
+            .unwrap_err()
+            .to_string()
+            .contains("16 KiB")
+    );
+}
+
+#[test]
 fn parallel_gate_cancels_sibling_tree_and_preserves_first_exit_code() {
     assert_parallel_cancellation("resource-workspace", "backend-workspace", 37, true);
     assert_parallel_cancellation("backend-workspace", "resource-workspace", 38, false);
@@ -70,7 +128,11 @@ fn completed_parent_reaps_descendants_before_returning_and_keeps_unrelated_tree(
         let root = test_directory();
         let unrelated_root = root.join("无关进程");
         fs::create_dir(&unrelated_root).unwrap();
-        let mut unrelated_command = helper_command(&unrelated_root, "grandchild");
+        let mut unrelated_command = helper_command(&HelperRequest {
+            role: HelperRole::Grandchild,
+            tree: unrelated_root.clone(),
+            parent_exit: false,
+        });
         unrelated_command
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -80,27 +142,42 @@ fn completed_parent_reaps_descendants_before_returning_and_keeps_unrelated_tree(
             .unwrap();
         wait_for_file(&unrelated_root.join("ready"));
         let executable = std::env::current_exe().unwrap();
-        let environment = [
-            (ROLE, "parent"),
-            (TREE_DIR, root.to_str().unwrap()),
-            (PARENT_EXIT, "1"),
-        ];
         let args = [HELPER, "--exact", "--ignored", "--nocapture"];
+        let input = helper_payload(&HelperRequest {
+            role: HelperRole::Parent,
+            tree: root.clone(),
+            parent_exit: true,
+        });
         let started = Instant::now();
         run_parallel_tasks(
             &root,
             "orphan-parent",
             || {
                 if capture {
-                    process::command_output_with_env(
+                    let output = process::command_output_with_input_timeout(
                         &root,
                         executable.to_str().unwrap(),
                         &args,
-                        &environment,
-                    )
-                    .map(|_| ())
+                        &[],
+                        Some(&input),
+                        Duration::from_secs(70),
+                    )?;
+                    if output.status.success() {
+                        Ok(())
+                    } else {
+                        Err(process::PreservedFailure::new(
+                            "并行门禁辅助进程失败".to_owned(),
+                            output.status.code(),
+                        )
+                        .into())
+                    }
                 } else {
-                    process::run_with_env(&root, executable.to_str().unwrap(), &args, &environment)
+                    process::run_with_stdin(
+                        &root,
+                        executable.to_str().unwrap(),
+                        &args,
+                        stdin_file(&root, &input),
+                    )
                 }
             },
             "peer",
@@ -132,14 +209,7 @@ fn panicking_branch_cancels_and_joins_its_sibling() {
     let error = run_parallel_tasks(
         &root,
         "long",
-        || {
-            run_long_tree(
-                &root,
-                executable.to_str().unwrap(),
-                root.to_str().unwrap(),
-                true,
-            )
-        },
+        || run_long_tree(&root, executable.to_str().unwrap(), true),
         "panic",
         || {
             wait_for_file(&root.join("ready"));
@@ -232,14 +302,25 @@ fn test_directory() -> std::path::PathBuf {
     root
 }
 
-fn helper_command(root: &Path, role: &str) -> Command {
+fn helper_command(request: &HelperRequest) -> Command {
+    let input = helper_payload(request);
+    let file = stdin_file(&request.tree, &input);
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([HELPER, "--exact", "--ignored", "--nocapture"])
-        .env(ROLE, role)
-        .env(TREE_DIR, root)
-        .stdin(Stdio::null());
+        .stdin(file);
     command
+}
+
+fn helper_payload(request: &HelperRequest) -> Vec<u8> {
+    serde_json::to_vec(request).expect("应能序列化受限辅助请求")
+}
+
+fn stdin_file(root: &Path, input: &[u8]) -> Stdio {
+    let mut file = tempfile::tempfile_in(root).expect("应能创建受管请求文件");
+    std::io::Write::write_all(&mut file, input).expect("应能写入受管请求");
+    file.seek(SeekFrom::Start(0)).expect("应能复位受管请求");
+    Stdio::from(file)
 }
 
 fn assert_parallel_cancellation(
@@ -257,12 +338,11 @@ fn assert_parallel_cancellation(
     fs::create_dir_all(&root).unwrap();
     let executable = std::env::current_exe().unwrap();
     let executable = executable.to_str().unwrap();
-    let root_text = root.to_str().unwrap();
     let started = Instant::now();
     let error = run_parallel_tasks(
         &root,
         long_label,
-        || run_long_tree(&root, executable, root_text, capture_output),
+        || run_long_tree(&root, executable, capture_output),
         failure_label,
         || fail_after_tree_ready(&root, failure_code),
     )
@@ -288,18 +368,33 @@ fn assert_parallel_cancellation(
     fs::remove_dir_all(root).unwrap();
 }
 
-fn run_long_tree(
-    root: &Path,
-    executable: &str,
-    root_text: &str,
-    capture: bool,
-) -> super::Result<()> {
+fn run_long_tree(root: &Path, executable: &str, capture: bool) -> super::Result<()> {
     let args = [HELPER, "--exact", "--ignored", "--nocapture"];
-    let environment = [(ROLE, "parent"), (TREE_DIR, root_text)];
+    let input = helper_payload(&HelperRequest {
+        role: HelperRole::Parent,
+        tree: root.to_path_buf(),
+        parent_exit: false,
+    });
     if capture {
-        process::command_output_with_env(root, executable, &args, &environment).map(|_| ())
+        let output = process::command_output_with_input_timeout(
+            root,
+            executable,
+            &args,
+            &[],
+            Some(&input),
+            Duration::from_secs(70),
+        )?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(process::PreservedFailure::new(
+                "并行门禁辅助进程失败".to_owned(),
+                output.status.code(),
+            )
+            .into())
+        }
     } else {
-        process::run_with_env(root, executable, &args, &environment)
+        process::run_with_stdin(root, executable, &args, stdin_file(root, &input))
     }
 }
 
