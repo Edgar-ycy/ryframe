@@ -68,6 +68,19 @@ The reference drill uses the system tenant and 10 ordinary tenants across shared
 
 Before collection starts, pause business writes and stop API write entry points, Worker, scheduler, messaging, and other producers. Maintain quiescence throughout manifest collection, database dumping, and object copying, so data from different times is not registered as a consistent backup. Database digests follow the complete primary-key order, and objects use streaming SHA-256. Manifests include source SHA, schema fingerprints, physical database identities, tenant placements, object prefixes, byte sizes, and digests, without secrets.
 
+Post-copy administrator sessions use a separate file containing current credentials. Complete the first password change through the normal account flow, then create a private file in the backend's ignored directory, for example the absolute path `<backend>/.local-tests/clone/administrator.toml`:
+
+```toml
+[administrator]
+tenant_id = "system"
+username = "admin"
+password = "<current-password-after-first-change>"
+```
+
+The post-copy registration request's `source_admin` contains only four metadata fields: `subject_id`, `tenant_id`, `username`, and `client_address`. Register the TOML separately as `administrator_credentials` using its `path`, `bytes`, and `sha256` file binding. Never copy the password into requests, public registrations, or receipts. The tenant and username in the file must match the metadata. The file and every path component must have no links and remain inside the current backend's `.local-tests`. Registration and session startup verify the file binding before and after reading. Content or binding changes, invalid fields, and TOML parsing failures stop execution without echoing the source text. This password is independent of `bootstrap.admin_password`: tools never change passwords automatically, fall back to initialization passwords, or replay business writes. If the first password change is incomplete, finish the explicit account flow rather than registering the initialization password as current credentials.
+
+Continue to register explicitly through `cargo xtask check recovery clone post-copy --run-dir <run> --operation register --request <request.json> --write`; subsequent operations that write still require `--write`. The file bound by `api_environment` accepts only `{"environment":{"APP_ENV":"test"}}`, with no administrator credentials or other project configuration. Addresses, Worker mode, CORS, and other settings come from their bound application TOML files. An amendment may rebind the environment selector only after the existing stop-evidence and failure-reconciliation flow; environment fields cannot modify project configuration.
+
 ### Collection and Registration
 
 Use `cargo xtask data` on a Windows maintenance machine for backup and recovery registration. Keep configuration and secrets in a controlled ignored directory. This maintenance capability is not included in production runtime images.

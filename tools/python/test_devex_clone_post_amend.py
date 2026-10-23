@@ -25,7 +25,7 @@ class AmendmentTests(unittest.TestCase):
 
     def setUp(self):
         fixtures.PostTests.setUp(self)
-        self.old_api = {**self.api, "APP_CORS_ALLOW_ORIGINS": '["http://127.0.0.1:4190"]'}
+        self.old_api = dict(self.api)
         self.request["api_environment"] = self.file("old-api", {"environment": self.old_api})
         request = self.file("old-request", self.request)
         number = begin(self.directory, "post-copy", "register", {})
@@ -114,15 +114,15 @@ class AmendmentTests(unittest.TestCase):
         self.assertEqual(active.runtime, self.directory / "post-copy/runtime-0001")
         self.assertEqual(active.request, self.corrected)
         self.assertEqual(active.request["api_environment"], self.corrected["api_environment"])
-        self.assertEqual(read_json(Path(active.request["api_environment"]["path"]))["environment"]
-                         ["APP_CORS_ALLOW_ORIGINS"], "http://127.0.0.1:4190")
+        self.assertEqual(read_json(Path(active.request["api_environment"]["path"]))["environment"],
+                         {"APP_ENV": "test"})
         self.assertEqual({path: path.read_bytes() for path in paths}, before)
         self.assertFalse((self.directory / "post-copy/current.json").exists())
         amendment = read_json(Path(active.descriptor["path"]))
         self.assertNotIn("request", amendment)
         self.assertEqual(amendment["predecessor"], self.base)
 
-    def test_only_complete_request_and_single_raw_cors_change_are_accepted(self):
+    def test_only_complete_request_and_environment_selector_rebinding_are_accepted(self):
         cases = []
         bad_cors = {**self.api, "APP_CORS_ALLOW_ORIGINS": '["http://127.0.0.1:4190"]'}
         cases.append({**self.corrected, "api_environment": self.file("bad-cors", {"environment": bad_cors})})

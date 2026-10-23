@@ -20,7 +20,7 @@ from devex_clone_live_object import observe_target_object
 from devex_clone_model import linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_post import registration, registered, validate_registration, pacing_binding
-from devex_clone_post_model import action_input, full_row_sql, exact_directory
+from devex_clone_post_model import action_input, administrator, full_row_sql, exact_directory
 from devex_clone_post_process import require_quiet
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file, verify_generation, require_closed_port, verify_api_address
@@ -117,6 +117,7 @@ class Context:
                 bound_file(self.backend, self.request[field])
             external_file(self.request["node"])
             pacing_binding(self.backend, self.directory_root, self.request)
+            administrator(self.request["source_admin"], self.backend, self.request["administrator_credentials"])
             if self.ledger.inspect() != self.ledger_state or plan_hash(self.ledger.frames) != self.ledger_frames:
                 raise ValueError("复制账本在交接后变化")
             if initialization_history(self.backend, bound_file(self.backend, self.value["initialized"]),

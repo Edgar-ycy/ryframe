@@ -63,6 +63,8 @@ impl Registration {
         {
             return Err("SessionRegistrationMismatch".into());
         }
+        let registration_path = self.run.join("post-copy.json");
+        let registration = producer_authorization::binding(&registration_path)?;
         self.authorize(request)?;
         let frontend = Path::new(request["frontend"].as_str().ok_or("InvalidFrontendPath")?);
         validate_absolute_path(frontend, LocalTestPathKind::ExistingDirectory)
@@ -82,6 +84,9 @@ impl Registration {
         exact(&request["config"]["contract"], &["timeout_ms", "pacing"])?;
         bindings(&request["config"]["bindings"])?;
         let identity = self.identity(request)?;
+        if producer_authorization::binding(&registration_path)? != registration {
+            return Err("SessionRegistrationDrift".into());
+        }
         Ok(Initialization {
             artifacts,
             identity,
@@ -143,39 +148,17 @@ impl Registration {
     fn identity(&self, request: &Value) -> crate::Result<Value> {
         let registration = json_io::read(&self.run.join("post-copy.json"))?;
         let source = &registration["source_admin"];
-        exact(
-            source,
-            &[
-                "subject_id",
-                "tenant_id",
-                "username",
-                "password_env",
-                "client_address",
-            ],
-        )?;
+        identity(source)?;
         for field in ["subject_id", "tenant_id", "username", "client_address"] {
             if request["identity"][field] != source[field] {
                 return Err("SessionIdentityMismatch".into());
             }
         }
-        let descriptor = &registration["api_environment"];
-        let path = PathBuf::from(
-            descriptor["path"]
-                .as_str()
-                .ok_or("SessionConfigurationPath")?,
-        );
-        validate_local_test_path(&path, &self.root, LocalTestPathKind::ExistingFile)?;
-        if producer_authorization::binding(&path)? != *descriptor {
-            return Err("SessionConfigurationDrift".into());
-        }
-        let private = json_io::read(&path)?;
-        let key = source["password_env"]
-            .as_str()
-            .ok_or("SessionCredentialKey")?;
-        let password = private["environment"][key]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or("MissingSessionCredentials")?;
+        let password = super::credentials::load(
+            &self.root,
+            &registration["administrator_credentials"],
+            source,
+        )?;
         let mut identity = request["identity"].clone();
         identity["password"] = json!(password);
         Ok(identity)

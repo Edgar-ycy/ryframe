@@ -66,6 +66,19 @@ docker compose -f deploy/compose.prod.yml up -d
 
 开始采集前暂停业务写入，停止 API 写入入口、Worker、scheduler 和消息等生产者。在整个清单采集、数据库转储和对象复制期间保持静止，避免把多个时间点的数据登记为一致备份。数据库按完整主键顺序计算摘要，对象采用流式 SHA-256；清单包含源码 SHA、schema 指纹、物理数据库身份、租户 placement、对象前缀、字节数和摘要，不包含密钥。
 
+复制后的管理员会话使用独立的当前凭据文件。先通过正常账号流程完成首次改密，再在后端忽略目录中创建私有文件，例如绝对路径 `<backend>/.local-tests/clone/administrator.toml`：
+
+```toml
+[administrator]
+tenant_id = "system"
+username = "admin"
+password = "<current-password-after-first-change>"
+```
+
+post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、`username`、`client_address` 四项元数据；另以 `administrator_credentials` 登记该 TOML 的 `path`、`bytes` 和 `sha256` 文件绑定，不把密码写入请求、公开登记或收据。文件中的租户和用户名必须与元数据一致，文件及各级路径不得经过链接或越出当前后端的 `.local-tests`。注册和会话启动在读取前后核对文件绑定；内容或绑定变化、字段错误和 TOML 解析失败均拒绝继续，诊断不回显文件原文。此密码独立于 `bootstrap.admin_password`，工具不自动改密、不回退初始化密码，也不重放业务写入。未完成首次改密时，先完成明确的账号流程，不能将初始化密码作为当前凭据登记。
+
+继续通过 `cargo xtask check recovery clone post-copy --run-dir <run> --operation register --request <request.json> --write` 显式登记；后续产生写入的操作仍需 `--write`。`api_environment` 绑定文件仅允许 `{"environment":{"APP_ENV":"test"}}`，不再传递管理员凭据或其他项目配置；地址、Worker 模式和 CORS 等设置来自各自绑定的应用 TOML。amendment 仅可在既有停止证明和失败核对流程后重新绑定环境选择文件，不能借环境字段修改项目配置。
+
 ### 采集和登记
 
 在 Windows 维护机通过 `cargo xtask data` 执行备份和恢复登记；配置和密钥放在受控的忽略目录。该维护能力不包含在生产运行镜像中。

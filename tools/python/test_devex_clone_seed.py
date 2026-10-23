@@ -29,19 +29,21 @@ class SeedTests(unittest.TestCase):
         self.old = self.directory / "post-copy/runtime"
         self.old.mkdir(parents=True)
         self.scope = "seed-scope"
-        self.api = {"APP_ENV": "test", "APP_SCOPE_ID": self.scope, "APP_JOBS_MODE": "external",
-                    "APP_CORS_ALLOW_ORIGINS": "http://127.0.0.1:4190", "RYFRAME_ADMIN": "private-admin"}
+        self.api = {"APP_ENV": "test"}
         self.identity = {"pid": 991, "started": "222", "executable": str(self.backend / "api.exe")}
         self.file("manifest", {"copy_directory": str(self.directory / "copy")})
         initialize_state(self.directory)
         copied = self.stage("copy", "resume", {"status": "data_steps_verified"})
         generic = self.file("generic", {"safe": True})
+        credentials = self.backend / ".local-tests/administrator.toml"
+        credentials.write_text('[administrator]\ntenant_id="system"\nusername="admin"\npassword="Current!Changed123"\n', encoding="utf-8")
         self.post = {field: generic for field in POST_FIELDS}
         self.post.update(format_version=1, kind="devex-clone-post-copy", run_manifest=binding(self.directory / "manifest.json"),
             copy_stage_receipt=copied, copy_result=self.file("copy-result", {"status": "data_steps_verified"}),
             ledger_head=self.file("copy-head", {"sequence": 8}), api_environment=self.file("api-environment", {"environment": self.api}),
             frontend_root=str(self.backend.parent / "ryframe-vue3"), node={"path": str(self.backend / "node.exe"), "sha256": "1" * 64},
-            source_admin={"subject_id": "101", "tenant_id": "system", "username": "admin"})
+            source_admin={"subject_id": "101", "tenant_id": "system", "username": "admin", "client_address": "198.19.20.1"},
+            administrator_credentials=binding(credentials))
         self.file("post-copy", self.post)
         self.stage("post-copy", "register", {"status": "post_copy_registered", "registration": binding(self.directory / "post-copy.json")})
         post_verified = self.stage("post-copy", "verify", {"status": "post_copy_existing_data_verified",

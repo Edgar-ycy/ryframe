@@ -100,6 +100,9 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("copy-administrator-credentials") => {
+            crate::recovery::clone::native::session::credentials::validate_request(args)
+        }
         Some("physical-binding") => binding::physical(args),
         Some("lineage-derive") => lineage::derive(args),
         Some("lineage-verify") => lineage::verify(args),
