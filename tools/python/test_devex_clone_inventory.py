@@ -91,6 +91,7 @@ class InventoryTests(unittest.TestCase):
             destination = execution / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(self.backend / relative, destination)
+        shutil.copytree(self.backend / "config", execution / "config")
         maintenance = execution / ".local-tests/build.json"
         maintenance.parent.mkdir()
         maintenance.write_bytes(self.maintenance_file.read_bytes())
@@ -98,7 +99,7 @@ class InventoryTests(unittest.TestCase):
         value = inventory.capture_side_inventory(execution, "source", self.tools, maintenance, self.output,
                     environment=self.environment, evidence_root=self.backend)
         self.assertEqual(value.receipt["status"], "side_inventory_captured")
-        self.assertEqual(value.binding["configuration"]["directory"], str(self.backend / "config"))
+        self.assertEqual(value.binding["configuration"]["directory"], str(execution / "config"))
         with patch("subprocess.run", side_effect=AssertionError("只读复核不运行外部命令")):
             result = inventory.verify_side_inventory(self.backend, value.receipt_file, self.selected, execution)
         self.assertEqual(set(result["databases"]), set(inventory.KEYS))
@@ -213,7 +214,11 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.selected["databases"][2]["mode"] = "dedicated"
         self.output = self.local / "wrong-config"
-        self.environment["APP_DATABASE_NAME"] = "another_owned_database"
+        config = self.backend / "config/app.test.toml"
+        original = config.read_text(encoding="utf-8")
+        declared = f'database="{self.selected["databases"][0]["database"]}"'
+        self.assertIn(declared, original)
+        config.write_text(original.replace(declared, 'database="another_owned_database"', 1), encoding="utf-8")
         self.assert_failed()
         self.assertEqual(self.calls, [])
 

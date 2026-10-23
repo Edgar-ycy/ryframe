@@ -75,6 +75,7 @@ fn databases(
         return Err("配置与计划必须精确覆盖相同数据库目标".into());
     }
     let mut identities = BTreeSet::new();
+    let mut server_identities = BTreeSet::new();
     let mut result = Vec::new();
     let mut declared = declared.iter().collect::<Vec<_>>();
     declared.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
@@ -91,6 +92,9 @@ fn databases(
         if !identities.insert((
             strict_text(&actual["host"])?.to_owned(),
             port(&actual["port"])?,
+            strict_text(&actual["database"])?.to_ascii_lowercase(),
+        )) || !server_identities.insert((
+            strict_text(&db["server_uuid"])?.to_owned(),
             strict_text(&actual["database"])?.to_ascii_lowercase(),
         )) {
             return Err("不同逻辑目标引用同一物理数据库".into());
@@ -263,7 +267,9 @@ fn database_connection(
 ) -> Result<Map<String, Value>> {
     let key = text(&db["key"], "数据库 key")?;
     let control = key == "shared-control";
-    if configuration["kind"].as_str() != Some(if control { "control" } else { "mysql" })
+    if db["kind"].as_str() != Some(if control { "combined" } else { "tenant" })
+        || !matches!(db["mode"].as_str(), Some("shared" | "dedicated"))
+        || configuration["kind"].as_str() != Some(if control { "control" } else { "mysql" })
         || configuration["mode"] != db["mode"]
     {
         return Err("数据库逻辑类型或共享模式不同".into());

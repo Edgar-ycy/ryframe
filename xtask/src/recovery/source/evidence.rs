@@ -6,6 +6,10 @@ use serde_json::{Value, json};
 use super::super::clone::native::json as documents;
 use crate::Result;
 
+#[path = "evidence/binding.rs"]
+mod binding;
+#[path = "evidence/lineage.rs"]
+mod lineage;
 #[path = "evidence/model.rs"]
 mod model;
 #[path = "evidence/staging.rs"]
@@ -39,7 +43,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
             1,
             json!({"ok":false,"error":{
             "category":"SourceEvidenceRejected",
-            "message":format!("来源证据校验失败：{error}。检查同代路径、已绑定文件及Git来源；可能已创建部分本地staging，禁止覆盖或自动重放；未执行远端写入。"),
+            "message":format!("来源证据校验失败：{error}。检查同代路径、已绑定文件及Git来源；保留本地失败现场，创建操作可能留下部分文件，禁止覆盖或自动重放；未执行远端写入。"),
             "remote_write_may_have_occurred":false,"automatic_retry_permitted":false}}),
         ),
     };
@@ -64,11 +68,22 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         &["operation", "arguments", "write"],
         "来源证据请求",
     )?;
-    if request["write"].as_bool() != Some(request["operation"] == "staging-create") {
+    if request["write"].as_bool()
+        != Some(matches!(
+            request["operation"].as_str(),
+            Some("staging-create" | "database-configuration")
+        ))
+    {
         return Err("来源证据写入授权与操作不一致".into());
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("physical-binding") => binding::physical(args),
+        Some("lineage-derive") => lineage::derive(args),
+        Some("lineage-verify") => lineage::verify(args),
+        Some("redact-database") => binding::redact(args),
+        Some("connection-summary") => binding::summary(args),
+        Some("database-configuration") => binding::configuration(args),
         Some("result") => model::result(args),
         Some("cache-plan") => model::cache_plan(args),
         Some("login-audit") => model::login_audit(args),

@@ -10,7 +10,7 @@ pub(crate) mod bindings;
 pub(crate) mod chain;
 mod comparison;
 pub(crate) mod document;
-mod domain;
+pub(in crate::recovery) mod domain;
 mod fresh;
 mod inventory;
 pub(crate) mod product;

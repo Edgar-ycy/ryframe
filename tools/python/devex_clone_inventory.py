@@ -1,6 +1,8 @@
 """以已绑定维护 CLI 只读采集四个明确目标；不创建资源，不提供复制写入入口。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+
 import copy
 from dataclasses import asdict, dataclass
 import hashlib
@@ -22,7 +24,6 @@ from devex_clone_transfer import DatabaseObservation, PRESERVED
 from restore_build import file_digest
 from restore_reference_io import DatabaseVerificationError, ExternalTools, redact_object_diagnostic, verification_stdout
 from restore_reference_plan import plan_hash
-from restore_source_binding import defaults_connection, source_binding
 
 KEYS = ("shared-control", "shared", "dedicated-a", "dedicated-b")
 
@@ -292,8 +293,8 @@ class _Capture:
         self.maintenance = local_path(backend, str(maintenance))
         self.maintenance_digest = file_digest(self.maintenance)
         self.redaction = dict(self.environment)
-        for key, item in self.databases.items():
-            self.redaction["DATABASE_PASSWORD_" + key] = defaults_connection(self.evidence_root, item)["password"]
+        self.database_credentials = {"backend": str(self.evidence_root), "databases": copy.deepcopy(list(self.databases.values()))}
+        redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = self.selected["s3"][field]
         self.evidence_names = set()
@@ -333,9 +334,9 @@ class _Capture:
                     self._track(Path(output_evidence["stdout_file"]["path"]))
                 json.dump({"command": command, "returncode": code, "error_type": error_type,
                            "stdin": input_digest,
-                           "stdout": None if "stdout_capture_error" in output_evidence else redact_object_diagnostic(stdout, self.redaction),
+                           "stdout": None if "stdout_capture_error" in output_evidence else redact_object_diagnostic(stdout, self.redaction, database_credentials=self.database_credentials),
                            **output_evidence,
-                           "stderr": redact_object_diagnostic(stderr, self.redaction)}, stream, ensure_ascii=False, indent=2)
+                           "stderr": redact_object_diagnostic(stderr, self.redaction, database_credentials=self.database_credentials)}, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -346,7 +347,17 @@ class _Capture:
         if file_digest(regular_file(self.maintenance)) != self.maintenance_digest:
             raise ValueError("维护工具收据变化")
         validate_source(self.evidence_root, self.selected)
-        physical = source_binding(self.backend, {"source": self.selected}, self.environment, evidence_root=self.evidence_root)
+        physical = native_response(*native_invoke(
+            "__source-evidence", {"operation": "physical-binding", "write": False,
+                "arguments": {
+                    'backend': str(self.backend),
+                    'evidence_root': str(self.evidence_root),
+                    'source': self.selected,
+                    'app_env': self.environment.get("APP_ENV"),
+                    'config_dir': None,
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"]
         config = configuration(self.backend, self.environment, self.selected, evidence_root=self.evidence_root)
         if self.control_environment is None:
             maintenance = verify_tools(self.backend, self.maintenance, self.run)

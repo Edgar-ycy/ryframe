@@ -2,6 +2,7 @@
 from contextlib import ExitStack, contextmanager, nullcontext
 import copy
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import Mock, patch
@@ -48,8 +49,14 @@ class GenerationTests(unittest.TestCase):
                        "tools": {"mysql": "fixed"}, "max_object_bytes": 1024},
                        "review_successor": {"source_result": self.registration}, "review_successor_binding": self.successor,
                        "source_rebind": self.rebound, "storage": {"storage": {"same": True}}, "source_generation": None}
+        self.source["manifest"] = {}
+        self.source["result"] = {}
+        self.enterContext(patch("devex_clone_post_registration.resolve_post_registration", return_value=SimpleNamespace(request={}, descriptor={})))
+        self.enterContext(patch("devex_clone_run.require_target_copy", return_value=SimpleNamespace(plan={})))
+        self.enterContext(patch("devex_clone_post._validate_business_lineage"))
+        self.original_native = generation.native_invoke
         self.source["generation"] = {"physical_binding": {"same": "physical-source"}}
-        self.source["registration"] = {"source_request": self.file("old-request.json", self.source["request"]),
+        self.source["registration"] = {"post_copy": {}, "source_request": self.file("old-request.json", self.source["request"]),
             "generation_verified": self.file("old-generation.json", self.source["generation"]), "source_environment": self.request["source_environment"]}
         self.prefix = [self.record(52, "source-register", self.registration), self.record(53, "source-rebind", self.rebound)]
         self.state = {"attempts": self.prefix + [self.record(54, generation.START, status="running")]}
@@ -105,7 +112,7 @@ class GenerationTests(unittest.TestCase):
     def execute(self):
         with patch.object(generation, "inputs", return_value=(self.request, self.source, self.prefix)), \
                 patch.object(generation, "load_state", return_value=self.state), \
-                patch("restore_source_lineage.derive_dataset_lineage", return_value={"derived": "C52"}), \
+                patch.object(generation, "native_invoke", side_effect=lambda marker, request, runner, **kw: (SimpleNamespace(returncode=0), {"ok": True, "result": {"value": {"derived": "C52"}}}) if request["operation"] in {"lineage-derive", "lineage-verify"} else self.original_native(marker, request, runner, **kw)), \
                 patch.object(runtime, "GenerationRuntime", return_value=self.runtime), \
                 patch("devex_clone_seed_generation_images.capture_image", side_effect=self.capture), \
                 patch("devex_clone_seed_generation_images.verify_image", side_effect=lambda _b, descriptor, *_a, **_kw: read_json(Path(descriptor["path"]))), \
@@ -451,7 +458,7 @@ class GenerationTests(unittest.TestCase):
         with ExitStack() as stack:
             stack.enter_context(patch.object(generation, "load_state", return_value=state))
             stack.enter_context(patch.object(generation, "predecessor", return_value=self.source))
-            stack.enter_context(patch("restore_source_lineage.verify_dataset_lineage", return_value={"derived": "C52"}))
+            stack.enter_context(patch.object(generation, "native_invoke", side_effect=lambda marker, request, runner, **kw: (SimpleNamespace(returncode=0), {"ok": True, "result": {"value": {"derived": "C52"}}}) if request["operation"] in {"lineage-derive", "lineage-verify"} else self.original_native(marker, request, runner, **kw)))
             stack.enter_context(patch("devex_clone_seed_generation_images.verify_image",
                 side_effect=lambda _b, document, *_args, **_kwargs: read_json(Path(document["path"]))))
             verifier = stack.enter_context(patch.object(runtime, "verify_running_evidence", return_value={"runtime": "same"}))

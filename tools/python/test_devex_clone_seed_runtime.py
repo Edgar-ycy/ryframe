@@ -51,7 +51,7 @@ class RuntimeTests(unittest.TestCase):
                 patch.object(runtime, "identity_inputs"), \
                 confirmation_check as verify_confirmations, \
                 patch.object(runtime, "require_schedule_stage"), \
-                patch.object(runtime, "source_binding", return_value={"scope": "target"}), \
+                patch.object(runtime, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": {"scope": "target"}}})), \
                 patch.object(runtime, "verify_api_address"), \
                 patch.object(runtime, "worker_ready_url", return_value=context.selected["worker_ready_url"]), \
                 patch.object(runtime, "absent"), patch.object(runtime, "require_closed_port"), \
@@ -80,7 +80,7 @@ class RuntimeTests(unittest.TestCase):
             runtime=self.directory / "runtime", output=self.directory, review={"review": True},
             run=MagicMock(), environments=environments, bindings=MagicMock(),
             resolved_storage_run=lambda: fixture_run)
-        with patch.object(runtime, "source_binding", return_value={"scope": "target"}), \
+        with patch.object(runtime, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": {"scope": "target"}}})), \
                 patch.object(runtime, "verify_api_address"), \
                 patch.object(runtime, "worker_ready_url", return_value=context.selected["worker_ready_url"]), \
                 patch.object(runtime, "absent"), \

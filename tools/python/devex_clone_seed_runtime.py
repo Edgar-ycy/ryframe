@@ -1,3 +1,6 @@
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+import os
+import subprocess
 """身份 CLI 及新 seed API/Worker 的窄交接；不改变身份业务、配额或正常任务状态。"""
 import json
 import os
@@ -21,7 +24,6 @@ from devex_clone_target_resources import Resources
 from devex_clone_target_binding import application_config_directory
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import register_runtime, verify_runtime, worker_ready_url
-from restore_source_binding import source_binding
 
 
 def runtime_inputs(backend, directory):
@@ -48,7 +50,17 @@ def resources_guard(context):
     """当前物理身份和所有桶 ownership；允许已授权身份和 outbox 数据正常演进。"""
     context.bindings()
     with context.environments.use("target"):
-        if source_binding(context.backend, {"source": context.target_config}, config_dir=application_config_directory(context.backend, context.target)) != context.initial["generation"]["physical"]:
+        if native_response(*native_invoke(
+            "__source-evidence", {"operation": "physical-binding", "write": False,
+                "arguments": {
+                    'backend': str(context.backend),
+                    'evidence_root': str(context.backend),
+                    'source': context.target_config,
+                    'app_env': os.environ.get("APP_ENV"),
+                    'config_dir': str(application_config_directory(context.backend, context.target)),
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"] != context.initial["generation"]["physical"]:
             raise ValueError("seed 物理目标不属于原初始化资源")
         verify_api_address(context.backend, context.selected["api_url"], config_dir=application_config_directory(context.backend, context.target))
         if worker_ready_url(execution_root(context.backend, context.target), application_config_directory(context.backend, context.target)) != context.selected["worker_ready_url"]:
@@ -107,7 +119,17 @@ def current_mutation_guard(context, request, prerequisite, confirmations):
     require_prerequisite(context.backend, context.directory_root, request, prerequisite)
     require_schedule_stage(context, confirmations)
     with context.environments.use("target"):
-        if source_binding(context.backend, {"source": context.target_config}, config_dir=application_config_directory(context.backend, context.target)) != context.initial["generation"]["physical"]:
+        if native_response(*native_invoke(
+            "__source-evidence", {"operation": "physical-binding", "write": False,
+                "arguments": {
+                    'backend': str(context.backend),
+                    'evidence_root': str(context.backend),
+                    'source': context.target_config,
+                    'app_env': os.environ.get("APP_ENV"),
+                    'config_dir': str(application_config_directory(context.backend, context.target)),
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"] != context.initial["generation"]["physical"]:
             raise ValueError("seed 写入目标不属于原初始化资源")
         verify_api_address(context.backend, context.selected["api_url"], config_dir=application_config_directory(context.backend, context.target))
         if worker_ready_url(execution_root(context.backend, context.target), application_config_directory(context.backend, context.target)) != context.selected["worker_ready_url"]:

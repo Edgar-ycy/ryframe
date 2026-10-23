@@ -1,4 +1,5 @@
 """源运行证据严格绑定同一构建、请求、树和实际创建身份；不启动产品。"""
+from types import SimpleNamespace
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ class GenerationRuntimeTests(unittest.TestCase):
                 patch("devex_clone_run._require_owned_run"), patch.object(runtime, "verify_build_artifacts"), \
                 patch.object(runtime, "verify_tools", return_value={"source": frozen["source"]}), \
                 patch.object(runtime, "current_storage_binding", return_value=self.f.request["current_storage"]), \
-                patch.object(runtime, "source_binding", return_value=self.f.source["generation"]["physical_binding"]), \
+                patch.object(runtime, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": self.f.source["generation"]["physical_binding"]}})), \
                 patch.object(runtime, "verify_api_address"):
             build["build"] = restore_build.build_context(self.f.backend)
             path = Path(self.f.build["path"])
@@ -102,7 +103,7 @@ class GenerationRuntimeTests(unittest.TestCase):
         with ExitStack() as stack:
             registered = stack.enter_context(patch.object(runtime, "registered_inputs", return_value=(self.f.backend, self.build)))
             stack.enter_context(patch.object(runtime, "verify_runtime", return_value=self.contract))
-            stack.enter_context(patch.object(runtime, "source_binding", return_value=self.evidence["physical_binding"]))
+            stack.enter_context(patch.object(runtime, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": self.evidence["physical_binding"]}})))
             process = stack.enter_context(patch.object(runtime, "process_identity", side_effect=lambda pid: self.identities.get(pid)))
             listener = stack.enter_context(patch.object(runtime, "verify_listener"))
             ready = stack.enter_context(patch("devex_clone_runtime._ready", return_value=True))

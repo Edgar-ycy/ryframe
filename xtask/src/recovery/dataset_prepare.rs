@@ -14,7 +14,7 @@ mod configuration;
 #[path = "dataset_prepare/existing.rs"]
 mod existing;
 #[path = "dataset_prepare/existing_native.rs"]
-mod existing_native;
+pub(in crate::recovery) mod existing_native;
 #[path = "dataset_prepare/model.rs"]
 mod model;
 #[path = "dataset_prepare/prepare.rs"]

@@ -1,6 +1,9 @@
 """从同一 C52 successor 与注册构建生成只读源后继请求；仅显式发布写入文件。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+import subprocess
+
 from pathlib import Path
 
 from devex_clone_capture import read_json
@@ -13,7 +16,6 @@ from devex_clone_tools import verify_evidence
 from reference_fixture_successor import published_source
 from reference_fixture_successor_arm import _publish_json
 from restore_reference_plan import plan_hash
-from restore_source_binding import source_binding
 
 
 def build(backend: Path, successor: Path, execution: Path, expected_head: str, backend_build: Path,
@@ -63,7 +65,17 @@ def build(backend: Path, successor: Path, execution: Path, expected_head: str, b
     private = read_json(environment_path)
     exact(private, {"environment"})
     if (maintenance["source"] != receipt["sources"]["full"]["source"]
-            or source_binding(root, {"source": source["request"]["source"]}, configured(private["environment"]), evidence_root=backend)
+            or native_response(*native_invoke(
+                "__source-evidence", {"operation": "physical-binding", "write": False,
+                    "arguments": {
+                        'backend': str(root),
+                        'evidence_root': str(backend),
+                        'source': source["request"]["source"],
+                        'app_env': (configured(private["environment"])).get("APP_ENV"),
+                        'config_dir': None,
+                    },
+                }, subprocess.run, may_write=False,
+            ))[0]["value"]
             != source["generation"]["physical_binding"]):
         raise ValueError("后继请求维护构建或环境没有绑定同一源码与 C52 完整物理来源")
     if recovery is None:

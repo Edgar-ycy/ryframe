@@ -30,7 +30,6 @@ from devex_clone_transfer import DatabaseBasis, GenerationObservation, TransferS
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
 from restore_reference_plan import BUCKETS, plan_hash
-from restore_source_binding import defaults_connection
 from source_fingerprints import source_check
 
 
@@ -62,6 +61,7 @@ class CloneSession:
 
     def bind_credentials(self) -> None:
         values = set()
+        databases = []
         for side, config in (("source", self.exported["source"]), ("target", self.target_request["target"])):
             environment = self.environment.values[side]
             for field in ("access_key", "secret_key"):
@@ -69,10 +69,12 @@ class CloneSession:
                 if not isinstance(value, str) or not value:
                     raise ValueError("复制日志缺少配置文件中的对象凭据")
                 values.add(value)
-            values.update(defaults_connection(self.backend, database)["password"] for database in config["databases"])
+            databases.extend(config["databases"])
             if environment.get("RYFRAME_RESET_ADMIN_PASSWORD"):
                 values.add(environment["RYFRAME_RESET_ADMIN_PASSWORD"])
         self.secret_redaction = {f"COPY_PASSWORD_{index}": value for index, value in enumerate(sorted(values))}
+        self.database_credentials = {"backend": str(self.backend), "databases": copy.deepcopy(databases)}
+        redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
 
     def command(self, command, **kwargs):
         # 写请求前就占有诊断文件；不记录 stdin 中的业务 SQL 或明文环境。
@@ -85,7 +87,7 @@ class CloneSession:
 
         def diagnostic(value):
             if not private_probe:
-                return redact_object_diagnostic(value, redaction)
+                return redact_object_diagnostic(value, redaction, database_credentials=self.database_credentials)
             raw = value if isinstance(value, bytes) else (value or "").encode("utf-8")
             return {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 

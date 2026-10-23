@@ -263,89 +263,6 @@ print(json.dumps({'calls': 3, 'capacities': [100, 137, 149]}))
 }
 
 #[test]
-fn python_source_binding_reads_the_actual_native_document_without_connecting_services() {
-    let executable = Path::new(env!("CARGO_BIN_EXE_xtask"));
-    let binding = super::check::python_suite::binding(executable)
-        .unwrap()
-        .expect("本机测试必须绑定当前构建的普通原生工具");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let program = super::check::consumer_context::python::selected_program(root).unwrap();
-    let output = Command::new(program)
-        .args([
-            "-X",
-            "utf8",
-            "-B",
-            "-c",
-            r#"
-import json, sys
-from pathlib import Path
-from unittest.mock import patch
-sys.path.insert(0, str(Path(sys.argv[1]) / 'tools/python'))
-import rate_limit_client
-from rate_limit_tool import install_binding
-install_binding(sys.argv[2])
-import restore_source_binding as binding
-from test_restore_source_binding import SourceBindingTests
-case = SourceBindingTests()
-case.setUp()
-try:
-    directory = case.backend / '中文 隔离配置'
-    directory.mkdir()
-    document = ['scope_id=' + json.dumps(case.table['scope_id'])]
-    for name, values in [
-        ('database.primary', case.table['database']['primary']),
-        ('object_storage', case.table['object_storage']),
-    ]:
-        document.append('[' + name + ']')
-        document.extend(key + '=' + json.dumps(value) for key, value in values.items())
-    for target in case.table['tenant_data']['targets']:
-        document.append('[[tenant_data.targets]]')
-        document.extend(key + '=' + json.dumps(value) for key, value in target.items())
-    selected = directory / 'app.test.toml'
-    original = '\n'.join(document) + '\n'
-    selected.write_text(original, encoding='utf-8')
-    case.variables.update(APP_CONFIG_DIR='missing-legacy-directory', APP_SCOPE_ID='wrong-scope',
-                          APP_DATABASE_PASSWORD='wrong-secret', APP_TENANT_DATA_TARGETS='invalid-json')
-    with patch.object(binding, 'load_app_table', side_effect=rate_limit_client.load_app_table):
-        result = case.verify(config_dir=directory)
-        assert len(result['databases']) == 4
-        assert selected.read_text(encoding='utf-8') == original
-        assert not (directory / 'app.toml').exists()
-        for secret in ['private-db-value', 'private-access-value', 'private-secret-value']:
-            assert secret not in json.dumps(result)
-        selected.write_text(original.replace('scope_id="source-fixture"', 'scope_id="other-scope"'),
-                            encoding='utf-8')
-        try:
-            case.verify(config_dir=directory)
-        except binding.BindingError as error:
-            assert 'scope' in str(error)
-        else:
-            raise AssertionError('native document must be reloaded after file changes')
-    print(json.dumps({'targets': 4, 'scope_change_rejected': True, 'legacy_overrides_ignored': True}))
-finally:
-    case.doCleanups()
-"#,
-        ])
-        .arg(root)
-        .arg(binding)
-        .env("CARGO", "ryframe-cargo-must-not-be-started")
-        .env("PYTHONUTF8", "1")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        json!({
-            "targets": 4, "scope_change_rejected": true, "legacy_overrides_ignored": true
-        })
-    );
-}
-
-#[test]
 fn native_and_python_callers_share_the_rust_configuration_authority() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -372,7 +289,6 @@ fn native_and_python_callers_share_the_rust_configuration_authority() {
         "devex_clone_target_binding.py",
         "devex_clone_source_proof.py",
         "reference_fixture_browser.py",
-        "restore_source_binding.py",
     ] {
         let source = fs::read_to_string(root.join("tools/python").join(caller)).unwrap();
         assert!(

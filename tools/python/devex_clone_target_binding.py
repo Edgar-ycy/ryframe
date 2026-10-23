@@ -1,6 +1,9 @@
 """将新目标严格绑定到已审阅单侧资源、实际配置和三份维护工具。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+import subprocess
+
 import copy
 from collections import Counter
 import hashlib
@@ -20,7 +23,6 @@ from full_stack_runtime import configuration_digest, worker_ready_url
 from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, identifier, plan_hash
-from restore_source_binding import defaults_connection, source_binding
 from source_inventory import snapshot
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
@@ -658,7 +660,17 @@ def generation(backend: Path, request: dict, run) -> dict:
     if configuration_digest(execution_root, config_dir) != digest(request["configuration_sha256"]):
         raise ValueError("新目标 APP 配置或秘密发生变化")
     maintenance = verify_tools(execution_root, bound_file(backend, request["maintenance_build"]), run)
-    physical = source_binding(execution_root, {"source": request["target"]}, environment, config_dir=config_dir)
+    physical = native_response(*native_invoke(
+        "__source-evidence", {"operation": "physical-binding", "write": False,
+            "arguments": {
+                'backend': str(execution_root),
+                'evidence_root': str(execution_root),
+                'source': request["target"],
+                'app_env': environment.get("APP_ENV"),
+                'config_dir': str(config_dir),
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     planned = {db["key"]: db for db in selected["databases"]}
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
@@ -711,7 +723,11 @@ def validate_reset_manifest(manifest: dict, request: dict, original: dict) -> No
         seen.add(key)
         kinds = {"control", "tenant-data"} if key == "shared-control" else {"tenant-data"}
         source_db = next(db for db in target["databases"] if db["key"] == key)
-        connection = defaults_connection(Path(original["maintenance"]["backend_root"]), source_db)
+        connection = native_response(*native_invoke(
+            "__source-evidence", {"operation": "connection-summary", "write": False,
+                "arguments": {"backend": original["maintenance"]["backend_root"], "database": source_db}},
+            subprocess.run, may_write=False,
+        ))[0]["value"]
         if (any(item[field] != expected[field] for field in ("host", "port", "database"))
                 or item["control_baseline"] != (key == "shared-control") or item["tenant_baseline"] is not True
                 or item["ownership_markers"] != {kind: f"ryframe-owner:v1:{scope}:{kind}" for kind in kinds}

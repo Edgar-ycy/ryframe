@@ -183,12 +183,39 @@ class InventoryDiagnosticTests(unittest.TestCase):
                 self.assertEqual(receipt["stdin"], expected)
                 self.assertNotIn("private-sql", json.dumps(receipt))
 
+    def test_database_diagnostic_keeps_frozen_credentials_when_live_plan_changes_during_command(self):
+        f = self.fixture
+        password = "frozen-database-only-password"
+        client = f.client.read_text(encoding="utf-8").replace("fixture-secret", password)
+        f.client.write_text(client, encoding="utf-8")
+        for db in f.selected["databases"]:
+            db["defaults_sha256"] = hashlib.sha256(f.client.read_bytes()).hexdigest()
+        output = f.local / "frozen-diagnostic"
+        output.mkdir()
+        capture = inventory._Capture(f.backend, "source", f.tools, f.maintenance_file, output, f.environment)
+        alternate = f.local / "other-client.cnf"
+        alternate.write_text(client.replace(password, "unrelated-password"), encoding="utf-8")
+
+        def command(*_args, **_kwargs):
+            for db in capture.selected["databases"]:
+                db["defaults_file"] = str(alternate)
+                db["defaults_sha256"] = hashlib.sha256(alternate.read_bytes()).hexdigest()
+            return subprocess.CompletedProcess([], 0, password.encode(), password.encode())
+
+        capture.original.run = command
+        capture.run(["isolated-fake-command"])
+        record = json.loads(next(output.glob("command-*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(record["stdout"], "[REDACTED]")
+        self.assertEqual(record["stderr"], "[REDACTED]")
+        self.assertNotIn(password, json.dumps(record))
+
     def capture_runner(self, name):
         capture = object.__new__(inventory._Capture)
         capture.environment = self.fixture.environment
         capture.output = self.fixture.local / name
         capture.output.mkdir()
         capture.redaction = self.fixture.environment
+        capture.database_credentials = {"backend": str(self.fixture.backend), "databases": []}
         capture.original = Mock(run=Mock(return_value=subprocess.CompletedProcess([], 0, b"", b"")))
         capture.evidence_names = set()
         return capture

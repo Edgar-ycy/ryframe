@@ -1,6 +1,9 @@
 """复用完整进程树监督器，在复制 run 锁内启动并静止源 API/Worker。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+import subprocess
+
 import copy
 from datetime import datetime, timezone
 import os
@@ -24,7 +27,6 @@ from full_stack_process_tree import (launch_supervised_process, read_process_tre
 from full_stack_runtime import process_environment, register_runtime, verify_runtime
 from process_sockets import verify_listener
 from restore_build import registered_source, verify_build, verify_build_artifacts
-from restore_source_binding import source_binding
 from restore_runtime_evidence import timestamp
 
 ROLES = ("api", "worker")
@@ -94,7 +96,17 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
         if (contract["backend_root"] != str(execution)
                 or contract["artifacts"] != {role: {"path": item["executable"], "sha256": item["sha256"]}
                                              for role, item in build["artifacts"].items()}
-                or source_binding(execution, {"source": selected}, evidence_root=backend, config_dir=execution / "config") != physical):
+                or native_response(*native_invoke(
+                    "__source-evidence", {"operation": "physical-binding", "write": False,
+                        "arguments": {
+                            'backend': str(execution),
+                            'evidence_root': str(backend),
+                            'source': selected,
+                            'app_env': os.environ.get("APP_ENV"),
+                            'config_dir': str(execution / "config"),
+                        },
+                    }, subprocess.run, may_write=False,
+                ))[0]["value"] != physical):
             raise ValueError("运行中源配置、物理来源或产物变化")
     urls = {"api": selected["api_url"].rstrip("/") + "/readyz", "worker": contract["worker_ready_url"]}
     for role in ROLES:
@@ -183,7 +195,17 @@ class GenerationRuntime:
             raise ValueError("源后继运行目录已存在，不能覆盖或重放")
         with self.environment():
             # C52 物理绑定包含配置解析出的连接，不能仅比较数据库名或 server UUID。
-            if source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend, config_dir=self.execution / "config") != self.source["generation"]["physical_binding"]:
+            if native_response(*native_invoke(
+                "__source-evidence", {"operation": "physical-binding", "write": False,
+                    "arguments": {
+                        'backend': str(self.execution),
+                        'evidence_root': str(self.backend),
+                        'source': self.selected,
+                        'app_env': os.environ.get("APP_ENV"),
+                        'config_dir': str(self.execution / "config"),
+                    },
+                }, subprocess.run, may_write=False,
+            ))[0]["value"] != self.source["generation"]["physical_binding"]:
                 raise ValueError("后继运行改变了 C52 的完整物理来源配置")
             if (self.execution.parent / "fixture.json").exists():
                 raise ValueError("源后继不能混入独立 fixture 运行环境")
@@ -205,7 +227,17 @@ class GenerationRuntime:
                 raise ValueError("源后继维护工具与 v2 产品构建必须绑定同一完整执行来源")
         with self.environment():
             if (current_storage_binding(self.backend, self.directory, "target") != self.request["current_storage"]
-                    or source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend, config_dir=self.execution / "config") != self.source["generation"]["physical_binding"]):
+                    or native_response(*native_invoke(
+                        "__source-evidence", {"operation": "physical-binding", "write": False,
+                            "arguments": {
+                                'backend': str(self.execution),
+                                'evidence_root': str(self.backend),
+                                'source': self.selected,
+                                'app_env': os.environ.get("APP_ENV"),
+                                'config_dir': str(self.execution / "config"),
+                            },
+                        }, subprocess.run, may_write=False,
+                    ))[0]["value"] != self.source["generation"]["physical_binding"]):
                 raise ValueError("源后继运行期间存储代次或物理配置发生变化")
             verify_api_address(self.execution, self.selected["api_url"], config_dir=self.execution / "config")
             if self.contract is not None:

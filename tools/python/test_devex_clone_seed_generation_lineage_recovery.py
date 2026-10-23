@@ -366,8 +366,8 @@ class LineageRecoveryTests(unittest.TestCase):
             "devex_clone_tools.verify_evidence",
             return_value={"source": {"frozen": True}},
         ), patch("process_environment.configured", return_value={"APP_ENV": "test"}), patch(
-            "restore_source_binding.source_binding",
-            return_value=source["generation"]["physical_binding"],
+            'devex_clone_seed_generation_lineage_recovery.native_invoke',
+            return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": source["generation"]["physical_binding"]}}),
         ), patch("reference_fixture_successor_generation.rebuild") as rebuild:
             recovery._verify_request(self.backend, request, source)
         rebuild.assert_not_called()

@@ -233,13 +233,15 @@ class PostTests(unittest.TestCase):
         context = Context.__new__(Context)
         context.backend, context.value, context.directory_root = self.backend, self.value, self.directory
         context.output, context.runtime, context.run = self.directory, self.directory / 'runtime', None
-        context.target, context.review, context.target_config = {}, {}, {'scope_id': 'target-one'}
+        (self.backend / 'config').mkdir(exist_ok=True)
+        context.target, context.review, context.target_config = {'config_dir': str(self.backend / 'config')}, {}, {'scope_id': 'target-one'}
         context.initial, context.environments = {'generation': {'physical': 'physical'}}, Environments({}, {})
         context.selected = {**self.selected, 'worker_ready_url': 'http://127.0.0.1:19210',
                             'runtime_dir': str(self.directory / 'old-runtime')}
         tools = SimpleNamespace(verify_databases=lambda _: None, verify_objects=lambda _: None)
         resources, external = SimpleNamespace(storage_identity=lambda: None, tools=tools), self.local / 'storage-run'
-        with patch('devex_clone_post_context.source_binding', return_value='physical'), \
+        with patch('devex_clone_post_context.native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": 'physical'}})), \
+                patch('devex_clone_post_context.execution_root', return_value=self.backend), \
                 patch('devex_clone_post_context.verify_api_address'), \
                 patch('devex_clone_post_context.worker_ready_url', return_value=context.selected['worker_ready_url']), \
                 patch('devex_clone_post_context.require_closed_port'), \
@@ -252,7 +254,8 @@ class PostTests(unittest.TestCase):
         context = Context.__new__(Context)
         context.backend, context.value, context.directory_root = self.backend, self.value, self.directory
         context.output, context.runtime, context.run = self.directory, self.directory / 'runtime', None
-        context.target, context.review, context.target_config = {}, {}, {'scope_id': 'target-one'}
+        (self.backend / 'config').mkdir(exist_ok=True)
+        context.target, context.review, context.target_config = {'config_dir': str(self.backend / 'config')}, {}, {'scope_id': 'target-one'}
         context.initial, context.environments = {'generation': {'physical': 'physical'}}, Environments({}, {})
         context.owned_lock_identity = 4242
         context.selected = {**self.selected, 'worker_ready_url': 'http://127.0.0.1:19210',
@@ -260,7 +263,8 @@ class PostTests(unittest.TestCase):
         tools = SimpleNamespace(verify_databases=lambda _: None, verify_objects=lambda _: None)
         resources = SimpleNamespace(storage_identity=lambda: None, tools=tools)
         fixture = self.local / 'fixture-service-run'
-        with patch('devex_clone_post_context.source_binding', return_value='physical'), \
+        with patch('devex_clone_post_context.native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": 'physical'}})), \
+                patch('devex_clone_post_context.execution_root', return_value=self.backend), \
                 patch('devex_clone_post_context.verify_api_address'), \
                 patch('devex_clone_post_context.worker_ready_url', return_value=context.selected['worker_ready_url']), \
                 patch('devex_clone_post_context.require_closed_port'), \
@@ -308,13 +312,16 @@ class PostTests(unittest.TestCase):
     def test_prepare_is_read_only_remote_and_reuses_exact_partial_local_runtime(self):
         context = Context.__new__(Context)
         context.backend, context.runtime = self.backend, self.directory / 'runtime'
+        (self.backend / 'config').mkdir(exist_ok=True)
+        context.target = {'config_dir': str(self.backend / 'config')}
         context.request_binding, context.selected = {'sha256': 'a' * 64}, self.selected
         context.environments = Environments({}, self.api)
         context.build = {'artifacts': {'api': {'executable': 'unit-api'}, 'worker': {'executable': 'unit-worker'}}}
         context.before_api = lambda: None
         context.target_guard = lambda **_: None
         context.bindings = lambda: {'artifacts': {'reset': {'executable': 'unit-reset'}, 'migrate': {'executable': 'unit-migrate'}}}
-        def register_runtime(_backend, runtime):
+        def register_runtime(_backend, runtime, *, source_config_dir):
+            self.assertEqual(source_config_dir, self.backend / "config")
             path = runtime / 'runtime.json'
             if not path.exists(): write_json(path, {'configuration': 'unit'})
         with patch('devex_clone_post_context.register_runtime', side_effect=register_runtime):

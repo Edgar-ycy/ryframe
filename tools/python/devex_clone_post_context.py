@@ -1,5 +1,7 @@
 """复制后持锁交接的真实观察，数据库和对象只读，启动复用现有 runtime 工具。"""
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from dataclasses import asdict
+import copy
 import hashlib
 import json
 import os
@@ -33,7 +35,6 @@ from process_sockets import verify_listener
 from restore_build import verify_build_artifacts
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
 from restore_reference_plan import plan_hash, BUCKETS
-from restore_source_binding import source_binding, defaults_connection
 from source_fingerprints import source_check
 
 
@@ -97,11 +98,12 @@ class Context:
             self.tool_plan = {"source": self.source_config, "target": self.target_config, "tools": self.target["tools"]}
             self.build = read_json(bound_file(backend, self.request["backend_build"]))
             self.redaction = {}
+            self.database_credentials = {"backend": str(backend), "databases": []}
             for side, config in (("source", self.source_config), ("target", self.target_config)):
                 for field in ("access_key", "secret_key"):
                     self.redaction[f"SECRET_{side}_{field}"] = config["s3"][field]
-                for db in config["databases"]:
-                    self.redaction["PASSWORD_" + side + db["key"]] = defaults_connection(backend, db)["password"]
+                self.database_credentials["databases"].extend(copy.deepcopy(config["databases"]))
+            redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
 
     def bindings(self):
         with source_check(self.backend):
@@ -151,7 +153,17 @@ class Context:
 
     def target_guard(self, *, api):
         with self.environments.use("target"):
-            if source_binding(self.backend, {"source": self.target_config}, config_dir=application_config_directory(self.backend, self.target)) != self.initial["generation"]["physical"]:
+            if native_response(*native_invoke(
+                "__source-evidence", {"operation": "physical-binding", "write": False,
+                    "arguments": {
+                        'backend': str(self.backend),
+                        'evidence_root': str(self.backend),
+                        'source': self.target_config,
+                        'app_env': os.environ.get("APP_ENV"),
+                        'config_dir': str(application_config_directory(self.backend, self.target)),
+                    },
+                }, subprocess.run, may_write=False,
+            ))[0]["value"] != self.initial["generation"]["physical"]:
                 raise ValueError("派生 API 物理目标不是原复制目标")
             verify_api_address(self.backend, self.selected["api_url"], config_dir=application_config_directory(self.backend, self.target))
             if worker_ready_url(execution_root(self.backend, self.target), application_config_directory(self.backend, self.target)) != self.selected["worker_ready_url"]:
@@ -280,7 +292,7 @@ class Context:
             private = Path(command[0]).name.lower() in {'powershell.exe', 'pwsh.exe'}
             def diagnostic(value):
                 if not private:
-                    return redact_object_diagnostic(value, redaction)
+                    return redact_object_diagnostic(value, redaction, database_credentials=self.database_credentials)
                 raw = value if isinstance(value, bytes) else (value or '').encode()
                 return {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
             write_json(filename, {'command': command, 'returncode': code, 'error_type': failure,

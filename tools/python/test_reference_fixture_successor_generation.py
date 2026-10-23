@@ -1,4 +1,5 @@
 """唯一 generation-request 生产者的纯预览、原子发布与失败关闭。"""
+from types import SimpleNamespace
 import argparse
 from contextlib import ExitStack, contextmanager, redirect_stderr
 import copy
@@ -34,7 +35,7 @@ class GenerationRequestTests(unittest.TestCase):
             published = stack.enter_context(patch.object(producer, "published_source", return_value=self.f.source))
             registered = stack.enter_context(patch.object(producer, "registered_inputs", return_value=(self.f.backend, self.build)))
             stack.enter_context(patch.object(producer, "verify_evidence", return_value={"source": self.build["sources"]["full"]["source"]}))
-            stack.enter_context(patch.object(producer, "source_binding", return_value=self.f.source["generation"]["physical_binding"]))
+            stack.enter_context(patch.object(producer, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": self.f.source["generation"]["physical_binding"]}})))
             yield published, registered
 
     def test_preview_recomputes_current_source_and_never_writes_any_file_or_git_object(self):
@@ -60,8 +61,8 @@ class GenerationRequestTests(unittest.TestCase):
             ),
             patch.object(
                 producer,
-                "source_binding",
-                return_value=self.f.source["generation"]["physical_binding"],
+                'native_invoke',
+                return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": self.f.source["generation"]["physical_binding"]}}),
             ),
         )
         with patch.object(producer, "published_source", side_effect=ordinary) as published, patch(
@@ -282,7 +283,7 @@ class GenerationRequestTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "来源在只读构造期间变化"):
                 producer.publish(self.f.backend, output, *self.values)
         self.assertFalse(output.exists())
-        with self.inputs(), patch.object(producer, "source_binding", return_value={"different": "physical source"}), self.assertRaises(ValueError):
+        with self.inputs(), patch.object(producer, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": {"different": "physical source"}}})), self.assertRaises(ValueError):
             producer.build(self.f.backend, *self.values)
 
     def test_path_escape_and_reparse_output_are_rejected_before_source_reads(self):

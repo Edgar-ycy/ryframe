@@ -16,6 +16,8 @@ fn invoke(raw: &[u8], arguments: &[&str]) -> std::process::Output {
         .args(arguments)
         .env("RYFRAME_RESTORE_SOURCE_PROTOCOL", "private-do-not-read")
         .env("APP_ENV", "prod")
+        .env("APP_CONFIG_DIR", "absent-legacy-directory")
+        .env("APP_DATABASE_PASSWORD", "poisoned-secret")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -129,4 +131,66 @@ fn staging_git_reads_ignore_inherited_repository_object_and_replacement_override
             .unwrap(),
         b"{\"openapi\":\"3.1.0\"}\n"
     );
+}
+
+#[test]
+fn physical_binding_reads_selected_plaintext_files_and_ignores_legacy_environment() {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".local-tests/source-binding-process");
+    fs::create_dir_all(&base).unwrap();
+    let temporary = tempfile::tempdir_in(base).unwrap();
+    let root = temporary.path();
+    fs::create_dir(root.join(".local-tests")).unwrap();
+    let directory = root.join("中文 隔离配置");
+    fs::create_dir(&directory).unwrap();
+    let defaults = root.join(".local-tests/client.cnf");
+    fs::write(&defaults,"[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=private-secret\nssl-mode=REQUIRED\n").unwrap();
+    let configuration = "scope_id='source-process'\n[database.primary]\nhost='127.0.0.1'\nport=3306\ndatabase='fixture'\nusername='fixture'\npassword='private-secret'\ntls_mode='required'\n[object_storage]\nbackend='rustfs'\nendpoint='http://127.0.0.1:29000'\nregion='us-east-1'\naccess_key='private-access'\nsecret_key='private-object'\nuse_ssl=false\n";
+    let file = directory.join("app.test.toml");
+    fs::write(&file, configuration).unwrap();
+    let request = json!({"operation":"physical-binding","write":false,"arguments":{
+        "backend":root,"evidence_root":root,"config_dir":directory,"app_env":"test",
+        "source":{"scope_id":"source-process","databases":[{"key":"shared-control","kind":"combined","mode":"shared","database":"fixture","server_uuid":"server-fixture","defaults_file":defaults,"defaults_sha256":hex::encode(Sha256::digest(fs::read(&defaults).unwrap()))}],
+        "s3":{"endpoint":"http://127.0.0.1:29000","region":"us-east-1","access_key":"private-access","secret_key":"private-object"}}}});
+    let output = invoke(&serde_json::to_vec(&request).unwrap(), &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(output.stderr.is_empty());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        response["result"]["value"]["databases"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    for secret in [
+        "private-secret",
+        "private-access",
+        "private-object",
+        "poisoned-secret",
+    ] {
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+    }
+    assert_eq!(fs::read_to_string(&file).unwrap(), configuration);
+    assert!(!directory.join("app.toml").exists());
+    fs::write(
+        &file,
+        configuration.replace("source-process", "other-scope"),
+    )
+    .unwrap();
+    assert!(
+        !invoke(&serde_json::to_vec(&request).unwrap(), &[])
+            .status
+            .success()
+    );
+    fs::write(&file, "password='private-secret' invalid").unwrap();
+    let failure = invoke(&serde_json::to_vec(&request).unwrap(), &[]);
+    assert!(!failure.status.success());
+    assert!(!String::from_utf8_lossy(&failure.stdout).contains("private-secret"));
 }

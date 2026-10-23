@@ -6,7 +6,7 @@ mod clone;
 #[path = "existing_native/common.rs"]
 mod common;
 #[path = "existing_native/source.rs"]
-mod source;
+pub(in crate::recovery) mod source;
 
 pub(crate) const CLONE_MARKER: &str = "__recovery-existing-clone";
 pub(crate) const SOURCE_MARKER: &str = "__recovery-existing-source";

@@ -415,10 +415,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(test_config, self.root / "output" / environment.TEST_CONFIG_DIRECTORY)
         self.assertEqual((test_config / "app.toml").read_bytes(), (config / "app.toml").read_bytes())
         targets = (test_config / "app.test.toml").read_text(encoding="utf-8")
-        self.assertIn(
-            f"[rate_limit]\ncapacity = {environment.FIXTURE_REQUEST_RATE_LIMIT_CAPACITY}",
-            targets,
-        )
+        self.assertEqual(settings["rate_limit"]["capacity"], environment.FIXTURE_REQUEST_RATE_LIMIT_CAPACITY)
         self.assertIn("[[tenant_data.targets]]", targets)
         for item in self.review["scopes"]["seed"]["databases"]:
             if item["key"] == "shared-control":

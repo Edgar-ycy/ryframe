@@ -5,6 +5,9 @@ payload 仍须由 TransferSteps 单独校验。HEAD 复核不下载业务对象�
 """
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+import subprocess
+
 import copy
 from pathlib import Path
 from typing import Mapping
@@ -23,7 +26,6 @@ from native_s3_client import NativeS3InvocationError, inspect as native_s3_inspe
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
 from restore_reference_plan import BUCKETS, plan_hash
-from restore_source_binding import source_binding
 from source_fingerprints import build_source
 
 EVIDENCE = {"request", "generation-before", "generation-after", "inventory-before", "inventory-after",
@@ -306,7 +308,17 @@ class _Observation:
         source = self.plan["source"]
         return {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.environment),
                 "transport": "rust-s3-sigv4", "configuration_sha256": plan_hash(source["s3"]),
-                "physical": source_binding(self.execution, {"source": source}, self.environment, evidence_root=self.backend),
+                "physical": native_response(*native_invoke(
+                    "__source-evidence", {"operation": "physical-binding", "write": False,
+                        "arguments": {
+                            'backend': str(self.execution),
+                            'evidence_root': str(self.backend),
+                            'source': source,
+                            'app_env': self.environment.get("APP_ENV"),
+                            'config_dir': None,
+                        },
+                    }, subprocess.run, may_write=False,
+                ))[0]["value"],
                 "configuration": configuration(self.execution, self.environment, source, evidence_root=self.backend)}
 
     def run(self, command, **kwargs):

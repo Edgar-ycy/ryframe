@@ -22,7 +22,6 @@ from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import BUCKETS, identifier, plan_hash
-from restore_source_binding import defaults_connection
 
 
 REDIS_MARKER_REBIND_SCRIPT = """local cursor = '0'
@@ -66,8 +65,8 @@ class Resources:
         self.lock_output = lock_output or output
         self.environment = dict(os.environ)
         self.redaction = dict(self.environment)
-        for db in request["target"]["databases"]:
-            self.redaction["DB_PASSWORD_" + db["key"]] = defaults_connection(backend, db)["password"]
+        self.database_credentials = {"backend": str(backend), "databases": copy.deepcopy(request["target"]["databases"])}
+        redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = request["target"]["s3"][field]
         self.tools = ExternalTools({"target": request["target"], "tools": request["tools"]}, output, run,
@@ -107,8 +106,8 @@ class Resources:
             if diagnostic is not None:
                 diagnostic["phase"] = "command-receipt-publish"
             write_json(path, {"command": args, "returncode": code, "error_type": error_type,
-                             "stdout": redact_object_diagnostic(stdout, self.redaction),
-                             "stderr": redact_object_diagnostic(stderr, self.redaction)})
+                             "stdout": redact_object_diagnostic(stdout, self.redaction, database_credentials=self.database_credentials),
+                             "stderr": redact_object_diagnostic(stderr, self.redaction, database_credentials=self.database_credentials)})
 
     def _mysql(self, db: dict, sql: str) -> str:
         self.tools.verify_defaults(db)

@@ -149,7 +149,6 @@ def _verify_running_source(
 ) -> dict:
     from devex_clone_seed_generation_images import verify_image
     from devex_clone_seed_generation_runtime import verify_running_evidence
-    from restore_source_lineage import verify_dataset_lineage
 
     path = bound_file(backend, start_descriptor)
     directory = path.parent.parent
@@ -202,7 +201,26 @@ def _verify_running_source(
               source_registration=value["source_registration"]) for key in ("before", "running")}
     if images["before"]["image"] != images["running"]["image"]:
         raise ValueError("运行中源启动前后存在数据库、对象或 Redis 漂移")
-    lineage = verify_dataset_lineage(backend, source, value["dataset_lineage"], value["before"], images["before"])
+    from devex_clone_post_registration import resolve_post_registration
+    from devex_clone_run import require_target_copy
+    from devex_clone_post import _validate_business_lineage
+    lineage_post = resolve_post_registration(backend, source["directory"], descriptor=source["registration"]["post_copy"])
+    lineage_copy = require_target_copy(backend, source["directory"], source["manifest"], ("api",)).plan
+    _validate_business_lineage(backend, source["manifest"], lineage_post.request, lineage_copy)
+    lineage = native_response(*native_invoke(
+        "__source-evidence", {"operation": "lineage-verify", "write": False,
+            "arguments": {
+                'backend': str(backend),
+                'source': {**{key: source[key] for key in ("review_successor", "result", "registration", "manifest", "request")}, "directory": str(source["directory"])},
+                'post_request': lineage_post.request,
+                'post_descriptor': lineage_post.descriptor,
+                'copy_plan': lineage_copy,
+                'image_descriptor': value["before"],
+                'verified_image': images["before"],
+                'lineage_descriptor': value["dataset_lineage"],
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     runtime = verify_running_evidence(backend, output, request, selected, source["generation"]["physical_binding"], live=live)
     if live:
         from devex_clone_storage import current_storage_binding
@@ -451,7 +469,6 @@ def _reboot_image(archive: dict, current: dict, segment: dict) -> None:
 def execute_generation(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:
     from devex_clone_seed_generation_runtime import GenerationRuntime
     from devex_clone_seed_generation_images import capture_image, verify_image
-    from restore_source_lineage import derive_dataset_lineage
     from devex_clone_seed_generation_prelaunch import closed
 
     original = inputs(backend, directory, request_path, number)
@@ -488,8 +505,25 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
                                environment, output / "before", run, control_environment=runtime.control_environment)
         if archive is not None:
             _archived_image(archive, read_json(Path(before["path"]))["image"], segment)
-        lineage = derive_dataset_lineage(backend, source, before,
-            verify_image(backend, before, runtime.selected, source["request"], source_registration=request["source_registration"]))
+        from devex_clone_post_registration import resolve_post_registration
+        from devex_clone_run import require_target_copy
+        from devex_clone_post import _validate_business_lineage
+        lineage_post = resolve_post_registration(backend, source["directory"], descriptor=source["registration"]["post_copy"])
+        lineage_copy = require_target_copy(backend, source["directory"], source["manifest"], ("api",)).plan
+        _validate_business_lineage(backend, source["manifest"], lineage_post.request, lineage_copy)
+        lineage = native_response(*native_invoke(
+            "__source-evidence", {"operation": "lineage-derive", "write": False,
+                "arguments": {
+                    'backend': str(backend),
+                    'source': {**{key: source[key] for key in ("review_successor", "result", "registration", "manifest", "request")}, "directory": str(source["directory"])},
+                    'post_request': lineage_post.request,
+                    'post_descriptor': lineage_post.descriptor,
+                    'copy_plan': lineage_copy,
+                    'image_descriptor': before,
+                    'verified_image': verify_image(backend, before, runtime.selected, source["request"], source_registration=request["source_registration"]),
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"]
         write_json(output / "dataset-lineage.json", lineage)
         try:
             checkpoint()

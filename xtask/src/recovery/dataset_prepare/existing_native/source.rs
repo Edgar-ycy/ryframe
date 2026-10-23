@@ -200,7 +200,7 @@ fn validate_staging(
     model::hash(&Value::Array(modules.clone()))
 }
 
-pub(super) fn validate_lineage(value: &Value) -> Result<()> {
+pub(in crate::recovery) fn validate_lineage(value: &Value) -> Result<()> {
     let mut fields = vec!["format_version", "kind", "status"];
     fields.extend_from_slice(DESCRIPTORS);
     fields.extend_from_slice(&[
@@ -407,9 +407,15 @@ fn validate_tenants(value: &Value) -> Result<()> {
             {
                 return Err("派生来源对象样本无效".into());
             }
-            totals.3 += file["bytes"].as_u64().unwrap_or(0);
+            totals.3 = totals
+                .3
+                .checked_add(file["bytes"].as_u64().unwrap_or(0))
+                .ok_or("派生对象字节总数溢出")?;
         }
-        totals.0 += identity["records"].as_u64().ok_or("派生租户记录数无效")?;
+        totals.0 = totals
+            .0
+            .checked_add(identity["records"].as_u64().ok_or("派生租户记录数无效")?)
+            .ok_or("派生租户记录总数溢出")?;
         totals.1 += posts.len() as u64;
         totals.2 += files.len() as u64;
     }

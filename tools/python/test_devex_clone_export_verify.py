@@ -17,8 +17,37 @@ import devex_clone_rows as sql_rows
 from devex_clone_source import export_source
 from devex_clone_source_fixture import SourceFixture
 from restore_build import file_digest
-from restore_reference_io import ExternalTools
+from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools
 from restore_reference_plan import BUCKETS, plan_hash
+
+
+class ObjectRequestConfigurationTests(unittest.TestCase):
+    def test_object_requests_dispatch_inline_and_file_bound_configuration_to_their_declared_protocol_fields(self):
+        from workspace_directory import WorkspaceDirectory
+        temporary = WorkspaceDirectory(dir=Path(__file__).resolve().parents[2] / ".local-tests/object-request-mode")
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        for index, (field, configuration) in enumerate((
+            ("configuration", {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1", "access_key": "fixture-access", "secret_key": "fixture-secret"}),
+            ("configuration_binding", {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1", "configuration": {"app_env": "test", "directory": str(work), "files": {}, "sha256": "a" * 64}}),
+        )):
+            tools = ExternalTools({"source": {"scope_id": "restore-unit", "s3": configuration}, "tools": {}}, work)
+            with patch("restore_reference_io.native_s3_read", return_value=({"fixture": "response"}, {})) as native:
+                self.assertEqual(tools.read_object("source", "uploads", "restore-unit/system/file", work / str(index), max_bytes=4096), {"fixture": "response"})
+            request = native.call_args.args[0]
+            self.assertEqual(set(request), {"format_version", "kind", "scope_id", field, "bucket", "operation", "key", "if_match", "version", "destination", "max_bytes"})
+            self.assertEqual(request[field], configuration)
+            tools.plan["target"] = tools.plan["source"]
+            source = work / f"source-{index}"
+            source.write_bytes(b"data")
+            metadata = {name: None for name in COPY_METADATA_FIELDS}
+            metadata.update(ContentType="text/plain", Metadata={})
+            with patch("restore_reference_io.native_put_if_absent", return_value=({"status": "created_unverified", "remote_write_may_have_occurred": True}, {"returncode": 0, "error_type": None})) as put:
+                result = tools.create_object_if_absent("uploads", "restore-unit/system/file", source, metadata, file_digest(source))
+            request = put.call_args.args[0]
+            self.assertEqual(set(request), {"format_version", "kind", "scope_id", field, "bucket", "key", "source", "expected", "metadata"})
+            self.assertEqual(request[field], configuration)
+            self.assertNotIn("fixture-secret", Path(result["request_file"]).read_text(encoding="utf-8"))
 
 
 class ExportVerificationTests(unittest.TestCase):

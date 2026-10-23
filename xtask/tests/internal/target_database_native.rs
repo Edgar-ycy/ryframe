@@ -498,7 +498,7 @@ fn oracle(fixture: &Fixture, raw: &Value, declared: &Value, owners: &[Value]) ->
         &json!({"raw": raw, "declared": declared, "owners": owners}),
     )
     .unwrap();
-    let script = r#"import json,sys
+    let script = r#"import json,sys,subprocess
 from pathlib import Path
 from dataclasses import asdict
 from devex_clone_inventory import observation_from_inventory
@@ -670,10 +670,10 @@ fn python_can_reverify_the_complete_native_receipt() {
         &json!({"receipt": captured.receipt, "target": fixture.context.target(), "request": fixture.context.request, "environment": fixture.context.environment}),
     )
     .unwrap();
-    let script = r#"import json,sys
+    let script = r#"import json,sys,subprocess
 from pathlib import Path
 from devex_clone_inventory import verify_side_inventory,configuration
-from restore_source_binding import source_binding
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from restore_reference_plan import plan_hash
 from restore_build import file_digest
 v=json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
@@ -687,7 +687,7 @@ side={**v['target'],**{key:selected[key] for key in ('runtime_dir','api_url')}}
 maintenance=Path(request['maintenance_build']['path'])
 expected={'side':'target','tools_plan_sha256':plan_hash({'target':side,'tools':request['tools']}),
           'configuration':configuration(Path(sys.argv[2]),v['environment'],side,evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),
-          'physical':source_binding(Path(sys.argv[2]),{'source':side},v['environment'],evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),
+          'physical':native_response(*native_invoke('__source-evidence', {'operation':'physical-binding','write':False,'arguments':{'backend':sys.argv[2],'evidence_root':sys.argv[1],'source':side,'app_env':v['environment']['APP_ENV'],'config_dir':result['binding']['configuration']['directory']}},subprocess.run,may_write=False))[0]['value'],
           'maintenance':file_digest(maintenance),'source':json.loads(maintenance.read_text(encoding='utf-8'))['source']}
 assert result['binding']==expected
 print(json.dumps(result['receipt']))

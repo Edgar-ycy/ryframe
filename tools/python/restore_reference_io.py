@@ -15,7 +15,8 @@ from urllib.parse import quote, quote_plus
 
 from artifact_digests import filesystem_path
 from restore_build import file_digest
-from native_s3_client import (NativeS3InvocationError, put_if_absent as native_put_if_absent,
+from native_s3_client import (_invoke as native_invoke, _read_response as native_response,
+                              NativeS3InvocationError, put_if_absent as native_put_if_absent,
                               read as native_s3_read)
 from restore_reference_plan import BUCKETS, identifier, safe_file
 
@@ -73,8 +74,14 @@ class ObjectCreateError(RuntimeError):
         super().__init__(f"对象条件创建未确认：{outcome}；禁止降级或自动重试")
 
 
-def redact_object_diagnostic(stderr, env: dict) -> str:
+def redact_object_diagnostic(stderr, env: dict, *, database_credentials=None) -> str:
     text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else stderr or ""
+    if database_credentials is not None:
+        text = native_response(*native_invoke(
+            "__source-evidence", {"operation": "redact-database", "write": False,
+                "arguments": {**database_credentials, "text": text}},
+            subprocess.run, may_write=False,
+        ))[0]["value"]
     secrets = {value for name, value in env.items() if value and
                re.search(r"KEY|PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL|MYSQL_PWD", name, re.IGNORECASE)}
     variants = set()
@@ -398,7 +405,7 @@ class ExternalTools:
             self.before_execute()
         response, _ = native_s3_read({
             "format_version": 1, "kind": "ryframe-native-s3-read", "scope_id": scope,
-            "configuration_binding": self.plan[side]["s3"], "bucket": bucket,
+            **{("configuration_binding" if "configuration" in self.plan[side]["s3"] else "configuration"): self.plan[side]["s3"]}, "bucket": bucket,
             "operation": "get-object", "key": key, "if_match": None, "version": None,
             "destination": str(destination), "max_bytes": max_bytes,
         }, self.run)
@@ -448,7 +455,7 @@ class ExternalTools:
                     self.before_execute()
                 response, invocation = native_put_if_absent({
                     "format_version": 1, "kind": "ryframe-native-s3-put-if-absent",
-                    "scope_id": scope, "configuration_binding": config, "bucket": bucket, "key": key,
+                    "scope_id": scope, **{("configuration_binding" if "configuration" in config else "configuration"): config}, "bucket": bucket, "key": key,
                     "source": str(source), "expected": expected, "metadata": metadata,
                 }, self.run)
                 outcome = response["status"]

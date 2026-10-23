@@ -23,7 +23,7 @@ from reference_fixture_service_context import load_prepared_environment, service
 from reference_fixture_control_protocol import run_private
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
-from restore_source_binding import mysql_client
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from source_inventory import snapshot
 
 
@@ -63,7 +63,8 @@ def _fixture(value: dict) -> None:
 TEST_CONFIG_DIRECTORY = "config"
 
 
-def _test_configuration(execution: Path, output: Path, targets: list[dict], settings: dict) -> Path:
+def _test_configuration(execution: Path, output: Path, targets: list[dict], settings: dict,
+                        database_credentials: dict) -> Path:
     """生成测试运行配置目录：基础 app.toml 复制，租户目标写入 app.test.toml。
 
     调用方显式绑定生成目录读取已登记目标；冻结的夹具执行树
@@ -89,12 +90,16 @@ def _test_configuration(execution: Path, output: Path, targets: list[dict], sett
     for target in targets:
         fields = {"key": target["key"], "display_name": f"夹具 {target['key']}", "kind": target["kind"],
                   "mode": target["mode"], "host": target["host"], "port": target["port"],
-                  "database": target["database"], "username": target["username"],
-                  "password": target["password"], "tls_mode": target["tls_mode"],
+                  "database": target["database"], "tls_mode": target["tls_mode"],
                   "max_connections": 8}
         sections.append("[[tenant_data.targets]]\n" + "\n".join(
             f"{key} = {json.dumps(value)}" for key, value in fields.items()))
-    (directory / "app.test.toml").write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "database-configuration", "write": True,
+            "arguments": {**database_credentials, "output": str(directory / "app.test.toml"),
+                          "text": "\n\n".join(sections) + "\n"}},
+        subprocess.run, may_write=True,
+    ))
     (directory / "app.test.toml").chmod(0o600)
     return directory
 
@@ -460,10 +465,17 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         raise ValueError("同侧四个数据库必须使用同一冻结 MySQL 凭据")
     mysql_descriptor = _database_credentials(backend, source_mysql, mysql_path)
     try:
-        client = mysql_client(mysql_path, mysql_descriptor["sha256"])
+        database_credentials = {"backend": str(backend), "database": {
+            "defaults_file": str(mysql_path), "defaults_sha256": mysql_descriptor["sha256"],
+            "database": database["shared-control"]["database"]}}
+        client = native_response(*native_invoke(
+            "__source-evidence", {"operation": "connection-summary", "write": False,
+                                  "arguments": database_credentials},
+            subprocess.run, may_write=False,
+        ))[0]["value"]
     except ValueError as error:
         raise ValueError("MySQL 凭据格式无效") from error
-    tls_mode = client["ssl-mode"].lower()
+    tls_mode = client["tls_mode"]
     values, files = {}, {"mysql-client.cnf": mysql_descriptor}
     for key, filename in (("access_key", "rustfs-access-key.txt"),
                           ("secret_key", "rustfs-secret-key.txt"),
@@ -478,8 +490,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     for key in ("shared", "dedicated-a", "dedicated-b"):
         item = database[key]
         targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
-                        "port": item["port"], "database": item["database"], "username": client["user"],
-                        "password": client["password"], "tls_mode": tls_mode})
+                        "port": item["port"], "database": item["database"], "tls_mode": tls_mode})
     scope = selected["scope_id"]
     api = urlsplit(selected["api_url"])
     worker = urlsplit(selected["worker_ready_url"])
@@ -499,8 +510,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         "bootstrap": {"admin_password": values["admin_password"]},
         "cors": {"allow_origins": [frontend_origin]},
         "database.primary": {"host": client["host"], "port": int(client["port"]),
-                             "database": database["shared-control"]["database"], "username": client["user"],
-                             "password": client["password"], "tls_mode": tls_mode},
+                             "database": database["shared-control"]["database"], "tls_mode": tls_mode},
         "object_storage": {"backend": "rustfs", "endpoint": selected["objects"]["endpoint"],
                            "region": selected["objects"]["region"], "use_ssl": False,
                            "access_key": values["access_key"], "secret_key": values["secret_key"]},
@@ -513,7 +523,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         "reset": {"credential_version": "fixture-v1", "legacy_mysql_exclusive": True, "legacy_redis_exclusive": True,
                   "legacy_object_storage_exclusive": True, "redis_outside_sentinel_key": f"ryframe:devex-fresh:{scope}:sentinel"},
     }
-    _test_configuration(execution, output, targets, settings)
+    _test_configuration(execution, output, targets, settings, database_credentials)
     return environment, files
 
 

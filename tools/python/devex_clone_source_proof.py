@@ -1,6 +1,8 @@
 """开发复制源的显式配置、构建、进程代次与停止状态证明。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+
 from contextlib import nullcontext
 import copy
 import errno
@@ -22,7 +24,6 @@ from rate_limit_client import load_app_table
 from process_sockets import endpoint, verify_windows_port_idle
 from restore_build import file_digest, verify_build_artifacts
 from restore_reference_plan import identifier, plan_hash
-from restore_source_binding import source_binding
 
 REQUEST_FIELDS = {"format_version", "kind", "id", "source", "tools", "backend_build", "maintenance_build",
                   "worktree_fingerprint", "runtime", "processes", "producers_registry", "max_object_bytes"}
@@ -289,7 +290,17 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
         raise ValueError("源运行配置或 runtime 代次已变化")
     app_env = os.environ.get("APP_ENV")
     file_environment = {"APP_ENV": app_env} if isinstance(app_env, str) else {}
-    physical = source_binding(execution, {"source": source}, file_environment, evidence_root=backend)
+    physical = native_response(*native_invoke(
+        "__source-evidence", {"operation": "physical-binding", "write": False,
+            "arguments": {
+                'backend': str(execution),
+                'evidence_root': str(backend),
+                'source': source,
+                'app_env': (file_environment).get("APP_ENV"),
+                'config_dir': None,
+            },
+        }, subprocess.run, may_write=False,
+    ))[0]["value"]
     if load_app_table(execution, file_environment)["jobs"]["mode"] != "external":
         raise ValueError("源必须明确使用 external Worker，scheduler/consumer 由 Worker 承载")
     processes = {}

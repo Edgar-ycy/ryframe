@@ -1,6 +1,8 @@
 """封存 C68 谱系校验失败，并只授权相邻 C70 重试一次。"""
 from __future__ import annotations
 
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
+
 import copy
 import hashlib
 import os
@@ -266,7 +268,6 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
     from devex_clone_seed_generation_runtime import registered_inputs
     from devex_clone_tools import verify_evidence
     from process_environment import configured
-    from restore_source_binding import source_binding
 
     expected = {"format_version": 1, "kind": "devex-clone-seed-source-generation", "id": request["id"],
                 "source_registration": source["review_successor"]["source_result"],
@@ -282,8 +283,17 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
     private = read_json(bound_file(backend, request["source_environment"]))
     exact(private, {"environment"})
     if (maintenance["source"] != build["sources"]["full"]["source"]
-            or source_binding(execution, {"source": source["request"]["source"]},
-                              {"APP_ENV": private["environment"]["APP_ENV"]}, evidence_root=backend, config_dir=execution / "config")
+            or native_response(*native_invoke(
+                "__source-evidence", {"operation": "physical-binding", "write": False,
+                    "arguments": {
+                        'backend': str(execution),
+                        'evidence_root': str(backend),
+                        'source': source["request"]["source"],
+                        'app_env': private["environment"]["APP_ENV"],
+                        'config_dir': str(execution / "config"),
+                    },
+                }, subprocess.run, may_write=False,
+            ))[0]["value"]
             != source["generation"]["physical_binding"]):
         raise ValueError("C68 正式请求的构建、维护工具或环境与 C52 物理来源不同")
 
@@ -296,7 +306,6 @@ def _runtime(backend: Path, directory: Path, output: Path, request: dict, source
     from full_stack_process_tree import validate_process_tree_directory
     from full_stack_runtime import verify_runtime
     from restore_build import verify_build
-    from restore_source_binding import source_binding
     from devex_clone_source_proof import verify_api_address
 
     runtime = GenerationRuntime(backend, directory, output, request, source, run)
@@ -308,7 +317,17 @@ def _runtime(backend: Path, directory: Path, output: Path, request: dict, source
     with runtime.environment():
         if (runtime.execution.parent / "fixture.json").exists():
             raise ValueError("C68 运行环境混入独立 fixture")
-        if source_binding(runtime.execution, {"source": runtime.selected}, evidence_root=backend, config_dir=runtime.execution / "config") != source["generation"]["physical_binding"]:
+        if native_response(*native_invoke(
+            "__source-evidence", {"operation": "physical-binding", "write": False,
+                "arguments": {
+                    'backend': str(runtime.execution),
+                    'evidence_root': str(backend),
+                    'source': runtime.selected,
+                    'app_env': os.environ.get("APP_ENV"),
+                    'config_dir': str(runtime.execution / "config"),
+                },
+            }, subprocess.run, may_write=False,
+        ))[0]["value"] != source["generation"]["physical_binding"]:
             raise ValueError("C68 运行配置改变了 C52 物理来源")
         contract = verify_runtime(runtime.execution, runtime.runtime)
         verify_api_address(runtime.execution, runtime.selected["api_url"], config_dir=runtime.execution / "config")
