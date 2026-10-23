@@ -114,6 +114,13 @@ pub(crate) fn validate_pair(root: &Path, source: &str, owner: &str) -> Vec<Strin
                 .collect(&root.join(source), variant)
                 .and_then(|source_tests| {
                     let owner_tests = scanner.collect(&root.join(owner), variant)?;
+                    let source_count = source_tests.values().filter(|case| !case.opaque).count();
+                    let owner_count = owner_tests.values().filter(|case| !case.opaque).count();
+                    let opaque_count = source_tests.values().filter(|case| case.opaque).count();
+                    let missing = source_tests.keys().filter(|key| !owner_tests.contains_key(*key)).count();
+                    println!(
+                        "共享测试可达性 [{platform} resource={resource}] source_tests={source_count} owner_tests={owner_count} source_opaque={opaque_count} missing={missing}"
+                    );
                     for (identity, case) in source_tests {
                         if !owner_tests.contains_key(&identity) {
                             let reason = if case.opaque {

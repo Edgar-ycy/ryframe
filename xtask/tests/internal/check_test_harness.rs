@@ -6,6 +6,14 @@ struct Fixture {
     directory: tempfile::TempDir,
 }
 
+#[test]
+fn current_shared_harness_reaches_all_source_cases_in_four_variants() {
+    let root = super::workspace::root_dir();
+    println!("真实源码共享测试入口四种配置验证：{}", root.display());
+    let errors = test_harness::validate_pair(&root, "xtask/src/main.rs", "xtask/tests/internal.rs");
+    assert!(errors.is_empty(), "{errors:#?}");
+}
+
 impl Fixture {
     fn new() -> Self {
         let parent = super::workspace::root_dir().join(".local-tests/test-harness");
@@ -178,6 +186,111 @@ fn each_platform_and_resource_variant_must_reach_its_own_colocated_tests() {
 }
 
 #[test]
+fn path_attributes_preserve_rustc_directory_ownership_and_inline_bases() {
+    let fixture = Fixture::new();
+    fixture.write("xtask/src/main.rs", "mod foo; fn main() {}\n");
+    fixture.write(
+        "xtask/src/foo.rs",
+        concat!(
+            "mod child; mod inline { #[path = \"other.rs\"] mod leaf; }\n",
+            "#[path = \"redirect\"] mod redirected { #[path = \"other.rs\"] mod leaf; }\n",
+        ),
+    );
+    for path in ["foo/child.rs", "foo/inline/other.rs", "redirect/other.rs"] {
+        fixture.write(
+            &format!("xtask/src/{path}"),
+            "#[test] fn expected_case() {}\n",
+        );
+    }
+    for path in ["child.rs", "inline/other.rs", "foo/redirect/other.rs"] {
+        fixture.write(
+            &format!("xtask/src/{path}"),
+            "#[test] fn wrong_directory() {}\n",
+        );
+    }
+    fixture.write(
+        "xtask/tests/internal.rs",
+        concat!(
+            "#[path = \"../src/foo/child.rs\"] mod child;\n",
+            "#[path = \"../src/foo/inline/other.rs\"] mod inline;\n",
+            "#[path = \"../src/redirect/other.rs\"] mod redirected;\n",
+        ),
+    );
+    assert!(fixture.errors().is_empty(), "{:?}", fixture.errors());
+
+    fixture.write(
+        "xtask/src/main.rs",
+        "#[path = \"nested/foo.rs\"] mod alias;\n",
+    );
+    fixture.write(
+        "xtask/src/nested/foo.rs",
+        "mod child; mod inline { #[path = \"other.rs\"] mod leaf; }\n",
+    );
+    for path in ["nested/child.rs", "nested/inline/other.rs"] {
+        fixture.write(
+            &format!("xtask/src/{path}"),
+            "#[test] fn expected_case() {}\n",
+        );
+    }
+    for path in ["nested/foo/child.rs", "nested/foo/inline/other.rs"] {
+        fixture.write(
+            &format!("xtask/src/{path}"),
+            "#[test] fn wrong_directory() {}\n",
+        );
+    }
+    fixture.write(
+        "xtask/tests/internal.rs",
+        concat!(
+            "#[path = \"../src/nested/child.rs\"] mod child;\n",
+            "#[path = \"../src/nested/inline/other.rs\"] mod inline;\n",
+        ),
+    );
+    assert!(fixture.errors().is_empty(), "{:?}", fixture.errors());
+}
+
+#[test]
+fn cfg_attr_test_markers_are_checked_in_each_effective_variant() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "xtask/src/origin.rs",
+        concat!(
+            "#[cfg_attr(windows, test)] fn windows_case() {}\n",
+            "#[cfg_attr(feature = \"resource\", test)] fn resource_case() {}\n",
+        ),
+    );
+    assert!(fixture.errors().is_empty());
+    fixture.write("xtask/tests/internal.rs", "#[test] fn internal_only() {}\n");
+    let errors = fixture.errors();
+    assert_eq!(errors.len(), 4, "{errors:?}");
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("windows_case"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("resource_case"))
+            .count(),
+        2
+    );
+    assert!(
+        errors
+            .iter()
+            .filter(|error| error.contains("windows_case"))
+            .all(|error| error.contains("[windows "))
+    );
+    assert!(
+        errors
+            .iter()
+            .filter(|error| error.contains("resource_case"))
+            .all(|error| error.contains("resource=true]"))
+    );
+}
+
+#[test]
 fn unknown_cfg_and_unproven_macro_test_generation_block_the_gate() {
     let fixture = Fixture::new();
     for condition in [
@@ -199,6 +312,17 @@ fn unknown_cfg_and_unproven_macro_test_generation_block_the_gate() {
                 .all(|error| error.contains("未知") && error.contains("main.rs:1"))
         );
     }
+    fixture.write(
+        "xtask/src/main.rs",
+        "#[cfg_attr(any(test, future_platform), test)] fn cannot_skip() {}\n",
+    );
+    let errors = fixture.errors();
+    assert_eq!(errors.len(), 4);
+    assert!(
+        errors
+            .iter()
+            .all(|error| error.contains("未知") && error.contains("main.rs:1"))
+    );
     for source in [
         "macro_rules! generated { () => { #[test] fn hidden() {} } } generated!();",
         "#[test_case(1)] fn generated(value: u8) {}",
@@ -213,6 +337,38 @@ fn unknown_cfg_and_unproven_macro_test_generation_block_the_gate() {
             )
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_module_paths_are_rejected_before_canonicalization() {
+    let fixture = Fixture::new();
+    std::os::unix::fs::symlink("origin.rs", fixture.root().join("xtask/src/linked.rs")).unwrap();
+    fixture.write("xtask/src/main.rs", "#[path = \"linked.rs\"] mod origin;\n");
+    let errors = fixture.errors();
+    assert_eq!(errors.len(), 4);
+    assert!(
+        errors
+            .iter()
+            .all(|error| error.contains("链接或重解析点") && error.contains("linked.rs"))
+    );
+    fs::create_dir(fixture.root().join("xtask/src/real_directory")).unwrap();
+    std::os::unix::fs::symlink(
+        "real_directory",
+        fixture.root().join("xtask/src/linked_directory"),
+    )
+    .unwrap();
+    fixture.write(
+        "xtask/src/main.rs",
+        "#[path = \"linked_directory/../origin.rs\"] mod origin;\n",
+    );
+    let errors = fixture.errors();
+    assert_eq!(errors.len(), 4);
+    assert!(
+        errors
+            .iter()
+            .all(|error| error.contains("链接或重解析点") && error.contains("linked_directory"))
+    );
 }
 
 #[test]

@@ -51,6 +51,7 @@ struct Traversal {
 
 impl Scanner {
     pub(super) fn new(root: &Path) -> Result<Self, String> {
+        reject_links(root)?;
         let root = root
             .canonicalize()
             .map_err(|error| format!("无法解析仓库路径：{error}"))?;
@@ -105,12 +106,13 @@ impl Scanner {
         if !traversal.stack.insert(file.clone()) {
             return Err(format!("模块存在递归文件环：{}", file.display()));
         }
-        let parent = file.parent().ok_or("模块路径缺少父目录")?.to_path_buf();
+        // 身份与缓存使用物理路径，模块解析继续保留词法路径，不能提前折叠 link/..。
+        let parent = path.parent().ok_or("模块路径缺少父目录")?.to_path_buf();
         let directory =
             if explicit_directory || file.file_name().is_some_and(|name| name == "mod.rs") {
                 parent.clone()
             } else {
-                file.with_extension("")
+                path.with_extension("")
             };
         let parsed = self.parsed(&file)?;
         let scope = Scope {
@@ -242,9 +244,11 @@ impl Scanner {
         let identifier = text(identifier, source)?.trim_start_matches("r#");
         let name = joined(&scope.name, identifier);
         if let Some(body) = node.child_by_field_name("body") {
-            let directory = scope
-                .directory
-                .join(attributes.path.as_deref().unwrap_or(identifier));
+            // 显式 path 覆盖非 mod.rs 的相对目录前缀，与 rustc 的目录所有权规则一致。
+            let directory = match &attributes.path {
+                Some(path) => module_path(&scope.path_base, Path::new(path)),
+                None => module_path(&scope.directory, Path::new(identifier)),
+            };
             let child = Scope {
                 file: scope.file.clone(),
                 path_base: directory.clone(),
@@ -254,11 +258,11 @@ impl Scanner {
             return self.items(body, source, &child, traversal);
         }
         let path = if let Some(path) = &attributes.path {
-            scope.path_base.join(path)
+            module_path(&scope.path_base, Path::new(path))
         } else {
             let candidates = [
-                scope.directory.join(format!("{identifier}.rs")),
-                scope.directory.join(identifier).join("mod.rs"),
+                module_path(&scope.directory, Path::new(&format!("{identifier}.rs"))),
+                module_path(&scope.directory, Path::new(&format!("{identifier}/mod.rs"))),
             ];
             let existing = candidates
                 .iter()
@@ -294,7 +298,19 @@ fn joined(parent: &str, name: &str) -> String {
     }
 }
 
+fn module_path(base: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    // PathBuf::push 会折叠 Windows verbatim 路径中的 ..，先保留原始组件供链接检查。
+    let mut combined = base.as_os_str().to_os_string();
+    combined.push(std::path::MAIN_SEPARATOR_STR);
+    combined.push(path);
+    PathBuf::from(combined)
+}
+
 pub(super) fn checked_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    reject_links(path)?;
     let root = root
         .canonicalize()
         .map_err(|error| format!("无法解析仓库目录：{error}"))?;
@@ -305,4 +321,45 @@ pub(super) fn checked_path(root: &Path, path: &Path) -> Result<PathBuf, String> 
         return Err(format!("模块必须是仓库内的文件：{}", path.display()));
     }
     Ok(path)
+}
+
+fn reject_links(path: &Path) -> Result<(), String> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        if matches!(
+            component,
+            std::path::Component::Prefix(_) | std::path::Component::RootDir
+        ) {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&current).map_err(|error| {
+            format!(
+                "无法解析模块路径 {}（链接检查）：{error}",
+                current.display()
+            )
+        })?;
+        if is_link(&metadata) {
+            return Err(format!(
+                "模块路径含链接或重解析点，无法证明 Rust 目录语义：{}",
+                current.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_link(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
