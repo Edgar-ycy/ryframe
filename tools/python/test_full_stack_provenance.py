@@ -463,7 +463,11 @@ class ArchiveEvidenceTests(unittest.TestCase):
             "format_version": 1,
             "backend_root": backend_root,
             "scope_id": "ci-123-2",
-            "configuration_sha256": "d" * 64,
+            "api_config_dir": f"{self.receipt_root}/config",
+            "worker_config_dir": f"{self.receipt_root}/worker-config",
+            "api_configuration_sha256": "d" * 64,
+            "worker_configuration_sha256": "e" * 64,
+            "configuration_sha256": hashlib.sha256(json.dumps(["d" * 64, "e" * 64]).encode()).hexdigest(),
             "worker_ready_url": "http://127.0.0.1:9091/readyz",
             "artifacts": {
                 runtime_role: {
@@ -525,6 +529,23 @@ class ArchiveEvidenceTests(unittest.TestCase):
         self.assertEqual(result["build_evidence"], values["build"])
         self.assertEqual(result["runtime"], values["runtime"])
         self.assertEqual(result["runtime_evidence"], values["runtime_evidence"])
+
+    def test_archive_rejects_unbound_configuration_directories_and_digests(self):
+        entries, values = self.archive()
+        for field, replacement in (("api_config_dir", "/tmp/unbound/config"),
+                                   ("worker_config_dir", f"{self.receipt_root}/config"),
+                                   ("api_configuration_sha256", "invalid"),
+                                   ("worker_configuration_sha256", "d" * 64),
+                                   ("configuration_sha256", "f" * 64)):
+            with self.subTest(field=field):
+                changed_runtime = {**values["runtime"], field: replacement}
+                raw = self.raw(changed_runtime)
+                evidence = copy.deepcopy(values["runtime_evidence"])
+                evidence["runtime"] = self.binding(f"{self.receipt_root}/runtime.json", raw)
+                changed = self.replace(entries, provenance.RUNTIME_RECEIPT, raw)
+                changed = self.replace(changed, provenance.RUNTIME_EVIDENCE, self.raw(evidence))
+                with self.assertRaises(ValueError):
+                    self.validate(changed)
 
     def test_business_archive_binds_raw_fixture_clean_sources_and_generated_model(self):
         entries, values = self.archive("business")

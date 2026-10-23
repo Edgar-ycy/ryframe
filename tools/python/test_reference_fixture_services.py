@@ -32,10 +32,11 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
             path = self.root / name
             path.write_text(name, encoding="utf-8")
             self.credentials[name] = services.bound(path)
-        self.private = {
-            "access_key": "fixture-access",
-            "secret_key": "fixture-secret",
-        }
+        self.private = {"APP_ENV": "test"}
+        self.settings = {"object_storage": {"access_key": "fixture-access", "secret_key": "fixture-secret"}}
+        config = self.root / "config"
+        config.mkdir()
+        (config / "app.test.toml").write_text('[object_storage]\naccess_key = "fixture-access"\nsecret_key = "fixture-secret"\n', encoding="utf-8")
         self.review = {
             "future_root": str(self.future),
             "scopes": {
@@ -90,7 +91,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
                    "AWS_SESSION_TOKEN": "ambient-token", "AWS_PROFILE": "ambient-profile",
                    "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
         with patch.dict(os.environ, ambient):
-            configuration = services._bucket_configuration(self.review, self.private)
+            configuration = services._bucket_configuration(self.review, self.settings)
             self.assertEqual(configuration, {
                 "endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
                 "access_key": "fixture-access", "secret_key": "fixture-secret",
@@ -98,10 +99,10 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
             for key in ("access_key", "secret_key"):
                 for invalid in (None, "", 123):
                     with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "直接配置"):
-                        services._bucket_configuration(self.review, {**self.private, key: invalid})
-                missing = {name: value for name, value in self.private.items() if name != key}
+                        services._bucket_configuration(self.review, {"object_storage": {**self.settings["object_storage"], key: invalid}})
+                missing = {name: value for name, value in self.settings["object_storage"].items() if name != key}
                 with self.assertRaisesRegex(ValueError, "直接配置"):
-                    services._bucket_configuration(self.review, missing)
+                    services._bucket_configuration(self.review, {"object_storage": missing})
             with self.assertRaisesRegex(ValueError, "直接配置"):
                 services._bucket_configuration(self.review, {
                     "access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY",
@@ -179,7 +180,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
 
         def create(request):
             calls.append(request)
-            self.assertEqual(request["configuration"]["secret_key"], self.private["secret_key"])
+            self.assertEqual(request["configuration"]["secret_key"], self.settings["object_storage"]["secret_key"])
             self.environment_file.write_text('{"environment":{"changed":true}}', encoding="utf-8")
             return ({"status": "created_unverified", "http_status": 200,
                      "remote_write_may_have_occurred": True,

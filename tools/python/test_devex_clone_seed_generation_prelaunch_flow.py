@@ -84,7 +84,7 @@ class PrelaunchFlowTests(unittest.TestCase):
         stack.enter_context(patch("full_stack_runtime.verify_runtime", return_value={}))
         return stack
 
-    def register_runtime(self, backend, directory):
+    def register_runtime(self, backend, directory, *, source_config_dir):
         self.assertEqual(set(read_json(directory / "binaries.json")), {"ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"})
         write_json(directory / "runtime.json", {"backend_root": str(backend)})
         return {}

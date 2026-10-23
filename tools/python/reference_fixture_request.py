@@ -11,6 +11,7 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, request_binding, validate_review
 from restore_build import file_digest
+from reference_fixture_service_context import application_settings
 from restore_reference_plan import plan_hash
 from reference_fixture_service_context import service_run as expected_service_run
 from reference_fixture_control_protocol import run_private
@@ -221,13 +222,13 @@ def build(
     )
     environment_binding = _bound(environment_file)
     values = private.get("environment")
-    if (
-        not isinstance(values, dict)
-        or values.get("APP_SCOPE_ID") != selected["scope_id"]
-    ):
+    settings = application_settings(bootstrap_file, execution)
+    if (not isinstance(values, dict) or values.get("APP_ENV") != "test"
+            or settings.get("scope_id") != selected["scope_id"]):
         raise ValueError("fresh-target 私有环境未绑定当前 scope")
-    credential_version = values.get("APP_RESET_CREDENTIAL_VERSION")
-    if any(not isinstance(values.get(key), str) or not values[key]
+    credential_version = settings.get("reset", {}).get("credential_version")
+    credentials = settings.get("object_storage", {})
+    if any(not isinstance(credentials.get(key), str) or not credentials[key]
            for key in ("access_key", "secret_key")):
         raise ValueError("fresh-target 缺少直接配置的 S3 凭据")
     scope = selected["scope_id"]
@@ -245,13 +246,14 @@ def build(
             "s3": {
                 "endpoint": selected["objects"]["endpoint"],
                 "region": selected["objects"]["region"],
-                "access_key": values["access_key"],
-                "secret_key": values["secret_key"],
+                "access_key": credentials["access_key"],
+                "secret_key": credentials["secret_key"],
             },
             "databases": databases,
         },
         "maintenance_build": plan["maintenance_build"],
         "configuration_sha256": bootstrap["configuration_sha256"],
+        "config_dir": str(bootstrap_file.parent / "config"),
         "tools": {
             name: {key: review["tools"][name][key] for key in ("path", "sha256")}
             for name in ("mysql",)

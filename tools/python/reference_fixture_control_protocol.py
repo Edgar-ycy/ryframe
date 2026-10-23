@@ -10,8 +10,6 @@ import sys
 from typing import Callable
 
 
-PROTOCOL_KEY = "RYFRAME_REFERENCE_FIXTURE_CONTROL_PROTOCOL"
-PROTOCOL_PREFIX = "RYFRAME_REFERENCE_FIXTURE_CONTROL_"
 PROTOCOL_KIND = "ryframe-reference-fixture-control"
 BASE_FIELDS = {"backend_dir", "domain", "format_version", "kind", "operation", "write"}
 PATH_FIELDS = {
@@ -69,19 +67,12 @@ def private_arguments(
     *,
     positional_operation: bool,
     argv: list[str] | None = None,
-    environment: dict[str, str] | None = None,
 ) -> list[str]:
-    """只从单个私有环境字段重建经过精确约束的内部 argv。"""
+    """只从显式 JSON 参数重建经过精确约束的内部 argv。"""
     arguments = sys.argv[1:] if argv is None else argv
-    if arguments:
-        raise FixtureControlProtocolError("参考夹具控制脚本是私有实现，不接受命令行参数")
-    values = os.environ if environment is None else environment
-    unknown = sorted(
-        name for name in values if name.startswith(PROTOCOL_PREFIX) and name != PROTOCOL_KEY
-    )
-    if unknown:
-        raise FixtureControlProtocolError("参考夹具控制私有环境含未知字段")
-    raw = values.get(PROTOCOL_KEY)
+    if len(arguments) != 2 or arguments[0] != "--protocol-json":
+        raise FixtureControlProtocolError("参考夹具控制只接受 --protocol-json <JSON> 参数")
+    raw = arguments[1]
     if not isinstance(raw, str) or not raw or len(raw) > 65536:
         raise FixtureControlProtocolError("参考夹具控制私有协议缺失、为空或过长")
     if any(mark in raw for mark in ("\n", "\r", "\0")):
@@ -159,22 +150,13 @@ def run_private(
     except FixtureControlProtocolError:
         print("reference_fixture_control_protocol_error：私有控制请求无效。", file=sys.stderr)
         return 2
-    inherited_protocol = os.environ.pop(PROTOCOL_KEY, None)
     try:
-        try:
-            main(arguments)
-        except Exception as error:
-            from restore_reference_io import redact_object_diagnostic
-
-            detail = type(error).__name__
-            if isinstance(error, ValueError):
-                detail += ": " + redact_object_diagnostic(str(error), os.environ)
-            print(
-                f"reference_fixture_{domain}_failed：{detail}；请核对原账本和失败证据，不自动重放。",
-                file=sys.stderr,
-            )
-            return 1
-    finally:
-        if inherited_protocol is not None:
-            os.environ[PROTOCOL_KEY] = inherited_protocol
+        main(arguments)
+    except Exception as error:
+        from restore_reference_io import redact_object_diagnostic
+        detail = type(error).__name__
+        if isinstance(error, ValueError):
+            detail += ": " + redact_object_diagnostic(str(error), os.environ)
+        print(f"reference_fixture_{domain}_failed：{detail}；请核对原账本和失败证据，不自动重放。", file=sys.stderr)
+        return 1
     return 0

@@ -23,7 +23,8 @@ class RuntimeControlTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         (self.root / "config").mkdir()
-        (self.root / "config/app.toml").write_text('[app]\nhost="127.0.0.1"\nport=18210\n', encoding="utf-8")
+        (self.root / "config/app.toml").write_text('scope_id="runtime-control-test"\nsnowflake_worker_id=3\n[app]\nhost="127.0.0.1"\nport=18210\n[jobs]\nmode="external"\nhealth_host="127.0.0.1"\nhealth_port=19210\n', encoding="utf-8")
+        (self.root / "config/app.test.toml").write_text("", encoding="utf-8")
         self.directory = self.root / "runtime"
         self.directory.mkdir()
         write_receipt(self.directory / "binaries.json", {
@@ -34,7 +35,7 @@ class RuntimeControlTests(unittest.TestCase):
         }, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
-        register_runtime(self.root, self.directory)
+        register_runtime(self.root, self.directory, source_config_dir=self.root / "config")
         self.children = []
         self.popen = subprocess.Popen
         self.addCleanup(self.cleanup_children)
@@ -58,8 +59,11 @@ class RuntimeControlTests(unittest.TestCase):
             child.wait(timeout=5)
 
     def spawn(self, arguments, **kwargs):
-        self.assertEqual(arguments, [str(Path(sys.executable).resolve())])
-        self.assertIn(kwargs["env"]["SNOWFLAKE_WORKER_ID"], ("1", "2"))
+        self.assertEqual(arguments[0], str(Path(sys.executable).resolve()))
+        self.assertEqual(arguments[1], "--config-dir")
+        self.assertIn(Path(arguments[2]).name, ("config", "worker-config"))
+        self.assertNotIn("SNOWFLAKE_WORKER_ID", kwargs["env"])
+        self.assertEqual({key for key in kwargs["env"] if key.startswith("APP_")}, {"APP_ENV"})
         history = self.history()
         self.assertEqual(history["events"][-1]["event"], "start-intent")
         child = self.popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
@@ -151,9 +155,9 @@ class RuntimeControlTests(unittest.TestCase):
             self.control("status")
         self.require_closed_port.side_effect = None
         with mock.patch.dict(os.environ, {"APP_SCOPE_ID": "wrong-test"}):
-            with self.assertRaisesRegex(ValueError, "不匹配"):
-                self.control("stop")
-        (self.root / "config/app.toml").write_text('[app]\nport=1\n', encoding="utf-8")
+            self.control("stop")
+        receipt = json.loads((self.directory / "runtime.json").read_text(encoding="utf-8"))
+        (Path(receipt["api_config_dir"]) / "app.toml").write_text('[app]\nport=1\n', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "不匹配"):
             self.control("start")
         self.launch.assert_not_called()

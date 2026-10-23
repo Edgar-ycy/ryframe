@@ -212,10 +212,12 @@ class MigrationMysqlTests(unittest.TestCase):
             "tenant_data": {"targets": [{"key": "shared", "kind": "mysql", "mode": "shared",
                 "host": "127.0.0.1", "port": 3317, "database": "shared_test",
                 "username": "root", "password": "target-secret", "tls_mode": "disabled"}]}}
-        environment = mock.patch.dict(os.environ, {"APP_ENV": "test",
-            "RYFRAME_E2E_MYSQL_CLIENT": str(Path(sys.executable).resolve())}, clear=True)
+        environment = mock.patch.dict(os.environ, {"APP_ENV": "test"}, clear=True)
         environment.start()
         self.addCleanup(environment.stop)
+        control = mock.patch.object(mysql, "load_control", return_value={"mysql_client": str(Path(sys.executable).resolve()), "mysql_container_id": "abcdef012345"})
+        control.start()
+        self.addCleanup(control.stop)
         loader = mock.patch.object(mysql, "load_app_table", side_effect=lambda *a, **k: copy.deepcopy(self.settings))
         self.load = loader.start()
         self.addCleanup(loader.stop)
@@ -241,8 +243,9 @@ class MigrationMysqlTests(unittest.TestCase):
 
     def test_ci_credentials_use_stdin_and_exact_job_container(self):
         control, _ = mysql.bindings(self.root)
+        control["_container_id"] = "abcdef012345"
         with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123",
-                "GITHUB_RUN_ATTEMPT": "2", "RYFRAME_CI_MYSQL_CONTAINER_ID": "abcdef012345",
+                "GITHUB_RUN_ATTEMPT": "2",
                 "MYSQL_PWD": "host-secret", "APP_DATABASE_PASSWORD": "host-secret"}):
             with mysql.invocation(control) as (arguments, environment, prefix):
                 self.assertEqual(arguments[:4], ["docker", "exec", "-i", "abcdef012345"])
@@ -266,7 +269,8 @@ class MigrationMysqlTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     mysql.bindings(self.root)
         control, _ = mysql.bindings(self.root)
-        with mock.patch.dict(os.environ, {"RYFRAME_E2E_MYSQL_CLIENT": "mysql"}):
+        control["_mysql_client"] = "mysql"
+        with mock.patch.dict(os.environ, {"APP_ENV": "test"}):
             with self.assertRaisesRegex(ValueError, "绝对路径"):
                 with mysql.invocation(control):
                     pass

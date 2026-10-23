@@ -443,7 +443,7 @@ def execute(backend: Path, directory: Path, request_path: Path, number: int, pre
     binaries.update({"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")})
     write_json(runtime.runtime / "binaries.json", binaries)
     with runtime.environment() as environment:
-        register_runtime(runtime.execution, runtime.runtime)
+        register_runtime(runtime.execution, runtime.runtime, source_config_dir=runtime.execution / "config")
         images = {}
         for field in ("before", "after"):
             checkpoint()

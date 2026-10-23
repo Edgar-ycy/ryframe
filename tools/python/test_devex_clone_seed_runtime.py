@@ -12,7 +12,16 @@ import test_devex_clone_seed as fixtures
 
 
 class RuntimeTests(unittest.TestCase):
-    setUp = fixtures.SeedTests.setUp
+    def setUp(self):
+        fixtures.SeedTests.setUp(self)
+        self.config_dir = self.directory / "config"
+        self.config_dir.mkdir(exist_ok=True)
+        execution = patch.object(runtime, "execution_root", return_value=self.backend)
+        execution.start()
+        self.addCleanup(execution.stop)
+        binding = patch.object(runtime, "application_config_directory", return_value=self.config_dir)
+        binding.start()
+        self.addCleanup(binding.stop)
     file = fixtures.SeedTests.file
     stage = fixtures.SeedTests.stage
     register = fixtures.SeedTests.register
@@ -156,8 +165,12 @@ class RuntimeTests(unittest.TestCase):
         write_json(self.old / "binaries.json", {"ryframe": "api.exe", "ryframe-worker": "worker.exe"})
         old_api = binding(self.old / "api.json")
         old = read_json(self.old / "runtime.json")
+        old.update(api_config_dir=str(self.config_dir), worker_config_dir=str(self.directory / "worker-config"))
+        (self.old / "runtime.json").write_text(json.dumps(old), encoding="utf-8")
 
-        def register_runtime(backend, directory):
+        def register_runtime(backend, directory, *, api_config_dir, worker_config_dir):
+            self.assertEqual(api_config_dir, self.config_dir)
+            self.assertEqual(worker_config_dir, self.directory / "worker-config")
             write_json(directory / "runtime.json", old)
             return old
 

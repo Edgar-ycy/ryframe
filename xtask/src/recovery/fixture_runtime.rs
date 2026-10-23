@@ -10,7 +10,6 @@ use crate::{
 };
 
 const SCRIPT: &str = "tools/python/reference_fixture_runtime.py";
-const PROTOCOL_KEY: &str = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_PROTOCOL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateFixtureRuntimeInvocation {
@@ -27,9 +26,14 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
     run_with_env_removed(
         root,
         "python",
-        &["-B", invocation.script],
-        &[(PROTOCOL_KEY, invocation.protocol.as_str())],
-        &[PROTOCOL_KEY],
+        &[
+            "-B",
+            invocation.script,
+            "--protocol-json",
+            invocation.protocol.as_str(),
+        ],
+        &[],
+        &[],
     )
 }
 

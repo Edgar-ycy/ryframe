@@ -192,7 +192,7 @@ pub(crate) struct FreshTargetOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FullStackCommand {
     Prepare,
-    RateLimit { environment_file: PathBuf },
+    RateLimit { tool_config_file: PathBuf },
     Start,
     Collect,
     Help,

@@ -4,7 +4,7 @@ use super::cli::{
     ExistingReferenceSide, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
     RecoveryReferenceCommand,
 };
-use super::recovery::{fresh_target_protocol, full_stack_environment, reference};
+use super::recovery::{fresh_target_protocol, full_stack_arguments, reference};
 
 #[test]
 fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
@@ -32,39 +32,33 @@ fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
 }
 
 #[test]
-fn full_stack_stages_use_typed_environment() {
+fn full_stack_stages_use_typed_arguments() {
     for (command, operation) in [
         (FullStackCommand::Prepare, "prepare"),
         (FullStackCommand::Start, "start"),
         (FullStackCommand::Collect, "collect"),
     ] {
         assert_eq!(
-            full_stack_environment(&command, "D:/当前 后端").unwrap(),
-            vec![
-                ("RYFRAME_XTASK_FULL_STACK_OPERATION", operation.to_owned()),
-                ("RYFRAME_XTASK_BACKEND_ROOT", "D:/当前 后端".to_owned()),
-            ]
+            full_stack_arguments(&command, "D:/当前 后端").unwrap(),
+            vec!["--operation", operation, "--backend-root", "D:/当前 后端"]
         );
     }
-    let environment_file = Path::new("D:/临时/github-environment");
+    let value = full_stack_arguments(
+        &FullStackCommand::RateLimit {
+            tool_config_file: Path::new("D:/临时/browser-tool.json").to_path_buf(),
+        },
+        "D:/当前 后端",
+    )
+    .unwrap();
     assert_eq!(
-        full_stack_environment(
-            &FullStackCommand::RateLimit {
-                environment_file: environment_file.to_path_buf(),
-            },
-            "D:/当前 后端",
-        )
-        .unwrap(),
+        value,
         vec![
-            (
-                "RYFRAME_XTASK_FULL_STACK_OPERATION",
-                "rate-limit".to_owned()
-            ),
-            ("RYFRAME_XTASK_BACKEND_ROOT", "D:/当前 后端".to_owned()),
-            (
-                "RYFRAME_XTASK_FULL_STACK_ENVIRONMENT_FILE",
-                "D:/临时/github-environment".to_owned(),
-            ),
+            "--operation",
+            "rate-limit",
+            "--backend-root",
+            "D:/当前 后端",
+            "--tool-config-file",
+            "D:/临时/browser-tool.json"
         ]
     );
 }

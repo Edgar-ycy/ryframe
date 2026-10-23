@@ -65,24 +65,12 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                                  "frontend_url": "http://127.0.0.1:14200"}},
         })
         self.bootstrap = self.environment / "bootstrap.json"
-        self.private = {
-            "APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_CONFIG_DIR": str(self.execution),
-            "APP_APP_HOST": "127.0.0.1", "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external",
-            "APP_CORS_ALLOW_ORIGINS": "http://127.0.0.1:14200",
-            "APP_DATABASE_HOST": "127.0.0.1", "APP_DATABASE_PORT": "3306", "APP_DATABASE_NAME": "control",
-            "APP_DATABASE_USERNAME": "root", "APP_DATABASE_PASSWORD": "Database!Secret123",
-            "APP_DATABASE_TLS_MODE": "disabled", "APP_DB_PASSWORD": "Database!Secret123",
-            "APP_TENANT_DATA_TARGETS": "[]", "APP_OBJECT_STORAGE_BACKEND": "rustfs",
-            "APP_OBJECT_STORAGE_ENDPOINT": "http://127.0.0.1:29200", "APP_OBJECT_STORAGE_REGION": "us-east-1",
-            "APP_OBJECT_STORAGE_USE_SSL": "false", "APP_OBJECT_STORAGE_ACCESS_KEY": "RustfsAccess123",
-            "APP_OBJECT_STORAGE_SECRET_KEY": "Rustfs!Secret123", "APP_REDIS_HOST": "127.0.0.1",
-            "APP_REDIS_PORT": "16390", "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false",
-            "APP_REDIS_PASSWORD": "Redis!Secret123", "APP_JOBS_HEALTH_HOST": "127.0.0.1",
-            "APP_JOBS_HEALTH_PORT": "19200", "APP_AUTH_JWT_SECRET": "Jwt!Secret123",
-            "APP_MONITOR_METRICS_BEARER_TOKEN": "Metrics!Token123",
-            "RYFRAME_RESET_ADMIN_PASSWORD": "Admin!Secret123",
-            "TEMP": str(self.root / "tmp"), "TMP": str(self.root / "tmp"),
-        }
+        self.private = {"APP_ENV": "test", "TEMP": str(self.root / "tmp"), "TMP": str(self.root / "tmp")}
+        config = self.environment / "config"
+        config.mkdir()
+        (config / "app.test.toml").write_text(
+            'scope_id = "fixture-source"\n[app]\nhost = "127.0.0.1"\nport = 18200\n'
+            '[cors]\nallow_origins = ["http://127.0.0.1:14200"]\n', encoding="utf-8")
         secrets = self.reference / "secrets"
         secrets.mkdir()
         secret_values = {
@@ -393,7 +381,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                     "APP_DATABASE_PASSWORD": "poisoned", "RYFRAME_RESET_ADMIN_PASSWORD": "poisoned"}
         with self.patches(), patch.dict(os.environ, poisoned), \
                 patch.object(security, "configured", side_effect=safe_process_environment):
-            self.private.pop("RYFRAME_RESET_ADMIN_PASSWORD")
+            self.private.pop("RYFRAME_RESET_ADMIN_PASSWORD", None)
             # Bootstrap 仍须绑定其当前输入；凭据只能来自已登记文件。
             value = read(self.bootstrap)
             value["environment_sha256"] = fixture_environment.plan_hash(self.private)

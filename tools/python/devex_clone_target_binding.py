@@ -462,7 +462,7 @@ def external_file(value: dict) -> None:
 
 def _request_binding(backend: Path, request: dict, validate) -> tuple[dict, dict]:
     required = {"format_version", "kind", "id", "review", "side", "target", "maintenance_build",
-                "configuration_sha256", "tools", "storage", "reset"}
+                "configuration_sha256", "config_dir", "tools", "storage", "reset"}
     exact(request, required | ({"execution_backend"} if "execution_backend" in request else set()))
     if request["format_version"] != 1 or request["kind"] != "devex-clone-fresh-target":
         raise ValueError("新目标请求类型错误")
@@ -580,13 +580,25 @@ def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
     return root, {"kind": "business-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
 
 
+def application_config_directory(backend: Path, request: dict) -> Path:
+    value = request.get("config_dir")
+    if not isinstance(value, str):
+        raise ValueError("目标请求必须明确绑定 config_dir")
+    directory = Path(value)
+    if (not directory.is_absolute() or not directory.is_relative_to(backend.resolve(strict=True))
+            or directory.name != "config" or not directory.is_dir()
+            or any(linked(item) for item in (directory, *directory.parents))):
+        raise ValueError("目标 config_dir 必须是已绑定执行树内的无链接配置目录")
+    return directory
+
+
 def reset_config(backend: Path, request: dict, selected: dict) -> None:
     declared = request["reset"]
     exact(declared, {"legacy_ownership", "credential_version", "sentinel_key", "sentinel_value"})
     exact(declared["legacy_ownership"], EXCLUSIVE)
     if any(value is not True for value in declared["legacy_ownership"].values()):
         raise ValueError("仅本次新空资源显式声明 exclusive 引导；不能隐式注入配置")
-    table = load_app_table(backend, {"APP_ENV": os.environ.get("APP_ENV")}).get("reset", {})
+    table = load_app_table(backend, {"APP_ENV": os.environ.get("APP_ENV")}, config_dir=application_config_directory(backend, request)).get("reset", {})
     if not isinstance(table, dict):
         raise ValueError("所选配置文件的 reset 必须是配置表")
     for key in EXCLUSIVE:
@@ -615,7 +627,7 @@ def redis_configuration(backend: Path, request: dict, selected: dict, *, environ
         raise ValueError("Redis 计划 namespace 无效")
     # 该入口限定已登记的本机非 TLS Redis；不复制配置或创建 Redis 服务。
     environment = os.environ if environment is None else environment
-    redis = load_app_table(backend, {"APP_ENV": environment.get("APP_ENV")}).get("redis", {})
+    redis = load_app_table(backend, {"APP_ENV": environment.get("APP_ENV")}, config_dir=application_config_directory(backend, request)).get("redis", {})
     if not isinstance(redis, dict):
         raise ValueError("所选配置文件的 redis 必须是配置表")
     expected = {"host": "127.0.0.1", "port": request["storage"]["redis"]["port"],
@@ -641,22 +653,23 @@ def generation(backend: Path, request: dict, run) -> dict:
     environment = {"APP_ENV": os.environ.get("APP_ENV")}
     review, selected = request_binding(backend, request)
     execution_root, execution = execution_backend(backend, request)
+    config_dir = application_config_directory(backend, request)
     never_started(backend, selected)
-    if configuration_digest(execution_root) != digest(request["configuration_sha256"]):
+    if configuration_digest(execution_root, config_dir) != digest(request["configuration_sha256"]):
         raise ValueError("新目标 APP 配置或秘密发生变化")
     maintenance = verify_tools(execution_root, bound_file(backend, request["maintenance_build"]), run)
-    physical = source_binding(execution_root, {"source": request["target"]}, environment)
+    physical = source_binding(execution_root, {"source": request["target"]}, environment, config_dir=config_dir)
     planned = {db["key"]: db for db in selected["databases"]}
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
             raise ValueError("目标 MySQL host/port 不是审阅计划中的地址")
-    configuration = inventory_configuration(execution_root, environment, request["target"])
+    configuration = inventory_configuration(execution_root, environment, request["target"], config_dir=config_dir)
     reset_config(execution_root, request, selected)
-    verify_api_address(backend, selected["api_url"])
-    table = load_app_table(execution_root, environment)
+    verify_api_address(execution_root, selected["api_url"], config_dir=config_dir)
+    table = load_app_table(execution_root, environment, config_dir=config_dir)
     if not isinstance(table.get("jobs"), dict) or table["jobs"].get("mode") != "external":
         raise ValueError("所选配置文件的 jobs.mode 必须为 external")
-    if worker_ready_url(execution_root) != selected["worker_ready_url"]:
+    if worker_ready_url(execution_root, config_dir) != selected["worker_ready_url"]:
         raise ValueError("所选配置文件的 jobs.health_host/health_port 与目标 Worker 地址不同")
     for field in ("api_url", "worker_ready_url", "frontend_url"):
         require_closed_port(selected[field])

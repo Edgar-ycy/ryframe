@@ -44,10 +44,10 @@ class FileConfigurationTests(unittest.TestCase):
 
     def test_worker_and_scope_use_selected_file(self):
         self.assertEqual(self.f.environment, {"APP_ENV": "test"})
-        self.assertEqual(environment_scope(self.f.root), self.f.scope)
-        self.assertEqual(worker_ready_url(self.f.root), "http://127.0.0.1:19210/readyz")
+        self.assertEqual(environment_scope(self.f.root, self.f.root / "config"), self.f.scope)
+        self.assertEqual(worker_ready_url(self.f.root, self.f.root / "config"), "http://127.0.0.1:19210/readyz")
         self.override('[jobs]\nhealth_port=19211\n')
-        self.assertEqual(worker_ready_url(self.f.root), "http://127.0.0.1:19211/readyz")
+        self.assertEqual(worker_ready_url(self.f.root, self.f.root / "config"), "http://127.0.0.1:19211/readyz")
 
     def test_worker_errors_identify_invalid_field(self):
         for field, value in (("health_host", '"0.0.0.0"'), ("health_port", '"19210"'),
@@ -55,22 +55,22 @@ class FileConfigurationTests(unittest.TestCase):
             with self.subTest(field=field, value=value):
                 self.override(f'[jobs]\n{field}={value}\n')
                 with self.assertRaisesRegex(ValueError, "jobs." + field):
-                    worker_ready_url(self.f.root)
+                    worker_ready_url(self.f.root, self.f.root / "config")
 
     def test_jobs_mode_error_uses_file_value(self):
         self.override('[jobs]\nmode="embedded"\n')
         with self.assertRaisesRegex(ValueError, "jobs.mode"):
-            environment_scope(self.f.root)
+            environment_scope(self.f.root, self.f.root / "config")
 
     def test_digest_binds_only_common_and_selected_configuration(self):
-        original = binding.configuration_digest(self.f.root)
+        original = binding.configuration_digest(self.f.root, self.f.root / "config")
         (self.f.configuration / "app.prod.toml").write_text('scope_id="other-scope"\n', encoding="utf-8")
-        self.assertEqual(binding.configuration_digest(self.f.root), original)
+        self.assertEqual(binding.configuration_digest(self.f.root, self.f.root / "config"), original)
         self.override('[jobs]\nhealth_port=19211\n')
-        self.assertNotEqual(binding.configuration_digest(self.f.root), original)
+        self.assertNotEqual(binding.configuration_digest(self.f.root, self.f.root / "config"), original)
         (self.f.configuration / "app.test.toml").unlink()
         with self.assertRaises((ValueError, FileNotFoundError)):
-            binding.configuration_digest(self.f.root)
+            binding.configuration_digest(self.f.root, self.f.root / "config")
 
     def test_redis_errors_identify_file_field(self):
         selected = self.f.review["scopes"]["seed"]
@@ -379,7 +379,7 @@ class TargetTests(unittest.TestCase):
         }))
         path = f.configuration / "app.test.toml"
         path.write_text('[bootstrap]\nadmin_password="Changed!Admin123"\n', encoding="utf-8")
-        f.request["configuration_sha256"] = binding.configuration_digest(f.root)
+        f.request["configuration_sha256"] = binding.configuration_digest(f.root, f.root / "config")
         changed = binding.generation(f.root, f.request, f.run)
         self.assertNotEqual(changed["seed_credentials_sha256"], original["seed_credentials_sha256"])
         self.assertNotEqual(changed["configuration_sha256"], original["configuration_sha256"])
@@ -391,7 +391,7 @@ class TargetTests(unittest.TestCase):
                 text = base.read_text(encoding="utf-8")
                 replacement = "" if password is None else "admin_password=" + json.dumps(password) + "\n"
                 base.write_text(text.replace('admin_password="Fixture!Admin123"\n', replacement), encoding="utf-8")
-                f.request["configuration_sha256"] = binding.configuration_digest(f.root)
+                f.request["configuration_sha256"] = binding.configuration_digest(f.root, f.root / "config")
                 with self.assertRaisesRegex(ValueError, "bootstrap.admin_password"):
                     binding.generation(f.root, f.request, f.run)
                 base.write_text(text, encoding="utf-8")
@@ -566,7 +566,7 @@ class TargetTests(unittest.TestCase):
     def test_explicit_exclusive_must_match_actual_configuration(self):
         path = self.f.configuration / "app.test.toml"
         path.write_text('[reset]\nlegacy_mysql_exclusive=false\n', encoding="utf-8")
-        self.f.request["configuration_sha256"] = binding.configuration_digest(self.f.root)
+        self.f.request["configuration_sha256"] = binding.configuration_digest(self.f.root, self.f.root / "config")
         self.f.save_request()
         with self.assertRaisesRegex(ValueError, "reset.legacy_mysql_exclusive"): self.prepare()
         self.assertFalse(self.f.databases)

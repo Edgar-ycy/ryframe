@@ -93,7 +93,7 @@ class LineageRecoveryTests(unittest.TestCase):
         self.manifest_files = [{"path": "fixed", "bytes": 7, "sha256": "b" * 64}]
         self.source = {"request": {"source": {"scope_id": "source"}}}
         self.runtime = SimpleNamespace(selected={"api_url": "http://127.0.0.1:2"})
-        self.contract = {"worker_ready_url": "http://127.0.0.1:3"}
+        self.contract = {"worker_ready_url": "http://127.0.0.1:3", "api_config_dir": str(self.directory / "config"), "worker_config_dir": str(self.directory / "worker-config")}
 
     @staticmethod
     def record(number, stage, mode, status, result=None, *, error=None):
@@ -333,7 +333,7 @@ class LineageRecoveryTests(unittest.TestCase):
         maintenance_path = self.directory / "maintenance.json"
         environment_path = self.directory / "environment.json"
         write_json(maintenance_path, {"source": {"frozen": True}})
-        write_json(environment_path, {"environment": {"SAFE": "value"}})
+        write_json(environment_path, {"environment": {"APP_ENV": "test"}})
         source = {
             "review_successor": {"source_result": {"path": "registration"}},
             "review_successor_binding": {"path": "successor"},
@@ -365,7 +365,7 @@ class LineageRecoveryTests(unittest.TestCase):
         ), patch(
             "devex_clone_tools.verify_evidence",
             return_value={"source": {"frozen": True}},
-        ), patch("process_environment.configured", return_value={"SAFE": "value"}), patch(
+        ), patch("process_environment.configured", return_value={"APP_ENV": "test"}), patch(
             "restore_source_binding.source_binding",
             return_value=source["generation"]["physical_binding"],
         ), patch("reference_fixture_successor_generation.rebuild") as rebuild:
@@ -452,7 +452,7 @@ class AuthorizationTests(unittest.TestCase):
         }
         write_json(self.c68_runtime / "binaries.json", self.binaries)
         self.before = self.file("g0068/before/image.json", {"image": {"frozen": True}})
-        self.contract = {"worker_ready_url": "http://127.0.0.1:4"}
+        self.contract = {"worker_ready_url": "http://127.0.0.1:4", "api_config_dir": str(self.directory / "config"), "worker_config_dir": str(self.directory / "worker-config")}
         self.source = {"request": {"source": {"scope_id": "source"}}}
         self.facts = {
             "proof": {
@@ -518,7 +518,7 @@ class AuthorizationTests(unittest.TestCase):
     def authorization_patches(self, *, image=None):
         image = {"frozen": True} if image is None else image
 
-        def register(_execution, runtime_path):
+        def register(_execution, runtime_path, *, api_config_dir, worker_config_dir):
             write_json(runtime_path / "runtime.json", self.contract)
             return self.contract
 

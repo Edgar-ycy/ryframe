@@ -37,7 +37,7 @@ class Fixture:
         for role in ("mysql", "mysqldump", "rustfs", "wsl", "reset", "migrate", "tenant-data"):
             p = self.local / (role + ".exe"); p.write_bytes(role.encode()); self.paths[role] = p
         self.configuration = root / "config"; self.configuration.mkdir()
-        configuration = (f'scope_id="{self.scope}"\n[app]\nhost="127.0.0.1"\nport=18210\n'
+        configuration = (f'snowflake_worker_id=3\nscope_id="{self.scope}"\n[app]\nhost="127.0.0.1"\nport=18210\n'
                          '[jobs]\nmode="external"\nhealth_host="127.0.0.1"\nhealth_port=19210\n'
                          '[bootstrap]\nadmin_password="Fixture!Admin123"\n'
                          '[database]\nreplicas=[]\nsources=[]\n'
@@ -142,7 +142,8 @@ class Fixture:
                         patch.object(target, "capture_side_inventory", side_effect=self.inventory)]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches: test.addCleanup(p.stop)
-        self.request["configuration_sha256"] = configuration_digest(root)
+        self.request["config_dir"] = str(self.configuration)
+        self.request["configuration_sha256"] = configuration_digest(root, self.configuration)
         self.path, self.output = self.local / "request.json", self.local / "new-generation"
         self.save_request()
         self.databases, self.redis_values, self.extra_objects, self.calls = set(), {}, {}, []

@@ -279,14 +279,14 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("check_vulnerability_exceptions.py", workflow)
         self.assertNotIn("vulnerability-exceptions.json", workflow)
         self.assertIn("APP_ENV: test", block)
-        self.assertIn('APP_API_DOCS_ENABLED: "false"', block)
-        self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
+        self.assertIn("[api_docs]\n          enabled = false", block)
+        self.assertIn("legacy_mysql_exclusive = true", block)
         self.assertIn(
-            'APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage',
+            'local_base_dir = "$RUNNER_TEMP/ryframe-full-stack/storage"',
             block,
         )
         self.assertIn(
-            'RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state',
+            'state_directory = "$RUNNER_TEMP/ryframe-full-stack/reset-state"',
             block,
         )
         self.assertNotIn("APP_OBJECT_STORAGE_LOCAL_BASE_DIR: ${{ runner.temp }}", block)
@@ -298,7 +298,7 @@ class CiWorkflowTests(unittest.TestCase):
                 f"cargo xtask check recovery full-stack {operation}", block
             )
         self.assertIn("cargo xtask check recovery full-stack rate-limit", block)
-        self.assertIn('--environment-file "$GITHUB_ENV"', block)
+        self.assertIn('--tool-config-file "$RUNNER_TEMP/ryframe-full-stack/login-budget-config.json"', block)
         self.assertNotIn("python tools/python/ci_full_stack.py", block)
         self.assertNotIn("python tools/python/full_stack_rate_limit_config.py", block)
         collect = block.split("- name: 收集进程与基础设施日志", 1)[1].split(

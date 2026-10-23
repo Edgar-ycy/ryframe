@@ -21,7 +21,7 @@ from full_stack_process import process_identity, read_process
 from full_stack_process_monitor import completion_binding
 from full_stack_process_tree import (launch_supervised_process, read_process_tree,
                                     terminate_owned_process_tree, validate_process_tree_directory)
-from full_stack_runtime import register_runtime, verify_runtime
+from full_stack_runtime import process_environment, register_runtime, verify_runtime
 from process_sockets import verify_listener
 from restore_build import registered_source, verify_build, verify_build_artifacts
 from restore_source_binding import source_binding
@@ -44,7 +44,7 @@ def generation_directory(output: Path) -> None:
     files = {"request.json", "intent.json", "producers.json", "source-request.json",
              "generation-verified.json", "runtime-evidence.json", "running-evidence.json", "dataset-lineage.json"}
     directories = {"runtime", "before", "running", "after", "stop-before", "verification",
-                   "recover-before", "recover-after", "reboot-close"}
+                   "recover-before", "recover-after", "reboot-close", "runtime-configuration"}
     if linked(output) or not output.is_dir():
         raise ValueError("source-generation 必须是普通代次目录")
     for item in output.iterdir():
@@ -94,7 +94,7 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
         if (contract["backend_root"] != str(execution)
                 or contract["artifacts"] != {role: {"path": item["executable"], "sha256": item["sha256"]}
                                              for role, item in build["artifacts"].items()}
-                or source_binding(execution, {"source": selected}, evidence_root=backend) != physical):
+                or source_binding(execution, {"source": selected}, evidence_root=backend, config_dir=execution / "config") != physical):
             raise ValueError("运行中源配置、物理来源或产物变化")
     urls = {"api": selected["api_url"].rstrip("/") + "/readyz", "worker": contract["worker_ready_url"]}
     for role in ROLES:
@@ -183,9 +183,9 @@ class GenerationRuntime:
             raise ValueError("源后继运行目录已存在，不能覆盖或重放")
         with self.environment():
             # C52 物理绑定包含配置解析出的连接，不能仅比较数据库名或 server UUID。
-            if source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend) != self.source["generation"]["physical_binding"]:
+            if source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend, config_dir=self.execution / "config") != self.source["generation"]["physical_binding"]:
                 raise ValueError("后继运行改变了 C52 的完整物理来源配置")
-            if any(key in os.environ for key in ("RYFRAME_E2E_FIXTURE", "RYFRAME_FULL_STACK_SOURCE")):
+            if (self.execution.parent / "fixture.json").exists():
                 raise ValueError("源后继不能混入独立 fixture 运行环境")
             quiet_producers(self.backend, self.source)
             self.checkpoint()
@@ -205,9 +205,9 @@ class GenerationRuntime:
                 raise ValueError("源后继维护工具与 v2 产品构建必须绑定同一完整执行来源")
         with self.environment():
             if (current_storage_binding(self.backend, self.directory, "target") != self.request["current_storage"]
-                    or source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend) != self.source["generation"]["physical_binding"]):
+                    or source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend, config_dir=self.execution / "config") != self.source["generation"]["physical_binding"]):
                 raise ValueError("源后继运行期间存储代次或物理配置发生变化")
-            verify_api_address(self.execution, self.selected["api_url"])
+            verify_api_address(self.execution, self.selected["api_url"], config_dir=self.execution / "config")
             if self.contract is not None:
                 generation_directory(self.output)
                 if verify_runtime(self.execution, self.runtime) != self.contract:
@@ -224,7 +224,7 @@ class GenerationRuntime:
                     "ryframe-worker": self.build["artifacts"]["worker"]["executable"],
                     **{"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")}}
         write_json(self.runtime / "binaries.json", binaries)
-        self.contract = register_runtime(self.execution, self.runtime)
+        self.contract = register_runtime(self.execution, self.runtime, source_config_dir=self.execution / "config")
         self.urls = {"api": self.selected["api_url"].rstrip("/") + "/readyz", "worker": self.contract["worker_ready_url"]}
         for url in self.urls.values():
             require_closed_port(url)
@@ -237,7 +237,7 @@ class GenerationRuntime:
             require_closed_port(self.urls[role])
             with (self.runtime / f"{role}.log").open("xb") as log:
                 self.started[role] = launch_supervised_process(self.runtime, role, self.selected["scope_id"],
-                    [self.build["artifacts"][role]["executable"]], self.execution, dict(os.environ), log,
+                    [self.build["artifacts"][role]["executable"], "--config-dir", self.contract[f"{role}_config_dir"]], self.execution, process_environment(), log,
                     operation_id=self.operations[role])
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:

@@ -87,10 +87,10 @@ fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {
             Ok(FullStackCommand::RateLimitHelp)
         }
         [operation, option, value]
-            if operation == "rate-limit" && option == "--environment-file" =>
+            if operation == "rate-limit" && option == "--tool-config-file" =>
         {
-            validate_environment_file(value)
-                .map(|environment_file| FullStackCommand::RateLimit { environment_file })
+            validate_tool_config_file(value)
+                .map(|tool_config_file| FullStackCommand::RateLimit { tool_config_file })
         }
         [] => Err(CliError::new("check recovery full-stack 缺少明确子操作")),
         [operation, ..]
@@ -104,13 +104,13 @@ fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {
     }
 }
 
-fn validate_environment_file(value: &str) -> Result<PathBuf, CliError> {
+fn validate_tool_config_file(value: &str) -> Result<PathBuf, CliError> {
     if value.trim().is_empty() || value.contains(['\r', '\n']) {
-        return Err(CliError::new("--environment-file 必须是无换行的绝对路径"));
+        return Err(CliError::new("--tool-config-file 必须是无换行的绝对路径"));
     }
     let path = Path::new(value);
     if !path.is_absolute() {
-        return Err(CliError::new("--environment-file 必须是无换行的绝对路径"));
+        return Err(CliError::new("--tool-config-file 必须是无换行的绝对路径"));
     }
     Ok(path.to_path_buf())
 }

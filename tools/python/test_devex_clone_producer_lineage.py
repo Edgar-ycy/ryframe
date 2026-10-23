@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import os
+import hashlib
 import sys
 from types import SimpleNamespace
 import unittest
@@ -20,7 +22,27 @@ from restore_reference_plan import plan_hash
 
 
 class ProducerLineageTests(unittest.TestCase):
+    def test_runtime_rejects_directory_and_configuration_digest_drift(self):
+        directory = self.runtime("post-copy/runtime", pid=4242, started="100")
+        path = directory / "runtime.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        for field, replacement in (("api_config_dir", str(self.root / "unbound/config")),
+                                   ("worker_configuration_sha256", "d" * 64),
+                                   ("configuration_sha256", "f" * 64)):
+            with self.subTest(field=field):
+                self.write(path, {**original, field: replacement})
+                with self.assertRaises(ValueError):
+                    lineage._runtime_contract(self.backend, directory)
+        self.write(path, original)
+        with (directory / "worker-config/app.test.toml").open("a", encoding="utf-8") as output:
+            output.write("\n# drift\n")
+        with self.assertRaisesRegex(ValueError, "摘要"):
+            lineage._runtime_contract(self.backend, directory)
+
     def setUp(self):
+        selected = patch.dict(os.environ, {"APP_ENV": "test"})
+        selected.start()
+        self.addCleanup(selected.stop)
         self.backend = Path(__file__).resolve().parents[2]
         temporary_root = self.backend / ".local-tests" / "python-unit"
         temporary_root.mkdir(parents=True, exist_ok=True)
@@ -68,6 +90,14 @@ class ProducerLineageTests(unittest.TestCase):
     def runtime(self, name: str, *, pid: int, started: str, executable: Path | None = None) -> Path:
         directory = self.run / name
         directory.mkdir(parents=True)
+        for config_name, worker_id in (("config", 3), ("worker-config", 2)):
+            config = directory / config_name
+            config.mkdir()
+            (config / "app.toml").write_text('scope_id="fixture-scope"\n[jobs]\nmode="external"\nhealth_host="127.0.0.1"\nhealth_port=19210\n', encoding="utf-8")
+            (config / "app.test.toml").write_text(f'snowflake_worker_id={worker_id}\n', encoding="utf-8")
+        api_sha = lineage.configuration_digest(self.backend, directory / "config")
+        worker_sha = lineage.configuration_digest(self.backend, directory / "worker-config")
+        self.config_sha = hashlib.sha256(json.dumps([api_sha, worker_sha]).encode()).hexdigest()
         if name == "post-copy/runtime":
             sequence = 0
         else:
@@ -80,6 +110,10 @@ class ProducerLineageTests(unittest.TestCase):
             "backend_root": str(self.backend),
             "scope_id": "fixture-scope",
             "configuration_sha256": self.config_sha,
+            "api_config_dir": str(directory / "config"),
+            "worker_config_dir": str(directory / "worker-config"),
+            "api_configuration_sha256": api_sha,
+            "worker_configuration_sha256": worker_sha,
             "worker_ready_url": "http://127.0.0.1:19210/readyz",
             "artifacts": {"api": self.artifact(api), "worker": self.artifact(self.worker)},
         }

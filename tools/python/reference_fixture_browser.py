@@ -23,6 +23,7 @@ from reference_fixture_browser_evidence import (
     login_budget,
     verify_artifact_manifest,
 )
+from reference_fixture_service_context import application_settings
 from reference_fixture_browser_review import verify_browser_evidence, verify_browser_result
 from reference_fixture_browser_process import (
     failure_process as _failure_process,
@@ -230,13 +231,14 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     build = verified["build_evidence"]
     frontend, frontend_source = _frontend_source(build)
     review, selected, review_binding = _review(backend, bootstrap_file)
-    api_url = f"http://{private['APP_APP_HOST']}:{private['APP_APP_PORT']}"
+    settings = application_settings(bootstrap_file, execution)
+    api_url = f"http://{settings['app']['host']}:{settings['app']['port']}"
     frontend_url = selected.get("frontend_url")
     parsed = urlsplit(frontend_url if isinstance(frontend_url, str) else "")
-    if (selected.get("scope_id") != private.get("APP_SCOPE_ID") or selected.get("api_url") != api_url
+    if (selected.get("scope_id") != settings.get("scope_id") or selected.get("api_url") != api_url
             or parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"}
             or parsed.port is None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
-            or private.get("APP_CORS_ALLOW_ORIGINS") != frontend_url):
+            or frontend_url not in settings.get("cors", {}).get("allow_origins", [])):
         raise ValueError("业务 crate 浏览器端点、scope 或 CORS 与已审阅环境不一致")
     require_closed_port(frontend_url)
     mysql = review.get("tools", {}).get("mysql")
@@ -260,14 +262,14 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     if linked(cache) or not cache.is_dir():
         raise ValueError("Corepack 缓存必须是已准备的明确目录")
     corepack_tools["corepack_home"] = str(cache)
-    limits = rate_limit_settings(execution, private)
+    limits = rate_limit_settings(execution, {"APP_ENV": private["APP_ENV"]}, config_dir=bootstrap_file.parent / "config")
     outputs = browser_outputs(frontend, runtime, run_id, server)
     if require_fresh and server == "preview" and (frontend / "dist").exists():
         raise ValueError("业务 crate 前端已有生产产物，禁止覆盖未知构建")
     _assert_output_set(runtime, run_id, outputs, fresh=require_fresh)
     binding = {
         "format_version": 1, "kind": "reference-fixture-browser-binding", "status": "bound",
-        "run_id": run_id, "server": server, "scope_id": private["APP_SCOPE_ID"],
+        "run_id": run_id, "server": server, "scope_id": settings["scope_id"],
         "bootstrap": _bound(bootstrap_file),
         "environment": _bound(bootstrap_file.parent / "environment.json"),
         "review": review_binding, "runtime": verified["runtime"],

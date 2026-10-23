@@ -16,7 +16,7 @@ from devex_clone_source_proof import require_closed_port, verify_api_address
 from full_stack_process import (
     assert_identity, process_identity, read_process, record_process, terminate_owned_process, write_receipt,
 )
-from full_stack_runtime import verify_runtime
+from full_stack_runtime import process_environment, verify_runtime
 from process_sockets import endpoint, verify_listener
 from runtime_control_lock import ControllerLockSpec, controller_lock as _controller_lock
 from runtime_control_lock import reconcile_lock as _reconcile_controller_lock
@@ -109,8 +109,8 @@ def _start_one(backend: Path, directory: Path, receipt: dict, role: str, url: st
     try:
         with log_path.open("xb") as log:
             process = subprocess.Popen(
-                [executable], cwd=backend, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                env={**os.environ, "SNOWFLAKE_WORKER_ID": "1" if role == "api" else "2"},
+                [executable, "--config-dir", receipt[f"{role}_config_dir"]], cwd=backend, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                env=process_environment(),
                 start_new_session=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         identity = record_process(directory, role, process.pid, executable, receipt["scope_id"])["identity"]
@@ -188,7 +188,7 @@ def _control_context(backend: Path, runtime_directory: Path, roles: tuple[str, .
                      api_url: str) -> tuple[Path, Path, dict, dict]:
     backend, directory = _control_paths(backend, runtime_directory, roles, api_url)
     receipt = verify_runtime(backend, directory)
-    verify_api_address(backend, api_url)
+    verify_api_address(backend, api_url, config_dir=Path(receipt["api_config_dir"]))
     urls = {"api": api_url.rstrip("/") + "/readyz", "worker": receipt["worker_ready_url"]}
     if endpoint(urls["api"]) == endpoint(urls["worker"]):
         raise ValueError("API 和 Worker 必须使用不同的明确监听端口")

@@ -16,6 +16,7 @@ from devex_clone_seed import (registered, register, history, identity_inputs, id
 from devex_clone_quota_model import capacity_evidence
 from devex_clone_source_proof import bound_file, require_closed_port, verify_api_address
 from devex_clone_target_resources import Resources
+from devex_clone_target_binding import application_config_directory
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import register_runtime, verify_runtime, worker_ready_url
 from restore_source_binding import source_binding
@@ -45,10 +46,10 @@ def resources_guard(context):
     """当前物理身份和所有桶 ownership；允许已授权身份和 outbox 数据正常演进。"""
     context.bindings()
     with context.environments.use("target"):
-        if source_binding(context.backend, {"source": context.target_config}) != context.initial["generation"]["physical"]:
+        if source_binding(context.backend, {"source": context.target_config}, config_dir=application_config_directory(context.backend, context.target)) != context.initial["generation"]["physical"]:
             raise ValueError("seed 物理目标不属于原初始化资源")
-        verify_api_address(context.backend, context.selected["api_url"])
-        if worker_ready_url(execution_root(context.backend, context.target)) != context.selected["worker_ready_url"]:
+        verify_api_address(context.backend, context.selected["api_url"], config_dir=application_config_directory(context.backend, context.target))
+        if worker_ready_url(execution_root(context.backend, context.target), application_config_directory(context.backend, context.target)) != context.selected["worker_ready_url"]:
             raise ValueError("seed Worker 地址变化")
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
@@ -104,10 +105,10 @@ def current_mutation_guard(context, request, prerequisite, confirmations):
     require_prerequisite(context.backend, context.directory_root, request, prerequisite)
     require_schedule_stage(context, confirmations)
     with context.environments.use("target"):
-        if source_binding(context.backend, {"source": context.target_config}) != context.initial["generation"]["physical"]:
+        if source_binding(context.backend, {"source": context.target_config}, config_dir=application_config_directory(context.backend, context.target)) != context.initial["generation"]["physical"]:
             raise ValueError("seed 写入目标不属于原初始化资源")
-        verify_api_address(context.backend, context.selected["api_url"])
-        if worker_ready_url(execution_root(context.backend, context.target)) != context.selected["worker_ready_url"]:
+        verify_api_address(context.backend, context.selected["api_url"], config_dir=application_config_directory(context.backend, context.target))
+        if worker_ready_url(execution_root(context.backend, context.target), application_config_directory(context.backend, context.target)) != context.selected["worker_ready_url"]:
             raise ValueError("seed Worker 地址变化")
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
@@ -201,7 +202,7 @@ def prepare(context, request):
     if not filename.exists():
         write_json(filename, binaries)
     with context.environments.use("target"):
-        if register_runtime(context.backend, runtime) != old:
+        if register_runtime(context.backend, runtime, api_config_dir=Path(old["api_config_dir"]), worker_config_dir=Path(old["worker_config_dir"])) != old:
             raise ValueError("seed 配置、scope 或产品产物变化")
     handoff = {"registration": binding(context.directory_root / "seed-runtime.json"), "identity": proof, "capacity": capacity,
         "schedules": confirmations, "api_environment": context.request["api_environment"],

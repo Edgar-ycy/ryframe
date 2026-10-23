@@ -188,26 +188,26 @@ fn run_full_stack(command: &FullStackCommand) -> Result<()> {
         }
         FullStackCommand::RateLimitHelp => {
             println!(
-                "cargo xtask check recovery full-stack rate-limit --environment-file <绝对文件>"
+                "cargo xtask check recovery full-stack rate-limit --tool-config-file <绝对文件>"
             );
             return Ok(());
         }
         _ => {}
     }
     let backend = path_argument(&root_dir(), "后端目录")?;
-    let environment = full_stack_environment(command, &backend)?;
+    let arguments = full_stack_arguments(command, &backend)?;
     run_owned_with_env(
         &root_dir(),
         "python",
-        &strings(&["-B", "tools/python/ci_full_stack.py"]),
-        &environment,
+        &[strings(&["-B", "tools/python/ci_full_stack.py"]), arguments].concat(),
+        &[],
     )
 }
 
-pub(crate) fn full_stack_environment(
+pub(crate) fn full_stack_arguments(
     command: &FullStackCommand,
     backend: &str,
-) -> Result<Vec<(&'static str, String)>> {
+) -> Result<Vec<String>> {
     let operation = match command {
         FullStackCommand::Prepare => "prepare",
         FullStackCommand::Start => "start",
@@ -217,17 +217,14 @@ pub(crate) fn full_stack_environment(
             return Err("full-stack 帮助不启动私有阶段程序".into());
         }
     };
-    let mut environment = vec![
-        ("RYFRAME_XTASK_FULL_STACK_OPERATION", operation.to_owned()),
-        ("RYFRAME_XTASK_BACKEND_ROOT", backend.to_owned()),
-    ];
-    if let FullStackCommand::RateLimit { environment_file } = command {
-        environment.push((
-            "RYFRAME_XTASK_FULL_STACK_ENVIRONMENT_FILE",
-            path_argument(environment_file, "环境文件")?,
-        ));
+    let mut arguments = strings(&["--operation", operation, "--backend-root", backend]);
+    if let FullStackCommand::RateLimit { tool_config_file } = command {
+        arguments.extend([
+            "--tool-config-file".to_owned(),
+            path_argument(tool_config_file, "工具配置文件")?,
+        ]);
     }
-    Ok(environment)
+    Ok(arguments)
 }
 
 fn strings(values: &[&str]) -> Vec<String> {

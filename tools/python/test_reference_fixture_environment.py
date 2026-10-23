@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import tomllib
 import json
 from pathlib import Path
 import sys
@@ -23,11 +24,11 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             {name for name in environment.SECRET_FILES if name.startswith("reset-")},
             {"reset-admin-password.txt"},
         )
-        environment._validate_reset_password({"RYFRAME_RESET_ADMIN_PASSWORD": "Admin1!fixture"})
+        environment._validate_reset_password({"admin_password": "Admin1!fixture"})
         for value in (None, "", "123456", "Onlyletters"):
             with self.subTest(value=value), self.assertRaisesRegex(
-                    ValueError, "RYFRAME_RESET_ADMIN_PASSWORD") as raised:
-                environment._validate_reset_password({"RYFRAME_RESET_ADMIN_PASSWORD": value})
+                    ValueError, "admin_password") as raised:
+                environment._validate_reset_password({"admin_password": value})
             if value:
                 self.assertNotIn(value, str(raised.exception))
 
@@ -332,14 +333,14 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         maintenance = self.write("prepare-build.json", self.maintenance)
         output = self.root / "prepared"
 
-        def configuration(_execution):
+        def configuration(_execution, _config_dir):
             changed = copy.deepcopy(self.fixture)
             changed["status"] = "changed"
             fixture.write_text(json.dumps(changed), encoding="utf-8")
             return "c" * 64
 
         with (
-            patch.object(environment, "_environment", return_value=({"APP_SCOPE_ID": "fixture-seed"}, {})),
+            patch.object(environment, "_environment", return_value=({"APP_ENV": "test"}, {})),
             patch.object(environment, "configuration_digest", side_effect=configuration),
             patch.object(environment, "verify_tools", return_value={"source": {}}),
             self.assertRaisesRegex(ValueError, "业务 crate 收据"),
@@ -395,25 +396,22 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             values, files = environment._environment(self.backend, self.review, fixture, self.root / "output")
 
-        self.assertEqual(values["APP_SCOPE_ID"], "fixture-seed")
-        self.assertEqual(values["APP_DATABASE_NAME"], "fixture_seed_shared_control")
-        self.assertEqual((values["APP_APP_HOST"], values["APP_APP_PORT"]), ("127.0.0.1", "18210"))
-        self.assertEqual(values["APP_CORS_ALLOW_ORIGINS"], "http://127.0.0.1:4190")
-        self.assertEqual((values["APP_JOBS_HEALTH_HOST"], values["APP_JOBS_HEALTH_PORT"]), ("127.0.0.1", "19210"))
-        self.assertEqual(values["APP_DATABASE_TLS_MODE"], "disabled")
-        self.assertTrue(all(item["tls_mode"] == "disabled" for item in json.loads(values["APP_TENANT_DATA_TARGETS"])))
-        self.assertEqual(values["APP_MULTI_TENANCY_ENABLED"], "true")
-        self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
-        self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
-        self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
-        self.assertEqual(
-            {key for key in values if key.startswith("RYFRAME_RESET_")},
-            {"RYFRAME_RESET_ADMIN_PASSWORD"},
-        )
-        # 来源侧保留调度默认行为，复制目的地必须显式关闭调度，post-copy 才另行派生启用环境。
-        self.assertNotIn("APP_JOBS_SCHEDULER_ENABLED", values)
-        # 测试配置目录随环境生成：迁移 gate 等工具按 APP_CONFIG_DIR/app.test.toml 读取已登记目标。
-        test_config = Path(values["APP_CONFIG_DIR"])
+        self.assertEqual(set(values), {"APP_ENV", "TEMP", "TMP"})
+        self.assertEqual(values["APP_ENV"], "test")
+        test_config = self.root / "output" / environment.TEST_CONFIG_DIRECTORY
+        settings = tomllib.loads((test_config / "app.test.toml").read_text(encoding="utf-8"))
+        self.assertEqual(settings["scope_id"], "fixture-seed")
+        self.assertEqual(settings["database"]["primary"]["database"], "fixture_seed_shared_control")
+        self.assertEqual(settings["app"], {"host": "127.0.0.1", "port": 18210})
+        self.assertEqual(settings["cors"]["allow_origins"], ["http://127.0.0.1:4190"])
+        self.assertEqual(settings["jobs"]["health_port"], 19210)
+        self.assertTrue(settings["jobs"]["scheduler_enabled"])
+        self.assertEqual(settings["database"]["primary"]["tls_mode"], "disabled")
+        self.assertTrue(all(item["tls_mode"] == "disabled" for item in settings["tenant_data"]["targets"]))
+        self.assertTrue(settings["multi_tenancy"]["enabled"])
+        self.assertEqual(settings["object_storage"]["access_key"], "access")
+        self.assertEqual(settings["monitor"]["metrics_bearer_token"], "metrics")
+        self.assertFalse(settings["api_docs"]["enabled"])
         self.assertEqual(test_config, self.root / "output" / environment.TEST_CONFIG_DIRECTORY)
         self.assertEqual((test_config / "app.toml").read_bytes(), (config / "app.toml").read_bytes())
         targets = (test_config / "app.test.toml").read_text(encoding="utf-8")
@@ -449,8 +447,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(rotated["status"], "generated")
         self.assertEqual(set(rotated["files"]), set(environment.SECRET_FILES))
         self.assertEqual(set(rotated_files), {"mysql-client.cnf", *names})
-        self.assertNotEqual(rotated_values["RYFRAME_RESET_ADMIN_PASSWORD"], values["RYFRAME_RESET_ADMIN_PASSWORD"])
-        environment._validate_reset_password(rotated_values)
+        rotated_settings = tomllib.loads((self.root / "rotated-output/config/app.test.toml").read_text(encoding="utf-8"))
+        self.assertNotEqual(rotated_settings["bootstrap"]["admin_password"], settings["bootstrap"]["admin_password"])
+        environment._validate_reset_password(rotated_settings["bootstrap"])
 
         target_execution = self.root / "new-business-backend"
         (target_execution / ".local-tests/reference-fixture").mkdir(parents=True)
@@ -499,8 +498,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertFalse((drift_execution / ".local-tests/reference-fixture/secrets/bootstrap.json").exists())
         self.assertTrue((drift_execution / ".local-tests/reference-fixture/secrets/failed.json").is_file())
 
-        values["RYFRAME_RESET_ADMIN_PASSWORD"] = "weak"
-        with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_ADMIN_PASSWORD"):
+        values["admin_password"] = "weak"
+        with self.assertRaisesRegex(ValueError, "admin_password"):
             environment._validate_reset_password(values)
 
         base_mysql = self.root / "base/backend/.local-tests/reference-fixture/secrets/mysql-client.cnf"
@@ -508,9 +507,11 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             item["connection_file"] = str(base_mysql)
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             base_values, base_files = environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
-        self.assertEqual(base_values["APP_SCOPE_ID"], "fixture-base")
-        self.assertEqual(base_values["APP_DATABASE_NAME"], "fixture_base_shared_control")
-        self.assertEqual(base_values["APP_JOBS_SCHEDULER_ENABLED"], "false")
+        self.assertEqual(set(base_values), {"APP_ENV", "TEMP", "TMP"})
+        base_settings = tomllib.loads((self.root / "base-output/config/app.test.toml").read_text(encoding="utf-8"))
+        self.assertEqual(base_settings["scope_id"], "fixture-base")
+        self.assertEqual(base_settings["database"]["primary"]["database"], "fixture_base_shared_control")
+        self.assertFalse(base_settings["jobs"]["scheduler_enabled"])
         self.assertEqual(base_mysql.read_bytes(), (secrets / "mysql-client.cnf").read_bytes())
         self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
 

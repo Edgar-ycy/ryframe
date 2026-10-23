@@ -9,6 +9,7 @@ import time
 import unittest
 import uuid
 from unittest import mock
+from contextlib import contextmanager
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import full_stack_worker as worker
@@ -20,16 +21,40 @@ from full_stack_process import (
     terminate_owned_process,
 )
 from full_stack_runtime import register_runtime, verify_runtime
+from rate_limit_tool import tool_binding
 
 
 FAKE_WORKER = r"""
 import os
-if os.environ.get("SNOWFLAKE_WORKER_ID") == "2":
+import sys
+import subprocess
+original_popen = subprocess.Popen
+def product_popen(arguments, *args, **kwargs):
+    # 合成产品使用 Python；让产品参数位于 -c 之后，避免解释器拒绝未知选项。
+    if len(arguments) > 1 and arguments[0] == sys.executable and arguments[1] == "--config-dir":
+        arguments = [arguments[0], "-c", "pass", *arguments[1:]]
+    if arguments and arguments[0] == sys.executable and ("--config-dir" in arguments or "__supervise" in arguments):
+        from pathlib import Path
+        kwargs["env"] = {**kwargs.get("env", {}), "PYTHONPATH": str(Path(__file__).parent)}
+    return original_popen(arguments, *args, **kwargs)
+subprocess.Popen = product_popen
+if "--config-dir" in sys.argv:
+    import json
+    import tomllib
+    from pathlib import Path
+    directory = Path(sys.argv[sys.argv.index("--config-dir") + 1])
+    settings = tomllib.loads((directory / "app.test.toml").read_text(encoding="utf-8"))
+    assert settings["snowflake_worker_id"] == 2
+    assert os.environ.get("APP_ENV") == "test"
+    assert not any(key.startswith(("APP_", "RYFRAME_", "VITE_")) and key != "APP_ENV" for key in os.environ)
+    assert "SNOWFLAKE_WORKER_ID" not in os.environ
+    controls = json.loads((directory.parent / "fake-controls.json").read_text(encoding="utf-8"))
+    (directory.parent / f"fake-started-{os.getpid()}.json").write_text(json.dumps(controls), encoding="utf-8")
     import subprocess
     import socket
     import sys
     import time
-    mode = os.environ.get("RYFRAME_FAKE_WORKER_MODE", "ready")
+    mode = controls.get("RYFRAME_FAKE_WORKER_MODE", "ready")
     if mode in {"tree", "tree-exit"}:
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
@@ -40,14 +65,15 @@ if os.environ.get("SNOWFLAKE_WORKER_ID") == "2":
                 "-c",
                 "import os,signal,time; "
                 "signal.signal(signal.SIGTERM, lambda *_: None); "
-                "open(os.environ['RYFRAME_FAKE_DESCENDANT_PID'],'w').write(str(os.getpid())); "
+                "import sys; open(sys.argv[1],'w').write(str(os.getpid())); "
                 "time.sleep(60)",
+                controls["RYFRAME_FAKE_DESCENDANT_PID"],
             ],
             env=environment,
         )
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not os.path.isfile(
-            environment["RYFRAME_FAKE_DESCENDANT_PID"]
+            controls["RYFRAME_FAKE_DESCENDANT_PID"]
         ):
             time.sleep(0.02)
         if mode == "tree-exit":
@@ -57,10 +83,10 @@ if os.environ.get("SNOWFLAKE_WORKER_ID") == "2":
             time.sleep(1)
     if mode == "exit":
         os._exit(7)
-    time.sleep(float(os.environ.get("RYFRAME_FAKE_WORKER_DELAY", "0")))
+    time.sleep(float(controls.get("RYFRAME_FAKE_WORKER_DELAY", "0")))
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("127.0.0.1", int(os.environ["APP_JOBS_HEALTH_PORT"])))
+    server.bind(("127.0.0.1", settings["jobs"]["health_port"]))
     server.listen()
     while True:
         connection, _ = server.accept()
@@ -92,7 +118,16 @@ class WorkerControlTests(unittest.TestCase):
         self.directory.mkdir()
         self.fake = self.root / "fake-python"
         self.fake.mkdir()
-        (self.fake / "sitecustomize.py").write_text(FAKE_WORKER, encoding="utf-8")
+        binding = tool_binding()
+        prelude = ""
+        if binding is not None:
+            # 合成进程显式从测试文件读取已绑定工具，不借环境变量传协议。
+            descriptor = self.fake / "tool-binding.json"
+            descriptor.write_text(json.dumps(binding), encoding="utf-8")
+            prelude = (f"import sys, json\nsys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n"
+                       "from rate_limit_tool import install_binding\n"
+                       f"if '--tool-binding-json' not in sys.argv: install_binding(open({str(descriptor)!r}, encoding='utf-8').read())\n")
+        (self.fake / "sitecustomize.py").write_text(prelude + FAKE_WORKER, encoding="utf-8")
         port = self.free_port()
         (self.directory / "binaries.json").write_text(
             json.dumps(
@@ -108,16 +143,24 @@ class WorkerControlTests(unittest.TestCase):
         environment.update(
             {
                 "APP_ENV": "test",
-                "APP_SCOPE_ID": "worker-control-test",
-                "APP_JOBS_MODE": "external",
-                "APP_JOBS_HEALTH_HOST": "127.0.0.1",
-                "APP_JOBS_HEALTH_PORT": str(port),
                 "PYTHONPATH": str(self.fake),
             }
         )
         self.environment = mock.patch.dict(os.environ, environment, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        product_environment = worker.process_environment
+        fake_environment = mock.patch.object(worker, "process_environment", side_effect=lambda: {**product_environment(), "PYTHONPATH": str(self.fake)})
+        fake_environment.start()
+        self.addCleanup(fake_environment.stop)
+        self.port = port
+        for name, worker_id in (("config", 3), ("worker-config", 2)):
+            config_dir = self.directory / name
+            config_dir.mkdir()
+            (config_dir / "app.toml").write_text("", encoding="utf-8")
+            (config_dir / "app.test.toml").write_text(
+                f'scope_id="worker-control-test"\nsnowflake_worker_id={worker_id}\n[app]\nport=8080\n[jobs]\nmode="external"\nhealth_host="127.0.0.1"\nhealth_port={port}\n', encoding="utf-8")
+        (self.directory / "fake-controls.json").write_text("{}", encoding="utf-8")
         register_runtime(self.root, self.directory)
         self.controllers = []
         self.fake_workers = []
@@ -184,14 +227,21 @@ class WorkerControlTests(unittest.TestCase):
         except PermissionError:
             return False
 
+    @contextmanager
+    def fake_controls(self, _environment=None, values=None, clear=False):
+        path = self.directory / "fake-controls.json"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(json.dumps(values or {}), encoding="utf-8")
+        try:
+            yield
+        finally:
+            path.write_text(original, encoding="utf-8")
+
     def spawn_fake_worker(self, mode: str, *, register: bool) -> dict:
-        environment = {
-            **os.environ,
-            "RYFRAME_FAKE_WORKER_MODE": mode,
-            "SNOWFLAKE_WORKER_ID": "2",
-        }
+        environment = {**worker.process_environment(), "PYTHONPATH": str(self.fake)}
+        (self.directory / "fake-controls.json").write_text(json.dumps({"RYFRAME_FAKE_WORKER_MODE": mode}), encoding="utf-8")
         process = subprocess.Popen(
-            [sys.executable],
+            [sys.executable, "-c", "pass", "--config-dir", str(self.directory / "worker-config")],
             cwd=self.root,
             env=environment,
             stdin=subprocess.DEVNULL,
@@ -200,6 +250,7 @@ class WorkerControlTests(unittest.TestCase):
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self.wait_for(lambda: process_identity(process.pid) is not None)
+        self.wait_for(lambda: (self.directory / f"fake-started-{process.pid}.json").is_file())
         identity = process_identity(process.pid)
         self.assertIsNotNone(identity)
         self.fake_workers.append((process, identity))
@@ -308,7 +359,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
     def test_parent_death_is_recoverable_during_prepare_launch_and_readiness(self):
         for checkpoint in ("prepared", "authorized", "waiting-ready"):
             with self.subTest(checkpoint=checkpoint):
-                with mock.patch.dict(
+                with self.fake_controls(
                     os.environ, {"RYFRAME_FAKE_WORKER_DELAY": "0.5"}, clear=False
                 ):
                     self.launch_interrupted_controller(checkpoint)
@@ -330,7 +381,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
                 self.assertFalse(lock.exists())
 
     def test_parent_death_preserves_failed_start_and_waits_for_cleanup(self):
-        with mock.patch.dict(os.environ, {"RYFRAME_FAKE_WORKER_MODE": "exit"}):
+        with self.fake_controls(os.environ, {"RYFRAME_FAKE_WORKER_MODE": "exit"}):
             self.launch_interrupted_controller("authorized")
             lock = self.directory / worker.LOCK
             self.wait_for(lambda: (lock / "result.json").is_file())
@@ -375,7 +426,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         self.control("stop")
 
     def test_start_timeout_is_archived_and_reaps_exact_worker(self):
-        with mock.patch.dict(
+        with self.fake_controls(
             os.environ, {"RYFRAME_FAKE_WORKER_MODE": "idle"}, clear=False
         ):
             with self.assertRaisesRegex(RuntimeError, "就绪超时"):
@@ -395,7 +446,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         )
 
     def test_worker_exit_before_readiness_is_reaped_and_restartable(self):
-        with mock.patch.dict(
+        with self.fake_controls(
             os.environ, {"RYFRAME_FAKE_WORKER_MODE": "exit"}, clear=False
         ):
             with self.assertRaisesRegex(RuntimeError, "Worker.*退出码 7"):
@@ -409,7 +460,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
 
     def test_stop_reaps_worker_descendant_and_parent_exit_cannot_orphan_it(self):
         descendant_pid = self.root / "worker-descendant.pid"
-        with mock.patch.dict(
+        with self.fake_controls(
             os.environ,
             {
                 "RYFRAME_FAKE_WORKER_MODE": "tree",
@@ -439,7 +490,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
             self.assertEqual(normal_control["mode"], "normal")
 
         descendant_pid.unlink()
-        with mock.patch.dict(
+        with self.fake_controls(
             os.environ,
             {
                 "RYFRAME_FAKE_WORKER_MODE": "tree-exit",
@@ -457,7 +508,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
 
     def test_crash_control_records_force_mode_and_reaps_worker_descendant(self):
         descendant_pid = self.root / "crash-descendant.pid"
-        with mock.patch.dict(
+        with self.fake_controls(
             os.environ,
             {
                 "RYFRAME_FAKE_WORKER_MODE": "tree",
@@ -581,9 +632,8 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         self.control("stop")
 
     def test_configuration_and_binary_changes_fail_before_process_control(self):
-        with mock.patch.dict(os.environ, {"APP_SCOPE_ID": "other-test"}):
-            with self.assertRaisesRegex(ValueError, "不匹配"):
-                self.control("status")
+        with mock.patch.dict(os.environ, {"APP_SCOPE_ID": "other-test", "SNOWFLAKE_WORKER_ID": "2"}):
+            self.assertEqual(self.control("status")["state"], "stopped")
         with mock.patch.dict(os.environ, {"APP_ENV": "production"}):
             with self.assertRaisesRegex(ValueError, "APP_ENV=test"):
                 self.control("status")
@@ -595,7 +645,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         with self.assertRaisesRegex(ValueError, "不匹配"):
             self.control("status")
         manifest.write_text(original, encoding="utf-8")
-        (self.root / "config/app.toml").write_text(
+        (self.directory / "config/app.toml").write_text(
             "[app]\nport=9999\n", encoding="utf-8"
         )
         with self.assertRaisesRegex(ValueError, "不匹配"):
@@ -603,7 +653,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
 
     def test_stopped_state_fails_closed_when_the_registered_port_is_occupied(self):
         with socket.socket() as listener:
-            listener.bind(("127.0.0.1", int(os.environ["APP_JOBS_HEALTH_PORT"])))
+            listener.bind(("127.0.0.1", self.port))
             listener.listen()
             with self.assertRaisesRegex(ValueError, "端口已占用"):
                 self.control("status")

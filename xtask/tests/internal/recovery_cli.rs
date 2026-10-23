@@ -648,26 +648,35 @@ fn parses_typed_full_stack_operations_and_rejects_ambiguous_arguments() {
         );
     }
     #[cfg(windows)]
-    let environment_file = "D:/运行 目录/github-environment";
+    let tool_config_file = "D:/运行 目录/browser-tool.json";
     #[cfg(not(windows))]
-    let environment_file = "/tmp/运行 目录/github-environment";
+    let tool_config_file = "/tmp/运行 目录/browser-tool.json";
     assert_eq!(
         parse_command(&[
             "check",
             "recovery",
             "full-stack",
             "rate-limit",
-            "--environment-file",
-            environment_file,
+            "--tool-config-file",
+            tool_config_file,
         ])
         .unwrap(),
         Command::Check(CheckCommand::Recovery(RecoveryCommand::FullStack(
             FullStackCommand::RateLimit {
-                environment_file: environment_file.into(),
+                tool_config_file: tool_config_file.into(),
             }
         )))
     );
     for values in [
+        [
+            "check",
+            "recovery",
+            "full-stack",
+            "rate-limit",
+            "--environment-file",
+            tool_config_file,
+        ]
+        .as_slice(),
         ["check", "recovery", "full-stack"].as_slice(),
         ["check", "recovery", "full-stack", "unknown"].as_slice(),
         ["check", "recovery", "full-stack", "prepare", "extra"].as_slice(),
@@ -677,8 +686,8 @@ fn parses_typed_full_stack_operations_and_rejects_ambiguous_arguments() {
             "recovery",
             "full-stack",
             "rate-limit",
-            "--environment-file",
-            "relative.env",
+            "--tool-config-file",
+            "relative.json",
         ]
         .as_slice(),
         [
@@ -686,10 +695,10 @@ fn parses_typed_full_stack_operations_and_rejects_ambiguous_arguments() {
             "recovery",
             "full-stack",
             "rate-limit",
-            "--environment-file",
-            environment_file,
-            "--environment-file",
-            environment_file,
+            "--tool-config-file",
+            tool_config_file,
+            "--tool-config-file",
+            tool_config_file,
         ]
         .as_slice(),
     ] {

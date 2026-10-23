@@ -1,4 +1,4 @@
-"""用本地配置和合成二进制验证运行收据，不启动服务或执行 Cargo。"""
+"""用本地配置、合成二进制与绑定的配置读取工具验证运行收据，不启动服务。"""
 import hashlib
 import json
 import os
@@ -21,12 +21,18 @@ class RuntimeContractTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.backend = self.root / "中文源码 目录"
-        self.configuration = self.backend / "config"
+        self.backend.mkdir()
+        self.configuration = self.root / "runtime/config"
         self.configuration.mkdir(parents=True)
         self.config = self.configuration / "app.toml"
-        self.config.write_text('[app]\nport=18210\n', encoding="utf-8")
+        self.config.write_text('scope_id="runtime-fixture"\nsnowflake_worker_id=3\n[app]\nport=18210\n[jobs]\nmode="external"\nhealth_host="127.0.0.1"\nhealth_port=19210\n', encoding="utf-8")
+        (self.configuration / "app.test.toml").write_text('[database]\npassword="fixture-private-password"\n', encoding="utf-8")
+        self.worker_configuration = self.root / "runtime/worker-config"
+        self.worker_configuration.mkdir()
+        (self.worker_configuration / "app.toml").write_bytes(self.config.read_bytes())
+        (self.worker_configuration / "app.test.toml").write_text('snowflake_worker_id=2\n[database]\npassword="fixture-private-password"\n', encoding="utf-8")
         self.directory = self.root / "runtime"
-        self.directory.mkdir()
+        self.directory.mkdir(exist_ok=True)
         artifacts = self.root / "产物 目录"
         artifacts.mkdir()
         self.binaries = {}
@@ -93,20 +99,20 @@ class RuntimeContractTests(unittest.TestCase):
         write.assert_not_called()
         self.assertFalse(self.receipt.exists())
 
-    def test_configuration_digest_tracks_all_toml_and_app_values_only(self):
-        original = runtime.configuration_digest(self.backend)
+    def test_configuration_digest_tracks_bound_toml_and_ignores_old_environment(self):
+        original = runtime.configuration_digest(self.backend, self.configuration)
         with patch.dict(os.environ, {"UNRELATED_VALUE": "another"}):
-            self.assertEqual(runtime.configuration_digest(self.backend), original)
+            self.assertEqual(runtime.configuration_digest(self.backend, self.configuration), original)
         (self.configuration / "notes.txt").write_text("辅助文本", encoding="utf-8")
-        self.assertEqual(runtime.configuration_digest(self.backend), original)
+        self.assertEqual(runtime.configuration_digest(self.backend, self.configuration), original)
         with patch.dict(os.environ, {"APP_DB_PASSWORD": "changed-private-password"}):
-            self.assertNotEqual(runtime.configuration_digest(self.backend), original)
+            self.assertEqual(runtime.configuration_digest(self.backend, self.configuration), original)
         additional = self.configuration / "app.test.toml"
         additional.write_text("[app]\nport=18211\n", encoding="utf-8")
-        added = runtime.configuration_digest(self.backend)
+        added = runtime.configuration_digest(self.backend, self.configuration)
         self.assertNotEqual(added, original)
         additional.write_text("[app]\nport=18212\n", encoding="utf-8")
-        self.assertNotEqual(runtime.configuration_digest(self.backend), added)
+        self.assertNotEqual(runtime.configuration_digest(self.backend, self.configuration), added)
 
     def test_config_binary_scope_and_probe_changes_do_not_replace_registered_receipt(self):
         runtime.register_runtime(self.backend, self.directory)
@@ -119,26 +125,28 @@ class RuntimeContractTests(unittest.TestCase):
                     self.assert_rejected_without_replacing(original)
                 finally:
                     path.write_bytes(contents)
-        for values in ({"APP_SCOPE_ID": "different-scope"}, {"APP_JOBS_HEALTH_PORT": "19211"}):
+        for values in ({"APP_ENV": "dev"},):
             with self.subTest(values=values), patch.dict(os.environ, values):
                 self.assert_rejected_without_replacing(original)
         self.assertEqual(runtime.verify_runtime(self.backend, self.directory), json.loads(original))
 
     def test_invalid_environment_and_worker_address_never_publish_receipt(self):
-        cases = [
-            {"APP_ENV": "prod"}, {"APP_SCOPE_ID": ""}, {"APP_SCOPE_ID": "../scope"},
-            {"APP_JOBS_MODE": "inline"}, {"APP_JOBS_HEALTH_HOST": "192.0.2.1"},
-            {"APP_JOBS_HEALTH_HOST": "::1"}, {"APP_JOBS_HEALTH_PORT": ""},
-            {"APP_JOBS_HEALTH_PORT": "0"}, {"APP_JOBS_HEALTH_PORT": "65536"},
-            {"APP_JOBS_HEALTH_PORT": "invalid"},
-        ]
-        for values in cases:
-            with self.subTest(values=values), patch.dict(os.environ, values), \
-                    patch.object(runtime, "write_receipt") as write:
+        with patch.dict(os.environ, {"APP_ENV": "prod"}), self.assertRaises(ValueError):
+            runtime.register_runtime(self.backend, self.directory)
+        original = self.config.read_text(encoding="utf-8")
+        cases = [('scope_id="runtime-fixture"', 'scope_id="../scope"'),
+                 ('mode="external"', 'mode="inline"'),
+                 ('health_host="127.0.0.1"', 'health_host="192.0.2.1"'),
+                 ('health_port=19210', 'health_port=0'),
+                 ('health_port=19210', 'health_port=65536'),
+                 ('snowflake_worker_id=3', 'snowflake_worker_id=2')]
+        for old, new in cases:
+            with self.subTest(new=new):
+                self.config.write_text(original.replace(old, new), encoding="utf-8")
                 with self.assertRaises(ValueError):
                     runtime.register_runtime(self.backend, self.directory)
-                write.assert_not_called()
                 self.assertFalse(self.receipt.exists())
+        self.config.write_text(original, encoding="utf-8")
 
     def test_missing_tampered_or_unknown_receipt_is_not_adopted(self):
         with self.assertRaises(FileNotFoundError):
@@ -161,18 +169,41 @@ class RuntimeContractTests(unittest.TestCase):
                     runtime.register_runtime(self.backend, self.directory)
                 self.assertFalse(self.receipt.exists())
 
-    def test_explicit_configuration_directory_is_bound_and_empty_directory_is_rejected(self):
-        original = runtime.configuration_digest(self.backend)
-        alternate = self.backend / "隔离 配置"
-        alternate.mkdir()
-        with patch.dict(os.environ, {"APP_CONFIG_DIR": alternate.name}):
-            with self.assertRaises(ValueError):
-                runtime.register_runtime(self.backend, self.directory)
-            self.assertFalse(self.receipt.exists())
-            (alternate / "app.toml").write_bytes(self.config.read_bytes())
-            self.assertNotEqual(runtime.configuration_digest(self.backend), original)
-            registered = runtime.register_runtime(self.backend, self.directory)
-            self.assertEqual(runtime.verify_runtime(self.backend, self.directory), registered)
+    def test_managed_directory_and_both_file_digests_are_bound(self):
+        registered = runtime.register_runtime(self.backend, self.directory)
+        self.assertEqual(registered["api_config_dir"], str(self.configuration))
+        self.assertEqual(registered["worker_config_dir"], str(self.worker_configuration))
+        self.assertNotEqual(registered["api_configuration_sha256"], registered["worker_configuration_sha256"])
+        original = self.receipt.read_bytes()
+        path = self.worker_configuration / "app.test.toml"
+        contents = path.read_bytes()
+        path.write_bytes(contents + b"\n# changed\n")
+        self.assert_rejected_without_replacing(original)
+        path.write_bytes(contents)
+        moved = self.directory / "worker-config-moved"
+        self.worker_configuration.rename(moved)
+        with self.assertRaisesRegex(ValueError, "目录"):
+            runtime.verify_runtime(self.backend, self.directory)
+        moved.rename(self.worker_configuration)
+        tampered = {**registered, "worker_config_dir": str(moved)}
+        self.receipt.write_text(json.dumps(tampered), encoding="utf-8")
+        self.assert_rejected_without_replacing(self.receipt.read_bytes())
+
+    def test_legacy_environment_cannot_override_bound_configuration_or_process(self):
+        original = runtime.runtime_contract(self.backend, self.directory)
+        with patch.dict(os.environ, {"APP_SCOPE_ID": "foreign", "APP_JOBS_HEALTH_PORT": "1",
+                                    "APP_CONFIG_DIR": "missing", "SNOWFLAKE_WORKER_ID": "3",
+                                    "RYFRAME_PRIVATE": "secret", "VITE_APP_TARGET": "foreign",
+                                    "UNDECLARED_TOOL_SECRET": "secret", "AWS_SECRET_ACCESS_KEY": "secret"}):
+            self.assertEqual(runtime.runtime_contract(self.backend, self.directory), original)
+            child = runtime.process_environment()
+            self.assertEqual({key for key in child if key.startswith("APP_")}, {"APP_ENV"})
+            self.assertNotIn("SNOWFLAKE_WORKER_ID", child)
+            self.assertNotIn("RYFRAME_PRIVATE", child)
+            self.assertNotIn("VITE_APP_TARGET", child)
+            self.assertNotIn("UNDECLARED_TOOL_SECRET", child)
+            self.assertNotIn("AWS_SECRET_ACCESS_KEY", child)
+            self.assertEqual(child.get("PATH"), os.environ.get("PATH"))
 
 
 if __name__ == "__main__":

@@ -45,28 +45,39 @@ class FakeProcess:
 
 
 class FullStackCiTests(unittest.TestCase):
+    def settings(self, root):
+        return {"scope_id": "ci-12-3", "app": {"host": "127.0.0.1", "port": 8080},
+                "jobs": {"mode": "external", "health_host": "127.0.0.1", "health_port": 9091},
+                "redis": {"database": 14}, "reset": {"redis_outside_sentinel_key": "outside-sentinel"},
+                "object_storage": {"backend": "local", "local_base_dir": str(root / "storage")}}
+
+    def control(self, backend):
+        return {"format_version": 1, "runtime_dir": str(backend / "runner/ryframe-full-stack"),
+                "mysql_container_id": "a" * 64, "redis_container_id": "b" * 64, "s3_container_id": "c" * 64}
+
+    def setUp(self):
+        control = mock.patch.object(MODULE, "load_control", side_effect=self.control)
+        control.start()
+        self.addCleanup(control.stop)
+        loader = mock.patch.object(MODULE, "load_app_table", side_effect=lambda backend, *a, **k: self.settings(backend))
+        loader.start()
+        self.addCleanup(loader.stop)
+        scope = mock.patch.object(MODULE, "environment_scope", return_value="ci-12-3")
+        scope.start()
+        self.addCleanup(scope.stop)
+
     def environment(self, root: Path) -> dict[str, str]:
-        return {
-            "RUNNER_TEMP": str(root / "runner"),
-            "APP_OBJECT_STORAGE_LOCAL_BASE_DIR": str(root / "storage"),
-            "RYFRAME_CI_REDIS_CONTAINER_ID": "b" * 64,
-            "APP_REDIS_DATABASE": "14",
-            "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": "outside-sentinel",
-            "CARGO_TARGET_DIR": str(root / "target"),
-            "APP_ENV": "test",
-            "APP_SCOPE_ID": "ci-12-3",
-            "APP_APP_HOST": "127.0.0.1",
-            "APP_APP_PORT": "8080",
-            "APP_JOBS_HEALTH_HOST": "127.0.0.1",
-            "APP_JOBS_HEALTH_PORT": "9091",
-        }
+        return {"RUNNER_TEMP": str(root / "runner"), "CARGO_TARGET_DIR": str(root / "target"), "APP_ENV": "test"}
+
 
     def test_prepare_uses_reset_plan_and_explicit_migration_commands(self) -> None:
         with test_directory() as root:
             commands: list[list[str]] = []
-            database_plan = mock.Mock(scope_id="ci-12-3")
+            database_plan = mock.Mock(scope_id="ci-12-3", settings=self.settings(root))
 
-            def run(arguments: list[str], **_: object):
+            def run(arguments: list[str], **options: object):
+                if arguments[0] not in ("cargo", "docker"):
+                    self.assertEqual(options["env"], {"APP_ENV": "test"})
                 commands.append(arguments)
                 stdout = f"plan_hash={'a' * 64}\n" if arguments[-1] == "plan" else ""
                 if arguments[0] == "cargo":
@@ -169,7 +180,9 @@ class FullStackCiTests(unittest.TestCase):
 
     def test_api_and_external_worker_have_distinct_id_generators(self) -> None:
         with test_directory() as root:
-            environment = {**self.environment(root), "APP_JOBS_MODE": "external"}
+            environment = {**self.environment(root), "APP_JOBS_MODE": "external",
+                           "SNOWFLAKE_WORKER_ID": "2", "APP_CONFIG_DIR": "foreign",
+                           "APP_APP_PORT": "99999"}
             executable = str(Path(sys.executable).resolve())
             tree = {"process": {"pid": 101}, "supervisor": {"pid": 100}}
             process = mock.Mock(pid=101, tree=tree)
@@ -186,6 +199,7 @@ class FullStackCiTests(unittest.TestCase):
                     return_value={
                         "scope_id": "ci-12-3",
                         "worker_ready_url": "http://127.0.0.1:9091/readyz",
+                        "api_config_dir": str(root / "runner/ryframe-full-stack/config"),
                     },
                 ),
                 mock.patch.object(MODULE, "ensure_port_free"),
@@ -199,7 +213,8 @@ class FullStackCiTests(unittest.TestCase):
             ):
                 MODULE.start(root)
                 self.assertEqual(ready.call_count, 1)
-                self.assertEqual(launch.call_args.args[5]["SNOWFLAKE_WORKER_ID"], "1")
+                self.assertNotIn("SNOWFLAKE_WORKER_ID", launch.call_args.args[5])
+                self.assertEqual({key for key in launch.call_args.args[5] if key.startswith("APP_")}, {"APP_ENV"})
                 self.assertEqual(launch.call_args.args[3], [executable, "--config-dir", str(root / "runner/ryframe-full-stack/config")])
                 worker.assert_called_once_with(
                     "start", root, root / "runner/ryframe-full-stack", timeout=180
@@ -223,6 +238,7 @@ class FullStackCiTests(unittest.TestCase):
                     return_value={
                         "scope_id": "ci-12-3",
                         "worker_ready_url": "http://127.0.0.1:9091/readyz",
+                        "api_config_dir": str(root / "runner/ryframe-full-stack/config"),
                     },
                 ),
                 mock.patch.object(MODULE, "ensure_port_free"),
@@ -253,6 +269,7 @@ class FullStackCiTests(unittest.TestCase):
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
                 mock.patch.object(MODULE, "launch_supervised_process") as launch,
+                mock.patch.object(MODULE, "load_app_table", return_value={"app": {"host": "0.0.0.0", "port": 8080}}),
             ):
                 with self.assertRaisesRegex(MODULE.FullStackError, "本机 IPv4"):
                     MODULE.start(root)
@@ -276,22 +293,22 @@ class FullStackCiTests(unittest.TestCase):
 
     def test_prepare_preflight_rejects_unsafe_runtime_inputs_before_build(self) -> None:
         cases = (
-            {"CARGO_TARGET_DIR": "relative-target"},
-            {"RYFRAME_CI_REDIS_CONTAINER_ID": "--all"},
-            {"APP_REDIS_DATABASE": "16"},
-            {"APP_OBJECT_STORAGE_BACKEND": "unknown"},
-            {
-                "APP_OBJECT_STORAGE_BACKEND": "s3",
-                "RYFRAME_CI_S3_CONTAINER_ID": "service-name",
-            },
+            ({"CARGO_TARGET_DIR": "relative-target"}, {}),
+            ({"redis_container_id": "--all"}, {}),
+            ({}, {"redis": {"database": 16}}),
+            ({}, {"jobs": {"mode": "inline"}}),
+            ({}, {"object_storage": {"backend": "unknown"}}),
+            ({"s3_container_id": "service-name"},
+             {"object_storage": {"backend": "s3"}}),
         )
-        for changed in cases:
-            with self.subTest(changed=changed), test_directory() as root:
+        for changed, configuration in cases:
+            with self.subTest(changed=changed, configuration=configuration), test_directory() as root:
                 environment = {**self.environment(root), **changed}
                 with (
                     mock.patch.dict(os.environ, environment, clear=True),
+                    mock.patch.object(MODULE, "load_control", return_value={**self.control(root), **{k: v for k, v in changed.items() if k.endswith("_container_id")}}),
                     mock.patch.object(
-                        MODULE, "plan_databases", return_value=mock.sentinel.plan
+                        MODULE, "plan_databases", return_value=mock.Mock(settings={**self.settings(root), **configuration})
                     ),
                     mock.patch.object(MODULE, "build_binaries") as build,
                 ):
@@ -339,6 +356,7 @@ class FullStackCiTests(unittest.TestCase):
                 [
                     ["docker", "logs", "a" * 64],
                     ["docker", "logs", "b" * 64],
+                    ["docker", "logs", "c" * 64],
                     ["sccache", "--show-stats"],
                     ["sccache", "--stop-server"],
                 ],
@@ -379,57 +397,47 @@ class FullStackCiTests(unittest.TestCase):
 
     def test_rate_limit_export_uses_the_bound_backend_and_explicit_file(self) -> None:
         with test_directory() as root:
-            output = root / "github-environment"
-            environment = {
-                "RUNNER_TEMP": str(root / "runner"),
-                "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(root / "budget.json")
-            }
-            values = {
-                "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(root / "budget.json"),
-                "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "5",
-                "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "60",
-            }
+            output = root / "browser-tool.json"
+            environment = {"RUNNER_TEMP": str(root / "runner"), "APP_ENV": "test"}
+            authority = {"login": {"capacity": 5, "window_ms": 60_000}}
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
-                mock.patch.object(
-                    MODULE, "login_budget_environment", return_value=values
-                ) as export,
+                mock.patch.object(MODULE, "rate_limit_authority", return_value=authority) as export,
             ):
                 MODULE.export_rate_limit(root, output)
-                self.assertEqual(export.call_count, 1)
-                self.assertEqual(export.call_args.args[0], root)
-                self.assertEqual(dict(export.call_args.args[1]), environment)
-                self.assertEqual(export.call_args.args[2], root / "budget.json")
-                self.assertEqual(export.call_args.kwargs["config_dir"], root / "runner/ryframe-full-stack/config")
-            self.assertEqual(
-                output.read_text(encoding="utf-8").splitlines(),
-                [f"{key}={value}" for key, value in values.items()],
-            )
+                export.assert_called_once_with(root, {"APP_ENV": "test"}, config_dir=root / "runner/ryframe-full-stack/config")
+                with self.assertRaises(FileExistsError):
+                    MODULE.export_rate_limit(root, output)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {
+                "loginBudgetState": str(root / "runner/ryframe-full-stack/login-budget.json"),
+                "loginCapacity": 5, "loginWindowSeconds": 60,
+            })
+            self.assertNotIn("RYFRAME_E2E_LOGIN_", output.read_text(encoding="utf-8"))
 
-    def test_private_dispatch_uses_only_xtask_environment(self) -> None:
+    def test_invalid_login_budget_does_not_publish_tool_configuration(self):
         with test_directory() as root:
-            environment = {
-                "RYFRAME_XTASK_FULL_STACK_OPERATION": "start",
-                "RYFRAME_XTASK_BACKEND_ROOT": str(root),
-            }
-            with (
-                mock.patch.dict(os.environ, environment, clear=True),
-                mock.patch.object(sys, "argv", [str(SCRIPT)]),
-                mock.patch.object(MODULE, "start") as start,
-            ):
+            output = root / "browser-tool.json"
+            for login in ({}, {"capacity": True, "window_ms": 60_000},
+                          {"capacity": 0, "window_ms": 60_000},
+                          {"capacity": 10_001, "window_ms": 60_000},
+                          {"capacity": 5, "window_ms": 999},
+                          {"capacity": 5, "window_ms": 60_001},
+                          {"capacity": 5, "window_ms": 86_401_000}):
+                with self.subTest(login=login), \
+                        mock.patch.dict(os.environ, {"RUNNER_TEMP": str(root / "runner"), "APP_ENV": "test"}, clear=True), \
+                        mock.patch.object(MODULE, "rate_limit_authority", return_value={"login": login}):
+                    with self.assertRaisesRegex(MODULE.FullStackError, "未写入"):
+                        MODULE.export_rate_limit(root, output)
+                    self.assertFalse(output.exists())
+
+    def test_private_dispatch_uses_explicit_arguments_only(self):
+        with test_directory() as root:
+            with mock.patch.object(sys, "argv", [str(SCRIPT), "--operation", "start", "--backend-root", str(root)]), \
+                    mock.patch.object(MODULE, "start") as start:
                 MODULE.main()
             start.assert_called_once_with(root.resolve())
-
-            with (
-                mock.patch.dict(os.environ, environment, clear=True),
-                mock.patch.object(sys, "argv", [str(SCRIPT), "start"]),
-                mock.patch.object(MODULE, "start") as rejected,
-            ):
-                with self.assertRaisesRegex(
-                    MODULE.FullStackError, "不接受命令行参数"
-                ):
-                    MODULE.main()
-            rejected.assert_not_called()
+            with mock.patch.object(sys, "argv", [str(SCRIPT)]), self.assertRaises(SystemExit):
+                MODULE.main()
 
 
 if __name__ == "__main__":

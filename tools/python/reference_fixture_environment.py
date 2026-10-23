@@ -63,10 +63,10 @@ def _fixture(value: dict) -> None:
 TEST_CONFIG_DIRECTORY = "config"
 
 
-def _test_configuration(execution: Path, output: Path, targets: list[dict]) -> Path:
+def _test_configuration(execution: Path, output: Path, targets: list[dict], settings: dict) -> Path:
     """生成测试运行配置目录：基础 app.toml 复制，租户目标写入 app.test.toml。
 
-    迁移 gate 等工具按 `APP_CONFIG_DIR/app.test.toml` 读取已登记目标；冻结的夹具执行树
+    调用方显式绑定生成目录读取已登记目标；冻结的夹具执行树
     不能被写入，因此配置目录必须随环境一起生成。
     """
     source = execution / "config" / "app.toml"
@@ -77,18 +77,25 @@ def _test_configuration(execution: Path, output: Path, targets: list[dict]) -> P
     directory = output / TEST_CONFIG_DIRECTORY
     if directory.exists() or linked(directory):
         raise ValueError("夹具测试配置目录已存在，拒绝覆盖")
-    directory.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
+    from ci_full_stack_databases import _private_directory
+    _private_directory(directory)
     shutil.copyfile(source, directory / "app.toml")
-    sections = [f"[rate_limit]\ncapacity = {FIXTURE_REQUEST_RATE_LIMIT_CAPACITY}"]
+    (directory / "app.toml").chmod(0o600)
+    sections = ["\n".join(f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in settings.items() if not isinstance(value, dict))]
+    for name, table in settings.items():
+        if isinstance(table, dict):
+            sections.append(f"[{name}]\n" + "\n".join(f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in table.items()))
     for target in targets:
         fields = {"key": target["key"], "display_name": f"夹具 {target['key']}", "kind": target["kind"],
                   "mode": target["mode"], "host": target["host"], "port": target["port"],
                   "database": target["database"], "username": target["username"],
-                  "password_env": target["password_env"], "tls_mode": target["tls_mode"],
+                  "password": target["password"], "tls_mode": target["tls_mode"],
                   "max_connections": 8}
         sections.append("[[tenant_data.targets]]\n" + "\n".join(
             f"{key} = {json.dumps(value)}" for key, value in fields.items()))
     (directory / "app.test.toml").write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    (directory / "app.test.toml").chmod(0o600)
     return directory
 
 
@@ -387,7 +394,7 @@ def rotate_secrets(backend: Path, fixture_path: Path, output: Path) -> dict:
                 stream.write(value)
                 stream.flush()
                 os.fsync(stream.fileno())
-        values = {"RYFRAME_RESET_ADMIN_PASSWORD": _secret(output, "reset-admin-password.txt")[0]}
+        values = {"admin_password": _secret(output, "reset-admin-password.txt")[0]}
         _validate_reset_password(values)
         result = {"format_version": 1, "kind": "reference-fixture-secret-set", "status": "generated",
                   "source": {name: bound(source / name) for name in SECRET_FILES},
@@ -423,7 +430,7 @@ def _database_credentials(backend: Path, source: Path, destination: Path) -> dic
 
 def _validate_reset_password(values: dict) -> None:
     """在创建任何 fresh 资源前复现后端 reset 的管理员密码复杂度门槛。"""
-    key = "RYFRAME_RESET_ADMIN_PASSWORD"
+    key = "admin_password"
     value = values.get(key)
     if (not isinstance(value, str) or not re.fullmatch(r"[!-~]{8,72}", value)
             or not any(char.isascii() and char.isupper() for char in value)
@@ -458,12 +465,12 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         raise ValueError("MySQL 凭据格式无效") from error
     tls_mode = client["ssl-mode"].lower()
     values, files = {}, {"mysql-client.cnf": mysql_descriptor}
-    for key, filename in (("APP_OBJECT_STORAGE_ACCESS_KEY", "rustfs-access-key.txt"),
-                          ("APP_OBJECT_STORAGE_SECRET_KEY", "rustfs-secret-key.txt"),
-                          ("APP_REDIS_PASSWORD", "redis-password.txt"),
-                          ("RYFRAME_RESET_ADMIN_PASSWORD", "reset-admin-password.txt"),
-                          ("APP_AUTH_JWT_SECRET", "jwt-secret.txt"),
-                          ("APP_MONITOR_METRICS_BEARER_TOKEN", "metrics-token.txt")):
+    for key, filename in (("access_key", "rustfs-access-key.txt"),
+                          ("secret_key", "rustfs-secret-key.txt"),
+                          ("redis_password", "redis-password.txt"),
+                          ("admin_password", "reset-admin-password.txt"),
+                          ("jwt_secret", "jwt-secret.txt"),
+                          ("metrics_token", "metrics-token.txt")):
         value, descriptor = _secret(secrets, filename)
         values[key], files[filename] = value, descriptor
     _validate_reset_password(values)
@@ -472,7 +479,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         item = database[key]
         targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
                         "port": item["port"], "database": item["database"], "username": client["user"],
-                        "password_env": "APP_DB_PASSWORD", "tls_mode": tls_mode})
+                        "password": client["password"], "tls_mode": tls_mode})
     scope = selected["scope_id"]
     api = urlsplit(selected["api_url"])
     worker = urlsplit(selected["worker_ready_url"])
@@ -483,39 +490,30 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
             or frontend.port is None or frontend.path not in ("", "/") or frontend.query or frontend.fragment):
         raise ValueError("夹具 API、Worker 或前端地址必须是明确本机端口")
     frontend_origin = f"{frontend.scheme}://{frontend.netloc}"
-    config = _test_configuration(execution, output, targets)
-    environment = {
-        # 夹具配置目录独立生成：完整复制基础 app.toml 并按已审阅目标写出 app.test.toml，
-        # 与 CI 全栈流程一致；冻结执行树保持干净，迁移 gate 等工具也能读取测试目标。
-        "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(config),
-        "APP_MULTI_TENANCY_ENABLED": "true",
-        # 夹具 API 按 `--no-default-features --features bin-api` 构建，不包含 runtime-swagger-ui；
-        # 与夹具运行环境保持一致，必须在准备阶段就显式关闭 api_docs，否则目标代次、运行登记
-        # 与复制运行环境会得到不同的配置摘要。
-        "APP_API_DOCS_ENABLED": "false",
-        "APP_APP_HOST": api.hostname, "APP_APP_PORT": str(api.port),
-        "APP_CORS_ALLOW_ORIGINS": frontend_origin,
-        # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
-        "APP_DATABASE_HOST": client["host"], "APP_DATABASE_PORT": client["port"],
-        "APP_DATABASE_NAME": database["shared-control"]["database"],
-        "APP_DATABASE_USERNAME": client["user"],
-        "APP_DATABASE_PASSWORD": client["password"], "APP_DATABASE_TLS_MODE": tls_mode,
-        "APP_DB_PASSWORD": client["password"],
-        "APP_TENANT_DATA_TARGETS": json.dumps(targets, separators=(",", ":")),
-        "APP_OBJECT_STORAGE_BACKEND": "rustfs", "APP_OBJECT_STORAGE_ENDPOINT": selected["objects"]["endpoint"],
-        "APP_OBJECT_STORAGE_REGION": selected["objects"]["region"], "APP_OBJECT_STORAGE_USE_SSL": "false",
-        "APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(urlsplit(selected["redis"]["url"]).port or 16390),
-        "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false", "APP_JOBS_MODE": "external",
-        "APP_JOBS_HEALTH_HOST": worker.hostname, "APP_JOBS_HEALTH_PORT": str(worker.port),
-        # 复制目的地（base/candidate 两个 arm 侧）必须以显式关闭的调度启动：目标 API 在 post-copy
-        # 派生环境启用调度路由之前不得承接调度管理，来源侧 seed 保留原行为。
-        **({"APP_JOBS_SCHEDULER_ENABLED": "false"} if side != "seed" else {}),
-        "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
-        "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": f"ryframe:devex-fresh:{scope}:sentinel",
-        "APP_RESET_LEGACY_MYSQL_EXCLUSIVE": "true", "APP_RESET_LEGACY_REDIS_EXCLUSIVE": "true",
-        "APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE": "true", "TEMP": str(output / "tmp"), "TMP": str(output / "tmp"),
-        **values,
+    config = output / TEST_CONFIG_DIRECTORY
+    environment = {"APP_ENV": "test", "TEMP": str(output / "tmp"), "TMP": str(output / "tmp")}
+    settings = {
+        "scope_id": scope, "snowflake_worker_id": 3,
+        "app": {"host": api.hostname, "port": api.port},
+        "multi_tenancy": {"enabled": True}, "api_docs": {"enabled": False},
+        "bootstrap": {"admin_password": values["admin_password"]},
+        "cors": {"allow_origins": [frontend_origin]},
+        "database.primary": {"host": client["host"], "port": int(client["port"]),
+                             "database": database["shared-control"]["database"], "username": client["user"],
+                             "password": client["password"], "tls_mode": tls_mode},
+        "object_storage": {"backend": "rustfs", "endpoint": selected["objects"]["endpoint"],
+                           "region": selected["objects"]["region"], "use_ssl": False,
+                           "access_key": values["access_key"], "secret_key": values["secret_key"]},
+        "redis": {"mode": "required", "host": "127.0.0.1", "port": urlsplit(selected["redis"]["url"]).port or 16390,
+                  "database": 0, "tls": False, "password": values["redis_password"]},
+        "auth": {"jwt_secret": values["jwt_secret"]},
+        "monitor": {"metrics_bearer_token": values["metrics_token"]},
+        "jobs": {"mode": "external", "health_host": worker.hostname, "health_port": worker.port, "scheduler_enabled": side == "seed"},
+        "rate_limit": {"capacity": FIXTURE_REQUEST_RATE_LIMIT_CAPACITY},
+        "reset": {"credential_version": "fixture-v1", "legacy_mysql_exclusive": True, "legacy_redis_exclusive": True,
+                  "legacy_object_storage_exclusive": True, "redis_outside_sentinel_key": f"ryframe:devex-fresh:{scope}:sentinel"},
     }
+    _test_configuration(execution, output, targets, settings)
     return environment, files
 
 
@@ -601,7 +599,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
         # 隔离业务配置，同时保留 Git、Cargo 等本机工具必需的系统环境。
         runtime_environment = configured(environment)
         with Environments(runtime_environment, runtime_environment).use("target"):
-            configuration = configuration_digest(execution)
+            configuration = configuration_digest(execution, output / TEST_CONFIG_DIRECTORY)
             maintenance = verify_tools(execution, maintenance_file)
         if _planned_inputs(backend, result) != inputs:
             raise ValueError("夹具环境计划输入在准备期间发生变化")
@@ -609,6 +607,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
         write_json(output / "environment.json", {"environment": environment})
         receipt = {"format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
                    "plan": result, "execution_backend": str(execution), "configuration_sha256": configuration,
+                   "config_dir": str(output / TEST_CONFIG_DIRECTORY),
                    "maintenance": bound(maintenance_file), "maintenance_source": maintenance["source"],
                    "secret_files": secrets, "environment_sha256": plan_hash(environment),
                    "services_started": False, "remote_writes": 0, "historical_data_used": False}

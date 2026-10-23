@@ -29,12 +29,10 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         self.environment = self.root / "environment"
         self.environment.mkdir()
         self.bootstrap = self.environment / "bootstrap.json"
-        private = {
-            "APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_CONFIG_DIR": str(self.execution),
-            "APP_APP_HOST": "127.0.0.1", "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external",
-            "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19200",
-            "TEMP": str(self.root / "tmp"), "TMP": str(self.root / "tmp"),
-        }
+        private = {"APP_ENV": "test", "TEMP": str(self.root / "tmp"), "TMP": str(self.root / "tmp")}
+        config = self.environment / "config"
+        config.mkdir()
+        (config / "app.test.toml").write_text('scope_id = "fixture-source"\n[app]\nhost = "127.0.0.1"\nport = 18200\n[jobs]\nmode = "external"\nhealth_host = "127.0.0.1"\nhealth_port = 19200\n', encoding="utf-8")
         secrets = self.reference / "secrets"
         secrets.mkdir()
         for name in environment.SECRET_FILES:
@@ -71,7 +69,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             self.assertEqual(directory, output)
             return self.binaries
 
-        def register_runtime(_execution, directory):
+        def register_runtime(_execution, directory, *, source_config_dir):
             value = {"scope_id": "fixture-source"}
             write_json(directory / "runtime.json", value)
             return value
@@ -94,9 +92,8 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             result = runtime.build(self.backend, self.bootstrap, output)
 
         self.assertEqual(result["status"], "reference_fixture_runtime_built")
-        self.assertEqual(captured["environment"]["APP_API_DOCS_ENABLED"], "false")
-        self.assertEqual(captured["environment"]["RYFRAME_E2E_FIXTURE"], "business")
-        self.assertEqual(captured["environment"]["RYFRAME_CODE_SHA"], "b" * 40)
+        self.assertEqual(captured["environment"]["APP_ENV"], "test")
+        self.assertFalse(any(key.startswith("RYFRAME_") or key.startswith("APP_") and key != "APP_ENV" for key in captured["environment"]))
         self.assertEqual(source_probe.call_count, 1)
         self.assertEqual(inventory_probe.call_args_list[0].args, (self.execution, source))
         self.assertGreaterEqual(inventory_probe.call_count, 2)
@@ -124,11 +121,9 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             value = {"operation": command[4], "scope_id": "fixture-source", "state": "stopped"}
             return subprocess.CompletedProcess(command, 0, stdout=json.dumps(value), stderr="")
 
-        private = {"APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_APP_HOST": "127.0.0.1",
-                   "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external", "TEMP": str(self.root),
-                   "TMP": str(self.root)}
+        private = {"APP_ENV": "test", "TEMP": str(self.root), "TMP": str(self.root)}
         with patch.object(runtime, "verify", return_value={"runtime": {}}), \
-                patch.object(runtime, "_bootstrap", return_value=(None, self.execution, private)), \
+                patch.object(runtime, "_bootstrap", return_value=(self.bootstrap, self.execution, private)), \
                 patch.object(runtime, "_output", return_value=output), \
                 patch.object(runtime, "_run", side_effect=fake_run), \
                 patch.object(runtime, "control",
@@ -145,11 +140,9 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         output.mkdir()
         write_json(output / "runtime.json", {"scope_id": "fixture-source"})
         self._pair(self.execution, output / "source-pair.json")
-        private = {"APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_APP_HOST": "127.0.0.1",
-                   "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external", "TEMP": str(self.root),
-                   "TMP": str(self.root)}
+        private = {"APP_ENV": "test", "TEMP": str(self.root), "TMP": str(self.root)}
         with patch.object(runtime, "verify", return_value={"runtime": {}}), \
-                patch.object(runtime, "_bootstrap", return_value=(None, self.execution, private)), \
+                patch.object(runtime, "_bootstrap", return_value=(self.bootstrap, self.execution, private)), \
                 patch.object(runtime, "_output", return_value=output), \
                 patch.object(runtime, "control", return_value={"processes": {"api": {"state": "running"}}}):
             with self.assertRaisesRegex(ValueError, "Worker 控制入口"):
@@ -164,9 +157,9 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         evidence = {"source": {"fixture": "business", "head": "b" * 40}}
         original = dict(os.environ)
         def check(_execution, _output):
-            self.assertEqual(os.environ["RYFRAME_E2E_FIXTURE"], "business")
-            self.assertEqual(os.environ["RYFRAME_CODE_SHA"], "b" * 40)
-            self.assertEqual(os.environ["APP_SCOPE_ID"], "fixture-source")
+            self.assertEqual(os.environ["APP_ENV"], "test")
+            self.assertNotIn("APP_SCOPE_ID", os.environ)
+            self.assertNotIn("RYFRAME_CODE_SHA", os.environ)
             return evidence
         with patch.object(runtime, "verify_build_artifacts"), \
                 patch.object(runtime, "verify_build_evidence", side_effect=check) as verify, \

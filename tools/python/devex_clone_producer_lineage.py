@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from pathlib import PurePosixPath
+import hashlib
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -20,6 +22,7 @@ from devex_clone_post_process import (
 from devex_clone_run_state import STAGES, binding, load_state
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
+from full_stack_runtime import configuration_digest
 
 ATTEMPT_FIELDS = {
     "number", "stage", "mode", "started_at", "finished_at", "status", "sources", "result", "error_type",
@@ -96,6 +99,7 @@ def _runtime_contract(backend: Path, runtime: Path) -> tuple[dict, dict[str, Pat
     path = _regular(runtime / "runtime.json", runtime, "runtime 收据")
     value = read_json(path)
     exact(value, {"format_version", "backend_root", "scope_id", "configuration_sha256",
+                  "api_config_dir", "worker_config_dir", "api_configuration_sha256", "worker_configuration_sha256",
                   "worker_ready_url", "artifacts"})
     if (value["format_version"] != 1 or not isinstance(value["backend_root"], str)
             or Path(value["backend_root"]).resolve() != backend
@@ -103,6 +107,21 @@ def _runtime_contract(backend: Path, runtime: Path) -> tuple[dict, dict[str, Pat
             or re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}", value["scope_id"]) is None):
         raise ValueError("runtime 收据不属于当前后端或隔离 scope")
     digest(value["configuration_sha256"])
+    for role, name in (("api", "config"), ("worker", "worker-config")):
+        declared = value[f"{role}_config_dir"]
+        if not isinstance(declared, str) or Path(declared).name != name:
+            raise ValueError("runtime 双配置目录名与登记角色不匹配")
+        selected = _directory(Path(declared), backend, f"{role} 配置目录")
+        if digest(value[f"{role}_configuration_sha256"]) != configuration_digest(backend, selected):
+            raise ValueError("runtime 双配置文件摘要发生变化")
+    if Path(value["api_config_dir"]).parent != Path(value["worker_config_dir"]).parent:
+        raise ValueError("runtime 双配置目录不属于同一受管配置根")
+    combined = hashlib.sha256(json.dumps([
+        value["api_configuration_sha256"], value["worker_configuration_sha256"]
+    ]).encode()).hexdigest()
+    if (value["api_configuration_sha256"] == value["worker_configuration_sha256"]
+            or value["configuration_sha256"] != combined):
+        raise ValueError("runtime 双配置摘要或组合摘要不匹配")
     if not isinstance(value["worker_ready_url"], str):
         raise ValueError("runtime Worker 就绪地址无效")
     parsed = urlsplit(value["worker_ready_url"])

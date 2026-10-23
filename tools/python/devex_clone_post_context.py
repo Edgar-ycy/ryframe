@@ -22,7 +22,7 @@ from devex_clone_post_model import action_input, full_row_sql, exact_directory
 from devex_clone_post_process import require_quiet
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file, verify_generation, require_closed_port, verify_api_address
-from devex_clone_target_binding import request_binding, external_file
+from devex_clone_target_binding import request_binding, external_file, application_config_directory
 from devex_clone_target_resources import Resources
 from devex_clone_target_storage import actual_windows_argv
 from devex_clone_tools import verify as verify_tools
@@ -151,10 +151,10 @@ class Context:
 
     def target_guard(self, *, api):
         with self.environments.use("target"):
-            if source_binding(self.backend, {"source": self.target_config}) != self.initial["generation"]["physical"]:
+            if source_binding(self.backend, {"source": self.target_config}, config_dir=application_config_directory(self.backend, self.target)) != self.initial["generation"]["physical"]:
                 raise ValueError("派生 API 物理目标不是原复制目标")
-            verify_api_address(self.backend, self.selected["api_url"])
-            if worker_ready_url(execution_root(self.backend, self.target)) != self.selected["worker_ready_url"]:
+            verify_api_address(self.backend, self.selected["api_url"], config_dir=application_config_directory(self.backend, self.target))
+            if worker_ready_url(execution_root(self.backend, self.target), application_config_directory(self.backend, self.target)) != self.selected["worker_ready_url"]:
                 raise ValueError("Worker 地址变化")
             require_closed_port(self.selected["worker_ready_url"])
             absent(self.runtime / "worker.json")
@@ -208,7 +208,7 @@ class Context:
         else:
             write_json(filename, binaries)
         with self.environments.use("target"):
-            register_runtime(self.backend, self.runtime)
+            register_runtime(self.backend, self.runtime, source_config_dir=application_config_directory(self.backend, self.target))
         handoff = {"registration": self.request_binding, "runtime": binding(self.runtime / "runtime.json"),
                    "binaries": binding(filename), "api_url": self.selected["api_url"], "worker_started": False}
         filename = self.runtime / "handoff.json"

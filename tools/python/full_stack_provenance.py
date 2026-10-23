@@ -438,6 +438,10 @@ def validate_archive_evidence(
             "backend_root",
             "scope_id",
             "configuration_sha256",
+            "api_config_dir",
+            "worker_config_dir",
+            "api_configuration_sha256",
+            "worker_configuration_sha256",
             "worker_ready_url",
             "artifacts",
         },
@@ -448,6 +452,16 @@ def validate_archive_evidence(
     if runtime["scope_id"] != f"ci-{run_id}-{attempt}":
         raise ValueError("归档运行 scope 无效")
     _sha256(runtime["configuration_sha256"], "归档运行配置摘要")
+    for role, name in (("api", "config"), ("worker", "worker-config")):
+        if _archive_path(runtime[f"{role}_config_dir"], f"归档 {role} 配置目录") != receipt_root / name:
+            raise ValueError("归档双配置目录没有绑定同一运行目录")
+        _sha256(runtime[f"{role}_configuration_sha256"], f"归档 {role} 配置摘要")
+    expected_config = hashlib.sha256(json.dumps([
+        runtime["api_configuration_sha256"], runtime["worker_configuration_sha256"]
+    ]).encode()).hexdigest()
+    if (runtime["api_configuration_sha256"] == runtime["worker_configuration_sha256"]
+            or runtime["configuration_sha256"] != expected_config):
+        raise ValueError("归档双配置摘要或组合摘要不匹配")
     if not isinstance(runtime["worker_ready_url"], str) or re.fullmatch(
         r"http://127\.0\.0\.1:([1-9][0-9]{0,4})/readyz", runtime["worker_ready_url"]
     ) is None or not 1 <= int(
@@ -633,9 +647,6 @@ def _business_source_evidence(backend: Path, directory: Path) -> dict:
         _snapshot(generated[name], f"业务 crate 生成 {name} 来源")
         if sources[name]["head"] != generated[name]["head"]:
             raise ValueError(f"业务 crate {name} 原始 SHA 与生成工作树 HEAD 不匹配")
-    expected_backend = os.environ.get("RYFRAME_CODE_SHA", "")
-    if COMMIT_PATTERN.fullmatch(expected_backend) is None or sources["backend"]["head"] != expected_backend:
-        raise ValueError("业务 crate 后端原始 SHA 与本次验收提交不匹配")
     fixture_binding = _binding(receipt_path)
     pair = _source_pair(
         directory,
@@ -693,19 +704,14 @@ def reference_fixture_source_pair(backend: Path) -> dict:
 
 def full_stack_source_evidence(backend: Path, directory: Path | None = None) -> dict | None:
     """核对当前全栈源码；非全栈复用入口不隐式要求 fixture 环境。"""
-    fixture = os.environ.get("RYFRAME_E2E_FIXTURE")
-    if fixture is None:
+    if directory is None or not (directory / SOURCE_PAIR_RECEIPT).is_file():
         return None
-    if fixture not in {"core", "business"}:
-        raise ValueError("RYFRAME_E2E_FIXTURE 必须是 core 或 business")
-    if directory is None:
-        raise ValueError("全栈来源核验缺少明确运行目录")
     root = backend.resolve(strict=True)
-    if fixture == "business" or (root.parent / FIXTURE_RECEIPT).is_file():
-        # 业务夹具工作树内运行的套件（含核心套件）沿用夹具来源模型；
-        # RYFRAME_E2E_FIXTURE 只选择运行的测试集，不改变运行时的源码组合。
+    if (root.parent / FIXTURE_RECEIPT).is_file():
+        # 已绑定工作树与来源组合文件决定夹具类型，不接受外部环境覆盖。
         return _business_source_evidence(root, directory)
-    expected = os.environ.get("RYFRAME_CODE_SHA", "")
+    pair_input, _ = _read_json(directory / SOURCE_PAIR_RECEIPT, "全栈源码组合")
+    expected = pair_input.get("backend_sha", "")
     actual_git_root = Path(git(root, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if actual_git_root != root:
         raise ValueError("core 后端必须是实际 Git 工作树根目录")

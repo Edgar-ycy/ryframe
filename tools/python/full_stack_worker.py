@@ -33,7 +33,8 @@ from full_stack_process_tree import (
     supervise_product,
     terminate_owned_process_tree,
 )
-from full_stack_runtime import verify_runtime
+from full_stack_runtime import process_environment, verify_runtime
+from rate_limit_tool import install_binding, tool_binding
 from full_stack_worker_protocol import (
     ARCHIVE as ARCHIVE,
     LOCK,
@@ -240,6 +241,7 @@ def _run_worker(
     backend: Path, directory: Path, operation: dict, supervisor: dict, monitor: dict
 ) -> tuple[dict, subprocess.Popen | None, dict | None]:
     request = operation["request"]
+    receipt = verify_runtime(backend, directory)
     executable, url = request["worker_artifact"]["path"], request["worker_ready_url"]
     log_path = directory / request["log"]
     _progress(request["operation_id"], backend, directory, "launching", None)
@@ -247,9 +249,9 @@ def _run_worker(
     try:
         with log_path.open("xb") as log:
             process = subprocess.Popen(
-                [executable],
+                [executable, "--config-dir", receipt["worker_config_dir"]],
                 cwd=backend,
-                env={**os.environ, "SNOWFLAKE_WORKER_ID": "2"},
+                env=process_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -388,8 +390,7 @@ def _authorize_supervisor(
     backend: Path, directory: Path, operation: dict
 ) -> subprocess.Popen:
     operation_id = operation["owner"]["operation_id"]
-    environment = os.environ.copy()
-    environment.pop("SNOWFLAKE_WORKER_ID", None)
+    environment = process_environment()
     log = directory / f"worker-supervisor-{operation_id}.log"
     with log.open("xb") as output:
         command = [
@@ -403,6 +404,9 @@ def _authorize_supervisor(
             "--operation-id",
             operation_id,
         ]
+        binding = tool_binding()
+        if binding is not None:
+            command.extend(["--tool-binding-json", json.dumps(binding, separators=(",", ":"))])
         creation = dict(
             cwd=backend,
             env=environment,
@@ -824,7 +828,10 @@ def _main_supervisor(arguments: list[str]) -> int:
     parser.add_argument("--backend-root", required=True, type=Path)
     parser.add_argument("--runtime-dir", required=True, type=Path)
     parser.add_argument("--operation-id", required=True)
+    parser.add_argument("--tool-binding-json")
     args = parser.parse_args(arguments)
+    if args.tool_binding_json is not None:
+        install_binding(args.tool_binding_json)
     if OPERATION_ID.fullmatch(args.operation_id) is None:
         raise ValueError("Worker 监督操作 ID 无效")
     return _supervise_start(

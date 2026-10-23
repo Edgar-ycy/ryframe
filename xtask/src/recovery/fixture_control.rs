@@ -37,8 +37,6 @@ pub(crate) mod source_pair;
 #[path = "fixture_control/successor.rs"]
 mod successor;
 
-const PROTOCOL_KEY: &str = "RYFRAME_REFERENCE_FIXTURE_CONTROL_PROTOCOL";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateFixtureControlInvocation {
     pub(crate) script: &'static str,
@@ -59,9 +57,14 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
     run_with_env_removed(
         root,
         "python",
-        &["-B", invocation.script],
-        &[(PROTOCOL_KEY, invocation.protocol.as_str())],
-        &[PROTOCOL_KEY],
+        &[
+            "-B",
+            invocation.script,
+            "--protocol-json",
+            invocation.protocol.as_str(),
+        ],
+        &[],
+        &[],
     )
 }
 

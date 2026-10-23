@@ -283,7 +283,7 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
     exact(private, {"environment"})
     if (maintenance["source"] != build["sources"]["full"]["source"]
             or source_binding(execution, {"source": source["request"]["source"]},
-                              configured(private["environment"]), evidence_root=backend)
+                              {"APP_ENV": private["environment"]["APP_ENV"]}, evidence_root=backend, config_dir=execution / "config")
             != source["generation"]["physical_binding"]):
         raise ValueError("C68 正式请求的构建、维护工具或环境与 C52 物理来源不同")
 
@@ -306,12 +306,12 @@ def _runtime(backend: Path, directory: Path, output: Path, request: dict, source
         raise ValueError("C68 运行配置没有绑定同一执行来源和构建")
     verify_build(runtime.execution, runtime.build, request["expected_backend_sha"], run)
     with runtime.environment():
-        if any(key in os.environ for key in ("RYFRAME_E2E_FIXTURE", "RYFRAME_FULL_STACK_SOURCE")):
+        if (runtime.execution.parent / "fixture.json").exists():
             raise ValueError("C68 运行环境混入独立 fixture")
-        if source_binding(runtime.execution, {"source": runtime.selected}, evidence_root=backend) != source["generation"]["physical_binding"]:
+        if source_binding(runtime.execution, {"source": runtime.selected}, evidence_root=backend, config_dir=runtime.execution / "config") != source["generation"]["physical_binding"]:
             raise ValueError("C68 运行配置改变了 C52 物理来源")
         contract = verify_runtime(runtime.execution, runtime.runtime)
-        verify_api_address(runtime.execution, runtime.selected["api_url"])
+        verify_api_address(runtime.execution, runtime.selected["api_url"], config_dir=runtime.execution / "config")
         if require_idle:
             if current_storage_binding(backend, directory, "target") != request["current_storage"]:
                 raise ValueError("C68 谱系恢复前 RustFS 代次已变化")
@@ -456,7 +456,9 @@ def authorize(backend: Path, directory: Path, request_path: Path, number: int, p
         raise ValueError("C69 观察运行使用的产品或维护二进制与 C68 不同")
     write_json(runtime.runtime / "binaries.json", binaries)
     with runtime.environment() as environment:
-        runtime.contract = register_runtime(runtime.execution, runtime.runtime)
+        runtime.contract = register_runtime(runtime.execution, runtime.runtime,
+                                            api_config_dir=Path(facts["contract"]["api_config_dir"]),
+                                            worker_config_dir=Path(facts["contract"]["worker_config_dir"]))
         if runtime.contract != facts["contract"]:
             raise ValueError("C69 观察运行配置与 C68 不同")
         runtime.urls = {"api": runtime.selected["api_url"].rstrip("/") + "/readyz",

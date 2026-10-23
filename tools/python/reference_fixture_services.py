@@ -20,7 +20,7 @@ from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
 from reference_fixture_environment import validate_current_review_tools, validate_preflight_successor
-from reference_fixture_service_context import service_run
+from reference_fixture_service_context import application_settings, service_run
 from reference_fixture_control_protocol import run_private
 from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect
 
@@ -78,7 +78,8 @@ def _initial_services(state: dict) -> None:
 
 
 def _bucket_configuration(review: dict, private: dict) -> dict:
-    access, secret = private.get("access_key"), private.get("secret_key")
+    objects = private.get("object_storage", {})
+    access, secret = objects.get("access_key"), objects.get("secret_key")
     if not isinstance(access, str) or not access or not isinstance(secret, str) or not secret:
         raise ValueError("对象桶初始化缺少直接配置的 S3 凭据")
     objects = review["scopes"]["seed"]["objects"]
@@ -118,7 +119,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
     if output.exists() or not manifest.is_file():
         raise ValueError("对象桶初始化必须复用首代服务账本且不能覆盖已有证据")
     _initial_services(load_state(run))
-    configuration = _bucket_configuration(review, private)
+    configuration = _bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))
     scope_id = review["scopes"]["seed"]["scope_id"]
     output.mkdir()
     environment_file = bootstrap_file.parent / "environment.json"
@@ -134,7 +135,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
         if (bound(manifest) != sources["manifest"]
                 or bound(environment_file) != sources["environment"]
                 or read_json(environment_file) != {"environment": private}
-                or plan_hash(_bucket_configuration(review, private)) != sources["configuration_sha256"]):
+                or plan_hash(_bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))) != sources["configuration_sha256"]):
             raise ValueError("对象桶初始化期间服务账本清单发生变化")
         validate_current_review_tools(review)
 
@@ -270,7 +271,7 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
     port = urlsplit("redis://" + service["endpoint"]).port
     if port is None:
         raise ValueError("Redis 审阅端点无端口")
-    password = private.get("APP_REDIS_PASSWORD")
+    password = application_settings(bootstrap_file, Path(bootstrap["execution_backend"])).get("redis", {}).get("password")
     if not isinstance(password, str) or not password:
         raise ValueError("Redis 首代缺少私有认证")
     tools = review["tools"]
@@ -290,7 +291,7 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
                "executable": redis_tool["resolved_path"], "sha256": redis_tool["sha256"], "configuration": bound(configuration),
                "directory": {"path": str(directory), "device": directory.stat().st_dev, "inode": directory.stat().st_ino},
                "previous_identity": None, "previous_boot_id": None, "previous_run_id": None, "port": port,
-               "password_env": "APP_REDIS_PASSWORD", "timeout_seconds": 60,
+               "password": password, "timeout_seconds": 60,
                "python": {"path": python["path"], "executable": python["resolved_path"], "sha256": python["sha256"]}}
     output.mkdir()
     write_json(output / "request.json", request)

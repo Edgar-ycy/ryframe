@@ -13,6 +13,7 @@ from devex_clone_storage_process import inspect_attempt, running
 from devex_clone_storage_request import arguments, directory_identity
 from full_stack_process import process_identity
 from full_stack_process_tree import read_process_tree
+from rate_limit_client import load_app_table
 from restore_reference_plan import plan_hash
 from reference_fixture_service_history import (close_reconciliation_evidence,
                                                reconcilable_failed_close, validate_history,
@@ -35,6 +36,11 @@ def service_run(review: dict) -> Path:
     ):
         raise ValueError("审阅计划 future_root 必须是 业务 crate 参考夹具目录的直接子目录")
     return root / "service-run"
+
+
+def application_settings(bootstrap_file: Path, execution: Path) -> dict:
+    """从已绑定 bootstrap 相邻的唯一明文配置目录读取应用值。"""
+    return load_app_table(execution, {"APP_ENV": "test"}, config_dir=bootstrap_file.parent / "config")
 
 
 def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[str, ...],
@@ -70,6 +76,8 @@ def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[st
                    for key, item in environment.items())
             or plan_hash(environment) != receipt["environment_sha256"]):
         raise ValueError("夹具私有环境与 bootstrap 摘要不一致")
+    if set(environment) - {"APP_ENV", "TEMP", "TMP"} or environment.get("APP_ENV") != "test":
+        raise ValueError("夹具进程环境只允许 APP_ENV 与受管临时目录")
     for name in secret_files:
         descriptor = receipt["secret_files"][name]
         if not isinstance(descriptor, dict) or set(descriptor) != {"path", "bytes", "sha256"}:

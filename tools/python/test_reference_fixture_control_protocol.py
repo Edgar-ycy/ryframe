@@ -20,12 +20,12 @@ import reference_fixture_source_pair as fixture_source_pair
 import reference_fixture_successor as fixture_successor
 from reference_fixture_control_protocol import (
     FixtureControlProtocolError,
-    PROTOCOL_KEY,
     private_arguments,
     run_private,
 )
 
 
+PROTOCOL_KEY = "RYFRAME_REFERENCE_FIXTURE_CONTROL"
 KIND = "ryframe-reference-fixture-control"
 
 
@@ -51,7 +51,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
             raise ValueError("计划来源错误：secret-for-test")
         with (
             mock.patch.dict(os.environ, {PROTOCOL_KEY: raw, "APP_PASSWORD": "secret-for-test"}),
-            mock.patch.object(sys, "argv", ["review.py"]),
+            mock.patch.object(sys, "argv", ["review.py", "--protocol-json", raw]),
             mock.patch.object(sys, "stderr", output),
         ):
             result = run_private(
@@ -81,8 +81,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
             domain,
             schemas,
             positional_operation=positional,
-            argv=[],
-            environment={PROTOCOL_KEY: raw},
+            argv=["--protocol-json", raw],
         )
 
     def test_generation_preview_preserves_explicit_source_roots(self):
@@ -243,15 +242,15 @@ class FixtureControlProtocolTests(unittest.TestCase):
         raw = self.protocol(
             "services", "status", False, review=path, environment=path
         )
-        with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
+        with self.assertRaisesRegex(FixtureControlProtocolError, "只接受 --protocol-json"):
             private_arguments(
                 "services", fixture_services.PROTOCOL_SCHEMAS,
-                positional_operation=True, argv=["status"], environment={PROTOCOL_KEY: raw},
+                positional_operation=True, argv=["status"],
             )
-        with self.assertRaisesRegex(FixtureControlProtocolError, "未知字段"):
+        with self.assertRaisesRegex(FixtureControlProtocolError, "只接受 --protocol-json"):
             private_arguments(
-                "services", fixture_services.PROTOCOL_SCHEMAS, positional_operation=True, argv=[],
-                environment={PROTOCOL_KEY: raw, "RYFRAME_REFERENCE_FIXTURE_CONTROL_EXTRA": "x"},
+                "services", fixture_services.PROTOCOL_SCHEMAS, positional_operation=True,
+                argv=["--protocol-json", raw, "extra"],
             )
         relative = self.protocol(
             "services", "status", False, review="relative.json", environment=path
@@ -466,12 +465,12 @@ class FixtureControlProtocolTests(unittest.TestCase):
         observed = []
 
         def fail_after_protocol(*_args):
-            observed.append(PROTOCOL_KEY in os.environ)
+            observed.append(sys.argv[1:] == ["--protocol-json", raw])
             raise ValueError("expected fixture failure")
 
         with (
             mock.patch.object(fixture_retention, "run", side_effect=fail_after_protocol),
-            mock.patch.object(sys, "argv", ["full_stack_migration_history.py"]),
+            mock.patch.object(sys, "argv", ["full_stack_migration_history.py", "--protocol-json", raw]),
             mock.patch.dict(os.environ, {PROTOCOL_KEY: raw}),
         ):
             self.assertEqual(
@@ -484,7 +483,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 1,
             )
             self.assertIn(PROTOCOL_KEY, os.environ)
-        self.assertEqual(observed, [False])
+        self.assertEqual(observed, [True])
 
 
 if __name__ == "__main__":

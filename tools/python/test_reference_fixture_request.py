@@ -147,17 +147,12 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
             "remote_writes": 0,
         }
         plan["sha256"] = plan_hash(plan)
-        self.write(
-            directory / "environment.json",
-            {
-                "environment": {
-                    "APP_SCOPE_ID": selected["scope_id"],
-                    "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
-                    "access_key": f"fixture-access-{side}",
-                    "secret_key": f"fixture-secret-{side}",
-                }
-            },
-        )
+        self.write(directory / "environment.json", {"environment": {"APP_ENV": "test"}})
+        config = directory / "config"
+        config.mkdir()
+        (config / "app.test.toml").write_text(
+            f'scope_id = "{selected["scope_id"]}"\n[reset]\ncredential_version = "fixture-v1"\n'
+            f'[object_storage]\naccess_key = "fixture-access-{side}"\nsecret_key = "fixture-secret-{side}"\n', encoding="utf-8")
         return self.write(
             directory / "bootstrap.json",
             {
@@ -253,23 +248,18 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         ambient = {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret",
                    "TEST_ACCESS_KEY": "ambient-test-access", "TEST_SECRET_KEY": "ambient-test-secret"}
         with patch.dict(os.environ, ambient):
-            path = self.environments["base"].parent / "environment.json"
-            original = json.loads(path.read_text(encoding="utf-8"))
+            settings = {"scope_id": "fixture-base", "reset": {"credential_version": "fixture-v1"},
+                        "object_storage": {"access_key": "fixture-access-base", "secret_key": "fixture-secret-base"}}
             for key in ("access_key", "secret_key"):
                 for invalid in (None, "", 123):
-                    changed = {"environment": {**original["environment"], key: invalid}}
-                    self.write(path, changed)
-                    with self.subTest(key=key, invalid=invalid), self.assertRaisesRegex(ValueError, "直接配置"):
+                    changed = {**settings, "object_storage": {**settings["object_storage"], key: invalid}}
+                    with self.subTest(key=key, invalid=invalid), patch.object(request, "application_settings", return_value=changed), self.assertRaisesRegex(ValueError, "直接配置"):
                         request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
-                missing = {name: value for name, value in original["environment"].items() if name != key}
-                self.write(path, {"environment": missing})
-                with self.assertRaisesRegex(ValueError, "直接配置"):
+                missing = {name: value for name, value in settings["object_storage"].items() if name != key}
+                with patch.object(request, "application_settings", return_value={**settings, "object_storage": missing}), self.assertRaisesRegex(ValueError, "直接配置"):
                     request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
-            legacy = {name: value for name, value in original["environment"].items()
-                      if name not in ("access_key", "secret_key")}
-            legacy.update({"access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY"})
-            self.write(path, {"environment": legacy})
-            with self.assertRaisesRegex(ValueError, "直接配置"):
+            legacy = {"access_key_env": "TEST_ACCESS_KEY", "secret_key_env": "TEST_SECRET_KEY"}
+            with patch.object(request, "application_settings", return_value={**settings, "object_storage": legacy}), self.assertRaisesRegex(ValueError, "直接配置"):
                 request.build(self.backend, self.environments["base"], self.service_run, "fresh-base", "base")
 
     def test_live_service_check_rejects_stopped_or_drifted_runtime_evidence(self):

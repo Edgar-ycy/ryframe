@@ -279,6 +279,7 @@ class Resources:
                     table = load_app_table(
                         self.execution_backend,
                         {"APP_ENV": self.environment.get("APP_ENV")},
+                        config_dir=Path(self.request["config_dir"]),
                     )
                     redis = table.get("redis", {})
                     password = redis.get("password") if isinstance(redis, dict) else None

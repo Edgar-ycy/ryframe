@@ -16,6 +16,29 @@ from rate_limit_client import load_app_table
 from workspace_directory import WorkspaceDirectory
 
 
+def load_control(backend: Path) -> dict:
+    path = backend / ".local-tests/full-stack-control.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024:
+        raise ValueError("全栈工具缺少无链接的受管 full-stack-control.json")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    base = {"format_version", "runtime_dir"}
+    ci_fields = {"mysql_container_id", "redis_container_id", "s3_container_id"}
+    if (not isinstance(value, dict) or set(value) not in (base | ci_fields, base | {"mysql_client"})
+            or type(value["format_version"]) is not int or value["format_version"] != 1):
+        raise ValueError("全栈工具配置字段无效")
+    if not isinstance(value["runtime_dir"], str) or not Path(value["runtime_dir"]).is_absolute():
+        raise ValueError("全栈 runtime_dir 必须是明确绝对路径")
+    if "mysql_client" in value:
+        client = value["mysql_client"]
+        if not isinstance(client, str) or not Path(client).is_absolute() or not Path(client).is_file():
+            raise ValueError("全栈工具配置 mysql_client 必须是实际客户端的绝对路径")
+        return value
+    for role in ("mysql", "redis", "s3"):
+        if not isinstance(value[f"{role}_container_id"], str) or not re.fullmatch(r"[a-f0-9]{12,64}", value[f"{role}_container_id"]):
+            raise ValueError(f"全栈工具配置 {role}_container_id 必须是明确容器 ID")
+    return value
+
+
 def identifier(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_]{1,64}", value):
         raise ValueError("测试数据库标识无效")
@@ -41,6 +64,10 @@ def bindings(backend: Path, target_key: str = "shared", *, config_dir: Path | No
             raise ValueError("此隔离 gate 尚不支持需要 CA/主机名参数的 MySQL TLS 模式")
         binding["_scope_id"] = settings.get("scope_id")
         binding["_client_dir"] = str(backend / ".local-tests/mysql-client")
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            binding["_container_id"] = load_control(backend)["mysql_container_id"]
+        else:
+            binding["_mysql_client"] = load_control(backend)["mysql_client"]
     if int(control["port"]) != int(target["port"]) or control["database"] == target["database"]:
         raise ValueError("故障 gate 仅接受同一 MySQL 实例上的两个不同隔离 schema")
     return control, target
@@ -124,20 +151,19 @@ def client_invocation(binding: dict, client: str):
 
 def _client_command(binding: dict, client: str, options: str, resources: ExitStack):
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        container = os.environ.get("RYFRAME_CI_MYSQL_CONTAINER_ID", "")
+        container = binding.get("_container_id", "")
         run, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
         if (not re.fullmatch(r"[a-f0-9]{12,64}", container)
                 or not re.fullmatch(r"[1-9][0-9]*", run)
                 or not re.fullmatch(r"[1-9][0-9]*", attempt)
-                or binding.get("_container_id", container) != container
                 or binding.get("_scope_id") != f"ci-{run}-{attempt}"):
             raise ValueError("MySQL 容器必须明确属于当前 CI run 与 attempt")
         return ["docker", "exec", "-i", container, "sh", "-c", CONTAINER_CLIENT,
                 "ryframe-mysql", client], 3306, options
     else:
-        executable = Path(os.environ.get("RYFRAME_E2E_MYSQL_CLIENT", ""))
+        executable = Path(binding.get("_mysql_client", ""))
         if not executable.is_absolute() or not executable.is_file():
-            raise ValueError("RYFRAME_E2E_MYSQL_CLIENT 必须是实际 mysql 客户端的绝对路径")
+            raise ValueError("绑定工具配置的 mysql_client 必须是实际客户端的绝对路径")
         if client == "mysqldump":
             executable = executable.with_name("mysqldump.exe" if os.name == "nt" else "mysqldump")
             if not executable.is_file():

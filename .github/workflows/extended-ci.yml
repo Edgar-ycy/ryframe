@@ -107,41 +107,6 @@ jobs:
             artifact_suffix: -business
     env:
       APP_ENV: test
-      APP_MULTI_TENANCY_ENABLED: "true"
-      APP_API_DOCS_ENABLED: "false"
-      APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
-      APP_APP_HOST: 127.0.0.1
-      APP_APP_PORT: "8080"
-      APP_RATE_LIMIT_CAPACITY: "100"
-      APP_RATE_LIMIT_WINDOW_SECS: "60"
-      APP_REDIS_MODE: required
-      APP_REDIS_HOST: 127.0.0.1
-      APP_REDIS_PORT: "6379"
-      APP_REDIS_DATABASE: "14"
-      APP_REDIS_TLS: "false"
-      APP_RESET_CREDENTIAL_VERSION: ci-v1
-      APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"
-      APP_RESET_LEGACY_REDIS_EXCLUSIVE: "true"
-      APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE: "true"
-      APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY: ryframe-ci-outside-sentinel
-      APP_OBJECT_STORAGE_BACKEND: s3
-      APP_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
-      APP_OBJECT_STORAGE_ACCESS_KEY: ryframe-ci-access
-      APP_OBJECT_STORAGE_SECRET_KEY: ryframe-ci-isolated-storage-secret
-      APP_OBJECT_STORAGE_USE_SSL: "false"
-      APP_AUTH_JWT_SECRET: ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes
-      APP_CORS_ALLOW_ORIGINS: http://127.0.0.1:4174
-      APP_JOBS_MODE: external
-      APP_JOBS_HEALTH_HOST: 127.0.0.1
-      RYFRAME_CODE_SHA: ${{ github.sha }}
-      RYFRAME_RESET_SERVICES_STOPPED: "YES"
-      RYFRAME_RESET_ADMIN_PASSWORD: Valid!Admin123
-      RYFRAME_E2E_TENANT_ID: system
-      RYFRAME_E2E_USERNAME: admin
-      RYFRAME_E2E_PASSWORD: Valid!Admin123
-      RYFRAME_E2E_BACKEND_DIR: ${{ github.workspace }}/${{ matrix.backend }}
-      RYFRAME_E2E_FIXTURE: ${{ matrix.fixture }}
-      VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
     services:
       rustfs:
@@ -178,14 +143,8 @@ jobs:
       - name: 配置全栈临时目录
         shell: bash
         run: |
-          {
-            echo "APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage"
-            echo "RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state"
-            echo "RYFRAME_E2E_RUNTIME_DIR=$RUNNER_TEMP/ryframe-full-stack"
-            echo "RYFRAME_E2E_RATE_LIMIT_CAPACITY=$APP_RATE_LIMIT_CAPACITY"
-            echo "RYFRAME_E2E_RATE_LIMIT_WINDOW_SECS=$APP_RATE_LIMIT_WINDOW_SECS"
-            echo "RYFRAME_E2E_LOGIN_BUDGET_STATE=$RUNNER_TEMP/ryframe-full-stack/login-budget.json"
-          } >> "$GITHUB_ENV"
+          umask 077
+          mkdir -p "$RUNNER_TEMP/ryframe-full-stack"
 
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -206,7 +165,7 @@ jobs:
         run: |
           set -euo pipefail
           port="$(python -c 'import socket; sock=socket.socket(); sock.bind(("127.0.0.1", 0)); print(sock.getsockname()[1]); sock.close()')"
-          echo "APP_JOBS_HEALTH_PORT=$port" >> "$GITHUB_ENV"
+          printf "%s\n" "$port" > "$RUNNER_TEMP/ryframe-full-stack/worker-health-port"
 
       - name: 安装固定并校验哈希的 CI Python 依赖
         working-directory: backend
@@ -306,6 +265,17 @@ jobs:
           scope_id = "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           snowflake_worker_id = 3
 
+          [bootstrap]
+          admin_password = "Valid!Admin123"
+          [app]
+          host = "127.0.0.1"
+          port = 8080
+          [multi_tenancy]
+          enabled = true
+          [api_docs]
+          enabled = false
+          [monitor]
+          metrics_bearer_token = "ryframe-ci-isolated-metrics-token-more-than-thirty-two-bytes"
           [database.primary]
           host = "127.0.0.1"
           port = 3306
@@ -313,21 +283,87 @@ jobs:
           username = "root"
           password = "ryframe-ci-password"
           tls_mode = "disabled"
+          [redis]
+          mode = "required"
+          host = "127.0.0.1"
+          port = 6379
+          password = ""
+          database = 14
+          tls = false
+          [object_storage]
+          backend = "s3"
+          endpoint = "http://127.0.0.1:9000"
+          region = "us-east-1"
+          access_key = "ryframe-ci-access"
+          secret_key = "ryframe-ci-isolated-storage-secret"
+          use_ssl = false
+          local_base_dir = "$RUNNER_TEMP/ryframe-full-stack/storage"
+          [auth]
+          jwt_secret = "ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes"
+          [cors]
+          allow_origins = ["http://127.0.0.1:4174"]
+          [jobs]
+          mode = "external"
+          health_host = "127.0.0.1"
+          health_port = $(cat "$RUNNER_TEMP/ryframe-full-stack/worker-health-port")
+          [rate_limit]
+          enabled = true
+          capacity = 100
+          window_secs = 60
+          api_window_secs = 60
+          [rate_limit.api_limits]
+          "POST /api/v1/auth/login" = 5
+          "POST /api/v1/auth/password-reset/complete" = 3
+          "GET /api/v1/auth/csrf" = 30
+          [reset]
+          credential_version = "ci-v1"
+          legacy_mysql_exclusive = true
+          legacy_redis_exclusive = true
+          legacy_object_storage_exclusive = true
+          redis_outside_sentinel_key = "ryframe-ci-outside-sentinel"
+          services_stopped = true
+          source_sha = "$GITHUB_SHA"
+          state_directory = "$RUNNER_TEMP/ryframe-full-stack/reset-state"
+          EOF
+          cat > .local-tests/full-stack-control.json <<EOF
+          {"format_version":1,"runtime_dir":"$RUNNER_TEMP/ryframe-full-stack","mysql_container_id":"${{ job.services.mysql.id }}","redis_container_id":"${{ job.services.redis.id }}","s3_container_id":"${{ job.services.rustfs.id }}"}
           EOF
 
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
-        env:
-          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-          RYFRAME_CI_S3_CONTAINER_ID: ${{ job.services.rustfs.id }}
-          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
         run: cargo xtask check recovery full-stack prepare
 
       - name: 从当前隔离配置导出登录预算
         working-directory: ${{ matrix.backend }}
         run: >-
           cargo xtask check recovery full-stack rate-limit
-          --environment-file "$GITHUB_ENV"
+          --tool-config-file "$RUNNER_TEMP/ryframe-full-stack/login-budget-config.json"
+
+      - name: 写入前端受管浏览器配置
+        working-directory: ${{ matrix.frontend }}
+        shell: bash
+        run: |
+          umask 077
+          python - <<'PY'
+          import json, os, pathlib, sys
+          runtime = pathlib.Path(os.environ["RUNNER_TEMP"]) / "ryframe-full-stack"
+          budget = json.loads((runtime / "login-budget-config.json").read_text(encoding="utf-8"))
+          frontend = pathlib.Path.cwd()
+          backend = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "${{ matrix.backend }}"
+          tools = frontend / ".local-tests/frontend-tools.json"
+          tools.parent.mkdir(parents=True, exist_ok=True)
+          browser = {"scopeId": f"ci-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",
+                     "tenantId": "system", "username": "admin", "password": "Valid!Admin123",
+                     "backendDir": str(backend), "runtimeDir": str(runtime), "python": sys.executable,
+                     "requestCapacity": 100, "requestWindowSeconds": 60,
+                     "port": 4174, "serverMode": "preview", "fixture": "${{ matrix.fixture }}",
+                     "runId": f"ci-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}", **budget}
+          configuration = {"real_browser": browser}
+          with tools.open("x", encoding="utf-8") as output:
+              json.dump(configuration, output, ensure_ascii=False, indent=2)
+              output.write("\n")
+          tools.chmod(0o600)
+          PY
 
       - name: 启动真实 API、Worker 并等待就绪
         working-directory: ${{ matrix.backend }}
@@ -335,9 +371,7 @@ jobs:
 
       - name: 构建前端生产产物
         working-directory: ${{ matrix.frontend }}
-        env:
-          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-        run: VITE_APP_BUILD_COMMIT="$(git rev-parse HEAD)" corepack pnpm build
+        run: corepack pnpm build --source-commit "$(git rev-parse HEAD)"
 
       - name: 复核全栈源码组合未变化
         working-directory: backend
@@ -349,10 +383,6 @@ jobs:
       - name: 收集进程与基础设施日志
         if: ${{ always() }}
         working-directory: ${{ matrix.backend }}
-        env:
-          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-          RYFRAME_CI_S3_CONTAINER_ID: ${{ job.services.rustfs.id }}
         run: cargo xtask check recovery full-stack collect
 
       - name: 保存全栈诊断产物
@@ -364,6 +394,9 @@ jobs:
           path: |
             ${{ runner.temp }}/ryframe-full-stack
             !${{ runner.temp }}/ryframe-full-stack/config/**
+            !${{ runner.temp }}/ryframe-full-stack/worker-config/**
+            !**/.local-tests/frontend-tools.json
+            !**/.local-tests/full-stack-config/**
             backend/.local-tests/business-fixture/fixture.json
             backend/.local-tests/business-fixture/prepare.log
           if-no-files-found: error
@@ -414,7 +447,7 @@ jobs:
         run: >-
           docker build
           --file deploy/Dockerfile
-          --build-arg "RYFRAME_BUILD_COMMIT=$GITHUB_SHA"
+          --build-arg "SOURCE_COMMIT=$GITHUB_SHA"
           --tag "ryframe-ci:$GITHUB_SHA"
           .
 

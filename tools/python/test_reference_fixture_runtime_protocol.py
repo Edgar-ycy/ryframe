@@ -27,8 +27,7 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
         }
 
     def parse(self, value: dict) -> runtime.RuntimeRequest:
-        environment = {runtime.PROTOCOL_KEY: json.dumps(value, separators=(",", ":"))}
-        return runtime.private_protocol_request([], environment)
+        return runtime.private_protocol_request(["--protocol-json", json.dumps(value, separators=(",", ":"))])
 
     def test_parses_exact_bind_protocol(self):
         value = {
@@ -45,13 +44,11 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
         self.assertEqual(request.server, "preview")
 
     def test_rejects_direct_arguments_before_reading_protocol(self):
-        with self.assertRaisesRegex(runtime.RuntimeProtocolError, "不接受命令行参数"):
-            runtime.private_protocol_request(["verify"], {})
+        with self.assertRaisesRegex(runtime.RuntimeProtocolError, "只接受 --protocol-json"):
+            runtime.private_protocol_request(["verify"])
 
     def test_direct_process_reports_argv_as_parameter_error(self):
-        environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(runtime.PROTOCOL_PREFIX)}
-        environment[runtime.PROTOCOL_KEY] = json.dumps(self.base, separators=(",", ":"))
+        environment = dict(os.environ)
         environment["PYTHONUTF8"] = "1"
         result = subprocess.run(
             [sys.executable, str(Path(runtime.__file__).resolve()), "verify"],
@@ -73,7 +70,7 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
         ):
             with self.subTest(value=value):
                 with self.assertRaises(runtime.RuntimeProtocolError):
-                    runtime.private_protocol_request([], {runtime.PROTOCOL_KEY: value})
+                    runtime.private_protocol_request(["--protocol-json", value])
 
     def test_rejects_wrong_write_mode_and_ambiguous_browser_fields(self):
         invalid = [
@@ -101,13 +98,9 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
                 with self.assertRaises(runtime.RuntimeProtocolError):
                     self.parse(value)
 
-    def test_rejects_unknown_prefixed_environment(self):
-        environment = {
-            runtime.PROTOCOL_KEY: json.dumps(self.base),
-            runtime.PROTOCOL_PREFIX + "EXTRA": "unexpected",
-        }
-        with self.assertRaisesRegex(runtime.RuntimeProtocolError, "未知字段"):
-            runtime.private_protocol_request([], environment)
+    def test_rejects_extra_arguments(self):
+        with self.assertRaisesRegex(runtime.RuntimeProtocolError, "只接受 --protocol-json"):
+            runtime.private_protocol_request(["--protocol-json", json.dumps(self.base), "extra"])
 
 
 if __name__ == "__main__":

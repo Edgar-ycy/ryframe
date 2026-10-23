@@ -19,6 +19,7 @@ from full_stack_provenance import verify_build_evidence
 from full_stack_runtime import register_runtime, verify_runtime
 from reference_fixture_browser import RuntimeApi, bind_browser, run_browser, verify_browser
 from reference_fixture_environment import prepared_environment
+from reference_fixture_service_context import application_settings
 from reference_fixture_source_pair import write_pair
 from restore_build import build_command, build_context, file_digest, source_snapshot, verify_build_artifacts
 from source_inventory import build_source_domains, capture_inventory
@@ -48,8 +49,7 @@ def _runtime_environment(values: dict, pair: dict) -> dict:
     head = source.get("head") if isinstance(source, dict) else None
     if not isinstance(head, str):
         raise ValueError("夹具来源组合缺少后端提交")
-    return {**configured(values), "APP_API_DOCS_ENABLED": "false",
-            "RYFRAME_E2E_FIXTURE": "business", "RYFRAME_CODE_SHA": head}
+    return configured(values)
 
 
 def _environment(execution: Path, values: dict, output: Path) -> dict:
@@ -107,7 +107,7 @@ def _backend_build(execution: Path, output: Path, binaries: dict[str, str], inve
 
 
 def build(backend: Path, environment_path: Path, output_path: Path) -> dict:
-    _, execution, private = _bootstrap(backend, environment_path)
+    bootstrap_path, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=True)
     output.mkdir()
     try:
@@ -118,7 +118,7 @@ def build(backend: Path, environment_path: Path, output_path: Path) -> dict:
             context = build_context(execution)
             binaries = build_binaries(_run, execution, output)
             _backend_build(execution, output, binaries, inventory, context)
-            runtime = register_runtime(execution, output)
+            runtime = register_runtime(execution, output, source_config_dir=bootstrap_path.parent / "config")
         return {"status": "reference_fixture_runtime_built", "source_pair": _bound(output / "source-pair.json"),
                 "backend_build": _bound(output / "backend-build.json"), "runtime": _bound(output / "runtime.json"),
                 "scope_id": runtime["scope_id"], "remote_writes": 0}
@@ -129,7 +129,7 @@ def build(backend: Path, environment_path: Path, output_path: Path) -> dict:
 
 
 def verify(backend: Path, environment_path: Path, output_path: Path) -> dict:
-    _, execution, private = _bootstrap(backend, environment_path)
+    bootstrap_file, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=False)
     pair = read_json(output / "source-pair.json")
     values = _runtime_environment(private, pair)
@@ -146,11 +146,12 @@ def run(backend: Path, environment_path: Path, output_path: Path, operation: str
     if operation not in {"start", "stop", "status"}:
         raise ValueError("夹具运行时操作无效")
     verified = verify(backend, environment_path, output_path)
-    _, execution, private = _bootstrap(backend, environment_path)
+    bootstrap_file, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=False)
     pair = read_json(output / "source-pair.json")
     values = _runtime_environment(private, pair)
-    api_url = f"http://{values['APP_APP_HOST']}:{values['APP_APP_PORT']}"
+    settings = application_settings(bootstrap_file, execution)
+    api_url = f"http://{settings['app']['host']}:{settings['app']['port']}"
     with Environments(values, values).use("source"):
         # 先停 Worker 再停 API，先起 API 再起受监督的 Worker。
         worker = _worker_control(execution, output, "stop") if operation == "stop" else None
@@ -168,11 +169,12 @@ def observe_runtime(backend: Path, environment_path: Path, output_path: Path,
     if operation != "status":
         raise ValueError("夹具运行时只读观察仅支持 status")
     verified = verify(backend, environment_path, output_path)
-    _, execution, private = _bootstrap(backend, environment_path)
+    bootstrap_file, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=False)
     pair = read_json(output / "source-pair.json")
     values = _runtime_environment(private, pair)
-    api_url = f"http://{values['APP_APP_HOST']}:{values['APP_APP_PORT']}"
+    settings = application_settings(bootstrap_file, execution)
+    api_url = f"http://{settings['app']['host']}:{settings['app']['port']}"
     with Environments(values, values).use("source"):
         result = observe(execution, output, ("api",), api_url)
         worker = _worker_control(execution, output, "status")
@@ -188,7 +190,7 @@ def worker_only(backend: Path, environment_path: Path, output_path: Path,
     if operation not in {"start", "stop", "status"}:
         raise ValueError("夹具 Worker 控制操作无效")
     verify(backend, environment_path, output_path)
-    _, execution, private = _bootstrap(backend, environment_path)
+    bootstrap_file, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=False)
     pair = read_json(output / "source-pair.json")
     values = _runtime_environment(private, pair)
@@ -200,8 +202,6 @@ def _browser_api() -> RuntimeApi:
     return RuntimeApi(_bootstrap, _output, verify, run, observe_runtime, worker_only)
 
 
-PROTOCOL_KEY = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_PROTOCOL"
-PROTOCOL_PREFIX = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_"
 OPERATIONS = frozenset({
     "build", "verify", "start", "stop", "status", "bind", "browser",
     "browser-verify", "browser-close",
@@ -250,17 +250,11 @@ def _protocol_path(value: object, label: str) -> Path:
     return Path(value)
 
 
-def private_protocol_request(argv: list[str] | None = None,
-                             environment: dict[str, str] | None = None) -> RuntimeRequest:
+def private_protocol_request(argv: list[str] | None = None) -> RuntimeRequest:
     arguments = sys.argv[1:] if argv is None else argv
-    values = os.environ if environment is None else environment
-    if arguments:
-        raise RuntimeProtocolError("夹具运行时脚本是私有实现，不接受命令行参数")
-    unknown = sorted(name for name in values
-                     if name.startswith(PROTOCOL_PREFIX) and name != PROTOCOL_KEY)
-    if unknown:
-        raise RuntimeProtocolError("夹具运行时私有环境含未知字段")
-    raw = values.get(PROTOCOL_KEY)
+    if len(arguments) != 2 or arguments[0] != "--protocol-json":
+        raise RuntimeProtocolError("夹具运行时只接受 --protocol-json <JSON> 参数")
+    raw = arguments[1]
     if not isinstance(raw, str) or not raw or len(raw) > 32768:
         raise RuntimeProtocolError("夹具运行时私有协议缺失、为空或过长")
     if any(character in raw for character in ("\n", "\r", "\0")):
@@ -345,7 +339,6 @@ def main(request: RuntimeRequest) -> None:
 if __name__ == "__main__":
     try:
         request = private_protocol_request()
-        os.environ.pop(PROTOCOL_KEY, None)
         main(request)
     except RuntimeProtocolError:
         print("reference_fixture_runtime_protocol_error：夹具运行时私有协议无效。",

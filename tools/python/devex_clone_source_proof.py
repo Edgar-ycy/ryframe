@@ -121,10 +121,10 @@ def require_closed_port(url: str) -> None:
         raise ValueError("源精确端口仍在监听或无法明确证明连接被拒绝")
 
 
-def verify_api_address_environment(backend: Path, url: str, environment) -> None:
+def verify_api_address_environment(backend: Path, url: str, environment, *, config_dir: Path | None = None) -> None:
     if set(environment) != {"APP_ENV"}:
         raise ValueError("源 API 配置只接受 APP_ENV 选择的明文配置文件")
-    app = load_app_table(backend, environment)["app"]
+    app = load_app_table(backend, environment, config_dir=config_dir)["app"]
     host, port = app.get("host"), app.get("port")
     parsed = urlsplit(url)
     allowed = {"127.0.0.1": {"127.0.0.1", "0.0.0.0"}, "::1": {"::1", "::"}}
@@ -133,8 +133,8 @@ def verify_api_address_environment(backend: Path, url: str, environment) -> None
         raise ValueError("源 API 精确端口未绑定实际 APP 配置")
 
 
-def verify_api_address(backend: Path, url: str) -> None:
-    verify_api_address_environment(backend, url, os.environ)
+def verify_api_address(backend: Path, url: str, *, config_dir: Path | None = None) -> None:
+    verify_api_address_environment(backend, url, {"APP_ENV": os.environ.get("APP_ENV")}, config_dir=config_dir)
 
 
 def _cim_creation_time(pid: int, run) -> int:
