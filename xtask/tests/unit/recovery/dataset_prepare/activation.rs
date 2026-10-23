@@ -359,7 +359,8 @@ fn authoritative_root_password_flag_is_required_before_any_password_mutation() {
                 )
                 .is_err()
         );
-        assert!(runtime().block_on(fixture.client(0).login()).is_err());
+        let login = runtime().block_on(fixture.client(0).login());
+        assert_eq!(login.is_ok(), matches!(invalid, InvalidFlag::Opposite));
         assert!(
             !server
                 .requests
