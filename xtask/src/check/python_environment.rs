@@ -6,10 +6,7 @@ mod protocol;
 mod requirements;
 
 #[allow(unused_imports)]
-pub(crate) use protocol::{
-    EnvironmentReport, NATIVE_PROBE_MARKER, decode_report, validate_environment,
-    validate_native_probe,
-};
+pub(crate) use protocol::{EnvironmentReport, decode_report, validate_environment};
 #[allow(unused_imports)]
 pub(crate) use requirements::{Requirement, parse as parse_requirements};
 
@@ -21,10 +18,9 @@ use crate::{
 use super::consumer_context::python;
 
 pub(crate) const REQUIREMENTS_PATH: &str = "scripts/requirements-ci.txt";
-pub(crate) const NATIVE_PROBE_PATH: &str = "tools/python/rust_function_size.py";
+
 pub(crate) const MINIMUM_PYTHON: [u64; 3] = [3, 11, 0];
 const ENVIRONMENT_TIMEOUT: Duration = Duration::from_secs(60);
-const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(crate) fn run(root: &Path) -> Result<()> {
     let requirements_path = root.join(REQUIREMENTS_PATH);
@@ -55,44 +51,9 @@ pub(crate) fn run(root: &Path) -> Result<()> {
     }
     println!("✓ Python 环境与固定依赖一致：{identity}");
 
-    let probe_path = root.join(NATIVE_PROBE_PATH);
-    if !probe_path.is_file() {
-        return Err(format!(
-            "Python 原生 AST 探针不存在：{}；请恢复受版本控制的 {NATIVE_PROBE_PATH}",
-            probe_path.display()
-        )
-        .into());
-    }
-    let probe = probe_path.to_str().ok_or_else(|| {
-        format!(
-            "Python 原生 AST 探针路径不是 UTF-8：{}",
-            probe_path.display()
-        )
-    })?;
-    println!("→ 执行 tree-sitter Rust 64 轮原生探针：{probe}");
-    let output = run_python(
-        root,
-        &program,
-        &["-I", "-B", probe, "--native-probe"],
-        None,
-        NATIVE_PROBE_TIMEOUT,
-    )?;
-    let marker =
-        protocol::validate_native_probe(output.status.code(), &output.stdout, &output.stderr)
-            .map_err(|error| {
-                PreservedFailure::new(
-                    format!(
-                        "{error}\n解释器身份：{identity}\n修复：确认固定 Python 依赖已按 {} 安装，\
-                 并在工具文件 verification.python_program 指定隔离解释器。",
-                        requirements_path.display()
-                    ),
-                    failure_exit_code(error.as_ref()).or(Some(1)),
-                )
-            })?;
-    println!("✓ {marker}");
     println!(
         "Python environment check passed (executable={}, implementation={}, version={}, \
-         distributions={}, native_probe=64).",
+         distributions={}).",
         report.executable,
         report.implementation,
         version_label(&report.version),

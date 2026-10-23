@@ -117,10 +117,6 @@ pub(super) fn command_stdout(
     Ok(stdout)
 }
 
-pub(super) fn python_executable(root: &Path) -> Result<std::ffi::OsString, String> {
-    crate::process::resolved_executable(root, "python").map_err(|error| error.to_string())
-}
-
 pub(super) fn is_rust_file(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }

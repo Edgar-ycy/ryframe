@@ -756,15 +756,8 @@ fn tenant_boundary_gate_covers_catalog_binding_and_controlled_session() {
 }
 
 #[test]
-fn rust_ast_bridge_preserves_tree_sitter_function_and_unsafe_records() {
+fn rust_ast_preserves_tree_sitter_function_and_unsafe_records() {
     let directory = test_dir();
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    fs::create_dir_all(directory.path().join("tools/python")).unwrap();
-    fs::copy(
-        source_root.join("tools/python/rust_function_size.py"),
-        directory.path().join("tools/python/rust_function_size.py"),
-    )
-    .unwrap();
     write(
         directory.path(),
         "crates/example/src/lib.rs",
@@ -801,13 +794,8 @@ fn rust_ast_bridge_preserves_tree_sitter_function_and_unsafe_records() {
 }
 
 #[test]
-fn ast_helper_process_failure_produces_an_explicit_diagnostic() {
+fn ast_missing_source_produces_an_explicit_diagnostic() {
     let directory = test_dir();
-    write(
-        directory.path(),
-        "crates/example/src/lib.rs",
-        "fn safe() {}\n",
-    );
     let function_size = table(
         "mode = \"all\"\npublic_max_lines = 150\nprivate_max_lines = 100\norchestration_max_lines = 80\nmax_exception_days = 30\norchestrations = []\nexceptions = []\n",
     );
@@ -825,7 +813,7 @@ fn ast_helper_process_failure_produces_an_explicit_diagnostic() {
     assert!(
         errors
             .iter()
-            .any(|error| error.contains("Rust AST helper 执行失败"))
+            .any(|error| error.contains("Rust AST 源码不存在"))
     );
 }
 
@@ -872,6 +860,41 @@ fn function_policy_applies_changed_ranges_orchestration_and_exception_growth() {
     assert_eq!(violations, 2);
     assert!(errors.iter().any(|error| error.contains("编排函数")));
     assert!(errors.iter().any(|error| error.contains("只能缩短")));
+}
+
+#[test]
+fn function_policy_rejects_expiry_all_mode_and_stale_registrations() {
+    let raw = |mode: &str, days: i64| {
+        let expires = (Local::now().date_naive() + Duration::days(days)).format("%Y-%m-%d");
+        table(&format!(
+            "mode = \"{mode}\"\npublic_max_lines = 150\nprivate_max_lines = 100\norchestration_max_lines = 80\nmax_exception_days = 30\norchestrations = [{{ path = \"src/lib.rs\", symbol = \"run\" }}]\nexceptions = [{{ path = \"src/lib.rs\", symbol = \"legacy\", current_lines = 151, reason = \"等待拆分\", expires = {expires} }}]\n"
+        ))
+    };
+    for (mode, days, expected) in [
+        ("all", 10, "exceptions 清零"),
+        ("changed", 31, "不得超过 30 天"),
+        ("changed", -1, "已过期"),
+    ] {
+        let mut errors = Vec::new();
+        ast::parse_policy(&raw(mode, days), &mut errors).unwrap();
+        assert!(
+            errors.iter().any(|error| error.contains(expected)),
+            "{errors:?}"
+        );
+    }
+    let mut errors = Vec::new();
+    let policy = ast::parse_policy(&raw("changed", 10), &mut errors).unwrap();
+    ast::validate_functions(&policy, &[], None, &mut errors);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("编排函数登记已失效"))
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("函数长度例外已失效"))
+    );
 }
 
 #[test]

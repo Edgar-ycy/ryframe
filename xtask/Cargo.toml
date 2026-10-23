@@ -13,6 +13,8 @@ default = []
 resource = ["dep:ryframe-generator"]
 
 [dependencies]
+tree-sitter = "=0.25.2"
+tree-sitter-rust = "=0.24.2"
 ryframe-config = { path = "../crates/ryframe-config", features = ["tools"] }
 chrono = { workspace = true }
 base64 = { workspace = true }

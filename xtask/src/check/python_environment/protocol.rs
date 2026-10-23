@@ -27,6 +27,11 @@ try:
         except Exception as error:
             versions[name] = None
             errors.append(f"{name}: {type(error).__name__}")
+    try:
+        import yaml
+        yaml.safe_load("probe: true")
+    except Exception as error:
+        errors.append(f"PyYAML import: {type(error).__name__}")
     response = {
         "executable": os.path.realpath(sys.executable),
         "implementation": platform.python_implementation(),
@@ -41,8 +46,6 @@ except Exception as error:
     sys.stderr.write(f"Python environment protocol failed: {type(error).__name__}\n")
     raise SystemExit(2)
 "#;
-
-pub(crate) const NATIVE_PROBE_MARKER: &str = "Rust AST native probe passed (rounds=64)";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct EnvironmentRequest<'a> {
@@ -138,41 +141,6 @@ pub(crate) fn validate_environment(
         }
     }
     failure(errors)
-}
-
-pub(crate) fn validate_native_probe(
-    exit_code: Option<i32>,
-    stdout: &[u8],
-    stderr: &[u8],
-) -> Result<String> {
-    if exit_code != Some(0) {
-        let detail = command_detail(stdout, stderr);
-        return Err(PreservedFailure::new(
-            format!(
-                "tree-sitter Rust 原生探针失败（exit={}）{}",
-                exit_code
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "进程被信号终止".into()),
-                if detail.is_empty() {
-                    String::new()
-                } else {
-                    format!("：{detail}")
-                }
-            ),
-            exit_code.or(Some(1)),
-        )
-        .into());
-    }
-    let text = std::str::from_utf8(stdout)
-        .map_err(|error| format!("tree-sitter Rust 原生探针输出不是 UTF-8：{error}"))?;
-    let marker = text.trim();
-    if marker.is_empty() {
-        return Err("tree-sitter Rust 原生探针成功退出但没有输出".into());
-    }
-    if marker != NATIVE_PROBE_MARKER {
-        return Err(format!("tree-sitter Rust 原生探针返回未预期输出：{}", clip(marker)).into());
-    }
-    Ok(marker.to_owned())
 }
 
 pub(crate) fn command_detail(stdout: &[u8], stderr: &[u8]) -> String {

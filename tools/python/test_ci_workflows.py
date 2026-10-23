@@ -454,13 +454,8 @@ class CiWorkflowTests(unittest.TestCase):
         requirements = (ROOT / "scripts/requirements-ci.txt").read_text(
             encoding="utf-8"
         )
-        for requirement in (
-            "PyYAML==6.0.3",
-            "tree-sitter==0.25.2",
-            "tree-sitter-rust==0.24.2",
-        ):
-            self.assertIn(requirement, requirements)
-        self.assertEqual(requirements.count("--hash=sha256:"), 11)
+        self.assertIn("PyYAML==6.0.3", requirements)
+        self.assertEqual(requirements.count("--hash=sha256:"), 6)
 
     def test_preflight_checks_the_exact_frontend_source(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

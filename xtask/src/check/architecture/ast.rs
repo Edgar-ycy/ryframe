@@ -4,15 +4,15 @@ use std::{
 };
 
 use chrono::{Duration, Local, NaiveDate};
-use serde::Deserialize;
-use serde_json::json;
+
 use toml::{Table, Value};
 
-use super::support::{command_stdout, python_executable};
 #[path = "ast/changed.rs"]
 pub(crate) mod changed;
+#[path = "ast/parser.rs"]
+mod parser;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub(crate) struct FunctionRecord {
     pub(crate) path: String,
     pub(crate) symbol: String,
@@ -22,14 +22,14 @@ pub(crate) struct FunctionRecord {
     pub(crate) private: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub(super) struct UnsafeSyntaxRecord {
     path: String,
     line: usize,
     context: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default)]
 struct AstResponse {
     functions: Vec<FunctionRecord>,
     unsafe_syntax: Vec<UnsafeSyntaxRecord>,
@@ -76,7 +76,8 @@ pub(crate) fn validate_ast(
     base_sha: Option<&str>,
     errors: &mut Vec<String>,
 ) -> AstStats {
-    let response = run_helper(root, sources, templates, errors);
+    let response = parser::parse_files(root, sources, templates);
+    errors.extend(response.errors.iter().cloned());
     let checked_unsafe_sources = sources.len() + templates.len();
     let unsafe_violations = validate_no_unsafe(&response.unsafe_syntax, errors);
     let Some(policy) = parse_policy(function_size, errors) else {
@@ -106,44 +107,6 @@ pub(crate) fn validate_ast(
         checked_functions,
         function_violations,
         excluded_frozen_functions,
-    }
-}
-
-fn run_helper(
-    root: &Path,
-    sources: &[String],
-    templates: &[String],
-    errors: &mut Vec<String>,
-) -> AstResponse {
-    let request = json!({
-        "root": root.to_string_lossy(),
-        "sources": sources,
-        "templates": templates,
-    })
-    .to_string();
-    let output = match python_executable(root).and_then(|program| {
-        command_stdout(
-            root,
-            program.as_os_str(),
-            &["tools/python/rust_function_size.py", "--ast-json"],
-            Some(&request),
-        )
-    }) {
-        Ok(output) => output,
-        Err(error) => {
-            errors.push(format!("Rust AST helper 执行失败: {error}"));
-            return AstResponse::default();
-        }
-    };
-    match serde_json::from_str::<AstResponse>(&output) {
-        Ok(response) => {
-            errors.extend(response.errors.iter().cloned());
-            response
-        }
-        Err(error) => {
-            errors.push(format!("Rust AST helper 输出不是有效 JSON: {error}"));
-            AstResponse::default()
-        }
     }
 }
 

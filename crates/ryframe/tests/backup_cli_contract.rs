@@ -6,6 +6,8 @@ mod configuration_fixture;
 mod output;
 #[path = "../src/bin/ryframe_tenant_data/proof_file.rs"]
 mod proof_file;
+#[path = "../src/bin/ryframe_tenant_data/proof_python.rs"]
+mod proof_python;
 
 use args::{Command, InventoryTime, parse};
 use ryframe_kernel::AppError;

@@ -13,6 +13,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "proof_python.rs"]
+mod python_environment;
+use python_environment::{PYTHON_DEPENDENCY_PROBE, PythonEnvironment, validate_python_environment};
+
 const MAX_EVIDENCE_BYTES: u64 = 16 * 1024 * 1024;
 const VERIFIER_TIMEOUT: Duration = Duration::from_secs(300);
 fn compiled_source_sha() -> Option<&'static str> {
@@ -267,14 +271,20 @@ fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
         PathBuf::from(value.trim())
     };
     let before = artifact_source(&path, "Python 解释器")?;
-    let environment = backend.join("tools/python/rust_function_size.py");
-    regular_path(&environment, "Python AST 原生探针")?;
+    let requirements = std::fs::read_to_string(backend.join("scripts/requirements-ci.txt"))
+        .map_err(|error| validation(format!("无法读取固定 Python 依赖：{error}")))?;
+    let version = requirements
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("PyYAML=="))
+        .and_then(|line| line.split_whitespace().next())
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| validation("固定 Python 依赖缺少 PyYAML 精确版本"))?;
     let mut command = Command::new(&before.path);
     command
         .arg("-I")
         .arg("-B")
-        .arg(&environment)
-        .arg("--native-probe")
+        .arg("-c")
+        .arg(PYTHON_DEPENDENCY_PROBE)
         .current_dir(backend)
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH");
@@ -286,6 +296,9 @@ fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
             .collect::<String>();
         return Err(validation(format!("固定 Python 环境核验失败：{detail}")));
     }
+    let report: PythonEnvironment = serde_json::from_slice(&output.stdout)
+        .map_err(|error| validation(format!("Python 环境协议无效：{error}")))?;
+    validate_python_environment(&before.path, version, &report)?;
     if artifact_source(&path, "Python 解释器")? != before {
         return Err(validation("Python 解释器在环境核验期间发生变化"));
     }

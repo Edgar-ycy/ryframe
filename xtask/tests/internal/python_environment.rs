@@ -5,8 +5,7 @@ use std::{
 
 use super::{
     check::python_environment::{
-        EnvironmentReport, NATIVE_PROBE_MARKER, Requirement, decode_report, parse_requirements,
-        validate_environment, validate_native_probe,
+        EnvironmentReport, Requirement, decode_report, parse_requirements, validate_environment,
     },
     process,
 };
@@ -63,29 +62,38 @@ fn requirements_parser_rejects_unknown_duplicate_and_non_exact_entries() {
 #[test]
 fn environment_protocol_reports_old_python_and_dependency_mismatches() {
     let requirements = fixture_requirements();
-    let old = report(
-        [3, 10, 12],
-        &[
-            ("PyYAML", Some("6.0.3")),
-            ("tree-sitter", Some("0.25.2")),
-            ("tree-sitter-rust", Some("0.24.2")),
-        ],
-    );
+    let old = report([3, 10, 12], &[("PyYAML", Some("6.0.3"))]);
     let error = validate_environment(&requirements, [3, 11, 0], &old).unwrap_err();
     assert!(error.to_string().contains("Python 版本过低"));
 
-    let mismatched = report(
-        [3, 12, 7],
-        &[
-            ("PyYAML", Some("6.0.2")),
-            ("tree-sitter", None),
-            ("tree-sitter-rust", Some("0.24.2")),
-        ],
-    );
+    let mismatched = report([3, 12, 7], &[("PyYAML", Some("6.0.2"))]);
     let error = validate_environment(&requirements, [3, 11, 0], &mismatched).unwrap_err();
     let text = error.to_string();
     assert!(text.contains("Python 依赖版本不匹配：PyYAML"));
-    assert!(text.contains("缺少固定 Python 依赖：tree-sitter==0.25.2"));
+    let missing = report([3, 12, 7], &[("PyYAML", None)]);
+    assert!(
+        validate_environment(&requirements, [3, 11, 0], &missing)
+            .unwrap_err()
+            .to_string()
+            .contains("缺少固定 Python 依赖：PyYAML==6.0.3")
+    );
+}
+
+#[test]
+fn environment_protocol_rejects_import_failure_and_incomplete_identity() {
+    let requirements = fixture_requirements();
+    let mut observed = report([3, 12, 7], &[("PyYAML", Some("6.0.3"))]);
+    observed.errors.push("PyYAML import: ImportError".into());
+    assert!(
+        validate_environment(&requirements, [3, 11, 0], &observed)
+            .unwrap_err()
+            .to_string()
+            .contains("PyYAML import")
+    );
+    observed.errors.clear();
+    observed.executable.clear();
+    observed.implementation.clear();
+    assert!(validate_environment(&requirements, [3, 11, 0], &observed).is_err());
 }
 
 #[test]
@@ -95,9 +103,7 @@ fn environment_protocol_accepts_exact_utf8_report_and_rejects_extra_fields() {
         "implementation":"CPython",
         "version":[3,12,7],
         "distribution_versions":{
-            "PyYAML":"6.0.3",
-            "tree-sitter":"0.25.2",
-            "tree-sitter-rust":"0.24.2"
+            "PyYAML":"6.0.3"
         },
         "errors":[]
     }"#;
@@ -109,22 +115,6 @@ fn environment_protocol_accepts_exact_utf8_report_and_rejects_extra_fields() {
     assert!(decode_report(extra.as_bytes()).is_err());
     assert!(decode_report(&[0xff]).is_err());
     assert!(decode_report(b"").is_err());
-}
-
-#[test]
-fn native_probe_result_requires_exit_zero_marker_and_output() {
-    let marker = format!("{NATIVE_PROBE_MARKER}\n");
-    assert_eq!(
-        validate_native_probe(Some(0), marker.as_bytes(), b"").unwrap(),
-        NATIVE_PROBE_MARKER
-    );
-    let failed = validate_native_probe(Some(7), b"", b"probe failure").unwrap_err();
-    assert!(failed.to_string().contains("exit=7"));
-    assert!(failed.to_string().contains("probe failure"));
-    let empty = validate_native_probe(Some(0), b"", b"").unwrap_err();
-    assert!(empty.to_string().contains("成功退出但没有输出"));
-    let unexpected = validate_native_probe(Some(0), b"different output\n", b"").unwrap_err();
-    assert!(unexpected.to_string().contains("未预期输出"));
 }
 
 #[test]
@@ -180,17 +170,13 @@ fn current_workspace_python_environment_executor_passes() {
 }
 
 fn fixture_requirements() -> Vec<Requirement> {
-    [
-        ("PyYAML", "6.0.3"),
-        ("tree-sitter", "0.25.2"),
-        ("tree-sitter-rust", "0.24.2"),
-    ]
-    .into_iter()
-    .map(|(name, version)| Requirement {
-        name: name.into(),
-        version: version.into(),
-    })
-    .collect()
+    [("PyYAML", "6.0.3")]
+        .into_iter()
+        .map(|(name, version)| Requirement {
+            name: name.into(),
+            version: version.into(),
+        })
+        .collect()
 }
 
 fn report(version: [u64; 3], versions: &[(&str, Option<&str>)]) -> EnvironmentReport {
