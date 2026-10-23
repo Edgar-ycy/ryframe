@@ -64,12 +64,18 @@ pub(crate) fn validate_windows_acl(value: &Value) -> Result<Value> {
 
 #[cfg(windows)]
 pub(crate) fn security_receipt(path: &Path) -> Result<Value> {
-    use std::{path::PathBuf, process::Command};
+    use std::{
+        io::Write,
+        path::PathBuf,
+        process::{Command, Stdio},
+    };
     // 由系统提供的安全 API 读取原始 ACE；校验和收据规范化仍在 Rust 完成。
     const SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$acl = Get-Acl -LiteralPath $env:RYFRAME_MONITORING_ACL_PATH
+$credentialPath = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrEmpty($credentialPath)) { throw 'Missing credential path' }
+$acl = Get-Acl -LiteralPath $credentialPath
 $raw = [System.Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
 $entries = @()
 foreach ($ace in $raw.DiscretionaryAcl) {
@@ -89,7 +95,10 @@ foreach ($ace in $raw.DiscretionaryAcl) {
 } | ConvertTo-Json -Compress -Depth 8
 "#;
     let system = std::env::var_os("SystemRoot").ok_or("Windows 缺少 SystemRoot")?;
-    let output = Command::new(
+    let credential_path = path
+        .to_str()
+        .ok_or("监控凭据路径必须是有效的 Unicode 路径")?;
+    let mut child = Command::new(
         PathBuf::from(system)
             .join("System32")
             .join("WindowsPowerShell")
@@ -97,9 +106,20 @@ foreach ($ace in $raw.DiscretionaryAcl) {
             .join("powershell.exe"),
     )
     .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-    .env("RYFRAME_MONITORING_ACL_PATH", path)
-    .output()
-    .map_err(|error| format!("无法读取监控凭据 Windows DACL：{error}"))?;
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .map_err(|error| format!("无法启动监控凭据 Windows DACL 检查：{error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("监控凭据 Windows DACL 检查缺少标准输入")?
+        .write_all(credential_path.as_bytes())
+        .map_err(|error| format!("无法传递监控凭据路径：{error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("无法读取监控凭据 Windows DACL：{error}"))?;
     if !output.status.success() {
         return Err(format!("读取监控凭据 Windows DACL 失败：退出状态 {}", output.status).into());
     }
