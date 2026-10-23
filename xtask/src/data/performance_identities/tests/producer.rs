@@ -2,7 +2,10 @@ use super::{
     evidence,
     producer::{self, Registration},
 };
-use crate::recovery::clone::native::{digest, lifecycle::identity};
+use crate::recovery::clone::native::{
+    digest,
+    lifecycle::{identity, state},
+};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -20,22 +23,41 @@ impl Fixture {
         let run = backend
             .join(".local-tests")
             .join(format!("identity-producer-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(run.join("seed-runtime/attempt-0001")).unwrap();
+        fs::create_dir_all(run.join("seed-runtime/attempt-0002")).unwrap();
         fs::create_dir(run.join("run.lock")).unwrap();
         evidence::new(&run.join("manifest.json"), &json!({"kind":"isolated"})).unwrap();
         evidence::new(&run.join("plan.json"), &json!({"no_secrets":true})).unwrap();
         let executable = std::env::current_exe().unwrap();
         let tool = json!({"path":executable,"sha256":digest::file(&executable).unwrap().sha256});
-        let attempt =
-            json!({"number":1,"stage":"seed-runtime","mode":"identities-apply","status":"running"});
         let owner = json!({"format_version":1,"directory":run,"manifest_sha256":producer::binding(&run.join("manifest.json")).unwrap()["sha256"],"identity":identity::current().unwrap()});
-        evidence::new(&run.join("state.json"), &json!({"attempts":[attempt]})).unwrap();
+
         evidence::new(&run.join("run.lock/owner.json"), &owner).unwrap();
-        evidence::new(&run.join("controller-0001.json"),&json!({"format_version":1,"kind":"devex-stage-controller","owner":owner,"attempt":1,"attempt_sha256":digest::plan_hash(&attempt).unwrap()})).unwrap();
-        evidence::new(&run.join("seed-runtime.json"),&json!({"identity_tool":tool,"identity_plan":producer::binding(&run.join("plan.json")).unwrap(),"identity_state":run.join("seed-runtime/identities")})).unwrap();
+        let manifest = producer::binding(&run.join("manifest.json")).unwrap();
+        evidence::new(&run.join("seed-runtime.json"), &json!({
+            "format_version":1,"kind":"devex-clone-seed-runtime","run_manifest":manifest,
+            "post_copy":{},"post_verify":{},"node":{},"api_process":{},
+            "identity_tool":tool,"identity_plan":producer::binding(&run.join("plan.json")).unwrap(),
+            "identity_state":run.join("seed-runtime/identities")
+        })).unwrap();
+        state::initialize(&run).unwrap();
+        let (registered, _) = state::begin(&run, "seed-runtime", "register", &json!({})).unwrap();
+        state::finish(
+            &run,
+            registered,
+            Some(&json!({
+                "status":"seed_runtime_registered",
+                "registration":producer::binding(&run.join("seed-runtime.json")).unwrap()
+            })),
+            None,
+        )
+        .unwrap();
+        let (number, started) =
+            state::begin(&run, "seed-runtime", "identities-apply", &json!({})).unwrap();
+        assert_eq!(number, 2);
+        state::bind_controller(&run, number, &owner, &started).unwrap();
         let args = [
             ("--run-dir", run.display().to_string()),
-            ("--attempt", "1".into()),
+            ("--attempt", "2".into()),
             (
                 "--identity-plan",
                 run.join("plan.json").display().to_string(),
@@ -61,12 +83,12 @@ impl Fixture {
             args.clone(),
         ]
         .concat();
-        let launch = run.join("seed-runtime/attempt-0001/session-launch.json");
-        evidence::new(&launch,&json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":producer::binding(&run.join("manifest.json")).unwrap(),"registration":producer::binding(&run.join("seed-runtime.json")).unwrap(),"controller":producer::binding(&run.join("controller-0001.json")).unwrap(),"attempt":1,"producer_kind":"identity-apply","command":command,"tool":tool,"source":producer::binding(&backend.join("xtask/src/data/performance_identities/producer.rs")).unwrap()})).unwrap();
+        let launch = run.join("seed-runtime/attempt-0002/session-launch.json");
+        evidence::new(&launch,&json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":producer::binding(&run.join("manifest.json")).unwrap(),"registration":producer::binding(&run.join("seed-runtime.json")).unwrap(),"controller":producer::binding(&run.join("controller-0002.json")).unwrap(),"attempt":2,"producer_kind":"identity-apply","command":command,"tool":tool,"source":producer::binding(&backend.join("xtask/src/data/performance_identities/producer.rs")).unwrap()})).unwrap();
         let token = uuid::Uuid::new_v4().to_string();
-        let process = run.join("seed-runtime/attempt-0001/session-process.json");
+        let process = run.join("seed-runtime/attempt-0002/session-process.json");
         evidence::new(&process,&json!({"format_version":1,"kind":"devex-post-producer","identity":identity::current().unwrap(),"launch":producer::binding(&launch).unwrap(),"identity_lock_owner":token})).unwrap();
-        let grant = json!({"operation":"start","run_dir":run,"attempt":1,"identity_lock_owner":token,"launch":producer::binding(&launch).unwrap(),"process":producer::binding(&process).unwrap()});
+        let grant = json!({"operation":"start","run_dir":run,"attempt":2,"identity_lock_owner":token,"launch":producer::binding(&launch).unwrap(),"process":producer::binding(&process).unwrap()});
         Self { run, args, grant }
     }
     fn registration(&self) -> Registration {
@@ -93,7 +115,7 @@ fn native_producer_authority_binds_current_kernel_owner_launch_and_raw_plan() {
         fixture.grant["identity_lock_owner"]
     );
     for (key, value) in [
-        ("attempt", json!(2)),
+        ("attempt", json!(3)),
         ("run_dir", json!(fixture.run.join("other"))),
         (
             "identity_lock_owner",
@@ -124,7 +146,7 @@ fn native_producer_authority_binds_current_kernel_owner_launch_and_raw_plan() {
 fn native_producer_rejects_registration_tool_source_and_controller_drift() {
     for filename in [
         "seed-runtime.json",
-        "controller-0001.json",
+        "controller-0002.json",
         "run.lock/owner.json",
         "state.json",
     ] {
@@ -136,6 +158,41 @@ fn native_producer_rejects_registration_tool_source_and_controller_drift() {
                 .authorize(&fixture.root(), &fixture.grant)
                 .is_err()
         );
+    }
+}
+
+#[test]
+fn native_producer_requires_passed_registration_and_exact_published_receipt() {
+    for case in ["failed", "wrong-result", "wrong-run"] {
+        let fixture = Fixture::new();
+        let mut saved =
+            evidence::parse(&fs::read(fixture.run.join("state.json")).unwrap()).unwrap();
+        match case {
+            "failed" => saved["attempts"][0]["status"] = json!("failed"),
+            "wrong-result" => {
+                let path = fixture.run.join("results/0001.json");
+                crate::recovery::clone::native::json::write_replace(
+                    &path,
+                    &json!({"status":"Private-Secret-Result","registration":{}}),
+                )
+                .unwrap();
+                saved["attempts"][0]["result"] = producer::binding(&path).unwrap();
+            }
+            "wrong-run" => saved["manifest"] = json!({}),
+            _ => unreachable!(),
+        }
+        crate::recovery::clone::native::json::write_replace(
+            &fixture.run.join("state.json"),
+            &saved,
+        )
+        .unwrap();
+        let failure = fixture
+            .registration()
+            .authorize(&fixture.root(), &fixture.grant)
+            .unwrap_err()
+            .to_string();
+        assert!(!failure.contains("Private-Secret-Result"));
+        assert!(!fixture.run.join("seed-runtime/identities").exists());
     }
 }
 #[test]

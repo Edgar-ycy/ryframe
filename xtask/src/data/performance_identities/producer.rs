@@ -3,7 +3,7 @@ use super::{evidence, producer_authorization};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::{digest, json as document},
+    recovery::clone::native::digest,
 };
 use serde_json::Value;
 use std::{
@@ -86,7 +86,9 @@ impl Registration {
             return Err("身份计划原始文件摘要变化".into());
         }
         let registration_path = self.run.join("seed-runtime.json");
-        let registration = document::read(&registration_path)?;
+        let seed =
+            crate::recovery::clone::native::seed::Registration::load(root, &self.run, false)?;
+        let registration = &seed.value;
         let tool = &registration["identity_tool"];
         let command = self.command(tool)?;
         let mode = format!("identities-{}", self.mode);
@@ -114,6 +116,7 @@ impl Registration {
         if digest::file(&self.plan)?.sha256 != self.plan_sha256 {
             return Err("身份生产者授权期间计划变化".into());
         }
+        seed.assert_unchanged(root, false)?;
         Ok(token)
     }
 

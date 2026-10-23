@@ -23,6 +23,7 @@ mod plan;
 pub(crate) mod resources;
 pub(crate) mod s3;
 pub(crate) mod schedule;
+pub(crate) mod seed;
 pub(crate) mod session;
 pub(crate) mod source;
 pub(crate) mod sql;
