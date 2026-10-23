@@ -1,6 +1,4 @@
-use crate::http_session::{
-    HookFuture, NoopHook, RequestHook, RequestMetadata, Session, SessionError,
-};
+use crate::http_session::{NoopHook, RequestHook, RequestMetadata, Session, SessionError};
 
 #[path = "http_session/authentication.rs"]
 mod authentication;
@@ -22,8 +20,9 @@ struct Hook {
     fail_complete: bool,
 }
 
+#[async_trait::async_trait]
 impl RequestHook for Hook {
-    fn before<'a>(&'a mut self, metadata: &'a RequestMetadata) -> HookFuture<'a> {
+    async fn before(&mut self, metadata: &RequestMetadata) -> Result<(), SessionError> {
         self.before += 1;
         self.metadata.push((
             metadata.operation.clone(),
@@ -31,13 +30,13 @@ impl RequestHook for Hook {
             metadata.route.clone(),
         ));
         let failed = self.fail_before;
-        Box::pin(async move { hook_result(failed) })
+        hook_result(failed)
     }
 
-    fn complete<'a>(&'a mut self) -> HookFuture<'a> {
+    async fn complete(&mut self) -> Result<(), SessionError> {
         self.complete += 1;
         let failed = self.fail_complete;
-        Box::pin(async move { hook_result(failed) })
+        hook_result(failed)
     }
 }
 

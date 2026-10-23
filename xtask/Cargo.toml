@@ -13,6 +13,7 @@ default = []
 resource = ["dep:ryframe-generator"]
 
 [dependencies]
+async-trait.workspace = true
 tree-sitter = "=0.25.2"
 tree-sitter-rust = "=0.24.2"
 ryframe-config = { path = "../crates/ryframe-config", features = ["tools"] }

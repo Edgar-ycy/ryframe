@@ -1,7 +1,8 @@
 use super::{department, quota};
+use crate::Result;
 use crate::data::performance_identities::{
     evidence,
-    execution::{Context, IdentityFuture, IdentitySession},
+    execution::{Context, IdentitySession},
 };
 use base64::Engine;
 use serde_json::{Value, json};
@@ -30,31 +31,27 @@ struct FakeContext {
     observed: Rc<RefCell<Observed>>,
 }
 
+#[async_trait::async_trait(?Send)]
 impl Context for FakeContext {
-    fn password<'a>(&'a mut self, _: &'a str) -> IdentityFuture<'a, String> {
-        Box::pin(async { Err("测试上下文不提供密码".into()) })
+    async fn password(&mut self, _: &str) -> Result<String> {
+        Err("测试上下文不提供密码".into())
     }
 
-    fn inspect<'a>(&'a mut self, _: &'a str) -> IdentityFuture<'a, Value> {
-        Box::pin(async { Err("测试上下文不检查外部服务".into()) })
+    async fn inspect(&mut self, _: &str) -> Result<Value> {
+        Err("测试上下文不检查外部服务".into())
     }
 
-    fn session<'a>(
-        &'a mut self,
-        identity: &'a Value,
-    ) -> IdentityFuture<'a, Box<dyn IdentitySession>> {
-        Box::pin(async move {
-            let script = self.scripts.pop_front().ok_or("缺少测试会话")?;
-            if script.identity != *identity {
-                return Err("测试会话身份顺序不匹配".into());
-            }
-            Ok(Box::new(FakeSession {
-                responses: script.responses,
-                template: script.template,
-                token: "first-token".into(),
-                observed: self.observed.clone(),
-            }) as Box<dyn IdentitySession>)
-        })
+    async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>> {
+        let script = self.scripts.pop_front().ok_or("缺少测试会话")?;
+        if script.identity != *identity {
+            return Err("测试会话身份顺序不匹配".into());
+        }
+        Ok(Box::new(FakeSession {
+            responses: script.responses,
+            template: script.template,
+            token: "first-token".into(),
+            observed: self.observed.clone(),
+        }) as Box<dyn IdentitySession>)
     }
 }
 
@@ -65,46 +62,43 @@ struct FakeSession {
     observed: Rc<RefCell<Observed>>,
 }
 
+#[async_trait::async_trait(?Send)]
 impl IdentitySession for FakeSession {
-    fn login(&mut self) -> IdentityFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
+    async fn login(&mut self) -> Result<()> {
+        Ok(())
     }
 
-    fn request<'a>(&'a mut self, step: &'a Value) -> IdentityFuture<'a, Value> {
-        Box::pin(async move {
-            self.observed.borrow_mut().requests.push(step.clone());
-            let operation = step["operation"].as_str().ok_or("测试操作缺失")?;
-            if operation == "post_auth_refresh" {
-                self.token = "second-token".into();
-            }
-            self.responses
-                .get_mut(operation)
-                .and_then(VecDeque::pop_front)
-                .ok_or_else(|| format!("测试操作没有响应：{operation}").into())
-        })
+    async fn request(&mut self, step: &Value) -> Result<Value> {
+        self.observed.borrow_mut().requests.push(step.clone());
+        let operation = step["operation"].as_str().ok_or("测试操作缺失")?;
+        if operation == "post_auth_refresh" {
+            self.token = "second-token".into();
+        }
+        self.responses
+            .get_mut(operation)
+            .and_then(VecDeque::pop_front)
+            .ok_or_else(|| format!("测试操作没有响应：{operation}").into())
     }
 
-    fn template<'a>(&'a mut self, _: &'a Path) -> IdentityFuture<'a, Value> {
-        Box::pin(async { Err("测试不写模板文件".into()) })
+    async fn template(&mut self, _: &Path) -> Result<Value> {
+        Err("测试不写模板文件".into())
     }
 
-    fn template_data(&mut self) -> IdentityFuture<'_, Value> {
-        Box::pin(async { Ok(self.template.clone()) })
+    async fn template_data(&mut self) -> Result<Value> {
+        Ok(self.template.clone())
     }
 
     fn token(&self) -> Option<&str> {
         Some(&self.token)
     }
 
-    fn close(&mut self) -> IdentityFuture<'_, ()> {
-        Box::pin(async {
-            self.observed.borrow_mut().closed += 1;
-            if self.observed.borrow().fail_close {
-                Err("测试关闭失败".into())
-            } else {
-                Ok(())
-            }
-        })
+    async fn close(&mut self) -> Result<()> {
+        self.observed.borrow_mut().closed += 1;
+        if self.observed.borrow().fail_close {
+            Err("测试关闭失败".into())
+        } else {
+            Ok(())
+        }
     }
 }
 

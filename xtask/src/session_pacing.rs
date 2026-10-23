@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::time::{Duration, Instant};
 
 use crate::{
-    http_session::{HookFuture, RequestHook, RequestMetadata, SessionError},
+    http_session::{RequestHook, RequestMetadata, SessionError},
     login_budget::{Binding, LedgerFile, Reservation},
 };
 
@@ -187,13 +187,14 @@ impl PreparationHook {
     }
 }
 
+#[async_trait::async_trait]
 impl RequestHook for PreparationHook {
-    fn before<'a>(&'a mut self, metadata: &'a RequestMetadata) -> HookFuture<'a> {
-        Box::pin(async move { self.before_request(metadata).await })
+    async fn before(&mut self, metadata: &RequestMetadata) -> Result<(), SessionError> {
+        self.before_request(metadata).await
     }
 
-    fn complete<'a>(&'a mut self) -> HookFuture<'a> {
-        Box::pin(async move { self.complete_request() })
+    async fn complete(&mut self) -> Result<(), SessionError> {
+        self.complete_request()
     }
 }
 

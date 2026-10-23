@@ -1,6 +1,6 @@
 use super::{
     evidence,
-    execution::{Context, IdentityFuture, IdentitySession},
+    execution::{Context, IdentitySession},
     inspection,
     plan::{self, text},
 };
@@ -61,101 +61,93 @@ impl NativeContext {
         })
     }
 }
+#[async_trait::async_trait(?Send)]
 impl Context for NativeContext {
-    fn password<'a>(&'a mut self, slot: &'a str) -> IdentityFuture<'a, String> {
-        Box::pin(async move {
-            let private = plan::load(
-                &self.plan,
-                Path::new(text(&self.plan["environment"], "backend_dir")?),
-            )?;
-            Ok(text(&private["passwords"], slot)?.to_owned())
-        })
+    async fn password(&mut self, slot: &str) -> Result<String> {
+        let private = plan::load(
+            &self.plan,
+            Path::new(text(&self.plan["environment"], "backend_dir")?),
+        )?;
+        Ok(text(&private["passwords"], slot)?.to_owned())
     }
-    fn inspect<'a>(&'a mut self, phase: &'a str) -> IdentityFuture<'a, Value> {
-        Box::pin(async move {
-            let plan = self.plan.clone();
-            let phase = phase.to_owned();
-            let (value, config_dir) = tokio::task::spawn_blocking(move || {
-                inspection::inspect(&plan, &phase).map_err(|error| error.to_string())
-            })
-            .await
-            .map_err(|_| "身份环境检查线程未完成")?
-            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
-            if let Some(baseline) = &self.baseline {
-                if baseline["scope_id"] != value["scope_id"]
-                    || baseline["server_uuid"] != value["server_uuid"]
-                    || baseline["api_process"] != value["api_process"]
-                {
-                    return Err("身份准备期间 API 创建身份或资源绑定变化".into());
-                }
-            } else {
-                fs::create_dir(&self.artifacts)?;
-                evidence::new(&self.artifacts.join("environment.json"), &value)?;
-                self.baseline = Some(value.clone());
-            }
-            self.config["bindings"]["app_config_dir"] = json!(config_dir);
-            Ok(value)
+    async fn inspect(&mut self, phase: &str) -> Result<Value> {
+        let plan = self.plan.clone();
+        let phase = phase.to_owned();
+        let (value, config_dir) = tokio::task::spawn_blocking(move || {
+            inspection::inspect(&plan, &phase).map_err(|error| error.to_string())
         })
+        .await
+        .map_err(|_| "身份环境检查线程未完成")?
+        .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        if let Some(baseline) = &self.baseline {
+            if baseline["scope_id"] != value["scope_id"]
+                || baseline["server_uuid"] != value["server_uuid"]
+                || baseline["api_process"] != value["api_process"]
+            {
+                return Err("身份准备期间 API 创建身份或资源绑定变化".into());
+            }
+        } else {
+            fs::create_dir(&self.artifacts)?;
+            evidence::new(&self.artifacts.join("environment.json"), &value)?;
+            self.baseline = Some(value.clone());
+        }
+        self.config["bindings"]["app_config_dir"] = json!(config_dir);
+        Ok(value)
     }
-    fn session<'a>(
-        &'a mut self,
-        identity: &'a Value,
-    ) -> IdentityFuture<'a, Box<dyn IdentitySession>> {
-        Box::pin(async move {
-            if self.baseline.is_none() {
-                return Err("身份会话必须先通过资源 ownership 核验".into());
-            }
-            let private = plan::load(
-                &self.plan,
-                Path::new(text(&self.plan["environment"], "backend_dir")?),
-            )?;
-            let mut identity = identity.clone();
-            if let Some(slot) = identity["credential_slot"].as_str() {
-                identity["password"] = private["passwords"][slot].clone();
+    async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>> {
+        if self.baseline.is_none() {
+            return Err("身份会话必须先通过资源 ownership 核验".into());
+        }
+        let private = plan::load(
+            &self.plan,
+            Path::new(text(&self.plan["environment"], "backend_dir")?),
+        )?;
+        let mut identity = identity.clone();
+        if let Some(slot) = identity["credential_slot"].as_str() {
+            identity["password"] = private["passwords"][slot].clone();
+        } else {
+            let admin = if identity["tenant_id"] == "system" {
+                &private["system_admin"]
             } else {
-                let admin = if identity["tenant_id"] == "system" {
-                    &private["system_admin"]
-                } else {
-                    &private["tenants"]
-                        .as_array()
-                        .ok_or("缺少租户身份配置")?
-                        .iter()
-                        .find(|tenant| tenant["tenant_id"] == identity["tenant_id"])
-                        .ok_or("身份未登记")?["admin"]
-                };
-                for key in ["tenant_id", "username", "client_address"] {
-                    if admin[key] != identity[key] {
-                        return Err("身份会话与私有文件绑定不同".into());
-                    }
+                &private["tenants"]
+                    .as_array()
+                    .ok_or("缺少租户身份配置")?
+                    .iter()
+                    .find(|tenant| tenant["tenant_id"] == identity["tenant_id"])
+                    .ok_or("身份未登记")?["admin"]
+            };
+            for key in ["tenant_id", "username", "client_address"] {
+                if admin[key] != identity[key] {
+                    return Err("身份会话与私有文件绑定不同".into());
                 }
-                identity["password"] = admin["password"].clone();
             }
-            if identity["password"].as_str().is_none_or(str::is_empty) {
-                return Err("身份文件配置缺少明确密码".into());
-            }
-            let directory = self
-                .artifacts
-                .join(format!("session-{}", uuid::Uuid::new_v4()));
-            fs::create_dir(&directory)?;
-            let session = Session::new(&self.config, self.catalog.clone(), &identity)?;
-            let hook = PreparationHook::new(
-                Path::new(text(&self.plan["environment"], "backend_dir")?),
-                &self.config,
-                &identity,
-                &directory,
-                "test",
-            )
-            .await?;
-            Ok(Box::new(NativeSession {
-                session,
-                hook,
-                identity,
-                config: self.config.clone(),
-                catalog: self.catalog.clone(),
-                login_attempted: false,
-                closed: false,
-            }) as Box<dyn IdentitySession>)
-        })
+            identity["password"] = admin["password"].clone();
+        }
+        if identity["password"].as_str().is_none_or(str::is_empty) {
+            return Err("身份文件配置缺少明确密码".into());
+        }
+        let directory = self
+            .artifacts
+            .join(format!("session-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory)?;
+        let session = Session::new(&self.config, self.catalog.clone(), &identity)?;
+        let hook = PreparationHook::new(
+            Path::new(text(&self.plan["environment"], "backend_dir")?),
+            &self.config,
+            &identity,
+            &directory,
+            "test",
+        )
+        .await?;
+        Ok(Box::new(NativeSession {
+            session,
+            hook,
+            identity,
+            config: self.config.clone(),
+            catalog: self.catalog.clone(),
+            login_attempted: false,
+            closed: false,
+        }) as Box<dyn IdentitySession>)
     }
 }
 struct NativeSession {
@@ -167,61 +159,55 @@ struct NativeSession {
     login_attempted: bool,
     closed: bool,
 }
+#[async_trait::async_trait(?Send)]
 impl IdentitySession for NativeSession {
-    fn login(&mut self) -> IdentityFuture<'_, ()> {
-        Box::pin(async {
-            self.login_attempted = true;
-            self.session.login(&mut self.hook).await?;
-            Ok(())
-        })
+    async fn login(&mut self) -> Result<()> {
+        self.login_attempted = true;
+        self.session.login(&mut self.hook).await?;
+        Ok(())
     }
-    fn request<'a>(&'a mut self, step: &'a Value) -> IdentityFuture<'a, Value> {
-        Box::pin(async move { Ok(self.session.request(step, &mut self.hook).await?) })
+    async fn request(&mut self, step: &Value) -> Result<Value> {
+        Ok(self.session.request(step, &mut self.hook).await?)
     }
-    fn template<'a>(&'a mut self, path: &'a Path) -> IdentityFuture<'a, Value> {
-        Box::pin(async move {
-            let value = self.download_template().await?;
-            let content =
-                base64::engine::general_purpose::STANDARD.decode(text(&value, "base64")?)?;
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)?;
-            file.write_all(&content)?;
-            file.sync_all()?;
-            Ok(serde_json::to_value(
-                crate::devex::import_samples::template_receipt(path, text(&value, "sha256")?)?,
-            )?)
-        })
+    async fn template(&mut self, path: &Path) -> Result<Value> {
+        let value = self.download_template().await?;
+        let content = base64::engine::general_purpose::STANDARD.decode(text(&value, "base64")?)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(&content)?;
+        file.sync_all()?;
+        Ok(serde_json::to_value(
+            crate::devex::import_samples::template_receipt(path, text(&value, "sha256")?)?,
+        )?)
     }
-    fn template_data(&mut self) -> IdentityFuture<'_, Value> {
-        Box::pin(async { self.download_template().await })
+    async fn template_data(&mut self) -> Result<Value> {
+        self.download_template().await
     }
     fn token(&self) -> Option<&str> {
         self.session.token()
     }
-    fn close(&mut self) -> IdentityFuture<'_, ()> {
-        Box::pin(async {
-            if self.closed {
-                return Ok(());
-            }
-            self.closed = true;
-            let result = if self.login_attempted || self.session.token().is_some() {
-                tokio::time::timeout(
-                    Duration::from_secs(10),
-                    self.session
-                        .request(&json!({"operation":"post_auth_logout"}), &mut self.hook),
-                )
-                .await
-                .map_err(|_| -> Box<dyn std::error::Error> { "身份退出结果未知".into() })
-                .and_then(|value| value.map(|_| ()).map_err(Into::into))
-            } else {
-                Ok(())
-            };
-            let closed = self.hook.close().await;
-            result.and(closed.map_err(Into::into))?;
+    async fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+        let result = if self.login_attempted || self.session.token().is_some() {
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                self.session
+                    .request(&json!({"operation":"post_auth_logout"}), &mut self.hook),
+            )
+            .await
+            .map_err(|_| -> Box<dyn std::error::Error> { "身份退出结果未知".into() })
+            .and_then(|value| value.map(|_| ()).map_err(Into::into))
+        } else {
             Ok(())
-        })
+        };
+        let closed = self.hook.close().await;
+        result.and(closed.map_err(Into::into))?;
+        Ok(())
     }
 }
 impl NativeSession {
