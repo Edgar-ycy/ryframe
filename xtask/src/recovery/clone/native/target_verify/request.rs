@@ -115,7 +115,7 @@ pub(crate) fn validate_with(
     })
 }
 
-fn target(backend: &Path, value: &Value, selected: &Value) -> Result<()> {
+pub(crate) fn target(backend: &Path, value: &Value, selected: &Value) -> Result<()> {
     let target = exact(value, &["scope_id", "s3", "databases"], "目标配置")?;
     let scope = text(&target["scope_id"], "目标 scope")?;
     super::super::super::input::name(scope)?;
@@ -200,7 +200,7 @@ pub(crate) fn external_file(value: &Value) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn tools(value: &Value, review: &Value) -> Result<()> {
+pub(crate) fn tools(value: &Value, review: &Value) -> Result<()> {
     let tools = exact(value, &["mysql"], "目标工具")?;
     for (role, tool) in tools {
         external_file(tool)?;

@@ -51,7 +51,7 @@ class TargetCliTests(unittest.TestCase):
         self.temporary.mkdir()
         write_json(self.request, {"kind": "offline-request"})
         write_json(self.environment, {"environment": {
-            "APP_SCOPE_ID": "fresh-fixture", "RYFRAME_RESET_ADMIN_PASSWORD": "private-secret",
+            "APP_ENV": "test",
             "TEMP": str(self.temporary), "TMP": str(self.temporary)}})
         validator = patch.object(target_cli, "_validate_registered_request", return_value=None)
         self.request_validator = validator.start()
@@ -112,8 +112,9 @@ class TargetCliTests(unittest.TestCase):
         folded = {key.upper(): value for key, value in observed.items()}
         self.assertEqual(folded["PATH"], "fixture-path")
         self.assertEqual(folded["SYSTEMROOT"], "fixture-root")
-        self.assertEqual(observed["APP_SCOPE_ID"], "fresh-fixture")
-        self.assertEqual(observed["RYFRAME_RESET_ADMIN_PASSWORD"], "private-secret")
+        self.assertEqual(observed["APP_ENV"], "test")
+        self.assertNotIn("APP_SCOPE_ID", observed)
+        self.assertNotIn("RYFRAME_RESET_ADMIN_PASSWORD", observed)
         for name in ("RYFRAME_OLD", "SNOWFLAKE_WORKER_ID", "CARGO_HOME", "AWS_SECRET_ACCESS_KEY",
                      "RUSTFS_SECRET_KEY", "MYSQL_PWD", "HTTP_PROXY", "NO_PROXY", "SAFE_BASE",
                      "GH_TOKEN", "PYTHONPATH", "NODE_OPTIONS"):
@@ -232,7 +233,7 @@ class TargetCliTests(unittest.TestCase):
         def initialize(backend, target, *, storage_run, publish_files):
             self.assertEqual(storage_run, self.storage_run)
             self.assertTrue((storage_run / "run.lock").is_dir())
-            self.assertEqual(os.environ["APP_SCOPE_ID"], "fresh-fixture")
+            self.assertEqual(os.environ["APP_ENV"], "test")
             publish_initialized(target, publish_files)
             return {"status": "fresh_target_initialized"}
 
@@ -437,11 +438,20 @@ class TargetCliTests(unittest.TestCase):
                     target_cli.initialize(self.backend, self.workspace)
                 operation.assert_not_called()
 
+    def test_missing_managed_tool_binding_fails_before_workspace_creation(self):
+        with patch("rate_limit_tool.tool_binding", return_value=None), self.assertRaisesRegex(
+                ValueError, "缺少受管 Rust 工具"):
+            target_cli.prepare(self.backend, self.workspace, self.request,
+                               self.environment, self.storage_run)
+        self.assertFalse(self.workspace.exists())
+
     def test_private_environment_rejects_shell_and_case_duplicate_fields(self):
         valid = {"TEMP": str(self.temporary), "TMP": str(self.temporary)}
         for number, environment in enumerate((
                 {**valid, "PATH": "forbidden"},
-                {**valid, "APP_SCOPE": "one", "app_scope": "two"},
+                {**valid, "APP_ENV": "test", "app_env": "dev"},
+                {**valid, "RYFRAME_RESET_ADMIN_PASSWORD": "forbidden-secret"},
+                {**valid, "APP_SCOPE": "forbidden"},
                 {**valid, "APP_SCOPE": 1},
                 {"APP_SCOPE": "missing-private-temp"},
                 {"TEMP": str(self.temporary), "TMP": str(self.local / "other-temp")},

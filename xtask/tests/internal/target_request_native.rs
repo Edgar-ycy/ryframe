@@ -673,3 +673,92 @@ fn initialized_requires_explicit_never_started_and_no_external_writers() {
         assert!(super::validate_initialized(&bad).is_err());
     }
 }
+
+#[test]
+fn cli_request_binding_preserves_review_identity_and_pending_is_not_executable() {
+    let mut fixture = Fixture::new();
+    fixture.request["config_dir"] = json!(fixture.backend.join("config"));
+    let result = crate::recovery::clone::native::target_verify::binding_request::validate(
+        &fixture.backend,
+        &fixture.request,
+        &Value::Null,
+    )
+    .unwrap();
+    assert_eq!(result["review"], fixture.review);
+    assert_eq!(result["selected"], fixture.review["scopes"]["seed"]);
+    fixture.review["ready_for_execution"] = json!(false);
+    fixture.seal_review();
+    let predecessor = fixture.request["review"].clone();
+    assert!(
+        crate::recovery::clone::native::target_verify::binding_request::validate(
+            &fixture.backend,
+            &fixture.request,
+            &Value::Null,
+        )
+        .is_err()
+    );
+    assert!(
+        crate::recovery::clone::native::target_verify::binding_request::validate(
+            &fixture.backend,
+            &fixture.request,
+            &predecessor,
+        )
+        .is_ok()
+    );
+    let mut changed = predecessor;
+    changed["bytes"] = json!(0);
+    assert!(
+        crate::recovery::clone::native::target_verify::binding_request::validate(
+            &fixture.backend,
+            &fixture.request,
+            &changed,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn cli_request_binding_rejects_duplicate_physical_targets_tool_drift_and_unknown_fields() {
+    let mut fixture = Fixture::new();
+    fixture.request["config_dir"] = json!(fixture.backend.join("config"));
+    let original = fixture.request.clone();
+    for pointer in [
+        "/target/databases/0/defaults_sha256",
+        "/tools/mysql/sha256",
+        "/review/canonical_sha256",
+    ] {
+        fixture.request = original.clone();
+        *fixture.request.pointer_mut(pointer).unwrap() = json!("f".repeat(64));
+        assert!(
+            crate::recovery::clone::native::target_verify::binding_request::validate(
+                &fixture.backend,
+                &fixture.request,
+                &Value::Null,
+            )
+            .is_err(),
+            "{pointer}"
+        );
+    }
+    fixture.request = original.clone();
+    fixture.request["unknown"] = json!(true);
+    assert!(
+        crate::recovery::clone::native::target_verify::binding_request::validate(
+            &fixture.backend,
+            &fixture.request,
+            &Value::Null,
+        )
+        .is_err()
+    );
+    fixture.request = original;
+    fixture.review["scopes"]["candidate"]["databases"][0]["database"] =
+        fixture.review["scopes"]["seed"]["databases"][0]["database"].clone();
+    fixture.seal_review();
+    assert!(
+        crate::recovery::clone::native::target_verify::binding_request::validate(
+            &fixture.backend,
+            &fixture.request,
+            &Value::Null,
+        )
+        .is_err()
+    );
+}

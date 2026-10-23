@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from artifact_digests import protect_binaries
-from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
 from devex_clone_factory_context import initialization_history
 from process_environment import Environments, configured
@@ -17,8 +16,6 @@ import devex_clone_target_tree_claim as snapshot_evidence
 from process_guard import process_guard
 
 FIELDS = {"format_version", "kind", "request", "environment", "storage_run", "target_directory"}
-PRIVATE_NAMES = {"TEMP", "TMP"}
-PRIVATE_PREFIXES = ("APP_", "RYFRAME_")
 WORKSPACE_GUARD = "fresh-target.guard"
 
 
@@ -48,28 +45,10 @@ def _workspace_control(workspace: Path):
 
 
 def _private_environment(backend: Path, descriptor: dict) -> tuple[Path, dict]:
-    expected = copy.deepcopy(descriptor)
-    path, document = _bound_json(backend, descriptor)
-    exact(document, {"environment"})
-    private = document["environment"]
-    if (not isinstance(private, dict)
-            or any(not isinstance(key, str) or not isinstance(value, str) or not value
-                   for key, value in private.items())
-            or any(key.upper() not in PRIVATE_NAMES and not key.upper().startswith(PRIVATE_PREFIXES)
-                   for key in private)):
-        raise ValueError("fresh 目标私有环境仅允许 APP_、RYFRAME_、TEMP 和 TMP 文本字段")
-    # configured 同时拒绝 Windows 上会冲突的大小写重复键。
-    configured(private, {})
-    folded = {key.upper(): value for key, value in private.items()}
-    if (not PRIVATE_NAMES.issubset(folded) or folded["TEMP"] != folded["TMP"]
-            or not Path(folded["TEMP"]).is_absolute()):
-        raise ValueError("fresh 目标 TEMP 与 TMP 必须绑定同一绝对私有目录")
-    temporary = local_path(backend, folded["TEMP"])
-    if not temporary.is_dir():
-        raise ValueError("fresh 目标 TEMP 与 TMP 必须是已存在的普通私有目录")
-    if descriptor != expected or binding(path) != expected:
-        raise ValueError("fresh 目标私有环境在读取期间变化")
-    return path, private
+    from devex_clone_target_binding import _native
+
+    result = _native("private-environment", backend, descriptor=descriptor)
+    return Path(result["path"]), result["environment"]
 
 
 def _fixture_service_run(manifest: dict, state: dict) -> bool:
@@ -146,23 +125,10 @@ def _disjoint(*paths: Path) -> None:
                 raise ValueError("fresh 目标 workspace、storage run 与观察目录必须互不包含")
 
 
-def _preflight_reconciliation(target: Path) -> dict:
-    """验证只允许清空 preflight 失败资源的收尾收据，且不把它当作可重放初始化。"""
-    completed = target / "reconciliation-completed.json"
-    reports = sorted((target / "reset-state").glob("*.report.json"))
-    value = read_json(completed)
-    exact(value, {"status", "before", "after", "failure", "reset_report", "automatic_retry", "restore_qualified"})
-    if (value["status"] != "preflight_failure_reconciled" or value["automatic_retry"] is not False
-            or value["restore_qualified"] is not False or len(reports) != 1
-            or value["failure"] != snapshot_evidence.digest_binding(target / "failure.json")
-            or value["reset_report"] != snapshot_evidence.digest_binding(reports[0])):
-        raise ValueError("fresh 目标预检失败收尾收据无效")
-    for name, exists in (("before", True), ("after", False)):
-        state = value[name]
-        if (set(state) != {"databases", "objects", "redis"} or not isinstance(state["databases"], list)
-                or not state["databases"] or any(item.get("exists") is not exists for item in state["databases"])):
-            raise ValueError("fresh 目标预检失败收尾资源前后像无效")
-    return binding(completed)
+def _preflight_reconciliation(backend: Path, target: Path) -> dict:
+    from devex_clone_target_binding import _native
+
+    return _native("preflight-reconciliation", backend, target=str(target))["binding"]
 
 
 def _prepared(backend: Path, workspace: Path, value: dict) -> dict:
@@ -496,7 +462,7 @@ def status(backend: Path, workspace: Path) -> dict:
 
     try:
         if (target / "reconciliation-completed.json").is_file():
-            reconciliation = _preflight_reconciliation(target)
+            reconciliation = _preflight_reconciliation(backend, target)
             result = report("fresh_target_preflight_reconciled", "preflight_reconciled", "new_registration",
                             "prepare-new-workspace", valid=True,
                             reason="原 workspace 已记录收尾，必须使用新的私有环境和工作区重新登记",

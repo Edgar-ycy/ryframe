@@ -15,7 +15,8 @@ const MAX_BYTES: u64 = 1024 * 1024;
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if arguments.first().map(String::as_str) != Some(MARKER) {
+    let binding = arguments.first().map(String::as_str) == Some("__target-binding");
+    if !binding && arguments.first().map(String::as_str) != Some(MARKER) {
         return None;
     }
     let mut bytes = Vec::new();
@@ -26,7 +27,11 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         std::io::stdin()
             .take(MAX_BYTES + 1)
             .read_to_end(&mut bytes)?;
-        execute(&bytes)
+        if binding {
+            super::binding::execute(&bytes)
+        } else {
+            execute(&bytes)
+        }
     })();
     let (code, response) = match result {
         Ok(value) => (0, json!({"ok":true,"result":value})),
@@ -263,6 +268,9 @@ const DIAGNOSTICS: &[&str] = &[
 fn safe_message(error: &dyn std::error::Error) -> &str {
     // 只公开固定诊断，解析错误、文件路径与任意输入值均不进入协议输出。
     let reason = error.to_string();
+    if let Some(message) = super::binding::diagnostic(&reason) {
+        return message;
+    }
     DIAGNOSTICS
         .iter()
         .copied()

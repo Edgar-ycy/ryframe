@@ -1,10 +1,10 @@
 """将新目标严格绑定到已审阅单侧资源、实际配置和三份维护工具。"""
 from __future__ import annotations
 
-from native_s3_client import _invoke as native_invoke, _read_response as native_response
+from native_s3_client import (NativeS3InvocationError, _invoke as native_invoke,
+                              _read_response as native_response)
 import subprocess
 
-import copy
 from collections import Counter
 import hashlib
 import os
@@ -14,7 +14,7 @@ import re
 from artifact_digests import filesystem_path
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json
-from devex_clone_model import digest, exact, linked, local_path, name
+from devex_clone_model import digest, exact, linked, local_path
 from devex_clone_inventory import configuration as inventory_configuration
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file, require_closed_port, verify_api_address
@@ -22,7 +22,7 @@ from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
 from rate_limit_client import load_app_table
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS, identifier, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash
 from source_inventory import snapshot
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
@@ -407,157 +407,61 @@ def validate_initialization_delta(target: Path, current: list[dict], prepared: l
                          + ", ".join(sorted(remaining)))
 
 
+def _native(operation: str, backend: Path, **arguments) -> dict:
+    """向已绑定协调器交付只读校验；不使用 PATH 或 Cargo 猜测工具。"""
+    from rate_limit_tool import tool_binding
+
+    if tool_binding() is None:
+        raise ValueError("目标绑定缺少受管 Rust 工具；请通过 run_checks.py 或正式 xtask 入口执行")
+    def invoke(command, **options):
+        options["timeout"] = 30
+        return subprocess.run(command, **options)
+
+    try:
+        result, response = native_invoke(
+            "__target-binding", {"format_version": 1, "operation": operation,
+                                  "backend": str(backend), "arguments": arguments},
+            invoke, may_write=False,
+        )
+    except NativeS3InvocationError as error:
+        raise ValueError("原生目标绑定进程未完成：" + str(error.error_type)
+                         + "；请核对受管工具与输入文件，保留现场，不重放任何写入") from None
+    if (result.returncode == 1 and isinstance(response, dict)
+            and set(response) == {"ok", "error"} and response["ok"] is False
+            and isinstance(response["error"], dict)
+            and set(response["error"]) == {"category", "message", "remote_writes", "automatic_retry"}
+            and response["error"]["category"] == "TargetEvidenceRejected"
+            and response["error"]["remote_writes"] == 0
+            and response["error"]["automatic_retry"] is False
+            and isinstance(response["error"]["message"], str)):
+        raise ValueError(response["error"]["message"])
+    if (result.returncode != 0 or not isinstance(response, dict)
+            or set(response) != {"ok", "result"} or response["ok"] is not True
+            or not isinstance(response["result"], dict)):
+        raise ValueError("原生目标绑定未确认；请核对当前工具和绑定文件，保留现场，不重放任何写入")
+    return response["result"]
+
+
 def validate_review(review: dict) -> None:
-    """拒绝缺字段的审阅计划，避免初始化过程中才发现资源定义不完整。"""
-    if not isinstance(review, dict) or not isinstance(review.get("reference"), dict):
-        raise ValueError("审阅计划结构无效")
-    if review.get("kind") != "review-only-perf-resource-plan-with-readonly-preflight":
-        raise ValueError("审阅计划类型无效")
-    if review.get("ready_for_execution") is not True:
-        raise ValueError("审阅计划尚未就绪")
-    scopes, tools, services = review.get("scopes"), review.get("tools"), review.get("services")
-    if not isinstance(scopes, dict) or set(scopes) != {"seed", "base", "candidate"}:
-        raise ValueError("审阅计划必须完整声明三侧资源")
-    if not isinstance(tools, dict) or not isinstance(services, dict):
-        raise ValueError("审阅计划缺少工具或服务定义")
-    for role in REVIEW_FILE_TOOLS:
-        tool = tools.get(role)
-        if not isinstance(tool, dict) or not isinstance(tool.get("path"), str) or not isinstance(tool.get("sha256"), str):
-            raise ValueError("审阅计划工具定义无效")
-    redis = tools.get("redis_server")
-    if not isinstance(redis, dict) or any(not isinstance(redis.get(key), str) for key in ("distribution", "resolved_path", "sha256")):
-        raise ValueError("审阅计划 Redis 工具定义无效")
-    rustfs, cache = services.get("rustfs"), services.get("redis")
-    if not isinstance(rustfs, dict) or not isinstance(cache, dict) or any(
-        not isinstance(value, str)
-        for value in (rustfs.get("api"), rustfs.get("console"), rustfs.get("data_dir"), cache.get("directory"))
-    ):
-        raise ValueError("审阅计划服务定义无效")
-    for role in ("source", "protected_target"):
-        side = review["reference"].get(role)
-        if not isinstance(side, dict) or not isinstance(side.get("databases"), list):
-            raise ValueError("审阅计划保护资源定义无效")
-    for side in scopes.values():
-        if not isinstance(side, dict) or not isinstance(side.get("scope_id"), str) or not name(side["scope_id"]):
-            raise ValueError("审阅计划 scope 无效")
-        if any(not isinstance(side.get(key), str) for key in ("runtime_dir", "identity_ledger", "api_url", "worker_ready_url", "frontend_url")):
-            raise ValueError("审阅计划运行路径无效")
-        objects, cache = side.get("objects"), side.get("redis")
-        if not isinstance(objects, dict) or any(not isinstance(objects.get(key), str) for key in ("endpoint", "region")):
-            raise ValueError("审阅计划对象存储定义无效")
-        if not isinstance(cache, dict) or any(not isinstance(cache.get(key), str) for key in ("url", "namespace", "ownership_key", "ownership_value")):
-            raise ValueError("审阅计划 Redis 定义无效")
-        databases = side.get("databases")
-        if not isinstance(databases, list) or {item.get("key") for item in databases if isinstance(item, dict)} != set(KEYS):
-            raise ValueError("审阅计划数据库定义无效")
-        if any(not isinstance(item.get("database"), str) or not isinstance(item.get("expected_server_uuid"), str) for item in databases):
-            raise ValueError("审阅计划数据库身份无效")
+    _native("review", Path(__file__).resolve().parents[2], review=review)
 
 
 def external_file(value: dict) -> None:
-    exact(value, {"path", "sha256"})
-    path = Path(value["path"])
-    if (not path.is_absolute() or any(linked(p) for p in (path, *path.parents))
-            or file_digest(path)["sha256"] != digest(value["sha256"])):
-        raise ValueError("新目标外部工具实际字节或路径已变化")
-
-
-def _request_binding(backend: Path, request: dict, validate) -> tuple[dict, dict]:
-    required = {"format_version", "kind", "id", "review", "side", "target", "maintenance_build",
-                "configuration_sha256", "config_dir", "tools", "storage", "reset"}
-    exact(request, required | ({"execution_backend"} if "execution_backend" in request else set()))
-    if request["format_version"] != 1 or request["kind"] != "devex-clone-fresh-target":
-        raise ValueError("新目标请求类型错误")
-    name(request["id"])
-    exact(request["review"], {"path", "bytes", "sha256", "canonical_sha256"})
-    review = read_json(bound_file(backend, {k: v for k, v in request["review"].items() if k != "canonical_sha256"}))
-    validate(review)
-    if (plan_hash(review) != digest(request["review"]["canonical_sha256"])
-            or request["side"] not in review["scopes"]):
-        raise ValueError("必须选择已就绪审阅计划的明确单侧")
-    selected = review["scopes"][request["side"]]
-    target = request["target"]
-    exact(target, {"scope_id", "s3", "databases"})
-    if name(target["scope_id"]) != selected["scope_id"]:
-        raise ValueError("目标 scope 与单侧审阅计划不符")
-    exact(target["s3"], {"endpoint", "region", "access_key", "secret_key"})
-    if any(not isinstance(target["s3"][field], str) or not target["s3"][field]
-           or any(ord(char) < 32 for char in target["s3"][field])
-           for field in ("access_key", "secret_key")):
-        raise ValueError("目标对象凭据必须在绑定文件中直接提供且不能为空")
-    if any(target["s3"][key] != selected["objects"][key] for key in ("endpoint", "region")):
-        raise ValueError("对象存储不是计划中的目标端点")
-    actual = target["databases"]
-    if not isinstance(actual, list) or len(actual) != 4 or {db["key"] for db in actual} != set(KEYS):
-        raise ValueError("新目标必须精确包含四个逻辑数据库")
-    planned = {db["key"]: db for db in selected["databases"]}
-    all_names = [(db["expected_server_uuid"], db["database"].lower())
-                 for side in review["scopes"].values() for db in side["databases"]]
-    protected = {(db["server_uuid"], db["database"].lower())
-                 for role in ("source", "protected_target") for db in review["reference"][role]["databases"]}
-    if len(all_names) != 12 or len(set(all_names)) != 12 or set(all_names) & protected:
-        raise ValueError("三侧数据库相互重叠或碰到参考资源")
-    for db in actual:
-        exact(db, {"key", "kind", "mode", "database", "server_uuid", "defaults_file", "defaults_sha256"})
-        expected = planned[db["key"]]
-        if ((db["kind"], db["mode"]) != KEYS[db["key"]] or identifier(db["database"]) != expected["database"]
-                or db["server_uuid"] != expected["expected_server_uuid"]
-                or db["defaults_file"] != expected["connection_file"]):
-            raise ValueError("数据库物理身份或凭据路径不是精确审阅目标")
-        if file_digest(local_path(backend, db["defaults_file"]))["sha256"] != digest(db["defaults_sha256"]):
-            raise ValueError("目标 MySQL 凭据文件变化")
-    exact(request["tools"], {"mysql"})
-    for role, tool in request["tools"].items():
-        external_file(tool)
-        if any(tool[key] != review["tools"][role][key] for key in ("path", "sha256")):
-            raise ValueError("目标工具不属于审阅版本")
-    exact(request["storage"], {"rustfs", "redis"})
-    return review, selected
+    _native("external-file", Path(__file__).resolve().parents[2], descriptor=value)
 
 
 def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
-    """只接受已经完成预检并明确就绪的普通 fresh-target 请求。"""
-    return _request_binding(backend, request, validate_review)
+    result = _native("request", backend, request=request, predecessor=None)
+    return result["review"], result["selected"]
 
 
 def execution_binary_bindings(backend: Path, request: dict) -> list[dict]:
-    """收集 fresh 阶段会执行或持续核验的本机二进制。"""
-    review, _ = request_binding(backend, request)
-    build = read_json(bound_file(backend, request["maintenance_build"]))
-    artifacts = build.get("artifacts")
-    if build.get("kind") != "devex-clone-tool-build" or not isinstance(artifacts, dict) \
-            or set(artifacts) != {"reset", "migrate", "tenant-data"}:
-        raise ValueError("fresh 目标维护构建缺少完整二进制")
-    bindings = [dict(value) for value in request["tools"].values()]
-    for artifact in artifacts.values():
-        if not isinstance(artifact, dict) or any(key not in artifact for key in ("executable", "sha256")):
-            raise ValueError("fresh 目标维护构建二进制绑定无效")
-        bindings.append({"path": artifact["executable"], "sha256": artifact["sha256"]})
-    rustfs, redis = request["storage"]["rustfs"], request["storage"]["redis"]
-    rustfs_binding = {"path": rustfs.get("identity", {}).get("executable"), "sha256": rustfs.get("sha256")}
-    if rustfs_binding != review["tools"]["rustfs"] or redis.get("wsl") != review["tools"]["wsl"]:
-        raise ValueError("fresh 目标存储二进制不属于审阅版本")
-    bindings.extend((rustfs_binding, dict(redis["wsl"])))
-    return bindings
+    return _native("binaries", backend, request=request)["bindings"]
 
 
 def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
-    """仅供 review successor 核对历史 seed；不授予该请求执行权限。"""
-    expected = copy.deepcopy(predecessor)
-    if request.get("review") != expected:
-        raise ValueError("历史 seed 请求未绑定指定 pending predecessor")
-
-    def validate_pending(review: dict) -> None:
-        if review.get("ready_for_execution") is not False:
-            raise ValueError("历史 seed predecessor 必须保持 pending")
-        structural = copy.deepcopy(review)
-        structural["ready_for_execution"] = True
-        validate_review(structural)
-
-    result = _request_binding(backend, request, validate_pending)
-    if request.get("review") != expected:
-        raise ValueError("历史 seed 请求的 predecessor 在核对期间变化")
-    return result
+    result = _native("request", backend, request=request, predecessor=predecessor)
+    return result["review"], result["selected"]
 
 
 def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
@@ -583,72 +487,22 @@ def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
 
 
 def application_config_directory(backend: Path, request: dict) -> Path:
-    value = request.get("config_dir")
-    if not isinstance(value, str):
-        raise ValueError("目标请求必须明确绑定 config_dir")
-    directory = Path(value)
-    if (not directory.is_absolute() or not directory.is_relative_to(backend.resolve(strict=True))
-            or directory.name != "config" or not directory.is_dir()
-            or any(linked(item) for item in (directory, *directory.parents))):
-        raise ValueError("目标 config_dir 必须是已绑定执行树内的无链接配置目录")
-    return directory
+    return Path(_native("config-directory", backend, request=request)["path"])
 
 
 def reset_config(backend: Path, request: dict, selected: dict) -> None:
-    declared = request["reset"]
-    exact(declared, {"legacy_ownership", "credential_version", "sentinel_key", "sentinel_value"})
-    exact(declared["legacy_ownership"], EXCLUSIVE)
-    if any(value is not True for value in declared["legacy_ownership"].values()):
-        raise ValueError("仅本次新空资源显式声明 exclusive 引导；不能隐式注入配置")
-    table = load_app_table(backend, {"APP_ENV": os.environ.get("APP_ENV")}, config_dir=application_config_directory(backend, request)).get("reset", {})
-    if not isinstance(table, dict):
-        raise ValueError("所选配置文件的 reset 必须是配置表")
-    for key in EXCLUSIVE:
-        field = "legacy_" + key
-        actual = table.get(field)
-        if actual is not True:
-            raise ValueError(f"所选配置文件的 reset.{field} 必须为 true，与请求保持一致")
-    for field, value in (("credential_version", declared["credential_version"]),
-                         ("redis_outside_sentinel_key", declared["sentinel_key"])):
-        if table.get(field) != value:
-            raise ValueError(f"所选配置文件的 reset.{field} 与显式请求不同")
-    scope = request["target"]["scope_id"]
-    if (not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", declared["credential_version"])
-            or declared["sentinel_key"] != f"ryframe:devex-fresh:{scope}:sentinel"
-            or declared["sentinel_value"] != f"devex-fresh:{request['id']}"
-            or declared["sentinel_key"].startswith(selected["redis"]["namespace"])):
-        raise ValueError("sentinel 必须是仅归本 scope 的精确外部哨兵")
-    redis_configuration(backend, request, selected)
+    _native("reset-configuration", backend, request=request, selected=selected,
+            app_env=os.environ.get("APP_ENV"))
 
 
 def redis_configuration(backend: Path, request: dict, selected: dict, *, environment=None) -> None:
-    """核对精确 Redis 连接与 namespace；复用于只读来源代次，不执行 reset。"""
-    scope = request["target"]["scope_id"]
-    redis = selected["redis"]
-    if redis["namespace"] != f"ryframe:{{{scope}}}:" or redis["ownership_key"] != redis["namespace"] + ".ryframe-owner":
-        raise ValueError("Redis 计划 namespace 无效")
-    # 该入口限定已登记的本机非 TLS Redis；不复制配置或创建 Redis 服务。
     environment = os.environ if environment is None else environment
-    redis = load_app_table(backend, {"APP_ENV": environment.get("APP_ENV")}, config_dir=application_config_directory(backend, request)).get("redis", {})
-    if not isinstance(redis, dict):
-        raise ValueError("所选配置文件的 redis 必须是配置表")
-    expected = {"host": "127.0.0.1", "port": request["storage"]["redis"]["port"],
-                "database": 0, "tls": False}
-    for key, value in expected.items():
-        if type(redis.get(key)) is not type(value) or redis.get(key) != value:
-            raise ValueError(f"所选配置文件的 redis.{key} 未显式匹配本侧配置")
+    _native("redis-configuration", backend, request=request, selected=selected,
+            app_env=environment.get("APP_ENV"))
 
 
 def never_started(backend: Path, selected: dict) -> None:
-    runtime = local_path(backend, selected["runtime_dir"])
-    for filename in ("producer-history.json", "api.json", "worker.json"):
-        evidence = runtime / filename
-        if evidence.exists() or linked(evidence):
-            raise ValueError("目标已经出现生产者启动意图或进程收据，不能认定为从未启动的 fresh 目标")
-    for field in ("runtime_dir", "identity_ledger"):
-        directory = local_path(backend, selected[field])
-        if directory.exists() and (linked(directory) or not directory.is_dir() or any(directory.iterdir())):
-            raise ValueError("目标已经出现运行或身份准备历史，不具备本代次 fresh 条件")
+    _native("never-started", backend, selected=selected)
 
 
 def generation(backend: Path, request: dict, run) -> dict:
@@ -699,55 +553,5 @@ def generation(backend: Path, request: dict, run) -> dict:
 
 
 def validate_reset_manifest(manifest: dict, request: dict, original: dict) -> None:
-    target, reset = request["target"], request["reset"]
-    exact(manifest, {"manifest_version", "environment", "scope_id", "code_sha", "config_sha", "credential_version",
-                     "confirmation_phrase", "legacy_ownership", "redis", "object_storage", "databases"})
-    scope = target["scope_id"]
-    if (manifest["manifest_version"] != 4 or manifest["environment"] != "test" or manifest["scope_id"] != scope
-            or manifest["code_sha"] != original["maintenance"]["source"]["snapshot"]["head"]
-            or manifest["credential_version"] != reset["credential_version"]
-            or manifest["confirmation_phrase"] != f"RESET-RYFRAME-test-{scope}"
-            or manifest["legacy_ownership"] != reset["legacy_ownership"]):
-        raise ValueError("实际 reset plan 来源或引导范围不符")
-    digest(manifest["config_sha"])
-    physical = {item["key"]: item for item in original["physical"]["databases"]}
-    if len(manifest["databases"]) != 4:
-        raise ValueError("reset plan 包含额外或缺失数据库")
-    seen = set()
-    for item in manifest["databases"]:
-        keys = item["target_keys"]
-        if len(keys) != 1 or keys[0] not in KEYS or keys[0] in seen:
-            raise ValueError("reset plan 数据库合并或重复")
-        key = keys[0]
-        expected = physical[key]
-        seen.add(key)
-        kinds = {"control", "tenant-data"} if key == "shared-control" else {"tenant-data"}
-        source_db = next(db for db in target["databases"] if db["key"] == key)
-        connection = native_response(*native_invoke(
-            "__source-evidence", {"operation": "connection-summary", "write": False,
-                "arguments": {"backend": original["maintenance"]["backend_root"], "database": source_db}},
-            subprocess.run, may_write=False,
-        ))[0]["value"]
-        if (any(item[field] != expected[field] for field in ("host", "port", "database"))
-                or item["control_baseline"] != (key == "shared-control") or item["tenant_baseline"] is not True
-                or item["ownership_markers"] != {kind: f"ryframe-owner:v1:{scope}:{kind}" for kind in kinds}
-                or item["connection"]["tls_mode"] != expected["tls_mode"]
-                or item["connection"]["username"] != connection["username"]
-                or any(item["connection"].get(field) is not None for field in ("tls_ca_sha256", "tls_client_cert_sha256", "tls_client_key_ref_sha256"))):
-            raise ValueError("reset plan 数据库实际目标、baseline 或 owner 不符")
-    storage = manifest["object_storage"]
-    expected_storage = original["physical"]["s3"]
-    if (any(storage[field] != expected_storage[field] for field in ("backend", "endpoint", "region"))
-            or storage["use_ssl"] != expected_storage["endpoint"].startswith("https://")
-            or len(storage["prefixes"]) != 5 or {p["bucket"] for p in storage["prefixes"]} != BUCKETS):
-        raise ValueError("reset plan 对象端点或五桶不符")
-    for item in storage["prefixes"]:
-        if item != {"bucket": item["bucket"], "prefix": scope + "/", "ownership_marker_key": scope + "/.ryframe-owner",
-                    "ownership_marker": f"ryframe-owner:v1:{scope}:object-storage:{item['bucket']}"}:
-            raise ValueError("reset plan 对象前缀越界")
-    redis, selected = manifest["redis"], original["selected"]["redis"]
-    if (redis["host"] != "127.0.0.1" or redis["port"] != request["storage"]["redis"]["port"]
-            or redis["database"] != 0 or redis["tls"] is not False or redis["namespace"] != selected["namespace"]
-            or redis["ownership_marker_key"] != selected["ownership_key"] or redis["ownership_marker"] != selected["ownership_value"]
-            or redis["outside_sentinel_key_sha256"] != hashlib.sha256(reset["sentinel_key"].encode()).hexdigest()):
-        raise ValueError("reset plan Redis namespace、端点或 sentinel 不符")
+    _native("reset-manifest", Path(original["maintenance"]["backend_root"]),
+            manifest=manifest, request=request, original=original)

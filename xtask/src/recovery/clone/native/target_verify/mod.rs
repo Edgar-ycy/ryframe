@@ -7,6 +7,9 @@ use super::{digest, export::transport::SystemTransport, json as json_io};
 use crate::Result;
 
 pub(crate) mod authority;
+mod binding;
+mod binding_configuration;
+mod binding_request;
 pub(crate) mod database;
 pub(crate) mod evidence_creation;
 mod evidence_model;
