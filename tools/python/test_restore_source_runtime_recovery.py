@@ -94,11 +94,8 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
     @contextlib.contextmanager
     def context(self):
         f = self.fixture
-        tools = SimpleNamespace(command=lambda _name: [sys.executable])
         with f.modules(), patch.object(runtime, "_resources", side_effect=self.resources_factory), \
                 patch.object(sys.modules["devex_clone_seed_generation_images"], "capture_image", self.capture), \
-                patch.object(runtime, "ExternalTools", return_value=tools), \
-                patch("restore_reference_io.ExternalTools", return_value=tools), \
                 patch.object(producer, "process_identity", side_effect=f.identity):
             yield
 
@@ -169,7 +166,7 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
         self.assertEqual(len(self.resources.eval_calls), 1)
         self.assertIsNone(cleanup["deleted"])
         self.assertEqual(cleanup["execution"], "reconciled_unknown_lua_result")
-        writes = runtime._remote_write_receipt(cleanup, recovered=True)
+        writes = producer._runtime_policy("remote-writes", cleanup=cleanup, recovered=True)
         self.assertEqual(writes["authorization_cache"]["historical_cleanup"], "unknown")
         self.assertEqual(writes["authorization_cache"]["confirmed_commands"], 0)
         runtime._verify_cache_receipt(self.fixture.backend, self.output.parent,
@@ -297,7 +294,15 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
             cleanup.update(deleted=None, execution="reconciled_unknown_lua_result")
             cleanup_path.write_text(json.dumps(cleanup), encoding="utf-8")
             receipt = read_json(self.output)
-            receipt.update(cache_cleanup=binding(cleanup_path), remote_writes=runtime._remote_write_receipt(cleanup, recovered=False))
+            with self.assertRaises(ValueError):
+                producer._runtime_policy("remote-writes", cleanup=cleanup, recovered=False)
+            # 显式构造攻击输入，继续验证最终 validator，不能靠收据构造器提前拒绝替代。
+            writes = producer._runtime_policy("remote-writes", cleanup=cleanup, recovered=True)
+            writes["authorization_cache"].update(
+                unknown_result_commands=0, phase="initial_verification",
+                historical_cleanup="not_applicable",
+            )
+            receipt.update(cache_cleanup=binding(cleanup_path), remote_writes=writes)
             self.output.write_text(json.dumps(receipt), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "副作用"):
                 runtime.verify_source_runtime(f.backend, binding(self.output), live=False)

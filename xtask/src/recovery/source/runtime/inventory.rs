@@ -108,7 +108,7 @@ fn walk(root: &Path, directory: &Path, rows: &mut Vec<Value>) -> Result<()> {
     Ok(())
 }
 
-fn manifest(root: &Path) -> Result<Vec<Value>> {
+pub(super) fn manifest(root: &Path) -> Result<Vec<Value>> {
     let mut rows = Vec::new();
     walk(root, root, &mut rows)?;
     rows.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));

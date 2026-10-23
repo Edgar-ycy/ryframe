@@ -378,17 +378,7 @@ class SourceRuntimeTests(unittest.TestCase):
     def test_execute_and_static_validator_bind_same_generation_and_exact_effects(self):
         output = self.generation / "verification/source-runtime.json"
 
-        class Tools:
-            def __init__(_self, *_args, **_kwargs):
-                pass
-
-            def command(_self, name):
-                self.assertEqual(name, "node")
-                return [sys.executable]
-
         with self.modules(), patch.object(runtime, "_resources", return_value=self.resources), \
-                patch.object(runtime, "ExternalTools", Tools), \
-                patch("restore_reference_io.ExternalTools", Tools), \
                 patch.object(producer, "process_identity", side_effect=self.identity):
             result = runtime.execute_source_verification(
                 self.backend, Path(self.start["path"]), output, popen=self.fake_popen
@@ -458,6 +448,19 @@ class SourceRuntimeTests(unittest.TestCase):
                         self.backend, Path(self.start["path"]), output, popen=self.fake_popen
                     )
         self.assertEqual(called, [])
+
+    def test_invalid_operation_fails_before_configuration_staging_or_process_registration(self):
+        directory = self.copy_run / "invalid-operation/verification"
+        directory.mkdir(parents=True)
+        for operation in ("", "INVALID", "a" * 31, "a" * 33, True):
+            with self.subTest(operation=operation), self.assertRaises(ValueError):
+                producer.run_source_producer(
+                    self.backend, self.backend, directory, operation,
+                    Path(sys.executable).resolve(), self.start, self.lineage, {"APP_ENV": "test"},
+                    coordinator_source=self.coordinator_source, execution_sha=self.execution_sha,
+                    popen=lambda *_a, **_kw: self.fail("非法标识不能启动进程"),
+                )
+            self.assertEqual(list(directory.iterdir()), [])
 
     def test_cancelled_or_timed_out_producer_reclaims_only_registered_identity_without_completion(self):
         for index, error in enumerate((KeyboardInterrupt(), subprocess.TimeoutExpired("producer", 1))):

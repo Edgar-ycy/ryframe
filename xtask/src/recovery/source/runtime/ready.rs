@@ -3,7 +3,13 @@ use super::documents;
 use crate::{Result, recovery::clone::native::digest};
 use serde_json::{Value, json};
 
+#[path = "policy.rs"]
+mod policy;
+
 pub(super) fn verify(args: &Value) -> Result<Value> {
+    if args.get("action").is_some() {
+        return policy::request(args);
+    }
     documents::exact(
         args,
         &["raw", "operation", "start", "lineage", "staging"],
