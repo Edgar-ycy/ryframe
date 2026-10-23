@@ -80,10 +80,10 @@ def generation(backend: Path, directory: Path, start: dict) -> dict:
 
 def failed_prefix(directory: Path) -> dict:
     """被中断的失败验收前缀：只接受精确文件集合与已知失败记录。"""
-    from restore_source_runtime import FAILED_ROOT_ENTRIES, _producer_bindings
+    from restore_source_runtime import _runtime_policy, _producer_bindings
 
     names = frozenset(entry.name for entry in directory.iterdir())
-    if names != frozenset(FAILED_ROOT_ENTRIES):
+    if names != frozenset(_runtime_policy("failed-entries")):
         raise ValueError("来源验收失败前缀不是未清理、未采集后像的精确集合")
     failure = read_json(directory / "failed.json")
     exact(failure, {"status", "error"})

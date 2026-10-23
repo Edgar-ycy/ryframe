@@ -6,17 +6,14 @@ import copy
 import datetime as dt
 import os
 from pathlib import Path
-import re
 import subprocess
 import uuid
 
 from devex_clone_capture import read_json, write_json
 from process_environment import Environments, configured
-from devex_clone_model import linked
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
-from restore_reference_plan import identifier
-from restore_runtime_evidence import artifact_snapshot, exact_fields
+from restore_runtime_evidence import artifact_snapshot
 from restore_source_runtime_producer import (
     COMPLETION,
     CONFIGURATION,
@@ -26,56 +23,26 @@ from restore_source_runtime_producer import (
     STDERR,
     STDOUT,
     run_source_producer,
-    _runtime_policy,
-    _source_policy,
+    _source_policy as _native_source_policy,
     verify_source_producer,
 )
 
 
-RECEIPT_FIELDS = {
-    "format_version", "kind", "status", "source_generation", "dataset_lineage",
-    "before", "after", "producer", "verification", "login_audit", "cache_cleanup",
-    "evidence", "write_effects", "started_at", "verified_at", "remote_writes",
-    "restore_qualified",
-}
-RECOVERED_RECEIPT_FIELDS = RECEIPT_FIELDS | {"recovery"}
 RECOVERY_INTENT = "source-verification-recovery-intent.json"
 RECOVERY_RECEIPT = "source-verification-recovery.json"
 RECOVERY_AUDIT = "recovery-audit"
-FAILED_ROOT_ENTRIES = {
-    "before", "audit", "source-tools", INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
-    CONFIGURATION, "failed.json",
-}
-AUTHORIZATION_CACHE_CLEANUP_SCRIPT = """local expired = {}
-for index = 0, 10 do
-  local key_offset = index * 3
-  local argument_offset = index * 5
-  local tenant_key = KEYS[key_offset + 1]
-  local user_key = KEYS[key_offset + 2]
-  local snapshot_key = KEYS[key_offset + 3]
-  if redis.call('TYPE', tenant_key)['ok'] ~= 'string'
-      or redis.call('GET', tenant_key) ~= ARGV[argument_offset + 1]
-      or redis.call('TYPE', user_key)['ok'] ~= 'string'
-      or redis.call('GET', user_key) ~= ARGV[argument_offset + 2] then
-    return redis.error_reply('authorization persistent cache compare failed')
-  end
-  local expected_type = ARGV[argument_offset + 3]
-  local snapshot_type = redis.call('TYPE', snapshot_key)['ok']
-  if snapshot_type ~= expected_type then
-    return redis.error_reply('authorization snapshot cache type changed')
-  elseif snapshot_type == 'none' then
-    table.insert(expired, snapshot_key)
-  elseif snapshot_type == 'hash' then
-    if redis.call('HLEN', snapshot_key) ~= 1
-        or redis.call('HGET', snapshot_key, ARGV[argument_offset + 4]) ~= ARGV[argument_offset + 5] then
-      return redis.error_reply('authorization snapshot cache compare failed')
-    end
-  else
-    return redis.error_reply('authorization snapshot cache type changed')
-  end
-end
-local deleted = redis.call('UNLINK', unpack(KEYS))
-return {deleted, expired}"""
+
+
+def _source_policy(operation: str, **arguments):
+    from rate_limit_tool import tool_binding
+
+    if tool_binding() is None:
+        raise ValueError("来源验收缺少协调器原生工具绑定；先由正式检查入口登记工具，禁止临时编译回退")
+    return _native_source_policy(operation, **arguments)
+
+
+def _runtime_policy(action: str, **arguments):
+    return _source_policy("producer-ready", action=action, arguments=arguments)
 
 
 def _timestamp() -> str:
@@ -90,28 +57,17 @@ def _new_file(path: Path, content: bytes) -> dict:
     return artifact_snapshot(path).descriptor()
 
 
-def _login_rows(raw: str) -> list[dict]:
-    return _runtime_policy("login-rows", raw=raw)
-
-
-def _login_query(resources, database: dict, condition: str) -> str:
-    name = identifier(database["database"])
-    sql = (
-        "SELECT CAST(`id` AS CHAR),HEX(`tenant_id`),HEX(`user_name`),HEX(`ipaddr`),"
-        "IFNULL(HEX(`login_location`),'NULL'),IFNULL(HEX(`browser`),'NULL'),"
-        "IFNULL(HEX(`os`),'NULL'),HEX(`status`),IFNULL(HEX(`msg`),'NULL'),"
-        "DATE_FORMAT(`login_time`,'%Y-%m-%dT%H:%i:%s.%f') "
-        f"FROM `{name}`.`sys_login_info` {condition} ORDER BY `id`;"
-    )
+def _login_query(resources, database: dict, selection: str, upper=None) -> str:
+    sql = _runtime_policy("login-query", database=database["database"], selection=selection, upper_id=upper)
     return resources._mysql(database, sql)
 
 
 def _login_before(resources, database: dict, audit: Path) -> tuple[bytes, int, dict]:
-    raw = _login_query(resources, database, "")
-    rows = _login_rows(raw)
-    content = (raw + ("\n" if raw else "")).encode()
+    raw = _login_query(resources, database, "all")
+    evidence = _runtime_policy("login-row-evidence", raw=raw)
+    content = bytes.fromhex(evidence["hex"])
     descriptor = _new_file(audit / "login-before.tsv", content)
-    return content, max((int(row["id"]) for row in rows), default=0), descriptor
+    return content, evidence["upper_id"], descriptor
 
 
 def _login_after(
@@ -124,86 +80,43 @@ def _login_after(
     subjects: list[dict],
     started_at: str,
 ) -> dict:
-    previous = _login_query(resources, database, f"WHERE `id` <= {upper}")
-    added = _login_query(resources, database, f"WHERE `id` > {upper}")
+    previous = _login_query(resources, database, "old", upper)
+    added = _login_query(resources, database, "new", upper)
     previous_bytes = (previous + ("\n" if previous else "")).encode()
-    old_descriptor = _new_file(audit / "login-after-old.tsv", previous_bytes)
-    new_descriptor = _new_file(audit / "login-after-new.tsv", (added + ("\n" if added else "")).encode())
+    _new_file(audit / "login-after-old.tsv", previous_bytes)
+    _new_file(audit / "login-after-new.tsv", (added + ("\n" if added else "")).encode())
     completed_at = _timestamp()
-    verified = _source_policy(
-        'login-audit',
-        old_before=old.hex(),
-        old_after=previous_bytes.hex(),
-        upper_id=upper,
-        new_rows=_login_rows(added),
-        lineage=lineage,
-        subjects=subjects,
-        started_at=started_at,
-        completed_at=completed_at,
+    receipt = _runtime_policy(
+        "login-create", backend=str(_evidence_backend(audit)), directory=str(audit.parent),
+        old_before=old.hex(), old_after=previous_bytes.hex(), upper_id=upper, new_raw=added,
+        lineage=lineage, subjects=subjects, started_at=started_at, completed_at=completed_at,
     )
-    receipt = {
-        "format_version": 1,
-        "kind": "restore-source-login-audit",
-        "status": "verified",
-        "before_rows": binding(audit / "login-before.tsv"),
-        "after_old_rows": old_descriptor,
-        "after_new_rows": new_descriptor,
-        "verified": verified,
-        "completed_at": completed_at,
-    }
     write_json(audit / "login-audit.json", receipt)
     return receipt
 
 
-def _snapshot_identity(payload: str, subject: dict, tenant_epoch: str) -> dict:
-    return _runtime_policy("snapshot", payload=payload, subject=subject, tenant_epoch=tenant_epoch)
-
-
 def _cache_keys(plan: list[dict]) -> list[str]:
-    # JSON 保存会排序对象字段；Redis 的三键顺序必须来自角色合同。
-    return [item["keys"][role] for item in plan
-            for role in ("tenant_epoch", "user_version", "snapshot")]
+    return _runtime_policy("cache-keys", plan=plan)
 
 
 def _cache_before(resources, plan: list[dict]) -> tuple[list[dict], list[str]]:
-    result, comparisons = [], []
+    raw = []
     for item in plan:
         keys = item["keys"]
-        types = {name: resources._redis(["TYPE", key]) for name, key in keys.items()}
-        if (
-            types.get("tenant_epoch") != "string"
-            or types.get("user_version") != "string"
-            or types.get("snapshot") not in {"hash", "none"}
-        ):
-            raise ValueError("来源授权缓存持久键缺失或快照类型无效")
-        tenant_epoch = resources._redis(["GET", keys["tenant_epoch"]])
-        user_version = resources._redis(["GET", keys["user_version"]])
-        if (
-            not isinstance(tenant_epoch, str)
-            or re.fullmatch(r"[1-9][0-9]{0,9}", tenant_epoch) is None
-            or not isinstance(user_version, str)
-            or user_version != str(item["user_authorization_version"])
-        ):
-            raise ValueError("来源授权缓存持久版本不同")
-        snapshot = {"key": keys["snapshot"], "type": types["snapshot"]}
-        field, payload = "", ""
-        if types["snapshot"] == "hash":
-            fields = resources._redis(["HKEYS", keys["snapshot"]])
-            field = f"{tenant_epoch}:{user_version}"
-            if fields != [field]:
-                raise ValueError("来源授权缓存快照字段不同")
-            payload = resources._redis(["HGET", keys["snapshot"], field])
-            if not isinstance(payload, str):
-                raise ValueError("来源授权缓存快照为空")
-            snapshot.update(field=field, **_snapshot_identity(payload, item, tenant_epoch))
-        result.append({
-            **{key: item[key] for key in ("tenant_id", "user_id", "user_authorization_version")},
-            "tenant_epoch": {"key": keys["tenant_epoch"], "value": tenant_epoch},
-            "user_version": {"key": keys["user_version"], "value": user_version},
-            "snapshot": snapshot,
+        raw.append({
+            "types": {name: resources._redis(["TYPE", key]) for name, key in keys.items()},
+            "tenant_epoch": resources._redis(["GET", keys["tenant_epoch"]]),
+            "user_version": resources._redis(["GET", keys["user_version"]]),
         })
-        comparisons.extend([tenant_epoch, user_version, types["snapshot"], field, payload])
-    return result, comparisons
+    selected = _runtime_policy("cache-read-plans", plan=plan, raw=raw)
+    for item, row, read in zip(plan, raw, selected, strict=True):
+        fields, payload = [], ""
+        if read["snapshot_type"] == "hash":
+            fields = resources._redis(["HKEYS", item["keys"]["snapshot"]])
+            payload = resources._redis(["HGET", item["keys"]["snapshot"], read["field"]])
+        row.update(fields=fields, payload=payload)
+    observed = _runtime_policy("cache-observe", plan=plan, raw=raw)
+    return observed["before"], observed["comparisons"]
 
 
 def _cache_observation(resources, namespace: str, subjects: list[dict]) -> tuple[dict, list[str]]:
@@ -240,21 +153,13 @@ def _execute_cache_cleanup(
     keys = _cache_keys(observation["plan"])
     if checkpoint is not None:
         checkpoint()
-    result = resources._redis([
-        "EVAL", AUTHORIZATION_CACHE_CLEANUP_SCRIPT, str(len(keys)), *keys, *comparisons,
-    ])
+    command = _runtime_policy("cache-command", observation=observation, comparisons=comparisons)
+    result = resources._redis(command)
     if checkpoint is not None:
         checkpoint()
-    if (
-        not isinstance(result, list)
-        or len(result) != 2
-        or type(result[0]) is not int
-        or not isinstance(result[1], list)
-        or any(not isinstance(key, str) for key in result[1])
-    ):
-        raise ValueError("来源授权缓存原子清理返回无效")
+    verified = _runtime_policy("cache-result", value=result)
     return _publish_cache_cleanup(
-        resources, observation, output, result[0], result[1], "confirmed_lua_result"
+        resources, observation, output, verified["deleted"], verified["expired"], "confirmed_lua_result"
     )
 
 
@@ -301,33 +206,20 @@ def _resources(backend: Path, facts: dict, output: Path, run):
 
 
 def _control_database(facts: dict) -> dict:
-    databases = facts["source"]["seed_target"]["target"]["databases"]
-    matches = [item for item in databases if item.get("key") == "shared-control"]
-    if len(matches) != 1 or matches[0].get("kind") != "combined":
-        raise ValueError("来源验收缺少唯一控制数据库")
-    return matches[0]
+    return _runtime_policy("control-database", databases=facts["source"]["seed_target"]["target"]["databases"])
 
 
 def _validate_paths(backend: Path, start: Path, output: Path) -> tuple[Path, Path]:
-    backend = backend.resolve(strict=True)
-    local = (backend / ".local-tests").resolve(strict=True)
-    for path, label in ((start, "source generation"), (output, "来源运行收据")):
-        if not path.is_absolute() or not path.resolve().is_relative_to(local) or linked(path):
-            raise ValueError(f"{label}必须位于当前后端忽略目录且不能经过链接")
-    if output.name != "source-runtime.json" or output.parent.name != "verification":
-        raise ValueError("来源运行收据必须使用同代 verification/source-runtime.json")
-    return start.resolve(strict=True), output
+    selected = _runtime_policy("paths", backend=str(backend), start=str(start), output=str(output))
+    return Path(selected["start"]), Path(selected["output"])
 
 
 def _producer_bindings(directory: Path) -> dict:
-    return {
-        "intent": binding(directory / INTENT),
-        "process": binding(directory / PROCESS),
-        "ready": binding(directory / READY),
-        "stdout": binding(directory / STDOUT),
-        "stderr": artifact_snapshot(directory / STDERR).descriptor(),
-        "completion": binding(directory / COMPLETION),
-    }
+    return _runtime_policy("producer-bindings", backend=str(_evidence_backend(directory)), directory=str(directory))
+
+
+def receipt_fields(*, recovered=False) -> set[str]:
+    return set(_runtime_policy("receipt-fields", recovered=recovered))
 
 
 def _source_runtime_receipt(
@@ -403,8 +295,7 @@ def execute_source_verification(
                             backend, before, facts["selected"], facts["source"]["request"],
                             source_registration=facts["receipt"]["source_registration"],
                         )
-                        if before_value["image"] != facts["running"]["image"]:
-                            raise ValueError("来源验收开始前完整像与同一运行 start 不同")
+                        _runtime_policy("image-binding", before=before_value["image"], expected=facts["running"]["image"])
                     elif stage == "producer":
                         from restore_source_runtime_producer import native_tool
                         node = native_tool()
@@ -448,11 +339,7 @@ def execute_source_verification(
                             before=before_value['image'],
                             after=after_value['image'],
                         )
-                        if (
-                            cleanup["deleted"] + len(cleanup["expired_snapshot_keys"])
-                            != effects["authorization_cache"]["created_and_removed_keys"]
-                        ):
-                            raise ValueError("来源验收授权缓存清理与完整前后像合同不同")
+                        _runtime_policy("cache-effects", cleanup=cleanup, effects=effects, recovered=False)
                     elif stage == "receipt":
                         receipt = _source_runtime_receipt(
                             expected_directory, facts, start, started_at, before, after, effects, cleanup,
@@ -462,8 +349,7 @@ def execute_source_verification(
                         write_json(output, receipt)
                     elif stage == "verify-published":
                         verified = verify_source_runtime(backend, binding(output), live=True)
-                        if verified["receipt"] != receipt:
-                            raise ValueError("来源运行收据写入后复核不同")
+                        _runtime_policy("published", expected=receipt, actual=verified["receipt"])
                     elif stage == "checkpoint":
                         checkpoint()
                     else:
@@ -479,39 +365,14 @@ def execute_source_verification(
 def _validate_stored_login_audit(
     backend: Path, directory: Path, descriptor: dict, lineage: dict, subjects: list[dict], started_at: str
 ) -> dict:
-    audit = _read_login_audit(backend, directory, descriptor)
-    old = (directory / "audit/login-before.tsv").read_bytes()
-    old_after = (directory / "audit/login-after-old.tsv").read_bytes()
-    added = (directory / "audit/login-after-new.tsv").read_text(encoding="utf-8").strip()
-    verified = _source_policy(
-        'login-audit',
-        old_before=old.hex(),
-        old_after=old_after.hex(),
-        upper_id=int(audit['verified']['upper_id']),
-        new_rows=_login_rows(added),
-        lineage=lineage,
-        subjects=subjects,
-        started_at=started_at,
-        completed_at=audit['completed_at'],
-    )
-    if audit["verified"] != verified:
-        raise ValueError("来源登录审计派生结果发生变化")
-    return audit
+    return _runtime_policy("login-stored", backend=str(backend), directory=str(directory),
+                           descriptor=descriptor, lineage=lineage, subjects=subjects, started_at=started_at)
 
 
 def _verify_recovery_prefix(backend: Path, directory: Path, facts: dict) -> dict:
     from devex_clone_seed_generation_images import verify_image
 
-    names = frozenset(entry.name for entry in directory.iterdir())
-    if names not in {
-        frozenset(FAILED_ROOT_ENTRIES), frozenset(FAILED_ROOT_ENTRIES | {RECOVERY_INTENT}),
-        frozenset(FAILED_ROOT_ENTRIES | {RECOVERY_INTENT, RECOVERY_AUDIT}),
-    }:
-        raise ValueError("来源验收恢复只接受未清理、未采集后像且未封口的精确失败前缀")
-    failure = read_json(directory / "failed.json")
-    exact_fields(failure, {"status", "error"}, "来源验收原失败记录")
-    if failure != {"status": "failed", "error": "ValueError"}:
-        raise ValueError("来源验收恢复只接受缓存阶段 ValueError 失败记录")
+    _runtime_policy("recovery-prefix", backend=str(backend), directory=str(directory))
     environment = configured(facts["environment"]["environment"])
     from restore_source_runtime_producer import native_tool
     node = native_tool()
@@ -538,8 +399,7 @@ def _verify_recovery_prefix(backend: Path, directory: Path, facts: dict) -> dict
         backend, before_descriptor, facts["selected"], facts["source"]["request"],
         source_registration=facts["receipt"]["source_registration"],
     )
-    if before["image"] != facts["running"]["image"]:
-        raise ValueError("来源验收恢复前像与同一 start 运行像不同")
+    _runtime_policy("image-binding", before=before["image"], expected=facts["running"]["image"])
     return {"producer": producer, "producer_intent": producer_intent, "node": verified_node,
             "audit": audit, "before": before, "before_descriptor": before_descriptor,
             "environment": environment}
@@ -549,21 +409,12 @@ def _recovery_intent(
     directory: Path, facts: dict, prefix: dict, successor: dict, pre_manifest: list[dict],
     authorization_cache: dict,
 ) -> dict:
-    return {
-        "format_version": 1,
-        "kind": "restore-source-verification-recovery-intent",
-        "status": "recovering",
-        "source_generation": facts["start_descriptor"],
-        "dataset_lineage": facts["receipt"]["dataset_lineage"],
-        "failure": binding(directory / "failed.json"),
-        "producer": _producer_bindings(directory),
-        "login_audit": binding(directory / "audit/login-audit.json"),
-        "before": prefix["before_descriptor"],
-        "pre_recovery_manifest": pre_manifest,
-        "successor": successor,
-        "authorization_cache": authorization_cache,
-        "started_at": _timestamp(),
-    }
+    return _runtime_policy(
+        "recovery-intent", backend=str(_evidence_backend(directory)), directory=str(directory),
+        start=facts["start_descriptor"], lineage=facts["receipt"]["dataset_lineage"],
+        before=prefix["before_descriptor"], successor=successor, pre_manifest=pre_manifest,
+        authorization_cache=authorization_cache, started_at=_timestamp(),
+    )
 
 
 def _validate_pending_recovery_intent(
@@ -597,12 +448,10 @@ def _resume_or_execute_cache_cleanup(resources, intent: dict, output: Path, *, c
 
 def _recheck_login_rows(resources, database: dict, directory: Path, audit: dict) -> None:
     upper = int(audit["verified"]["upper_id"])
-    for condition, filename in ((f"WHERE `id` <= {upper}", "login-after-old.tsv"),
-                                (f"WHERE `id` > {upper}", "login-after-new.tsv")):
-        raw = _login_query(resources, database, condition)
-        actual = (raw + ("\n" if raw else "")).encode()
-        if actual != (directory / "audit" / filename).read_bytes():
-            raise ValueError("来源验收恢复时登录日志出现原审计以外的未知写入")
+    for selection, filename in (("old", "login-after-old.tsv"), ("new", "login-after-new.tsv")):
+        raw = _login_query(resources, database, selection, upper)
+        _runtime_policy("login-recheck", backend=str(_evidence_backend(directory)),
+                        directory=str(directory), filename=filename, raw=raw)
 
 
 def execute_source_verification_recovery(
@@ -674,21 +523,12 @@ def execute_source_verification_recovery(
                         before=prefix['before']['image'],
                         after=after['image'],
                     )
-                    if len(cleanup["after"]) != 33:
-                        raise ValueError("来源验收恢复缓存清理没有完整解释 33 个计划键")
+                    _runtime_policy("cache-effects", cleanup=cleanup, effects=effects, recovered=True)
                 elif stage == "recovery-receipt":
-                    recovery = {
-                        "format_version": 1, "kind": "restore-source-verification-recovery",
-                        "status": "recovered", "intent": binding(directory / RECOVERY_INTENT),
-                        "cache_cleanup": binding(directory / "cache-cleanup.json"), "after": after_descriptor,
-                        "historical_cleanup": "unknown",
-                        "confirmed_cleanup": (
-                            "recovery_lua_cas_unlink" if cleanup["execution"] == "confirmed_lua_result"
-                            else "reconciled_unknown_lua_result_all_keys_absent"
-                        ),
-                        "login_recheck": _manifest(recovery_audit),
-                        "completed_at": _timestamp(),
-                    }
+                    recovery = _runtime_policy(
+                        "recovery-receipt", backend=str(backend), directory=str(directory),
+                        cleanup=cleanup, after=after_descriptor, completed_at=_timestamp(),
+                    )
                     write_json(directory / RECOVERY_RECEIPT, recovery)
                 elif stage == "receipt":
                     receipt = _source_runtime_receipt(
@@ -700,19 +540,12 @@ def execute_source_verification_recovery(
                     write_json(output, receipt)
                 elif stage == "verify-published":
                     verified = verify_source_runtime(backend, binding(output), live=True)
-                    if verified["receipt"] != receipt:
-                        raise ValueError("恢复后的来源运行收据写入后复核不同")
+                    _runtime_policy("published", expected=receipt, actual=verified["receipt"])
                 elif stage == "checkpoint":
                     checkpoint()
                 else:
                     raise ValueError("来源恢复阶段不属于原生固定计划")
         return {"output": str(output), "status": receipt["status"], "restore_success": False}
-
-
-def _read_login_audit(backend: Path, directory: Path, descriptor: dict) -> dict:
-    return _runtime_policy(
-        "login-evidence", backend=str(backend), directory=str(directory), descriptor=descriptor,
-    )
 
 
 def _verify_cache_receipt(backend: Path, directory: Path, descriptor: dict, subjects: list[dict]) -> dict:
@@ -764,11 +597,8 @@ def verify_source_runtime(backend: Path, descriptor: dict, *, live: bool) -> dic
         "runtime-schema", backend=str(backend), directory=str(directory), value=receipt,
     )["recovered"]
     facts = verify_source_runtime_facts(backend, receipt, live=live)
-    if (
-        directory != facts["output"] / "verification"
-        or receipt["dataset_lineage"] != facts["receipt"]["dataset_lineage"]
-    ):
-        raise ValueError("来源运行收据没有绑定同一 generation 与数据血缘")
+    _runtime_policy("facts-binding", directory=str(directory), generation=str(facts["output"]),
+                    receipt=receipt, lineage=facts["receipt"]["dataset_lineage"])
     environment = configured(facts["environment"]["environment"])
     from restore_source_runtime_producer import native_tool
     node = native_tool()

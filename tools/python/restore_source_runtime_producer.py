@@ -37,15 +37,13 @@ PRODUCER_FILES = {INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION, CONFIGURAT
 
 def native_tool() -> Path:
     """读取协调器安装的原生工具绑定；不从 PATH 或环境猜测。"""
-    from rate_limit_tool import tool_binding
+    from rate_limit_tool import tool_binding, verified_tool
 
     value = tool_binding()
     if value is None:
         raise ValueError("来源验收缺少协调器原生工具绑定")
-    from devex_clone_target_binding import external_file
-
-    external_file(value)
-    return Path(value["path"]).resolve(strict=True)
+    with verified_tool(value) as executable:
+        return Path(executable).resolve(strict=True)
 
 
 def _timestamp() -> str:

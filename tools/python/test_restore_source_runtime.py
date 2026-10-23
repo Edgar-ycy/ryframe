@@ -129,7 +129,8 @@ class FakeResources:
         command, *arguments = parts
         if command == "EVAL":
             script, count, *values = arguments
-            assert script == runtime.AUTHORIZATION_CACHE_CLEANUP_SCRIPT and count == "33"
+            script_path = Path(__file__).resolve().parents[2] / "xtask/src/recovery/source/runtime/policy/cache_cleanup.lua"
+            assert script == script_path.read_bytes().decode("utf-8") and count == "33"
             keys, comparisons = values[:33], values[33:]
             assert len(comparisons) == 55
             expired = []
@@ -629,6 +630,24 @@ class SourceRuntimeTests(unittest.TestCase):
 
 
 class SourceRuntimeCliTests(unittest.TestCase):
+    def test_native_tool_uses_registered_binding_and_rejects_digest_drift(self):
+        from rate_limit_tool import tool_binding
+
+        registered = tool_binding()
+        self.assertIsNotNone(registered)
+        self.assertEqual(producer.native_tool(), Path(registered["path"]).resolve(strict=True))
+        invalid = {**registered, "sha256": "f" * 64}
+        with patch("rate_limit_tool._COORDINATOR_BINDING", json.dumps(invalid)), \
+                self.assertRaisesRegex(ValueError, "摘要"):
+            producer.native_tool()
+
+    def test_runtime_policy_requires_registered_native_tool_without_compilation_fallback(self):
+        with patch("rate_limit_tool._COORDINATOR_BINDING", None), \
+                patch("native_s3_client.subprocess.run") as run, \
+                self.assertRaisesRegex(ValueError, "原生工具绑定"):
+            runtime._runtime_policy("flow", mode="verify")
+        run.assert_not_called()
+
     def test_verify_uses_only_generation_lineage_and_explicit_output(self):
         backend = Path(__file__).resolve().parents[2]
         start = backend / ".local-tests/run/results/start.json"

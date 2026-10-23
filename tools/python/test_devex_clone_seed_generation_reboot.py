@@ -43,7 +43,7 @@ class RebootObservationTests(unittest.TestCase):
 
     def test_failed_prefix_accepts_only_the_exact_interrupted_shape(self):
         value = reboot.failed_prefix(self.verification)
-        self.assertEqual(value["manifest"], sorted(runtime.FAILED_ROOT_ENTRIES))
+        self.assertEqual(value["manifest"], runtime._runtime_policy("failed-entries"))
         self.assertEqual(value["producer"]["intent"]["bytes"], 2)
         configuration = self.verification / runtime.CONFIGURATION
         configuration.unlink()

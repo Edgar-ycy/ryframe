@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import restore_business_proof as proof
 from devex_clone_seed_generation import RESULT_FIELDS, START_FIELDS
-from restore_source_runtime import RECEIPT_FIELDS
+from restore_source_runtime import receipt_fields
 from workspace_directory import WorkspaceDirectory
 
 
@@ -37,7 +37,7 @@ class BusinessLineageTests(unittest.TestCase):
         if start_change:
             start_change(start_value)
         start = self.write("start.json", start_value)
-        runtime_value = {**dict.fromkeys(RECEIPT_FIELDS), "source_generation": start, "dataset_lineage": lineage}
+        runtime_value = {**dict.fromkeys(receipt_fields()), "source_generation": start, "dataset_lineage": lineage}
         if runtime_change:
             runtime_change(runtime_value)
         runtime = self.write("runtime.json", runtime_value)

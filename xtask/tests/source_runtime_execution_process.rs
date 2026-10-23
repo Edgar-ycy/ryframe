@@ -70,3 +70,70 @@ fn runtime_unknown_cache_result_does_not_synthesize_a_deletion_count() {
         Value::Null
     );
 }
+
+#[test]
+fn runtime_adapter_plans_are_dispatched_without_relaxing_write_or_scalar_boundaries() {
+    for (action, arguments) in [
+        ("cache-result", json!({"value":[27,["expired"]]})),
+        (
+            "login-query",
+            json!({"database":"control","selection":"new","upper_id":9007199254740993_u64}),
+        ),
+        ("receipt-fields", json!({"recovered":true})),
+        ("failed-entries", json!({})),
+    ] {
+        let (status, response) = invoke(&json!({"operation":"producer-ready","write":false,
+            "arguments":{"action":action,"arguments":arguments}}));
+        assert!(status.success(), "{action}: {response}");
+        match action {
+            "cache-result" => assert_eq!(
+                response["result"]["value"],
+                json!({"deleted":27,"expired":["expired"]})
+            ),
+            "login-query" => assert!(
+                response["result"]["value"]
+                    .as_str()
+                    .unwrap()
+                    .contains("WHERE `id` > 9007199254740993")
+            ),
+            "receipt-fields" => assert!(
+                response["result"]["value"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("recovery"))
+            ),
+            "failed-entries" => assert!(
+                !response["result"]["value"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("after"))
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn runtime_new_plans_reject_secrets_unknown_fields_and_unconfirmed_results() {
+    for (action, arguments) in [
+        ("cache-result", json!({"value":[true,[]]})),
+        ("cache-result", json!({"value":null})),
+        (
+            "login-query",
+            json!({"database":"private-source-secret","selection":"new","upper_id":true}),
+        ),
+        (
+            "control-database",
+            json!({"databases":[{"key":"shared-control","kind":"private-source-secret"}]}),
+        ),
+        ("receipt-fields", json!({"recovered":1})),
+        ("failed-entries", json!({"extra":"private-source-secret"})),
+    ] {
+        let (status, response) = invoke(&json!({"operation":"producer-ready","write":false,
+            "arguments":{"action":action,"arguments":arguments}}));
+        assert!(!status.success(), "{action}");
+        assert_eq!(response["error"]["remote_write_may_have_occurred"], false);
+        assert_eq!(response["error"]["automatic_retry_permitted"], false);
+        assert!(!response.to_string().contains("private-source-secret"));
+    }
+}
