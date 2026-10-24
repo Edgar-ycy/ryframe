@@ -17,6 +17,8 @@ frontend_dir = "../ryframe-vue3"
 # node_program = ".local-tests/node/node.exe"
 
 [generator]
+# 生成器共享 Cargo 缓存根；相对后端根解析，绝对路径可用；缺省 target，不读取环境覆盖。
+# target_dir = "target"
 # 结构导入使用的应用配置目录；相对路径以后端工作区为基准。
 # config_dir = "config"
 # 创建自己的业务 crate 后设置 package，避免每次在命令行重复传入。

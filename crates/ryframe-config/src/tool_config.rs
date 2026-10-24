@@ -42,6 +42,8 @@ pub struct WorkspaceSettings {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GeneratorSettings {
+    /// 生成器 Cargo 缓存根目录；相对后端根目录解析，不读取环境覆盖。
+    pub target_dir: Option<PathBuf>,
     /// 应用配置目录；相对路径以后端工作区为基准，显式 CLI 或 Builder 参数优先。
     pub config_dir: Option<PathBuf>,
     pub package: Option<String>,
@@ -82,6 +84,28 @@ impl ToolSettings {
         values.try_into().map_err(|_: toml::de::Error| AppError::Config(
             "工具配置字段或类型错误：检查 config/tools.toml 和 .local-tests/tools.toml 的字段名与类型，路径以当前后端根目录解析".into()
         ))
+    }
+
+    pub fn generator_target_dir(&self, root: &Path) -> AppResult<PathBuf> {
+        let selected = self
+            .generator
+            .target_dir
+            .as_deref()
+            .unwrap_or(Path::new("target"));
+        if selected
+            .to_str()
+            .is_none_or(|value| value.trim().is_empty() || value.chars().any(char::is_control))
+            || selected
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(AppError::Config("generator.target_dir 必须是非空 UTF-8 路径，不得包含控制字符或父跳转；核对工具配置".into()));
+        }
+        Ok(if selected.is_absolute() {
+            selected.to_owned()
+        } else {
+            root.join(selected)
+        })
     }
 
     pub fn frontend_dir(&self, root: &Path) -> PathBuf {

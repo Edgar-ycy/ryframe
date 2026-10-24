@@ -36,6 +36,7 @@ pub(super) fn reader_manifest(package: &BusinessPackage) -> Result<String, Resou
 pub(super) fn resolve_reader(
     package: &BusinessPackage,
     scratch: &Path,
+    target: &Path,
 ) -> Result<(), ResourceError> {
     let source = package.workspace_root.join("Cargo.lock");
     let root = read_lock(&source)?;
@@ -52,6 +53,7 @@ pub(super) fn resolve_reader(
         ])
         .arg(scratch.join("Cargo.toml"))
         .current_dir(scratch)
+        .env("CARGO_TARGET_DIR", target)
         .output()
         .map_err(|error| lock_error(format!("无法启动 catalog 依赖解析：{error}")))?;
     if !output.status.success() {

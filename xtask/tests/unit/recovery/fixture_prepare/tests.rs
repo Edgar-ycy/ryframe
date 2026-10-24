@@ -66,14 +66,20 @@ fn validates_independent_roots_new_ignored_output_and_exact_git_root() {
 }
 
 #[test]
-fn business_commands_keep_registration_candidate_contract_and_offline_lock_refresh() {
-    let values = commands(Path::new("backend"), Path::new("frontend"));
+fn business_commands_keep_registration_frozen_lock_and_shared_target() {
+    let target = Path::new("shared-target");
+    let values = commands(Path::new("backend"), Path::new("frontend"), target);
     let commands = values.iter().map(|(_, v)| v.join(" ")).collect::<Vec<_>>();
     assert!(commands[0].contains("new-business order --write"));
-    assert!(commands[2].contains("generate-lockfile --offline"));
-    assert!(commands[4].contains("pnpm install --offline --frozen-lockfile"));
-    assert!(commands[6].contains("xtask data migrate reconcile --write"));
-    assert!(commands[7].contains("xtask generate api --write --frontend-dir frontend"));
+    assert!(!commands.join(" ").contains("generate-lockfile"));
+    assert!(commands[3].contains("pnpm install --offline --frozen-lockfile"));
+    assert!(commands[5].contains("xtask -- data migrate reconcile --write"));
+    assert!(commands[6].contains("xtask -- generate api --write --frontend-dir frontend"));
+    for (_, command) in values.iter().filter(|(_, command)| command[0] == "cargo") {
+        let separator = command.iter().position(|arg| arg == "--").unwrap();
+        assert!(command[..separator].iter().any(|arg| arg == "--locked"));
+        assert_eq!(&command[2..4], ["--target-dir", "shared-target"]);
+    }
     assert!(
         !commands
             .join(" ")
@@ -180,6 +186,12 @@ fn formal_rejection_has_no_writes_and_copy_ack_loss_keeps_preparing_evidence() {
     assert!(!output.exists());
     assert!(port.events.is_empty());
     options.expected_sources = None;
+    let tool_config = backend.path().join(".local-tests/tools.toml");
+    fs::write(&tool_config, "[generator]\ntarget_dir=''\n").unwrap();
+    assert!(prepare(&options, backend.path(), frontend.path(), &mut port).is_err());
+    assert!(!output.exists());
+    assert!(port.events.is_empty());
+    fs::write(&tool_config, "[generator]\ntarget_dir='target'\n").unwrap();
     port.fail_after_copy = true;
     assert!(prepare(&options, backend.path(), frontend.path(), &mut port).is_err());
     let receipt = documents::read(&output.join("fixture.json")).unwrap();
@@ -212,7 +224,12 @@ fn read_only_generator_drift_never_prewarm_or_claims_ready() {
         .is_err()
     );
     assert_eq!(documents::read(&path).unwrap()["status"], "preparing");
-    assert!(!port.events.iter().any(|v| v == "xtask --help"));
+    assert!(
+        !port
+            .events
+            .iter()
+            .any(|v| v.ends_with("-p xtask -- --help"))
+    );
 }
 
 #[test]
@@ -238,6 +255,8 @@ fn prewarm_uses_actual_browser_alias_only_after_read_only_source_check() {
     )
     .unwrap();
     assert!(port.events[0].ends_with("resource --package order-business"));
-    assert_eq!(port.events[1], "xtask --help");
+    assert!(port.events[1].ends_with("-p xtask -- --help"));
+    let target = backend.path().join("target").to_string_lossy().into_owned();
+    assert!(port.events.iter().all(|command| command.contains(&target)));
     assert_eq!(documents::read(&path).unwrap()["status"], "ready");
 }

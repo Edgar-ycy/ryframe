@@ -36,6 +36,7 @@ pub struct GenerationBuilder {
 pub struct GenerationPlan {
     pub workspace_root: PathBuf,
     pub config_directory: PathBuf,
+    pub target_dir: PathBuf,
     pub operation: GenerationOperation,
     pub package: String,
     pub models: Vec<String>,
@@ -123,6 +124,7 @@ impl GenerationBuilder {
     pub fn plan(self) -> Result<GenerationPlan, String> {
         let settings =
             ToolSettings::load(&self.root).map_err(|error| error.message().to_owned())?;
+        let target_dir = super::target_directory(&self.root, &settings)?;
         let defaults = &settings.generator;
         let config_directory = resolve_configuration_directory(
             &self.root,
@@ -164,6 +166,7 @@ impl GenerationBuilder {
         let plan = GenerationPlan {
             workspace_root: self.root,
             config_directory,
+            target_dir,
             operation,
             package,
             models,
@@ -188,6 +191,9 @@ impl GenerationBuilder {
 
 impl GenerationPlan {
     pub(super) fn validate(&self) -> Result<(), String> {
+        if super::target_directory(&self.workspace_root, &self.settings)? != self.target_dir {
+            return Err("生成器 target_dir 不同于已解析的工具配置；重新创建生成计划".into());
+        }
         if self.operation == GenerationOperation::Configured {
             return Err("未解析的生成操作；请通过 GenerationBuilder::plan 创建计划".into());
         }
@@ -277,18 +283,20 @@ impl GenerationPlan {
     pub fn describe(&self) -> String {
         if let GenerationOperation::NewBusiness(module) = &self.operation {
             return format!(
-                "生成计划：创建业务模块={module}，业务包={}，配置目录={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+                "生成计划：创建业务模块={module}，业务包={}，配置目录={}，缓存目录={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
                 self.package,
                 self.config_directory.display(),
+                self.target_dir.display(),
                 self.write,
                 self.tasks().join(" → "),
             );
         }
         format!(
-            "生成计划：操作={:?}，业务包={}，配置目录={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+            "生成计划：操作={:?}，业务包={}，配置目录={}，缓存目录={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
             self.operation,
             self.package,
             self.config_directory.display(),
+            self.target_dir.display(),
             self.models,
             self.source,
             self.tables,
