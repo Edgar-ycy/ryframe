@@ -210,7 +210,7 @@ impl Context {
     }
 }
 
-fn validate_request(backend: &Path, request: &Value) -> Result<()> {
+pub(crate) fn validate_request(backend: &Path, request: &Value) -> Result<()> {
     let value = exact(request, REQUEST_FIELDS, "源导出请求")?;
     if value.get("format_version").and_then(Value::as_u64) != Some(1)
         || value.get("kind").and_then(Value::as_str) != Some("devex-clone-source-export")

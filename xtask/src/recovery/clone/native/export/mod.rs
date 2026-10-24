@@ -12,7 +12,7 @@ mod inventory;
 mod inventory_validate;
 pub(crate) mod object;
 mod object_owner;
-mod proof;
+pub(crate) mod proof;
 pub(crate) mod recovery;
 pub(crate) mod transport;
 mod verify;

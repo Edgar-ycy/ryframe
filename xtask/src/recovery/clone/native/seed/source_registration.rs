@@ -10,6 +10,8 @@ pub(crate) mod identity;
 
 #[path = "source_registration/lineage.rs"]
 pub(crate) mod lineage;
+#[path = "source_registration/materialize.rs"]
+pub(crate) mod materialize;
 #[path = "source_registration/publication.rs"]
 pub(crate) mod publication;
 #[path = "source_registration/quiet.rs"]
