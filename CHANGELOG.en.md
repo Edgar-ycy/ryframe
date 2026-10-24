@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Declare the shared file-ownership fixture dependency for targeted composition-root MySQL tests, avoiding accidental reliance on unrelated binary features. Existence and active-connection counts explicitly return unsigned values, with safe decoding and database-error-code diagnostics. API and migration dependency boundaries remain independent.
+
 - The generator and formal business fixtures share a fixed build directory through file configuration, avoiding MSVC output-path failures in deeply nested workspaces. Keep the lockfile produced by business creation instead of recomputing it wholesale. Acceptance command failures identify the program and working directory and provide configuration guidance for recognized C1083 invalid-path errors without exposing private subprocess output.
 
 - Source registration now uses the native Rust stage controller to hold target and ledger locks and publish local evidence, removing the former Python writer. Initialization-history tests share one fixture and internal entry point; redundant internal-step assertions covered by complete-history validation are consolidated while recovery and rejection of unknown failures remain protected.
