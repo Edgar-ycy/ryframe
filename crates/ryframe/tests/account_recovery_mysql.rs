@@ -218,7 +218,7 @@ async fn initial_user_login_requires_and_completes_password_change() {
     }
     initialize();
     mysql::run_mysql_test("initial-user-login", |database| async move {
-        sql_initialization::import(&database).await?;
+        let exported = sql_initialization::import(&database).await?;
         let (_, auth) = services(database.clone())?;
         let initial = auth
             .login("system", "user", "123456")
@@ -273,6 +273,7 @@ async fn initial_user_login_requires_and_completes_password_change() {
             .map_err(message)?;
         assert!(admin.user_info.password_change_required);
         assert!(auth.login("system", "admin", "123456").await.is_err());
+        exported.finish()?;
         Ok(())
     })
     .await;
