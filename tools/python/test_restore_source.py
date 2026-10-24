@@ -299,7 +299,7 @@ class SourcePrivateConfigurationTests(unittest.TestCase):
         for secret in secrets:
             self.assertNotIn(secret, encoded)
         invalid = {**value, "secret_key": "private-secret-key"}
-        with self.assertRaisesRegex(ValueError, "无凭据文件绑定") as failure:
+        with self.assertRaisesRegex(ValueError, "参考证据参数字段缺失或包含未知字段") as failure:
             validate_configuration_binding(invalid, self.backend)
         self.assertNotIn("private-secret-key", str(failure.exception))
 
