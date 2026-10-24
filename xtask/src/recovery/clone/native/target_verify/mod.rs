@@ -25,6 +25,7 @@ mod object;
 mod prepare_state;
 pub(crate) mod proof;
 pub(crate) mod publication;
+pub(crate) mod published;
 pub(crate) mod redis;
 pub(crate) mod reset;
 mod resume;

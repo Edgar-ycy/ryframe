@@ -15,7 +15,7 @@ pub(super) fn resolved(backend: &Path, target: &Path) -> Result<bool> {
         qualification(backend, target).unwrap_or(false),
         "初始化历史存在未解决的失败记录",
     )?;
-    Ok(true)
+    Ok(target.join("failure.json").is_file())
 }
 
 fn qualification(backend: &Path, target: &Path) -> Result<bool> {
