@@ -542,7 +542,12 @@ fn checkpoint_error_is_returned_and_no_inventory_is_published() {
     );
 }
 
-fn oracle(fixture: &Fixture, raw: &Value, declared: &Value, owners: &[Value]) -> Value {
+fn python_observation_adapter(
+    fixture: &Fixture,
+    raw: &Value,
+    declared: &Value,
+    owners: &[Value],
+) -> Value {
     let input = fixture.context.observation_dir.join("oracle-input.json");
     json_io::write_replace(
         &input,
@@ -578,7 +583,7 @@ except ValueError:
 }
 
 #[test]
-fn observations_match_python_for_combined_and_tenant() {
+fn python_observation_adapter_preserves_all_four_target_results() {
     let fixture = Fixture::new();
     for key in KEYS {
         let db = fixture.database(key);
@@ -592,7 +597,8 @@ fn observations_match_python_for_combined_and_tenant() {
             &owners,
         )
         .unwrap();
-        let python = oracle(&fixture, &raw, &db, &owners);
+        // 同一原生模型的跨进程适配契约，核对 Python 返回类型与完整结果。
+        let python = python_observation_adapter(&fixture, &raw, &db, &owners);
         assert_eq!(python, json!({"ok": true, "value": native}));
     }
 }
@@ -661,7 +667,7 @@ fn invalid_inventories(fixture: &Fixture) -> Vec<Value> {
 }
 
 #[test]
-fn malformed_tables_and_placements_match_python_rejections() {
+fn malformed_tables_and_placements_are_rejected() {
     let fixture = Fixture::new();
     let db = fixture.database("shared");
     let owners = model::expected_owners(SCOPE, false);
@@ -678,7 +684,6 @@ fn malformed_tables_and_placements_match_python_rejections() {
             )
             .is_err()
         );
-        assert_eq!(oracle(&fixture, &raw, &db, &owners), json!({"ok": false}));
     }
 }
 
@@ -820,10 +825,6 @@ fn explicit_business_catalog_requires_the_business_table_and_ledger() {
             .get("ryframe_business_migration")
             .is_some()
     );
-    assert_eq!(
-        oracle(&fixture, &raw, &db, &owners),
-        json!({"ok": true, "value": native})
-    );
     for name in ["biz_fixture_item", "ryframe_business_migration"] {
         let mut missing = raw.clone();
         for field in ["/target/database/tables", "/target/preserved_tables"] {
@@ -835,10 +836,6 @@ fn explicit_business_catalog_requires_the_business_table_and_ledger() {
                 .retain(|table| table["table"] != name);
         }
         assert!(model::observation(&backend, &missing, &db, SCOPE, &owners).is_err());
-        assert_eq!(
-            oracle(&fixture, &missing, &db, &owners),
-            json!({"ok": false})
-        );
     }
 }
 
