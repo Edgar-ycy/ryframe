@@ -262,6 +262,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
                 1,
             )
             .await?;
+            verify_shared_business_boundary(&migrated).await?;
             Ok(())
         })
         .await;
@@ -513,4 +514,77 @@ async fn inventory(database: &DatabaseConnection) -> Result<Vec<Vec<String>>, St
         );
     }
     Ok(result)
+}
+
+async fn verify_shared_business_boundary(database: &DatabaseConnection) -> Result<(), String> {
+    use ryframe_application::ports::tenant_data::TenantDataTableDescriptor;
+    use ryframe_tenant_db::migration as tenant;
+
+    mysql::execute(database, "CREATE TABLE biz_tenant_example (tenant_id VARCHAR(32) NOT NULL, id BIGINT NOT NULL, PRIMARY KEY(tenant_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci").await?;
+    let canonical = ryframe_db::schema::canonical_table_schema(database, "biz_tenant_example")
+        .await
+        .map_err(mysql::db_error)?;
+    let table = TenantDataTableDescriptor {
+        table: "biz_tenant_example",
+        copy_order: 1,
+        tenant_column: "tenant_id",
+        primary_key_cursor_columns: &["tenant_id", "id"],
+        checksum_columns: &["tenant_id", "id"],
+        column_types: &["varchar", "bigint"],
+        has_generated_columns: false,
+        foreign_key_dependencies: &[],
+        foreign_keys: &[],
+        schema_canonical: Box::leak(canonical.into_boxed_str()),
+    };
+    tenant::register_business_catalog([table], ["biz_sql_example"])?;
+    tenant::up_pending_business_migrations(database)
+        .await
+        .map_err(mysql::db_error)?;
+    tenant::verify_shared_control(database)
+        .await
+        .map_err(mysql::db_error)?;
+    mysql::execute(
+        database,
+        "INSERT INTO biz_tenant_example(tenant_id,id) VALUES ('system',1)",
+    )
+    .await?;
+    // 再次应用框架迁移后只读确认，不应重放已完成的 DDL 或改变业务数据。
+    let before = inventory(database).await?;
+    tenant::up_pending_business_migrations(database)
+        .await
+        .map_err(mysql::db_error)?;
+    tenant::verify_shared_control(database)
+        .await
+        .map_err(mysql::db_error)?;
+    assert_eq!(before, inventory(database).await?);
+    mysql::require_count(
+        database,
+        "SELECT COUNT(*) AS value FROM biz_tenant_example WHERE tenant_id='system' AND id=1",
+        1,
+    )
+    .await?;
+    let dedicated = tenant::verify_mysql_target(database)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(dedicated.contains("biz_sql_example") && dedicated.contains("未知表"));
+    mysql::execute(database, "CREATE TABLE biz_unknown (id BIGINT PRIMARY KEY)").await?;
+    let unknown = tenant::verify_shared_control(database)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        unknown.contains("biz_unknown")
+            && unknown.contains("未知表")
+            && unknown.contains("勿删库")
+            && unknown.contains("此前迁移可能已完成 DDL")
+    );
+    mysql::execute(database, "DROP TABLE biz_unknown").await?;
+    mysql::execute(database, "DROP TABLE biz_tenant_example").await?;
+    let missing = tenant::verify_shared_control(database)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(missing.contains("biz_tenant_example") && missing.contains("缺失表"));
+    Ok(())
 }

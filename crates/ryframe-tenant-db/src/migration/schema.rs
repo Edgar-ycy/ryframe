@@ -54,6 +54,33 @@ pub async fn verify_for_catalog(
     db: &DatabaseConnection,
     catalog: &TenantDataCatalog,
 ) -> Result<(), DbErr> {
+    verify_scoped(db, catalog, &std::collections::BTreeSet::new()).await
+}
+
+/// 仅显式 shared-control 调用方可排除组合根登记的控制库业务表。
+pub async fn verify_shared_control(db: &DatabaseConnection) -> Result<(), DbErr> {
+    tenant_data_catalog().validate().map_err(DbErr::Custom)?;
+    verify_shared_control_for_catalog(db, tenant_data_catalog()).await
+}
+
+/// 显式共享目标使用注入目录校验；控制库排除集合仍仅取组合根正式登记。
+pub async fn verify_shared_control_for_catalog(
+    db: &DatabaseConnection,
+    catalog: &TenantDataCatalog,
+) -> Result<(), DbErr> {
+    verify_scoped(
+        db,
+        catalog,
+        super::business_catalog::shared_control_tables(),
+    )
+    .await
+}
+
+async fn verify_scoped(
+    db: &DatabaseConnection,
+    catalog: &TenantDataCatalog,
+    control_tables: &std::collections::BTreeSet<String>,
+) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
     catalog
@@ -69,7 +96,7 @@ pub async fn verify_for_catalog(
             status.unexpected.join(",")
         )));
     }
-    verify_fence_schema(db, catalog).await
+    verify_fence_schema(db, catalog, control_tables).await
 }
 
 /// 统一数据面只接受 MySQL 8.0.16 或更高版本；错误契约不回显服务器原始身份。
@@ -94,7 +121,7 @@ pub async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-/// dedicated/mysql 目标不得混入控制面对象；shared-control 使用 `verify`。
+/// dedicated/mysql 目标不得混入控制面对象；shared-control 使用 `verify_shared_control`。
 pub async fn verify_mysql_target(db: &DatabaseConnection) -> Result<(), DbErr> {
     tenant_data_catalog()
         .validate()
@@ -110,8 +137,9 @@ pub async fn verify_mysql_target_for_catalog(
     let actual = mysql_target_table_names(db).await?;
     let expected = expected_mysql_target_table_names(catalog);
     if actual != expected {
-        return Err(DbErr::Custom(
-            "mysql tenant-data target table set does not match the compiled catalog".into(),
+        return Err(table_set_difference(
+            &actual.iter().map(String::as_str).collect::<Vec<_>>(),
+            &expected.iter().map(String::as_str).collect::<Vec<_>>(),
         ));
     }
     Ok(())
@@ -122,9 +150,13 @@ pub async fn ensure_mysql_target_boundary(db: &DatabaseConnection) -> Result<(),
     let expected = expected_mysql_target_table_names(tenant_data_catalog());
     let actual = mysql_target_table_names(db).await?;
     if actual.iter().any(|table| !expected.contains(table)) {
-        return Err(DbErr::Custom(
-            "mysql tenant-data target contains objects outside the compiled tenant-data schema"
-                .into(),
+        return Err(table_set_difference(
+            &actual.iter().map(String::as_str).collect::<Vec<_>>(),
+            &actual
+                .iter()
+                .filter(|table| expected.contains(table))
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
         ));
     }
     Ok(())
@@ -180,6 +212,7 @@ pub(super) fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {
 async fn verify_fence_schema(
     db: &DatabaseConnection,
     catalog: &TenantDataCatalog,
+    control_tables: &std::collections::BTreeSet<String>,
 ) -> Result<(), DbErr> {
     let tables = TableMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
@@ -196,7 +229,9 @@ async fn verify_fence_schema(
     .await?;
     let mut actual_business_tables = tables
         .iter()
-        .filter(|table| table.table_name.starts_with("biz_"))
+        .filter(|table| {
+            table.table_name.starts_with("biz_") && !control_tables.contains(&table.table_name)
+        })
         .map(|table| table.table_name.as_str())
         .collect::<Vec<_>>();
     let mut expected_business_tables = vec![
@@ -210,8 +245,9 @@ async fn verify_fence_schema(
     actual_business_tables.sort_unstable();
     expected_business_tables.sort_unstable();
     if actual_business_tables != expected_business_tables {
-        return Err(schema_fingerprint_mismatch(
-            "tenant-data table set (unknown or missing biz_ table)",
+        return Err(table_set_difference(
+            &actual_business_tables,
+            &expected_business_tables,
         ));
     }
     let fence = tables
@@ -275,5 +311,23 @@ pub(super) fn schema_fingerprint_mismatch(detail: &str) -> DbErr {
     DbErr::Custom(format!(
         "tenant-data schema fingerprint mismatch ({detail}): expected {}",
         tenant_data_schema_fingerprint()
+    ))
+}
+
+fn table_set_difference(actual: &[&str], expected: &[&str]) -> DbErr {
+    let unexpected = actual
+        .iter()
+        .filter(|table| !expected.contains(table))
+        .copied()
+        .collect::<Vec<_>>();
+    let missing = expected
+        .iter()
+        .filter(|table| !actual.contains(table))
+        .copied()
+        .collect::<Vec<_>>();
+    DbErr::Custom(format!(
+        "租户表集合不一致：未知表 [{}]，缺失表 [{}]；请核对目标配置、组合根登记的 control/tenant 业务归属及迁移账本，并运行 control verify 与 tenant-data verify；当前校验只读；此前迁移可能已完成 DDL，请保留现场，勿删库或自动重放迁移",
+        unexpected.join(", "),
+        missing.join(", ")
     ))
 }

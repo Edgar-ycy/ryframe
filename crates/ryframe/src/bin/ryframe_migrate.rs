@@ -253,7 +253,7 @@ async fn run_tenant_data_operation(
             if mysql_target {
                 ryframe_tenant_db::migration::verify_mysql_target(database).await?;
             } else {
-                ryframe_tenant_db::migration::verify(database).await?;
+                ryframe_tenant_db::migration::verify_shared_control(database).await?;
             }
             println!("scope=tenant-data target={target} migration=completed schema=verified");
             return Ok(());
@@ -262,7 +262,7 @@ async fn run_tenant_data_operation(
             if mysql_target {
                 ryframe_tenant_db::migration::verify_mysql_target(database).await?;
             } else {
-                ryframe_tenant_db::migration::verify(database).await?;
+                ryframe_tenant_db::migration::verify_shared_control(database).await?;
             }
             println!("scope=tenant-data target={target} migration_ledger=current schema=verified");
         }

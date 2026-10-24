@@ -297,7 +297,7 @@ async fn verify_schema_for_catalog(
     target_key: &str,
     catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<(), TenantDataError> {
-    crate::migration::verify_for_catalog(database, catalog)
+    crate::migration::verify_shared_control_for_catalog(database, catalog)
         .await
         .map_err(|error| {
             tracing::warn!(

@@ -43,6 +43,7 @@ pub use runtime::{Migrator, up, up_pending_business_migrations};
 pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
     canonical_table_schema, ensure_mysql_target_boundary, verify, verify_for_catalog,
-    verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog,
+    verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog, verify_shared_control,
+    verify_shared_control_for_catalog,
 };
 pub use status::{MigrationStatus, TENANT_DATA_MIGRATION_LEDGER, status};

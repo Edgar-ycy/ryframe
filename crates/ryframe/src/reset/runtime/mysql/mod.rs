@@ -281,9 +281,15 @@ impl MysqlReset {
                 continue;
             }
             let target = self.connect_verified_target(handle).await?;
-            ryframe_tenant_db::migration::up(&target)
+            ryframe_tenant_db::migration::up_pending_business_migrations(&target)
                 .await
                 .map_err(|_| ResetError::new("租户库唯一 baseline 执行失败"))?;
+            if handle.resource.control_baseline {
+                ryframe_tenant_db::migration::verify_shared_control(&target).await
+            } else {
+                ryframe_tenant_db::migration::verify(&target).await
+            }
+            .map_err(|_| ResetError::new("租户库 baseline 结构校验失败"))?;
             ryframe_db::resource_ownership::ensure_resource_ownership(
                 &target,
                 &manifest.scope_id,
@@ -330,9 +336,12 @@ impl MysqlReset {
                 verify_empty_control_resources(&target).await?;
             }
             if handle.resource.tenant_baseline {
-                ryframe_tenant_db::migration::verify(&target)
-                    .await
-                    .map_err(|_| ResetError::new("租户库 ledger/schema 指纹验证失败"))?;
+                if handle.resource.control_baseline {
+                    ryframe_tenant_db::migration::verify_shared_control(&target).await
+                } else {
+                    ryframe_tenant_db::migration::verify(&target).await
+                }
+                .map_err(|_| ResetError::new("租户库 ledger/schema 指纹验证失败"))?;
                 if !handle.resource.control_baseline {
                     ryframe_tenant_db::migration::verify_mysql_target(&target)
                         .await

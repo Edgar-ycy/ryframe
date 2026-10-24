@@ -41,7 +41,7 @@ cargo migrate -- tenant-data verify --target shared-control
 
 ## 数据边界与迁移
 
-控制库保存身份、授权、产品、租户目录、任务、文件元数据和 placement。无 `tenant_id` 的控制库业务默认只允许系统租户访问；租户业务通过 placement 路由到 `shared-control`、共享业务目标或独立租户目标。控制库与租户数据面使用不同账本，编译期目录记录表、列、游标和 schema；启动、`verify` 或生成器发现缺失、漂移、未知账本和归属冲突时失败关闭，不自动建表或改写授权。
+控制库保存身份、授权、产品、租户目录、任务、文件元数据和 placement。无 `tenant_id` 的控制库业务默认只允许系统租户访问；租户业务通过 placement 路由到 `shared-control`、共享业务目标或独立租户目标。控制库与租户数据面使用不同账本，编译期目录记录表、列、游标和 schema；启动、`verify` 或生成器发现缺失、漂移、未知账本和归属冲突时失败关闭，不自动建表或改写授权。 `shared-control` 校验仅排除组合根正式登记为 control 的业务表；这些表仍由 `control verify` 校验结构，不进入租户复制目录或独立 MySQL 目标许可集合。未知或缺失业务表会列出表名；若 `tenant-data up` 已完成 DDL 后校验失败，先保留现场并运行只读 `control verify` 与 `tenant-data verify` 核对归属和账本，勿删库或自动重放。
 
 当前 `0.x` 只面向全新隔离库。旧结构或无效能力代码不会被自动转换；`v1.0.0` 后冻结迁移只追加并 roll-forward。迁移账号需要读取业务表元数据。DDL 可能隐式提交，账本事务不保证整个迁移回滚；执行后校验失败应保留现场，不能假定回滚或自动重放。常用检查为：
 

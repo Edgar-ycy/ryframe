@@ -129,7 +129,12 @@ async fn execute(
                 }
             }
             if options.target.is_some() {
-                ryframe_tenant_db::migration::verify(database).await?;
+                match connection {
+                    Connection::Primary(_) => {
+                        ryframe_tenant_db::migration::verify_shared_control(database).await?
+                    }
+                    Connection::Tenant(_) => ryframe_tenant_db::migration::verify(database).await?,
+                }
             }
         }
         Task::Operation => {
