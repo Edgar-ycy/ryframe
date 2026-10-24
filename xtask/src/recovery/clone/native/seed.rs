@@ -10,6 +10,8 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+#[path = "seed/capacity.rs"]
+pub(crate) mod capacity;
 #[path = "seed/current.rs"]
 mod current;
 pub(crate) use current::Current;
@@ -24,6 +26,8 @@ pub(crate) mod identity;
 pub(crate) mod protocol;
 #[path = "seed/runtime_model.rs"]
 pub(crate) mod runtime_model;
+#[path = "seed/source_registration.rs"]
+pub(crate) mod source_registration;
 
 pub(crate) fn publish(backend: &Path, run: &Path, request_path: &Path) -> Result<Value> {
     validate_local_test_path(request_path, backend, LocalTestPathKind::ExistingFile)?;

@@ -9,7 +9,9 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::path::Path;
+#[path = "producer/attempt.rs"]
 mod attempt;
+#[path = "producer/source.rs"]
 mod source;
 use source::{bound, identity};
 
