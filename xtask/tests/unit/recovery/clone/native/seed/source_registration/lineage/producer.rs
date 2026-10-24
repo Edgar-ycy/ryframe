@@ -15,9 +15,9 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let backend = portable_path(&fs::canonicalize(root.path()).unwrap());
         let run = backend.join(".local-tests/run");
-        let output = run.join("seed-runtime/attempt-0001");
-        fs::create_dir_all(&output).unwrap();
+        fs::create_dir_all(&run).unwrap();
         fs::write(run.join("manifest.json"), b"{}").unwrap();
+        state::initialize(&run).unwrap();
         let executable = backend.join("tool.exe");
         fs::write(&executable, b"historical tool").unwrap();
         let tool = json!({"path":executable,"sha256":digest::file(&executable).unwrap().sha256});
@@ -31,33 +31,36 @@ impl Fixture {
             "clean":false,"files":[{"path":"xtask/src/data/performance_identities/producer.rs","sha256":descriptor["sha256"]},{"path":"z-history.txt","sha256":"e".repeat(64)}]},
             "worktree_fingerprint":format!("sha256:{}","c".repeat(64)),
             "fingerprints":{"product":{"files":1,"sha256":"d".repeat(64)},"test_tools":{"files":0,"sha256":"e".repeat(64)},"support":{"files":0,"sha256":"f".repeat(64)}}});
-        let mut attempt = json!({"number":1,"stage":"seed-runtime","mode":"identities-apply","started_at":"start","finished_at":"finish","status":"passed","sources":snapshot,"result":null,"error_type":null});
-        fs::create_dir_all(run.join("results")).unwrap();
-        let result_path = run.join("results").join("0001.json");
-        json_io::write_new(
-            &result_path,
-            &json!({"status":"identity_producer_finished"}),
-        )
-        .unwrap();
-        attempt["result"] = common::binding(&result_path).unwrap();
-        let mut running = attempt.clone();
-        running["status"] = json!("running");
-        running["finished_at"] = Value::Null;
-        running["result"] = Value::Null;
+        let (number, running) =
+            state::begin(&run, "seed-runtime", "identities-apply", &snapshot).unwrap();
+        let output = run
+            .join("seed-runtime")
+            .join(format!("attempt-{number:04}"));
+        fs::create_dir_all(&output).unwrap();
         let identity = json!({"pid":42,"started":"123","executable":executable});
-        let controller = json!({"format_version":1,"kind":"devex-stage-controller","attempt":1,
+        let controller = json!({"format_version":1,"kind":"devex-stage-controller","attempt":number,
             "attempt_sha256":digest::plan_hash(&running).unwrap(),"owner":{"format_version":1,"identity":identity,"directory":run,"manifest_sha256":common::binding(&run.join("manifest.json")).unwrap()["sha256"]}});
-        let controller_path = run.join("controller-0001.json");
+        let controller_path = state::controller_path(&run, number);
         json_io::write_new(&controller_path, &controller).unwrap();
-        let registered =
-            json!({"attempt":attempt,"controller":common::binding(&controller_path).unwrap()});
-        let plan = command::build(&json!({"backend":backend,"run_dir":run,"attempt":1,"kind":"identity-apply","output":output,"tool":tool,"registration":request,"configuration":null})).unwrap();
+        let controller_binding = common::binding(&controller_path).unwrap();
+        let plan = command::build(&json!({"backend":backend,"run_dir":run,"attempt":number,"kind":"identity-apply","output":output,"tool":tool,"registration":request,"configuration":null})).unwrap();
         let launch = json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":common::binding(&run.join("manifest.json")).unwrap(),
-            "registration":common::binding(&run.join("seed-runtime.json")).unwrap(),"controller":registered["controller"],"attempt":1,"producer_kind":"identity-apply",
+            "registration":common::binding(&run.join("seed-runtime.json")).unwrap(),"controller":controller_binding,"attempt":number,"producer_kind":"identity-apply",
             "command":plan["argv"],"tool":tool,"source":descriptor});
         json_io::write_new(&output.join("session-launch.json"), &launch).unwrap();
         json_io::write_new(&output.join("session-process.json"), &json!({"format_version":1,"kind":"devex-post-producer",
             "launch":common::binding(&output.join("session-launch.json")).unwrap(),"identity":identity,"identity_lock_owner":"ABCDEFAB-1234-4234-8234-ABCDEFABCDEF"})).unwrap();
+        state::finish(
+            &run,
+            number,
+            Some(&json!({"status":"identity_producer_finished"})),
+            None,
+        )
+        .unwrap();
+        let saved = state::load(&run, true).unwrap();
+        let attempt = state::attempts(&saved).unwrap().last().unwrap().clone();
+        let registered =
+            json!({"attempt":attempt,"controller":common::binding(&controller_path).unwrap()});
         Self {
             _root: root,
             backend,
@@ -74,27 +77,15 @@ impl Fixture {
         let source = common::binding(&script).unwrap();
         let mut sources = self.registered["attempt"]["sources"].clone();
         sources["snapshot"]["files"] = json!([{"path":"xtask/src/recovery/clone/native/session.rs","sha256":source["sha256"]}]);
-        let (number, _) = state::begin(&self.run, "post-copy", "schedules", &sources).unwrap();
-        state::finish(
-            &self.run,
-            number,
-            Some(&json!({"status":"historical_session_finished"})),
-            None,
-        )
-        .unwrap();
-        let saved = state::load(&self.run, false).unwrap();
-        let attempt = state::attempts(&saved).unwrap().last().unwrap().clone();
-        let mut controller = json_io::read(&self.run.join("controller-0001.json")).unwrap();
-        let mut original = attempt.clone();
-        original["status"] = json!("running");
-        for key in ["finished_at", "result", "error_type"] {
-            original[key] = Value::Null;
-        }
+        let (number, running) =
+            state::begin(&self.run, "post-copy", "schedules", &sources).unwrap();
+        let previous = PathBuf::from(self.registered["controller"]["path"].as_str().unwrap());
+        let mut controller = json_io::read(&previous).unwrap();
         controller["attempt"] = json!(number);
-        controller["attempt_sha256"] = json!(digest::plan_hash(&original).unwrap());
-        let path = self.run.join(format!("controller-{number:04}.json"));
-        fs::write(&path, serde_json::to_vec(&controller).unwrap()).unwrap();
-        self.registered = json!({"attempt":attempt,"controller":common::binding(&path).unwrap()});
+        controller["attempt_sha256"] = json!(digest::plan_hash(&running).unwrap());
+        let path = state::controller_path(&self.run, number);
+        json_io::write_new(&path, &controller).unwrap();
+        let controller_binding = common::binding(&path).unwrap();
         self.output = self
             .run
             .join("post-copy")
@@ -111,10 +102,20 @@ impl Fixture {
         .unwrap();
         let plan = command::build(&json!({"backend":self.backend,"run_dir":self.run,"attempt":number,"kind":"session","output":self.output,"tool":self.tool,"registration":request,"configuration":null})).unwrap();
         let launch = json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":common::binding(&self.run.join("manifest.json")).unwrap(),
-            "registration":descriptor,"controller":self.registered["controller"],"attempt":number,"producer_kind":"session","command":plan["argv"],"tool":self.tool,"source":source});
+            "registration":descriptor,"controller":controller_binding,"attempt":number,"producer_kind":"session","command":plan["argv"],"tool":self.tool,"source":source});
         self.rewrite("session-launch.json", &launch);
         self.rewrite("session-process.json",&json!({"format_version":1,"kind":"devex-post-producer","launch":common::binding(&self.output.join("session-launch.json")).unwrap(),
             "identity":controller["owner"]["identity"],"producer_owner":"abcdefab-1234-4234-8234-abcdefabcdef"}));
+        state::finish(
+            &self.run,
+            number,
+            Some(&json!({"status":"historical_session_finished"})),
+            None,
+        )
+        .unwrap();
+        let saved = state::load(&self.run, true).unwrap();
+        let attempt = state::attempts(&saved).unwrap().last().unwrap().clone();
+        self.registered = json!({"attempt":attempt,"controller":common::binding(&path).unwrap()});
     }
     fn collect(&self) -> Result<Option<Value>> {
         super::collect(&self.backend, &self.run, &self.registered, &self.tool)
@@ -217,21 +218,6 @@ fn controller_owner_source_and_argv_mismatches_are_rejected() {
 #[test]
 fn historical_amendment_uses_the_requested_descriptor() {
     let mut fixture = Fixture::new();
-    state::initialize(&fixture.run).unwrap();
-    let (number, _) = state::begin(
-        &fixture.run,
-        "seed-runtime",
-        "identities-apply",
-        &fixture.registered["attempt"]["sources"],
-    )
-    .unwrap();
-    state::finish(
-        &fixture.run,
-        number,
-        Some(&json!({"status":"identity_producer_finished"})),
-        None,
-    )
-    .unwrap();
     let original = json!({"api_environment":{"original":true},"private_metadata":"unchanged"});
     json_io::write_new(&fixture.run.join("post-copy.json"), &original).unwrap();
     let base = common::binding(&fixture.run.join("post-copy.json")).unwrap();
