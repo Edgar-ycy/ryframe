@@ -170,10 +170,10 @@ mod tests {
         let private = json!({"endpoint":"http://127.0.0.1:19000","region":"us-east-1","access_key":"private-access","secret_key":"private-secret"});
         let table = json!({"object_storage":private});
         std::fs::write(directory.join("app.test.toml"), "[object_storage]\nendpoint='http://127.0.0.1:19000'\nregion='us-east-1'\naccess_key='private-access'\nsecret_key='private-secret'\n").unwrap();
-        let descriptor = project(&root, &directory, &table, &private).unwrap();
+        let descriptor = project(&root, directory, &table, &private).unwrap();
         assert_eq!(
             descriptor,
-            json!({"endpoint":private["endpoint"],"region":private["region"],"configuration":s3::app_configuration::configuration_value(&root, &directory, "test").unwrap()})
+            json!({"endpoint":private["endpoint"],"region":private["region"],"configuration":s3::app_configuration::configuration_value(&root, directory, "test").unwrap()})
         );
         for field in ["endpoint", "region", "access_key", "secret_key"] {
             let mut different = private.clone();

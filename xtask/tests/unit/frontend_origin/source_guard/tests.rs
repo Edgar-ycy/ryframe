@@ -346,11 +346,13 @@ fn unix_identity_retains_device_inode_and_nanosecond_ctime_mtime() {
 #[test]
 fn windows_identity_keeps_full_index_and_creation_time_and_rejects_all_reparse_tags() {
     use winsafe::co;
-    let mut info = winsafe::BY_HANDLE_FILE_INFORMATION::default();
-    info.dwFileAttributes = co::FILE_ATTRIBUTE::NORMAL;
-    info.dwVolumeSerialNumber = 7;
-    info.nFileIndexHigh = 9;
-    info.nFileIndexLow = 11;
+    let mut info = winsafe::BY_HANDLE_FILE_INFORMATION {
+        dwFileAttributes: co::FILE_ATTRIBUTE::NORMAL,
+        dwVolumeSerialNumber: 7,
+        nFileIndexHigh: 9,
+        nFileIndexLow: 11,
+        ..Default::default()
+    };
     info.ftCreationTime.dwHighDateTime = 13;
     info.ftCreationTime.dwLowDateTime = 15;
     let state = windows_state(&info, Path::new("fixture"), false).unwrap();

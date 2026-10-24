@@ -784,7 +784,7 @@ fn application_identity_uses_selected_files_while_full_toml_snapshot_detects_cha
     );
     let selected = fixture.backend.join("config/app.test.toml");
     let mut content = fs::read_to_string(&selected).unwrap();
-    content.push_str("\n");
+    content.push('\n');
     fs::write(&selected, content).unwrap();
     let binding = fixture.validate().unwrap();
     assert!(
