@@ -40,6 +40,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         true,
     )?;
     let runtime = json_io::read(&runtime_path)?;
+    verify_runtime_contract(context, &runtime_path, &runtime)?;
     if runtime.get("scope_id").and_then(Value::as_str)
         != context.source().get("scope_id").and_then(Value::as_str)
     {
@@ -72,6 +73,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
     {
         return Err("源运行配置在导出证明核验期间变化".into());
     }
+    verify_runtime_contract(context, &runtime_path, &runtime)?;
     let proof = json!({
         "source": expected["snapshot"],
         "worktree_fingerprint": context.request["worktree_fingerprint"],
@@ -87,6 +89,32 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
     });
     scope.assert_unchanged()?;
     Ok(proof)
+}
+
+fn verify_runtime_contract(context: &Context, path: &Path, expected: &Value) -> Result<()> {
+    if context.environment.len() != 1
+        || context.environment.get("APP_ENV").map(String::as_str) != Some("test")
+    {
+        return Err("源完整运行契约必须仅使用 APP_ENV=test".into());
+    }
+    let directory = path.parent().ok_or("源运行收据缺少所在目录")?;
+    let actual = crate::recovery::fixture_control::verify_full_stack_runtime(
+        &context.execution_backend,
+        directory,
+    )?;
+    if actual != *expected {
+        return Err("源完整运行契约与已读取的运行收据不同".into());
+    }
+    let bound = manifest::bound_file(
+        &context.backend,
+        &context.request["runtime"],
+        "源运行收据",
+        true,
+    )?;
+    if bound != path {
+        return Err("源运行收据不属于实际绑定路径".into());
+    }
+    Ok(())
 }
 
 fn runtime_processes(
