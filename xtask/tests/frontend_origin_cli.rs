@@ -418,14 +418,19 @@ fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watche
         marker["helper_sha256"],
         hex::encode(Sha256::digest(&helper))
     );
+    let fixtures = [
+        prepare_build_script_fixture(&source, &helper, b"same-content"),
+        prepare_build_script_fixture(&source, &helper, b"same-content"),
+    ];
+    let output = &fixtures[0].2;
     let mut observations = Vec::new();
-    for content in [b"same-content".as_slice(), b"same-content".as_slice()] {
-        let (fixture, manifest, output) = prepare_build_script_fixture(&source, &helper, content);
+    for index in [0, 1, 0] {
+        let (fixture, manifest, _) = &fixtures[index];
         let root = fixture.0.path();
         let result = Command::new(program)
-            .current_dir(&manifest)
-            .env("CARGO_MANIFEST_DIR", &manifest)
-            .env("OUT_DIR", &output)
+            .current_dir(manifest)
+            .env("CARGO_MANIFEST_DIR", manifest)
+            .env("OUT_DIR", output)
             .output()
             .unwrap();
         assert!(
@@ -468,9 +473,9 @@ fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watche
         let generated = output.join("frontend-origin-sources.json");
         let before = fs::metadata(&generated).unwrap().modified().unwrap();
         let repeated = Command::new(program)
-            .current_dir(&manifest)
-            .env("CARGO_MANIFEST_DIR", &manifest)
-            .env("OUT_DIR", &output)
+            .current_dir(manifest)
+            .env("CARGO_MANIFEST_DIR", manifest)
+            .env("OUT_DIR", output)
             .output()
             .unwrap();
         assert!(repeated.status.success());
@@ -482,12 +487,13 @@ fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watche
             serde_json::from_slice::<Value>(&fs::read(generated).unwrap()).unwrap(),
             snapshot
         );
-        reject_existing_always_check(program, &manifest, &output);
-        reject_changed_build_inputs(program, &manifest, &output);
+        reject_existing_always_check(program, manifest, output);
+        reject_changed_build_inputs(program, manifest, output);
         observations.push(snapshot);
     }
     assert_eq!(observations[0]["files"], observations[1]["files"]);
     assert_ne!(observations[0]["root"], observations[1]["root"]);
+    assert_eq!(observations[2], observations[0]);
 }
 
 fn reject_existing_always_check(program: &Path, manifest: &Path, output: &Path) {
