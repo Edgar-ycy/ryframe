@@ -107,9 +107,12 @@ fn execute(bytes: &[u8]) -> Result<Value> {
             use crate::recovery::clone::native::business;
             if operation == "business-catalog" {
                 let loaded = business::load(&backend)?;
-                Ok(json!({"tables": loaded.tables, "columns": loaded.columns}))
+                let columns = loaded.ordered_columns()?;
+                Ok(json!({"tables": loaded.tables, "columns": columns}))
             } else {
-                Ok(serde_json::to_value(business::ledger_columns(&backend)?)?)
+                Ok(serde_json::to_value(business::ledger_column_pairs(
+                    &backend,
+                )?)?)
             }
         }
         Some("copy-administrator-credentials") => {

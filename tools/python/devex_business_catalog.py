@@ -9,8 +9,9 @@ def business_tables(backend: Path) -> list[dict]:
 
 
 def business_columns(backend: Path) -> dict:
-    return _native("business-catalog", {"backend": str(backend)})["columns"]
+    columns = _native("business-catalog", {"backend": str(backend)})["columns"]
+    return {table: dict(pairs) for table, pairs in columns.items()}
 
 
 def business_ledger_columns(backend: Path) -> dict:
-    return _native("business-ledger-columns", {"backend": str(backend)})
+    return dict(_native("business-ledger-columns", {"backend": str(backend)}))

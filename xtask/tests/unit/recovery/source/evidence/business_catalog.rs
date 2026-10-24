@@ -72,10 +72,17 @@ fn complete_owned_business_columns_are_included() {
     assert_eq!(result["tables"], json!([fixture.table]));
     assert_eq!(
         result["columns"],
-        json!({"biz_order":{
-            "tenant_id":"VARCHAR","id":"BIGINT","name":"VARCHAR"
-        }})
+        json!({"biz_order":[
+            ["tenant_id","VARCHAR"],["id","BIGINT"],["name","VARCHAR"]
+        ]})
     );
+    let names = result["columns"]["biz_order"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pair| pair[0].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(json!(names), fixture.table["checksum_columns"]);
 }
 
 #[test]
@@ -152,13 +159,42 @@ fn unknown_workspace_path_is_rejected() {
 
 #[test]
 fn business_ledger_columns_follow_formal_sdk_ddl() {
+    let result = request(&crate::workspace::root_dir(), "business-ledger-columns").unwrap();
     assert_eq!(
-        request(&crate::workspace::root_dir(), "business-ledger-columns").unwrap(),
-        json!({
-            "scope":"VARCHAR","origin":"VARCHAR","tables_json":"JSON","adoption_hash":"CHAR",
-            "module_name":"VARCHAR","migration_id":"VARCHAR","checksum":"CHAR",
-            "before_fingerprint":"CHAR","after_fingerprint":"CHAR","applied_at":"TIMESTAMP"
-        })
+        result,
+        json!([
+            ["scope", "VARCHAR"],
+            ["module_name", "VARCHAR"],
+            ["migration_id", "VARCHAR"],
+            ["checksum", "CHAR"],
+            ["before_fingerprint", "CHAR"],
+            ["after_fingerprint", "CHAR"],
+            ["origin", "VARCHAR"],
+            ["tables_json", "JSON"],
+            ["adoption_hash", "CHAR"],
+            ["applied_at", "TIMESTAMP"]
+        ])
+    );
+    let names = result
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pair| pair[0].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "scope",
+            "module_name",
+            "migration_id",
+            "checksum",
+            "before_fingerprint",
+            "after_fingerprint",
+            "origin",
+            "tables_json",
+            "adoption_hash",
+            "applied_at"
+        ]
     );
 }
 

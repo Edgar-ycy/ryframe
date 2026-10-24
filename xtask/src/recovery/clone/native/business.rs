@@ -22,6 +22,25 @@ pub(crate) struct Loaded {
     pub(crate) sources: Vec<PathBuf>,
 }
 
+impl Loaded {
+    pub(crate) fn ordered_columns(&self) -> Result<Value> {
+        let mut result = serde_json::Map::new();
+        for table in &self.tables {
+            let name = text(&table["table"], "业务表名")?;
+            let columns = &self.columns[name];
+            let pairs = array(&table["checksum_columns"], "业务表列")?
+                .iter()
+                .map(|column| {
+                    let column = text(column, "业务表列名")?;
+                    Ok((column.to_owned(), columns[column].clone()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            result.insert(name.to_owned(), serde_json::to_value(pairs)?);
+        }
+        Ok(Value::Object(result))
+    }
+}
+
 pub(crate) fn load(root: &Path) -> Result<Loaded> {
     let manifest = root.join("Cargo.toml");
     if !manifest.is_file() {
@@ -330,6 +349,10 @@ fn read_regular(path: &Path) -> Result<Vec<u8>> {
 }
 
 pub(crate) fn ledger_columns(backend: &Path) -> Result<Columns> {
+    Ok(ledger_column_pairs(backend)?.into_iter().collect())
+}
+
+pub(crate) fn ledger_column_pairs(backend: &Path) -> Result<Vec<(String, String)>> {
     let path = backend.join("crates/ryframe-sdk/src/migration/ledger.rs");
     digest::file(&path)?;
     let source = fs::read_to_string(path)?;
@@ -345,9 +368,15 @@ pub(crate) fn ledger_columns(backend: &Path) -> Result<Columns> {
         .captures_iter(&matches[0][1])
         .map(|capture| (capture[1].to_owned(), capture[2].to_owned()))
         .collect::<Vec<_>>();
-    let result = names.iter().cloned().collect::<Columns>();
-    if names.len() != 10 || result.len() != 10 {
+    if names.len() != 10
+        || names
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<HashSet<_>>()
+            .len()
+            != 10
+    {
         return Err("业务迁移账本完整列结构变化，必须审查复制规则".into());
     }
-    Ok(result)
+    Ok(names)
 }
