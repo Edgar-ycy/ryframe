@@ -155,8 +155,8 @@ pub(crate) fn table_sets(backend: &Path, combined: bool) -> Result<TableSets> {
             .map(ToOwned::to_owned),
         );
     }
-    if !business::columns(backend)?.0.is_empty() {
-        business_ledger(backend)?;
+    if !business::load(backend)?.columns.is_empty() {
+        business::ledger_columns(backend)?;
         raw.insert("ryframe_business_migration".into());
     }
     let mut expected = business.union(&raw).cloned().collect::<BTreeSet<_>>();
@@ -166,28 +166,6 @@ pub(crate) fn table_sets(backend: &Path, combined: bool) -> Result<TableSets> {
         expected.extend(catalog::parse_schema(&fs::read_to_string(path)?)?.into_keys());
     }
     Ok((business, expected, raw))
-}
-
-fn business_ledger(backend: &Path) -> Result<()> {
-    let path = backend.join("crates/ryframe-sdk/src/migration/ledger.rs");
-    digest::file(&path)?;
-    let source = fs::read_to_string(path)?;
-    let pattern = regex::Regex::new(
-        r#"const DDL: &str = "CREATE TABLE ryframe_business_migration \(([^"\n]+)\) ENGINE="#,
-    )?;
-    let matches = pattern.captures_iter(&source).collect::<Vec<_>>();
-    if matches.len() != 1 {
-        return Err("正式业务迁移账本 DDL 缺失或不唯一".into());
-    }
-    let columns = regex::Regex::new(r"(?:^|, )([a-z_]+) (VARCHAR|CHAR|TIMESTAMP|JSON)\b")?;
-    let names = columns
-        .captures_iter(&matches[0][1])
-        .map(|capture| capture[1].to_owned())
-        .collect::<Vec<_>>();
-    if names.len() != 10 || names.iter().collect::<BTreeSet<_>>().len() != 10 {
-        return Err("业务迁移账本完整列结构变化，必须审查复制规则".into());
-    }
-    Ok(())
 }
 
 pub(crate) fn table_map(value: &Value) -> Result<BTreeMap<String, Value>> {

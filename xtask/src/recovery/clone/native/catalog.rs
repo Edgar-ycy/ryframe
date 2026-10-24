@@ -137,14 +137,17 @@ pub(crate) fn load(root: &Path) -> Result<Loaded> {
         return Err("生成租户表与固定基线表重复".into());
     }
     tenant.extend(generated_tenant);
-    let (business, mut business_sources) = business::columns(root)?;
-    if tenant.keys().any(|table| business.contains_key(table)) {
+    let mut business = business::load(root)?;
+    if tenant
+        .keys()
+        .any(|table| business.columns.contains_key(table))
+    {
         return Err("框架与独立业务目录重复声明租户表".into());
     }
-    tenant.extend(business);
+    tenant.extend(business.columns);
 
     let mut sources = vec![sql_path, generated_path, baseline_path];
-    sources.append(&mut business_sources);
+    sources.append(&mut business.sources);
     Ok(Loaded {
         control,
         tenant,

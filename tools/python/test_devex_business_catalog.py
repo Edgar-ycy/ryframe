@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from devex_business_catalog import business_columns, business_ledger_columns, business_tables, validate_table
+from devex_business_catalog import business_columns, business_ledger_columns, business_tables
 
 
 class BusinessCatalogTests(unittest.TestCase):
@@ -55,14 +55,18 @@ class BusinessCatalogTests(unittest.TestCase):
         self.write_owned({"format_version": 1, "tables": []})
         with self.assertRaisesRegex(ValueError, "资源与租户表"):
             business_tables(self.root)
+        self.write_owned({"format_version": 1, "tables": [self.table, self.table]})
+        with self.assertRaisesRegex(ValueError, "重复声明租户表"):
+            business_tables(self.root)
 
     def test_incomplete_columns_cursor_and_schema_fail_closed(self):
         for field, value in [("checksum_columns", ["id"]), ("column_types", []),
                              ("primary_key_cursor_columns", ["unknown"]), ("schema_canonical", "")]:
             table = copy.deepcopy(self.table)
             table[field] = value
+            self.write_owned({"format_version": 1, "tables": [table]})
             with self.subTest(field=field), self.assertRaises(ValueError):
-                validate_table(table)
+                business_tables(self.root)
 
     def test_unknown_workspace_path_is_rejected(self):
         (self.root / "Cargo.toml").write_text('[workspace]\nmembers = ["../unowned"]\n')

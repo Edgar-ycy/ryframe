@@ -100,6 +100,17 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
+            documents::exact(args, &["backend"], "业务目录参数")?;
+            let backend = binding::path(&args["backend"])?;
+            use crate::recovery::clone::native::business;
+            if operation == "business-catalog" {
+                let loaded = business::load(&backend)?;
+                Ok(json!({"tables": loaded.tables, "columns": loaded.columns}))
+            } else {
+                Ok(serde_json::to_value(business::ledger_columns(&backend)?)?)
+            }
+        }
         Some("copy-administrator-credentials") => {
             crate::recovery::clone::native::session::credentials::validate_request(args)
         }

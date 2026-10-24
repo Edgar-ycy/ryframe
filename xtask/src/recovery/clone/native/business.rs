@@ -16,12 +16,20 @@ use crate::Result;
 
 type Columns = std::collections::BTreeMap<String, String>;
 
-pub(crate) fn columns(
-    root: &Path,
-) -> Result<(std::collections::BTreeMap<String, Columns>, Vec<PathBuf>)> {
+pub(crate) struct Loaded {
+    pub(crate) columns: std::collections::BTreeMap<String, Columns>,
+    pub(crate) tables: Vec<Value>,
+    pub(crate) sources: Vec<PathBuf>,
+}
+
+pub(crate) fn load(root: &Path) -> Result<Loaded> {
     let manifest = root.join("Cargo.toml");
     if !manifest.is_file() {
-        return Ok((Default::default(), Vec::new()));
+        return Ok(Loaded {
+            columns: Default::default(),
+            tables: Vec::new(),
+            sources: Vec::new(),
+        });
     }
     let manifest = read_regular(&manifest)?;
     let document = toml::from_str::<toml::Table>(
@@ -34,6 +42,7 @@ pub(crate) fn columns(
         .and_then(Toml::as_array)
         .ok_or("Workspace 清单缺少 members")?;
     let mut result = std::collections::BTreeMap::new();
+    let mut tables = Vec::new();
     let mut sources = vec![root.join("Cargo.toml")];
     let mut seen = HashSet::new();
     for member in members {
@@ -77,25 +86,27 @@ pub(crate) fn columns(
         let resources = json::read(&resources_path)?;
         sources.extend([catalog_path, resources_path]);
         validate_module(
-            &package,
-            root,
             rykind,
             &value,
             &resources,
             &mut result,
+            &mut tables,
             &mut seen,
         )?;
     }
-    Ok((result, sources))
+    Ok(Loaded {
+        columns: result,
+        tables,
+        sources,
+    })
 }
 
 fn validate_module(
-    package: &Path,
-    root: &Path,
     marker: &Toml,
     value: &Value,
     resources: &Value,
     result: &mut std::collections::BTreeMap<String, Columns>,
+    descriptors: &mut Vec<Value>,
     seen: &mut HashSet<String>,
 ) -> Result<()> {
     let value = exact(value, &["format_version", "tables"], "业务租户目录")?;
@@ -143,14 +154,13 @@ fn validate_module(
     if expected != actual {
         return Err("业务资源与租户表目录不同".into());
     }
-    let _ = package;
-    let _ = root;
     for table in tables {
         let (name, columns) = validate_table(table)?;
         if !seen.insert(name.clone()) {
             return Err("多个业务模块重复声明租户表".into());
         }
         result.insert(name, columns);
+        descriptors.push(table.clone());
     }
     Ok(())
 }
@@ -317,4 +327,27 @@ fn read_regular(path: &Path) -> Result<Vec<u8>> {
         return Err(format!("受管文件必须是普通文件：{}", path.display()).into());
     }
     Ok(fs::read(path)?)
+}
+
+pub(crate) fn ledger_columns(backend: &Path) -> Result<Columns> {
+    let path = backend.join("crates/ryframe-sdk/src/migration/ledger.rs");
+    digest::file(&path)?;
+    let source = fs::read_to_string(path)?;
+    let pattern = regex::Regex::new(
+        r#"const DDL: &str = "CREATE TABLE ryframe_business_migration \(([^"\n]+)\) ENGINE="#,
+    )?;
+    let matches = pattern.captures_iter(&source).collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err("正式业务迁移账本 DDL 缺失或不唯一".into());
+    }
+    let columns = regex::Regex::new(r"(?:^|, )([a-z_]+) (VARCHAR|CHAR|TIMESTAMP|JSON)\b")?;
+    let names = columns
+        .captures_iter(&matches[0][1])
+        .map(|capture| (capture[1].to_owned(), capture[2].to_owned()))
+        .collect::<Vec<_>>();
+    let result = names.iter().cloned().collect::<Columns>();
+    if names.len() != 10 || result.len() != 10 {
+        return Err("业务迁移账本完整列结构变化，必须审查复制规则".into());
+    }
+    Ok(result)
 }
