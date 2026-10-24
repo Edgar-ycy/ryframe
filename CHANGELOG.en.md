@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the frontend source-authority context misreporting caller configuration-validation errors as program-protection failures. Preserve the original configuration-file diagnostic while retaining complete source, binding, and program-identity checks on exit.
+
 - Seven categories of formal Python recovery-tool entry points explicitly pass and verify the current native tool. Remove implicit Cargo compilation fallbacks from object, fixture, rate-limit, full-stack file, and reference-dataset operations. Tool identity stays outside business specifications and product fingerprints; missing or invalid bindings are rejected before business dispatch.
 - Source-object capture uses a public projection of bound configuration files and the native read-only S3 protocol, fixing export interruptions caused by obsolete configuration fields. Target configuration directories must remain inside the bound execution tree. Source and target projections consistently verify plaintext TOML, while public evidence excludes credentials.
 - Move read-only target `inventory-history` receipt verification to Rust, retaining complete receipts, raw files, and before/after checks. Resource replay derives MySQL/Redis activation from captured configuration files and TLS material, and CI selects its paired repository through `workspace.frontend_repository` in tool files. Move 11 more standalone source-test files into the unified test directory, removing duplicate ledger assertions already covered by native tests and retired environment entry points.

@@ -361,6 +361,24 @@ class ProviderRejectionTests(unittest.TestCase):
                 self.assertEqual(len(phases), 2)
         self.assertEqual(len(phases), 3)
 
+    def test_caller_errors_keep_identity_after_three_probes_and_final_identity_checks(self):
+        token = {"format_version": 1, "kind": "frontend-origin-source-snapshot",
+                 "source_count": len(SOURCES), "sha256": "0" * 64}
+        for error in (OSError("app.dev.toml 读取失败"), ValueError("app.dev.toml 配置无效")):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(tool, "protect_binary_invocation", return_value=nullcontext()), \
+                    patch.object(tool, "_source_snapshot", return_value=token) as probe, \
+                    patch.object(tool, "_snapshot", wraps=tool._snapshot) as binding, \
+                    patch.object(tool, "_program_state", wraps=tool._program_state) as program:
+                with self.assertRaises(type(error)) as caught:
+                    with tool._verified_tool():
+                        raise error
+                self.assertIs(caught.exception, error)
+                self.assertEqual(probe.call_count, 3)
+                self.assertEqual([call.args for call in binding.call_args_list],
+                                 [(self.binding,), (self.binding,), (self.binding,)])
+                self.assertEqual(program.call_count, 3)
+
     def test_cancelled_initial_probe_still_checks_binding_without_launching_another_probe(self):
         with patch.object(tool, "protect_binary_invocation", return_value=nullcontext()), \
                 patch.object(tool, "_source_snapshot", side_effect=KeyboardInterrupt()) as probe, \

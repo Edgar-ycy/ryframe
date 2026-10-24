@@ -212,6 +212,7 @@ def _verified_tool():
     path, alias = _executable_paths(executable["path"], str(binding))
     before = _program_state(path, alias, executable["sha256"])
     protected = {"path": str(path), "sha256": executable["sha256"]}
+    caller_error = None
     try:
         with protect_binary_invocation(protected):
             sources, cancelled = None, False
@@ -222,7 +223,11 @@ def _verified_tool():
                     raise _error(str(binding), "绑定或源码输入发生身份或内容漂移") from None
                 if _program_state(path, alias, executable["sha256"]) != before:
                     raise _error(str(path), "获取保护期间程序发生漂移") from None
-                yield path
+                try:
+                    yield path
+                except (OSError, ValueError) as error:
+                    caller_error = error
+                    raise
             except (KeyboardInterrupt, SystemExit):
                 # 取消只回收当前只读 probe；不得在收尾中再启动同一来源扫描。
                 cancelled = True
@@ -241,7 +246,9 @@ def _verified_tool():
                             raise _error(str(path), "调用期间程序发生身份或内容漂移") from None
     except _ToolFailure:
         raise
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
+        if error is caller_error:
+            raise
         raise _error(str(path), "普通 PE 程序保护或收尾身份复核失败") from None
 
 
