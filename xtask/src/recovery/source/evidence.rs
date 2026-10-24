@@ -100,6 +100,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),
         Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
         Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
@@ -171,4 +172,18 @@ fn database_observation(args: &Value) -> Result<Value> {
         scope,
         ownership,
     )
+}
+
+fn schema_catalog(args: &Value) -> Result<Value> {
+    documents::exact(args, &["backend", "include_full"], "复制schema目录参数")?;
+    let backend = binding::path(&args["backend"])?;
+    let include_full = documents::boolean(&args["include_full"], "include_full")?;
+    let loaded = crate::recovery::clone::native::catalog::load_ordered(&backend, include_full)?;
+    Ok(match loaded.full {
+        Some((full_control, full_tenant)) => json!({
+            "control": loaded.control, "tenant": loaded.tenant,
+            "full_control": full_control, "full_tenant": full_tenant,
+        }),
+        None => json!({"control": loaded.control, "tenant": loaded.tenant}),
+    })
 }

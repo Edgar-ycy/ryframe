@@ -11,11 +11,18 @@ use crate::Result;
 
 pub(crate) type Columns = BTreeMap<String, String>;
 pub(crate) type Catalog = BTreeMap<String, Columns>;
-type OrderedCatalog = BTreeMap<String, Vec<(String, String)>>;
+pub(crate) type OrderedCatalog = BTreeMap<String, Vec<(String, String)>>;
 
 pub(crate) struct Loaded {
     pub(crate) control: Catalog,
     pub(crate) tenant: Catalog,
+    pub(crate) sources: Vec<PathBuf>,
+}
+
+pub(crate) struct OrderedLoaded {
+    pub(crate) control: OrderedCatalog,
+    pub(crate) tenant: OrderedCatalog,
+    pub(crate) full: Option<(OrderedCatalog, OrderedCatalog)>,
     pub(crate) sources: Vec<PathBuf>,
 }
 
@@ -91,46 +98,34 @@ static REVIEWED_TENANT: &[&str] = &[
 ];
 
 pub(crate) fn load(root: &Path) -> Result<Loaded> {
+    let loaded = load_ordered(root, false)?;
+    Ok(Loaded {
+        control: into_catalog(loaded.control),
+        tenant: into_catalog(loaded.tenant),
+        sources: loaded.sources,
+    })
+}
+
+pub(crate) fn load_ordered(root: &Path, include_full: bool) -> Result<OrderedLoaded> {
     let sql_path = root.join("sql/ryframe_config.sql");
     let generated_path = root.join("crates/ryframe-tenant-db/src/generated/catalog.rs");
     let baseline_path =
         root.join("crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs");
-    let control_content = read_text(&sql_path)?;
-    let generated_content = read_text(&generated_path)?;
-    let baseline_content = read_text(&baseline_path)?;
-
-    let all_control = parse_schema(&control_content)?;
-    if all_control
-        .keys()
-        .filter(|table| !EXCLUDED.contains(&table.as_str()))
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        != CONTROL_TABLES
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect()
-    {
-        return Err("控制库表与已审查复制白名单不同；须先审查新增/删除表的状态及物理引用".into());
-    }
+    let all_control = parse_ordered_schema(&read_text(&sql_path)?)?;
+    let baseline = parse_ordered_schema(&read_text(&baseline_path)?)?;
+    validate_catalogs(&all_control, &baseline)?;
     let control = all_control
-        .into_iter()
+        .iter()
         .filter(|(table, _)| !EXCLUDED.contains(&table.as_str()))
+        .map(|(table, columns)| (table.clone(), columns.clone()))
         .collect();
-
-    let (generated_tenant, mut generated_sources) = parse_generated(root, &generated_content)?;
-    let baseline = parse_schema(&baseline_content)?;
-    if baseline.keys().cloned().collect::<BTreeSet<_>>()
-        != REVIEWED_TENANT
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect()
-    {
-        return Err("租户基线含未审查表；须补齐复制白名单，不能过滤未知业务表".into());
-    }
+    let (generated_tenant, mut generated_sources) =
+        parse_generated(root, &read_text(&generated_path)?)?;
     let mut tenant = baseline
-        .into_iter()
-        .filter(|(table, _)| table != "ryframe_resource_ownership")
-        .collect::<Catalog>();
+        .iter()
+        .filter(|(table, _)| table.as_str() != "ryframe_resource_ownership")
+        .map(|(table, columns)| (table.clone(), columns.clone()))
+        .collect::<OrderedCatalog>();
     if tenant
         .keys()
         .any(|table| generated_tenant.contains_key(table))
@@ -145,23 +140,65 @@ pub(crate) fn load(root: &Path) -> Result<Loaded> {
     {
         return Err("框架与独立业务目录重复声明租户表".into());
     }
-    tenant.extend(business.columns);
-
+    tenant.extend(business.ordered_columns()?);
     let mut sources = vec![sql_path, generated_path, baseline_path];
     sources.append(&mut generated_sources);
     sources.append(&mut business.sources);
-    Ok(Loaded {
+    let full = if include_full {
+        let mut full_tenant = baseline;
+        full_tenant.extend(tenant.clone());
+        if !business.columns.is_empty() {
+            full_tenant.insert(
+                "ryframe_business_migration".into(),
+                business::ledger_column_pairs(root)?,
+            );
+            sources.push(root.join("crates/ryframe-sdk/src/migration/ledger.rs"));
+        }
+        Some((all_control, full_tenant))
+    } else {
+        None
+    };
+    Ok(OrderedLoaded {
         control,
         tenant,
+        full,
         sources,
     })
 }
 
+fn validate_catalogs(control: &OrderedCatalog, baseline: &OrderedCatalog) -> Result<()> {
+    if control
+        .keys()
+        .filter(|table| !EXCLUDED.contains(&table.as_str()))
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        != CONTROL_TABLES
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect()
+    {
+        return Err("控制库表与已审查复制白名单不同；须先审查新增/删除表的状态及物理引用".into());
+    }
+    if baseline.keys().cloned().collect::<BTreeSet<_>>()
+        != REVIEWED_TENANT
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect()
+    {
+        return Err("租户基线含未审查表；须补齐复制白名单，不能过滤未知业务表".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_schema(content: &str) -> Result<Catalog> {
-    Ok(parse_ordered_schema(content)?
+    Ok(into_catalog(parse_ordered_schema(content)?))
+}
+
+fn into_catalog(ordered: OrderedCatalog) -> Catalog {
+    ordered
         .into_iter()
         .map(|(table, columns)| (table, columns.into_iter().collect()))
-        .collect())
+        .collect()
 }
 
 fn parse_ordered_schema(content: &str) -> Result<OrderedCatalog> {
@@ -186,7 +223,7 @@ fn parse_ordered_schema(content: &str) -> Result<OrderedCatalog> {
     Ok(result)
 }
 
-fn parse_generated(root: &Path, content: &str) -> Result<(Catalog, Vec<PathBuf>)> {
+fn parse_generated(root: &Path, content: &str) -> Result<(OrderedCatalog, Vec<PathBuf>)> {
     let descriptor = Regex::new(
         r#"(?s)TenantDataTableDescriptor \{\s*table: "([a-z0-9_]+)",.*?tenant_column: "([a-z0-9_]+)",.*?column_types: &\[(.*?)\],.*?has_generated_columns: (true|false),"#,
     )?;
@@ -196,7 +233,7 @@ fn parse_generated(root: &Path, content: &str) -> Result<(Catalog, Vec<PathBuf>)
     let entries = descriptor.captures_iter(content).collect::<Vec<_>>();
     if empty.is_match(content) {
         if entries.is_empty() {
-            return Ok((Catalog::new(), Vec::new()));
+            return Ok((OrderedCatalog::new(), Vec::new()));
         }
         return Err("空生成租户目录包含描述符".into());
     }
@@ -205,7 +242,7 @@ fn parse_generated(root: &Path, content: &str) -> Result<(Catalog, Vec<PathBuf>)
     }
     let ddl_pattern = Regex::new(r##"(?s)pub const CREATE_TABLE_DDL: &str = r#"(.*?)"#;"##)?;
     let type_pattern = Regex::new(r#""([a-z]+)""#)?;
-    let mut result = Catalog::new();
+    let mut result = OrderedCatalog::new();
     let mut sources = Vec::new();
     for part in entries {
         let table = &part[1];
@@ -250,7 +287,7 @@ fn parse_generated(root: &Path, content: &str) -> Result<(Catalog, Vec<PathBuf>)
         {
             return Err("生成租户描述符与迁移列类型不一致".into());
         }
-        result.insert((*table).to_owned(), columns.into_iter().collect());
+        result.insert((*table).to_owned(), columns);
         sources.push(migrations[0].to_path_buf());
     }
     Ok((result, sources))

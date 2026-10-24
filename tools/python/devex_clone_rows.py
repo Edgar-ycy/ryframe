@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 
 from restore_reference_io import DATA_HEADER, validate_insert
-from restore_reference_plan import EXCLUDED_TABLES
+from restore_reference_plan import EXCLUDED_TABLES, _native
 
 EXCLUDED = EXCLUDED_TABLES | {"sys_tenant_data_backup_point", "seaql_migrations"}
 EMPTY = {"sys_tenant_operation_lease", "sys_tenant_data_migration", "sys_tenant_data_migration_item"}
@@ -21,97 +21,10 @@ STATES = {
     "sys_data_retention_run": {"succeeded", "failed"}, "password_reset_requests": {"completed", "expired"},
 }
 EXECUTION_OUTCOMES = {"enqueued", "skipped_misfire", "skipped_concurrency", "target_unavailable", "invalid_configuration"}
-# 新表必须先审查状态和物理引用；机器快照只提供列结构，不能自动扩大复制白名单。
-CONTROL_TABLES = set("""
-sys_tenant sys_cache_namespace_version sys_dept sys_user password_reset_requests sys_role
-sys_permission sys_menu sys_post sys_config sys_dict_type sys_dict_data sys_notice sys_oper_log
-sys_login_info sys_user_role sys_role_permission sys_role_dept sys_file sys_background_job
-sys_job_schedule sys_job_schedule_execution sys_message sys_message_audience sys_message_recipient
-sys_data_retention_run sys_user_import_job sys_user_import_row_result sys_tenant_config_bundle
-sys_tenant_config_transfer sys_tenant_config_transfer_item sys_product_plan sys_product_plan_version
-sys_product_plan_capability sys_tenant_product_plan sys_tenant_capability_override sys_tenant_provision_request
-sys_tenant_operation_lease sys_tenant_data_placement sys_tenant_data_migration sys_tenant_data_migration_item
-sys_background_job_attempt sys_outbox_event sys_export_job
-""".split())
-
-
 def schema_catalog(backend: Path) -> tuple[dict, dict]:
-    """从当前机器 SQL 快照及租户基线读取完整列，不猜测未知生成业务表。"""
-    generated = backend / "crates/ryframe-tenant-db/src/generated/catalog.rs"
-    generated_tenant = generated_catalog(backend, generated.read_text(encoding="utf-8"))
-    control = parse_schema((backend / "sql/ryframe_config.sql").read_text(encoding="utf-8"))
-    if set(control) - EXCLUDED != CONTROL_TABLES:
-        raise ValueError("控制库表与已审查复制白名单不同；须先审查新增/删除表的状态及物理引用")
-    tenant = parse_schema((backend / "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs").read_text(encoding="utf-8"))
-    if set(tenant) != {
-        "biz_tenant_fence", "biz_tenant_target_slot", "ryframe_resource_ownership",
-        "biz_data_scope_projection", "biz_data_scope_owner", "biz_data_scope_dept",
-    }:
-        raise ValueError("租户基线含未审查表；须补齐复制白名单，不能过滤未知业务表")
-    tenant = {name: columns for name, columns in tenant.items() if name != "ryframe_resource_ownership"}
-    if set(tenant) & set(generated_tenant):
-        raise ValueError("生成租户表与固定基线表重复")
-    tenant.update(generated_tenant)
-    from devex_business_catalog import business_columns
-    business = business_columns(backend)
-    if set(tenant) & set(business):
-        raise ValueError("框架与独立业务目录重复声明租户表")
-    tenant.update(business)
-    if not set(STATES | {name: None for name in EMPTY}).issubset(control):
-        raise ValueError("当前 schema 缺少开发复制必须审查的状态表")
-    return {name: columns for name, columns in control.items() if name not in EXCLUDED}, tenant
-
-
-def generated_catalog(backend: Path, content: str) -> dict:
-    """从生成描述符及同名迁移读取全部租户业务表，拒绝猜测任意源码目录。"""
-    entries = re.findall(
-        r'TenantDataTableDescriptor \{\s*table: "([a-z0-9_]+)",.*?tenant_column: "([a-z0-9_]+)",.*?'
-        r'column_types: &\[(.*?)\],.*?has_generated_columns: (true|false),', content, re.S)
-    empty = re.search(r"GENERATED_TENANT_DATA_TABLES:[^=]+?=\s*&\[\s*\];", content) is not None
-    if empty:
-        if entries:
-            raise ValueError("空生成租户目录包含描述符")
-        return {}
-    if not entries:
-        raise ValueError("非空生成租户目录缺少可验证描述符")
-    result = {}
-    for table, tenant_column, raw_types, generated_columns in entries:
-        if (not table.startswith("biz_") or table in result or tenant_column != "tenant_id"
-                or generated_columns != "false"):
-            raise ValueError("生成租户描述符包含未审查表、重复表或不支持的列规则")
-        resource = table.removeprefix("biz_")
-        generated = backend / "crates/ryframe-tenant-db/src/generated"
-        migrations = [
-            path for path in (
-                generated / f"business_{resource}_migration.rs",
-                generated / resource / "migration.rs",
-            ) if path.is_file()
-        ]
-        if len(migrations) != 1:
-            raise ValueError("生成租户描述符缺少同名迁移")
-        migration = migrations[0]
-        ddl = re.search(r'pub const CREATE_TABLE_DDL: &str = r#"(.*?)"#;', migration.read_text(encoding="utf-8"), re.S)
-        if ddl is None:
-            raise ValueError("生成租户迁移缺少确定性 DDL")
-        tables = parse_schema(ddl.group(1))
-        if set(tables) != {table}:
-            raise ValueError("生成租户迁移包含额外或错误表")
-        columns = tables[table]
-        types = re.findall(r'"([a-z]+)"', raw_types)
-        if len(types) != len(columns) or [kind.lower() for kind in columns.values()] != types:
-            raise ValueError("生成租户描述符与迁移列类型不一致")
-        result[table] = columns
-    return result
-
-
-def parse_schema(content: str) -> dict:
-    result = {}
-    for match in re.finditer(r"CREATE TABLE(?: IF NOT EXISTS)? `([a-z0-9_]+)` \((.*?)\n\s*\) ENGINE=", content, re.S):
-        columns = dict(re.findall(r"^\s*`([a-z0-9_]+)`\s+([A-Za-z]+)", match[2], re.M))
-        if not columns or match[1] in result:
-            raise ValueError("schema 表或列重复/缺失")
-        result[match[1]] = {name: kind.upper() for name, kind in columns.items()}
-    return result
+    value = _native("copy-schema-catalog", {"backend": str(backend), "include_full": False})
+    return tuple({table: dict(pairs) for table, pairs in value[name].items()}
+                 for name in ("control", "tenant"))
 
 
 def quoted(value: str, position: int) -> tuple[str, int]:

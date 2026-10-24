@@ -23,8 +23,8 @@ pub(crate) struct Loaded {
 }
 
 impl Loaded {
-    pub(crate) fn ordered_columns(&self) -> Result<Value> {
-        let mut result = serde_json::Map::new();
+    pub(crate) fn ordered_columns(&self) -> Result<super::catalog::OrderedCatalog> {
+        let mut result = super::catalog::OrderedCatalog::new();
         for table in &self.tables {
             let name = text(&table["table"], "业务表名")?;
             let columns = &self.columns[name];
@@ -35,9 +35,9 @@ impl Loaded {
                     Ok((column.to_owned(), columns[column].clone()))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            result.insert(name.to_owned(), serde_json::to_value(pairs)?);
+            result.insert(name.to_owned(), pairs);
         }
-        Ok(Value::Object(result))
+        Ok(result)
     }
 }
 
