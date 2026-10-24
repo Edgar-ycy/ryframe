@@ -92,6 +92,16 @@ impl ToolSettings {
             .target_dir
             .as_deref()
             .unwrap_or(Path::new("target"));
+        if !selected.is_absolute()
+            && selected.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+        {
+            return Err(AppError::Config("generator.target_dir 不接受驱动器相对路径或缺少驱动器的根路径；使用完整绝对路径或以后端根目录为基准的普通相对路径".into()));
+        }
         if selected
             .to_str()
             .is_none_or(|value| value.trim().is_empty() || value.chars().any(char::is_control))

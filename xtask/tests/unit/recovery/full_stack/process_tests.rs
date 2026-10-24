@@ -82,19 +82,22 @@ fn captures_private_stdin_without_putting_values_in_arguments_or_errors() {
     )
     .unwrap();
     assert_eq!(output, "private-password");
-    let error = capture(
-        command("fail", root.path()),
-        root.path(),
-        b"private-password",
-        Duration::from_secs(5),
-        None,
-        false,
-        false,
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(error.contains("17"));
-    assert!(!error.contains("private-password"));
+    for (mode, compiler_failure) in [("fail", false), ("compiler-fail", true)] {
+        let error = capture(
+            command(mode, root.path()),
+            root.path(),
+            b"private-password",
+            Duration::from_secs(5),
+            None,
+            false,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("17"));
+        assert!(!error.contains("private-password"));
+        assert_eq!(error.contains("generator.target_dir"), compiler_failure);
+    }
     gone(root.path());
 }
 #[test]

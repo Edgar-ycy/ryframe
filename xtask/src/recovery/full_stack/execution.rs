@@ -236,6 +236,10 @@ impl Port for Native<'_> {
         let output = match output {
             Ok(output) => output,
             Err(error) => {
+                let error = format!(
+                    "程序 {actual} 在目录 {} 执行失败：{error}；先核对该阶段前后像及收据，不直接重放写入命令",
+                    cwd.display()
+                );
                 if let Some(path) = log {
                     let mut file = fs::OpenOptions::new()
                         .create(true)
@@ -243,7 +247,7 @@ impl Port for Native<'_> {
                         .open(path)?;
                     writeln!(file, "{error}")?;
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         if cargo_json && log.is_none() {
@@ -447,7 +451,10 @@ fn capture(
     drop(child);
     let mut bytes = output.join().map_err(|_| "全栈输出线程失败")??;
     let errors = errors.join().map_err(|_| "全栈错误输出线程失败")??;
-    result?;
+    if let Err(error) = result {
+        let reason = compiler_path_diagnostic(&bytes, &errors);
+        return Err(format!("{error}{reason}").into());
+    }
     if merge_stderr {
         bytes.extend(errors);
     }
@@ -455,6 +462,17 @@ fn capture(
         return Err("全栈命令输出超过16MiB".into());
     }
     String::from_utf8(bytes).map_err(|_| "全栈输出不是UTF-8".into())
+}
+
+fn compiler_path_diagnostic(stdout: &[u8], stderr: &[u8]) -> &'static str {
+    if [stdout, stderr].iter().any(|bytes| {
+        let text = String::from_utf8_lossy(bytes);
+        text.contains("fatal error C1083") && text.contains("Invalid argument")
+    }) {
+        "；已确认 MSVC C1083 报告无效输出路径；检查路径长度和访问权限，在工具文件中为 generator.target_dir 配置较短的固定目录，修复后先预览；未回显子进程原文"
+    } else {
+        ""
+    }
 }
 
 enum Child {

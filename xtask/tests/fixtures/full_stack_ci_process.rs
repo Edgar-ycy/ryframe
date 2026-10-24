@@ -35,6 +35,10 @@ fn main() {
         eprintln!("private-password");
         std::process::exit(17);
     }
+    if mode == "compiler-fail" {
+        eprintln!("private-password: fatal error C1083: Cannot open compiler generated file: Invalid argument");
+        std::process::exit(17);
+    }
     if mode == "json" {
         eprintln!("编译诊断 private-password");
         println!("{{\"reason\":\"compiler-artifact\"}}");

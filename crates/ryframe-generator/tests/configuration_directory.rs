@@ -111,7 +111,11 @@ fn builder_and_tool_directories_reject_invalid_paths_before_execution() {
             .unwrap_err()
             .contains("config_dir")
     );
-    for invalid in ["", " ", "bad\0path", "bad\tpath", "../outside"] {
+    let mut invalid_targets = vec!["", " ", "bad\0path", "bad\tpath", "../outside"];
+    if cfg!(windows) {
+        invalid_targets.extend(["C:cache", r"\cache"]);
+    }
+    for invalid in invalid_targets {
         let mut settings = toml::Table::new();
         settings.insert("target_dir".into(), toml::Value::String(invalid.into()));
         let settings = toml::Table::from_iter([("generator".into(), toml::Value::Table(settings))]);

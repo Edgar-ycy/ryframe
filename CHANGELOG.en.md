@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- The generator and formal business fixtures share a fixed build directory through file configuration, avoiding MSVC output-path failures in deeply nested workspaces. Keep the lockfile produced by business creation instead of recomputing it wholesale. Acceptance command failures identify the program and working directory and provide configuration guidance for recognized C1083 invalid-path errors without exposing private subprocess output.
+
 - Source registration now uses the native Rust stage controller to hold target and ledger locks and publish local evidence, removing the former Python writer. Initialization-history tests share one fixture and internal entry point; redundant internal-step assertions covered by complete-history validation are consolidated while recovery and rejection of unknown failures remain protected.
 
 - Move historical producer stop verification into Rust. On Windows, kernel access-denied errors use a managed native CIM query with strict microsecond precision boundaries. CIM failure explicitly rejects verification with repair guidance. Remove the PowerShell/PDH fallback and duplicate Python algorithm; existing callers only forward complete identities and strict results.
