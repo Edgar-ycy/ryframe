@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::super::{
     digest,
     json::{self as json_io, exact, text},
-    lifecycle::{manifest, stage::StageRequest},
+    lifecycle::{manifest, stage::StageRequest, state},
 };
 use crate::{
     Result,
@@ -92,6 +92,52 @@ impl Context {
             attempt,
             manifest: loaded.value,
             request: request_value,
+            request_path,
+            environment,
+            execution_backend,
+        })
+    }
+
+    /// 仅构造当前来源登记代次；运行锁与完整来源证明由调用方负责。
+    pub(crate) fn from_source_registration(
+        backend: &Path,
+        run: &Path,
+        attempt: u64,
+        source_request_binding: &Value,
+        source_environment_binding: &Value,
+    ) -> Result<Self> {
+        let before = registration_attempt(run, attempt)?;
+        let manifest_path = run.join("manifest.json");
+        let loaded = manifest::load(backend, &manifest_path)?;
+        if loaded.value.get("copy_stage").and_then(Value::as_str) != Some("source_to_seed") {
+            return Err("来源登记只处理 source_to_seed 清单".into());
+        }
+        let request_path =
+            manifest::bound_file(backend, source_request_binding, "派生源请求", true)?;
+        let request = json_io::read(&request_path)?;
+        validate_request(backend, &request)?;
+        let environment = load_environment(backend, source_environment_binding)?;
+        if environment.len() != 1 || environment.get("APP_ENV").map(String::as_str) != Some("test")
+        {
+            return Err("来源登记环境必须仅包含 APP_ENV=test".into());
+        }
+        let execution_backend = execution_backend(backend, &request)?;
+        manifest::bound_file(backend, source_request_binding, "派生源请求", true)?;
+        manifest::bound_file(backend, source_environment_binding, "来源环境", true)?;
+        let after = manifest::load(backend, &manifest_path)?;
+        if after.digest != loaded.digest
+            || after.value != loaded.value
+            || registration_attempt(run, attempt)? != before
+        {
+            return Err("来源登记上下文读取期间清单或阶段状态变化".into());
+        }
+        Ok(Self {
+            backend: backend.to_path_buf(),
+            run_dir: run.to_path_buf(),
+            mode: "source-register".into(),
+            attempt,
+            manifest: loaded.value,
+            request,
             request_path,
             environment,
             execution_backend,
@@ -392,4 +438,19 @@ fn endpoint(value: &str) -> Result<()> {
         return Err("源端点只接受明确的本机 loopback 端口".into());
     }
     Ok(())
+}
+
+fn registration_attempt(run: &Path, number: u64) -> Result<Value> {
+    if number == 0 {
+        return Err("来源登记代次必须大于零".into());
+    }
+    let value = state::load(run, true)?;
+    let running = state::running_attempt(&value)?.ok_or("来源登记缺少运行中阶段")?;
+    if running.get("number").and_then(Value::as_u64) != Some(number)
+        || running.get("stage").and_then(Value::as_str) != Some("seed-runtime")
+        || running.get("mode").and_then(Value::as_str) != Some("source-register")
+    {
+        return Err("来源登记必须属于当前 seed-runtime/source-register 运行代次".into());
+    }
+    Ok(value)
 }

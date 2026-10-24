@@ -554,3 +554,115 @@ fn public_source_request_excludes_credentials_and_matches_python_projection() {
         public
     );
 }
+
+#[test]
+fn source_registration_context_uses_bound_generation_without_export_stage_or_writes() {
+    let fixture = Fixture::new();
+    let request_path = fixture.local.join("source-request.json");
+    let environment_path = fixture.local.join("registration-environment.json");
+    write_json(
+        &environment_path,
+        &json!({"environment": {"APP_ENV": "test"}}),
+    );
+    let (attempt, _) =
+        state::begin(&fixture.run, "seed-runtime", "source-register", &json!({})).unwrap();
+    let before = snapshot(&fixture.run);
+    let context = Context::from_source_registration(
+        &fixture.backend,
+        &fixture.run,
+        attempt,
+        &binding(&request_path),
+        &binding(&environment_path),
+    )
+    .unwrap();
+    assert_eq!(context.mode, "source-register");
+    assert_eq!(context.attempt, attempt);
+    assert_eq!(context.request_path, request_path);
+    assert_eq!(context.execution_backend, fixture.backend);
+    assert_eq!(context.environment.get("APP_ENV").unwrap(), "test");
+    assert_eq!(snapshot(&fixture.run), before);
+    assert!(!fixture.run.join("run.lock").exists());
+    let request_binding = binding(&request_path);
+    let environment_binding = binding(&environment_path);
+    for number in [0, attempt + 1] {
+        assert!(
+            Context::from_source_registration(
+                &fixture.backend,
+                &fixture.run,
+                number,
+                &request_binding,
+                &environment_binding,
+            )
+            .is_err()
+        );
+    }
+    fs::write(&environment_path, b"{}").unwrap();
+    assert!(
+        Context::from_source_registration(
+            &fixture.backend,
+            &fixture.run,
+            attempt,
+            &request_binding,
+            &environment_binding,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn source_registration_context_rejects_wrong_stage_environment_and_tool_drift() {
+    let fixture = Fixture::new();
+    let request_path = fixture.local.join("source-request.json");
+    let environment_path = fixture.local.join("registration-environment.json");
+    let (attempt, _) = state::begin(&fixture.run, "export", "run", &json!({})).unwrap();
+    write_json(
+        &environment_path,
+        &json!({"environment": {"APP_ENV": "test"}}),
+    );
+    assert!(
+        Context::from_source_registration(
+            &fixture.backend,
+            &fixture.run,
+            attempt,
+            &binding(&request_path),
+            &binding(&environment_path),
+        )
+        .is_err()
+    );
+    state::finish(&fixture.run, attempt, None, Some("FixtureStopped")).unwrap();
+    let (attempt, _) =
+        state::begin(&fixture.run, "seed-runtime", "source-register", &json!({})).unwrap();
+    for environment in [
+        json!({}),
+        json!({"APP_ENV": "dev"}),
+        json!({"APP_ENV": "test", "UNEXPECTED": "private-value"}),
+    ] {
+        write_json(&environment_path, &json!({"environment": environment}));
+        assert!(
+            Context::from_source_registration(
+                &fixture.backend,
+                &fixture.run,
+                attempt,
+                &binding(&request_path),
+                &binding(&environment_path),
+            )
+            .is_err()
+        );
+    }
+    write_json(
+        &environment_path,
+        &json!({"environment": {"APP_ENV": "test"}}),
+    );
+    let request_binding = binding(&request_path);
+    fs::write(fixture.local.join("mysql"), b"changed-tool").unwrap();
+    assert!(
+        Context::from_source_registration(
+            &fixture.backend,
+            &fixture.run,
+            attempt,
+            &request_binding,
+            &binding(&environment_path),
+        )
+        .is_err()
+    );
+}
