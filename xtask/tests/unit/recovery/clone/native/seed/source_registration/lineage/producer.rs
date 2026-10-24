@@ -31,10 +31,19 @@ impl Fixture {
             "clean":false,"files":[{"path":"xtask/src/data/performance_identities/producer.rs","sha256":descriptor["sha256"]},{"path":"z-history.txt","sha256":"e".repeat(64)}]},
             "worktree_fingerprint":format!("sha256:{}","c".repeat(64)),
             "fingerprints":{"product":{"files":1,"sha256":"d".repeat(64)},"test_tools":{"files":0,"sha256":"e".repeat(64)},"support":{"files":0,"sha256":"f".repeat(64)}}});
-        let attempt = json!({"number":1,"stage":"seed-runtime","mode":"identities-apply","started_at":"start","finished_at":"finish","status":"passed","sources":snapshot,"result":null,"error_type":null});
+        let mut attempt = json!({"number":1,"stage":"seed-runtime","mode":"identities-apply","started_at":"start","finished_at":"finish","status":"passed","sources":snapshot,"result":null,"error_type":null});
+        fs::create_dir_all(run.join("results")).unwrap();
+        let result_path = run.join("results").join("0001.json");
+        json_io::write_new(
+            &result_path,
+            &json!({"status":"identity_producer_finished"}),
+        )
+        .unwrap();
+        attempt["result"] = common::binding(&result_path).unwrap();
         let mut running = attempt.clone();
         running["status"] = json!("running");
         running["finished_at"] = Value::Null;
+        running["result"] = Value::Null;
         let identity = json!({"pid":42,"started":"123","executable":executable});
         let controller = json!({"format_version":1,"kind":"devex-stage-controller","attempt":1,
             "attempt_sha256":digest::plan_hash(&running).unwrap(),"owner":{"format_version":1,"identity":identity,"directory":run,"manifest_sha256":common::binding(&run.join("manifest.json")).unwrap()["sha256"]}});
@@ -66,7 +75,13 @@ impl Fixture {
         let mut sources = self.registered["attempt"]["sources"].clone();
         sources["snapshot"]["files"] = json!([{"path":"xtask/src/recovery/clone/native/session.rs","sha256":source["sha256"]}]);
         let (number, _) = state::begin(&self.run, "post-copy", "schedules", &sources).unwrap();
-        state::finish(&self.run, number, None, None).unwrap();
+        state::finish(
+            &self.run,
+            number,
+            Some(&json!({"status":"historical_session_finished"})),
+            None,
+        )
+        .unwrap();
         let saved = state::load(&self.run, false).unwrap();
         let attempt = state::attempts(&saved).unwrap().last().unwrap().clone();
         let mut controller = json_io::read(&self.run.join("controller-0001.json")).unwrap();
@@ -203,6 +218,20 @@ fn controller_owner_source_and_argv_mismatches_are_rejected() {
 fn historical_amendment_uses_the_requested_descriptor() {
     let mut fixture = Fixture::new();
     state::initialize(&fixture.run).unwrap();
+    let (number, _) = state::begin(
+        &fixture.run,
+        "seed-runtime",
+        "identities-apply",
+        &fixture.registered["attempt"]["sources"],
+    )
+    .unwrap();
+    state::finish(
+        &fixture.run,
+        number,
+        Some(&json!({"status":"identity_producer_finished"})),
+        None,
+    )
+    .unwrap();
     let original = json!({"api_environment":{"original":true},"private_metadata":"unchanged"});
     json_io::write_new(&fixture.run.join("post-copy.json"), &original).unwrap();
     let base = common::binding(&fixture.run.join("post-copy.json")).unwrap();
