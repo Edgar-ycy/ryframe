@@ -63,6 +63,7 @@ class InventoryTests(unittest.TestCase):
         self.raw_override = None
         self.uuid_failure = self.owner_failure = False
         self.models = schema_models(self.backend)
+        self._table_digests = {}
         context = patch.object(inventory, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance))
         self.verify_mock = context.start()
         self.addCleanup(context.stop)
@@ -78,7 +79,10 @@ class InventoryTests(unittest.TestCase):
         all_tables = business | preserved | (set(full_control) if combined else set())
         def table(name):
             rows = 2 if name == "ryframe_resource_ownership" and combined else 1 if name in preserved or name == "biz_tenant_target_slot" else 0
-            return {"table": name, "rows": rows, "sha256": plan_hash({"table": name, "rows": rows})}
+            key = (name, rows)
+            if key not in self._table_digests:
+                self._table_digests[key] = plan_hash({"table": name, "rows": rows})
+            return {"table": name, "rows": rows, "sha256": self._table_digests[key]}
         return {"scope_id": self.scope, "control_schema_fingerprint": "c" * 16, "tenant_schema_fingerprint": "d" * 64,
                 "target": {"database": {**{name: declared[name] for name in ("key", "kind", "server_uuid", "database")},
                     "shared": declared["mode"] == "shared", "placements": [], "tables": [table(name) for name in sorted(all_tables - preserved)]},
