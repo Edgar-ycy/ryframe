@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Load framework SQL, generated tenant catalogs, and complete export models through one ordered Rust implementation, removing duplicate Python parsing. Read-only binding checks request only the required catalogs, while complete exports retain ownership, migration ledgers, and physical column order. Inventory fixtures reuse only identical table-name and row-count digests within one instance, retaining every capture and verification; separate execution-root revalidation permits only two local read-only operations of the bound tool.
+
+- Reuse Rust validation for database inventory observations while preserving Python callers' return types and read-only boundaries. Include generated migration files actually read by the catalog in source digests so DDL changes during plan computation cannot escape verification.
+
 - Reuse strict Rust validation for target schedule actions while preserving declaration order and rejecting non-ASCII or out-of-range IDs consistently. Move seven meaningful business-catalog test scenarios into the existing Rust evidence-protocol entry point. Validate generated table types in DDL declaration order and transport business-catalog and migration-ledger columns as ordered pairs, preventing alphabetical column sorting from rejecting valid exports.
 
 - Remove the unused standalone source-export command entry point. Formal exports continue through the unified flow with a bound native tool; the export implementation and caller behavior remain unchanged.
