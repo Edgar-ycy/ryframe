@@ -21,6 +21,7 @@ mod snapshot;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_imports_two_tables_from_business_subdirectory_without_database_writes() {
     mysql::run_mysql_test("cliimport", |database| async move {
+        let frontend = frontend::Candidate::from_control()?;
         let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
         mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
@@ -35,6 +36,9 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         let directory = tempfile::tempdir_in(cache).map_err(message)?;
         let root = directory.path().join("backend");
         original.copy_to(&root)?;
+        if let Some(frontend) = &frontend {
+            frontend.configure_target(&root)?;
+        }
         GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
         let configuration = captured.prepare(&root, &schema)?;
         verify_physical_binding(&database, &configuration).await?;
@@ -59,7 +63,7 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         assert!(delta.iter().any(|change| change.relative == Path::new("crates/cli-import-business/src/resources/table1.rs") && change.before.is_none() && change.after.is_some()));
         require_success(import(&root, &configuration, "table1,table2", true)?)?;
         installed.verify()?;
-        if let Some(frontend) = frontend::Candidate::from_control()? {
+        if let Some(frontend) = &frontend {
             frontend.configure(&root)?;
             let mut command = import_command(&root, &configuration, "table1,table2")?;
             command.args(["--sync-frontend", "--write"]);
@@ -116,10 +120,6 @@ fn import_command(
         .arg(directory)
         .current_dir(root.join("crates/cli-import-business/src"))
         .env("APP_ENV", "test");
-    command.env(
-        "CARGO_TARGET_DIR",
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/mysql-schema-cli"),
-    );
     Ok(command)
 }
 
