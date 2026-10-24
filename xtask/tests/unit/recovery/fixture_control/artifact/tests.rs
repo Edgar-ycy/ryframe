@@ -294,6 +294,15 @@ fn artifact_runtime_rejects_duplicate_json_and_unexpected_evidence() {
     assert!(runtime::verify(root.path(), &directory).is_err());
 }
 
+fn source_fixture_root() -> tempfile::TempDir {
+    let parent = crate::workspace::root_dir().join(".local-tests");
+    fs::create_dir_all(&parent).unwrap();
+    tempfile::Builder::new()
+        .prefix("artifact-source-")
+        .tempdir_in(parent)
+        .unwrap()
+}
+
 fn source_fixture(root: &Path) -> std::path::PathBuf {
     let (directory, _) = runtime_fixture(root);
     let git = |args: &[&str]| {
@@ -364,7 +373,7 @@ fn source_fixture(root: &Path) -> std::path::PathBuf {
 
 #[test]
 fn artifact_source_rejects_source_and_receipt_drift() {
-    let root = tempfile::tempdir().unwrap();
+    let root = source_fixture_root();
     let directory = source_fixture(root.path());
     runtime::verify(root.path(), &directory).unwrap();
     fs::write(root.path().join("source.txt"), b"drift").unwrap();
@@ -376,7 +385,7 @@ fn artifact_source_rejects_source_and_receipt_drift() {
 
 #[test]
 fn artifact_source_rejects_unconsumed_snapshot_fields_with_consistent_bindings() {
-    let root = tempfile::tempdir().unwrap();
+    let root = source_fixture_root();
     let directory = source_fixture(root.path());
     super::source::verify(root.path(), &directory).unwrap();
     let pair_path = directory.join("source-pair.json");
@@ -402,7 +411,7 @@ fn artifact_source_rejects_unconsumed_snapshot_fields_with_consistent_bindings()
 
 #[test]
 fn artifact_source_rechecks_source_and_all_consumed_receipts_after_observation() {
-    let root = tempfile::tempdir().unwrap();
+    let root = source_fixture_root();
     let directory = source_fixture(root.path());
     let observed = std::cell::Cell::new(0);
     super::source::verify_observed(root.path(), &directory, || observed.set(observed.get() + 1))
