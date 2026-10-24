@@ -1,4 +1,6 @@
 //! 来源登记的完整历史和受控文件发布；由同一原生闭环共享证据。
+#[path = "source_registration/anchors.rs"]
+pub(crate) mod anchors;
 #[path = "source_registration/close.rs"]
 pub(crate) mod close;
 #[path = "source_registration/copied.rs"]
