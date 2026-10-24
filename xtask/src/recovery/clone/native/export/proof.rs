@@ -193,7 +193,7 @@ fn validate_registry(
 ) -> Result<Vec<Value>> {
     text(scope, "源运行 scope")?;
     let registry = exact(
-        &registry,
+        registry,
         &["format_version", "scope_id", "runtime_sha256", "processes"],
         "producer 清单",
     )?;
