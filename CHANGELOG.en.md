@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recheck source trees and every consumed evidence binding before and after full-stack artifact verification, rejecting extra fields in original snapshots. Validate fixed evidence paths before hashing files and keep source-test fixtures in isolated workspace directories.
+
 - Native source export checks product build inputs, the current build environment and explicit source audits separately. Valid reuse retains the original build snapshot and fingerprint, and the end of the execution window rechecks the complete source and frozen artifacts. Producer registries reject duplicate PID creation generations rather than allowing different names to register the same process more than once.
 
 - Replace seven JS/TS syntax fragments in cross-repository identity-capability text-gate fixtures with plain text data, retaining every scan path, forbidden symbol, and rejection scenario without executing frontend programs.
