@@ -1,4 +1,4 @@
-//! 无持锁模式下重读完整初始化历史；不授予 checkpoint 或重放权限。
+//! 重读完整初始化历史；持锁模式只接受保护同一目标的真实 Generation。
 use std::{fs, io::ErrorKind, path::Path};
 
 use serde_json::{Value, json};
@@ -35,15 +35,39 @@ fn unlocked(target: &Path) -> Result<()> {
 }
 
 pub(crate) fn unlocked_history(backend: &Path, filename: &Path) -> Result<(Value, Value)> {
+    history(backend, filename, None)
+}
+
+pub(crate) fn owned_history(
+    backend: &Path,
+    filename: &Path,
+    owner: &guard::Generation,
+) -> Result<(Value, Value)> {
+    history(backend, filename, Some(owner))
+}
+
+fn protection(target: &Path, owner: Option<&guard::Generation>) -> Result<()> {
+    match owner {
+        Some(owner) => owner.protects(target),
+        None => unlocked(target),
+    }
+}
+
+fn history(
+    backend: &Path,
+    filename: &Path,
+    owner: Option<&guard::Generation>,
+) -> Result<(Value, Value)> {
     let target = filename.parent().ok_or("初始化历史缺少目标目录")?;
     validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
     check(
         filename == target.join("initialized.json"),
         "初始化历史必须读取固定 initialized.json",
     )?;
-    unlocked(target)?;
-    let before = tree::initialized(backend, target)?;
-    let files = super::tree::snapshot(backend, target, false)?;
+    protection(target, owner)?;
+    let locked = owner.is_some();
+    let before = tree::initialized(backend, target, locked)?;
+    let files = super::tree::snapshot(backend, target, locked)?;
     let inputs = guard::Inputs::open(super::tree::files(target, &files)?)?;
     let resumed = failure::resolved(backend, target)?;
     let initialized = read(backend, filename)?;
@@ -52,12 +76,13 @@ pub(crate) fn unlocked_history(backend: &Path, filename: &Path) -> Result<(Value
     request_binding(backend, &request)?;
     initialization(backend, target, &initialized, &prepared, &request, resumed)?;
     inputs.check()?;
-    unlocked(target)?;
+    protection(target, owner)?;
     check(
-        tree::initialized(backend, target)? == before
-            && super::tree::snapshot(backend, target, false)? == files,
+        tree::initialized(backend, target, locked)? == before
+            && super::tree::snapshot(backend, target, locked)? == files,
         "初始化历史读取期间文件树或绑定变化",
     )?;
+    protection(target, owner)?;
     Ok((initialized, request))
 }
 

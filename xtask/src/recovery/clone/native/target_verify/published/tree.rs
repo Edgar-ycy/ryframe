@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::super::{super::json as json_io, evidence_model::*, resume_baseline};
 use crate::Result;
 
-pub(super) fn initialized(backend: &Path, target: &Path) -> Result<Value> {
+pub(super) fn initialized(backend: &Path, target: &Path, locked: bool) -> Result<Value> {
     let workspace = target.parent().ok_or("初始化目标缺少登记目录")?;
     let initialized_path = workspace.join("initialized-files.json");
     let prepared_path = workspace.join("prepared-files.json");
@@ -46,7 +46,7 @@ pub(super) fn initialized(backend: &Path, target: &Path) -> Result<Value> {
     )?;
     super::super::resume_observations::file_map(&value["files"])?;
     check(
-        value["files"] == super::super::tree::snapshot(backend, target, false)?
+        value["files"] == super::super::tree::snapshot(backend, target, locked)?
             && binding(backend, &initialized_path)? == initialized
             && binding(backend, &prepared_path)? == prepared
             && binding(backend, &registration_path)? == registration,

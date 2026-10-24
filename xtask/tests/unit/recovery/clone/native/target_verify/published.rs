@@ -204,3 +204,67 @@ fn published_history_never_accepts_an_existing_initialize_lock() {
         }
     }
 }
+
+#[test]
+fn published_owned_history_requires_real_generation_and_preserves_unlocked_rejection() {
+    let fixture = complete();
+    let filename = fixture.target.join("initialized.json");
+    let expected = unlocked_history(&fixture.backend, &filename).unwrap();
+    let owner = guard::Generation::acquire(&fixture.backend, &fixture.target).unwrap();
+    owner.protects(&fixture.target).unwrap();
+    let observed = owned_history(&fixture.backend, &filename, &owner);
+    let error = unlocked_history(&fixture.backend, &filename)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("initialize.lock"), "{error}");
+    assert!(fixture.target.join("initialize.lock").is_dir());
+    assert_eq!(owner.finish(observed).unwrap(), expected);
+    assert!(!fixture.target.join("initialize.lock").exists());
+    assert_eq!(
+        unlocked_history(&fixture.backend, &filename).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn published_owned_history_rejects_another_targets_generation() {
+    let fixture = complete();
+    let other = fixture.local.join("other-target");
+    fs::create_dir(&other).unwrap();
+    let owner = guard::Generation::acquire(&fixture.backend, &other).unwrap();
+    let error = owned_history(
+        &fixture.backend,
+        &fixture.target.join("initialized.json"),
+        &owner,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("不属于当前目标目录"), "{error}");
+    assert!(other.join("initialize.lock").is_dir());
+    assert!(!fixture.target.join("initialize.lock").exists());
+    owner.finish(Ok(())).unwrap();
+}
+
+#[test]
+fn published_owned_history_rejects_unknown_lock_contents_without_cleanup() {
+    let fixture = complete();
+    let owner = guard::Generation::acquire(&fixture.backend, &fixture.target).unwrap();
+    let marker = fixture.target.join("initialize.lock/owned-test-marker");
+    fs::write(&marker, b"unknown lock write must survive rejection").unwrap();
+    let error = owned_history(
+        &fixture.backend,
+        &fixture.target.join("initialized.json"),
+        &owner,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("目录锁包含未知写入"), "{error}");
+    assert_eq!(
+        fs::read(&marker).unwrap(),
+        b"unknown lock write must survive rejection"
+    );
+    // 仅删除本测试刚创建且已逐字节核对的 marker，再正常释放真实持有者。
+    fs::remove_file(&marker).unwrap();
+    owner.finish(Ok(())).unwrap();
+    assert!(!fixture.target.join("initialize.lock").exists());
+}

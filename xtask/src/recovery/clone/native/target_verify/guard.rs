@@ -148,6 +148,13 @@ impl Generation {
         self.lock.as_ref().ok_or("目标初始化目录锁已释放")?.check()
     }
 
+    pub(crate) fn protects(&self, target: &Path) -> Result<()> {
+        if self.root.path != target {
+            return Err("初始化持有者不属于当前目标目录".into());
+        }
+        self.check()
+    }
+
     pub(crate) fn checkpoint(&self) -> Result<()> {
         self.lock.as_ref().ok_or("目标初始化目录锁已释放")?;
         self.process.check()?;
