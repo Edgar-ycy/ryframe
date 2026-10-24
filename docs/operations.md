@@ -83,6 +83,10 @@ post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、
 
 ### 采集和登记
 
+Windows 历史生产者的停止核验先读取内核身份：进程不存在，或同一 PID 的创建时间严格晚于登记时间，才证明旧代次已经结束。仅在内核查询返回拒绝访问（错误码 `5`）时，使用受管 Rust 子进程查询本机 CIM；查询超时预算为 15 秒。CIM 保留微秒精度，创建时间必须严格晚于旧时间加 10 个 100 ns tick 的边界。同一代次、相邻精度边界、重复身份、未知时间或查询失败都拒绝登记，不再回退 PowerShell/PDH，也不会向占用该 PID 的进程发送信号。
+
+若错误包含 CIM 的 HRESULT，先用 `Get-Service Winmgmt` 查看本机服务状态，并检查 `ROOT\CIMV2` 的读取权限。修复后重新执行原核验命令；保留已有阶段结果和局部文件，按实际状态恢复，不手工改写“已停止”或自动重放数据写入。查询失败只表示停止证据不足，不能据此推断旧进程已经退出。source-register 遇到 `HistoricalProducerCimUnavailable` 时会记录失败阶段并返回安全诊断，不返回成功的 `stage_finished` 结果。正常收尾会核验并释放本次实际持有的控制锁，guard 文件可以继续保留；锁校验或释放失败时保留现场和异常残留锁，不手工删除后强行重试。`Get-Service Winmgmt` 仅用于人工排障，不是运行时回退。
+
 在 Windows 维护机通过 `cargo xtask data` 执行备份和恢复登记；配置和密钥放在受控的忽略目录。该维护能力不包含在生产运行镜像中。
 ```powershell
 cargo xtask data --help
@@ -129,13 +133,23 @@ cargo xtask data backup status
 
 参考夹具环境计划、配置和预检收据守卫由正式绑定的 Rust 工具执行；Python 仍负责准备编排、secret set 轮换及 bootstrap 文件生命周期。seed close/rebind 的模型和证据守卫也由正式绑定的 Rust 工具执行；核验不授权远端写入或重放。
 
-来源验证、已有数据核验、岗位批次、夹具运行与后继、监控预检及 DevEx 来源核验，都由正式维护入口绑定当前协调器原生工具后启动私有程序。若报告工具绑定缺失、摘要变化或身份不一致，请保留阶段收据与原始失败，核对当前维护产物后重新进入正式命令；不要直接启动私有脚本、设置旧工具环境变量或尝试临时 Cargo 回退。绑定失败不会授权资源写入或未知结果重放。
+完成同一 source_to_seed run 的复制、post-copy、seed 验证和 close 后，使用正式来源登记入口：
 
-`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、原生 Rust S3 客户端和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <new-file> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要；原生 S3 客户端直接读取计划绑定的受控明文配置，不启动 AWS CLI 子进程，也不通过环境变量传递访问密钥。凭据值不得进入计划或公开收据。工具不创建或扫描数据库，源目标均需事先初始化。 参考计划的源对象配置仅从绑定 runtime 的 `api_config_dir`、`api_configuration_sha256` 和 `APP_ENV=test` 推导；目标对象配置从 fresh 请求必需的 `config_dir` 及 `configuration_sha256` 推导。两侧公开配置只包含端点、region 和 `app_env/directory/files/sha256` 文件绑定；生成前核对 TOML 与私有请求的端点、region、访问密钥及秘密密钥完全一致，返回前复核配置、runtime 与 arm 文件，任何缺失或漂移均拒绝，不创建或修补配置。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由隔离业务 crate 生成资源验收覆盖。
+```powershell
+cargo xtask check recovery clone seed-runtime --operation source-register --run-dir <absolute-run> --write
+```
+
+`<absolute-run>` 必须是当前后端 `.local-tests` 内已登记且无链接的运行目录。该操作必须显式传入 `--write`，不接受 `--request`、`--output` 或手工指定 attempt；它读取固定运行清单和阶段历史，由统一 Rust 阶段控制器分配 attempt 并直接执行来源登记，不启动 Python materialize 或登记脚本。执行期间实际持有目标 Generation 和复制账本 guard，要求完整历史生产者已停止，并进行两轮来源锚点、请求和 generation 验证。六项本地证据按固定顺序发布；失败保留已写前缀，不自动清理、重放或猜测多个旧目录。同一 run 已有其他成功来源登记时拒绝再次发布。
+
+成功 stdout 的顶层 `status` 是 `stage_finished`，同时包含 `stage="seed-runtime"`、`mode="source-register"`、控制器分配的 `attempt`、内层 `result` 和 `restore_qualified=false`。内层 `result.status` 才是 `seed_source_registered`；`result.registration`、`result.source_request`、`result.source_storage`、`result.generation_verified` 均为含 `path`、`bytes`、`sha256` 的文件绑定，另外包含 `remote_writes=0`、`outbox_drained=true`、`restore_qualified=false`。后续调用应消费这些内层绑定，不能读取顶层 `registration`。`<run>/results/NNNN.json` 保存内层结果，NNNN 对应本次 attempt；六文件证据可续接唯一旧前缀目录，实际位置以返回绑定为准。私有 source request 保留在受控文件中，不把配置凭据复制到公开登记。登记成功不表示完整端到端恢复或正式演练已通过，也不授权远端写入。
+
+上述 source-register 直接在 Rust 进程内执行。其余来源验证、已有数据核验、岗位批次、夹具运行与后继、监控预检及 DevEx 来源核验，仍由正式维护入口绑定当前协调器原生工具后启动各自私有程序。若报告工具绑定缺失、摘要变化或身份不一致，请保留阶段收据与原始失败，核对当前维护产物后重新进入正式命令；不要直接启动私有脚本、设置旧工具环境变量或尝试临时 Cargo 回退。绑定失败不会授权资源写入或未知结果重放。
+
+`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、原生 Rust S3 客户端和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；参考计划入口默认只在标准输出预览，加 `--output <new-file> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要；原生 S3 客户端直接读取计划绑定的受控明文配置，不启动 AWS CLI 子进程，也不通过环境变量传递访问密钥。凭据值不得进入计划或公开收据。工具不创建或扫描数据库，源目标均需事先初始化。 参考计划的源对象配置仅从绑定 runtime 的 `api_config_dir`、`api_configuration_sha256` 和 `APP_ENV=test` 推导；目标对象配置从 fresh 请求必需的 `config_dir` 及 `configuration_sha256` 推导。两侧公开配置只包含端点、region 和 `app_env/directory/files/sha256` 文件绑定；生成前核对 TOML 与私有请求的端点、region、访问密钥及秘密密钥完全一致，返回前复核配置、runtime 与 arm 文件，任何缺失或漂移均拒绝，不创建或修补配置。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由隔离业务 crate 生成资源验收覆盖。
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
-所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <plan-json>`。公开入口在连接资源前完成严格参数解析：未知、重复、缺失或跨阶段参数均以参数错误拒绝。计划、输入、备份目录、工作目录和输出都必须位于当前后端 `.local-tests`，不得包含 `..`、经过链接或重解析点，也不能覆盖已有输出。外部数据库、对象存储和工具路径只从已经绑定的参考计划及收据读取，不能另传路径绕过 ownership。先用 `inputs reference --arm-input <side-arm-result> --fresh-target-verify <side-observation-directory/verify.json> --side base|candidate --id <backup-id> --work-dir <new-side-directory>` 预览参考计划，再追加 `--output <side-reference-plan.json> --write` 发布。
+所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，以下基于参考计划的阶段共用 `--plan <plan-json>`。公开入口在连接资源前完成严格参数解析：未知、重复、缺失或跨阶段参数均以参数错误拒绝。计划、输入、备份目录、工作目录和输出都必须位于当前后端 `.local-tests`，不得包含 `..`、经过链接或重解析点，也不能覆盖已有输出。外部数据库、对象存储和工具路径只从已经绑定的参考计划及收据读取，不能另传路径绕过 ownership。先用 `inputs reference --arm-input <side-arm-result> --fresh-target-verify <side-observation-directory/verify.json> --side base|candidate --id <backup-id> --work-dir <new-side-directory>` 预览参考计划，再追加 `--output <side-reference-plan.json> --write` 发布。
 
 随后用 `inputs product --reference-plan <side-reference-plan> --backup-receipt <same-backup.json> --comparison-sources <two-version-source-manifest> --arm-input <side-arm-result> --fresh-target-verify <side-observation-directory/verify.json> --side base|candidate --id <restore-id> --fault-at <utc-time>` 预览产品计划，追加 `--output <side-product-plan.json> --write` 发布。该入口从同一备份、比较来源、arm、fresh 目标和对应侧产品 SHA 推导原生 `RestorePlan`，并校验 `fault_at` 位于备份实际采集后 24 小时内；`--output` 与 `--write` 必须同时出现。参考计划的源侧只记录备份所需 API，目标侧另记录 API、Worker 和前端三个端点。
 
