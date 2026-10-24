@@ -274,6 +274,9 @@ mod runtime_selection_tests;
 mod runtime_source_tests;
 #[path = "internal/seed_source.rs"]
 mod seed_source_tests;
+#[cfg(windows)]
+#[path = "internal/source_registration_cim.rs"]
+mod source_registration_cim_tests;
 #[path = "internal/target_authority_native.rs"]
 mod target_authority_native;
 #[path = "internal/target_configuration_fixture.rs"]
@@ -302,8 +305,12 @@ mod target_storage_model_tests;
 mod target_storage_redis;
 #[path = "internal/target_storage_redis_state.rs"]
 mod target_storage_redis_state;
+#[path = "internal/target_verify_fixture.rs"]
+mod target_verify_fixture;
 #[path = "internal/target_verify_native.rs"]
 mod target_verify_native_tests;
+#[path = "internal/target_verify_published.rs"]
+mod target_verify_published_tests;
 #[path = "internal/watch.rs"]
 mod watch_tests;
 #[path = "internal/workspace.rs"]

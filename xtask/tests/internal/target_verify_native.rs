@@ -2,8 +2,7 @@ use std::fs;
 
 use crate::recovery::clone::native::{json as json_io, target_verify};
 
-#[path = "target_verify_fixture.rs"]
-mod fixture;
+use crate::target_verify_fixture as fixture;
 
 use fixture::{Fixture, database::FakeTransport, snapshot};
 

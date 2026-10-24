@@ -18,10 +18,6 @@ use crate::{
 mod failure;
 mod tree;
 
-#[cfg(test)]
-#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/published.rs"]
-mod tests;
-
 pub(crate) fn request_binding(backend: &Path, request: &Value) -> Result<Value> {
     binding_request::validate(backend, request, &Value::Null)
 }

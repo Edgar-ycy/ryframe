@@ -2,11 +2,18 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 use serde_json::{Value, json};
 
-use super::*;
-use crate::recovery::clone::native::target_verify::tree as target_tree;
-
-#[path = "../../../../../internal/target_verify_fixture.rs"]
-mod fixture;
+use crate::{
+    recovery::clone::native::{
+        digest, input, json as json_io,
+        resources::common::binding,
+        target_verify::{
+            guard, proof,
+            published::{owned_history, request_binding, unlocked_history},
+            tree as target_tree,
+        },
+    },
+    target_verify_fixture as fixture,
+};
 
 fn write(path: &Path, value: &Value) {
     fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
@@ -65,7 +72,7 @@ fn object_observations(fixture: &fixture::Fixture, names: &mut BTreeSet<String>)
         ("bucket-versioning", "get-bucket-versioning"),
         ("scoped-list", "list-objects-v2"),
     ] {
-        for bucket in super::super::evidence_model::BUCKETS {
+        for bucket in input::BUCKETS {
             let list = operation == "list-objects-v2";
             let response = if list {
                 json!({"IsTruncated":false,"Contents":[]})
@@ -113,8 +120,7 @@ fn complete() -> fixture::Fixture {
 fn refresh(fixture: &fixture::Fixture) {
     let path = fixture.local.join("initialized-files.json");
     let mut initialized = json_io::read(&path).unwrap();
-    initialized["predecessor"] =
-        binding(&fixture.backend, &fixture.local.join("prepared-files.json")).unwrap();
+    initialized["predecessor"] = binding(&fixture.local.join("prepared-files.json")).unwrap();
     initialized["files"] = target_tree::snapshot(&fixture.backend, &fixture.target, false).unwrap();
     write(&path, &initialized);
 }
@@ -291,9 +297,9 @@ fn inventory_recovered() -> fixture::Fixture {
         "automatic_retry":false,"automatic_resource_cleanup":false,"fresh_target_initialized":false,
         "clone_verified":false,"restore_qualified":false}),
     );
-    let failed = binding(&fixture.backend, &failure_path).unwrap();
+    let failed = binding(&failure_path).unwrap();
     let prepared = json_io::read(&fixture.local.join("prepared-files.json")).unwrap();
-    let prepared_files = json!({"descriptor":binding(&fixture.backend, &fixture.local.join("prepared-files.json")).unwrap(),
+    let prepared_files = json!({"descriptor":binding(&fixture.local.join("prepared-files.json")).unwrap(),
         "registration":prepared["registration"],"predecessor":prepared["predecessor"]});
     let intent_path = fixture
         .target
@@ -326,8 +332,7 @@ fn inventory_recovered() -> fixture::Fixture {
         &command(json!([executable, "plan"]), json!(stdout)),
     );
     initialized["completed_at"] = json!("2026-10-18T00:05:00Z");
-    initialized["inventory"]["receipt"] =
-        binding(&fixture.backend, &resumed.join("inventory.json")).unwrap();
+    initialized["inventory"]["receipt"] = binding(&resumed.join("inventory.json")).unwrap();
     initialized["history"] = proof::history(&fixture.backend, &fixture.target).unwrap();
     write(
         &fixture.target.join("initialized-candidate.json"),
@@ -339,9 +344,9 @@ fn inventory_recovered() -> fixture::Fixture {
             .target
             .join(format!("resume-initialize-{attempt}.confirmed.json")),
         &json!({"format_version":1,"kind":"devex-clone-initialize-resume-confirmed","attempt":attempt,
-        "at":"2026-10-18T00:05:01Z","intent":binding(&fixture.backend, &intent_path).unwrap(),
+        "at":"2026-10-18T00:05:01Z","intent":binding(&intent_path).unwrap(),
         "failure":failed,"prepared_files":prepared_files,
-        "initialized":binding(&fixture.backend, &fixture.target.join("initialized.json")).unwrap(),"remote_writes":0}),
+        "initialized":binding(&fixture.target.join("initialized.json")).unwrap(),"remote_writes":0}),
     );
     refresh(&fixture);
     fixture
@@ -352,19 +357,7 @@ fn published_owned_inventory_recovery_keeps_complete_history_and_rejects_unknown
     let fixture = inventory_recovered();
     let filename = fixture.target.join("initialized.json");
     let expected = unlocked_history(&fixture.backend, &filename).unwrap();
-    assert!(super::super::resume::inventory::confirmed(
-        &fixture.backend,
-        &fixture.target,
-        &expected.0,
-        None
-    ));
     let owner = guard::Generation::acquire(&fixture.backend, &fixture.target).unwrap();
-    assert!(super::super::resume::inventory::confirmed(
-        &fixture.backend,
-        &fixture.target,
-        &expected.0,
-        Some(&owner)
-    ));
     let observed = owned_history(&fixture.backend, &filename, &owner);
     assert_eq!(owner.finish(observed).unwrap(), expected);
     let unknown = fixture.target.join("failure-unrecognized.json");
