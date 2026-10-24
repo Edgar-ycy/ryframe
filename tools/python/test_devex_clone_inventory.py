@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_inventory as inventory
 import devex_clone_tools
+import rate_limit_tool
 from process_environment import Environments
 from devex_clone_transfer import DatabaseObservation
 from devex_clone_export import schema_models
@@ -104,8 +105,21 @@ class InventoryTests(unittest.TestCase):
                     environment=self.environment, evidence_root=self.backend)
         self.assertEqual(value.receipt["status"], "side_inventory_captured")
         self.assertEqual(value.binding["configuration"]["directory"], str(execution / "config"))
-        with patch("subprocess.run", side_effect=AssertionError("只读复核不运行外部命令")):
+        real_run = subprocess.run
+        binding = rate_limit_tool.tool_binding()
+        calls = self.calls.copy()
+
+        def readonly_native(command, **kwargs):
+            self.assertEqual(Path(command[0]), Path(binding['path']))
+            self.assertEqual(command[1:], ['__source-evidence'])
+            request = json.loads(kwargs['input'])
+            self.assertIs(request['write'], False)
+            self.assertIn(request['operation'], {'reference-plan-hash', 'copy-database-observation'})
+            return real_run(command, **kwargs)
+
+        with patch("subprocess.run", side_effect=readonly_native):
             result = inventory.verify_side_inventory(self.backend, value.receipt_file, self.selected, execution)
+        self.assertEqual(self.calls, calls)
         self.assertEqual(set(result["databases"]), set(inventory.KEYS))
 
     def run_external(self, command, **kwargs):
