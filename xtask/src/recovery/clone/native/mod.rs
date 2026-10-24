@@ -12,6 +12,7 @@ pub(crate) mod bridge;
 pub(crate) mod business;
 pub(crate) mod cache;
 pub(crate) mod catalog;
+pub(crate) mod copy_ledger;
 pub(crate) mod department;
 pub(crate) mod digest;
 pub(crate) mod export;
