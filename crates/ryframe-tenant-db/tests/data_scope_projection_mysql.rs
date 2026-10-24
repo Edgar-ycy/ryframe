@@ -118,7 +118,8 @@ async fn exercise(
     .await?;
     require_stale(router).await?;
     // owner批次先写入；在部门写入处失败，完整前后像须捕获所有build的残留。
-    mysql::execute(target, "CREATE TRIGGER projection_test_reject_dept BEFORE INSERT ON biz_data_scope_dept FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='projection-test-reject-dept'").await?;
+    target.execute_unprepared("CREATE TRIGGER projection_test_reject_dept BEFORE INSERT ON biz_data_scope_dept FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='projection-test-reject-dept'")
+        .await.map_err(|error| format!("创建投影故障触发器失败，尚未执行故障发布：{error}"))?;
     let failure = publisher.publish(&event(3)).await.unwrap_err();
     assert!(
         matches!(failure, ryframe_kernel::AppError::Database(ref detail)
@@ -126,7 +127,10 @@ async fn exercise(
     );
     assert_eq!(projection_image(target).await?, published);
     require_stale(router).await?;
-    mysql::execute(target, "DROP TRIGGER projection_test_reject_dept").await?;
+    target
+        .execute_unprepared("DROP TRIGGER projection_test_reject_dept")
+        .await
+        .map_err(|error| format!("移除投影故障触发器失败，尚未执行恢复发布：{error}"))?;
     publisher.publish(&event(3)).await.map_err(message)?;
     assert_projection(control, target, router, 3, 11).await?;
     let latest = projection_image(target).await?;
