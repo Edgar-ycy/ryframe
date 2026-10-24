@@ -12,7 +12,12 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let parent = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&parent).unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("producer-lineage-")
+            .tempdir_in(parent)
+            .unwrap();
         let backend = portable_path(&fs::canonicalize(root.path()).unwrap());
         let run = backend.join(".local-tests/run");
         fs::create_dir_all(&run).unwrap();
