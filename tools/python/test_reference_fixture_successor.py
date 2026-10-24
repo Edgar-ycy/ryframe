@@ -6,6 +6,7 @@ from rate_limit_tool import tool_binding
 import copy
 from contextlib import redirect_stderr
 import io
+import json
 from pathlib import Path
 import sys
 import unittest
