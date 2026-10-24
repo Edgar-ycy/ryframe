@@ -2,23 +2,31 @@
 use std::path::Path;
 
 use super::super::{
-    super::json as json_io, evidence_model::*, evidence_prepare, prepare_state, resume,
-    resume_confirmed, resume_model,
+    super::json as json_io, evidence_model::*, evidence_prepare, guard::Generation, prepare_state,
+    resume, resume_confirmed, resume_model,
 };
 use crate::Result;
 
-pub(super) fn resolved(backend: &Path, target: &Path) -> Result<bool> {
-    if names(target, r"^failure.*\.json$")?.is_empty() {
-        return Ok(false);
+pub(super) fn resolved(backend: &Path, target: &Path, owner: Option<&Generation>) -> Result<bool> {
+    if let Some(owner) = owner {
+        owner.protects(target)?;
     }
-    check(
-        qualification(backend, target).unwrap_or(false),
-        "初始化历史存在未解决的失败记录",
-    )?;
+    let qualified = if names(target, r"^failure.*\.json$")?.is_empty() {
+        None
+    } else {
+        Some(qualification(backend, target, owner).unwrap_or(false))
+    };
+    if let Some(owner) = owner {
+        owner.protects(target)?;
+    }
+    let Some(qualified) = qualified else {
+        return Ok(false);
+    };
+    check(qualified, "初始化历史存在未解决的失败记录")?;
     Ok(target.join("failure.json").is_file())
 }
 
-fn qualification(backend: &Path, target: &Path) -> Result<bool> {
+fn qualification(backend: &Path, target: &Path, owner: Option<&Generation>) -> Result<bool> {
     let prepared = read(backend, &target.join("prepare.json"))?;
     json_io::exact(&prepared, resume_model::PREPARE, "prepare")?;
     let descriptor = &prepared["request"];
@@ -28,7 +36,7 @@ fn qualification(backend: &Path, target: &Path) -> Result<bool> {
     )?;
     if target.join("initialized.json").is_file() {
         let initialized = read(backend, &target.join("initialized.json"))?;
-        let inventory = resume::inventory::confirmed(backend, target, &initialized);
+        let inventory = resume::inventory::confirmed(backend, target, &initialized, owner);
         let migration = resume_confirmed::confirmed(backend, target, &initialized);
         if inventory || migration {
             return Ok(true);

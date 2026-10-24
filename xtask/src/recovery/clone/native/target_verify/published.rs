@@ -69,7 +69,7 @@ fn history(
     let before = tree::initialized(backend, target, locked)?;
     let files = super::tree::snapshot(backend, target, locked)?;
     let inputs = guard::Inputs::open(super::tree::files(target, &files)?)?;
-    let resumed = failure::resolved(backend, target)?;
+    let resumed = failure::resolved(backend, target, owner)?;
     let initialized = read(backend, filename)?;
     let prepared = read(backend, &target.join("prepare.json"))?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;

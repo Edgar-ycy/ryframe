@@ -129,12 +129,37 @@ pub(super) fn state(
     )
 }
 
-pub(crate) fn confirmed(backend: &Path, target: &Path, initialized: &Value) -> bool {
-    verify(backend, target, initialized).is_ok()
+pub(crate) fn confirmed(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> bool {
+    verify(backend, target, initialized, owner).is_ok()
 }
 
-fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
-    let files = super::super::tree::snapshot(backend, target, false)?;
+fn verify(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> Result<()> {
+    if let Some(owner) = owner {
+        owner.protects(target)?;
+    }
+    let result = verify_evidence(backend, target, initialized, owner);
+    let protected = owner.map_or(Ok(()), |owner| owner.protects(target));
+    result?;
+    protected
+}
+
+fn verify_evidence(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> Result<()> {
+    let files = super::super::tree::snapshot(backend, target, owner.is_some())?;
     let paths = names(target, r"^resume-initialize-.*\.confirmed\.json$")?;
     check(
         paths.len() == 1
@@ -216,7 +241,7 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
         Some((attempt, &value["at"])),
     )?;
     check(
-        super::super::tree::snapshot(backend, target, false)? == files,
+        super::super::tree::snapshot(backend, target, owner.is_some())? == files,
         "库存续作判定期间目标证据树发生变化",
     )
 }

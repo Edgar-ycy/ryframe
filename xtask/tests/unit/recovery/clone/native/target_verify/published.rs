@@ -268,3 +268,113 @@ fn published_owned_history_rejects_unknown_lock_contents_without_cleanup() {
     owner.finish(Ok(())).unwrap();
     assert!(!fixture.target.join("initialize.lock").exists());
 }
+
+fn inventory_recovered() -> fixture::Fixture {
+    let fixture = complete();
+    let attempt = "a".repeat(32);
+    let initial = fixture.target.join("inventory-initial");
+    let resumed = fixture.target.join(format!("inventory-resume-{attempt}"));
+    // 复用原 fixture 的完整四库八份输出和前后来源绑定，不伪造库存通过结果。
+    fs::rename(&initial, &resumed).unwrap();
+    fs::create_dir(&initial).unwrap();
+    write(
+        &initial.join("failure.json"),
+        &json!({"format_version":1,
+        "status":"side_inventory_failed","stage":"inputs","error_type":"FileNotFoundError",
+        "remote_writes":0,"target_ready":false,"clone_verified":false}),
+    );
+    let failure_path = fixture.target.join("failure.json");
+    write(
+        &failure_path,
+        &json!({"status":"needs_reconciliation","stage":"inventory",
+        "at":"2026-10-18T00:03:59Z","error_type":"InventoryCaptureError","reason":"fixture inventory failure",
+        "automatic_retry":false,"automatic_resource_cleanup":false,"fresh_target_initialized":false,
+        "clone_verified":false,"restore_qualified":false}),
+    );
+    let failed = binding(&fixture.backend, &failure_path).unwrap();
+    let prepared = json_io::read(&fixture.local.join("prepared-files.json")).unwrap();
+    let prepared_files = json!({"descriptor":binding(&fixture.backend, &fixture.local.join("prepared-files.json")).unwrap(),
+        "registration":prepared["registration"],"predecessor":prepared["predecessor"]});
+    let intent_path = fixture
+        .target
+        .join(format!("resume-initialize-{attempt}.intent.json"));
+    write(
+        &intent_path,
+        &json!({"format_version":1,"kind":"devex-clone-initialize-resume-intent",
+        "attempt":attempt,"at":"2026-10-18T00:04:01Z","failure":failed,
+        "prepared_files":prepared_files,"remote_writes":0}),
+    );
+    let plan = json_io::read(&fixture.target.join("reset-plan.json")).unwrap();
+    write(
+        &fixture
+            .target
+            .join(format!("resume-reset-plan-{attempt}.json")),
+        &plan,
+    );
+    let mut initialized = json_io::read(&fixture.target.join("initialized.json")).unwrap();
+    let executable = &initialized["generation"]["maintenance"]["artifacts"]["reset"]["executable"];
+    let stdout = format!(
+        "{}\nplan_hash={}\n",
+        serde_json::to_string(&plan["manifest"]).unwrap(),
+        plan["plan_hash"].as_str().unwrap()
+    );
+    write(
+        &fixture.target.join(format!(
+            "resume-reset-plan-{attempt}-{}.command.json",
+            "b".repeat(32)
+        )),
+        &command(json!([executable, "plan"]), json!(stdout)),
+    );
+    initialized["completed_at"] = json!("2026-10-18T00:05:00Z");
+    initialized["inventory"]["receipt"] =
+        binding(&fixture.backend, &resumed.join("inventory.json")).unwrap();
+    initialized["history"] = proof::history(&fixture.backend, &fixture.target).unwrap();
+    write(
+        &fixture.target.join("initialized-candidate.json"),
+        &initialized,
+    );
+    write(&fixture.target.join("initialized.json"), &initialized);
+    write(
+        &fixture
+            .target
+            .join(format!("resume-initialize-{attempt}.confirmed.json")),
+        &json!({"format_version":1,"kind":"devex-clone-initialize-resume-confirmed","attempt":attempt,
+        "at":"2026-10-18T00:05:01Z","intent":binding(&fixture.backend, &intent_path).unwrap(),
+        "failure":failed,"prepared_files":prepared_files,
+        "initialized":binding(&fixture.backend, &fixture.target.join("initialized.json")).unwrap(),"remote_writes":0}),
+    );
+    refresh(&fixture);
+    fixture
+}
+
+#[test]
+fn published_owned_inventory_recovery_keeps_complete_history_and_rejects_unknown_failure() {
+    let fixture = inventory_recovered();
+    let filename = fixture.target.join("initialized.json");
+    let expected = unlocked_history(&fixture.backend, &filename).unwrap();
+    assert!(super::super::resume::inventory::confirmed(
+        &fixture.backend,
+        &fixture.target,
+        &expected.0,
+        None
+    ));
+    let owner = guard::Generation::acquire(&fixture.backend, &fixture.target).unwrap();
+    assert!(super::super::resume::inventory::confirmed(
+        &fixture.backend,
+        &fixture.target,
+        &expected.0,
+        Some(&owner)
+    ));
+    let observed = owned_history(&fixture.backend, &filename, &owner);
+    assert_eq!(owner.finish(observed).unwrap(), expected);
+    let unknown = fixture.target.join("failure-unrecognized.json");
+    fs::write(&unknown, b"unknown failure must survive").unwrap();
+    refresh(&fixture);
+    let owner = guard::Generation::acquire(&fixture.backend, &fixture.target).unwrap();
+    let error = owned_history(&fixture.backend, &filename, &owner)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("未解决"), "{error}");
+    assert_eq!(fs::read(&unknown).unwrap(), b"unknown failure must survive");
+    owner.finish(Ok(())).unwrap();
+}

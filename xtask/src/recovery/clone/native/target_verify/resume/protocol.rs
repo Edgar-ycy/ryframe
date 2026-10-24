@@ -84,9 +84,9 @@ fn dispatch(value: &Value, operation: &str, fields: &[&str]) -> Result<Value> {
                 .as_bool()
                 .ok_or("初始化锁标志必须为布尔值")?,
         ),
-        "inventory-resume-confirmed" => {
-            Ok(json!({"confirmed":inventory::confirmed(backend, target, &value["initialized"])}))
-        }
+        "inventory-resume-confirmed" => Ok(
+            json!({"confirmed":inventory::confirmed(backend, target, &value["initialized"], None)}),
+        ),
         "inventory-resume-records" => {
             inventory_records::execute(backend, target, &value["context"], &value["success"])
         }
