@@ -5,28 +5,20 @@ import subprocess
 import sys
 import unittest
 from unittest.mock import Mock, patch
-from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_source_proof as proof
 import full_stack_process as process
 import native_s3_client
-from artifact_digests import file_digest
+from rate_limit_tool import tool_binding
 
 
 class HistoricalProducerTests(unittest.TestCase):
     def setUp(self):
         self.expected = {"pid": 45940, "started": "134329416910833259", "executable": str(Path(__file__).resolve())}
         self.run = Mock()
-        holder = WorkspaceDirectory(Path(__file__).resolve().parents[2] / ".local-tests", prefix="recorded-process-bridge-")
-        self.addCleanup(holder.cleanup)
-        tool = Path(holder.name) / "native.exe"
-        tool.write_bytes(b"bound-tool-fixture")
-        binding = {"format_version": 1, "kind": "ryframe-native-rate-limit-tool",
-                   "path": str(tool), **file_digest(tool)}
-        installed = patch.object(native_s3_client, "tool_binding", return_value=binding)
-        installed.start()
-        self.addCleanup(installed.stop)
+        if tool_binding() is None:
+            raise RuntimeError("本测试必须通过正式 run_checks --rate-limit-tool-binding 入口安装协调器绑定")
 
     @staticmethod
     def response(value):
@@ -45,8 +37,10 @@ class HistoricalProducerTests(unittest.TestCase):
         for value in ({}, {"stopped": True}, {"stopped": 1, "signals_sent": 0},
                       {"stopped": False, "signals_sent": 0}, {"stopped": True, "signals_sent": False},
                       {"stopped": True, "signals_sent": 0.0}, {"stopped": True, "signals_sent": 1}, {"stopped": True, "signals_sent": 0, "extra": True}):
-            with self.subTest(value=value), patch.object(proof.subprocess, "run", return_value=self.response(value)), self.assertRaises(ValueError):
-                proof.require_recorded_producer_stopped(self.expected)
+            with self.subTest(value=value), patch.object(proof.subprocess, "run", return_value=self.response(value)) as run:
+                with self.assertRaises(ValueError):
+                    proof.require_recorded_producer_stopped(self.expected)
+                run.assert_called_once()
 
     def test_native_failure_propagates_without_retry_or_unbound_fallback(self):
         with patch.object(proof.subprocess, "run", side_effect=OSError("native unavailable")) as run:
