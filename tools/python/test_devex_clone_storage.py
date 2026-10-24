@@ -16,6 +16,9 @@ from devex_clone_run_state import (binding, begin, bind_controller_attempt, fini
 from full_stack_process import process_identity, write_receipt
 
 
+_REAL_POPEN = subprocess.Popen
+
+
 class StorageTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
@@ -58,6 +61,7 @@ class StorageTests(unittest.TestCase):
         self.child = Mock(pid=self.new["pid"])
         self.child.poll.return_value = None
         self.child.wait.return_value = 0
+        self.rustfs_launch = Mock(side_effect=self.popen)
 
     def file(self, name, contents):
         path = self.root / name
@@ -73,6 +77,18 @@ class StorageTests(unittest.TestCase):
         if pid == os.getpid():
             return self.controller
         return self.new if pid == self.new["pid"] and self.alive else None
+
+    def route_popen(self, *args, **kwargs):
+        command = args[0] if args else kwargs.get("args")
+        executable = kwargs.get("executable")
+        if executable is None and isinstance(command, (list, tuple)) and command:
+            executable = command[0]
+        if isinstance(executable, (str, bytes, os.PathLike)):
+            actual = os.path.normcase(os.path.abspath(os.fsdecode(executable)))
+            expected = os.path.normcase(os.path.abspath(self.request["executable"]["path"]))
+            if actual == expected:
+                return self.rustfs_launch(*args, **kwargs)
+        return _REAL_POPEN(*args, **kwargs)
 
     def popen(self, *_args, **kwargs):
         self.assertNotIn("RUSTFS_UNDECLARED", kwargs["env"])
@@ -104,7 +120,7 @@ class StorageTests(unittest.TestCase):
         stack.enter_context(patch.object(process, "verify_listener"))
         stack.enter_context(patch.object(process, "wait_ready"))
         stack.enter_context(patch.object(process, "terminate_owned_process", side_effect=self.terminate))
-        stack.enter_context(patch.object(process.subprocess, "Popen", side_effect=self.popen))
+        stack.enter_context(patch.object(process.subprocess, "Popen", side_effect=self.route_popen))
         return stack
 
     @staticmethod
@@ -358,13 +374,15 @@ class StorageTests(unittest.TestCase):
         self.assertTrue((self.directory / "storage-source/a0001/failure-cleanup.json").exists())
 
     def test_popen_constructor_failure_remains_unknown_without_returned_handle(self):
-        with self.patches(), patch.object(process.subprocess, "Popen", side_effect=OSError("launch failed")):
+        with self.patches(), patch.object(self, "rustfs_launch", side_effect=OSError("launch failed")) as launch:
             with self.assertRaises(OSError):
                 self.execute("restart")
+            launch.assert_called_once()
         self.assertFalse((self.directory / "storage-source/a0001/not-started.json").exists())
         with self.patches():
             with self.assertRaises(ValueError):
                 self.execute("restart")
+        self.rustfs_launch.assert_not_called()
 
     def test_receipt_write_failure_with_exact_child_reaped_can_restart(self):
         original_write = process.write_json
@@ -376,8 +394,10 @@ class StorageTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.execute("restart")
         self.assertFalse(self.alive)
+        self.assertEqual(self.rustfs_launch.call_count, 1)
         with self.patches():
             self.execute("restart")
+        self.assertEqual(self.rustfs_launch.call_count, 2)
 
     def test_cleanup_failure_does_not_replace_original_start_error(self):
         original = TimeoutError("not ready")
