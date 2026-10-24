@@ -139,7 +139,7 @@ fn rebind_receipt(input: &Value) -> Result<()> {
     Ok(())
 }
 
-fn bound_result(backend: &Path, input: &Value) -> Result<Value> {
+pub(crate) fn bound_result(backend: &Path, input: &Value) -> Result<Value> {
     document::exact(
         input,
         &["value", "runtime", "handoff", "in_progress"],

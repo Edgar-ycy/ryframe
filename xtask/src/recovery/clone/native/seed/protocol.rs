@@ -16,7 +16,7 @@ use std::{
 };
 
 #[path = "guards/mod.rs"]
-mod guards;
+pub(crate) mod guards;
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
