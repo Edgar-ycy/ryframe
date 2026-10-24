@@ -223,7 +223,7 @@ fn historical_amendment_uses_the_requested_descriptor() {
     let descriptor = common::binding(&path).unwrap();
     let (number, _) = state::begin(&fixture.run, "post-copy", "amend", &json!({})).unwrap();
     state::finish(&fixture.run,number,Some(&json!({"status":"post_copy_amended","registration":descriptor,"sequence":1,"predecessor":base,
-        "runtime_directory":fixture.run.join("post-copy/runtime-0001"),"remote_writes":0,"worker_must_remain_stopped":true,"restore_qualified":false})),None).unwrap();
+        "runtime_directory":fixture.run.join("post-copy").join("runtime-0001"),"remote_writes":0,"worker_must_remain_stopped":true,"restore_qualified":false})),None).unwrap();
     assert_eq!(
         registration::resolve(
             &fixture.backend,
