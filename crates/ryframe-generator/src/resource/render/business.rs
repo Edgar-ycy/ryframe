@@ -199,7 +199,6 @@ fn api_content(content: String, model_path: &str, name: &str) -> String {
             &format!("crate::generated::handlers::{name}::"),
         )
         .replace("super::dto::", &format!("crate::generated::dto::{name}::"))
-        .replace("serde_json::", "ryframe_sdk::serde_json::")
 }
 
 fn handler_content(resource: &ResourceIr, header: &str, model_path: &str) -> String {
@@ -301,4 +300,5 @@ fn shared_content(content: String) -> String {
         .replace("validator::", "ryframe_sdk::validator::")
         .replace("chrono::", "ryframe_sdk::chrono::")
         .replace("rust_decimal::", "ryframe_sdk::rust_decimal::")
+        .replace("serde_json::", "ryframe_sdk::serde_json::")
 }

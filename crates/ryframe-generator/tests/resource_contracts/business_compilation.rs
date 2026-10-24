@@ -394,6 +394,7 @@ pub struct GlobalItem {
     pub id: i64,
     #[resource(unique, filter, sort, sql_type = "VARCHAR(32)")]
     pub code: String,
+    pub payload: Option<ryframe_sdk::serde_json::Value>,
     #[resource(read_only)]
     pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
     #[resource(read_only)]

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix generated business models and entities with JSON fields referencing an undeclared direct `serde_json` dependency. Generate the type through the SDK's public export and include a JSON field in the existing real business compilation scenario.
+
 - Reuse the shared ownership fixture and file configuration for real MySQL tenant-projection scenarios on shared-control and an independent dedicated target. Check minimal identity/department facts, stale-version rejection, and complete rollback preimages after publication failure; explicitly close the target pool before successful cleanup and retain failed scenes.
 
 - Initialize the real MySQL first-password-change acceptance case by exporting private initialization SQL through the official migration CLI, importing it into an owned empty database, and verifying it. Preserve ordinary-user password changes, old-credential rejection, refresh, and repeated-migration behavior, and check the administrator's explicit password and first-change flag.
