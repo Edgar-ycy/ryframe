@@ -102,7 +102,10 @@ fn complete_single_runtime_keeps_full_creation_time_and_empty_log_without_live_c
     let fixture = Fixture::new();
     let result = fixture.read().unwrap();
     assert_eq!(result.as_object().unwrap().len(), 6);
-    assert_eq!(result["runtime_directory"], json!(fixture.runtime));
+    assert_eq!(
+        result["runtime_directory"],
+        json!(super::canonical(&fixture.runtime).unwrap())
+    );
     assert_eq!(result["generations"].as_array().unwrap().len(), 1);
     assert_eq!(
         result["generations"][0]["identity"],
