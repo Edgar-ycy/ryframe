@@ -38,17 +38,17 @@ const CLEAN_FILES: &[(&str, &str)] = &[
     ("前端 包含空格/openapi/openapi.json", "{}"),
     (
         "前端 包含空格/src/index.ts",
-        "export const capabilityCatalog = []",
+        "RyFrame clean frontend source fixture",
     ),
     (
         "前端 包含空格/scripts/generate.mjs",
-        "export const domains = ['core']",
+        "RyFrame clean generator fixture",
     ),
     (
         "前端 包含空格/scripts/headers.ts",
-        "export const headers = ['Accept']",
+        "RyFrame clean headers fixture",
     ),
-    ("前端 包含空格/vite.config.ts", "export default {}"),
+    ("前端 包含空格/vite.config.ts", "RyFrame clean fixture"),
     ("CHANGELOG.md", "service_accounts 历史功能"),
     ("AGENTS.md", "ServiceAccount 未来可能重新设计"),
     ("scripts/tests/removed.txt", "sys_service_account 删除断言"),
@@ -168,15 +168,15 @@ fn product_definitions_cover_every_original_location_and_extra_entry_points() {
         ("catalog/access.toml", "key = \"service-accounts\""),
         (
             "前端 包含空格/src/index.ts",
-            "export { ServiceAccessAudit } from './audit'",
+            "Removed identity fixture: ServiceAccessAudit",
         ),
         (
             "前端 包含空格/scripts/generate.mjs",
-            "export const key = 'RyFrameApiKey'",
+            "Removed identity fixture: RyFrameApiKey",
         ),
         (
             "前端 包含空格/scripts/headers.ts",
-            "export const key = 'X-RyFrame-Delegation'",
+            "Removed identity fixture: X-RyFrame-Delegation",
         ),
         ("Cargo.toml", "service_credentials"),
         ("crates/api/build.rs", "PepperKeyring"),
