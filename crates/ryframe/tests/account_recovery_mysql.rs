@@ -22,6 +22,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 mod mysql;
 #[path = "../../ryframe-adapters/tests/support/configuration.rs"]
 mod redis_configuration;
+#[path = "account_recovery_mysql/sql_initialization.rs"]
+mod sql_initialization;
 
 const OLD_PASSWORD: &str = "AbandonedRandom123!";
 const NEW_PASSWORD: &str = "RecoveredUser123!";
@@ -216,14 +218,7 @@ async fn initial_user_login_requires_and_completes_password_change() {
     }
     initialize();
     mysql::run_mysql_test("initial-user-login", |database| async move {
-        let hashes = migration::BootstrapHashes::new(
-            password::hash("ExplicitAdmin123!").map_err(message)?,
-            password::hash("123456").map_err(message)?,
-        )
-        .map_err(message)?;
-        migration::up(&database, Some(&hashes))
-            .await
-            .map_err(message)?;
+        sql_initialization::import(&database).await?;
         let (_, auth) = services(database.clone())?;
         let initial = auth
             .login("system", "user", "123456")
@@ -272,6 +267,12 @@ async fn initial_user_login_requires_and_completes_password_change() {
                 .user_info
                 .password_change_required
         );
+        let admin = auth
+            .login("system", "admin", sql_initialization::ADMIN_PASSWORD)
+            .await
+            .map_err(message)?;
+        assert!(admin.user_info.password_change_required);
+        assert!(auth.login("system", "admin", "123456").await.is_err());
         Ok(())
     })
     .await;

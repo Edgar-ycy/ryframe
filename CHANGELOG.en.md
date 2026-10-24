@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Initialize the real MySQL first-password-change acceptance case by exporting private initialization SQL through the official migration CLI, importing it into an owned empty database, and verifying it. Preserve ordinary-user password changes, old-credential rejection, refresh, and repeated-migration behavior, and check the administrator's explicit password and first-change flag.
+
 - Declare the shared file-ownership fixture dependency for targeted composition-root MySQL tests, avoiding accidental reliance on unrelated binary features. Existence and active-connection counts explicitly return unsigned values, with safe decoding and database-error-code diagnostics. API and migration dependency boundaries remain independent.
 
 - The generator and formal business fixtures share a fixed build directory through file configuration, avoiding MSVC output-path failures in deeply nested workspaces. Keep the lockfile produced by business creation instead of recomputing it wholesale. Acceptance command failures identify the program and working directory and provide configuration guidance for recognized C1083 invalid-path errors without exposing private subprocess output.
