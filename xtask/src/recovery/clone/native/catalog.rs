@@ -117,7 +117,7 @@ pub(crate) fn load(root: &Path) -> Result<Loaded> {
         .filter(|(table, _)| !EXCLUDED.contains(&table.as_str()))
         .collect();
 
-    let generated_tenant = parse_generated(root, &generated_content)?;
+    let (generated_tenant, mut generated_sources) = parse_generated(root, &generated_content)?;
     let baseline = parse_schema(&baseline_content)?;
     if baseline.keys().cloned().collect::<BTreeSet<_>>()
         != REVIEWED_TENANT
@@ -148,6 +148,7 @@ pub(crate) fn load(root: &Path) -> Result<Loaded> {
     tenant.extend(business.columns);
 
     let mut sources = vec![sql_path, generated_path, baseline_path];
+    sources.append(&mut generated_sources);
     sources.append(&mut business.sources);
     Ok(Loaded {
         control,
@@ -185,7 +186,7 @@ fn parse_ordered_schema(content: &str) -> Result<OrderedCatalog> {
     Ok(result)
 }
 
-fn parse_generated(root: &Path, content: &str) -> Result<Catalog> {
+fn parse_generated(root: &Path, content: &str) -> Result<(Catalog, Vec<PathBuf>)> {
     let descriptor = Regex::new(
         r#"(?s)TenantDataTableDescriptor \{\s*table: "([a-z0-9_]+)",.*?tenant_column: "([a-z0-9_]+)",.*?column_types: &\[(.*?)\],.*?has_generated_columns: (true|false),"#,
     )?;
@@ -195,7 +196,7 @@ fn parse_generated(root: &Path, content: &str) -> Result<Catalog> {
     let entries = descriptor.captures_iter(content).collect::<Vec<_>>();
     if empty.is_match(content) {
         if entries.is_empty() {
-            return Ok(Catalog::new());
+            return Ok((Catalog::new(), Vec::new()));
         }
         return Err("空生成租户目录包含描述符".into());
     }
@@ -205,6 +206,7 @@ fn parse_generated(root: &Path, content: &str) -> Result<Catalog> {
     let ddl_pattern = Regex::new(r##"(?s)pub const CREATE_TABLE_DDL: &str = r#"(.*?)"#;"##)?;
     let type_pattern = Regex::new(r#""([a-z]+)""#)?;
     let mut result = Catalog::new();
+    let mut sources = Vec::new();
     for part in entries {
         let table = &part[1];
         if !table.starts_with("biz_")
@@ -249,8 +251,9 @@ fn parse_generated(root: &Path, content: &str) -> Result<Catalog> {
             return Err("生成租户描述符与迁移列类型不一致".into());
         }
         result.insert((*table).to_owned(), columns.into_iter().collect());
+        sources.push(migrations[0].to_path_buf());
     }
-    Ok(result)
+    Ok((result, sources))
 }
 
 fn read_text(path: &Path) -> Result<String> {
