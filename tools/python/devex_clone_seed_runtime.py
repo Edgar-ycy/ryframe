@@ -414,10 +414,6 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
                     or not isinstance(response["result"], dict)):
                 raise ValueError("seed 原生登记未完成；核对当前 attempt、控制器、目标锁和绑定配置，禁止自动重放")
             return response["result"]
-        if mode == "source-register":
-            from devex_clone_seed_source import register_source
-
-            return register_source(backend, directory, value, number)
         request = registered(backend, directory)
         # 持锁阶段构造上下文必须携带同一锁身份，初始化文件树复核才不会被 guard 锁定拒绝。
         context = Context(backend, directory, value, number, stage="seed-runtime",

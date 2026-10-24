@@ -172,7 +172,7 @@ class PublishedSeedTests(unittest.TestCase):
         initial = {"initialized": True}
         before = {path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()}
         with patch.object(source, "load_state", return_value=state), patch.object(source, "validate_request"), \
-                patch.object(source, "initialization_history", side_effect=ValueError("缺少当前 fresh wrapper")) as fresh, \
+                patch("devex_clone_factory_context.initialization_history", side_effect=ValueError("缺少当前 fresh wrapper")) as fresh, \
                 patch("devex_clone_factory_context._initialization_evidence",
                       return_value=(initial, seed_target)) as core:
             observed = source._registered_source(self.backend, descriptor, live_storage=False,
@@ -252,7 +252,7 @@ class PublishedSeedTests(unittest.TestCase):
         filename = self.local / "initialized.json"
         descriptor = self.file(filename, {"initialized": True})
         with patch("devex_clone_factory_context._initialization_evidence", side_effect=ValueError("原初始化内容或阶段不符")), \
-                patch.object(source, "initialization_history", side_effect=AssertionError("不得回退其他初始化路径")) as fresh, \
+                patch("devex_clone_factory_context.initialization_history", side_effect=AssertionError("不得回退其他初始化路径")) as fresh, \
                 self.assertRaisesRegex(ValueError, "原初始化内容或阶段"):
             source._published_initialization(self.backend, {"initialized": descriptor})
         fresh.assert_not_called()
