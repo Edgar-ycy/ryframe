@@ -96,6 +96,12 @@ pub(crate) fn accepts(kind: &str, mode: &str) -> bool {
     }
 }
 
+pub(crate) fn producer_phase(stage: &str, mode: &str) -> bool {
+    KINDS
+        .iter()
+        .any(|(kind, expected_stage, _)| *expected_stage == stage && accepts(kind, mode))
+}
+
 pub(crate) fn build(request: &Value) -> Result<Value> {
     let object = json_io::exact(
         request,
