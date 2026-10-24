@@ -5,6 +5,10 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 pub(super) fn verify(root: &Path, directory: &Path) -> Result<()> {
+    verify_observed(root, directory, || {})
+}
+
+pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnce()) -> Result<()> {
     let pair_path = directory.join("source-pair.json");
     let runtime_path = directory.join("runtime-evidence.json");
     if !pair_path.exists() {
@@ -13,6 +17,7 @@ pub(super) fn verify(root: &Path, directory: &Path) -> Result<()> {
         }
         return Ok(());
     }
+    let mut bindings = evidence_bindings(directory)?;
     let build_path = directory.join("build-evidence.json");
     let build = read_json(&build_path, "全栈构建证据", 4 * 1024 * 1024)?;
     exact_object(
@@ -33,7 +38,51 @@ pub(super) fn verify(root: &Path, directory: &Path) -> Result<()> {
         return Err("全栈构建证据格式或后端路径无效".into());
     }
     let source = &build["source"];
+    if source["fixture"] == "business" {
+        for descriptor in [
+            &source["fixture_receipt"],
+            &source["fixture_definition"]["model"],
+        ] {
+            let path = PathBuf::from(text_field(descriptor, "path", "业务来源证据")?);
+            bindings.push((path.clone(), file_binding(&path, "业务来源证据")?));
+        }
+    }
     verify_source(root, directory, source)?;
+    verify_artifacts(directory, &build)?;
+    let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
+    let expected = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":file_binding(&build_path,"构建证据")?,"runtime":file_binding(&directory.join("runtime.json"),"运行收据")?});
+    if actual != expected {
+        return Err("全栈运行来源证据与当前来源不匹配".into());
+    }
+    // 每次调用独立的观察点，不使用全局状态；随后必须重读同一来源和全部证据。
+    observe();
+    verify_source(root, directory, source)?;
+    for (path, original) in bindings {
+        if file_binding(&path, "全栈来源前后绑定")? != original {
+            return Err("全栈来源证据在产物核验期间发生变化".into());
+        }
+    }
+    Ok(())
+}
+
+fn evidence_bindings(directory: &Path) -> Result<Vec<(PathBuf, Value)>> {
+    [
+        "build-evidence.json",
+        "source-pair.json",
+        "runtime.json",
+        "runtime-evidence.json",
+        "binaries.json",
+    ]
+    .into_iter()
+    .map(|name| {
+        let path = directory.join(name);
+        let binding = file_binding(&path, "全栈来源初始绑定")?;
+        Ok((path, binding))
+    })
+    .collect()
+}
+
+fn verify_artifacts(directory: &Path, build: &Value) -> Result<()> {
     let binaries = read_json(
         &directory.join("binaries.json"),
         "全栈二进制清单",
@@ -58,11 +107,6 @@ pub(super) fn verify(root: &Path, directory: &Path) -> Result<()> {
         if binaries[name] != binding["path"] || *binding != file_binding(&path, "构建产物")? {
             return Err("全栈构建证据与二进制清单或产物不匹配".into());
         }
-    }
-    let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
-    let expected = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":file_binding(&build_path,"构建证据")?,"runtime":file_binding(&directory.join("runtime.json"),"运行收据")?});
-    if actual != expected {
-        return Err("全栈运行来源证据与当前来源不匹配".into());
     }
     Ok(())
 }
@@ -155,6 +199,7 @@ fn verify_source_identity(pair: &Value) -> Result<()> {
     let commit_pattern = regex::Regex::new(r"^[a-f0-9]{40}$")?;
     for side in ["backend", "frontend"] {
         let item = &pair["sources"][side];
+        exact_object(item, &["head", "patch_sha256", "files"], "原始来源快照")?;
         let head = text_field(item, "head", "原始来源")?;
         if !commit_pattern.is_match(head)
             || item["patch_sha256"] != crate::devex::runtime_native::artifacts::sha(&[])

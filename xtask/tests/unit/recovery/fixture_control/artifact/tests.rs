@@ -294,14 +294,12 @@ fn artifact_runtime_rejects_duplicate_json_and_unexpected_evidence() {
     assert!(runtime::verify(root.path(), &directory).is_err());
 }
 
-#[test]
-fn artifact_source_rejects_source_and_receipt_drift() {
-    let root = tempfile::tempdir().unwrap();
-    let (directory, _) = runtime_fixture(root.path());
+fn source_fixture(root: &Path) -> std::path::PathBuf {
+    let (directory, _) = runtime_fixture(root);
     let git = |args: &[&str]| {
         let output = std::process::Command::new("git")
             .arg("-C")
-            .arg(root.path())
+            .arg(root)
             .args(args)
             .output()
             .unwrap();
@@ -312,11 +310,11 @@ fn artifact_source_rejects_source_and_receipt_drift() {
         );
     };
     fs::write(
-        root.path().join(".gitignore"),
+        root.join(".gitignore"),
         "runtime/\nconfig/\nworker-config/\n",
     )
     .unwrap();
-    fs::write(root.path().join("source.txt"), b"source").unwrap();
+    fs::write(root.join("source.txt"), b"source").unwrap();
     git(&["init", "--quiet"]);
     git(&["add", "."]);
     git(&[
@@ -329,7 +327,7 @@ fn artifact_source_rejects_source_and_receipt_drift() {
         "-m",
         "fixture",
     ]);
-    let snapshot = crate::recovery::clone::native::source::capture(root.path())
+    let snapshot = crate::recovery::clone::native::source::capture(root)
         .unwrap()
         .source
         .snapshot;
@@ -338,7 +336,7 @@ fn artifact_source_rejects_source_and_receipt_drift() {
     let mut pair = json!({"format_version":1,"backend_sha":source["head"],"frontend_sha":source["head"],"run_id":1,"attempt":1,"sources":{"backend":source,"frontend":source}});
     fs::write(&pair_path, serde_json::to_vec(&pair).unwrap()).unwrap();
     pair["receipt"] = super::super::file_binding(&pair_path, "pair").unwrap();
-    let source = json!({"format_version":1,"fixture":"core","backend_root":root.path(),"source_pair":pair,"original":{"backend":source}});
+    let source = json!({"format_version":1,"fixture":"core","backend_root":root,"source_pair":pair,"original":{"backend":source}});
     let binaries: Value =
         serde_json::from_slice(&fs::read(directory.join("binaries.json")).unwrap()).unwrap();
     let artifacts = binaries
@@ -353,7 +351,7 @@ fn artifact_source_rejects_source_and_receipt_drift() {
         })
         .collect::<serde_json::Map<_, _>>();
     let build_path = directory.join("build-evidence.json");
-    let build = json!({"format_version":1,"kind":"full-stack-build","backend_root":root.path(),"source":source,"artifacts":artifacts});
+    let build = json!({"format_version":1,"kind":"full-stack-build","backend_root":root,"source":source,"artifacts":artifacts});
     fs::write(&build_path, serde_json::to_vec(&build).unwrap()).unwrap();
     let runtime_evidence = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":super::super::file_binding(&build_path,"build").unwrap(),"runtime":super::super::file_binding(&directory.join("runtime.json"),"runtime").unwrap()});
     fs::write(
@@ -361,10 +359,93 @@ fn artifact_source_rejects_source_and_receipt_drift() {
         serde_json::to_vec(&runtime_evidence).unwrap(),
     )
     .unwrap();
+    directory
+}
+
+#[test]
+fn artifact_source_rejects_source_and_receipt_drift() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = source_fixture(root.path());
     runtime::verify(root.path(), &directory).unwrap();
     fs::write(root.path().join("source.txt"), b"drift").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
     fs::write(root.path().join("source.txt"), b"source").unwrap();
     fs::write(directory.join("runtime-evidence.json"), b"{}").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+}
+
+#[test]
+fn artifact_source_rejects_unconsumed_snapshot_fields_with_consistent_bindings() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = source_fixture(root.path());
+    super::source::verify(root.path(), &directory).unwrap();
+    let pair_path = directory.join("source-pair.json");
+    let mut pair = super::super::read_json(&pair_path, "pair", 16 * 1024).unwrap();
+    pair["sources"]["frontend"]["unconsumed"] = json!("must reject");
+    fs::write(&pair_path, serde_json::to_vec(&pair).unwrap()).unwrap();
+    pair["receipt"] = super::super::file_binding(&pair_path, "pair").unwrap();
+    let build_path = directory.join("build-evidence.json");
+    let mut build = super::super::read_json(&build_path, "build", 4 * 1024 * 1024).unwrap();
+    build["source"]["source_pair"] = pair;
+    fs::write(&build_path, serde_json::to_vec(&build).unwrap()).unwrap();
+    let evidence_path = directory.join("runtime-evidence.json");
+    let mut evidence = super::super::read_json(&evidence_path, "runtime", 4 * 1024 * 1024).unwrap();
+    evidence["source"] = build["source"].clone();
+    evidence["build_evidence"] = super::super::file_binding(&build_path, "build").unwrap();
+    fs::write(&evidence_path, serde_json::to_vec(&evidence).unwrap()).unwrap();
+    let error = super::source::verify(root.path(), &directory)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("原始来源快照"), "{error}");
+    assert!(error.contains("字段"), "{error}");
+}
+
+#[test]
+fn artifact_source_rechecks_source_and_all_consumed_receipts_after_observation() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = source_fixture(root.path());
+    let observed = std::cell::Cell::new(0);
+    super::source::verify_observed(root.path(), &directory, || observed.set(observed.get() + 1))
+        .unwrap();
+    assert_eq!(observed.get(), 1);
+    for name in [
+        "build-evidence.json",
+        "source-pair.json",
+        "runtime.json",
+        "runtime-evidence.json",
+        "binaries.json",
+    ] {
+        let path = directory.join(name);
+        let original = fs::read(&path).unwrap();
+        observed.set(0);
+        let error = super::source::verify_observed(root.path(), &directory, || {
+            observed.set(observed.get() + 1);
+            let mut changed = original.clone();
+            changed.push(b'\n');
+            fs::write(&path, changed).unwrap();
+        })
+        .unwrap_err()
+        .to_string();
+        assert_eq!(observed.get(), 1, "{name}");
+        assert!(
+            error.contains("发生变化") || error.contains("构建来源与源码组合不匹配"),
+            "{name}: {error}"
+        );
+        assert_ne!(fs::read(&path).unwrap(), original, "{name}");
+        fs::write(path, original).unwrap();
+    }
+    let path = root.path().join("source.txt");
+    let error = super::source::verify_observed(root.path(), &directory, || {
+        fs::write(&path, b"changed after artifacts").unwrap();
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("core 来源与当前源码不匹配"), "{error}");
+    assert_eq!(fs::read(&path).unwrap(), b"changed after artifacts");
+    fs::write(path, b"source").unwrap();
+    let evidence = directory.join("runtime-evidence.json");
+    fs::write(evidence, b"{}").unwrap();
+    observed.set(0);
+    assert!(super::source::verify_observed(root.path(), &directory, || observed.set(1)).is_err());
+    assert_eq!(observed.get(), 0);
 }
