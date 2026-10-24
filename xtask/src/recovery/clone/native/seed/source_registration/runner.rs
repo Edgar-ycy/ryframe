@@ -90,10 +90,10 @@ impl SourceRegisterRunner {
                 window.check()?;
                 let tool_path = Path::new(document::text(&tool["path"], "协调器工具")?);
                 let mut observe = |expected: &Value| {
-                    window.check()?;
+                    window.checkpoint()?;
                     let result =
                         quiet::require_stopped(&self.backend, request.run_dir, expected, tool_path);
-                    preserve(result, window.check(), "quiet 后置核验")
+                    preserve(result, window.checkpoint(), "quiet 后置核验")
                 };
                 let result = materialize::materialize(
                     &self.backend,
@@ -192,6 +192,17 @@ impl<'a> Frame<'a> {
         }
         Ok(())
     }
+    fn owner_checkpoint(&self) -> Result<()> {
+        let path = common::bound_file(
+            self.backend,
+            &self.owner_binding,
+            "统一运行 owner checkpoint",
+        )?;
+        if path != self.run.join("run.lock/owner.json") {
+            return Err("来源登记 owner 小文件绑定不属于原运行锁".into());
+        }
+        Ok(())
+    }
 }
 struct Paths {
     target: PathBuf,
@@ -234,6 +245,23 @@ struct Window<'a, 'b> {
     scope: &'a Scope,
 }
 impl Window<'_, '_> {
+    fn checkpoint(&self) -> Result<()> {
+        let result = preserve(
+            self.generation.checkpoint(),
+            self.ledger.check(),
+            "复制账本 guard",
+        );
+        let result = preserve(
+            result,
+            self.paths.check(self.frame.backend),
+            "目标及账本路径",
+        );
+        preserve(
+            result,
+            self.frame.owner_checkpoint(),
+            "运行 owner 小文件绑定",
+        )
+    }
     fn check(&self) -> Result<()> {
         let result = preserve(
             self.generation.check(),
