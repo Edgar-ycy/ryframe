@@ -1,7 +1,6 @@
 """显式只读导出开发性能测试的源数据；不初始化、修改源或目标，不登记备份恢复。"""
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import os
 from pathlib import Path
@@ -119,23 +118,3 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
                    "stderr": redact_object_diagnostic(getattr(error, "stderr", b""), os.environ),
                    "clone_verified": False, "restore_qualified": False})
         raise
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend-dir", type=Path, required=True)
-    parser.add_argument("--request", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--write", action="store_true", required=True, help="仅显式写入本地新证据，所有远端操作只读")
-    args = parser.parse_args()
-    try:
-        result = export_source(args.backend_dir.resolve(strict=True), args.request, args.output_dir)
-        print(f"status={result['status']} remote_writes=0 clone_verified=false restore_qualified=false")
-        return 0
-    except Exception as error:
-        print(f"status=source_export_failed error_type={type(error).__name__}")
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
