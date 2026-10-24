@@ -14,8 +14,8 @@ pub(super) struct Export {
 impl Export {
     pub(super) fn finish(mut self) -> Result<(), String> {
         let directory = self.directory.take().ok_or("私有 SQL 验收资源已释放")?;
-        let path = directory.keep();
-        fs::remove_dir_all(&path).map_err(|_| {
+        let path = directory.path().to_owned();
+        directory.close().map_err(|_| {
             format!(
                 "清理私有 SQL 验收材料失败；请核对目录权限，剩余现场保留于 {}",
                 path.display()
