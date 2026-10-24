@@ -1,5 +1,10 @@
 # 开发工具配置；本机覆盖可写入忽略目录 .local-tests/tools.toml。
 # 相对路径以此后端 Cargo Workspace 根目录为基准。
+# 开发监督器的完整覆盖示例；复制到本机工具文件并按需取消注释，不改变公共默认值。
+# [development]
+# config_dir = ".local-tests/dev-config"
+# verify_tenant_targets = ["shared-control"]
+
 [workspace]
 frontend_dir = "../ryframe-vue3"
 # CI 前端仓库；本地运行 frontend-source 时显式设置，CI 缺省为当前 owner/ryframe-vue3。

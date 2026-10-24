@@ -52,12 +52,7 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 模型驱动新建从 `ResourceModel` 生成 CRUD、迁移和受管资产；已有数据库用 `schema-import` 只读反向生成模型、CRUD 和迁移；运行目标已有表和业务行时，模型与历史迁移匹配后还必须显式 adopt，adopt 只登记结构，不执行建表 DDL 或改写业务行。`generator.source` 或 `--connection` 只决定结构来源，可取 `primary`、`sources.<name>` 或 `tenant_data.targets.<target-key>`；`storage` 或 `--database` 单独决定运行范围 `control|tenant`，二者不会自动映射。`source="local"` 在 control 范围读 primary，在 tenant 范围读 `tenant_data.default_target`，后者必须是 MySQL 目标；import 示例使用显式 primary。 资源生成前先编写并登记模型。
 
-```powershell
-cargo generate -- new-business order-business
-cargo generate -- new-business order-business --write
-cargo generate -- resource --package order-business
-cargo generate -- resource --package order-business --model Order --write
-```
+业务 crate 与资源生成命令见 [README：开发业务](../README.md#开发业务)，省略 `--write` 时预览。
 
 命令可从工作区根目录或业务 crate 的 `src` 等子目录执行；生成器默认读取后端 `workspace/config`。`--config-dir <directory>` 与 Builder `.configuration_directory(path)` 的相对路径统一以后端 Workspace 根目录解析。优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；`[generator] config_dir` 可省略，工具文件不通过环境变量覆盖。预览在隔离缓存编译模型、生成 CRUD 与迁移并报告差异；`sync_frontend=true` 或 `--sync-frontend` 还会导出本次候选 OpenAPI、同步 typed caller、生成列表表单和路由，并执行前端类型与 lint 检查。需先安装前端依赖；业务页面模板由前端仓库的 `scripts/resource-render/` 维护，后端通过固定 Corepack 入口传递已校验 IR，校验返回资产的版本、完整集合、归属和路径后才进入受管安装。候选副本复用 package.json 完全匹配的已安装前端环境，依赖不完整时直接报错，不隐式安装或改锁文件。`--no-sync-frontend` 可临时关闭，并且不调用前端渲染器。全部成功后，`--write` 统一安装两仓受管文件；并发改动拒绝覆盖，失败回滚未完成时报告备份路径。默认页面使用生成的 page.vue，模型的 `frontend_page="@/views/…/index.vue"` 可指定手写页面。`resource` 不写手写目录或覆盖历史迁移。描述符 reader 离线使用 Workspace 锁定版本、来源、校验和及 patch，不修改项目锁文件。配置支持 `package`、`models`、`tables`、`source`、`storage`、`strip_table_prefix` 和 `sync_frontend`；`resource --models Order,OrderItem` 覆盖模型列表，`import --tables biz_order,biz_order_item` 选择完整表批次。`run` 根据 tables 是否为空选择导入或模型生成，导入需 `--features schema-import`；`--plan` 只列同一执行计划，不编译、不连接数据库、不落盘。 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。生成的 `access.toml` 与 `access.rs` 由模型维护，脚手架通过 `.access_catalog(generated::access::CATALOG)` 接入模块；已有手写装配须补上该调用再重新生成，不能只登记资源而遗漏访问目录。默认模块父目录自动生成，`menu_parent` 可复用已有框架目录；目录、页面或权限冲突会整批停止。审阅生成结果后执行 `cargo migrate -- --config-dir .local-tests/dev-config control up`、`cargo migrate -- --config-dir .local-tests/dev-config control verify`；服务启动不自动补写菜单权限。新租户管理员默认获得租户业务 CRUD，普通用户和扩展操作手工授权；系统租户专用业务不复制到普通租户。已有租户不自动增加角色授权。
 
@@ -132,22 +127,11 @@ Unix 与 Windows 使用同一套 Rust fixture：xtask 调用本机 OpenSSL 生�
 
 `cargo xtask dev --config-dir .local-tests/dev-config` 只校验已登记数据库，不自动升级。配置目录优先使用显式 `--config-dir`，再读取 `.local-tests/tools.toml`、`config/tools.toml` 的 `[development].config_dir`，最后使用 `workspace/config`；相对路径均以后端 Workspace 根目录解析。未给 `--workspace-root` 时从当前目录向上寻找 Cargo 工作区，不读取旧的工作区环境覆盖入口。监督器为每代保存完整私有明文配置、locales 与 API／Worker／probe／migrate 专用目录，子进程仅设置 `APP_ENV=dev` 并通过 `--config-dir` 绑定角色。保存端口或实例编号会复用二进制切换新代次；API 使用配置的根实例编号，Worker 使用下一编号（1023 后回到 0），probe 避开运行中和候选编号并在正式切换前停止。候选失败恢复旧代次保存的完整配置、端口和编号；部分停止或身份未知时保留现场，不重复启动 Worker。仅注释或排版改变不重启，凭据与其他语义变化会被检测。公开 v3 manifest 只保存哈希及非凭据信息，旧格式不转换，私有配置不得公开。该主链仍待主控集成与运行验证，不能将静态检查视为整体验收；常用排障从 `cargo xtask check doctor` 开始。后端完整门禁与 CI 预检会拒绝自维护的 JS/TS 系列源文件，第三方 `vendor/` 单列保留；后端预检不再安装或执行 Node 测试。框架维护者通过 `cargo xtask check` 执行按变更规划的后端检查，通过 `cargo xtask check --full` 执行完整后端门禁，均不要求检出前端。跨仓契约和资源 Workspace 消费验证使用 `cargo xtask check --scope all --full`；单独检查前端使用 `--scope frontend`。这些命令不隐式运行真实浏览器。需要真实 MySQL、Redis、对象存储或浏览器的检查必须使用已登记的隔离环境。性能对比保持相同数据、配置和冷热条件，保存全部有效与失败样本；全栈恢复从初始化到业务核验连续运行。生产数据、共享数据库和未登记服务不得作为开发夹具。性能、恢复、发布和资源门禁均属于框架维护入口，具体参数以 `cargo xtask check --help` 为准；报告写入 `.local-tests/` 并绑定源码、环境和运行收据。 DevEx 导入测量的 XLSX 样本由 Rust xtask 的隐藏内部入口生成，不需要 Python 解析器。`.local-tests/devex/runtime.json` 的 `bindings.import_samples` 只绑定绝对 `template` 路径；`contract.import_samples` 继续固定真实模板 SHA-256 与当前样本模型 SHA-256。前端浏览器驱动通过 `cargo run --quiet --locked -p xtask` 的标准输入协议取得清单，继续限制超时、输出大小和失败信息，不拼接 shell 命令。性能样本按 namespace、worker、cycle 生成独立用户名和文件；浏览器样本包含成功行、重复行和无效部门行。读取和重写共用同一 ZIP/XML 校验核心，保留原模板其他成员、表头样式与表格结构，并拒绝路径穿越、重复或加密成员、符号链接、超出限额的归档和大文件保留成员冲突。身份环境模板检查也只调用该 Rust 入口并严格解析 JSON，不再维护第二套 XLSX 解析。限流配置的 TOML 深合并、字段校验、authority 与登录预算同样由 xtask 的 `__rate-limit` 隐藏入口统一执行；Rust 准备会话直接复用同一 authority 实现；Python 薄客户端只通过 stdin JSON 调用并严格解析结果，配置请求只携带 `backend`、`app_env`（`dev` 或 `test`）和可选的 `config_dir`；不接受字段环境覆盖。限流配置、全栈文件操作与参考数据准备的 Python 桥接必须通过正式 xtask 或 `run_checks.py` 绑定当前原生工具；缺少绑定时拒绝本次子进程调用，不通过 Cargo、PATH 或环境自动恢复工具。省略目录时读取后端 `config/`，相对目录以后端根目录解析。公共 `app.toml` 可缺省，所选 `app.{env}.toml` 必须存在；表递归合并，数组整体替换。错误保留稳定类别、配置文件、字段或语法位置及修复方法，不回显凭据或原始配置行。 运行测量文件 `.local-tests/devex/runtime.json` 的 `bindings.app_config_dir` 可显式选择应用配置目录，仍由 `APP_ENV` 选择环境文件；省略时使用后端 `config/`。正式运行测量在启动驱动前只读核对配置、实际身份池分布、限流配置、OpenAPI 操作目录和固定节奏摘要；非法输入会提前失败并给出不含凭据的原因，身份池选择结果与节奏约束由 Rust 提前校验。现有 HTTP 和浏览器测量驱动仍按原流程运行。
 
-前端改名或移动后在 `config/tools.toml` 设置路径，本机覆盖放在忽略的 `.local-tests/tools.toml`。以下集中展示工具文件各节；工具文件可登记租户迁移验证目标；环境数组整体替换。其中 `[development]` 字段只影响开发监督器，不能代替显式的数据库初始化。`cargo xtask dev --measure-once --case config-only --output .local-tests/dev-save.json` 选择保存测量场景；`--case` 和 `--output` 仅允许与 `--measure-once` 一起使用，默认场景为 `shared-runtime`，不改变历史测量结果合同。
+前端改名或移动后在 `config/tools.toml` 设置路径，本机覆盖放在忽略的 `.local-tests/tools.toml`。工具文件示例见下方链接；工具文件可登记租户迁移验证目标；环境数组整体替换。其中 `[development]` 字段只影响开发监督器，不能代替显式的数据库初始化。`cargo xtask dev --measure-once --case config-only --output .local-tests/dev-save.json` 选择保存测量场景；`--case` 和 `--output` 仅允许与 `--measure-once` 一起使用，默认场景为 `shared-runtime`，不改变历史测量结果合同。
 
 CI 配套前端仓库可在工具文件的 `[workspace].frontend_repository` 中显式设置为完整 `owner/repository`，本机 `.local-tests/tools.toml` 覆盖公共 `config/tools.toml`。省略该字段时，仅使用 GitHub 标准身份 `GITHUB_REPOSITORY_OWNER` 选择 `<owner>/ryframe-vue3`；本地没有该身份时必须配置此字段。空值、非法仓库名或换行会报错，不回退到环境覆盖；旧 `RYFRAME_FRONTEND_REPOSITORY` 和 `FRONTEND_REPOSITORY` 均不再作为配置入口。`cargo xtask check ci frontend-source` 同次输出 `ref`、`changed` 和 `repository`，各工作流使用该结果检出配套源码；`--plan` 只展示任务图，不解析 GitHub owner 或写入 job 输出。
 
-```toml
-[development]
-config_dir = ".local-tests/dev-config"
-verify_tenant_targets = ["shared-control"]
-[workspace]
-frontend_dir = "../web"
-frontend_repository = "your-owner/ryframe-vue3"
-[generator]
-config_dir = "config"
-[verification]
-python_program = ".local-tests/python/Scripts/python.exe"
-```
+各节配置示例见 [config/tools.toml](../config/tools.toml)，其中开发监督器字段以完整注释示例提供。
 
 CI 计划和快速预检通过 `cargo xtask check ci <plan|preflight> --base-sha <SHA>` 选择基准，省略或空值表示没有基准。资源门禁使用 `cargo xtask check ci resource-gate [--base-sha <SHA>] [--head-sha <SHA>] [--frontend-ref <SHA>] [--targeted] [--decision-file <绝对文件>] [--jobs <1..64>] [--test-jobs <1..64>]`：三个 SHA 参数必须是非零的 40 位十六进制提交 SHA，参数不得重复；缺少基准、head、前端提交或 targeted 激活时执行完整门禁。decision 文件只创建新文件，父目录必须已存在；并发参数必须为 1 到 64。工作流仅在 PR 或分支 push 传入基准，tag 不使用 `before`。回放器显式传递每个案例的提交、激活状态、decision 路径与固定预算；本地 DevEx 不从环境推测范围，缺少显式范围时记录完整回退。预检将同一基准传给迁移保护和函数长度增量扫描；资源门禁不读取项目自定义环境变量。
 
@@ -168,10 +152,4 @@ CI 计划和快速预检通过 `cargo xtask check ci <plan|preflight> --base-sha
 
 ### Cargo 工具来源核验
 
-直接执行 Cargo build、check 或 test 时，xtask 构建脚本每次重新核对当前 Cargo 工作区根与完整来源文件集，包括新增和删除的文件。编译快照包含规范化的根路径及文件摘要；跨工作树即使内容相同，也属于不同的编译来源。工具的 describe 只读取编译时固化的来源，不在运行时重算。
-
-生成内容不变时保留生成文件的内容及修改时间；内容改变时完整写入临时文件并安全替换。构建脚本保留完整文件与目录监视集，并监视一个不生成的 OUT_DIR 路径，使 Cargo 每次执行核验。若该检查路径已存在（包括链接），构建会拒绝并提示核对后精确清理该缓存对象或仅清理 xtask，不自动删除未知对象。当前工具链实测同根同内容的 build、check、test 仍执行构建脚本并重新编译 xtask，即使生成快照的摘要与修改时间保持不变；不能据此保证增量构建不重编译。共享 target 的跨工作树切换会更新根身份并重新编译。并发回归环境中的耗时仅供参考，独占性能需另行测量。
-
-构建脚本还固化并核对自身与来源遍历 helper 的编译输入字节。共享缓存中的脚本若与当前根这两个文件不符，将拒绝构建并要求仅清理 xtask 后重建；不会读取当前文件后将其摘要伪装成脚本编译来源。
-
-受管 origin 工具的完整来源核验由同一受保护二进制的私有 `__frontend-origin verify-sources` 执行。标准输入只接受 `format_version` 为整数 `1`、`root` 和 `sources` 三个字段，上限为 4 MiB；根必须是编译时同一真实且无链接或重解析点的目录，来源绑定必须与编译列表和当前完整发现集合一致，不增加排除目录。每个普通文件按 16 MiB 上限双读完整字节，并核对读取前、打开句柄、关闭后的真实设备/文件编号、大小和 mtime/ctime；Windows ctime 为创建时间，Unix ctime 保留纳秒。返回值仅含固定版本、种类、文件数及覆盖有序绑定与文件/根身份的 SHA-256 聚合 token，不含源码字节。现存 Python loader 保留严格绑定读取、程序摘要和二进制保护，在保护内取得初始 token、发布工具前及 finally 再核验并比较 token；取消时回收当前只读 probe、不重试，仍核对绑定与程序身份。URL check 仍使用 10 秒超时，完整来源扫描不新增固定总期限；两者保留有界管道和失败关闭。源码或绑定变化后须重新编译并通过 `__frontend-origin describe` 重建受管绑定，不能回退到旧来源扫描或临时编译工具。
+完整机制、失败处理及受管工具协议见[架构说明：Cargo 工具来源核验](architecture.md#cargo-工具来源核验)。

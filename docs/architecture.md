@@ -125,3 +125,13 @@ cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha25
 `reset plan` 会真实读取、校验应用配置，生成绑定来源与资源范围的清单及哈希，不执行破坏性重建，也不能替代 `execute` 的 ownership 预检；它不属于不读应用配置的离线 `control export-sql --plan` 或 `adopt --plan`。reset 内部物理别名去重只避免重复处理同一物理数据库，不放宽独立租户目标的共库限制；仍须遵守[数据指南](data.md#租户路由)中的 schema 隔离约束。执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。`cargo reset` 是使用者直接入口；框架维护工具 `cargo xtask data reset` 消费同一任务图并要求显式 `--write`。排障时不要混用两种入口的状态目录，也不要通过删除 ledger 启动新的重建。
 
 报告的 `status` 区分 `completed`（本次完成）、`reused`（复用同一 ledger 的原完成）和 `failed`。`completed_at` 记录锁释放后持久化的原完成时间，重复执行不更新该值，也不重新运行预检或破坏性阶段；`reported_at` 仅表示报告生成时间。锁释放失败、中断或缺少完成证据时，重复执行仍失败，必须人工核对服务停止状态、MySQL 环境锁及清单内精确资源，保留原始失败记录。在 `reset.state_directory` 中选择一个新的绝对状态目录表示一次新的维护操作，目录路径不得包含点号跳转、链接或重解析点；必须重新生成并核验 plan、ownership 和资源范围，不得通过删除或覆盖旧 ledger 触发重置。当前开发版本使用 manifest v5、ledger v5 和 report v2；清单使用非秘密配置引用 `password_config_key`、`access_key_config_key`、`secret_key_config_key`，并保留 `credential_version` 的轮换绑定。旧格式明确拒绝，不自动转换或重放，旧本地证据继续保留。
+
+## Cargo 工具来源核验
+
+直接执行 Cargo build、check 或 test 时，xtask 构建脚本每次重新核对当前 Cargo 工作区根与完整来源文件集，包括新增和删除的文件。编译快照包含规范化的根路径及文件摘要；跨工作树即使内容相同，也属于不同的编译来源。工具的 describe 只读取编译时固化的来源，不在运行时重算。
+
+生成内容不变时保留生成文件的内容及修改时间；内容改变时完整写入临时文件并安全替换。构建脚本保留完整文件与目录监视集，并监视一个不生成的 OUT_DIR 路径，使 Cargo 每次执行核验。若该检查路径已存在（包括链接），构建会拒绝并提示核对后精确清理该缓存对象或仅清理 xtask，不自动删除未知对象。当前工具链实测同根同内容的 build、check、test 仍执行构建脚本并重新编译 xtask，即使生成快照的摘要与修改时间保持不变；不能据此保证增量构建不重编译。共享 target 的跨工作树切换会更新根身份并重新编译。并发回归环境中的耗时仅供参考，独占性能需另行测量。
+
+构建脚本还固化并核对自身与来源遍历 helper 的编译输入字节。共享缓存中的脚本若与当前根这两个文件不符，将拒绝构建并要求仅清理 xtask 后重建；不会读取当前文件后将其摘要伪装成脚本编译来源。
+
+受管 origin 工具的完整来源核验由同一受保护二进制的私有 `__frontend-origin verify-sources` 执行。标准输入只接受 `format_version` 为整数 `1`、`root` 和 `sources` 三个字段，上限为 4 MiB；根必须是编译时同一真实且无链接或重解析点的目录，来源绑定必须与编译列表和当前完整发现集合一致，不增加排除目录。每个普通文件按 16 MiB 上限双读完整字节，并核对读取前、打开句柄、关闭后的真实设备/文件编号、大小和 mtime/ctime；Windows ctime 为创建时间，Unix ctime 保留纳秒。返回值仅含固定版本、种类、文件数及覆盖有序绑定与文件/根身份的 SHA-256 聚合 token，不含源码字节。现存 Python loader 保留严格绑定读取、程序摘要和二进制保护，在保护内取得初始 token、发布工具前及 finally 再核验并比较 token；取消时回收当前只读 probe、不重试，仍核对绑定与程序身份。URL check 仍使用 10 秒超时，完整来源扫描不新增固定总期限；两者保留有界管道和失败关闭。源码或绑定变化后须重新编译并通过 `__frontend-origin describe` 重建受管绑定，不能回退到旧来源扫描或临时编译工具。

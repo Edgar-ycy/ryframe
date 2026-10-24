@@ -185,36 +185,7 @@ API 与 Worker 的备份采集器每 60 秒读取控制库汇总，整次采集�
 
 将该规则文件只读挂载或复制到现有 Prometheus 的 `/etc/prometheus/rules/ryframe-alerts.yml`，在其配置中显式加载这个文件。下例中的两个 HTTPS 地址应替换为现有监控入口，分别转发到 API 的 `/api/v1/monitor/metrics` 和 Worker 健康端口的 `/metrics`；生产 Compose 中的 Worker 默认只在后端网络可见，需要由现有监控网络或反向代理提供访问。密钥文件只保存与 RyFrame 明文配置 `monitor.metrics_bearer_token` 相同的 token 内容；这是 Prometheus 自身的凭据文件读取，路径以 Prometheus 所在主机或容器为准。
 
-```yaml
-global:
-  scrape_interval: 30s
-  evaluation_interval: 30s
-
-rule_files:
-  - /etc/prometheus/rules/ryframe-alerts.yml
-
-scrape_configs:
-  - job_name: ryframe-api
-    scheme: https
-    metrics_path: /api/v1/monitor/metrics
-    authorization:
-      type: Bearer
-      credentials_file: /run/secrets/ryframe-metrics-token
-    tls_config:
-      ca_file: /run/secrets/monitor-ca.pem
-    static_configs:
-      - targets: [ryframe-api.internal.example:443]
-  - job_name: ryframe-worker
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /run/secrets/ryframe-metrics-token
-    tls_config:
-      ca_file: /run/secrets/monitor-ca.pem
-    static_configs:
-      - targets: [ryframe-worker.internal.example:443]
-```
+完整抓取与规则加载配置见 [Prometheus 配置示例](../deploy/prometheus/prometheus.example.yml)。
 沿用现有 `alerting.alertmanagers` 配置，并将 `service=ryframe` 的 warning/critical 告警路由到运维通知渠道。先执行 `promtool check config /etc/prometheus/prometheus.yml` 与 `promtool check rules /etc/prometheus/rules/ryframe-alerts.yml`，通过后按现有平台的配置重载方式生效；Prometheus 支持 `SIGHUP`，也支持在启用生命周期接口后通过 `POST /-/reload` 重载。[配置与重载方式](https://prometheus.io/docs/prometheus/latest/configuration/configuration/)
 
 重载后在 Targets 中确认两个抓取目标均为 UP，在 Rules 中确认 `ryframe.application` 规则组加载且健康，并查询 `ryframe_backup_collector_up`、`ryframe_backup_resources` 和 `ryframe_backup_last_success_timestamp_seconds` 检查实际采集结果。API 与 Worker 各暴露一份部署汇总，按 Prometheus 的 `job`、`instance` 区分采集进程，不能将两份计数相加。最后通过隔离演练产生真实失败状态，核对告警进入 Alertmanager 并送达通知渠道；仅通过配置检查不作为通知送达证据。正式恢复的隔离演练统一使用 `cargo xtask check recovery monitoring`：先创建只含权限已收紧 `metrics-token.txt` 的新 run 目录，以 `bind --help` 核对参数，再用 `bind ... --write` 绑定同一次正式恢复的 `runtime.json`、目标计划、唯一 run ID、Prometheus/promtool 3.5.0、Alertmanager/amtool 0.34.0、四个工具绝对路径及三个互异的非特权回环端口，生成不可覆盖的 `binding.json` 和当前干净提交的不可变 staging；token 必须与运行中的 API、Worker 指标凭据一致，内容不得进入命令行或收据。监控绑定、输入 staging、回环 HTTP、webhook、Prometheus/Alertmanager 进程树、观测和关闭由 Rust xtask 执行；`status` 与 `result` 原生读取阶段证据，不启动 Python。`bind|start|observe|close` 仍通过固定只读协议复用现有 Python 核验器，主动检查正式恢复的静态来源和三端存活代次，不能用 JSON 字段匹配代替。绑定同时记录当前 xtask 可执行文件摘要；阶段执行期间保留凭据、工具、规则和协调程序的文件句柄，并在结束时复核身份与摘要。Windows 凭据要求受保护的显式 DACL，仅允许当前用户、System 和 Administrators；Unix 要求当前用户拥有且其他用户无访问权限。权限无法核验时失败关闭，不自动放宽。后续只对该绑定依次执行只读的 `status --binding <absolute-path>`，以及显式写入的 `start|observe|close|result --binding <absolute-path> --write`，每次只执行 `status` 返回的 `next_action`，失败、中断、未知发布结果或 `*-failure.json` 必须保留并转入其指示的关闭或人工核对，禁止删除证据后重放。start 管理回环 webhook、Alertmanager、Prometheus 三棵进程树；observe 核对 API/Worker bearer 拒绝与成功响应、targets、固定规则、精确 firing/resolved probe 及 promtool 23/24 小时边界，receiver 只允许 `ryframe-local-webhook` 且外部联系数必须为零；close 等待全部后代退出和端口释放；result 只在 start、observation、close 均成功后排他发布并重验全部摘要，遗留 pending 时先核对文件身份和内容，不能用重跑猜测结果。

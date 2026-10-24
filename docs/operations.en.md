@@ -79,7 +79,7 @@ username = "admin"
 password = "<current-password-after-first-change>"
 ```
 
-The post-copy registration request's `source_admin` contains only four metadata fields: `subject_id`, `tenant_id`, `username`, and `client_address`. Register the TOML separately as `administrator_credentials` using its `path`, `bytes`, and `sha256` file binding. Never copy the password into requests, public registrations, or receipts. The tenant and username in the file must match the metadata. The file and every path component must have no links and remain inside the current backend's `.local-tests`. Registration and session startup verify the file binding before and after reading. Content or binding changes, invalid fields, and TOML parsing failures stop execution without echoing the source text. After login, the authoritative `SessionContext` must explicitly report the Boolean `password_change_required=false` at its root; a true, missing, or incorrectly typed field prevents business actions. This password is independent of `bootstrap.admin_password`: tools never change passwords automatically, fall back to initialization passwords, or replay business writes. If the first password change is incomplete, finish the explicit account flow rather than registering the initialization password as current credentials.
+The post-copy registration request's `source_admin` contains only four metadata fields: `subject_id`, `tenant_id`, `username`, and `client_address`. Register the TOML separately as `administrator_credentials` using its `path`, `bytes`, and `sha256` file binding. Never copy the password into requests, public registrations, or receipts. The tenant and username in the file must match the metadata. The file and every path component must have no links and remain inside the current backend's `.local-tests`. Registration and session startup verify the file binding before and after reading. Content or binding changes, invalid fields, and TOML parsing failures stop execution without echoing the source text. After login, the authoritative `SessionContext` must explicitly report the root field `password_change_required` as the Boolean `false`; `true`, a missing field, or an incorrectly typed field prevents business actions. This password is independent of `bootstrap.admin_password`: tools never change passwords automatically, fall back to initialization passwords, or replay business writes. If the first password change is incomplete, finish the explicit account flow rather than registering the initialization password as current credentials.
 
 Continue to register explicitly through `cargo xtask check recovery clone post-copy --run-dir <run> --operation register --request <request.json> --write`; subsequent operations that write still require `--write`. The file bound by `api_environment` accepts only `{"environment":{"APP_ENV":"test"}}`, with no administrator credentials or other project configuration. Addresses, Worker mode, CORS, and other settings come from their bound application TOML files. An amendment may rebind the environment selector only after the existing stop-evidence and failure-reconciliation flow; environment fields cannot modify project configuration.
 
@@ -187,36 +187,7 @@ API and Worker backup collectors read control-database summaries every 60 second
 
 Mount the rules file read-only or copy it to `/etc/prometheus/rules/ryframe-alerts.yml` in the existing Prometheus deployment, and explicitly load it in configuration. Replace the two HTTPS addresses below with existing monitoring entry points forwarding to API `/api/v1/monitor/metrics` and `/metrics` on the Worker health port, respectively. In production Compose, Worker is only visible on the backend network by default, so access must be provided through an existing monitoring network or reverse proxy. The secret file contains only the same token content as RyFrame's plaintext `monitor.metrics_bearer_token` configuration; this is Prometheus's own credential-file loading; paths are interpreted on the Prometheus host or container.
 
-```yaml
-global:
-  scrape_interval: 30s
-  evaluation_interval: 30s
-
-rule_files:
-  - /etc/prometheus/rules/ryframe-alerts.yml
-
-scrape_configs:
-  - job_name: ryframe-api
-    scheme: https
-    metrics_path: /api/v1/monitor/metrics
-    authorization:
-      type: Bearer
-      credentials_file: /run/secrets/ryframe-metrics-token
-    tls_config:
-      ca_file: /run/secrets/monitor-ca.pem
-    static_configs:
-      - targets: [ryframe-api.internal.example:443]
-  - job_name: ryframe-worker
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /run/secrets/ryframe-metrics-token
-    tls_config:
-      ca_file: /run/secrets/monitor-ca.pem
-    static_configs:
-      - targets: [ryframe-worker.internal.example:443]
-```
+See the [Prometheus configuration example](../deploy/prometheus/prometheus.example.yml) for the complete scrape and rule-loading configuration.
 Retain the existing `alerting.alertmanagers` configuration and route warning/critical alerts with `service=ryframe` to operations notification channels. First run `promtool check config /etc/prometheus/prometheus.yml` and `promtool check rules /etc/prometheus/rules/ryframe-alerts.yml`; after they pass, reload configuration using the existing platform's procedure. Prometheus supports `SIGHUP` and, with the lifecycle endpoint enabled, `POST /-/reload`. See [configuration and reloading](https://prometheus.io/docs/prometheus/latest/configuration/configuration/).
 
 After reloading, confirm both scrape targets are UP in Targets and that the `ryframe.application` rule group is loaded and healthy in Rules. Query `ryframe_backup_collector_up`, `ryframe_backup_resources`, and `ryframe_backup_last_success_timestamp_seconds` to inspect actual collection. API and Worker each expose a deployment summary; distinguish collecting processes by Prometheus `job` and `instance`, rather than adding the two counts. Finally, create real failure states through an isolated drill and verify alerts reach Alertmanager and the notification channel; configuration checks alone do not prove notification delivery. Formal recovery's isolated monitoring drill consistently uses `cargo xtask check recovery monitoring`. First create a new run directory containing only permission-restricted `metrics-token.txt`, inspect arguments with `bind --help`, then use `bind ... --write` to bind the same formal recovery's `runtime.json`, target plan, unique run ID, Prometheus/promtool 3.5.0, Alertmanager/amtool 0.34.0, absolute paths for all four tools, and three distinct unprivileged loopback ports. This generates a non-overwritable `binding.json` and immutable staging from the current clean commit. The token must match running API and Worker metric credentials and must not appear in command lines or receipts. Rust xtask handles monitoring bindings, input staging, loopback HTTP, webhook, Prometheus/Alertmanager process trees, observations, and closure. `status` and `result` read stage evidence natively without starting Python. `bind|start|observe|close` still reuse the existing Python verifier through a fixed read-only protocol, actively checking formal recovery's static source and live generations of all three endpoints; matching JSON fields cannot replace this. Bindings also record the current xtask executable digest. During stage execution, file handles for credentials, tools, rules, and coordinator programs are retained, and identities and digests are rechecked at the end. Windows credentials require a protected explicit DACL permitting only the current user, System, and Administrators; Unix requires ownership by the current user and no access for other users. If permissions cannot be verified, fail closed without automatically relaxing them. Subsequent operations use only this binding, with read-only `status --binding <absolute-path>` and explicit-write `start|observe|close|result --binding <absolute-path> --write`, each time reading `status` and executing only its returned `next_action`. Failure, interruption, unknown publication outcomes, or `*-failure.json` must be retained and followed by the indicated closure or manual verification; evidence must not be deleted for replay. start manages three process trees: loopback webhook, Alertmanager, and Prometheus. observe checks API/Worker bearer denial and success responses, targets, fixed rules, exact firing/resolved probes, and promtool's 23/24-hour boundaries; the receiver may only be `ryframe-local-webhook`, with zero external contacts. close waits for all descendants to exit and ports to be released. result publishes exclusively and revalidates all digests only after start, observation, and close succeed. If pending remains, first check file identity and contents rather than guessing the outcome by rerunning.
