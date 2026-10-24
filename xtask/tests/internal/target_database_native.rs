@@ -837,6 +837,31 @@ fn explicit_business_catalog_requires_the_business_table_and_ledger() {
         }
         assert!(model::observation(&backend, &missing, &db, SCOPE, &owners).is_err());
     }
+    use crate::recovery::clone::native::{business, catalog};
+    let full = catalog::load_ordered(&backend, true).unwrap();
+    let (full_control, full_tenant) = full.full.as_ref().unwrap();
+    assert!(full_control.contains_key("ryframe_resource_ownership"));
+    for table in [
+        "ryframe_resource_ownership",
+        "biz_fixture_item",
+        "ryframe_business_migration",
+    ] {
+        assert!(full_tenant.contains_key(table));
+    }
+    assert_eq!(
+        full_tenant.get("ryframe_business_migration").unwrap(),
+        &business::ledger_column_pairs(&backend).unwrap()
+    );
+    let ledger = backend.join("crates/ryframe-sdk/src/migration/ledger.rs");
+    assert!(full.sources.contains(&ledger));
+    let bytes = fs::read(&ledger).unwrap();
+    fs::remove_file(&ledger).unwrap();
+    let filtered = catalog::load_ordered(&backend, false);
+    let missing_full = catalog::load_ordered(&backend, true);
+    fs::write(&ledger, bytes).unwrap();
+    let filtered = filtered.unwrap();
+    assert!(!filtered.sources.contains(&ledger));
+    assert!(missing_full.is_err());
 }
 
 #[test]
