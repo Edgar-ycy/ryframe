@@ -193,11 +193,12 @@ class CaptureTests(unittest.TestCase):
         for command, kwargs in self.store.calls:
             request = json.loads(kwargs["input"])
             self.assertIn("__s3-read", command)
-            self.assertEqual(request["configuration"]["endpoint"], self.plan["source"]["s3"]["endpoint"])
+            self.assertEqual(request["configuration_binding"], self.plan["source"]["s3"]["configuration"])
+            self.assertNotIn("configuration", request)
             self.assertTrue(request["key"].startswith("source/"))
             self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
             self.assertNotIn("secret-fixture", command)
-            self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
+            self.assertNotIn("secret-fixture", kwargs["input"].decode("utf-8"))
         self.assertEqual(json.loads((self.output / "capture.json").read_text(encoding="utf-8")), result)
 
     def test_rustfs_missing_get_language_is_saved_separately_from_head_metadata(self):

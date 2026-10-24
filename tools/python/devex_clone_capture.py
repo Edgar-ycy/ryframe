@@ -217,7 +217,7 @@ class CaptureReader:
             "format_version": 1,
             "kind": "ryframe-native-s3-read",
             "scope_id": config["scope_id"],
-            "configuration": config["s3"],
+            "configuration_binding": config["s3"]["configuration"],
             "bucket": bucket,
             "operation": operation,
             "key": key,

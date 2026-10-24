@@ -376,6 +376,14 @@ class SourceExportTests(unittest.TestCase):
         self.fixture.case.add("shared-empty", "biz_tenant_target_slot", slot_id=1)
         self.fixture.case.refresh()
         self.fixture.write_config(self.fixture.request["source"])
+        self.fixture.runtime["api_configuration_sha256"] = configuration_digest(
+            self.fixture.backend, self.fixture.backend / "config")
+        self.fixture.request["runtime"] = self.fixture.bind(
+            self.fixture.runtime_dir / "runtime.json", self.fixture.runtime)
+        self.fixture.registry["runtime_sha256"] = self.fixture.request["runtime"]["sha256"]
+        self.fixture.request["producers_registry"] = self.fixture.bind(
+            self.fixture.local / "producers.json", self.fixture.registry)
+        self.fixture.object_configuration = configuration_binding(self.fixture.backend, self.fixture.backend / "config")
         self.fixture.save_request()
         self.fixture.missing_target = True
         self.failed("inventory_before")
