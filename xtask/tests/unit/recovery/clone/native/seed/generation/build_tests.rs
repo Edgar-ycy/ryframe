@@ -136,7 +136,10 @@ impl Drop for Fixture {
             self.execution
                 .starts_with(self.backend.join(".local-tests"))
         );
-        let cleanup = fs::remove_dir_all(&self.execution);
+        let cleanup = crate::ci::resource_gate::replay::remove_partial_worktree_directory(
+            &self.execution,
+            &self.backend.join(".local-tests"),
+        );
         if !std::thread::panicking() {
             cleanup.unwrap();
         }
