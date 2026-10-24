@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Replace seven JS/TS syntax fragments in cross-repository identity-capability text-gate fixtures with plain text data, retaining every scan path, forbidden symbol, and rejection scenario without executing frontend programs.
+
 - Load framework SQL, generated tenant catalogs, and complete export models through one ordered Rust implementation, removing duplicate Python parsing. Read-only binding checks request only the required catalogs, while complete exports retain ownership, migration ledgers, and physical column order. Inventory fixtures reuse only identical table-name and row-count digests within one instance, retaining every capture and verification; separate execution-root revalidation permits only two local read-only operations of the bound tool.
 
 - Reuse Rust validation for database inventory observations while preserving Python callers' return types and read-only boundaries. Include generated migration files actually read by the catalog in source digests so DDL changes during plan computation cannot escape verification.
