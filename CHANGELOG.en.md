@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix initial-password-change sessions incorrectly rejecting context reads and password changes after nested routing rewrites the URI. Check the existing method and path allowlist against the original full URI, preserve business and message-ticket restrictions and normal permission checks, and cover nested behavior with HTTP middleware requests.
+
 - Fix generated business models and entities with JSON fields referencing an undeclared direct `serde_json` dependency. Generate the type through the SDK's public export and include a JSON field in the existing real business compilation scenario.
 
 - Reuse the shared ownership fixture and file configuration for real MySQL tenant-projection scenarios on shared-control and an independent dedicated target. Check minimal identity/department facts, stale-version rejection, and complete rollback preimages after publication failure; explicitly close the target pool before successful cleanup and retain failed scenes.

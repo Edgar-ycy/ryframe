@@ -4,6 +4,8 @@
 
 Login, refresh, and `/auth/context` use the same `SessionContext`, which must contain the boolean field `password_change_required`. When this value is true, the super administrator flag is false, and the role, permission, menu, and capability collections are empty. A restricted token can only read the session context, change the user's own password, and log out; it cannot issue message tickets. A successful password change clears the flag, updates the authorization version, and revokes the user's login sessions. The client must log in again.
 
+Restricted sessions are checked against the HTTP method and original full path: only `GET /api/v1/auth/context`, `PUT /api/v1/auth/profile/password`, and `POST /api/v1/auth/logout` are allowed. Nested routing does not change this restriction; other business endpoints and message tickets remain denied.
+
 Authorization diagnostics distinguish the cache states `current`, `behind`, `ahead`, `missing`, `disabled`, and `unavailable`. When the mirror is behind a new token, the system verifies the identity against the primary database and rebuilds the mirror atomically. When the mirror has a newer version, the old token is still rejected, and the cache is not overwritten with an older version. A disabled cache is a normal configuration state and is not reported as a cache failure warning.
 
 ## Recovering Accounts with Unknown Passwords
