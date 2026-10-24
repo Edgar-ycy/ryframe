@@ -7,6 +7,7 @@ use crate::{
         lifecycle::{manifest as manifests, state},
         resources::common,
         seed::{Registration, capacity, history, latest, runtime_model},
+        target_verify::guard::Generation,
     },
 };
 use serde_json::{Value, json};
@@ -26,6 +27,7 @@ pub(crate) fn collect(
     manifest: &Value,
     current: u64,
     coordinator_tool: &Value,
+    generation: &Generation,
     quiet: &mut dyn FnMut(&Value) -> Result<()>,
 ) -> Result<Anchors> {
     if current == 0 {
@@ -35,6 +37,8 @@ pub(crate) fn collect(
     if before.value != *manifest || manifest["copy_stage"] != "source_to_seed" {
         return Err("只有固定完整 source_to_seed run 可登记 seed 复制源".into());
     }
+    let initialized = common::bound_file(backend, &manifest["initialized"], "来源登记初始化目标")?;
+    generation.protects(initialized.parent().ok_or("初始化目标缺少目录")?)?;
     let state_binding = common::binding(&run.join("state.json"))?;
     let plan = copied::require(backend, run, manifest)?;
     if plan["copy_stage"] != "source_to_seed" {
@@ -60,7 +64,7 @@ pub(crate) fn collect(
     require_quiet(&lineage, quiet)?;
     let record = latest(&saved, "seed-runtime", &["register"], None, false)?;
     let stage = attempt_binding(backend, run, record)?;
-    let storage = storage::verify(backend, run, manifest)?;
+    let storage = storage::verify(backend, run, manifest, generation)?;
     let handoff = common::binding(&inputs.runtime.join("handoff.json"))?;
     if common::read_bound(backend, &handoff, "seed 固定 handoff")? != inputs.handoff {
         return Err("seed handoff 在组装期间变化".into());
@@ -78,6 +82,7 @@ pub(crate) fn collect(
         &post,
     )?;
     common::bound_file(backend, &evidence["seed_handoff"], "seed 固定 handoff")?;
+    generation.check()?;
     assemble(evidence, &registered.value, post.request, inputs)
 }
 

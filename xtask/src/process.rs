@@ -315,7 +315,7 @@ pub(crate) fn command_output_with_input_timeout(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command_output_result_with_timeout(command, timeout).map_err(|error| {
         format!(
-            "无法执行一次性 Python 输出协议 `{}`：{error}",
+            "无法执行一次性子进程输出协议 `{}`：{error}",
             command_executable.to_string_lossy()
         )
         .into()

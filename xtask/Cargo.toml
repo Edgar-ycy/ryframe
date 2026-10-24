@@ -46,6 +46,7 @@ nix = { version = "=0.29.0", default-features = false, features = ["fs", "signal
 [target.'cfg(windows)'.dependencies]
 processkit = { version = "=3.3.4", default-features = false, features = ["stats", "process-control"] }
 winsafe = { version = "=0.0.19", default-features = false, features = ["kernel"] }
+wmi = { version = "=0.18.4", default-features = false }
 
 [build-dependencies]
 serde = { workspace = true, features = ["derive"] }

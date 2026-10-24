@@ -58,7 +58,7 @@ pub(crate) fn cim(pid: u32, rows: &[Value]) -> Result<Creation> {
         .num_microseconds()
         .and_then(|n| n.checked_mul(10))
         .and_then(|n| u64::try_from(n).ok())
-        .filter(|n| *n > 0)
+        .filter(|n| *n > 0 && n.to_string().len() <= 18)
         .ok_or("CIM 创建时间不能转换为正 FILETIME")?;
     Ok(Creation {
         pid,
@@ -68,6 +68,20 @@ pub(crate) fn cim(pid: u32, rows: &[Value]) -> Result<Creation> {
 }
 
 pub(crate) fn require_newer(expected: &Value, observed: &Creation) -> Result<()> {
+    let (pid, started) = recorded(expected)?;
+    if observed.pid != pid || observed.precision_ticks != 10 {
+        return Err("观察创建身份的 PID 或 CIM 时间精度无效".into());
+    }
+    let boundary = started
+        .checked_add(observed.precision_ticks)
+        .ok_or("创建时间裕量溢出")?;
+    if observed.started <= boundary {
+        return Err("观察创建时间不能证明为裕量之后的新代次".into());
+    }
+    Ok(())
+}
+
+pub(super) fn recorded(expected: &Value) -> Result<(u32, u64)> {
     document::exact(expected, &["pid", "started", "executable"], "历史进程身份")?;
     let pid = expected["pid"]
         .as_u64()
@@ -87,16 +101,7 @@ pub(crate) fn require_newer(expected: &Value, observed: &Creation) -> Result<()>
     if !Path::new(executable).is_absolute() {
         return Err("历史可执行路径必须为绝对路径".into());
     }
-    if observed.pid != pid || !matches!(observed.precision_ticks, 1 | 10) {
-        return Err("观察创建身份的 PID 或时间精度无效".into());
-    }
-    let boundary = started
-        .checked_add(observed.precision_ticks)
-        .ok_or("创建时间裕量溢出")?;
-    if observed.started <= boundary {
-        return Err("观察创建时间不能证明为裕量之后的新代次".into());
-    }
-    Ok(())
+    Ok((pid, started))
 }
 
 fn number(text: &str, start: usize, end: usize) -> Result<u32> {

@@ -15,7 +15,7 @@ use crate::{
         json as document,
         lifecycle::{manifest, state},
         resources::common,
-        target_verify::published,
+        target_verify::{guard::Generation, published},
     },
 };
 
@@ -41,6 +41,7 @@ struct Session<'a> {
     manifest: manifest::Manifest,
     state: Value,
     state_binding: Value,
+    generation: &'a Generation,
 }
 
 struct Derived {
@@ -74,10 +75,19 @@ pub(crate) fn materialize(
     current: u64,
     coordinator_tool: &Value,
     scope: &bridge::scope::Scope,
+    generation: &Generation,
     quiet: &mut dyn FnMut(&Value) -> Result<()>,
 ) -> Result<Value> {
     scope.assert_unchanged()?;
-    let result = execute(backend, run, current, coordinator_tool, scope, quiet);
+    let result = execute(
+        backend,
+        run,
+        current,
+        coordinator_tool,
+        scope,
+        generation,
+        quiet,
+    );
     let unchanged = scope.assert_unchanged();
     let result = result?;
     unchanged?;
@@ -90,9 +100,10 @@ fn execute(
     current: u64,
     coordinator_tool: &Value,
     scope: &bridge::scope::Scope,
+    generation: &Generation,
     quiet: &mut dyn FnMut(&Value) -> Result<()>,
 ) -> Result<Value> {
-    let session = Session::load(backend, run, current)?;
+    let session = Session::load(backend, run, current, generation)?;
     let output = publication::output(backend, run, &session.state, current)?;
     let before = anchors::collect(
         backend,
@@ -100,6 +111,7 @@ fn execute(
         &session.manifest.value,
         current,
         coordinator_tool,
+        generation,
         quiet,
     )?;
     let first = publish_round(&session, &output, &before, scope)?;
@@ -109,6 +121,7 @@ fn execute(
         &session.manifest.value,
         current,
         coordinator_tool,
+        generation,
         quiet,
     )?;
     confirm_round(&session, &before, &after, &first, scope)?;
@@ -155,6 +168,9 @@ fn publish_round(
         &before.anchors["source_environment"],
     )?;
     let generation = proof::generation_in(&context, scope)?;
+    if serde_json::to_value(&context.environment)? != before.environment {
+        return Err("来源登记的执行环境与已核验运行环境不一致".into());
+    }
     let generation_binding =
         publication::write_or_match(backend, output, "generation-verified.json", &generation)?;
     let files = Files {
@@ -183,6 +199,9 @@ fn confirm_round(
     let backend = session.backend;
     let run = session.run;
     let current = session.current;
+    if before.environment != after.environment {
+        return Err("来源登记期间执行环境变化".into());
+    }
     compare_anchors(&before.anchors, &after.anchors)?;
     let expected_registry = build_registry(after, &first.runtime)?;
     let expected = Derived::load(
@@ -227,24 +246,39 @@ fn confirm_round(
 }
 
 impl<'a> Session<'a> {
-    fn load(backend: &'a Path, run: &'a Path, current: u64) -> Result<Self> {
+    fn load(
+        backend: &'a Path,
+        run: &'a Path,
+        current: u64,
+        generation: &'a Generation,
+    ) -> Result<Self> {
         common::local_directory(backend, run, "source-register 运行目录")?;
         let manifest = manifest::load(backend, &run.join("manifest.json"))?;
         let state_binding = file_binding(backend, &run.join("state.json"))?;
         let saved = state::load(run, true)?;
         reject_prior(&saved, current)?;
         common::bound_file(backend, &state_binding, "source-register 固定阶段状态")?;
-        Ok(Self {
+        let session = Self {
             backend,
             run,
             current,
             manifest,
             state: saved,
             state_binding,
-        })
+            generation,
+        };
+        session.recheck()?;
+        Ok(session)
     }
 
     fn recheck(&self) -> Result<()> {
+        let initialized = common::bound_file(
+            self.backend,
+            &self.manifest.value["initialized"],
+            "来源登记初始化目标",
+        )?;
+        self.generation
+            .protects(initialized.parent().ok_or("初始化目标缺少目录")?)?;
         let after = manifest::load(self.backend, &self.run.join("manifest.json"))?;
         if after.value != self.manifest.value
             || after.digest != self.manifest.digest
@@ -289,7 +323,7 @@ impl Derived {
         let original = common::read_bound(backend, &manifest["source_request"], "原始私有源请求")?;
         export_input::validate_request(backend, &original)?;
         let path = common::bound_file(backend, &manifest["initialized"], "seed 原初始化")?;
-        let (initialized, target) = published::unlocked_history(backend, &path)?;
+        let (initialized, target) = published::owned_history(backend, &path, session.generation)?;
         let review = published::request_binding(backend, &target)?;
         let maintenance =
             common::read_bound(backend, &target["maintenance_build"], "seed 目标维护构建")?;
@@ -353,7 +387,8 @@ impl Derived {
             &session.manifest.value["initialized"],
             "seed 原初始化",
         )?;
-        let (initialized, target) = published::unlocked_history(session.backend, &path)?;
+        let (initialized, target) =
+            published::owned_history(session.backend, &path, session.generation)?;
         if initialized != self.initialized
             || target != self.target
             || published::request_binding(session.backend, &target)? != self.review

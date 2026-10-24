@@ -3,7 +3,8 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        CloneCommand, FreshTargetCommand, FreshTargetOptions, RecoveryCommand, SeedSourceOptions,
+        CloneCommand, FreshTargetCommand, FreshTargetOptions, RecoveryCommand, SeedSourceOperation,
+        SeedSourceOptions,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     process::{protocol_stdin, run_with_stdin},
@@ -63,6 +64,22 @@ fn clone_stdin(payload: &str) -> Result<std::process::Stdio> {
 
 fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
     let root = root_dir();
+    if options.operation == SeedSourceOperation::Register {
+        if !options.write || options.request.is_some() {
+            return Err("来源登记要求 --write，且不接受外部请求文件".into());
+        }
+        let runner =
+            clone::native::seed::source_registration::runner::SourceRegisterRunner::new(&root);
+        let result = clone::native::lifecycle::stage::run_named(
+            &root,
+            &options.run_dir,
+            "seed-runtime",
+            "source-register",
+            &runner,
+        )?;
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(());
+    }
     let payload = seed_source_protocol_at(options, &root)?;
     run_with_stdin(
         &root,
@@ -103,6 +120,9 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
 }
 
 pub(crate) fn seed_source_protocol_at(options: &SeedSourceOptions, root: &Path) -> Result<String> {
+    if options.operation == SeedSourceOperation::Register {
+        return Err("来源登记仅通过原生 Rust 阶段入口执行，不生成 Python 私有协议".into());
+    }
     validate_local_test_path(&options.run_dir, root, LocalTestPathKind::ExistingDirectory)?;
     if let Some(request) = &options.request {
         validate_local_test_path(request, root, LocalTestPathKind::ExistingFile)?;

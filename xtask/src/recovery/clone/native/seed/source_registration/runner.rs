@@ -55,6 +55,15 @@ impl SourceRegisterRunner {
         require_state(&saved, None)?;
         let registration = Registration::load(&self.backend, request.run_dir, false)?;
         history::validate(&self.backend, request.run_dir, &registration.value)?;
+        let initialized = common::bound_file(
+            &self.backend,
+            &before.value["initialized"],
+            "目标初始化完整绑定",
+        )?;
+        crate::recovery::clone::native::target_verify::published::unlocked_history(
+            &self.backend,
+            &initialized,
+        )?;
         registration.assert_unchanged(&self.backend, false)?;
         let after = manifest::load(&self.backend, &request.run_dir.join("manifest.json"))?;
         if before.value != after.value

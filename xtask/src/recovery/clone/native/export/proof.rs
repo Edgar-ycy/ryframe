@@ -202,7 +202,12 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
         processes,
     )?;
     for producer in &result {
-        require_stopped(&producer["identity"])?;
+        super::super::seed::source_registration::quiet::require_stopped(
+            &context.backend,
+            &context.run_dir,
+            &producer["identity"],
+            &crate::recovery::fixture_control::portable_path(&std::env::current_exe()?),
+        )?;
     }
     manifest::bound_file(
         &context.backend,
@@ -267,33 +272,6 @@ fn validate_registry(
             .cmp(&right.get("name").and_then(Value::as_str))
     });
     Ok(result)
-}
-
-fn require_stopped(identity: &Value) -> Result<()> {
-    let pid = identity
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or("producer PID 无效")?;
-    let original = identity
-        .get("started")
-        .and_then(Value::as_str)
-        .ok_or("producer 创建代次无效")?
-        .parse::<u128>()
-        .map_err(|_| "producer 创建代次无效")?;
-    let Some(current) = common::process_identity(pid)? else {
-        return Ok(());
-    };
-    validate_identity(&current, "当前 producer 身份")?;
-    let started = current
-        .get("started")
-        .and_then(Value::as_str)
-        .and_then(|value| value.parse::<u128>().ok())
-        .ok_or("当前 producer 创建代次无效")?;
-    if started <= original {
-        return Err("登记 producer 尚未停止或当前创建代次不明确".into());
-    }
-    Ok(())
 }
 
 fn validate_identity<'a>(value: &'a Value, label: &str) -> Result<&'a Value> {

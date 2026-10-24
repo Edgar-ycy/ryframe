@@ -20,5 +20,7 @@ pub(crate) mod quiet;
 pub(crate) mod registry;
 #[path = "source_registration/request.rs"]
 pub(crate) mod request;
+#[path = "source_registration/runner.rs"]
+pub(crate) mod runner;
 #[path = "source_registration/storage.rs"]
 pub(crate) mod storage;

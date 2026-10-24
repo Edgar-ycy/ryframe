@@ -73,6 +73,15 @@ pub(crate) fn execute(backend: &Path, bytes: &[u8]) -> Result<Value> {
     validate_local_test_path(run, backend, LocalTestPathKind::ExistingDirectory)?;
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("process-time") => {
+            document::exact(args, &["pid"], "本机进程创建时间参数")?;
+            let pid = args["pid"]
+                .as_u64()
+                .and_then(|pid| u32::try_from(pid).ok())
+                .filter(|pid| *pid > 1)
+                .ok_or("本机进程查询必须指定大于 1 的 u32 PID")?;
+            super::source_registration::quiet::cim::query(pid)
+        }
         Some("close-rebind-guard") => guards::dispatch(backend, run, args),
         Some("generation-guard") => super::generation::dispatch(backend, run, args),
         Some("department-guard") => super::super::department::dispatch(backend, run, args),

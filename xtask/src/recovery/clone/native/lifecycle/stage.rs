@@ -155,6 +155,7 @@ struct LockedOutcome {
     number: u64,
     result: Option<Value>,
     failure: Option<String>,
+    diagnostic: Option<String>,
 }
 
 fn execute_claimed(
@@ -176,6 +177,7 @@ fn execute_claimed(
     let mut failure = state::bind_controller(run_dir, number, &run_lock.owner, &attempt)
         .err()
         .map(|error| failure_type(&*error));
+    let mut diagnostic = None;
     let result = if failure.is_none() {
         let request = StageRequest {
             backend,
@@ -188,6 +190,7 @@ fn execute_claimed(
             Ok(value) => Some(value),
             Err(error) => {
                 failure = Some(failure_type(&*error));
+                diagnostic = safe_diagnostic(error.as_ref());
                 None
             }
         }
@@ -217,6 +220,7 @@ fn execute_claimed(
         number,
         result,
         failure,
+        diagnostic,
     })
 }
 
@@ -245,7 +249,11 @@ fn finalize(run_dir: &Path, stage: &str, mode: &str, outcome: LockedOutcome) -> 
         outcome.failure.as_deref(),
     )?;
     if let Some(failure) = outcome.failure {
-        return Err(format!("阶段 {stage} 未完成：{failure}").into());
+        let diagnostic = outcome
+            .diagnostic
+            .map(|value| format!("；{value}"))
+            .unwrap_or_default();
+        return Err(format!("阶段 {stage} 未完成：{failure}{diagnostic}").into());
     }
     let result = outcome.result.ok_or("成功阶段必须发布实际结果")?;
     Ok(json!({
@@ -333,6 +341,9 @@ pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<St
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if safe_diagnostic(error).is_some() {
+        return "HistoricalProducerCimUnavailable".into();
+    }
     let text = error.to_string();
     Regex::new(r"开发复制未完成：([A-Za-z0-9_]+)")
         .ok()
@@ -349,6 +360,15 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
                 .map(|_| "ProtocolError".to_owned())
         })
         .unwrap_or_else(|| "StageError".into())
+}
+
+fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(error) =
+        error.downcast_ref::<super::super::seed::source_registration::quiet::CimUnavailable>()
+    {
+        return Some(error.to_string());
+    }
+    error.source().and_then(safe_diagnostic)
 }
 
 fn path_text<'a>(path: &'a Path, label: &str) -> Result<&'a str> {

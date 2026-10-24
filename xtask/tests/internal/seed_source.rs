@@ -209,6 +209,14 @@ fn rejects_paths_outside_local_tests_parent_jumps_missing_inputs_and_links() {
 }
 
 #[test]
+fn source_register_cannot_fall_back_to_python_protocol() {
+    let fixture = Fixture::new();
+    let options = parse_source(&fixture, "source-register", false, true).unwrap();
+    let error = seed_source_protocol_at(&options, &root_dir()).unwrap_err();
+    assert!(error.to_string().contains("仅通过原生 Rust"));
+}
+
+#[test]
 fn private_protocol_has_exact_fields_paths_only_and_rechecks_inputs() {
     let fixture = Fixture::new();
     let options = parse_source(&fixture, "source-generation-start", true, true).unwrap();

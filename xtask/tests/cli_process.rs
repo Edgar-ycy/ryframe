@@ -95,7 +95,7 @@ fn full_plan_lists_the_rust_python_environment_without_spawning_it() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("任务 python.environment"), "{text}");
     assert!(text.contains("调用=validate_python_environment"), "{text}");
-    assert!(!text.contains("无法执行一次性 Python 输出协议"), "{text}");
+    assert!(!text.contains("无法执行一次性子进程输出协议"), "{text}");
 }
 
 fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {

@@ -36,32 +36,31 @@ fn complete_microseconds_and_both_offsets_preserve_utc_across_days() {
 fn same_older_and_precision_boundary_do_not_prove_new_generation() {
     let identity = expected();
     let started = 116444736000000000_u64;
-    for precision in [1, 10] {
-        for value in [started - 1, started, started + precision] {
-            assert!(
-                require_newer(
-                    &identity,
-                    &Creation {
-                        pid: 42,
-                        started: value,
-                        precision_ticks: precision
-                    }
-                )
-                .is_err()
-            );
-        }
+    let precision = 10;
+    for value in [started - 1, started, started + precision] {
         assert!(
             require_newer(
                 &identity,
                 &Creation {
                     pid: 42,
-                    started: started + precision + 1,
+                    started: value,
                     precision_ticks: precision
                 }
             )
-            .is_ok()
+            .is_err()
         );
     }
+    assert!(
+        require_newer(
+            &identity,
+            &Creation {
+                pid: 42,
+                started: started + precision + 1,
+                precision_ticks: precision
+            }
+        )
+        .is_ok()
+    );
     // CIM 的十 tick 精度不靠舍入放行；低于一微秒的变化不能证明新代次。
     assert!(
         require_newer(
@@ -81,7 +80,7 @@ fn cim_requires_unique_matching_pid_and_complete_known_dmtf_time() {
     let valid = row("19700101000000.123456+000");
     assert!(cim(42, &[]).is_err());
     assert!(cim(42, &[valid.clone(), valid.clone()]).is_err());
-    assert!(cim(1, &[valid.clone()]).is_err());
+    assert!(cim(1, std::slice::from_ref(&valid)).is_err());
     for value in [json!(43), json!(true), json!("42"), json!(42.0)] {
         let mut wrong = valid.clone();
         wrong["ProcessId"] = value;
@@ -101,6 +100,7 @@ fn cim_requires_unique_matching_pid_and_complete_known_dmtf_time() {
         "16010101000000.000000+000",
         "16010101000000.000000+001",
         "00000101000000.000001+000",
+        "99991231235959.999999+000",
         "19700101000000.123456+０00",
     ] {
         assert!(cim(42, &[row(time)]).is_err());
@@ -150,7 +150,7 @@ fn identity_shape_pid_and_precision_fail_closed_without_input_values() {
         )
         .is_err()
     );
-    for precision in [0, 2, 11, u64::MAX] {
+    for precision in [0, 1, 2, 11, u64::MAX] {
         assert!(
             require_newer(
                 &good,

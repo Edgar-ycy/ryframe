@@ -100,6 +100,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("recorded-process-stopped") => recorded_process_stopped(args),
         Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),
         Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
@@ -154,6 +155,19 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         }
         _ => Err("来源证据操作无效".into()),
     }
+}
+
+fn recorded_process_stopped(args: &Value) -> Result<Value> {
+    documents::exact(args, &["identity"], "历史进程停止核验参数")?;
+    let backend = crate::workspace::root_dir();
+    let tool = crate::recovery::fixture_control::portable_path(&std::env::current_exe()?);
+    super::super::clone::native::seed::source_registration::quiet::require_stopped(
+        &backend,
+        &backend.join(".local-tests"),
+        &args["identity"],
+        &tool,
+    )?;
+    Ok(json!({"stopped":true,"signals_sent":0}))
 }
 
 fn database_observation(args: &Value) -> Result<Value> {

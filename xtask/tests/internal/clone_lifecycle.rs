@@ -148,6 +148,26 @@ impl stage::StageRunner for Failure {
 
 struct NeedsReconciliation;
 
+struct DiagnosticFailure(bool);
+
+impl stage::StageRunner for DiagnosticFailure {
+    fn preflight(&self, _: &stage::StageRequest<'_>) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    fn execute(&self, _: &stage::StageRequest<'_>) -> Result<Value, Box<dyn std::error::Error>> {
+        if self.0 {
+            Err(Box::new(
+                super::recovery::clone::native::seed::source_registration::quiet::CimUnavailable {
+                    code: Some(-2147024891),
+                },
+            ))
+        } else {
+            Err("fixture-private-content Winmgmt 0x80070005".into())
+        }
+    }
+}
+
 impl stage::StageRunner for NeedsReconciliation {
     fn preflight(
         &self,
@@ -498,6 +518,38 @@ fn revision_numbers_are_monotonic_and_tampering_fails_closed() {
     write_json(&state_path, &tampered);
     assert!(fixture.status().is_err());
     fs::write(state_path, original).unwrap();
+}
+
+#[test]
+fn failed_stage_exposes_typed_repair_guidance_without_echoing_arbitrary_errors() {
+    for typed in [true, false] {
+        let fixture = Fixture::new();
+        fixture.init().unwrap();
+        let error = stage::run_named(
+            &fixture.backend,
+            &fixture.run,
+            "seed-runtime",
+            "source-register",
+            &DiagnosticFailure(typed),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(error.contains("0x80070005"), typed, "{error}");
+        assert_eq!(error.contains("Winmgmt"), typed, "{error}");
+        assert!(!error.contains("fixture-private-content"));
+        let state = fixture.state();
+        assert_eq!(state["attempts"][0]["status"], "failed");
+        assert_eq!(state["attempts"][0]["result"], Value::Null);
+        assert_eq!(
+            state["attempts"][0]["error_type"],
+            if typed {
+                "HistoricalProducerCimUnavailable"
+            } else {
+                "StageError"
+            }
+        );
+        assert!(!fixture.run.join("run.lock").exists());
+    }
 }
 
 #[test]

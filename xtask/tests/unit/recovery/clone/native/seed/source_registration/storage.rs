@@ -55,7 +55,7 @@ fn exact_observation_accepts_canonical_equivalent_spelling_without_a_live_proces
     let parent = fixture.first.parent().unwrap().to_str().unwrap();
     let spelling = format!(
         "{parent}{}rustfs.exe",
-        std::path::MAIN_SEPARATOR.to_string().repeat(2)
+        std::path::MAIN_SEPARATOR_STR.repeat(2)
     );
     fixture.target["storage"]["rustfs"]["identity"]["executable"] = json!(spelling);
     assert_ne!(

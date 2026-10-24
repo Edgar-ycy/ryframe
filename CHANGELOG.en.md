@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Source registration now uses the native Rust stage controller to hold target and ledger locks and publish local evidence, removing the former Python writer. Initialization-history tests share one fixture and internal entry point; redundant internal-step assertions covered by complete-history validation are consolidated while recovery and rejection of unknown failures remain protected.
+
+- Move historical producer stop verification into Rust. On Windows, kernel access-denied errors use a managed native CIM query with strict microsecond precision boundaries. CIM failure explicitly rejects verification with repair guidance. Remove the PowerShell/PDH fallback and duplicate Python algorithm; existing callers only forward complete identities and strict results.
+
 - Recheck source trees and every consumed evidence binding before and after full-stack artifact verification, rejecting extra fields in original snapshots. Validate fixed evidence paths before hashing files and keep source-test fixtures in isolated workspace directories. Source-export proofs recheck the complete runtime contract, both configurations, and artifact manifests before and after verification, rejecting duplicate instance IDs, configuration mismatches, and runtime-receipt drift.
 
 - Native source export checks product build inputs, the current build environment and explicit source audits separately. Valid reuse retains the original build snapshot and fingerprint, and the end of the execution window rechecks the complete source and frozen artifacts. Producer registries reject duplicate PID creation generations rather than allowing different names to register the same process more than once.

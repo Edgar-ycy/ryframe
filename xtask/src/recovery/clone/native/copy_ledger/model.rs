@@ -266,13 +266,12 @@ fn clock_parts(text: &str) -> Option<[u32; 3]> {
     let mut split = text.split(['.', ',']);
     let main = split.next()?;
     let fractional = split.clone().next().is_some();
-    if let Some(fraction) = split.next() {
-        if fraction.is_empty()
+    if let Some(fraction) = split.next()
+        && (fraction.is_empty()
             || !fraction.bytes().all(|b| b.is_ascii_digit())
-            || split.next().is_some()
-        {
-            return None;
-        }
+            || split.next().is_some())
+    {
+        return None;
     }
     let parts = if main.contains(':') {
         main.split(':').collect::<Vec<_>>()

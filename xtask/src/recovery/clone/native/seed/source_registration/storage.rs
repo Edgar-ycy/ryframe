@@ -12,7 +12,9 @@ use crate::{
         json as document,
         lifecycle::state,
         resources::{common, storage::registered},
-        target_verify::{input::request_configuration::canonical_path, published},
+        target_verify::{
+            guard::Generation, input::request_configuration::canonical_path, published,
+        },
     },
 };
 
@@ -20,7 +22,12 @@ use crate::{
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/source_registration/storage.rs"]
 mod tests;
 
-pub(crate) fn verify(backend: &Path, run: &Path, manifest: &Value) -> Result<Value> {
+pub(crate) fn verify(
+    backend: &Path,
+    run: &Path,
+    manifest: &Value,
+    generation: &Generation,
+) -> Result<Value> {
     common::local_directory(backend, run, "seed来源运行目录")?;
     let manifest_binding = state::manifest_binding(run)?;
     if common::read_bound(backend, &manifest_binding, "seed来源固定清单")? != *manifest {
@@ -30,7 +37,7 @@ pub(crate) fn verify(backend: &Path, run: &Path, manifest: &Value) -> Result<Val
     let observed = registered::current(backend, run, CloneSide::Target)?
         .ok_or("seed源必须绑定本run实际重启的target RustFS")?;
     let initialized = common::bound_file(backend, &manifest["initialized"], "seed目标初始化")?;
-    let (history, target) = published::unlocked_history(backend, &initialized)?;
+    let (history, target) = published::owned_history(backend, &initialized, generation)?;
     let target_binding = published::request_binding(backend, &target)?;
     let observed_exe = executable(&observed["storage"]["identity"]["executable"])?;
     let target_exe = executable(&target["storage"]["rustfs"]["identity"]["executable"])?;
@@ -41,7 +48,8 @@ pub(crate) fn verify(backend: &Path, run: &Path, manifest: &Value) -> Result<Val
     ] {
         common::bound_file(backend, &observed[field], label)?;
     }
-    let (after_history, after_target) = published::unlocked_history(backend, &initialized)?;
+    let (after_history, after_target) =
+        published::owned_history(backend, &initialized, generation)?;
     if after_history != history
         || after_target != target
         || published::request_binding(backend, &after_target)? != target_binding
