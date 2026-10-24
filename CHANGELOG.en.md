@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse strict Rust validation for target schedule actions while preserving declaration order and rejecting non-ASCII or out-of-range IDs consistently. Move seven meaningful business-catalog test scenarios into the existing Rust evidence-protocol entry point. Validate generated table types in DDL declaration order and transport business-catalog and migration-ledger columns as ordered pairs, preventing alphabetical column sorting from rejecting valid exports.
+
 - Remove the unused standalone source-export command entry point. Formal exports continue through the unified flow with a bound native tool; the export implementation and caller behavior remain unchanged.
 
 - Load business-copy catalogs in Rust, preserving complete table descriptors, declaration order, managed assets, and content-digest validation. Business migration ledger column names and types share the native parser, removing duplicate Python catalog and DDL parsing. Assemble the source-policy module once and move two projection-validation cases into the single internal test harness, retaining every assertion while removing unused fixture path storage.
