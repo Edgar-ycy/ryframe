@@ -251,6 +251,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
             "environment": str(self.bootstrap),
             "format_version": 1,
             "kind": "ryframe-reference-fixture-control",
+            "native_tool": json.dumps(tool_binding()),
             "operation": "plan",
             "output": str(self.runtime / "dataset-plan.json"),
             "runtime": str(self.runtime),

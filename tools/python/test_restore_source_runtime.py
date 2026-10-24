@@ -23,6 +23,7 @@ import restore_source as source_cli
 import restore_source_runtime as runtime
 import restore_source_runtime_producer as producer
 from workspace_directory import WorkspaceDirectory
+from rate_limit_tool import tool_binding
 import source_fingerprints
 from test_source_fingerprints import inventory
 
@@ -657,6 +658,7 @@ class SourceRuntimeCliTests(unittest.TestCase):
             "backend_dir": str(backend),
             "format_version": 1,
             "kind": source_cli.PROTOCOL_KIND,
+            "native_tool": tool_binding(),
             "operation": "verify",
             "source_generation": str(start),
             "output": str(output),

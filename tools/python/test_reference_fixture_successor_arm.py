@@ -19,6 +19,7 @@ from devex_clone_capture import write_json
 from devex_clone_run_state import binding
 import reference_fixture_successor as successor
 import reference_fixture_successor_arm as arm
+from rate_limit_tool import tool_binding
 
 
 class SuccessorArmRequestTests(unittest.TestCase):
@@ -196,6 +197,8 @@ class SuccessorArmRequestTests(unittest.TestCase):
         arguments = [
             "reference_fixture_successor.py",
             "arm-request",
+            "--native-tool",
+            json.dumps(tool_binding()),
             "--backend-dir",
             str(self.backend),
             "--successor",
@@ -222,11 +225,12 @@ class SuccessorArmRequestTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()), {"status": "planned"})
 
         with (
-            redirect_stderr(io.StringIO()),
+            redirect_stderr(io.StringIO()) as diagnostic,
             self.assertRaises(SystemExit) as raised,
         ):
             successor.main([*arguments[1:], "--output", str(self.local / "bad.json")])
         self.assertEqual(raised.exception.code, 2)
+        self.assertIn("arm-request 写入必须同时指定 --output 与 --write", diagnostic.getvalue())
 
 
 if __name__ == "__main__":

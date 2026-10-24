@@ -15,6 +15,7 @@ from devex_clone_run_state import binding, begin, finish, load_state
 import reference_fixture_service_context as context
 from fixture_service_client import validate_history
 import reference_fixture_services as cli
+from rate_limit_tool import tool_binding
 
 
 class ServiceContextTests(unittest.TestCase):
@@ -157,7 +158,8 @@ class ServiceContextTests(unittest.TestCase):
 
 
     def test_cli_rejects_ambiguous_or_write_status_arguments_with_usage_exit(self):
-        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
+        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
+                  "--native-tool", json.dumps(tool_binding())]
         for args in (("status", "--write"), ("close",), ("reconcile", "--write"),
                      ("recover", "--write"), ("close", "--write", "--owner-binding", "owner.json")):
             with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
@@ -170,7 +172,8 @@ class ServiceContextTests(unittest.TestCase):
         expected = {"status": "failed_close_reconciled", "remote_writes": 0}
         arguments = ["reconcile", "--backend-dir", str(self.backend),
                      "--review", str(self.review), "--environment", str(self.bootstrap),
-                     "--owner-binding", str(self.run / "state.json"), "--write"]
+                     "--owner-binding", str(self.run / "state.json"), "--write",
+                     "--native-tool", json.dumps(tool_binding())]
         with patch("fixture_service_client.lifecycle", return_value=expected) as reconcile, \
                 patch("builtins.print") as output:
             cli.main(arguments)
@@ -180,7 +183,8 @@ class ServiceContextTests(unittest.TestCase):
 
 
     def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
-        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
+        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
+                  "--native-tool", json.dumps(tool_binding())]
         before = self.snapshot()
         invalid = [("status", "--review", "other"), ("status", "--environment=other"),
                    ("close", "--write", "--write"), ("status", "--rev", "other")]
