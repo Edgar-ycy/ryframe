@@ -20,6 +20,7 @@ private_max_lines = 100
 orchestration_max_lines = 80
 max_exception_days = 30
 orchestrations = [
+    { path = "xtask/src/recovery/clone/native/export/proof.rs", symbol = "generation_in" },
     { path = "xtask/src/ci/resource_gate.rs", symbol = "run" },
     { path = "xtask/src/ci/resource_gate.rs", symbol = "execute_plan" },
     { path = "xtask/src/ci/resource_gate/model.rs", symbol = "plan_steps" },

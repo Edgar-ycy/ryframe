@@ -15,6 +15,9 @@ use super::{
 
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 
+#[path = "clone_bridge/reuse.rs"]
+mod reuse;
+
 struct Fixture {
     root: PathBuf,
     local: PathBuf,
@@ -27,6 +30,10 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+        Self::at(root)
+    }
+
+    fn at(root: PathBuf) -> Self {
         fs::create_dir_all(root.join(".local-tests")).unwrap();
         write(&root.join(".gitignore"), ".local-tests/\ntarget/\n");
         write(&root.join("Cargo.toml"), "[workspace]\n");
