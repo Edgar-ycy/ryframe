@@ -17,11 +17,17 @@ FRESH_TARGET_OPERATIONS = {
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
-    "source-register", "source-rebind", "source-generation-start",
+    "source-rebind", "source-generation-start",
     "source-generation-stop", "source-generation-status",
     "source-generation-reboot-status",
     "source-generation-reboot-close",
     "source-generation-recover", "source-export", "source-export-reconcile",
+}
+SEED_RUNTIME_OPERATIONS = SEED_SOURCE_OPERATIONS | {
+    "register", "quotas-plan", "quotas-apply", "quotas-reconcile",
+    "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
+    "identities-apply", "identities-verify", "prepare", "start", "close", "arm-input",
+    "stop", "status", "recover", "recover-session",
 }
 SEED_SOURCE_REQUEST_OPERATIONS = {
     "source-rebind", "source-generation-start", "source-generation-stop",
@@ -271,6 +277,8 @@ def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
 
 
 def dispatch(args, backend: Path) -> dict:
+    if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
+        raise ValueError("Python seed-runtime 不接受此操作；来源登记必须使用原生 Rust 入口")
     if args.command == "fresh-target":
         from devex_clone_target_cli import initialize as initialize_target, reconcile_preflight
         from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, status as target_status, verify

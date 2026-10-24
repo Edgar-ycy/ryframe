@@ -1,10 +1,8 @@
-"""保留来源登记的 Python registry 桥接与 CLI 边界；写入职责由原生 Runner 承担。"""
+"""来源 producer 完整身份与 PID 复用风险；登记写入由原生 Runner 承担。"""
 from pathlib import Path
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import devex_clone_run_cli as cli
 import devex_clone_source_proof as source_proof
 
 
@@ -34,25 +32,6 @@ class SeedSourceTests(unittest.TestCase):
         registry["processes"][2]["identity"] = self.identities[0]
         with self.assertRaisesRegex(ValueError, "重复"):
             source_proof.producer_identities(request, registry, processes, run="fixed-runner")
-
-
-class SourceRegisterDispatchTests(unittest.TestCase):
-    def test_cli_requires_write_and_routes_without_request(self):
-        backend = Path.cwd().resolve()
-        directory = backend / ".local-tests/seed-source-cli"
-        args = SimpleNamespace(command="seed-runtime", run_dir=directory,
-                               operation="source-register", request=None,
-                               producer_binding=None, write=False)
-        with patch.object(cli, "execute") as execute, self.assertRaisesRegex(ValueError, "显式 --write"):
-            cli.dispatch(args, backend)
-        execute.assert_not_called()
-        outer = {"status": "stage_finished", "stage": "seed-runtime", "mode": "source-register",
-                 "attempt": 9, "restore_qualified": False}
-        with patch.object(cli, "execute", return_value=outer) as execute:
-            args.write = True
-            self.assertEqual(cli.dispatch(args, backend), outer)
-        execute.assert_called_once_with(backend, directory, "seed-runtime", "source-register",
-                                        seed_request=None, producer_binding=None)
 
 
 if __name__ == "__main__":
