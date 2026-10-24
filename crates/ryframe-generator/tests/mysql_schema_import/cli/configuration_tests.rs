@@ -93,83 +93,117 @@ fn require_diagnostic(error: &str, path: &Path, stage: &str) {
 #[test]
 fn explicit_shared_source_preserves_every_connection_field_and_only_changes_schema() {
     let scope = fixture();
-    let root = scope.path().join("workspace");
-    fs::create_dir(&root).unwrap();
-    let public = write_source(
-        &root,
-        "config",
-        &BASE
-            .replace("shared", "public")
-            .replace("localhost", "127.0.0.2"),
-    );
-    fs::write(
-        public.join("app.test.toml"),
-        SELECTED.replace("23306", "24306"),
-    )
-    .unwrap();
-    let shared = write_source(scope.path(), "explicit-shared", BASE);
-    let original = [
-        fs::read(shared.join("app.toml")).unwrap(),
-        fs::read(shared.join("app.test.toml")).unwrap(),
-    ];
-    let captured = CapturedConfiguration::capture(&shared).unwrap();
-    assert!(captured.base.bytes == original[0]);
-    assert!(captured.selected.bytes == original[1]);
-    let prepared = captured.prepare(&root, "actual_fixture_schema").unwrap();
-    let loaded = AppConfig::load(prepared.directory().unwrap(), Environment::Test).unwrap();
-    let expected = AppConfig::load(&shared, Environment::Test).unwrap();
-    let unrelated = AppConfig::load(&public, Environment::Test).unwrap();
-    assert!(equal_connection_except_schema(
-        &loaded.database.primary,
-        &expected.database.primary
-    ));
-    assert!(!equal_connection_except_schema(
-        &loaded.database.primary,
-        &unrelated.database.primary
-    ));
-    assert!(loaded.database.primary.database == "actual_fixture_schema");
-    let mut expected_table: toml::Table = toml::from_str(SELECTED).unwrap();
-    expected_table["database"]["primary"]
-        .as_table_mut()
-        .unwrap()
-        .insert(
-            "database".into(),
-            toml::Value::String("actual_fixture_schema".into()),
-        );
-    assert!(
-        parse_table(
-            &prepared.selected,
-            &prepared.directory.join("app.test.toml")
-        )
-        .unwrap()
-            == expected_table
-    );
-    assert!(fs::read(prepared.directory.join("app.toml")).unwrap() == original[0]);
-    for _ in 0..3 {
-        assert!(prepared.directory().unwrap() == prepared.directory.as_path());
-    }
-    assert!(fs::read(shared.join("app.toml")).unwrap() == original[0]);
-    assert!(fs::read(shared.join("app.test.toml")).unwrap() == original[1]);
-    assert!(
-        fs::read(public.join("app.toml")).unwrap()
-            == BASE
+    for with_base in [true, false] {
+        let case = scope.path().join(if with_base {
+            "with-base"
+        } else {
+            "selected-only"
+        });
+        fs::create_dir(&case).unwrap();
+        let root = case.join("workspace");
+        fs::create_dir(&root).unwrap();
+        let public = write_source(
+            &root,
+            "config",
+            &BASE
                 .replace("shared", "public")
-                .replace("localhost", "127.0.0.2")
-                .as_bytes()
-    );
+                .replace("localhost", "127.0.0.2"),
+        );
+        fs::write(
+            public.join("app.test.toml"),
+            SELECTED.replace("23306", "24306"),
+        )
+        .unwrap();
+        let shared = write_source(&case, "explicit-shared", BASE);
+        if !with_base {
+            fs::remove_file(shared.join("app.toml")).unwrap();
+            fs::write(shared.join("app.test.toml"), BASE).unwrap();
+        }
+        let original = (
+            if with_base {
+                Some(fs::read(shared.join("app.toml")).unwrap())
+            } else {
+                None
+            },
+            fs::read(shared.join("app.test.toml")).unwrap(),
+        );
+        let captured = CapturedConfiguration::capture(&shared).unwrap();
+        assert!(captured.base.as_ref().map(|file| &file.bytes) == original.0.as_ref());
+        assert!(captured.selected.bytes == original.1);
+        let prepared = captured.prepare(&root, "actual_fixture_schema").unwrap();
+        let loaded = AppConfig::load(prepared.directory().unwrap(), Environment::Test).unwrap();
+        let expected = AppConfig::load(&shared, Environment::Test).unwrap();
+        let unrelated = AppConfig::load(&public, Environment::Test).unwrap();
+        assert!(equal_connection_except_schema(
+            &loaded.database.primary,
+            &expected.database.primary
+        ));
+        assert!(!equal_connection_except_schema(
+            &loaded.database.primary,
+            &unrelated.database.primary
+        ));
+        assert!(loaded.database.primary.database == "actual_fixture_schema");
+        let mut expected_table: toml::Table =
+            toml::from_str(std::str::from_utf8(&original.1).unwrap()).unwrap();
+        expected_table["database"]["primary"]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "database".into(),
+                toml::Value::String("actual_fixture_schema".into()),
+            );
+        assert!(
+            parse_table(
+                &prepared.selected,
+                &prepared.directory.join("app.test.toml")
+            )
+            .unwrap()
+                == expected_table
+        );
+        assert!(fs::read(prepared.directory.join("app.toml")).ok() == original.0);
+        assert_eq!(prepared.directory.join("app.toml").exists(), with_base);
+        assert!(fs::read(shared.join("app.toml")).ok() == original.0);
+        assert!(fs::read(shared.join("app.test.toml")).unwrap() == original.1);
+        assert!(
+            fs::read(public.join("app.toml")).unwrap()
+                == BASE
+                    .replace("shared", "public")
+                    .replace("localhost", "127.0.0.2")
+                    .as_bytes()
+        );
+    }
 }
 
 #[test]
 fn captured_source_changes_are_rejected_without_recapturing_or_creating_target() {
     let scope = fixture();
-    for name in ["app.toml", "app.test.toml"] {
-        let case = scope.path().join(name.replace('.', "-"));
+    for (index, name, absent, replacement) in [
+        (0, "app.toml", false, false),
+        (1, "app.test.toml", false, false),
+        (2, "app.toml", true, false),
+        (3, "app.toml", false, true),
+    ] {
+        let case = scope.path().join(format!("case-{index}"));
         fs::create_dir(&case).unwrap();
         let shared = write_source(&case, "source", BASE);
+        if absent {
+            fs::remove_file(shared.join(name)).unwrap();
+        }
         let captured = CapturedConfiguration::capture(&shared).unwrap();
         let root = case.join("workspace");
         fs::create_dir(&root).unwrap();
-        fs::write(shared.join(name), format!("changed = '{SECRET}'")).unwrap();
+        if replacement {
+            fs::rename(shared.join(name), shared.join("retained-original.toml")).unwrap();
+            fs::write(shared.join(name), BASE).unwrap();
+            File::options()
+                .write(true)
+                .open(shared.join(name))
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
+                .unwrap();
+        } else {
+            fs::write(shared.join(name), format!("changed = '{SECRET}'")).unwrap();
+        }
         let error = captured.prepare(&root, "fixture_schema").err().unwrap();
         require_diagnostic(&error, &shared.join(name), "复核共享源文件");
         assert!(!root.join(".local-tests/导入 配置").exists());
@@ -179,18 +213,40 @@ fn captured_source_changes_are_rejected_without_recapturing_or_creating_target()
 #[test]
 fn source_drift_after_preparation_is_rejected_and_private_snapshot_stays_unchanged() {
     let scope = fixture();
-    let shared = write_source(scope.path(), "source", BASE);
-    let root = scope.path().join("workspace");
-    fs::create_dir(&root).unwrap();
-    let prepared = CapturedConfiguration::capture(&shared)
-        .unwrap()
-        .prepare(&root, "fixture_schema")
-        .unwrap();
-    let before = fs::read(prepared.directory.join("app.test.toml")).unwrap();
-    fs::write(shared.join("app.test.toml"), "scope_id = 'changed-scope'").unwrap();
-    let error = prepared.directory().err().unwrap();
-    require_diagnostic(&error, &shared.join("app.test.toml"), "复核共享源文件");
-    assert!(fs::read(prepared.directory.join("app.test.toml")).unwrap() == before);
+    for (index, private, absent) in [(0, false, false), (1, false, true), (2, true, true)] {
+        let case = scope.path().join(format!("case-{index}"));
+        fs::create_dir(&case).unwrap();
+        let shared = write_source(&case, "source", BASE);
+        if absent {
+            fs::remove_file(shared.join("app.toml")).unwrap();
+            fs::write(shared.join("app.test.toml"), BASE).unwrap();
+        }
+        let root = case.join("workspace");
+        fs::create_dir(&root).unwrap();
+        let prepared = CapturedConfiguration::capture(&shared)
+            .unwrap()
+            .prepare(&root, "fixture_schema")
+            .unwrap();
+        let before = fs::read(prepared.directory.join("app.test.toml")).unwrap();
+        let changed = if private {
+            prepared.directory.join("app.toml")
+        } else {
+            shared.join(if absent { "app.toml" } else { "app.test.toml" })
+        };
+        fs::write(&changed, "scope_id = 'changed-scope'").unwrap();
+        let error = prepared.directory().err().unwrap();
+        require_diagnostic(
+            &error,
+            &changed,
+            if private {
+                "复核私有配置文件"
+            } else {
+                "复核共享源文件"
+            },
+        );
+        assert!(fs::read(prepared.directory.join("app.test.toml")).unwrap() == before);
+        assert!(fs::read_to_string(changed).unwrap() == "scope_id = 'changed-scope'");
+    }
 }
 
 #[test]
@@ -229,7 +285,7 @@ fn existing_target_and_later_foreign_file_are_never_overwritten() {
         &prepared.directory.join("app.toml"),
         "复核私有配置文件",
     );
-    assert!(error.contains("不重建、不覆盖、不自动重放"));
+    assert!(error.contains("不重新捕获、不切换来源、不自动重放"));
     assert!(fs::read(prepared.directory.join("app.toml")).unwrap() == SECRET.as_bytes());
 }
 
@@ -239,11 +295,9 @@ fn missing_non_regular_invalid_and_non_utf8_sources_fail_with_safe_diagnostics()
     let source = scope.path().join("source");
     fs::create_dir(&source).unwrap();
     let error = CapturedConfiguration::capture(&source).err().unwrap();
-    require_diagnostic(&error, &source.join("app.toml"), "读取前元数据");
+    require_diagnostic(&error, &source.join("app.test.toml"), "读取前元数据");
     assert!(error.contains("IOkind=NotFound") && error.contains("rawcode="));
     fs::write(source.join("app.toml"), BASE).unwrap();
-    let error = CapturedConfiguration::capture(&source).err().unwrap();
-    require_diagnostic(&error, &source.join("app.test.toml"), "读取前元数据");
     fs::create_dir(source.join("app.test.toml")).unwrap();
     let error = CapturedConfiguration::capture(&source).err().unwrap();
     require_diagnostic(
@@ -336,6 +390,17 @@ fn linked_source_file_and_linked_ancestor_are_rejected() {
         panic!("创建离线测试链接失败：{error}");
     }
     assert!(CapturedConfiguration::capture(&link).is_err());
+    let base = source.join("app.toml");
+    fs::remove_file(&base).unwrap();
+    let captured = CapturedConfiguration::capture(&source).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(source.join("app.test.toml"), &base).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(source.join("app.test.toml"), &base).unwrap();
+    assert!(captured.verify().is_err());
+    assert!(CapturedConfiguration::capture(&source).is_err());
+    fs::remove_file(&base).unwrap();
+    fs::write(&base, BASE).unwrap();
     let selected = source.join("app.test.toml");
     fs::remove_file(&selected).unwrap();
     #[cfg(unix)]
