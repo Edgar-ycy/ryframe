@@ -1,12 +1,11 @@
 """复制后只允许登记的配置差异与完整调度行，不推断新资源或认证信息。"""
-import re
 import subprocess
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from devex_clone_model import exact, linked
+from devex_clone_model import linked
 from devex_clone_rows import schema_catalog
 from devex_clone_schedule import (ACTION_FIELDS, canonical_value, inspect_schedule,
                                   schedule_actions, schedule_row_sha256)
@@ -69,14 +68,6 @@ def environment_delta(initial: dict, api: dict, frontend_url: str) -> None:
 
 
 def administrator(value: dict, backend: Path, credentials: dict) -> None:
-    exact(value, {"subject_id", "tenant_id", "username", "client_address"})
-    if (value["tenant_id"] != "system" or not isinstance(value["subject_id"], str)
-            or not re.fullmatch(r"[1-9][0-9]{0,18}", value["subject_id"])
-            or not isinstance(value["username"], str)
-            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value["username"])
-            or not isinstance(value["client_address"], str)
-            or not re.fullmatch(r"198\.19\.20\.(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])", value["client_address"])):
-        raise ValueError("必须登记实际 system 身份；当前凭据只通过独立 TOML 文件绑定")
     native_response(*native_invoke(
         "__source-evidence", {"operation": "copy-administrator-credentials", "write": False,
             "arguments": {"backend": str(backend), "identity": value,

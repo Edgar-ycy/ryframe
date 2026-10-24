@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Consolidate duplicate post-administrator identity metadata validation in the existing Rust credential-validation entry point, preserving identity fields, ASCII subject and username boundaries, credential TOML, and file-binding checks. Python only forwards read-only requests; errors never return credentials.
+
 - Fix the frontend source-authority context misreporting caller configuration-validation errors as program-protection failures. Preserve the original configuration-file diagnostic while retaining complete source, binding, and program-identity checks on exit.
 
 - Seven categories of formal Python recovery-tool entry points explicitly pass and verify the current native tool. Remove implicit Cargo compilation fallbacks from object, fixture, rate-limit, full-stack file, and reference-dataset operations. Tool identity stays outside business specifications and product fingerprints; missing or invalid bindings are rejected before business dispatch.

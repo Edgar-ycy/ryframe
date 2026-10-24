@@ -88,6 +88,21 @@ pub(crate) fn validate_request(args: &Value) -> Result<Value> {
             "管理员凭据请求",
         )?;
         let root = Path::new(args["backend"].as_str().ok_or(REJECTED)?);
+        let identity = &args["identity"];
+        let subject = identity["subject_id"].as_str().ok_or(REJECTED)?;
+        let username = identity["username"].as_str().ok_or(REJECTED)?;
+        if subject.is_empty()
+            || subject.len() > 19
+            || subject.starts_with('0')
+            || !subject.bytes().all(|byte| byte.is_ascii_digit())
+            || username.is_empty()
+            || username.len() > 64
+            || !username
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+        {
+            return Err(REJECTED.into());
+        }
         load(root, &args["administrator_credentials"], &args["identity"])?;
         Ok(Value::Null)
     })();
@@ -171,9 +186,97 @@ mod tests {
         let args = json!({"backend":f.root,"identity":f.identity,
             "administrator_credentials":descriptor});
         assert_eq!(validate_request(&args).unwrap(), Value::Null);
+        for subject in ["1", "9999999999999999999"] {
+            for username in ["A_z.09-".to_owned(), "a".repeat(64)] {
+                let mut valid = args.clone();
+                valid["identity"]["subject_id"] = json!(subject);
+                valid["identity"]["username"] = json!(username);
+                valid["administrator_credentials"] = f.write(&format!(
+                    "[administrator]\ntenant_id='system'\nusername='{username}'\npassword='Current!Changed123'\n"
+                ));
+                assert_eq!(validate_request(&valid).unwrap(), Value::Null);
+            }
+        }
+        let descriptor = f.valid();
+        let mut rejected = args.clone();
+        rejected["administrator_credentials"] = descriptor;
+        for subject in [
+            json!(""),
+            json!("0"),
+            json!("01"),
+            json!("+1"),
+            json!("1\n"),
+            json!("１"),
+            json!("١"),
+            json!("10000000000000000000"),
+            json!(9),
+            Value::Null,
+            json!(true),
+        ] {
+            rejected["identity"]["subject_id"] = subject;
+            assert_eq!(
+                validate_request(&rejected).unwrap_err().to_string(),
+                REJECTED
+            );
+        }
+        // 此长度仍是既有 load 接受的 u64；仅 post 元数据入口限制为 19 位。
+        assert!(
+            load(
+                &f.root,
+                &rejected["administrator_credentials"],
+                &json!({
+                    "subject_id":"10000000000000000000", "tenant_id":"system",
+                    "username":"admin", "client_address":"198.19.20.1"
+                })
+            )
+            .is_ok()
+        );
+        for username in [
+            "a".repeat(65),
+            "管理员".into(),
+            "admin user".into(),
+            "admin/".into(),
+        ] {
+            let mut invalid = args.clone();
+            invalid["identity"]["username"] = json!(username);
+            invalid["administrator_credentials"] = f.write(&format!(
+                "[administrator]\ntenant_id='system'\nusername='{username}'\npassword='Current!Changed123'\n"
+            ));
+            assert!(
+                load(
+                    &f.root,
+                    &invalid["administrator_credentials"],
+                    &invalid["identity"]
+                )
+                .is_ok()
+            );
+            assert_eq!(
+                validate_request(&invalid).unwrap_err().to_string(),
+                REJECTED
+            );
+        }
+        let descriptor = f.valid();
+        for username in [
+            json!(""),
+            json!("admin\n"),
+            json!(9),
+            Value::Null,
+            json!(true),
+        ] {
+            let mut invalid = args.clone();
+            invalid["administrator_credentials"] = descriptor.clone();
+            invalid["identity"]["username"] = username;
+            assert_eq!(
+                validate_request(&invalid).unwrap_err().to_string(),
+                REJECTED
+            );
+        }
         let mut overridden = args;
         overridden["password_env"] = json!("OLD_PASSWORD");
-        assert!(validate_request(&overridden).is_err());
+        assert_eq!(
+            validate_request(&overridden).unwrap_err().to_string(),
+            REJECTED
+        );
     }
 
     #[test]
@@ -195,10 +298,43 @@ mod tests {
             let mut identity = f.identity.clone();
             identity[field] = json!("private-parser-sentinel");
             f.rejected(&descriptor, &identity);
+            let args = json!({"backend":f.root,"identity":identity,
+                "administrator_credentials":descriptor});
+            assert_eq!(validate_request(&args).unwrap_err().to_string(), REJECTED);
         }
         let mut wrong = f.identity.clone();
         wrong["username"] = json!("other");
         f.rejected(&descriptor, &wrong);
+        for address in ["198.19.20.1", "198.19.20.254"] {
+            let mut identity = f.identity.clone();
+            identity["client_address"] = json!(address);
+            assert_eq!(
+                validate_request(&json!({"backend":f.root,"identity":identity,
+                "administrator_credentials":descriptor}))
+                .unwrap(),
+                Value::Null
+            );
+        }
+        for (field, value) in [
+            ("tenant_id", json!("other")),
+            ("client_address", json!("198.19.20.0")),
+            ("client_address", json!("198.19.20.255")),
+            ("client_address", json!("198.19.20.01")),
+            ("client_address", json!("198.19.20.１")),
+            ("client_address", json!("198.19.20.1\n")),
+            ("client_address", json!(9)),
+        ] {
+            let mut identity = f.identity.clone();
+            identity[field] = value;
+            f.rejected(&descriptor, &identity);
+            assert_eq!(
+                validate_request(&json!({"backend":f.root,"identity":identity,
+                "administrator_credentials":descriptor}))
+                .unwrap_err()
+                .to_string(),
+                REJECTED
+            );
+        }
     }
 
     #[test]

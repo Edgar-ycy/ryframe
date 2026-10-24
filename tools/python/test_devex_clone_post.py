@@ -35,10 +35,6 @@ class PostContractTests(unittest.TestCase):
         self.assertFalse(payload['write'])
         self.assertFalse(invoked.call_args.kwargs['may_write'])
         self.assertNotIn('password', json.dumps(payload))
-        for field in ('password', 'password_env'):
-            with patch('devex_clone_post_model.native_invoke') as invoked, self.assertRaises(ValueError):
-                administrator({**admin, field: 'private-sentinel'}, Path('D:/backend'), descriptor)
-            invoked.assert_not_called()
 
     def test_environment_selector_rejects_overrides_on_both_sides(self):
         valid = {'APP_ENV': 'test'}
