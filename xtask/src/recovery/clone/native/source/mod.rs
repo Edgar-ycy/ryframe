@@ -16,6 +16,7 @@ mod domains;
 pub(crate) mod protocol;
 
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/source/tests.rs"]
 mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
