@@ -2,6 +2,9 @@ use serde_json::{Value, json};
 
 use super::{execute, model};
 
+#[path = "business_catalog.rs"]
+mod business_catalog;
+
 #[path = "../../../../../src/recovery/source/evidence/tests/staging.rs"]
 mod staging;
 
