@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Load business-copy catalogs in Rust, preserving complete table descriptors, declaration order, managed assets, and content-digest validation. Business migration ledger column names and types share the native parser, removing duplicate Python catalog and DDL parsing. Assemble the source-policy module once and move two projection-validation cases into the single internal test harness, retaining every assertion while removing unused fixture path storage.
+
 - Consolidate duplicate post-administrator identity metadata validation in the existing Rust credential-validation entry point, preserving identity fields, ASCII subject and username boundaries, credential TOML, and file-binding checks. Python only forwards read-only requests; errors never return credentials.
 
 - Fix the frontend source-authority context misreporting caller configuration-validation errors as program-protection failures. Preserve the original configuration-file diagnostic while retaining complete source, binding, and program-identity checks on exit.

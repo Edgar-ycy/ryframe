@@ -14,10 +14,7 @@ use super::{
     identity::Identity,
     python,
 };
-use crate::Result;
-
-#[path = "../../frontend_origin/sources.rs"]
-mod source_inventory;
+use crate::{Result, frontend_origin::sources};
 
 const INVALID: &str = "origin 工具绑定无效：核对当前程序、完整编译来源清单和固定绑定文件，保留失败证据后重新编译同一来源工具。";
 const LIMIT: u64 = 4 * 1024 * 1024;
@@ -51,7 +48,7 @@ impl OriginBinding {
     pub(crate) fn verify(&self) -> Result<()> {
         let result = (|| {
             self.binding.verify()?;
-            if source_inventory::discover(&self.source_root)? != self.source_paths {
+            if sources::discover(&self.source_root)? != self.source_paths {
                 return Err(INVALID.into());
             }
             for file in &self.held {
@@ -192,7 +189,7 @@ fn validate_current(
     {
         return Err(INVALID.into());
     }
-    let actual = source_inventory::discover(root).map_err(|_| INVALID)?;
+    let actual = sources::discover(root).map_err(|_| INVALID)?;
     if !actual.iter().map(String::as_str).eq(description
         .sources
         .iter()

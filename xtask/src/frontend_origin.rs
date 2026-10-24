@@ -13,6 +13,8 @@ use url::Url;
 
 #[path = "frontend_origin/source_guard.rs"]
 mod source_guard;
+#[path = "frontend_origin/sources.rs"]
+pub(crate) mod sources;
 
 const INPUT_LIMIT: usize = 64 * 1024 * 1024;
 const INVALID_ARGUMENTS: &str =

@@ -66,13 +66,13 @@ pub(super) fn reference_tools(request: &Value) -> Result<Value> {
     }))
 }
 
-pub(super) struct TargetProjection {
+pub(crate) struct TargetProjection {
     pub(super) target: Value,
     files: BTreeMap<String, Value>,
 }
 
 impl TargetProjection {
-    pub(super) fn load(target: &super::target::TargetRequest) -> Result<Self> {
+    pub(crate) fn load(target: &super::target::TargetRequest) -> Result<Self> {
         let environment = BTreeMap::from([("APP_ENV".into(), "test".into())]);
         let request = &target.document.value;
         let (directory, files) =

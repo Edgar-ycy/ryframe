@@ -36,7 +36,6 @@ struct TargetState {
     review: Value,
     environment: Value,
     storage_run: Value,
-    registration: PathBuf,
     registration_binding: Value,
     initialized_files_binding: Value,
     initialized_binding: Value,
@@ -95,7 +94,6 @@ fn prepare_target(base: &Base) -> TargetState {
         review,
         environment: registration.environment,
         storage_run: registration.storage_run,
-        registration: registration.registration,
         registration_binding: registration.registration_binding,
         initialized_files_binding: registration.initialized_files_binding,
         initialized_binding: registration.initialized_binding,
@@ -106,7 +104,6 @@ fn prepare_target(base: &Base) -> TargetState {
 struct RegistrationState {
     environment: Value,
     storage_run: Value,
-    registration: PathBuf,
     registration_binding: Value,
     initialized_files_binding: Value,
     initialized_binding: Value,
@@ -178,7 +175,6 @@ fn registration_state(base: &Base, request: &Value, selected: &Value) -> Registr
     RegistrationState {
         environment,
         storage_run: value,
-        registration,
         registration_binding,
         initialized_files_binding: binding(&initialized_files),
         initialized_binding: binding(&initialized),

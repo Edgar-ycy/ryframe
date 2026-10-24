@@ -72,7 +72,7 @@ pub(crate) fn load_with_reference(
     })
 }
 
-fn validate_links(
+pub(crate) fn validate_links(
     reference: &Value,
     backup: &Backup,
     comparison: &Value,
@@ -156,68 +156,4 @@ pub(crate) fn product_execution(chain: &Chain) -> Result<Value> {
         "builds": arm.get("builds").ok_or("比较 source arm 缺少构建")?,
         "adapter": arm.get("adapter").ok_or("比较 source arm 缺少适配")?,
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{recovery_inputs_fixture::Fixture, recovery_inputs_support::read_value};
-    use serde_json::json;
-
-    #[test]
-    fn target_projection_rejects_descriptor_credentials_and_physical_mapping_changes() {
-        let fixture = Fixture::new();
-        let chain = load(
-            &fixture.backend,
-            &fixture.reference_plan,
-            &fixture.backup_receipt,
-            &fixture.comparison_sources,
-            &fixture.arm_input,
-            &fixture.fresh_verify,
-            "base",
-        )
-        .unwrap();
-        for field in ["scope_id", "s3", "databases"] {
-            let mut reference = fixture.reference_value.clone();
-            reference["target"][field] = match field {
-                "scope_id" => json!("another-target"),
-                "s3" => reference["source"]["s3"].clone(),
-                _ => {
-                    let mut databases = reference["target"]["databases"].clone();
-                    databases[0]["database"] = json!("another_physical_database");
-                    databases
-                }
-            };
-            assert!(
-                validate_links(
-                    &reference,
-                    &chain.backup,
-                    &chain.comparison,
-                    &chain.arm,
-                    &chain.fresh
-                )
-                .is_err()
-            );
-            assert!(!fixture.output.exists());
-        }
-        let path = &chain.arm.target.document.path;
-        let original = std::fs::read(path).unwrap();
-        let mut request = read_value(path);
-        request["target"]["s3"]["secret_key"] = json!("changed-target-private-secret");
-        std::fs::write(path, serde_json::to_vec(&request).unwrap()).unwrap();
-        let document =
-            super::super::document::read(path, &fixture.backend, "测试目标请求").unwrap();
-        let target = super::super::target::validate(&fixture.backend, document, "base").unwrap();
-        let before = std::fs::read(path).unwrap();
-        let error = super::super::reference_configuration::TargetProjection::load(&target)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("object_storage.secret_key与绑定私有请求不一致"));
-        assert!(!error.contains("changed-target-private-secret"));
-        assert!(!error.contains("target-secret"));
-        assert_eq!(std::fs::read(path).unwrap(), before);
-        assert!(!fixture.output.exists());
-        std::fs::write(path, original).unwrap();
-    }
 }

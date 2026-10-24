@@ -1,10 +1,14 @@
 use std::fs;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::cli::{RecoveryInputsCommand, RestoreInputPublication};
-use super::recovery::inputs::{bindings, document, product, publish, reference, run};
+use super::recovery::inputs::{
+    backup, bindings, chain, document, product, publish, reference, reference_configuration, run,
+    target,
+};
 use super::recovery_inputs_fixture::Fixture;
+use super::recovery_inputs_support::{binding, hash, read_value};
 
 #[test]
 fn reference_product_and_bindings_native_chains_succeed() {
@@ -329,4 +333,126 @@ fn source_reference_projection_rejects_binding_runtime_and_configuration_drift()
     assert_eq!(fs::read(runtime).unwrap(), runtime_before);
     assert_eq!(fs::read(config).unwrap(), config_before);
     assert_eq!(fs::read(path).unwrap(), request.raw);
+}
+
+#[test]
+fn target_projection_rejects_descriptor_credentials_and_physical_mapping_changes() {
+    let fixture = Fixture::new();
+    let chain = chain::load(
+        &fixture.backend,
+        &fixture.reference_plan,
+        &fixture.backup_receipt,
+        &fixture.comparison_sources,
+        &fixture.arm_input,
+        &fixture.fresh_verify,
+        "base",
+    )
+    .unwrap();
+    for field in ["scope_id", "s3", "databases"] {
+        let mut reference = fixture.reference_value.clone();
+        reference["target"][field] = match field {
+            "scope_id" => json!("another-target"),
+            "s3" => reference["source"]["s3"].clone(),
+            _ => {
+                let mut databases = reference["target"]["databases"].clone();
+                databases[0]["database"] = json!("another_physical_database");
+                databases
+            }
+        };
+        assert!(
+            chain::validate_links(
+                &reference,
+                &chain.backup,
+                &chain.comparison,
+                &chain.arm,
+                &chain.fresh
+            )
+            .is_err()
+        );
+        assert!(!fixture.output.exists());
+    }
+    let path = &chain.arm.target.document.path;
+    let original = std::fs::read(path).unwrap();
+    let mut request = read_value(path);
+    request["target"]["s3"]["secret_key"] = json!("changed-target-private-secret");
+    std::fs::write(path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let document = document::read(path, &fixture.backend, "测试目标请求").unwrap();
+    let target = target::validate(&fixture.backend, document, "base").unwrap();
+    let before = std::fs::read(path).unwrap();
+    let error = reference_configuration::TargetProjection::load(&target)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("object_storage.secret_key与绑定私有请求不一致"));
+    assert!(!error.contains("changed-target-private-secret"));
+    assert!(!error.contains("target-secret"));
+    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert!(!fixture.output.exists());
+    std::fs::write(path, original).unwrap();
+}
+
+#[test]
+fn source_identity_rejects_changed_reference_and_private_credentials_without_writes() {
+    let fixture = Fixture::new();
+    let receipt = read_value(&fixture.backup_receipt);
+    let export = &receipt["result"]["source_export"];
+    let generation = &receipt["result"]["source_generation"];
+    backup::validate_source_identity(
+        &fixture.backend,
+        &fixture.reference_value,
+        export,
+        generation,
+    )
+    .unwrap();
+    for (section, field, replacement) in [
+        ("source", "scope_id", json!("another-source")),
+        (
+            "tools",
+            "mysql",
+            json!({"path":fixture.root.join("other.exe"),"sha256":"a".repeat(64)}),
+        ),
+        (
+            "tools",
+            "mysqldump",
+            json!({"path":fixture.reference_value["tools"]["mysqldump"]["path"],"sha256":"a".repeat(64)}),
+        ),
+        (
+            "source",
+            "s3",
+            fixture.reference_value["target"]["s3"].clone(),
+        ),
+    ] {
+        let mut changed = fixture.reference_value.clone();
+        changed[section][field] = replacement;
+        assert!(
+            backup::validate_source_identity(&fixture.backend, &changed, export, generation)
+                .is_err()
+        );
+        assert!(!fixture.output.exists());
+    }
+    let path = fixture.root.join("source-request.json");
+    let original = std::fs::read(&path).unwrap();
+    let mut request = read_value(&path);
+    request["source"]["s3"]["secret_key"] = json!("different-private-secret");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let mut changed = export.clone();
+    changed["source_request"] = binding(&path);
+    changed.as_object_mut().unwrap().remove("identity_sha256");
+    changed["identity_sha256"] = json!(hash(&changed));
+    let before = std::fs::read(&path).unwrap();
+    let error = backup::validate_source_identity(
+        &fixture.backend,
+        &fixture.reference_value,
+        &changed,
+        generation,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("object_storage.secret_key与绑定私有请求不一致"));
+    assert!(!error.contains("different-private-secret"));
+    assert!(!error.contains("source-secret"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!fixture.output.exists());
+    std::fs::write(path, original).unwrap();
 }

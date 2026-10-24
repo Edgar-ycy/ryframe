@@ -8,8 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[path = "sources.rs"]
-mod sources;
+use super::sources;
 
 pub(super) const LIMIT: usize = 4 * 1024 * 1024;
 const FILE_LIMIT: usize = 16 * 1024 * 1024;
