@@ -27,6 +27,41 @@ mod workbook;
 #[path = "department/workflow.rs"]
 mod workflow;
 
+/// 复用最新阶段选择器和部门证据算法，不创建中间受管输入文件。
+pub(crate) fn verified_evidence(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    current: Option<u64>,
+) -> Result<Value> {
+    let request_path = run.join("seed-runtime.json");
+    let request_binding = common::binding(&request_path)?;
+    if common::read_bound(backend, &request_binding, "部门seed登记请求")? != *request {
+        return Err("部门请求不同于当前seed登记".into());
+    }
+    let before = super::lifecycle::state::load(run, true)?;
+    let record = super::seed::latest(
+        &before,
+        "seed-runtime",
+        &[
+            "departments-plan",
+            "departments-apply",
+            "departments-reconcile",
+            "departments-verify",
+        ],
+        current,
+        false,
+    )?;
+    let result = evidence::department_evidence(backend, run, request, record)?;
+    common::bound_file(backend, &record["result"], "部门最终阶段结果")?;
+    common::bound_file(backend, &request["identity_plan"], "部门身份计划")?;
+    common::bound_file(backend, &request_binding, "部门seed登记请求")?;
+    if super::lifecycle::state::load(run, true)? != before {
+        return Err("部门核验期间完整阶段状态变化；保留现场，禁止重放".into());
+    }
+    Ok(result)
+}
+
 pub(crate) fn dispatch(backend: &Path, run: &Path, args: &Value) -> Result<Value> {
     document::exact(args, &["backend_root", "parameters"], "部门证据工作区绑定")?;
     let selected = Path::new(document::text(&args["backend_root"], "部门证据后端")?);
