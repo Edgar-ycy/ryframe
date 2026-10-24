@@ -127,7 +127,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         self.make_service_run()
 
     def make_environment(self, side: str) -> Path:
-        directory = self.root / f"environment-{side}"
+        directory = self.execution / ".local-tests" / f"environment-{side}"
         directory.mkdir()
         selected = self.review["scopes"][side]
         plan = {
