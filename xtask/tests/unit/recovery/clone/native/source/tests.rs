@@ -234,7 +234,7 @@ fn complete_inventory_and_domains_reject_tampering_and_unknown_fields() {
     );
 }
 
-#[path = "../../../../../../src/recovery/clone/native/source/tests/git.rs"]
+#[path = "tests/git.rs"]
 mod git;
 
 #[test]
