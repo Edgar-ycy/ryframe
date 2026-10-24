@@ -100,6 +100,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
         Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
             documents::exact(args, &["backend"], "业务目录参数")?;
             let backend = binding::path(&args["backend"])?;

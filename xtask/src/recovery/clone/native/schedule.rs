@@ -16,6 +16,17 @@ pub(crate) const TRIGGERS: &[&str] = &["scheduled", "misfire", "manual"];
 
 type ActionKey = (String, String);
 
+pub(crate) fn request(args: &Value) -> Result<Value> {
+    exact(
+        args,
+        &["copy_stage", "target_schedule_actions"],
+        "复制调度待办参数",
+    )?;
+    actions(args)?;
+    // 规则校验使用索引，协议返回保留调用方的声明顺序。
+    Ok(args["target_schedule_actions"].clone())
+}
+
 pub(crate) fn actions(value: &Value) -> Result<BTreeMap<ActionKey, Value>> {
     let stage = text(
         value.get("copy_stage").ok_or("复制输入缺少 copy_stage")?,

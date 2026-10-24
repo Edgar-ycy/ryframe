@@ -696,6 +696,54 @@ fn exact_schedule_disposition_is_bound_without_writing_resources() {
 }
 
 #[test]
+fn schedule_action_protocol_preserves_order_and_rejects_id_and_shape_boundaries() {
+    let action = json!({"action": "disable_schedule_via_api", "tenant_id": "system",
+        "schedule_id": "9", "handler_key": "system.cleanup", "expected_version": 1,
+        "source_row_sha256": "a".repeat(64)});
+    let mut second = action.clone();
+    second["schedule_id"] = json!("2");
+    let input =
+        json!({"copy_stage": "source_to_seed", "target_schedule_actions": [action, second]});
+    assert_eq!(
+        native::schedule::request(&input).unwrap(),
+        input["target_schedule_actions"]
+    );
+    for id in ["0", "01", "-1", "1２", "1٢", "9223372036854775808"] {
+        let mut invalid = input.clone();
+        invalid["target_schedule_actions"][0]["schedule_id"] = json!(id);
+        assert!(native::schedule::request(&invalid).is_err(), "{id}");
+    }
+    let mut maximum = input.clone();
+    maximum["target_schedule_actions"][0]["schedule_id"] = json!(i64::MAX.to_string());
+    assert!(native::schedule::request(&maximum).is_ok());
+    for version in [json!(true), json!(0), json!(i64::MAX)] {
+        let mut invalid = input.clone();
+        invalid["target_schedule_actions"][0]["expected_version"] = version;
+        assert!(native::schedule::request(&invalid).is_err());
+    }
+    let mut duplicate = input.clone();
+    duplicate["target_schedule_actions"][1] = duplicate["target_schedule_actions"][0].clone();
+    assert!(native::schedule::request(&duplicate).is_err());
+    let mut extra_field = input.clone();
+    extra_field["target_schedule_actions"][0]["unexpected"] = json!(true);
+    assert!(native::schedule::request(&extra_field).is_err());
+    let oversized = json!({"copy_stage": "source_to_seed", "target_schedule_actions":
+        vec![input["target_schedule_actions"][0].clone(); 101]});
+    assert!(native::schedule::request(&oversized).is_err());
+    let mut wrong_stage = input.clone();
+    wrong_stage["copy_stage"] = json!("seed_to_arm");
+    assert!(native::schedule::request(&wrong_stage).is_err());
+    let empty = json!({"copy_stage": "seed_to_arm", "target_schedule_actions": []});
+    assert_eq!(native::schedule::request(&empty).unwrap(), json!([]));
+    let mut extra = input.clone();
+    extra["unexpected"] = json!(false);
+    assert!(native::schedule::request(&extra).is_err());
+    let mut missing = input;
+    missing.as_object_mut().unwrap().remove("copy_stage");
+    assert!(native::schedule::request(&missing).is_err());
+}
+
+#[test]
 fn existing_outputs_and_outputs_inside_evidence_root_are_rejected() {
     let fixture = Fixture::new();
     fixture.write();

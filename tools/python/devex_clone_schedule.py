@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 import re
 
-from restore_reference_plan import plan_hash
+from restore_reference_plan import _native, plan_hash
 
 DATE_COLUMNS = {"next_run_at", "last_run_at", "created_at", "updated_at"}
 ACTION_FIELDS = {"action", "tenant_id", "schedule_id", "handler_key", "expected_version", "source_row_sha256"}
@@ -56,27 +56,11 @@ def schedule_row_sha256(row: dict) -> str:
 
 
 def schedule_actions(value: dict) -> dict:
-    stage, actions = value["copy_stage"], value["target_schedule_actions"]
-    if stage not in {"source_to_seed", "seed_to_arm"} or not isinstance(actions, list) or len(actions) > 100:
-        raise ValueError("复制阶段或目标调度处置清单无效")
-    if actions and stage != "source_to_seed":
-        raise ValueError("只有来源到 seed 可以声明目标调度待办；两侧必须复制已完成处置的 seed")
-    result = {}
-    for action in actions:
-        if not isinstance(action, dict) or set(action) != ACTION_FIELDS:
-            raise ValueError("目标调度动作字段必须完整且唯一")
-        if (action["action"] != "disable_schedule_via_api" or action["tenant_id"] != "system"
-                or not isinstance(action["schedule_id"], str) or not re.fullmatch(r"[1-9]\d{0,18}", action["schedule_id"])
-                or int(action["schedule_id"]) > 2**63 - 1
-                or not isinstance(action["handler_key"], str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", action["handler_key"])
-                or type(action["expected_version"]) is not int or not 0 < action["expected_version"] < 2**63 - 1
-                or not isinstance(action["source_row_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", action["source_row_sha256"])):
-            raise ValueError("仅接受明确 system 记录、版本、处理器与完整源行摘要的停用待办")
-        key = action["tenant_id"], action["schedule_id"]
-        if key in result:
-            raise ValueError("同一目标调度待办重复")
-        result[key] = action
-    return result
+    actions = _native("copy-schedule-actions", {
+        "copy_stage": value["copy_stage"],
+        "target_schedule_actions": value["target_schedule_actions"],
+    })
+    return {(action["tenant_id"], action["schedule_id"]): action for action in actions}
 
 
 def inspect_schedule(row: dict, actions: dict) -> dict | None:
