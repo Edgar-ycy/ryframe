@@ -110,3 +110,55 @@ fn invalid_jobs_empty_versions_and_missing_target_fail_without_environment_value
     assert!(from_inputs(CARGO, "\n", &BTreeMap::new()).is_err());
     assert!(from_inputs(CARGO, "rustc fixture without host", &BTreeMap::new()).is_err());
 }
+
+#[test]
+fn version_diagnostics_explain_causes_and_remedies_without_private_values() {
+    use super::{VersionFailure, version_diagnostic};
+    use std::io::{Error, ErrorKind};
+    let missing = Error::new(ErrorKind::NotFound, "private-path/secret-token");
+    let denied = Error::new(ErrorKind::PermissionDenied, "private-path/secret-token");
+    let os_error = Error::from_raw_os_error(2);
+    #[cfg(windows)]
+    let status = {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(7)
+    };
+    #[cfg(unix)]
+    let status = {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(7 << 8)
+    };
+    let cases = [
+        (VersionFailure::Spawn(&missing), "ErrorKind=NotFound"),
+        (VersionFailure::Spawn(&denied), "ErrorKind=PermissionDenied"),
+        (VersionFailure::Spawn(&os_error), "OS错误码=Some(2)"),
+        (VersionFailure::Exit(status), "code=Some(7)"),
+        (VersionFailure::InvalidUtf8, "不是有效 UTF-8"),
+        (VersionFailure::Empty, "为空或仅含空白"),
+    ];
+    for (failure, reason) in cases {
+        let message = version_diagnostic("rustc", "-vV", failure);
+        for expected in [
+            "rustc -vV",
+            reason,
+            "修复办法",
+            "PATH",
+            "rust-toolchain.toml",
+            "rustup show",
+            "重装",
+        ] {
+            assert!(message.contains(expected));
+        }
+        assert!(!message.contains("private-path"));
+        assert!(!message.contains("secret-token"));
+    }
+    assert!(version_diagnostic("cargo", "-V", VersionFailure::Empty).contains("cargo -V"));
+    assert!(
+        !version_diagnostic(
+            "private-path/secret-token",
+            "secret-token",
+            VersionFailure::Empty
+        )
+        .contains("secret-token")
+    );
+}

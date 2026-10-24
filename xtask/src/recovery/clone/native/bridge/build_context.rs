@@ -180,15 +180,51 @@ fn version(root: &Path, executable: &str, argument: &str) -> Result<String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    // 失败输出可能来自工具环境；不把原始stdout、stderr或系统错误写入诊断。
-    let output = command.output().map_err(|_| "无法读取构建工具链版本")?;
+    // 只公开结构化失败原因，不把原始输出、环境或系统错误中的路径写入诊断。
+    let output = command
+        .output()
+        .map_err(|error| version_diagnostic(executable, argument, VersionFailure::Spawn(&error)))?;
     if !output.status.success() {
-        return Err("构建工具链版本命令失败".into());
+        return Err(
+            version_diagnostic(executable, argument, VersionFailure::Exit(output.status)).into(),
+        );
     }
-    let value = String::from_utf8(output.stdout).map_err(|_| "构建工具链版本输出不是UTF-8")?;
+    let value = String::from_utf8(output.stdout)
+        .map_err(|_| version_diagnostic(executable, argument, VersionFailure::InvalidUtf8))?;
     let value = value.trim();
     if value.is_empty() {
-        return Err("构建工具链版本输出为空".into());
+        return Err(version_diagnostic(executable, argument, VersionFailure::Empty).into());
     }
     Ok(value.to_owned())
+}
+
+// formatter 只接受结构化原因；原始 I/O 错误正文和进程输出不参与格式化。
+enum VersionFailure<'a> {
+    Spawn(&'a std::io::Error),
+    Exit(std::process::ExitStatus),
+    InvalidUtf8,
+    Empty,
+}
+
+fn version_diagnostic(executable: &str, argument: &str, failure: VersionFailure<'_>) -> String {
+    let command = match (executable, argument) {
+        ("rustc", "-vV") => "rustc -vV",
+        ("cargo", "-V") => "cargo -V",
+        _ => "未登记的固定版本命令",
+    };
+    let reason = match failure {
+        VersionFailure::Spawn(error) => format!(
+            "无法启动；ErrorKind={:?}，OS错误码={:?}",
+            error.kind(),
+            error.raw_os_error()
+        ),
+        VersionFailure::Exit(status) => {
+            format!("未成功退出；ExitStatus={status}，code={:?}", status.code())
+        }
+        VersionFailure::InvalidUtf8 => "命令成功退出，但版本标准输出不是有效 UTF-8".into(),
+        VersionFailure::Empty => "命令成功退出，但版本标准输出为空或仅含空白".into(),
+    };
+    format!(
+        "读取构建工具链版本命令 {command} 失败：{reason}。修复办法：检查工作目录、PATH、执行权限及安全软件拦截，确认对应工具属于 rust-toolchain.toml 固定工具链；运行 rustup show 核对，必要时重装固定工具链或修复对应 cargo/rustc 工具及其包装器。"
+    )
 }
