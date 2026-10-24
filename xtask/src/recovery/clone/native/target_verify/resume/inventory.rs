@@ -129,7 +129,7 @@ pub(super) fn state(
     )
 }
 
-pub(super) fn confirmed(backend: &Path, target: &Path, initialized: &Value) -> bool {
+pub(crate) fn confirmed(backend: &Path, target: &Path, initialized: &Value) -> bool {
     verify(backend, target, initialized).is_ok()
 }
 

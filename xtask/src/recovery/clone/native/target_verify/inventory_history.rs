@@ -31,7 +31,7 @@ pub(super) fn diagnostic(reason: &str) -> Option<&'static str> {
         .find(|message| *message == reason)
 }
 
-pub(super) fn verify(backend: &Path, target: &Path, value: &Value) -> Result<Value> {
+pub(crate) fn verify(backend: &Path, target: &Path, value: &Value) -> Result<Value> {
     verify_with(backend, target, value, || {})
 }
 

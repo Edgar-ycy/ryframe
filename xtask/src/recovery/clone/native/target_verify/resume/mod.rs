@@ -1,5 +1,5 @@
 //! 目标续作的纯证据模型与状态转换；协议不执行远端副作用。
-mod inventory;
+pub(super) mod inventory;
 mod inventory_failure;
 mod inventory_records;
 mod protocol;

@@ -1,0 +1,104 @@
+//! 无持锁模式下重读完整初始化历史；不授予 checkpoint 或重放权限。
+use std::{fs, io::ErrorKind, path::Path};
+
+use serde_json::{Value, json};
+
+use super::{
+    super::{digest, json as json_io},
+    binding_request,
+    evidence_model::*,
+    evidence_protocol::inventory_history,
+    guard, proof, reset,
+};
+use crate::{
+    Result,
+    local_test_path::{LocalTestPathKind, validate_local_test_path},
+};
+
+mod failure;
+mod tree;
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/published.rs"]
+mod tests;
+
+pub(crate) fn request_binding(backend: &Path, request: &Value) -> Result<Value> {
+    binding_request::validate(backend, request, &Value::Null)
+}
+
+fn unlocked(target: &Path) -> Result<()> {
+    match fs::symlink_metadata(target.join("initialize.lock")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("初始化历史仍有 initialize.lock；本入口不支持持锁 checkpoint".into()),
+    }
+}
+
+pub(crate) fn unlocked_history(backend: &Path, filename: &Path) -> Result<(Value, Value)> {
+    let target = filename.parent().ok_or("初始化历史缺少目标目录")?;
+    validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
+    check(
+        filename == target.join("initialized.json"),
+        "初始化历史必须读取固定 initialized.json",
+    )?;
+    unlocked(target)?;
+    let before = tree::initialized(backend, target)?;
+    let files = super::tree::snapshot(backend, target, false)?;
+    let inputs = guard::Inputs::open(super::tree::files(target, &files)?)?;
+    let resumed = failure::resolved(backend, target)?;
+    let initialized = read(backend, filename)?;
+    let prepared = read(backend, &target.join("prepare.json"))?;
+    let request = read(backend, &bound(backend, &prepared["request"])?)?;
+    request_binding(backend, &request)?;
+    initialization(backend, target, &initialized, &prepared, &request, resumed)?;
+    inputs.check()?;
+    unlocked(target)?;
+    check(
+        tree::initialized(backend, target)? == before
+            && super::tree::snapshot(backend, target, false)? == files,
+        "初始化历史读取期间文件树或绑定变化",
+    )?;
+    Ok((initialized, request))
+}
+
+fn initialization(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    prepared: &Value,
+    request: &Value,
+    resumed: bool,
+) -> Result<()> {
+    check(
+        initialized["status"] == "fresh_target_initialized"
+            && initialized["controlled_generation_never_started"] == true
+            && initialized["prepare_sha256"]
+                == binding(backend, &target.join("prepare.json"))?["sha256"]
+            && read(backend, &target.join("initialized-candidate.json"))? == *initialized
+            && read(backend, &target.join("request.json"))? == *request
+            && initialized["history"] == proof::history(backend, target)?
+            && initialized["generation"] == prepared["generation"]
+            && prepared["request_sha256"] == digest::plan_hash(request)?
+            && initialized["id"] == request["id"]
+            && initialized["scope_id"] == request["target"]["scope_id"],
+        "初始化历史候选、请求、代次或未启动声明不一致",
+    )?;
+    inventory_history::verify(
+        backend,
+        target,
+        &json!({
+            "initial":initialized["inventory"], "request":request,
+            "resumed":resumed,"inventory_directory":null
+        }),
+    )?;
+    let plan = read(backend, &target.join("reset-plan.json"))?;
+    check(
+        reset::completed(
+            backend,
+            target,
+            &plan["manifest"],
+            json_io::text(&plan["plan_hash"], "reset 计划摘要")?,
+        )? == initialized["reset"],
+        "初始化历史 reset 完成证据变化",
+    )
+}

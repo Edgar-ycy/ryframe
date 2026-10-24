@@ -11,7 +11,7 @@ use super::super::json as json_io;
 use crate::Result;
 
 #[path = "inventory_history.rs"]
-mod inventory_history;
+pub(super) mod inventory_history;
 
 const MARKER: &str = "__target-evidence";
 const MAX_BYTES: u64 = 1024 * 1024;
