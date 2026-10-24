@@ -405,6 +405,8 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
+from rate_limit_tool import install_verified_binding
+install_verified_binding(sys.argv[4])
 from devex_clone_capture import capture_result, owner_evidence, read_json, verify_capture
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
@@ -430,6 +432,9 @@ result = verify_capture(
 print(result["status"])
 "#;
     let script = script.replace("%s", &sha(b"data"));
+    let native_tool = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+        .unwrap()
+        .expect("兼容校验必须显式绑定当前原生工具");
     let output = Command::new("python")
         .args([
             "-B",
@@ -438,6 +443,7 @@ print(result["status"])
             &fixture.backend.join("tools/python").to_string_lossy(),
             &capture_dir.to_string_lossy(),
             &fixture.local.join("source-request.json").to_string_lossy(),
+            &native_tool,
         ])
         .output()
         .expect("Python compatibility check must start");
