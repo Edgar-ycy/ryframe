@@ -333,7 +333,7 @@ fn freeze_artifact(source: &Path, directory: &Path, name: &str) -> Result<PathBu
     Ok(saved)
 }
 
-fn toolchain(root: &Path, runner: &dyn Runner) -> Result<Value> {
+pub(crate) fn toolchain(root: &Path, runner: &dyn Runner) -> Result<Value> {
     let rustc = runner.version(root, "rustc", &["-Vv"])?;
     let cargo = runner.version(root, "cargo", &["-V"])?;
     if rustc.is_empty() || cargo.is_empty() {

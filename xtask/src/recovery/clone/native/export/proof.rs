@@ -7,14 +7,22 @@ use super::super::{
     bridge, digest,
     json::{self as json_io, array, exact, object, text},
     lifecycle::manifest,
-    maintenance,
     resources::common,
-    source,
 };
 use super::input::Context;
 use crate::Result;
 
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/export/producers.rs"]
+mod producer_tests;
+
 pub(crate) fn generation(context: &Context) -> Result<Value> {
+    let bindings = array(&context.manifest["build_bridges"], "显式构建来源审计")?;
+    let scope = bridge::scope::Scope::load(&context.backend, bindings, &[])?;
+    generation_in(context, &scope)
+}
+
+pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> Result<Value> {
     let build_path = manifest::bound_file(
         &context.backend,
         context.request.get("backend_build").unwrap(),
@@ -22,23 +30,9 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
         true,
     )?;
     let build = json_io::read(&build_path)?;
-    bridge::verify_build(&context.backend, &build_path, &build)?;
-    let current = source::capture(&context.execution_backend)?;
-    let expected = build
-        .pointer("/sources/full/source")
-        .cloned()
-        .ok_or("API/Worker 构建缺少完整来源")?;
-    if source::binding_value(&current.source) != expected
-        || current.source.worktree_fingerprint
-            != context
-                .request
-                .get("worktree_fingerprint")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-    {
-        return Err("实际源码与构建、工作区指纹或源请求不一致".into());
-    }
-    verify_maintenance(context, &expected)?;
+    let fingerprint = text(&context.request["worktree_fingerprint"], "源请求构建指纹")?;
+    let expected = scope.product(&context.execution_backend, &build_path, &build, fingerprint)?;
+    let maintenance = verify_maintenance(context, &expected, scope)?;
     let runtime_path = manifest::bound_file(
         &context.backend,
         context.request.get("runtime").unwrap(),
@@ -51,57 +45,7 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
     {
         return Err("源 runtime scope 与请求不一致".into());
     }
-    let artifacts = object(
-        build.get("artifacts").ok_or("API/Worker 构建缺少产物")?,
-        "API/Worker 构建产物",
-    )?;
-    let runtime_artifacts = object(
-        runtime.get("artifacts").ok_or("源 runtime 缺少产物")?,
-        "源 runtime 产物",
-    )?;
-    let mut processes = BTreeMap::new();
-    for role in ["api", "worker"] {
-        let artifact = exact(
-            artifacts.get(role).ok_or("API/Worker 构建缺少产物")?,
-            &["executable", "command", "bytes", "sha256"],
-            "API/Worker 构建产物",
-        )?;
-        let executable = text(artifact.get("executable").unwrap(), "产物路径")?;
-        let expected_runtime = json!({
-            "path": executable,
-            "sha256": text(artifact.get("sha256").unwrap(), "产物摘要")?,
-        });
-        if runtime_artifacts.get(role) != Some(&expected_runtime) {
-            return Err("源 runtime 产物与当前构建不一致".into());
-        }
-        let receipt_path = manifest::bound_file(
-            &context.backend,
-            context
-                .request
-                .pointer(&format!("/processes/{role}"))
-                .ok_or("源请求缺少进程收据")?,
-            "源进程收据",
-            true,
-        )?;
-        let receipt_value = json_io::read(&receipt_path)?;
-        let receipt = exact(
-            &receipt_value,
-            &["format_version", "role", "scope_id", "identity"],
-            "源进程收据",
-        )?;
-        validate_identity(receipt.get("identity").unwrap(), "源进程身份")?;
-        if receipt.get("format_version").and_then(Value::as_u64) != Some(1)
-            || receipt.get("role").and_then(Value::as_str) != Some(role)
-            || receipt.get("scope_id") != context.source().get("scope_id")
-            || receipt_value
-                .pointer("/identity/executable")
-                .and_then(Value::as_str)
-                != Some(executable)
-        {
-            return Err("源进程角色、scope 或实际二进制与构建不一致".into());
-        }
-        processes.insert(role.to_owned(), receipt["identity"].clone());
-    }
+    let processes = runtime_processes(context, &build, &runtime)?;
     let producers = producers(context, &processes)?;
     let (api_configuration, api_files) = runtime_configuration(context, &runtime, "api")?;
     let (worker_configuration, worker_files) = runtime_configuration(context, &runtime, "worker")?;
@@ -128,41 +72,90 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
     {
         return Err("源运行配置在导出证明核验期间变化".into());
     }
-    Ok(json!({
+    let proof = json!({
         "source": expected["snapshot"],
         "worktree_fingerprint": context.request["worktree_fingerprint"],
         "runtime": runtime,
         "processes": processes,
         "operator_declared_producers": producers,
         "physical_binding": physical_binding(context)?,
-        "maintenance": json_io::read(&manifest::bound_file(
-            &context.execution_backend,
-            context.request.get("maintenance_build").unwrap(),
-            "维护构建",
-            true,
-        )?)?,
+        "maintenance": maintenance,
         "request_sha256": digest::plan_hash(&context.request)?,
         "external_writers_discovered": false,
         "clone_verified": false,
         "restore_qualified": false,
-    }))
+    });
+    scope.assert_unchanged()?;
+    Ok(proof)
 }
 
-fn verify_maintenance(context: &Context, expected: &Value) -> Result<()> {
+fn runtime_processes(
+    context: &Context,
+    build: &Value,
+    runtime: &Value,
+) -> Result<BTreeMap<String, Value>> {
+    let artifacts = object(&build["artifacts"], "API/Worker 构建产物")?;
+    let runtime_artifacts = object(&runtime["artifacts"], "源 runtime 产物")?;
+    let mut processes = BTreeMap::new();
+    for role in ["api", "worker"] {
+        let artifact = exact(
+            artifacts.get(role).ok_or("API/Worker 构建缺少产物")?,
+            &["executable", "command", "bytes", "sha256"],
+            "API/Worker 构建产物",
+        )?;
+        let executable = text(&artifact["executable"], "产物路径")?;
+        let expected = json!({"path":executable,"sha256":text(&artifact["sha256"],"产物摘要")?});
+        if runtime_artifacts.get(role) != Some(&expected) {
+            return Err("源 runtime 产物与当前构建不一致".into());
+        }
+        let descriptor = context
+            .request
+            .pointer(&format!("/processes/{role}"))
+            .ok_or("源请求缺少进程收据")?;
+        let path = manifest::bound_file(&context.backend, descriptor, "源进程收据", true)?;
+        let value = json_io::read(&path)?;
+        let receipt = exact(
+            &value,
+            &["format_version", "role", "scope_id", "identity"],
+            "源进程收据",
+        )?;
+        validate_identity(&receipt["identity"], "源进程身份")?;
+        if receipt["format_version"].as_u64() != Some(1)
+            || receipt["role"] != role
+            || receipt.get("scope_id") != context.source().get("scope_id")
+            || value
+                .pointer("/identity/executable")
+                .and_then(Value::as_str)
+                != Some(executable)
+        {
+            return Err("源进程角色、scope 或实际二进制与构建不一致".into());
+        }
+        manifest::bound_file(&context.backend, descriptor, "源进程收据", true)?;
+        processes.insert(role.to_owned(), receipt["identity"].clone());
+    }
+    Ok(processes)
+}
+
+fn verify_maintenance(
+    context: &Context,
+    expected: &Value,
+    scope: &bridge::scope::Scope,
+) -> Result<Value> {
     let path = manifest::bound_file(
         &context.execution_backend,
         context.request.get("maintenance_build").unwrap(),
         "维护构建",
         true,
     )?;
-    let receipt = maintenance::verify_evidence(&context.execution_backend, &path, None)?;
+    let value = json_io::read(&path)?;
+    let receipt = scope.maintenance(&context.execution_backend, &path, &value)?;
     if receipt.pointer("/source/snapshot") != expected.get("snapshot")
         || receipt.pointer("/source/worktree_fingerprint")
             != context.request.get("worktree_fingerprint")
     {
         return Err("维护工具与源实际后端构建不属于同一完整源码".into());
     }
-    Ok(())
+    Ok(receipt)
 }
 
 fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<Vec<Value>> {
@@ -173,25 +166,47 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
         true,
     )?;
     let registry = json_io::read(&path)?;
+    let runtime_sha = text(&context.request["runtime"]["sha256"], "源运行收据摘要")?;
+    let result = validate_registry(
+        &registry,
+        &context.source()["scope_id"],
+        runtime_sha,
+        processes,
+    )?;
+    for producer in &result {
+        require_stopped(&producer["identity"])?;
+    }
+    manifest::bound_file(
+        &context.backend,
+        &context.request["producers_registry"],
+        "producer 清单",
+        true,
+    )?;
+    Ok(result)
+}
+
+fn validate_registry(
+    registry: &Value,
+    scope: &Value,
+    runtime_sha: &str,
+    processes: &BTreeMap<String, Value>,
+) -> Result<Vec<Value>> {
+    text(scope, "源运行 scope")?;
     let registry = exact(
         &registry,
         &["format_version", "scope_id", "runtime_sha256", "processes"],
         "producer 清单",
     )?;
-    let runtime_sha = context
-        .request
-        .pointer("/runtime/sha256")
-        .and_then(Value::as_str)
-        .ok_or("源运行收据缺少摘要")?;
     let items = array(registry.get("processes").unwrap(), "producer 清单")?;
     if registry.get("format_version").and_then(Value::as_u64) != Some(1)
-        || registry.get("scope_id") != context.source().get("scope_id")
+        || registry.get("scope_id") != Some(scope)
         || registry.get("runtime_sha256").and_then(Value::as_str) != Some(runtime_sha)
         || items.len() < 3
     {
         return Err("操作人声明的 producer 清单不完整或 scope 不同".into());
     }
     let mut names = std::collections::BTreeSet::new();
+    let mut identities = std::collections::BTreeSet::new();
     let mut result = Vec::with_capacity(items.len());
     for item in items {
         let item = exact(item, &["name", "identity"], "producer")?;
@@ -200,13 +215,19 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
         if !names.insert(name.to_owned()) {
             return Err("producer 名称重复".into());
         }
+        let key = (
+            identity["pid"].as_u64().ok_or("producer PID 无效")?,
+            text(&identity["started"], "producer 创建时间")?.to_owned(),
+        );
+        if !identities.insert(key) {
+            return Err("producer 创建代次重复，不能用不同名称重复登记同一进程".into());
+        }
         if processes
             .get(name)
             .is_some_and(|recorded| recorded != identity)
         {
             return Err("producer 清单中的 API/Worker 代次与真实运行收据不同".into());
         }
-        require_stopped(identity)?;
         result.push(Value::Object(item.clone()));
     }
     if !names.contains("api") || !names.contains("worker") {

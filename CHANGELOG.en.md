@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Native source export checks product build inputs, the current build environment and explicit source audits separately. Valid reuse retains the original build snapshot and fingerprint, and the end of the execution window rechecks the complete source and frozen artifacts. Producer registries reject duplicate PID creation generations rather than allowing different names to register the same process more than once.
+
 - Replace seven JS/TS syntax fragments in cross-repository identity-capability text-gate fixtures with plain text data, retaining every scan path, forbidden symbol, and rejection scenario without executing frontend programs.
 
 - Load framework SQL, generated tenant catalogs, and complete export models through one ordered Rust implementation, removing duplicate Python parsing. Read-only binding checks request only the required catalogs, while complete exports retain ownership, migration ledgers, and physical column order. Inventory fixtures reuse only identical table-name and row-count digests within one instance, retaining every capture and verification; separate execution-root revalidation permits only two local read-only operations of the bound tool.

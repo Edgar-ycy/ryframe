@@ -16,6 +16,11 @@ use crate::{
 const BRIDGE_BYTES: u64 = 16 * 1024 * 1024;
 const ROLES: [&str; 2] = ["api", "worker"];
 
+#[path = "bridge/build_context.rs"]
+pub(crate) mod build_context;
+#[path = "bridge/scope.rs"]
+pub(crate) mod scope;
+
 pub(crate) fn write(
     root: &Path,
     build_path: &Path,
