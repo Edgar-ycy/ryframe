@@ -87,11 +87,11 @@ class RequestTests(unittest.TestCase):
 
     def test_all_declared_source_producers_and_both_target_ports_are_checked(self):
         producers, selected = self.producers()
-        with patch("devex_clone_factory_context.initialization_history", return_value=({}, {"target": {"scope_id": "target-scope"}})), patch("devex_clone_target_binding.request_binding", return_value=({}, selected)), patch("devex_clone_source_proof.process_identity", return_value=None) as observe, patch.object(model, "require_closed_port") as port:
+        with patch("devex_clone_factory_context.initialization_history", return_value=({}, {"target": {"scope_id": "target-scope"}})), patch("devex_clone_target_binding.request_binding", return_value=({}, selected)), patch("devex_clone_source_proof.require_recorded_producer_stopped") as observe, patch.object(model, "require_closed_port") as port:
             model.producers_stopped(self.backend, self.directory, self.value)
             self.assertEqual(observe.call_count, 3)
             self.assertEqual(port.call_count, 4)
-        with patch("devex_clone_source_proof.process_identity", return_value=producers[-1]["identity"]):
+        with patch("devex_clone_source_proof.require_recorded_producer_stopped", side_effect=ValueError("原生停止证明拒绝")):
             with self.assertRaises(ValueError):
                 model.producers_stopped(self.backend, self.directory, self.value)
 

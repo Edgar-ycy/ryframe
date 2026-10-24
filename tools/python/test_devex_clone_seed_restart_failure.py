@@ -99,7 +99,7 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertEqual([call.args[0] for call in stopped.call_args_list],
                          [read_json(self.controller_path)["owner"]["identity"], self.process])
-        self.assertTrue(all(call.kwargs == {"run": subprocess.run, "counter_run": subprocess.run}
+        self.assertTrue(all(not call.kwargs
                             for call in stopped.call_args_list))
         self.assertEqual([call.args[0] for call in port.call_args_list],
                          [self.request["api_url"], self.request["console_url"]])

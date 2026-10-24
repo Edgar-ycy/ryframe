@@ -6,7 +6,6 @@ from native_s3_client import _invoke as native_invoke, _read_response as native_
 from contextlib import nullcontext
 import copy
 import errno
-import json
 import os
 from pathlib import Path
 import re
@@ -18,7 +17,7 @@ from devex_clone import read_json
 from devex_clone_model import digest, exact, linked, local_path, name
 from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
-from full_stack_process import process_identity, read_process
+from full_stack_process import read_process
 from full_stack_runtime import verify_runtime
 from rate_limit_client import load_app_table
 from process_sockets import endpoint, verify_windows_port_idle
@@ -138,112 +137,15 @@ def verify_api_address(backend: Path, url: str, *, config_dir: Path | None = Non
     verify_api_address_environment(backend, url, {"APP_ENV": os.environ.get("APP_ENV")}, config_dir=config_dir)
 
 
-def _cim_creation_time(pid: int, run) -> int:
-    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    if not executable.is_absolute() or not executable.is_file():
-        raise ValueError("历史 producer 查询必须使用本机系统 PowerShell")
-    script = (
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
-        f"$items=@(Get-CimInstance -Namespace root/cimv2 -ClassName Win32_Process -Filter 'ProcessId = {pid}' "
-        "-Property ProcessId,CreationDate -ErrorAction Stop); "
-        "if($items.Count -ne 1){throw 'producer creation record is not unique'}; "
-        "$created=$items[0].CreationDate; "
-        "if($created -isnot [datetime] -or $created.Kind -notin @([DateTimeKind]::Local,[DateTimeKind]::Utc))"
-        "{throw 'producer creation timezone is unknown'}; "
-        "[ordered]@{count=$items.Count;pid=[long]$items[0].ProcessId;kind=$created.Kind.ToString();"
-        "started=$created.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture);"
-        "precision_ticks=10}|ConvertTo-Json -Compress"
-    )
-    result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
-                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                 check=True, timeout=15,
-                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
-    if result.returncode != 0:
-        raise ValueError("历史 producer 创建时间查询失败")
-    value = json.loads(result.stdout.decode("utf-8-sig"))
-    exact(value, {"count", "pid", "kind", "started", "precision_ticks"})
-    if (type(value["count"]) is not int or value["count"] != 1 or type(value["pid"]) is not int
-            or value["pid"] != pid or value["kind"] not in {"Local", "Utc"}
-            or type(value["precision_ticks"]) is not int or value["precision_ticks"] != 10
-            or not isinstance(value["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", value["started"])
-            or int(value["started"]) % 10 != 0):
-        raise ValueError("历史 producer 创建时间、PID 或精度不明确")
-    return int(value["started"])
-
-
-def _counter_creation_time(pid: int, run) -> int:
-    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    if not executable.is_absolute() or not executable.is_file():
-        raise ValueError("历史 producer 查询必须使用本机系统 PowerShell")
-    script = (
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
-        "$samples=@((Get-Counter '\\Process(*)\\ID Process','\\Process(*)\\Elapsed Time' "
-        "-SampleInterval 1 -MaxSamples 1 -ErrorAction SilentlyContinue).CounterSamples); "
-        f"$ids=@($samples|Where-Object{{$_.Status -eq 0 -and $_.CounterType -eq 65536 -and "
-        f"[long]$_.RawValue -eq {pid} -and $_.Path.EndsWith('\\id process',"
-        "[StringComparison]::OrdinalIgnoreCase)}); "
-        "if($ids.Count -ne 1){throw 'producer counter identity is not unique'}; "
-        "$elapsedPath=$ids[0].Path.Substring(0,$ids[0].Path.Length-'id process'.Length)+'elapsed time'; "
-        "$elapsed=@($samples|Where-Object{$_.Status -eq 0 -and $_.CounterType -eq 807666944 -and "
-        "[string]::Equals($_.Path,$elapsedPath,[StringComparison]::OrdinalIgnoreCase)}); "
-        "if($elapsed.Count -ne 1){throw 'producer elapsed counter is not unique'}; "
-        "$started=[long]$elapsed[0].RawValue; $seconds=[double]$elapsed[0].CookedValue; "
-        "$now=[DateTime]::UtcNow.ToFileTimeUtc(); "
-        "if($started -le 0 -or $started -gt $now -or $seconds -lt 0 -or "
-        "[Math]::Abs((($now-$started)/10000000.0)-$seconds) -gt 5)"
-        "{throw 'producer elapsed counter timebase is invalid'}; "
-        f"[ordered]@{{count=$ids.Count;elapsed_count=$elapsed.Count;pid=[long]{pid};"
-        "started=$started.ToString([Globalization.CultureInfo]::InvariantCulture);precision_ticks=1}"
-        "|ConvertTo-Json -Compress"
-    )
-    result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
-                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                 check=True, timeout=15,
-                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
-    if result.returncode != 0:
-        raise ValueError("历史 producer 性能计数器查询失败")
-    value = json.loads(result.stdout.decode("utf-8-sig"))
-    exact(value, {"count", "elapsed_count", "pid", "started", "precision_ticks"})
-    if (value["count"] != 1 or type(value["count"]) is not int
-            or value["elapsed_count"] != 1 or type(value["elapsed_count"]) is not int
-            or value["pid"] != pid or type(value["pid"]) is not int
-            or not isinstance(value["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", value["started"])
-            or value["precision_ticks"] != 1 or type(value["precision_ticks"]) is not int):
-        raise ValueError("历史 producer 性能计数器创建时间无效")
-    return int(value["started"])
-
-
-def require_recorded_producer_stopped(expected: dict, *, run=None, counter_run=None) -> None:
-    """只证明登记的旧创建代次结束；不授权向当前占用 PID 的进程发送信号。"""
-    exact(expected, {"pid", "started", "executable"})
-    if (type(expected["pid"]) is not int or expected["pid"] <= 1
-            or not isinstance(expected["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", expected["started"])
-            or not isinstance(expected["executable"], str) or not Path(expected["executable"]).is_absolute()):
-        raise ValueError("历史 producer 创建身份无效")
-    original = int(expected["started"])
-    try:
-        current = process_identity(expected["pid"])
-    except PermissionError as error:
-        if os.name != "nt" or getattr(error, "winerror", None) != 5 or run is None:
-            raise
-        # CIM 只有微秒精度；性能计数器也保留各自精度边界，邻接代次不能当作停止证明。
-        try:
-            created, precision = _cim_creation_time(expected["pid"], run), 10
-        except subprocess.CalledProcessError:
-            if counter_run is None:
-                raise
-            created, precision = _counter_creation_time(expected["pid"], counter_run), 1
-        if created <= original + precision:
-            raise ValueError("历史 producer 查询的创建时间不能证明为后续代次") from error
-        return
-    if current is None:
-        return
-    exact(current, {"pid", "started", "executable"})
-    if (type(current["pid"]) is not int or current["pid"] != expected["pid"]
-            or not isinstance(current["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", current["started"])
-            or not isinstance(current["executable"], str) or not Path(current["executable"]).is_absolute()
-            or int(current["started"]) <= original):
-        raise ValueError("登记 producer 尚未停止或当前创建代次不明确")
+def require_recorded_producer_stopped(expected: dict) -> None:
+    """只读核验登记代次停止；身份与原生 CIM 失败均由原生权威拒绝。"""
+    result = native_response(*native_invoke(
+        "__source-evidence", {"operation": "recorded-process-stopped", "write": False,
+            "arguments": {"identity": expected}}, subprocess.run, may_write=False,
+    ))[0]["value"]
+    exact(result, {"stopped", "signals_sent"})
+    if result["stopped"] is not True or type(result["signals_sent"]) is not int or result["signals_sent"] != 0:
+        raise ValueError("原生历史 producer 停止证明结果无效")
 
 
 def producer_identities(request: dict, registry: dict, processes: dict, *, run) -> list[dict]:
@@ -265,7 +167,7 @@ def producer_identities(request: dict, registry: dict, processes: dict, *, run) 
             raise ValueError("producer 内核创建身份无效或重复")
         if role in processes and identity != processes[role]:
             raise ValueError("producer 清单中的 API/Worker 代次与真实运行收据不同")
-        require_recorded_producer_stopped(identity, run=run)
+        require_recorded_producer_stopped(identity)
         names.add(role)
         identities.add(identity_key)
     if not {"api", "worker"}.issubset(names):

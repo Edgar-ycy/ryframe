@@ -251,8 +251,8 @@ def _verify_failed_storage_restart(backend: Path, directory: Path, attempt: dict
             or cleanup != {"intent": observed["intent"], "identity": process,
                            "pid": process["pid"], "returncode": 0}):
         raise ValueError("失败存储重启的创建、回收与退出身份不一致")
-    require_recorded_producer_stopped(owner_identity, run=subprocess.run, counter_run=subprocess.run)
-    require_recorded_producer_stopped(process, run=subprocess.run, counter_run=subprocess.run)
+    require_recorded_producer_stopped(owner_identity)
+    require_recorded_producer_stopped(process)
     if require_idle:
         for key in ("api_url", "console_url"):
             require_closed_port(request[key])

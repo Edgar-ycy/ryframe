@@ -109,7 +109,7 @@ class SourceFixture:
                         patch.object(proof, "verify_source", side_effect=self.verify_source),
                         patch.object(proof, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance)),
                         patch.object(proof, "verify_runtime", side_effect=lambda *_: copy.deepcopy(self.runtime)),
-                        patch.object(proof, "process_identity", return_value=None), patch.object(proof, "require_closed_port")]
+                        patch.object(proof, "require_recorded_producer_stopped"), patch.object(proof, "require_closed_port")]
         self.mocks = [value.start() for value in self.patches]
         for value in self.patches:
             test.addCleanup(value.stop)

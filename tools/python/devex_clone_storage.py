@@ -106,12 +106,10 @@ def previous_attempts(backend: Path, directory: Path, side: str, descriptor: dic
 
 def require_previous_stopped(backend: Path, directory: Path, request: dict, descriptor: dict,
                              before: int | None) -> None:
-    require_recorded_producer_stopped(request["previous"]["identity"], run=subprocess.run,
-                                      counter_run=subprocess.run)
+    require_recorded_producer_stopped(request["previous"]["identity"])
     for _, observed in previous_attempts(backend, directory, request["side"], descriptor, before=before):
         if observed["state"] == "recorded":
-            require_recorded_producer_stopped(observed["identity"], run=subprocess.run,
-                                              counter_run=subprocess.run)
+            require_recorded_producer_stopped(observed["identity"])
     for key in ("api_url", "console_url"):
         require_closed_port(request[key])
 

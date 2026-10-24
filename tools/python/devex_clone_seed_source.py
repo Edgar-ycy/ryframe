@@ -360,7 +360,7 @@ def _anchors(backend: Path, directory: Path, value: dict, current: int, *, run) 
     runtimes, attempts = _lineage_inputs(backend, directory, state)
     lineage = collect_producer_lineage(backend, directory, runtimes, attempts)
     for item in lineage["identities"]:
-        require_recorded_producer_stopped(item["identity"], run=run)
+        require_recorded_producer_stopped(item["identity"])
     register_stage = latest(directory, "seed-runtime", {"register"})
     source_to_seed = {"copy_stage_receipt": post["copy_stage_receipt"],
                       "copy_result": post["copy_result"], "ledger_head": post["ledger_head"]}
