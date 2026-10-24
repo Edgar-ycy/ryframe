@@ -313,3 +313,29 @@ fn large_artifact_is_streamed_while_empty_documents_and_oversized_logs_are_rejec
     fs::write(fixture.runtime.join("producer-history.json"), "").unwrap();
     assert!(fixture.read().is_err());
 }
+
+#[test]
+fn configuration_digest_uses_resolved_directory_in_the_python_payload() {
+    let fixture = Fixture::new();
+    // 保留fixture构造的混合分隔符，以覆盖Windows实际失败路径。
+    let selected = fixture.runtime.join("config");
+    let resolved = super::canonical(&selected).unwrap();
+    let expected = python_configuration_hash(&json!({
+        "environment": {"APP_ENV": "test"},
+        "config_directory": resolved,
+        "files": {
+            "app.toml": digest::file(&resolved.join("app.toml")).unwrap().sha256,
+            "app.test.toml": digest::file(&resolved.join("app.test.toml")).unwrap().sha256,
+        },
+    }))
+    .unwrap();
+    assert_eq!(
+        contract::configuration_digest(&fixture.backend, &selected).unwrap(),
+        expected
+    );
+    assert_eq!(
+        contract::configuration_digest(&fixture.backend, &resolved).unwrap(),
+        expected
+    );
+    assert_eq!(fixture.receipt["api_configuration_sha256"], expected);
+}

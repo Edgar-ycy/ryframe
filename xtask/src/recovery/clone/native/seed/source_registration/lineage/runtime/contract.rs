@@ -79,7 +79,9 @@ pub(super) fn validate(backend: &Path, value: &mut Value) -> Result<()> {
 }
 
 pub(super) fn configuration_digest(backend: &Path, directory: &Path) -> Result<String> {
-    crate::rate_limit::load_app_table(backend, Some(directory), "test")
+    // 与Python resolve(strict=True)一致，调用方的分隔符写法不进入摘要。
+    let directory = super::directory(directory, backend)?;
+    crate::rate_limit::load_app_table(backend, Some(&directory), "test")
         .map_err(|error| error.message().to_owned())?;
     let mut files = BTreeMap::new();
     for name in ["app.toml", "app.test.toml"] {
@@ -87,7 +89,7 @@ pub(super) fn configuration_digest(backend: &Path, directory: &Path) -> Result<S
         if name == "app.toml" && !path.try_exists()? {
             continue;
         }
-        let path = regular(&path, directory, false)?;
+        let path = regular(&path, &directory, false)?;
         files.insert(name, digest::file(&path)?.sha256);
     }
     python_configuration_hash(&json!({"environment": {"APP_ENV": "test"},
