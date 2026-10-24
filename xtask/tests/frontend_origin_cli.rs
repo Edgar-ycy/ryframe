@@ -377,6 +377,25 @@ fn verify_sources_closed_stdout_exits_nonzero_without_retry() {
     assert_eq!(child.wait().unwrap().code(), Some(2));
 }
 
+fn prepare_build_script_fixture(
+    source: &[u8],
+    helper: &[u8],
+    content: &[u8],
+) -> (Fixture, PathBuf, PathBuf) {
+    let fixture = Fixture::new();
+    let root = fixture.0.path();
+    let manifest = root.join("xtask");
+    fs::create_dir_all(manifest.join("src/frontend_origin")).unwrap();
+    fs::write(manifest.join("src/frontend_origin/sources.rs"), helper).unwrap();
+    fs::write(manifest.join("build.rs"), source).unwrap();
+    fs::write(manifest.join("source-inventory.json"),
+        r#"{"format_version":1,"files":["xtask/build.rs","xtask/source-inventory.json"],"trees":["xtask/src"],"excluded_directories":[]}"#).unwrap();
+    fs::write(manifest.join("src/input.txt"), content).unwrap();
+    let output = root.join("out");
+    fs::create_dir(&output).unwrap();
+    (fixture, manifest, output)
+}
+
 #[test]
 fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watches() {
     let package = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -401,17 +420,8 @@ fn same_build_script_program_uses_each_runtime_root_and_relative_complete_watche
     );
     let mut observations = Vec::new();
     for content in [b"same-content".as_slice(), b"same-content".as_slice()] {
-        let fixture = Fixture::new();
+        let (fixture, manifest, output) = prepare_build_script_fixture(&source, &helper, content);
         let root = fixture.0.path();
-        let manifest = root.join("xtask");
-        fs::create_dir_all(manifest.join("src/frontend_origin")).unwrap();
-        fs::write(manifest.join("src/frontend_origin/sources.rs"), &helper).unwrap();
-        fs::write(manifest.join("build.rs"), &source).unwrap();
-        fs::write(manifest.join("source-inventory.json"),
-            r#"{"format_version":1,"files":["xtask/build.rs","xtask/source-inventory.json"],"trees":["xtask/src"],"excluded_directories":[]}"#).unwrap();
-        fs::write(manifest.join("src/input.txt"), content).unwrap();
-        let output = root.join("out");
-        fs::create_dir(&output).unwrap();
         let result = Command::new(program)
             .current_dir(&manifest)
             .env("CARGO_MANIFEST_DIR", &manifest)
