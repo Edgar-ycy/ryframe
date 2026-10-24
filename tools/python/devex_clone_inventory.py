@@ -16,14 +16,14 @@ import uuid
 
 from artifact_digests import filesystem_path
 from devex_clone_capture import read_json, regular_file, write_json
-from devex_clone_export import cli_executable, schema_models
-from devex_clone_model import digest, exact, linked, local_path, schema_fingerprints
+from devex_clone_export import cli_executable
+from devex_clone_model import exact, linked, local_path
 from devex_clone_source_proof import validate_source
 from devex_clone_tools import verify as verify_tools
-from devex_clone_transfer import DatabaseObservation, PRESERVED
+from devex_clone_transfer import DatabaseObservation
 from restore_build import file_digest
 from restore_reference_io import DatabaseVerificationError, ExternalTools, redact_object_diagnostic, verification_stdout
-from restore_reference_plan import plan_hash
+from restore_reference_plan import _native, plan_hash
 
 KEYS = ("shared-control", "shared", "dedicated-a", "dedicated-b")
 
@@ -66,67 +66,16 @@ def expected_owners(scope: str, combined: bool) -> tuple[dict, ...]:
                  for kind in (("control", "tenant-data") if combined else ("tenant-data",)))
 
 
-def table_digests(values: list) -> dict:
-    if not isinstance(values, list):
-        raise ValueError("库存逐表摘要必须为完整列表")
-    result = {}
-    for item in values:
-        exact(item, {"table", "rows", "sha256"})
-        if (not isinstance(item["table"], str) or item["table"] in result
-                or type(item["rows"]) is not int or item["rows"] < 0):
-            raise ValueError("库存表名重复或行数无效")
-        result[item["table"]] = {"rows": item["rows"], "sha256": digest(item["sha256"])}
-    return result
-
-
 def observation_from_inventory(backend: Path, value: dict, declared: dict, scope: str,
                                ownership: tuple[dict, ...]) -> DatabaseObservation:
     """转换实际 CLI 结果及实际 owner 行；调用方仍须证明工具来源与当前连接配置。"""
-    exact(value, {"scope_id", "control_schema_fingerprint", "tenant_schema_fingerprint", "target"})
-    exact(value["target"], {"database", "preserved_tables"})
-    database = value["target"]["database"]
-    exact(database, {"key", "kind", "server_uuid", "database", "shared", "placements", "tables"})
-    combined = declared["kind"] == "combined"
-    if (value["scope_id"] != scope or any(database[field] != declared[field] for field in
-            ("key", "kind", "server_uuid", "database")) or database["shared"] is not (declared["mode"] == "shared")
-            or ownership != expected_owners(scope, combined)):
-        raise ValueError("库存 scope、物理目标、共享模式或完整 owner 不匹配")
-    control, tenant, full_control, _ = schema_models(backend)
-    business = set(tenant) | (set(control) if combined else set())
-    raw_preserved = {"ryframe_resource_ownership", "seaql_tenant_data_migrations"}
-    if combined:
-        raw_preserved |= {"seaql_migrations", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}
-    from devex_business_catalog import business_tables
-    if business_tables(backend):
-        raw_preserved.add("ryframe_business_migration")
-    expected = business | raw_preserved | (set(full_control) if combined else set())
-    tables = table_digests(database["tables"])
-    kept = table_digests(value["target"]["preserved_tables"])
-    if set(tables) & set(kept) or set(kept) != raw_preserved or set(tables) | set(kept) != expected:
-        raise ValueError("库存完整表集、保留表或迁移账本不同，不能过滤未知表")
-    all_tables = {**tables, **kept}
-    preserved = set(all_tables) - business
-    if not preserved.issubset(PRESERVED) or all_tables["ryframe_resource_ownership"]["rows"] != (2 if combined else 1):
-        raise ValueError("库存存在未审查保留表或多余 ownership 行")
-    placements = database["placements"]
-    if not isinstance(placements, list):
-        raise ValueError("库存缺少完整租户关系")
-    seen = set()
-    for item in placements:
-        exact(item, {"tenant_id", "generation", "switch_token"})
-        if (not isinstance(item["tenant_id"], str) or not item["tenant_id"] or item["tenant_id"] in seen
-                or type(item["generation"]) is not int or item["generation"] <= 0
-                or not isinstance(item["switch_token"], str) or not item["switch_token"]):
-            raise ValueError("库存租户关系重复或代次无效")
-        seen.add(item["tenant_id"])
-    schema = schema_fingerprints(value)
-    if not combined:
-        schema["control_schema_fingerprint"] = None
-    return DatabaseObservation(
-        resource={"kind": "database", "scope_id": scope, "server_uuid": database["server_uuid"], "database": database["database"]},
-        schema_sha256=plan_hash(schema), tables={name: all_tables[name] for name in sorted(business)},
-        preserved={name: all_tables[name] for name in sorted(preserved)}, all_tables=tuple(sorted(all_tables)),
-        ownership=copy.deepcopy(ownership))
+    result = _native("copy-database-observation", {
+        "backend": str(backend), "value": value, "declared": declared,
+        "scope": scope, "ownership": ownership,
+    })
+    result["all_tables"] = tuple(result["all_tables"])
+    result["ownership"] = tuple(result["ownership"])
+    return DatabaseObservation(**result)
 
 
 def configuration(backend: Path, environment: Mapping[str, str], selected: dict, *,
