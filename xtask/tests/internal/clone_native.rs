@@ -436,6 +436,63 @@ fn sha(content: &[u8]) -> String {
 }
 
 #[test]
+fn generated_catalog_preserves_ddl_type_order_and_rejects_duplicate_columns() {
+    let fixture = Fixture::new();
+    let generated = fixture.root.join("crates/ryframe-tenant-db/src/generated");
+    let catalog = generated.join("catalog.rs");
+    let descriptor = r#"TenantDataTableDescriptor {
+        table: "biz_ordered",
+        tenant_column: "tenant_id",
+        column_types: &["varchar", "bigint"],
+        has_generated_columns: false,
+    }"#;
+    let ddl =
+        "CREATE TABLE `biz_ordered` (\n`tenant_id` VARCHAR(64),\n`id` BIGINT\n) ENGINE=InnoDB;";
+    let migration = generated.join("business_ordered_migration.rs");
+    fs::write(&catalog, descriptor).unwrap();
+    fs::write(
+        &migration,
+        format!("pub const CREATE_TABLE_DDL: &str = r#\"{ddl}\"#;"),
+    )
+    .unwrap();
+    let loaded = native::catalog::load(&fixture.root).unwrap();
+    assert_eq!(
+        loaded.tenant["biz_ordered"],
+        BTreeMap::from([
+            ("id".to_owned(), "BIGINT".to_owned()),
+            ("tenant_id".to_owned(), "VARCHAR".to_owned()),
+        ])
+    );
+    fs::write(
+        &catalog,
+        descriptor.replace("\"varchar\", \"bigint\"", "\"bigint\", \"varchar\""),
+    )
+    .unwrap();
+    assert!(
+        native::catalog::load(&fixture.root)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("迁移列类型不一致")
+    );
+    fs::write(&catalog, descriptor).unwrap();
+    let duplicate = ddl.replace("`id` BIGINT", "`tenant_id` BIGINT");
+    fs::write(
+        &migration,
+        format!("pub const CREATE_TABLE_DDL: &str = r#\"{duplicate}\"#;"),
+    )
+    .unwrap();
+    assert!(
+        native::catalog::load(&fixture.root)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("schema 表或列重复/缺失")
+    );
+    assert!(native::catalog::parse_schema(&format!("{ddl}\n{ddl}")).is_err());
+}
+
+#[test]
 fn native_plan_and_verify_are_deterministic_and_read_only_after_write() {
     let fixture = Fixture::new();
     let plan = fixture.plan("plan.json").unwrap();

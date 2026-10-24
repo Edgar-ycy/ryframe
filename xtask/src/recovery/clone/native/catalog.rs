@@ -11,6 +11,7 @@ use crate::Result;
 
 pub(crate) type Columns = BTreeMap<String, String>;
 pub(crate) type Catalog = BTreeMap<String, Columns>;
+type OrderedCatalog = BTreeMap<String, Vec<(String, String)>>;
 
 pub(crate) struct Loaded {
     pub(crate) control: Catalog,
@@ -156,20 +157,26 @@ pub(crate) fn load(root: &Path) -> Result<Loaded> {
 }
 
 pub(crate) fn parse_schema(content: &str) -> Result<Catalog> {
+    Ok(parse_ordered_schema(content)?
+        .into_iter()
+        .map(|(table, columns)| (table, columns.into_iter().collect()))
+        .collect())
+}
+
+fn parse_ordered_schema(content: &str) -> Result<OrderedCatalog> {
     let table =
         Regex::new(r"(?s)CREATE TABLE(?: IF NOT EXISTS)? `([a-z0-9_]+)` \((.*?)\n\s*\)\s*ENGINE=")?;
     let column = Regex::new(r"(?m)^\s*`([a-z0-9_]+)`\s+([A-Za-z]+)")?;
-    let mut result = Catalog::new();
+    let mut result = OrderedCatalog::new();
     for part in table.captures_iter(content) {
         let name = &part[1];
-        let mut columns = Columns::new();
+        let mut columns = Vec::new();
+        let mut names = BTreeSet::new();
         for capture in column.captures_iter(&part[2]) {
-            if columns
-                .insert(capture[1].to_owned(), capture[2].to_ascii_uppercase())
-                .is_some()
-            {
+            if !names.insert(capture[1].to_owned()) {
                 return Err("schema 表或列重复/缺失".into());
             }
+            columns.push((capture[1].to_owned(), capture[2].to_ascii_uppercase()));
         }
         if columns.is_empty() || result.insert(name.to_owned(), columns).is_some() {
             return Err("schema 表或列重复/缺失".into());
@@ -224,24 +231,24 @@ fn parse_generated(root: &Path, content: &str) -> Result<Catalog> {
         let ddl = ddl_pattern
             .captures(&migration)
             .ok_or("生成租户迁移缺少确定性 DDL")?;
-        let tables = parse_schema(&ddl[1])?;
+        let mut tables = parse_ordered_schema(&ddl[1])?;
         if tables.len() != 1 || !tables.contains_key(table) {
             return Err("生成租户迁移包含额外或错误表".into());
         }
-        let columns = tables.get(table).unwrap().clone();
+        let columns = tables.remove(table).unwrap();
         let types = type_pattern
             .captures_iter(&part[3])
             .map(|capture| capture[1].to_owned())
             .collect::<Vec<_>>();
         if types.len() != columns.len()
             || columns
-                .values()
-                .map(|kind| kind.to_ascii_lowercase())
+                .iter()
+                .map(|(_, kind)| kind.to_ascii_lowercase())
                 .ne(types)
         {
             return Err("生成租户描述符与迁移列类型不一致".into());
         }
-        result.insert((*table).to_owned(), columns);
+        result.insert((*table).to_owned(), columns.into_iter().collect());
     }
     Ok(result)
 }
