@@ -333,13 +333,14 @@ class ExportVerificationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify.verify_export_bindings(self.fixture.backend, loaded)
 
-    def test_binding_uses_only_required_catalog_parses(self):
+    def test_binding_uses_only_required_catalog_models(self):
         loaded = self.load()
         for selection in ("all", "global", ("uploads", self.fixture.scope + "/system/file.txt")):
             with self.subTest(selection=selection), patch.object(verify, "schema_models", side_effect=AssertionError("unused full models")), \
-                    patch.object(sql_rows, "parse_schema", wraps=sql_rows.parse_schema) as parser:
+                    patch.object(sql_rows, "_native", wraps=sql_rows._native) as catalog:
                 verify.verify_export_bindings(self.fixture.backend, loaded, selection=selection)
-                self.assertEqual(parser.call_count, 2)
+                catalog.assert_called_once_with("copy-schema-catalog", {
+                    "backend": str(self.fixture.backend), "include_full": False})
 
     def test_binding_rejects_actual_control_ddl_column_type_drift(self):
         loaded = self.load()
@@ -355,11 +356,11 @@ class ExportVerificationTests(unittest.TestCase):
             verify.verify_export_bindings(self.fixture.backend, loaded)
 
     def test_full_model_callers_retain_complete_models(self):
-        with patch.object(sql_rows, "parse_schema", wraps=sql_rows.parse_schema) as catalog_parser, \
-                patch.object(export, "parse_schema", wraps=export.parse_schema) as full_parser:
+        with patch.object(sql_rows, "_native", side_effect=AssertionError("unused filtered models")), \
+                patch.object(export, "_native", wraps=export._native) as full:
             models = export.schema_models(self.fixture.backend)
-        self.assertEqual(catalog_parser.call_count, 2)
-        self.assertEqual(full_parser.call_count, 2)
+        full.assert_called_once_with("copy-schema-catalog", {
+            "backend": str(self.fixture.backend), "include_full": True})
         self.assertEqual(len(models), 4)
         self.assertEqual(models[:2], verify.schema_catalog(self.fixture.backend))
         self.assertIn("ryframe_resource_ownership", models[2])
