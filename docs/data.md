@@ -56,17 +56,18 @@ cargo migrate -- tenant-data verify --all
 
 ## 已有表接管
 
-已有表只能显式接管。在正常控制库另加未登记的业务表后，启动校验拒绝未知表属于预期边界；保留表及数据，不能把生成模型后直接 `serve` 当成接管。先停止 API/Worker 等生产者，准备已登记模块及匹配模型、迁移，并使用包含该登记的当前迁移程序。以下命令要求框架账本、完整结构及业务权限/菜单已满足接管前置校验；新增访问目录未初始化也会阻断预览、核验和应用，不能跳过此门禁或靠重复 `up` 猜测补齐。满足前提后保存、检查和应用同一计划，再次 inspect 确认结果；确有已审阅的后续迁移时，在最终 verify 前显式执行对应范围的 `up`：
+已有表只能显式接管。在正常控制库另加未登记的业务表后，启动校验拒绝未知表属于预期边界；保留表及数据，不能把生成模型后直接 `serve` 当成接管。先停止 API/Worker 等生产者，准备已登记模块及匹配模型、迁移，并使用包含该登记的当前迁移程序。接管前置只读核验控制库框架账本、完整物理结构和目标边界；新增业务权限/菜单不必预先 seed，业务结构、物理目标、来源摘要和其他账本约束仍由接管计划逐次核对。保存预览和 inspect 不写数据库，apply 只登记已核对的 adopted 账本元数据，不执行历史业务 DDL 或更改业务行。应用后先 inspect 原计划；需要初始化新增访问目录或执行已审阅的后续迁移时，再显式执行对应范围的 `up`，最后完整 verify。以下新模块示例用 `control up` 初始化访问目录，再校验；API/Worker 启动前仍要求完整业务权限与菜单通过，不存在宽松启动路径：
 
 ```powershell
 cargo migrate -- control adopt --module order --output .local-tests/order-adopt.json --write
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
+cargo migrate -- control up
 cargo migrate -- control verify
 ```
 
-租户表把 `control` 改为 `tenant-data`，并显式提供 `--target business-shared`；不接受 `--all`。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
+租户表的接管、inspect、目标迁移和 verify 使用 `tenant-data` 并显式提供 `--target business-shared`，不接受 `--all`；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
 
 授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。可接受陈旧的列表读才使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。租户数据范围由 `sys_tenant.data_scope_version` 驱动：控制库事务写入 outbox，Worker 在 placement 目标发布并原子切换投影；认证主体版本落后或投影不可用时失败关闭。两个数据库之间没有分布式事务，已并发进入租户库的写入不能被控制库回滚。
 

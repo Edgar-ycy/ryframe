@@ -123,7 +123,9 @@ async fn execute(
             let connection = state.connection.as_ref().ok_or("接管任务图缺少连接依赖")?;
             let database = connection.database();
             match connection {
-                Connection::Primary(_) => ryframe_db::migration::verify(database).await?,
+                Connection::Primary(_) => {
+                    ryframe_db::migration::verify_control_baseline(database).await?
+                }
                 Connection::Tenant(_) => {
                     ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?
                 }

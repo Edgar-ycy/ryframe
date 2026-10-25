@@ -152,6 +152,14 @@ pub async fn up(db: &DatabaseConnection, bootstrap: Option<&BootstrapHashes>) ->
 /// 在不执行 DDL 或初始化写入的情况下，校验迁移账本完整且主库 schema 与当前迁移
 /// 指纹相匹配。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
+    verify_control_baseline(db).await?;
+    verify_business_access_catalog(db).await
+}
+
+/// 只读核验控制库框架账本与完整物理结构，保留未知应用表拒绝。
+/// 接管前置使用此入口；新增业务权限与菜单由接管后的显式 up 初始化，
+/// 正常启动和 verify 必须继续使用包含访问目录核验的完整入口。
+pub async fn verify_control_baseline(db: &DatabaseConnection) -> Result<(), DbErr> {
     let status = status(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
@@ -164,8 +172,7 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
     }
     verify_current_schema(db)
         .await
-        .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))?;
-    verify_business_access_catalog(db).await
+        .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
 }
 
 /// 在不改变数据库状态的情况下读取迁移账本状态。
