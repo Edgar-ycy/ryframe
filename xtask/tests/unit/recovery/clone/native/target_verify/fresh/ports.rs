@@ -1,4 +1,15 @@
-use super::*;
+use crate::{
+    Result,
+    recovery::clone::native::{
+        export::transport::Transport,
+        json as document,
+        target_verify::{
+            fresh::{objects, resources::database_absence},
+            input::request_physical,
+            storage::StorageInputs,
+        },
+    },
+};
 use crate::{
     recovery::clone::native::{
         export::transport::{CommandOutput, CommandSpec},
@@ -6,6 +17,7 @@ use crate::{
     },
     target_verify_fixture::Fixture,
 };
+use serde_json::{Value, json};
 use std::cell::RefCell;
 
 struct ReadOnly {
@@ -69,7 +81,6 @@ impl Transport for ReadOnly {
 #[test]
 fn four_database_absence_checks_require_the_exact_uuid_and_do_not_issue_write_sql() {
     let f = Fixture::for_status();
-    let scope = Scope::load(&f.backend, &[], &[]).unwrap();
     let mut environment = f.environment.clone();
     environment.insert("TEMP".into(), f.local.to_str().unwrap().into());
     let secret =
@@ -88,19 +99,14 @@ fn four_database_absence_checks_require_the_exact_uuid_and_do_not_issue_write_sq
             object_case: "empty",
             calls: RefCell::new(Vec::new()),
         };
-        let resources = Resources {
-            inputs: StorageInputs {
-                backend: &f.backend,
-                request: &f.request,
-                environment: &environment,
-                observation_dir: &f.local,
-            },
-            transport: &transport,
-            scope: &scope,
-            run: None,
+        let inputs = StorageInputs {
+            backend: &f.backend,
+            request: &f.request,
+            environment: &environment,
+            observation_dir: &f.local,
         };
         for db in f.request["target"]["databases"].as_array().unwrap() {
-            let result = resources.database(db);
+            let result = database_absence(&inputs, &transport, db);
             if uuid == crate::target_verify_fixture::UUID {
                 assert_eq!(result.unwrap()["exists"], false);
             } else {
@@ -141,7 +147,7 @@ fn five_bucket_absence_is_complete_and_denied_reads_never_become_empty_or_expose
             environment: &f.environment,
             observation_dir: &output,
         };
-        let result = super::super::objects::absence(&inputs, &transport);
+        let result = objects::absence(&inputs, &transport);
         if object_case != "empty" {
             assert!(result.is_err(), "{object_case}");
             assert_eq!(
@@ -156,12 +162,50 @@ fn five_bucket_absence_is_complete_and_denied_reads_never_become_empty_or_expose
             assert_eq!(result.unwrap().as_object().unwrap().len(), 5);
             assert_eq!(transport.calls.borrow().len(), 15);
         }
-        let receipts = std::fs::read_dir(&output)
-            .unwrap()
-            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
-            .collect::<String>();
-        assert!(!receipts.contains("fixture-access") && !receipts.contains("fixture-secret"));
-        assert!(!receipts.contains("403"));
+        for entry in std::fs::read_dir(&output).unwrap() {
+            let receipt = document::read(&entry.unwrap().path()).unwrap();
+            assert_public_object_receipt(&receipt, object_case == "denied");
+        }
         assert!(!output.join("prepare.json").exists());
+    }
+}
+
+fn assert_public_object_receipt(receipt: &Value, denied: bool) {
+    document::exact(
+        receipt,
+        &[
+            "transport",
+            "operation",
+            "bucket",
+            "returncode",
+            "error_type",
+            "response",
+            "key",
+            "destination",
+            "remote_writes",
+            "scope_id",
+            "endpoint",
+            "configuration_sha256",
+            "prefix",
+            "continuation",
+        ],
+        "对象公开收据",
+    )
+    .unwrap();
+    let public = serde_json::to_string(receipt).unwrap();
+    assert!(!public.contains("fixture-access") && !public.contains("fixture-secret"));
+    assert_eq!(receipt["transport"], "rust-s3-sigv4");
+    assert_eq!(receipt["remote_writes"], 0);
+    if denied {
+        assert_eq!(receipt["error_type"], "NativeS3Error");
+        assert!(receipt["returncode"].is_null());
+        assert!(
+            receipt["response"].is_null(),
+            "原始失败正文不得进入response"
+        );
+    } else {
+        assert!(receipt["error_type"].is_null());
+        assert_eq!(receipt["returncode"], 0);
+        assert!(receipt["response"].is_object());
     }
 }

@@ -3,13 +3,13 @@ mod status;
 mod storage;
 pub(crate) use status::observe;
 
-mod objects;
+pub(crate) mod objects;
 mod prepare;
 mod receipts;
-mod registration;
-mod resources;
+pub(crate) mod registration;
+pub(crate) mod resources;
 mod resume_prepare;
-pub(super) mod selection;
+pub(crate) mod selection;
 pub(crate) use prepare::{prepare, resume as resume_prepare};
 
 pub(crate) fn dispatch(

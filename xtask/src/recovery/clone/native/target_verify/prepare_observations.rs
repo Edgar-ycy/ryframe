@@ -9,9 +9,9 @@ use crate::Result;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
 
-struct Slot {
-    name: String,
-    expected: Value,
+pub(crate) struct Slot {
+    pub(crate) name: String,
+    pub(crate) expected: Value,
 }
 
 pub(super) fn validate(
@@ -65,13 +65,13 @@ pub(super) fn validate(
     resume_observations::redis(backend, target, &redis, &redis, 2)
 }
 
-fn category(name: &str) -> String {
+pub(crate) fn category(name: &str) -> String {
     name.rsplit_once('-')
         .map(|(prefix, _)| prefix.to_owned())
         .unwrap_or_default()
 }
 
-fn slots(backend: &Path, request: &Value, candidate: &Selected) -> Result<Vec<Slot>> {
+pub(crate) fn slots(backend: &Path, request: &Value, candidate: &Selected) -> Result<Vec<Slot>> {
     let mut descriptor = document::object(&request["review"], "审阅绑定")?.clone();
     descriptor.remove("canonical_sha256");
     let review = common::read_bound(backend, &Value::Object(descriptor), "prepare 审阅")?;
@@ -174,7 +174,7 @@ fn kernel_slots(redis: &Value) -> Result<Vec<Slot>> {
     Ok(result)
 }
 
-fn matches_slot(value: &Value, expected: &Value, success: bool) -> Result<()> {
+pub(crate) fn matches_slot(value: &Value, expected: &Value, success: bool) -> Result<()> {
     if expected.get("process_receipt").is_some() {
         return check(
             success && value == expected,
@@ -300,10 +300,6 @@ fn object(value: &Value, expected: &Value, success: bool) -> Result<()> {
         _ => Ok(()),
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/prepare_history.rs"]
-mod tests;
 
 /// 历史模型保留文件所属平台的绝对路径；Windows 文件必须使用精确 WSL 挂载映射。
 /// 这里不观察命名空间或端口，实际 Windows 资源端口仍使用 redis_layout::wsl_path。

@@ -1,4 +1,10 @@
-use super::*;
+use crate::recovery::clone::native::{
+    resources::common,
+    target_verify::{
+        fresh::selection::Selected,
+        prepare_observations::{category, matches_slot, slots},
+    },
+};
 use crate::{
     recovery::clone::native::{
         json as documents,
@@ -6,6 +12,8 @@ use crate::{
     },
     target_verify_fixture::Fixture,
 };
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::{fs, path::PathBuf};
 
 struct Case<'a> {

@@ -59,52 +59,11 @@ impl<T: Transport> Resources<'_, T> {
     pub(super) fn absence(&self) -> Result<Value> {
         let databases = document::array(&self.inputs.request["target"]["databases"], "fresh 四库")?
             .iter()
-            .map(|db| self.database(db))
+            .map(|db| database_absence(&self.inputs, self.transport, db))
             .collect::<Result<Vec<_>>>()?;
         let objects = super::objects::absence(&self.inputs, self.transport)?;
         let redis = self.redis_absence()?;
         Ok(json!({"databases":databases,"objects":objects,"redis":redis}))
-    }
-
-    fn database(&self, database: &Value) -> Result<Value> {
-        let before = request_physical::defaults_connection(self.inputs.backend, database)?;
-        let tool = request::external_file(&self.inputs.request["tools"]["mysql"])?;
-        let defaults = document::text(&database["defaults_file"], "MySQL 私有配置")?;
-        let name = document::text(&database["database"], "数据库名")?;
-        // request::validate 已限定标识符；此处仍不允许 SQL 元字符进入固定查询。
-        if name.is_empty() || !name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_') {
-            return Err("数据库名称不是已审阅的安全标识符".into());
-        }
-        let args = vec![
-            format!("--defaults-file={defaults}"),
-            "--connect-timeout=5".into(),
-            "--batch".into(),
-            "--raw".into(),
-            "--skip-column-names".into(),
-            "--binary-mode".into(),
-            "--default-character-set=utf8mb4".into(),
-        ];
-        let sql = format!(
-            "SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';"
-        );
-        let raw = receipts::command(
-            &self.inputs,
-            self.transport,
-            tool,
-            args,
-            Some(sql.into_bytes()),
-            &format!("mysql-{}", document::text(&database["key"], "数据库 key")?),
-        )?;
-        if raw.trim().lines().collect::<Vec<_>>()
-            != [document::text(&database["server_uuid"], "MySQL UUID")?]
-            || request_physical::defaults_connection(self.inputs.backend, database)? != before
-        {
-            return Err("目标 MySQL UUID、精确数据库不存在前像或私有配置不同".into());
-        }
-        request::external_file(&self.inputs.request["tools"]["mysql"])?;
-        Ok(
-            json!({"server_uuid":database["server_uuid"],"database":name,"exists":false,"empty_checked":false}),
-        )
     }
 
     fn redis_absence(&self) -> Result<Value> {
@@ -116,6 +75,51 @@ impl<T: Transport> Resources<'_, T> {
             },
         )
     }
+}
+
+pub(crate) fn database_absence(
+    inputs: &StorageInputs<'_>,
+    transport: &impl Transport,
+    database: &Value,
+) -> Result<Value> {
+    let before = request_physical::defaults_connection(inputs.backend, database)?;
+    let tool = request::external_file(&inputs.request["tools"]["mysql"])?;
+    let defaults = document::text(&database["defaults_file"], "MySQL 私有配置")?;
+    let name = document::text(&database["database"], "数据库名")?;
+    // request::validate 已限定标识符；此处仍不允许 SQL 元字符进入固定查询。
+    if name.is_empty() || !name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_') {
+        return Err("数据库名称不是已审阅的安全标识符".into());
+    }
+    let args = vec![
+        format!("--defaults-file={defaults}"),
+        "--connect-timeout=5".into(),
+        "--batch".into(),
+        "--raw".into(),
+        "--skip-column-names".into(),
+        "--binary-mode".into(),
+        "--default-character-set=utf8mb4".into(),
+    ];
+    let sql = format!(
+        "SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';"
+    );
+    let raw = receipts::command(
+        inputs,
+        transport,
+        tool,
+        args,
+        Some(sql.into_bytes()),
+        &format!("mysql-{}", document::text(&database["key"], "数据库 key")?),
+    )?;
+    if raw.trim().lines().collect::<Vec<_>>()
+        != [document::text(&database["server_uuid"], "MySQL UUID")?]
+        || request_physical::defaults_connection(inputs.backend, database)? != before
+    {
+        return Err("目标 MySQL UUID、精确数据库不存在前像或私有配置不同".into());
+    }
+    request::external_file(&inputs.request["tools"]["mysql"])?;
+    Ok(
+        json!({"server_uuid":database["server_uuid"],"database":name,"exists":false,"empty_checked":false}),
+    )
 }
 
 struct Observer<'a, T> {
@@ -155,7 +159,3 @@ impl<T: Transport> StorageObserver for Observer<'_, T> {
         SystemObserver::new(self.transport).redis(inputs, redis, parts)
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../../tests/unit/recovery/clone/native/target_verify/fresh/ports.rs"]
-mod tests;

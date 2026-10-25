@@ -12,7 +12,7 @@ use crate::Result;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-pub(super) struct Registration {
+pub(crate) struct Registration {
     pub(super) backend: PathBuf,
     pub(super) workspace: PathBuf,
     pub(super) target: PathBuf,
@@ -24,7 +24,7 @@ pub(super) struct Registration {
 }
 
 impl Registration {
-    pub(super) fn load(backend: &Path, workspace: &Path) -> Result<Self> {
+    pub(crate) fn load(backend: &Path, workspace: &Path) -> Result<Self> {
         let observed = cli::execute(
             backend,
             workspace,
@@ -70,7 +70,7 @@ impl Registration {
         Ok(())
     }
 
-    pub(super) fn execute<T>(
+    pub(crate) fn execute<T>(
         &self,
         operation: impl FnOnce(Option<&Path>) -> Result<T>,
     ) -> Result<T> {
@@ -104,14 +104,14 @@ impl Registration {
     }
 }
 
-pub(super) struct Workspace {
+pub(crate) struct Workspace {
     path: PathBuf,
     identity: (u64, u64),
     guard: ProcessGuard,
 }
 
 impl Workspace {
-    pub(super) fn claim(backend: &Path, workspace: &Path) -> Result<Self> {
+    pub(crate) fn claim(backend: &Path, workspace: &Path) -> Result<Self> {
         common::local_directory(backend, workspace, "fresh 工作区")?;
         let identity = common::device_inode_for(workspace, &std::fs::symlink_metadata(workspace)?)?;
         let guard = ProcessGuard::acquire_named(workspace, "fresh-target.guard")?;
@@ -133,7 +133,7 @@ impl Workspace {
         }
         self.guard.check()
     }
-    pub(super) fn finish<T>(self, result: Result<T>) -> Result<T> {
+    pub(crate) fn finish<T>(self, result: Result<T>) -> Result<T> {
         combine(result, self.check())
     }
 }
@@ -147,7 +147,3 @@ pub(super) fn combine<T>(result: Result<T>, check: Result<()>) -> Result<T> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../../tests/unit/recovery/clone/native/target_verify/fresh/registration.rs"]
-mod tests;

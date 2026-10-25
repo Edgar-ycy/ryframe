@@ -152,7 +152,7 @@ pub(super) fn document(
     )
 }
 
-pub(super) fn validate(
+pub(crate) fn validate(
     backend: &Path,
     target: &Path,
     files: &Value,
@@ -256,7 +256,7 @@ fn bound_files(
 }
 
 /// 初始化消费者仍保留整个历史树，仅用最近一次完整观察组作资源比较基线。
-pub(super) fn active(
+pub(crate) fn active(
     backend: &Path,
     target: &Path,
     files: &Value,

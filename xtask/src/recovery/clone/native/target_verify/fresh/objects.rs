@@ -11,7 +11,7 @@ use crate::Result;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-pub(super) fn absence(inputs: &StorageInputs<'_>, transport: &impl Transport) -> Result<Value> {
+pub(crate) fn absence(inputs: &StorageInputs<'_>, transport: &impl Transport) -> Result<Value> {
     let mut result = serde_json::Map::new();
     for bucket in BUCKETS.iter().copied().collect::<BTreeSet<_>>() {
         observe(
