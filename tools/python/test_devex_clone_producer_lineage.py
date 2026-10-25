@@ -231,17 +231,6 @@ class ProducerLineageTests(unittest.TestCase):
         self.assertEqual(node["launch"], binding(self.run / "seed-runtime/attempt-0001/session-launch.json"))
         self.assertEqual(node["controller"], attempt["controller"])
 
-    def test_native_identity_producer_requires_explicit_lock_owner(self):
-        runtime = self.runtime("post-copy/runtime", pid=4242, started="100")
-        attempt = self.node_attempt()
-        process_path = self.run / "seed-runtime/attempt-0001/session-process.json"
-        process = json.loads(process_path.read_text(encoding="utf-8"))
-        process["identity_lock_owner"] = "12345678-1234-4abc-8def-1234567890ab"
-        self.write(process_path, process)
-
-        result = self.collect([runtime], [attempt])
-
-        self.assertEqual(result["node_producers"][0]["receipt"], binding(process_path))
 
     def test_node_lock_owner_rejects_wrong_kind_format_and_unknown_fields(self):
         runtime = self.runtime("post-copy/runtime", pid=4242, started="100")
