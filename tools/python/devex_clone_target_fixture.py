@@ -30,6 +30,9 @@ class Fixture:
     def __init__(self, root: Path, test):
         self.root, self.local = root, root / ".local-tests"
         self.local.mkdir()
+        self.workspace = self.local / "fresh-workspace"
+        self.workspace.mkdir()
+        self.output = self.workspace / "target"
         (self.local / "manifest.json").write_text(
             json.dumps({"kind": "offline-run"}), encoding="utf-8"
         )
@@ -52,7 +55,7 @@ class Fixture:
                          '[reset]\nlegacy_mysql_exclusive=true\nlegacy_redis_exclusive=true\n'
                          'legacy_object_storage_exclusive=true\ncredential_version="fixture-v1"\n'
                          f'source_sha={json.dumps("1" * 40)}\n'
-                         f'state_directory={json.dumps(str(self.local / "target" / "reset-state"))}\n'
+                         f'state_directory={json.dumps(str(self.output / "reset-state"))}\n'
                          'services_stopped=true\n'
                          f'redis_outside_sentinel_key="ryframe:devex-fresh:{self.scope}:sentinel"\n')
         defaults = self.local / "mysql.cnf"
@@ -148,7 +151,7 @@ class Fixture:
         self.request["configuration_sha256"] = configuration_digest(root, self.configuration)
         from restore_reference_plan import configuration_binding
         self.object_configuration = configuration_binding(root, self.configuration)
-        self.path, self.output = self.local / "request.json", self.local / "target"
+        self.path = self.local / "request.json"
         self.save_request()
         self.databases, self.redis_values, self.extra_objects, self.calls = set(), {}, {}, []
         self.initialized = False; self.unknown_create = False; self.reset_status = "completed"
@@ -256,7 +259,7 @@ class Fixture:
     def publish_prepared_files(self, request_descriptor: dict | None = None) -> dict:
         """发布与真实 CLI 同形的完整 prepare 文件快照。"""
         descriptor = request_descriptor or {"path": str(self.path), **file_digest(self.path)}
-        registration = self.local / "registration.json"
+        registration = self.workspace / "registration.json"
         storage_run = self.local / "fresh-storage"
         if not storage_run.exists():
             from devex_clone_run_state import initialize_state
@@ -278,7 +281,7 @@ class Fixture:
         elif json.loads(registration.read_text(encoding="utf-8")) != registered_value:
             raise AssertionError("测试前像登记不能被重新绑定")
         registered = receipt_binding(registration)
-        snapshot = self.local / "prepared-files.json"
+        snapshot = self.workspace / "prepared-files.json"
         snapshot.write_text(json.dumps({
             "format_version": 1, "kind": "devex-clone-fresh-target-prepared-files",
             "registration": registered, "predecessor": None,
@@ -289,11 +292,11 @@ class Fixture:
         return self.prepared_files
 
     def publish_initialized_files(self, files=None) -> dict:
-        snapshot = self.local / "initialized-files.json"
+        snapshot = self.workspace / "initialized-files.json"
         snapshot.write_text(json.dumps({
             "format_version": 1, "kind": "devex-clone-fresh-target-initialized-files",
-            "registration": receipt_binding(self.local / "registration.json"),
-            "predecessor": receipt_binding(self.local / "prepared-files.json"),
+            "registration": receipt_binding(self.workspace / "registration.json"),
+            "predecessor": receipt_binding(self.workspace / "prepared-files.json"),
             "files": binding.target_files(self.output) if files is None else files,
         }), encoding="utf-8")
         return receipt_binding(snapshot)

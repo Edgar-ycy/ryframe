@@ -165,7 +165,7 @@ class TargetResumeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         base = Path(temporary.name)
         self.addCleanup(shutil.rmtree, filesystem_path(base), True)
-        suffix = len(str(Path(".local-tests") / "target")) + 1
+        suffix = len(str(Path(".local-tests") / "fresh-workspace" / "target")) + 1
         label = "中文 空格-"
         padding = 167 - len(str(base)) - suffix - 1 - len(label)
         self.assertGreaterEqual(padding, 0, "长路径夹具的父目录已超过精确边界")
@@ -625,7 +625,7 @@ class TargetResumeTests(unittest.TestCase):
 
         self.assertTrue((f.output / "initialized.json").is_file())
         self.assertTrue((f.output / "initialize.lock").is_dir())
-        self.assertFalse((f.local / "initialized-files.json").exists())
+        self.assertFalse((f.workspace / "initialized-files.json").exists())
         self.assertEqual(len(list(f.output.glob("resume-initialize-*.failure.json"))), 1)
         self.assertTrue(target.unresolved_failure(f.root, f.output))
 

@@ -202,7 +202,7 @@ class TargetTests(unittest.TestCase):
 
     def initialize(self):
         f = self.f
-        publisher = f.publish_initialized_files if (f.local / "prepared-files.json").is_file() else None
+        publisher = f.publish_initialized_files if (f.workspace / "prepared-files.json").is_file() else None
         result = target.initialize_target(f.root, f.output, f.run, publish_files=publisher)
         return result
 
@@ -617,7 +617,7 @@ class TargetTests(unittest.TestCase):
         self.assertTrue((self.f.output / "initialized.json").exists())
         self.assertTrue((self.f.output / "initialized-candidate.json").exists())
         self.assertTrue((self.f.output / "initialize.lock").exists())
-        self.assertFalse((self.f.local / "initialized-files.json").exists())
+        self.assertFalse((self.f.workspace / "initialized-files.json").exists())
         self.assertTrue(target.unresolved_failure(self.f.root, self.f.output))
 
     def test_publication_runs_after_initialize_unlock_while_target_guard_is_held(self):
@@ -637,7 +637,7 @@ class TargetTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "fresh_target_initialized")
         self.assertEqual(len(observations), 1)
-        self.assertTrue((self.f.local / "initialized-files.json").is_file())
+        self.assertTrue((self.f.workspace / "initialized-files.json").is_file())
 
     def test_locked_target_scan_checks_guard_before_and_after_walk(self):
         self.prepare()
@@ -683,7 +683,7 @@ class TargetTests(unittest.TestCase):
             self.initialize()
         self.assertFalse(f.databases)
         self.assertFalse((f.output / "initialize.started.json").exists())
-        self.assertFalse((f.local / "initialized-files.json").exists())
+        self.assertFalse((f.workspace / "initialized-files.json").exists())
 
     def test_unknown_file_before_final_tree_snapshot_prevents_publication(self):
         f = self.f
@@ -698,7 +698,7 @@ class TargetTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "未登记"):
             self.initialize()
         self.assertTrue((f.output / "initialized.json").exists())
-        self.assertFalse((f.local / "initialized-files.json").exists())
+        self.assertFalse((f.workspace / "initialized-files.json").exists())
 
     def test_failed_publication_candidate_is_not_verified(self):
         self.prepare(); self.initialize()
