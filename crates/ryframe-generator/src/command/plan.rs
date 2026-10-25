@@ -291,16 +291,23 @@ impl GenerationPlan {
                 self.tasks().join(" → "),
             );
         }
+        let selection = if self.operation == GenerationOperation::Resource {
+            format!(
+                "模型={:?}，持久化目标=资源模型声明（执行时解析）",
+                self.models
+            )
+        } else {
+            format!(
+                "只读结构来源={}，表={:?}，模型目标={}",
+                self.source, self.tables, self.database
+            )
+        };
         format!(
-            "生成计划：操作={:?}，业务包={}，配置目录={}，缓存目录={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+            "生成计划：操作={:?}，业务包={}，配置目录={}，缓存目录={}，{selection}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
             self.operation,
             self.package,
             self.config_directory.display(),
             self.target_dir.display(),
-            self.models,
-            self.source,
-            self.tables,
-            self.database,
             self.write,
             self.tasks().join(" → "),
         )

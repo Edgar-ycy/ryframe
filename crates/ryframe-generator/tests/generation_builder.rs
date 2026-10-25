@@ -32,7 +32,7 @@ fn configuration_and_builder_share_resolved_tasks_without_executing_them() {
 fn explicit_empty_selection_and_disabled_sync_override_configuration() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("config")).unwrap();
-    fs::write(root.path().join("config/tools.toml"), "[generator]\npackage='order-business'\ntables=['biz_order']\nmodels=['Old']\nsync_frontend=true\n").unwrap();
+    fs::write(root.path().join("config/tools.toml"), "[generator]\npackage='order-business'\nsource='sources.legacy'\nstorage='control'\ntables=['biz_order']\nmodels=['Old']\nsync_frontend=true\n").unwrap();
     let plan = GenerationBuilder::new(root.path())
         .include_tables(Vec::<String>::new())
         .include_models(["Order", "OrderItem"])
@@ -44,6 +44,10 @@ fn explicit_empty_selection_and_disabled_sync_override_configuration() {
     assert_eq!(plan.models, ["Order", "OrderItem"]);
     assert!(!plan.sync_frontend);
     assert_eq!(plan.tasks().last(), Some(&"事务写入文件"));
+    let description = plan.describe();
+    assert!(description.contains("持久化目标=资源模型声明"));
+    assert!(!description.contains("只读结构来源"));
+    assert!(!description.contains("模型目标=control"));
 }
 
 #[test]

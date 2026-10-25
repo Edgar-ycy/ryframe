@@ -62,6 +62,8 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 物理外键属性完整声明 `name`、有序物理 `columns`、`referenced_table`、有序 `referenced_columns`、`update_rule`、`delete_rule` 和 `match_option`，例如 `#[resource(foreign_key(name="fk_note_customer", columns=["customer_id"], referenced_table="legacy_customer", referenced_columns=["id"], update_rule="RESTRICT", delete_rule="SET NULL", match_option="NONE"))]`。只接受同一存储范围、当前受管资源集合中的同库引用；本表须显式声明同列序前缀索引，引用列完整匹配主键或唯一索引，类型和字符串排序规则须兼容。租户约束必须包含本表与引用表对应的 `tenant_id`，不能只引用业务 ID。支持 `CASCADE`、`RESTRICT`、`SET NULL`、`NO ACTION` 和 `MATCH NONE`，`SET NULL` 要求本列可空；未知动作、跨库或目标、重复名称、未解析引用和循环依赖整批拒绝。新表按已验证的父表优先拓扑创建；已有外键新增、删除或变更只报告需要审阅安全增量，不改写历史迁移或自动删除约束。
 
+`resource` 计划的持久化目标由各资源模型声明，执行时解析并校验；一个业务包可同时声明控制库和租户库资源。`import` 计划显示读取结构的来源、选中表和生成模型的目标类型。两种操作使用各自的目标依据。
+
 ### 已有表接管
 
 已有表接管要求模型、迁移与数据库物理结构完全一致。先在业务 crate 导入或手写模型并登记描述符，用 `cargo generate -- resource --package order-business` 预览、审阅后加 `--write`；导入的字段类型、排序规则、索引、外键和迁移历史必须保留。停止目标上的 API、Worker 和调度写入，控制库先完成框架初始化；tenant 表必须选择单个目标键，`adopt` 不接受 `--all`。 生成接管计划时控制库运行 `cargo migrate -- --config-dir .local-tests/dev-config control adopt --module order --output .local-tests/order-adopt.json --write`，租户库把 `control` 改为 `tenant-data` 并增加 `--target business-shared`，输出另取新文件。先 `--inspect` 该计划，只读核对物理实例、数据库、表、迁移前缀和指纹，再用同一计划 `--apply ... --write` 和对应 `verify`。`--module` 预览的 `--plan` 不读配置或数据库；`--output` 必须配 `--write`，`--inspect` 拒绝写入。部分登记、前像不符、来源不同或结构漂移都失败关闭；未知结果先 inspect 原计划，不能换计划重放。目标为空、只把已有表当结构模板时不需要 adopt，按正常 `up` 建表。
