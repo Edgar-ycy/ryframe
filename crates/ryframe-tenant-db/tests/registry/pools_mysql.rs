@@ -72,6 +72,7 @@ async fn budget_and_idle(
     eprintln!("registry 阶段：连接预算、并发首建及真实后台闲置回收");
     let registry = registry(targets, 2, 2, 1)?;
     let first = concurrent_first(&registry, first_schema, pools).await?;
+    verify_cached_schema_cause(&first).await;
     let original = connection_id(first.connection()).await?;
     let transaction = first.connection().begin().await.map_err(mysql::db_error)?;
     let transaction_id = connection_id(&transaction).await?;
@@ -320,4 +321,19 @@ async fn require_value<C: ConnectionTrait>(database: &C, expected: &str) -> Resu
 
 fn message(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+async fn verify_cached_schema_cause(lease: &TenantDatabasePoolLease) {
+    use std::error::Error;
+    // 此 owned 库只有 registry_pool_probe，真实完整 tenant schema 校验必须失败，不能缓存成功。
+    let first = lease.ensure_schema_verified().await.unwrap_err();
+    let cached = lease.ensure_schema_verified().await.unwrap_err();
+    assert_eq!(first.to_string(), cached.to_string());
+    let cause = first
+        .source()
+        .expect("真实 schema 失败必须保留安全原因")
+        .to_string();
+    assert!(!cause.is_empty());
+    assert_eq!(cause, cached.source().unwrap().to_string());
+    assert!(!lease.is_schema_verified());
 }

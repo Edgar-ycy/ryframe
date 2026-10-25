@@ -49,6 +49,7 @@ impl TenantDataSession {
             );
             TenantDataError::TargetUnavailable {
                 target_key: self.target_key().into(),
+                source: None,
             }
         })?;
         if let Err(error) = self
@@ -75,6 +76,7 @@ impl TenantDataSession {
             );
             TenantDataError::TargetUnavailable {
                 target_key: self.target_key().into(),
+                source: None,
             }
         })?;
         if let Err(error) = self
@@ -100,6 +102,7 @@ impl TenantDataSession {
             );
             TenantDataError::TargetUnavailable {
                 target_key: self.target_key().into(),
+                source: None,
             }
         })?;
         let actual = projection.as_ref().map(|row| row.source_version);
@@ -155,10 +158,12 @@ impl TenantDataSession {
                         );
                         TenantDataError::TargetUnavailable {
                             target_key: self.target_key().into(),
+                            source: None,
                         }
                     })?
                     .ok_or_else(|| TenantDataError::TargetUnavailable {
                         target_key: self.target_key().into(),
+                        source: None,
                     })?,
             )
         } else {
@@ -181,6 +186,7 @@ impl TenantDataSession {
             );
             TenantDataError::TargetUnavailable {
                 target_key: self.target_key().into(),
+                source: None,
             }
         })?
         .ok_or_else(|| TenantDataError::FenceRejected {

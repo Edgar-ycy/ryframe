@@ -270,6 +270,7 @@ async fn run_tenant_data(
         config.database.sql_log_level,
         config.database.sql_slow_threshold_ms,
         &targets,
+        context,
     )
     .await
     .map_err(|error| {

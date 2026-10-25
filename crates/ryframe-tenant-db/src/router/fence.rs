@@ -128,6 +128,7 @@ impl TenantDatabaseRouter {
             .map_err(|error| target_write_error(&provision, error, "dedicated slot 断言失败"))?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             })?;
             require_exact_dedicated_slot(Some(&slot), &provision)?;
         }
@@ -177,6 +178,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "fence 状态事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result = set_fence_state_in_transaction(
@@ -290,6 +292,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(%tenant_id, target = target_key, %error, "fence provision 事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
 
@@ -299,6 +302,7 @@ impl TenantDatabaseRouter {
                 tracing::warn!(%tenant_id, target = target_key, %error, "fence provision 提交失败");
                 TenantDataError::TargetUnavailable {
                     target_key: target_key.into(),
+                    source: None,
                 }
             }),
             Err(error) => {

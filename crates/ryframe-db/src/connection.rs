@@ -1,3 +1,6 @@
+mod diagnostic;
+pub use diagnostic::redact_database_diagnostic;
+
 use std::{collections::HashSet, time::Duration};
 
 use crate::DbResultExt;

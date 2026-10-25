@@ -28,10 +28,12 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "dedicated 固定占用槽读取失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?
         .ok_or_else(|| TenantDataError::TargetUnavailable {
             target_key: target_key.into(),
+            source: None,
         })?;
         match (row.tenant_id, row.placement_generation, row.switch_token) {
             (None, None, None) => Ok(None),
@@ -44,6 +46,7 @@ impl TenantDatabaseRouter {
             }
             _ => Err(TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }),
         }
     }
@@ -80,6 +83,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "目标租户 fence 空闲检查失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         if fence.is_some() {
@@ -96,10 +100,12 @@ impl TenantDatabaseRouter {
                 tracing::warn!(target = target_key, %error, "dedicated 目标占用槽空闲检查失败");
                 TenantDataError::TargetUnavailable {
                     target_key: target_key.into(),
+                    source: None,
                 }
             })?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             })?;
             if slot.tenant_id.is_some() {
                 return Ok(false);
@@ -147,6 +153,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "迁移目标 fence 事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result =
@@ -244,15 +251,18 @@ where
                 tracing::warn!(target = target_key, table = descriptor.table, %error, "目标租户空数据检查失败");
                 TenantDataError::TargetUnavailable {
                     target_key: target_key.into(),
+ source: None,
                 }
             })?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+ source: None,
             })?;
         if row.try_get_by_index::<i64>(0).map_err(|error| {
             tracing::warn!(target = target_key, table = descriptor.table, %error, "目标租户空数据结果无效");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+ source: None,
             }
         })? != 0
         {

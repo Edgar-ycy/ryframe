@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, error::Error};
 
+use super::diagnostic::{Context, Writes};
+
 use ryframe_config::{DbConnection, SqlLogLevel, TenantDatabaseTargetKind};
 use ryframe_db::connection::{DatabaseIdentity, physical_identity};
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
@@ -12,9 +14,14 @@ pub(super) async fn preflight(
     sql_log_level: SqlLogLevel,
     slow_threshold_ms: u64,
     targets: &[String],
+    context: &Context<'_>,
 ) -> Result<BTreeMap<String, DatabaseIdentity>, Box<dyn Error>> {
     let mut selected = BTreeMap::new();
     for target in targets {
+        let context = Context {
+            target: Some(target),
+            ..*context
+        };
         let identity = match registry.target_kind(target) {
             Some(TenantDatabaseTargetKind::Control) => {
                 let database = ryframe_db::connection::connect_with_sql_logging(
@@ -23,21 +30,22 @@ pub(super) async fn preflight(
                     slow_threshold_ms,
                 )
                 .await
-                .map_err(|error| target_failure(target, "目标连接预检", &error))?;
+                .map_err(|error| context.error("目标连接预检", Writes::None, &error))?;
                 let identity = physical_identity(&database).await;
                 let closed = database.close().await;
                 match (identity, closed) {
                     (Ok(identity), Ok(())) => identity,
                     (Err(error), Ok(())) => {
-                        return Err(target_failure(target, "目标物理身份预检", &error));
+                        return Err(context.error("目标物理身份预检", Writes::None, &error));
                     }
                     (Ok(_), Err(error)) => {
-                        return Err(target_failure(target, "预检关闭连接", &error));
+                        return Err(context.error("预检关闭连接", Writes::None, &error));
                     }
                     (Err(error), Err(close)) => {
                         return Err(format!(
-                            "{}；关闭连接时另有错误：{close}",
-                            target_failure(target, "目标物理身份预检", &error)
+                            "{}；关闭连接时另有错误：{}",
+                            context.error("目标物理身份预检", Writes::None, &error),
+                            context.error("预检关闭连接", Writes::None, &close)
                         )
                         .into());
                     }
@@ -45,11 +53,11 @@ pub(super) async fn preflight(
             }
             Some(TenantDatabaseTargetKind::Mysql) => {
                 let lease = registry.acquire(target).await.map_err(|error| {
-                    target_failure(target, "独立目标连接预检（registry 不可用）", &error)
+                    context.error("独立目标连接预检（registry 不可用）", Writes::None, &error)
                 })?;
                 physical_identity(lease.connection())
                     .await
-                    .map_err(|error| target_failure(target, "目标物理身份预检", &error))?
+                    .map_err(|error| context.error("目标物理身份预检", Writes::None, &error))?
             }
             None => {
                 return Err(format!(
@@ -62,10 +70,6 @@ pub(super) async fn preflight(
     }
     reject_duplicates(&selected)?;
     Ok(selected)
-}
-
-fn target_failure(target: &str, phase: &str, error: &dyn Error) -> Box<dyn Error> {
-    format!("目标={target}；阶段={phase}；{error}").into()
 }
 
 pub(super) fn reject_duplicates(

@@ -15,6 +15,10 @@ mod adoption;
 mod adoption_races;
 #[path = "business_initialization_mysql/adoption_unknown.rs"]
 mod adoption_unknown;
+#[path = "boot_contract/configuration_fixture.rs"]
+mod configuration_fixture;
+#[path = "../src/bin/ryframe_migrate/diagnostic.rs"]
+mod diagnostic;
 #[path = "../src/bin/ryframe_migrate/targets.rs"]
 mod migration_targets;
 #[cfg(feature = "bin-api")]

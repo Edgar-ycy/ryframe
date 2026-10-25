@@ -128,7 +128,7 @@ impl Context<'_> {
             } else { "cargo migrate -- --config-dir <当前已显示配置目录> control status；cargo migrate -- --config-dir <当前已显示配置目录> control verify".to_owned() },
             |target| format!("cargo migrate -- --config-dir <当前已显示配置目录> tenant-data status --target {target}；cargo migrate -- --config-dir <当前已显示配置目录> tenant-data verify --target {target}"));
         format!(
-            "请核对选定配置中的 host、port、database、账号连接与数据库访问权限、tls_mode、tls_ca、tls_client_cert、tls_client_key 及连接超时/池容量；不可用不等于认证失败，独立 MySQL 目标的 registry 可能未保留底层原因。修正后使用同一 --config-dir 和 APP_ENV 先执行只读核对：{commands}；up 或 adopt --apply 只能在核对完整现场后显式决定，不能自动重试。{adoption}"
+            "请核对选定配置中的 host、port、database、账号连接与数据库访问权限、tls_mode、tls_ca、tls_client_cert、tls_client_key 及连接超时/池容量；不可用不等于认证失败，独立 MySQL 目标仅展示已脱敏的底层原因；通道关闭等无底层错误时不会推断认证原因。修正后使用同一 --config-dir 和 APP_ENV 先执行只读核对：{commands}；up 或 adopt --apply 只能在核对完整现场后显式决定，不能自动重试。{adoption}"
         )
     }
 }
