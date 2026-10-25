@@ -1,4 +1,4 @@
-use ryframe_config::{AppConfig, DatabaseReplicaConfig, SqlLogLevel};
+use ryframe_config::{AppConfig, DatabaseReplicaConfig, DbConnection, SqlLogLevel};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use sea_orm::DatabaseConnection;
@@ -8,23 +8,35 @@ const REPLICA_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 const REPLICA_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const REPLICA_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(60);
 
+#[cfg(test)]
+#[path = "../../tests/boot_contract/datasource_diagnostics.rs"]
+mod tests;
+
 /// 连接主数据库、可选副本和具名数据源。
 /// 主库和具名数据源连接失败仍会导致启动失败；副本以降级状态启动，避免短暂的副本
 /// 故障阻止 API 提供由主库支撑的服务。
 pub async fn connect(config: &AppConfig) -> Result<ControlDatabaseCluster, AppError> {
     let primary_config = &config.database.primary;
+    let primary_error = |phase, error| {
+        startup_database_error(
+            config,
+            primary_config,
+            "database.primary",
+            None,
+            phase,
+            error,
+        )
+    };
     let primary = ryframe_db::connection::connect_with_sql_logging(
         primary_config,
         config.database.sql_log_level,
         config.database.sql_slow_threshold_ms,
     )
     .await
-    .map_err(|error| AppError::Database(format!("primary database connection failed: {error}")))?;
+    .map_err(|error| primary_error("连接池建立", error))?;
     ryframe_db::connection::ping(&primary)
         .await
-        .map_err(|error| {
-            AppError::Database(format!("primary database health check failed: {error}"))
-        })?;
+        .map_err(|error| primary_error("PING 健康检查", error))?;
     tracing::info!(
         database = %primary_config.database,
         driver = "mysql",
@@ -39,27 +51,28 @@ pub async fn connect(config: &AppConfig) -> Result<ControlDatabaseCluster, AppEr
         .map(|replica| (replica.name.clone(), None, false));
 
     let mut sources = Vec::with_capacity(config.database.sources.len());
-    for source_config in &config.database.sources {
+    for (index, source_config) in config.database.sources.iter().enumerate() {
+        let field = format!("database.sources[{index}]");
+        let source_error = |phase, error| {
+            startup_database_error(
+                config,
+                &source_config.connection,
+                &field,
+                Some(&source_config.name),
+                phase,
+                error,
+            )
+        };
         let source = ryframe_db::connection::connect_with_sql_logging(
             &source_config.connection,
             config.database.sql_log_level,
             config.database.sql_slow_threshold_ms,
         )
         .await
-        .map_err(|error| {
-            AppError::Database(format!(
-                "named database source {} connection failed: {error}",
-                source_config.name
-            ))
-        })?;
+        .map_err(|error| source_error("连接池建立", error))?;
         ryframe_db::connection::ping(&source)
             .await
-            .map_err(|error| {
-                AppError::Database(format!(
-                    "named database source {} health check failed: {error}",
-                    source_config.name
-                ))
-            })?;
+            .map_err(|error| source_error("PING 健康检查", error))?;
         tracing::info!(
             source = %source_config.name,
             database = %source_config.connection.database,
@@ -72,6 +85,128 @@ pub async fn connect(config: &AppConfig) -> Result<ControlDatabaseCluster, AppEr
     Ok(ControlDatabaseCluster::with_sources_and_replica_slots(
         primary, replicas, sources,
     ))
+}
+
+fn startup_database_error(
+    config: &AppConfig,
+    connection: &DbConnection,
+    field: &str,
+    name: Option<&str>,
+    phase: &str,
+    error: AppError,
+) -> AppError {
+    let host = safe_database_target(&connection.host);
+    let database = safe_database_target(&connection.database);
+    let name = name.map(safe_database_target).unwrap_or("primary");
+    let cause = error.to_string();
+    let cause = if cause.contains("-----BEGIN") && cause.contains("PRIVATE KEY-----") {
+        "底层错误含私钥材料，原文已隐藏"
+    } else {
+        &cause
+    };
+    let message = format!(
+        "必需数据库依赖启动失败：阶段={phase}；字段={field}；name={name}；目标=[{host}]:{}/{database}；原因链= {cause} ；\
+         本次进程启动已中止，尚未进入服务监听阶段。请核对当前所选配置文件中的 \
+         {field}.host、port、database，确认 MySQL 服务监听与网络可达、账号连接及数据库访问权限、\
+         tls_mode 与 CA/客户端证书/私钥配置；结合底层原因检查 connect_timeout_secs={}、\
+         acquire_timeout_secs={} 和连接池容量，修复后重新启动。超时本身不能证明凭据错误。",
+        connection.port, connection.connect_timeout_secs, connection.acquire_timeout_secs,
+    );
+    AppError::Database(redact_database_diagnostic(config, &message))
+}
+
+fn safe_database_target(value: &str) -> &str {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_alphanumeric() || "._-:%[]$".contains(character))
+    {
+        value
+    } else {
+        "<目标格式已隐藏，请核对配置字段>"
+    }
+}
+
+fn redact_database_diagnostic(config: &AppConfig, message: &str) -> String {
+    // DbResultExt 已保留驱动文本；这里遮蔽所有数据库角色的凭据及其实际 URL 编码，
+    // 不向日志输出完整连接配置，也不读取 TLS 私钥文件。
+    let mut secrets = Vec::new();
+    for connection in std::iter::once(&config.database.primary)
+        .chain(
+            config
+                .database
+                .replicas
+                .iter()
+                .map(|replica| &replica.connection),
+        )
+        .chain(
+            config
+                .database
+                .sources
+                .iter()
+                .map(|source| &source.connection),
+        )
+    {
+        for value in [
+            Some(connection.username.as_str()),
+            Some(connection.password.as_str()),
+            connection.tls_ca.as_deref(),
+            connection.tls_client_cert.as_deref(),
+            connection.tls_client_key.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.is_empty())
+        {
+            secrets.push(value.to_owned());
+            secrets.push(value.replace('\\', "\\\\").replace('\'', "\\'"));
+            secrets.push(value.replace('\'', "''"));
+            let escaped = format!("{value:?}");
+            secrets.push(escaped[1..escaped.len() - 1].to_owned());
+        }
+        let url = connection.connection_url();
+        if let Some((credentials, _)) = url
+            .strip_prefix("mysql://")
+            .and_then(|value| value.split_once('@'))
+        {
+            secrets.extend(
+                credentials
+                    .split(':')
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+        if let Some((_, query)) = url.split_once('?') {
+            secrets.extend(
+                query
+                    .split('&')
+                    .filter_map(|part| part.split_once('='))
+                    .filter(|(key, _)| matches!(*key, "ssl-ca" | "ssl-cert" | "ssl-key"))
+                    .map(|(_, value)| value.to_owned()),
+            );
+        }
+    }
+    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    secrets.dedup();
+    // 先遮蔽完整 URL，避免特殊凭据替换改变 URI 分隔符后漏判连接地址。
+    let mut redacted = message
+        .split_whitespace()
+        .map(|part| {
+            if part.contains("://") {
+                "<连接地址已隐藏>"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    for secret in secrets {
+        redacted = redacted.replace(&secret, "<已隐藏>");
+    }
+    if redacted.contains("-----BEGIN") && redacted.contains("PRIVATE KEY-----") {
+        return "数据库启动诊断包含私钥材料，已隐藏；本次进程启动已中止，尚未进入服务监听阶段；请核对所选配置的数据库 TLS 字段及私钥格式后重新启动".into();
+    }
+    redacted
 }
 
 /// 校验主库迁移账本与结构。滚动迁移期间副本可能滞后，健康检查通过前不得参与路由。
