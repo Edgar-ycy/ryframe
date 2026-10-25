@@ -18,6 +18,8 @@ use ryframe_db::{ControlDatabaseCluster, application_ports, migration};
 use ryframe_kernel::{ActorContext, DataScope};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
+#[path = "boot_contract/configuration_fixture.rs"]
+mod configuration_fixture;
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
 #[path = "../../ryframe-adapters/tests/support/configuration.rs"]

@@ -2,8 +2,7 @@ use std::{fs, io::Write, path::Path, process::Command};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection};
 
-#[path = "../boot_contract/configuration_fixture.rs"]
-mod configuration_fixture;
+use super::configuration_fixture;
 
 pub(super) const ADMIN_PASSWORD: &str = "ExplicitAdmin123!";
 

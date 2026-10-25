@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix valid user-role assignment returning 404 in ordinary tenants that intentionally have no super-administrator role. Remove the redundant super-role precheck while preserving self-assignment restrictions, transactional role ownership and super-administrator checks, and old-token invalidation after authorization changes.
+
 - Classify driver-reported foreign-key violations consistently: deleting a referenced parent or writing a reference to a missing parent returns 409, while connection and transaction failures retain their 503 classification. Do not infer foreign-key violations from error text or expose underlying SQL or field values in conflict responses.
 
 - Complete one-pass initialization of shared-control in the same physical database through formal control export-sql. Reuse runtime tenant DDL, slot/fence data statements and migration names, strictly compare shared ownership and create one business ledger for registered Control/Tenant migrations. Verify both ledgers directly after import without another up; independent MySQL targets still migrate separately, and nonempty databases or unknown DDL outcomes are not replayed.

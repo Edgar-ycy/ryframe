@@ -15,10 +15,7 @@ use ryframe_application::ports::backup::BackupHealthCache;
 use ryframe_config::{AppConfig, Environment};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use super::{NEW_PASSWORD, initialize, message, mysql, sql_initialization};
-
-#[path = "../boot_contract/configuration_fixture.rs"]
-mod configuration_fixture;
+use super::{NEW_PASSWORD, configuration_fixture, initialize, message, mysql, sql_initialization};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tenant_without_super_role_assigns_roles_through_http_and_preserves_boundaries() {
@@ -54,7 +51,7 @@ async fn tenant_without_super_role_assigns_roles_through_http_and_preserves_boun
             .await.map_err(message)?;
         assert!(system.user_info.is_super_admin);
         assert_eq!(request(server.address, &system.access_token, 2, &[1, 2]).await?, 200);
-        let system_roles = database.query_all(Statement::from_string(DbBackend::MySql,
+        let system_roles = database.query_all_raw(Statement::from_string(DbBackend::MySql,
             "SELECT role_id FROM sys_user_role WHERE tenant_id='system' AND user_id=2 ORDER BY role_id"))
             .await.map_err(message)?;
         assert_eq!(system_roles.into_iter().map(|row| row.try_get::<i64>("", "role_id").unwrap())
@@ -89,20 +86,20 @@ async fn seed_tenant(database: &DatabaseConnection) -> Result<(), String> {
     for sql in [
         "INSERT INTO sys_tenant (id,tenant_id,name) VALUES (100,'role-tenant','无超级角色租户')",
         "INSERT INTO sys_role (id,tenant_id,name,code) VALUES (110,'role-tenant','租户管理员','tenant_admin'),(111,'role-tenant','普通角色','ordinary'),(112,'role-tenant','业务角色','business')",
-        "INSERT INTO sys_permission (id,tenant_id,name,code,perm_type) VALUES (10010,'role-tenant','修改用户','system:user:edit','api'),(10011,'role-tenant','修改超级角色','sys:role:editSuper','api')",
-        "INSERT INTO sys_role_permission (tenant_id,role_id,perm_id) VALUES ('role-tenant',110,10010),('role-tenant',110,10011),('role-tenant',111,10010)",
+        "INSERT INTO sys_permission (id,tenant_id,name,code,perm_type) VALUES (900010,'role-tenant','修改用户','system:user:edit','api'),(900011,'role-tenant','修改超级角色','sys:role:editSuper','api')",
+        "INSERT INTO sys_role_permission (tenant_id,role_id,perm_id) VALUES ('role-tenant',110,900010),('role-tenant',110,900011),('role-tenant',111,900010)",
     ] {
         mysql::execute(database, sql).await?;
     }
     let hash = ryframe_auth::password::hash(NEW_PASSWORD).map_err(message)?;
-    database.execute(Statement::from_sql_and_values(DbBackend::MySql,
+    database.execute_raw(Statement::from_sql_and_values(DbBackend::MySql,
         "INSERT INTO sys_user (id,tenant_id,username,password_hash,nickname) VALUES (100,'role-tenant','tenant_admin',?,'租户管理员'),(101,'role-tenant','ordinary',?,'普通用户')",
         [hash.clone().into(), hash.into()])).await.map_err(message)?;
     mysql::execute(database, "INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES ('role-tenant',100,110),('role-tenant',101,111)").await
 }
 
 async fn assignments(database: &DatabaseConnection, user: i64) -> Result<(Vec<i64>, i32), String> {
-    let roles = database.query_all(Statement::from_sql_and_values(DbBackend::MySql,
+    let roles = database.query_all_raw(Statement::from_sql_and_values(DbBackend::MySql,
         "SELECT role_id FROM sys_user_role WHERE tenant_id='role-tenant' AND user_id=? ORDER BY role_id",
         [user.into()])).await.map_err(message)?;
     let roles = roles
@@ -110,7 +107,7 @@ async fn assignments(database: &DatabaseConnection, user: i64) -> Result<(Vec<i6
         .map(|row| row.try_get("", "role_id").map_err(message))
         .collect::<Result<Vec<i64>, _>>()?;
     let user = database
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             "SELECT authorization_version FROM sys_user WHERE tenant_id='role-tenant' AND id=?",
             [user.into()],
