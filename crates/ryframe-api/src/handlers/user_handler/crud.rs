@@ -185,19 +185,6 @@ pub(crate) async fn replace_roles(
         )?;
     }
 
-    let super_role = state
-        .services
-        .identity
-        .role
-        .get_super_role(&current_user)
-        .await?;
-    if role_ids.contains(&super_role.id) {
-        ensure_current_user_permission(
-            &current_user,
-            "sys:role:editSuper",
-            "无权限修改超级管理员角色",
-        )?;
-    }
     state
         .services
         .identity

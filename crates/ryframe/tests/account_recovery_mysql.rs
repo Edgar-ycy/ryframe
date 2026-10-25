@@ -22,6 +22,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 mod mysql;
 #[path = "../../ryframe-adapters/tests/support/configuration.rs"]
 mod redis_configuration;
+#[path = "account_recovery_mysql/role_assignment.rs"]
+mod role_assignment;
 #[path = "account_recovery_mysql/sql_initialization.rs"]
 mod sql_initialization;
 
