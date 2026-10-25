@@ -74,8 +74,6 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 复合索引用结构体属性 `#[resource(index(name="idx_code",fields=["code","id"]))]` 声明，唯一索引加 `unique`；导入保留索引名、字段顺序和唯一性，拒绝前缀、降序、函数、不可见及非 BTREE 索引。仅为自增联合主键补充必要的 id 首列索引，不给主键已覆盖字段补冗余索引。 字段的 `#[resource(sql_comment="Database comment")]` 独立于界面标签；导入、DDL、模型摘要及追加迁移保留该值，结构指纹仍只核对结构。引号、反斜杠、换行原样保存；字段注释不能含 NUL 或超过 1024 个字符。 字面量默认值使用字段 `default="value"`，数据库时钟使用 `sql_default="CURRENT_TIMESTAMP(6)"`、`sql_on_update="CURRENT_TIMESTAMP(6)"`；时钟只支持与 DATETIME 列一致的 0～6 位精度，不接受任意 SQL，`default` 与 `sql_default` 不能并用。导入保留这两类默认值及更新时间表达式。业务模型中显式声明数据库时钟表达式的字段不进入创建和更新表单；强类型插入输入省略数据库尚未生成的值，Repository 插入时省略这些列，更新时不写回数据库管理列，并返回实际持久化值。Record、实体和响应保留声明的非空类型；无数据库表达式的审计字段继续使用应用时钟，可编辑字段的可空替换语义不变。日期、Decimal 的字面量默认值须符合当前 CRUD 支持范围，其他表达式使用明确迁移扩展。
 
-外键只读元数据保留复合列顺序、同库引用身份、`ON UPDATE`、`ON DELETE` 和数据库报告的 `MATCH` 规则，并进入 `.ryframe/imports/` 来源记录；未知动作或匹配规则立即拒绝。读取引用动作不代表生成器支持写入该约束；当前仍在候选结构核验时拒绝未表达的外键，不生成关联 CRUD 或外键 DSL。完整导入未通过时，不会把候选来源记录或模型安装到正式工作树。
-
 - 新增可空列、带显式默认值的非空列、整数或字符串扩宽、放宽非空约束及新增索引可生成向前 DDL；唯一索引仍须先核对存量重复值。
 - 删除或重命名列、收窄类型、收紧非空约束、改变主键/表名/存储范围、调整已有列顺序或删除/修改索引只输出审阅原因，整批停止，不覆盖初始迁移或发布半批注册。非空新列没有默认值时，先用可空列分阶段回填。
 - 审阅迁移后停止生产者，再显式执行 control 或所选 tenant-data 目标的 `up` 和 `verify`。数据库被直接改动时 verify 报告漂移，生成器不会反向覆盖模型或猜测已执行状态。
@@ -84,8 +82,6 @@ cargo worker -- --config-dir .local-tests/worker-config
 生成器不执行数据库迁移。受管文件写入并审阅后，按模型存储范围先运行 `status`，再运行 `cargo migrate -- --config-dir .local-tests/dev-config control up` 或 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>`，最后用对应 `verify` 校验；多个目标共享版本时可显式用 `--all`，但不能替代 `control up`。最终结构校验失败仍应保留现场，先核对账本和实际表，不重放未知结果。 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 
 租户业务资源同时生成 `generated/tenant_catalog.rs` 与 `generated/tenant_catalog.json`，包含完整列、类型、复制游标及规范化 schema。模块通过 `tenant_data_tables()` 声明生成描述，组合根在连接数据库前统一装配、核验依赖并冻结目录；同一进程再次登记只能使用相同描述。重复表、缺失描述或无效 schema 会阻止启动，不会忽略业务表。复制和恢复校验使用完整目录，并保留业务迁移账本。生成迁移同时注册模型指纹与每张表的 before/after 物理结构；手写 `SeaOrmBusinessMigration` 也必须提供 `BusinessMigrationSchema`。单条 `verify_ledger` 仅校验历史账本，整组 `verify_business_migrations(database, scope, migrations)` 接收该范围的全部注册迁移，拒绝未知账本和归属冲突，再按每张表最新状态校验实际结构，避免合法追加迁移被旧结构误判。修改模型后先通过正式生成入口更新受管资产，再显式执行业务迁移；不要手改目录或 ownership 摘要。已有表按[已有表接管](#已有表接管)预览、保存、核对和执行计划；租户接管必须选择单个目标，不用 up 猜测接管。
-
-从模型到页面可按以下顺序联调：
 
 1. 创建业务 crate、登记 `ResourceModel` 后预览生成，再用 `--write` 写入；再次预览应没有差异。
 2. 为业务模型和用例添加测试，执行 `cargo test --locked -p order-business`。先通过控制库与明确租户目标的迁移状态检查，再显式应用本模块迁移，命令见[数据指南](data.md)。
