@@ -71,8 +71,7 @@ pub(super) fn members(backend: &Path, tree: &Value, timeout: std::time::Duration
                 ) || error
                     .downcast_ref::<std::io::Error>()
                     .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied))
-                    && std::time::Instant::now() < deadline =>
-            {}
+                    && std::time::Instant::now() < deadline => {}
             Err(error) => return Err(error),
         }
         if std::time::Instant::now() >= deadline {
