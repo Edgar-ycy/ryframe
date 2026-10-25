@@ -84,6 +84,8 @@ Authorization: Bearer <access_token>
 - 413：导出匹配行数或请求体超过限制。
 - 501/503：部署能力不可用或依赖暂时不可用。
 
+租户业务读取的数据范围投影缺失、尚未就绪或版本与控制库权威版本不匹配时，拒绝读取并返回 HTTP 503、`error_key=tenant_data_target_unavailable` 和 `Retry-After: 5`。这表示业务数据暂不可用，应等待投影同步后重试；刷新登录会话不能修复投影落后。该情况不使用表示产品运行代次变化的 `stale_runtime_epoch`。
+
 ## 筛选导出
 
 七类导出使用独立强类型请求，统一包络：

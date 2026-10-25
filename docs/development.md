@@ -104,6 +104,8 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 ## 集成验证
 
+租户业务读取保持数据范围投影版本的严格校验；投影缺失、未就绪或落后时使用 `TenantDataTargetUnavailable(message, 5)`，通过现有 HTTP 错误映射返回 503 和 `Retry-After: 5`，不要求客户端刷新产品会话。生成仓储与租户数据端口使用相同分类；修改生成器后，已有业务项目须通过正式生成入口更新受管仓储文件，不能手工修改生成产物。
+
 租户数据范围投影的真实 MySQL 用例 `data_scope_projection_mysql` 复用 `.local-tests/mysql/config` 与同一归属夹具，核验共享控制库及独立 dedicated schema；目标只初始化租户结构，版本发布从控制库读取最小身份与部门事实。场景核验投影落后拒绝、注入写入失败后的完整前后像及恢复发布；不创建额外数据库用户，不代表不同实例或业务 CRUD 已验收。
 
 共享真实 MySQL 测试的固定 opt-in 为后端根目录 `.local-tests/mysql/config`；目录缺失时明确跳过且未验收，已有目录及各层必须普通无链接。`app.test.toml` 必须存在，公共 `app.toml` 可以缺省；已存在的配置必须是普通无链接文件，缺少环境文件、无权读取或配置非法直接失败。通过 `AppConfig::load(directory, Environment::Test)` 加载完整 `database.primary`，地址、密码、连接池、超时及 TLS CA/证书/私钥均来自文件；普通测试保留配置 TLS 模式并拒绝 Disabled，显式 TLS 用例使用 Required。fixture 一次加载配置，用文件 `scope_id`、净化测试名、PID 和序号生成唯一 schema，不再读取旧 MySQL 项目环境配置。可运行 `mysql_real_protocol` 测试目标。MySQL、Redis 及 TLS 出站测试共用文件配置与统一 CI 入口；只有在明确选定的隔离服务上实际运行的用例才构成对应范围的验收，缺少配置的跳过、文件协议或回环 fixture 回归不能代替完整集成门禁。 fixture 在同一条管理连接上持有会话锁，记录实例 UUID、连接编号、schema 和不可覆盖的计划与 journal；业务池每条新物理连接均核对该实例及 schema。证据位于 `.local-tests/mysql/fixtures`，不包含密码或连接串。只有测试成功、业务连接池关闭、归属与文件身份仍一致、全局连接列表可见且没有活动业务连接时才精确删除本次 schema。测试账号须直接拥有全局 `PROCESS` 或 `ALL PRIVILEGES`，仅从角色继承的权限暂不用于证明全局可见性。测试失败、panic、连接或 DDL 结果未知、证据变化及权限不足均保留数据库和证据；先核对现场，不按库名前缀清理，不自动重放或声称回滚。

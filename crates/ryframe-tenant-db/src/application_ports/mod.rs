@@ -37,9 +37,12 @@ fn map_error(error: TenantDataError) -> AppError {
             tenant_id,
             expected,
             actual,
-        } => AppError::StaleRuntimeEpoch(format!(
-            "租户 {tenant_id} 的数据范围投影版本不匹配: expected={expected}, actual={actual:?}；请刷新会话后重试"
-        )),
+        } => AppError::TenantDataTargetUnavailable(
+            format!(
+                "租户 {tenant_id} 的数据范围投影暂不可用: expected={expected}, actual={actual:?}；请等待投影同步后重试"
+            ),
+            5,
+        ),
         TenantDataError::UnknownTarget { target_key }
         | TenantDataError::TargetUnavailable { target_key } => {
             AppError::TenantDataTargetUnavailable(format!("租户数据目标不可用: {target_key}"), 5)
@@ -54,3 +57,7 @@ fn map_error(error: TenantDataError) -> AppError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/tenant_mapping_contracts/projection_error.rs"]
+mod projection_error;

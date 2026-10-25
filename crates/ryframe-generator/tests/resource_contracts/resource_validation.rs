@@ -540,6 +540,10 @@ en = "Created by"
     assert!(content("order/service.rs").contains("created_by: Some(actor.user_id)"));
     assert!(content("order/service.rs").contains("record.created_by = Some(actor.user_id)"));
     assert!(content("order/repository.rs").contains("owner_id_condition"));
+    assert!(content("order/repository.rs").contains(
+        "crate::TenantDataError::DataScopeProjectionStale { .. } => {\n            AppError::TenantDataTargetUnavailable(message, 5)"
+    ));
+    assert!(!content("order/repository.rs").contains("AppError::StaleRuntimeEpoch"));
     assert!(content("order/repository.rs").contains("order_by_desc(entity::Column::Id)"));
     assert!(content("order/fake.rs").contains("is_some_and"));
     assert!(content("order/fake.rs").contains("owner_visible"));

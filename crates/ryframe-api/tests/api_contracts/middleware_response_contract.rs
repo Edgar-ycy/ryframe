@@ -21,6 +21,38 @@ use tower::ServiceExt;
 
 struct FixedLimiter(Result<RateLimitDecision, String>);
 
+#[test]
+fn tenant_data_unavailability_preserves_retry_and_does_not_request_session_refresh() {
+    use axum::response::IntoResponse;
+    use ryframe_api::http::HttpAppError;
+    use ryframe_kernel::AppError;
+
+    runtime().block_on(async {
+        let response = HttpAppError::from(AppError::TenantDataTargetUnavailable(
+            "租户 projection-tenant 的数据范围投影暂不可用: expected=9, actual=Some(8)".into(),
+            5,
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[RETRY_AFTER], "5");
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error_key"], "tenant_data_target_unavailable");
+        assert_eq!(body["message"], "error.tenant_data_target_unavailable");
+        assert!(body["details"].is_null());
+        assert!(!body.to_string().contains("expected=9"));
+
+        let changed_runtime =
+            HttpAppError::from(AppError::StaleRuntimeEpoch("产品运行代次确实变化".into()))
+                .into_response();
+        assert_eq!(changed_runtime.status(), StatusCode::CONFLICT);
+        assert!(!changed_runtime.headers().contains_key(RETRY_AFTER));
+        let body = to_bytes(changed_runtime.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error_key"], "stale_runtime_epoch");
+    });
+}
+
 #[async_trait::async_trait]
 impl HttpRateLimiter for FixedLimiter {
     async fn acquire(&self, _: &str, _: u64, _: u32) -> Result<RateLimitDecision, String> {

@@ -357,7 +357,7 @@ pub(crate) fn tenant_error_mapper() -> String {
             AppError::StalePlacementGeneration(message)
         }
         crate::TenantDataError::DataScopeProjectionStale { .. } => {
-            AppError::StaleRuntimeEpoch(message)
+            AppError::TenantDataTargetUnavailable(message, 5)
         }
         crate::TenantDataError::TenantDataMaintenance { .. }
         | crate::TenantDataError::FenceRejected { .. } => {
