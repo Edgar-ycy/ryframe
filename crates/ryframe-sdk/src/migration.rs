@@ -16,7 +16,7 @@ pub use adoption::{
     BusinessAdoptionTarget, apply_business_adoption, inspect_business_adoption,
     preview_business_adoption,
 };
-pub use export::business_initialization_statements;
+pub use export::{BusinessInitializationSql, business_initialization_statements};
 pub(crate) use schema::validate_migrations;
 pub use schema::{
     BusinessMigrationSchema, BusinessTableSchema, validate_business_migration_ledger,

@@ -34,7 +34,8 @@ pub use baseline_contract::ddl_statements as control_ddl_statements;
 #[cfg(feature = "migration")]
 pub use bootstrap::BootstrapHashes;
 pub use schema::{
-    expected_extra, extract_column_type, normalize_check_clause, normalize_column_type,
+    expected_extra, extract_column_type, framework_initialization_assertions,
+    normalize_check_clause, normalize_check_clause_sql, normalize_column_type,
     register_business_tables, verify_business_schema, verify_current_schema,
 };
 #[cfg(feature = "migration")]

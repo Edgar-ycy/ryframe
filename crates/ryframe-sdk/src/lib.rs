@@ -23,10 +23,11 @@ pub use control_catalog::BusinessControlTableDescriptor;
 pub use migration::{
     BusinessAdoptionLedger, BusinessAdoptionManifest, BusinessAdoptionMigration,
     BusinessAdoptionOutcome, BusinessAdoptionPlan, BusinessAdoptionState, BusinessAdoptionTable,
-    BusinessAdoptionTarget, BusinessMigration, BusinessMigrationOrigin, BusinessMigrationSchema,
-    BusinessMigrationScope, BusinessTableSchema, MigrationState, SeaOrmBusinessMigration,
-    apply_business_adoption, business_initialization_statements, inspect_business_adoption,
-    preview_business_adoption, validate_business_migration_ledger, verify_business_migrations,
+    BusinessAdoptionTarget, BusinessInitializationSql, BusinessMigration, BusinessMigrationOrigin,
+    BusinessMigrationSchema, BusinessMigrationScope, BusinessTableSchema, MigrationState,
+    SeaOrmBusinessMigration, apply_business_adoption, business_initialization_statements,
+    inspect_business_adoption, preview_business_adoption, validate_business_migration_ledger,
+    verify_business_migrations,
 };
 #[cfg(feature = "runtime")]
 pub use module::{BusinessModuleBuilder, RyFrameBusinessModule, sort_modules, validate_modules};

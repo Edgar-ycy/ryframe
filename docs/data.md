@@ -36,7 +36,7 @@ cargo migrate -- control verify
 cargo migrate -- tenant-data verify --target shared-control
 ```
 
-成功导入后直接完成上述两侧 verify，无需补 `up`；独立 MySQL 租户目标不在此物理库导出范围内，仍须使用各自 `tenant-data up/verify`。`sql/ryframe_config.sql` 是含占位哈希、没有账本的审阅快照，不能部署；导入中断后不要通过重复 `up` 猜测补齐或自动删除对象，确认用途后另建隔离库。MySQL DDL 不能依赖外层事务整体回滚。
+成功导入后直接完成上述两侧 verify，无需补 `up`；独立 MySQL 租户目标不在此物理库导出范围内，仍须使用各自 `tenant-data up/verify`。`sql/ryframe_config.sql` 是含占位哈希、没有账本的审阅快照，不能部署；导入中断后不要通过重复 `up` 猜测补齐或自动删除对象，确认用途后另建隔离库。MySQL DDL 不能依赖外层事务整体回滚。导入按迁移执行前置与执行后实际元数据断言，覆盖列顺序、默认值、排序规则、索引、外键及 `CHECK` 表达式和 `enforced`；仅通过后登记本次业务账本。最终复核框架、业务结构及归属/账本，并在持有元数据锁的登记事务内写入两侧框架完成标记。失败前已完成的迁移及 DDL 可能保留；错误结果先核对输出的迁移、阶段、类别与现场，禁止自动重放。
 
 ## 数据边界与迁移
 

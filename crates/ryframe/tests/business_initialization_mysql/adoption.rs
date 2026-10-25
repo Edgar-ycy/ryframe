@@ -173,8 +173,13 @@ async fn existing_latest(database: &DatabaseConnection) -> Result<(), String> {
 
 pub(super) async fn empty_ledger(database: &DatabaseConnection) -> Result<(), String> {
     let initial = migration(false).with_initialization_sql(&[DDL]);
-    let statements = business_initialization_statements(&[&initial]).map_err(message)?;
-    mysql::execute(database, &statements[0]).await
+    let statements = business_initialization_statements(&[&initial], &[]).map_err(message)?;
+    let ledger = statements
+        .setup
+        .iter()
+        .find(|sql| sql.starts_with("CREATE TABLE ryframe_business_migration "))
+        .ok_or("导出计划缺少正式业务账本定义")?;
+    mysql::execute(database, ledger).await
 }
 
 pub(super) async fn timestamps(database: &DatabaseConnection) -> Result<Vec<String>, String> {

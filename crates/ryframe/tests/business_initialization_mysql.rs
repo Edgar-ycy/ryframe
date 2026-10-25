@@ -19,8 +19,11 @@ mod adoption_unknown;
 mod migration_targets;
 #[path = "business_initialization_mysql/response_gate.rs"]
 mod response_gate;
+#[path = "business_initialization_mysql/sql_guard.rs"]
+mod sql_guard;
 #[path = "business_initialization_mysql/target_identity.rs"]
 mod target_identity;
+use sql_guard::{assert_schema_predicates, verify_non_check_value_boundaries};
 
 const DDL: &str = "CREATE TABLE biz_sql_example (id BIGINT NOT NULL AUTO_INCREMENT, code VARCHAR(32) NOT NULL, PRIMARY KEY(id), UNIQUE KEY uk_example_code(code)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 const CHECKSUM: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -138,25 +141,24 @@ fn hashes() -> Result<ryframe_db::migration::BootstrapHashes, String> {
 #[test]
 fn missing_empty_and_duplicate_sql_descriptions_fail_before_export() {
     let missing = migration(false);
-    let error = business_initialization_statements(&[&missing])
+    let error = business_initialization_statements(&[&missing], &[])
         .unwrap_err()
         .to_string();
     assert!(error.contains("control up") && error.contains("尚未写入"));
     let empty = migration(false).with_initialization_sql(&[]);
     assert!(
-        business_initialization_statements(&[&empty])
+        business_initialization_statements(&[&empty], &[])
             .unwrap_err()
             .to_string()
             .contains("SQL 为空")
     );
     let valid = migration(false).with_initialization_sql(&[DDL]);
     assert!(
-        business_initialization_statements(&[&valid, &valid])
+        business_initialization_statements(&[&valid, &valid], &[])
             .unwrap_err()
             .to_string()
             .contains("重复登记")
     );
-    assert!(business_initialization_statements(&[]).unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -250,7 +252,12 @@ async fn runtime_business_schema_verification_is_read_only_and_rejects_drift() {
     mysql::run_mysql_test("businessruntime", |database| async move {
         let missing = verify_business_schema(&database).await.unwrap_err().to_string();
         assert!(missing.contains("biz_sql_example") && missing.contains("control verify"));
+        let initial = ryframe_db::schema::schema_preconditions("biz_sql_example", None).map_err(mysql::db_error)?;
+        assert_schema_predicates(&database, &initial, &[]).await?;
         mysql::execute(&database, DDL).await?;
+        let after = ryframe_db::schema::schema_assertions("biz_sql_example", TABLE_SCHEMA).map_err(mysql::db_error)?;
+        assert_schema_predicates(&database, &after, &[]).await?;
+        assert_schema_predicates(&database, &initial, &["initial_absent"]).await?;
         verify_business_schema(&database).await.map_err(mysql::db_error)?;
         assert!(register_business_tables([("biz_sql_example", AFTER_SCHEMA), ("invalid_table", "invalid")]).is_err());
         assert!(register_business_tables([("biz_sql_example", TABLE_SCHEMA), ("biz_sql_example", TABLE_SCHEMA)]).is_err());
@@ -262,6 +269,7 @@ async fn runtime_business_schema_verification_is_read_only_and_rejects_drift() {
             ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?,
             business_rows(&database).await?,
         );
+        assert_schema_predicates(&database, &after, &["columns"]).await?;
         let drift = verify_business_schema(&database).await.unwrap_err().to_string();
         assert!(drift.contains("biz_sql_example") && drift.contains("code") && drift.contains("默认值"));
         assert!(!drift.contains("do-not-print-this-value"));
@@ -367,8 +375,8 @@ async fn interrupted_business_sql_cannot_register_control_completion() {
         assert!(database.execute_unprepared(&sql).await.is_err());
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='biz_sql_example'", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 0).await?;
-        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='seaql_migrations'", 0).await?;
-        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='seaql_tenant_data_migrations'", 0).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM seaql_migrations", 0).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM seaql_tenant_data_migrations", 0).await?;
         assert!(ryframe_db::migration::verify(&database).await.is_err());
         Ok(())
     }).await;
@@ -401,13 +409,13 @@ async fn existing_table_preflight_and_mismatched_ddl_never_claim_success() {
         assert!(error.contains("已存在") && error.contains("尚未执行"));
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ryframe_business_migration'", 0).await?;
         let before = ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?;
-        // 即使 DDL 被编码为 PREPARE，也不能用 IF NOT EXISTS 把已有结构当作导入成功。
+        // 编码 DDL 执行前即拒绝已有目标，不能用 IF NOT EXISTS 把原结构当作导入成功。
         let encoded = migration(false).with_initialization_sql(&[
             r#"CREATE TABLE IF NOT EXISTS `biz_sql_example` (`id` BIGINT) COMMENT='fixture\\path'"#
         ]);
-        let statements = business_initialization_statements(&[&encoded]).map_err(|error| error.to_string())?;
-        let error = database.execute_unprepared(&statements.join(";\n")).await.unwrap_err().to_string();
-        assert!(error.contains("already exists") && error.contains("biz_sql_example"), "{error}");
+        let statements = business_initialization_statements(&[&encoded], &[]).map_err(|error| error.to_string())?;
+        let error = database.execute_unprepared(&statements.into_statements().join(";\n")).await.unwrap_err().to_string();
+        assert!(error.contains("ryframe_schema_assertion_failed"), "{error}");
         assert_eq!(ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?, before);
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 0).await?;
         Ok(())
@@ -428,8 +436,9 @@ struct Next;
 async fn ledger_write_failure_preserves_ddl_and_requires_authoritative_recheck() {
     mysql::run_mysql_test("businessreceipt", |database| async move {
         let migration = migration(false).with_initialization_sql(&[DDL]);
-        let statements = business_initialization_statements(&[&migration]).map_err(|error| error.to_string())?;
-        mysql::execute(&database, &statements[0]).await?;
+        let statements = business_initialization_statements(&[&migration], &[]).map_err(|error| error.to_string())?;
+        let ledger = statements.setup.iter().find(|sql|sql.starts_with("CREATE TABLE ryframe_business_migration ")).ok_or("导出计划缺少正式业务账本定义")?;
+        mysql::execute(&database, ledger).await?;
         database.execute_unprepared("CREATE TRIGGER deny_business_receipt BEFORE INSERT ON ryframe_business_migration FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture denied ledger write'").await.map_err(mysql::db_error)?;
         let error = migration.up(&database).await.unwrap_err().to_string();
         assert!(error.contains("DDL 已执行并通过结构校验") && error.contains("账本写入失败") && error.contains("不自动重放"), "{error}");
@@ -493,9 +502,17 @@ async fn latest_table_contract_accepts_roll_forward_without_rechecking_historica
             "INSERT INTO biz_sql_example(code) VALUES ('keep-data')",
         )
         .await?;
+        let before_next =
+            ryframe_db::schema::schema_preconditions("biz_sql_example", Some(TABLE_SCHEMA))
+                .map_err(mysql::db_error)?;
+        assert_schema_predicates(&database, &before_next, &[]).await?;
         next.up(&database)
             .await
             .map_err(|error| error.to_string())?;
+        let after_next = ryframe_db::schema::schema_assertions("biz_sql_example", AFTER_SCHEMA)
+            .map_err(mysql::db_error)?;
+        assert_schema_predicates(&database, &after_next, &[]).await?;
+        assert_schema_predicates(&database, &before_next, &["columns"]).await?;
         verify_business_migrations(
             &database,
             BusinessMigrationScope::Control,
@@ -530,6 +547,7 @@ async fn latest_table_contract_accepts_roll_forward_without_rechecking_historica
             2,
         )
         .await?;
+        verify_non_check_value_boundaries(&database).await?;
         Ok(())
     })
     .await;

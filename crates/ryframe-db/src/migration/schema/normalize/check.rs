@@ -1,3 +1,7 @@
+mod rules;
+mod sql;
+pub use sql::normalize_check_clause_sql;
+
 pub fn normalize_check_clause(value: &str) -> String {
     // MySQL information_schema 可能增加外层括号、反引号及字符集引介符。
     // 先按词法 token 解析，再用类型和长度编码，避免删除空白后把不同表达式拼成同一串。
@@ -81,8 +85,9 @@ fn check_tokens(value: &str) -> Vec<CheckToken> {
 }
 
 fn charset_introducer_len(bytes: &[u8], index: usize) -> Option<usize> {
-    [b"_utf8mb4".as_slice(), b"_ascii".as_slice()]
-        .into_iter()
+    rules::INTRODUCERS
+        .iter()
+        .map(|value| value.as_bytes())
         .find(|introducer| {
             let end = index + introducer.len();
             bytes
@@ -230,61 +235,13 @@ fn is_word_byte(byte: u8) -> bool {
 }
 
 fn is_check_keyword(value: &str) -> bool {
-    matches!(
-        value,
-        "and"
-            | "as"
-            | "between"
-            | "binary"
-            | "case"
-            | "collate"
-            | "div"
-            | "else"
-            | "end"
-            | "escape"
-            | "false"
-            | "in"
-            | "interval"
-            | "is"
-            | "like"
-            | "member"
-            | "mod"
-            | "not"
-            | "null"
-            | "of"
-            | "or"
-            | "regexp"
-            | "rlike"
-            | "sounds"
-            | "then"
-            | "true"
-            | "unknown"
-            | "when"
-            | "xor"
-    )
+    rules::KEYWORDS.contains(&value)
 }
 
 fn symbol_end(bytes: &[u8], index: usize) -> usize {
-    for width in [3, 2] {
-        let Some(candidate) = bytes.get(index..index + width) else {
-            continue;
-        };
-        if matches!(
-            candidate,
-            b"<=>"
-                | b"->>"
-                | b">="
-                | b"<="
-                | b"<>"
-                | b"!="
-                | b"&&"
-                | b"||"
-                | b"<<"
-                | b">>"
-                | b"->"
-                | b":="
-        ) {
-            return index + width;
+    for symbol in rules::SYMBOLS {
+        if bytes.get(index..index + symbol.len()) == Some(symbol.as_bytes()) {
+            return index + symbol.len();
         }
     }
     index + 1

@@ -8,11 +8,12 @@ use super::m20260820_000000_tenant_baseline as baseline;
 /// 同一控制库物理数据库的租户结构、数据与最后完成标记。
 pub struct SharedControlInitialization {
     pub statements: Vec<String>,
+    pub ledger: String,
     pub completion: Vec<String>,
 }
 
 pub fn shared_control_initialization() -> Result<SharedControlInitialization, DbErr> {
-    let completion = completion_statements()?;
+    let (ledger, completion) = completion_statements()?;
     let mut statements = table_statements()?;
     statements.extend([
         baseline::TARGET_SLOT_SEED.into(),
@@ -20,6 +21,7 @@ pub fn shared_control_initialization() -> Result<SharedControlInitialization, Db
     ]);
     Ok(SharedControlInitialization {
         statements,
+        ledger,
         completion,
     })
 }
@@ -63,7 +65,7 @@ fn table_statements() -> Result<Vec<String>, DbErr> {
     Ok(statements)
 }
 
-fn completion_statements() -> Result<Vec<String>, DbErr> {
+fn completion_statements() -> Result<(String, Vec<String>), DbErr> {
     let baseline_migration = baseline::Migration;
     let projection_migration = super::m20261017_000000_data_scope_projection::Migration;
     let supported = [baseline_migration.name(), projection_migration.name()];
@@ -82,9 +84,9 @@ fn completion_statements() -> Result<Vec<String>, DbErr> {
         .create_table_from_entity(sea_orm_migration::seaql_migrations::Entity)
         .table(super::Migrator::migration_table_name())
         .to_string(MysqlQueryBuilder);
-    let mut completion = vec![ledger];
+    let mut completion = Vec::new();
     for name in actual {
         completion.push(format!("INSERT INTO `{}` (`version`, `applied_at`) SELECT '{name}', UNIX_TIMESTAMP() FROM `ryframe_initialization_guard` WHERE `valid` = 1", super::TENANT_DATA_MIGRATION_LEDGER));
     }
-    Ok(completion)
+    Ok((ledger, completion))
 }

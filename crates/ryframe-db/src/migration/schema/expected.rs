@@ -17,7 +17,16 @@ use crate::migration::baseline_contract::ddl_statements;
 
 pub(super) fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();
-    for statement in ddl_statements() {
+    extend_schema(&mut schema, ddl_statements())?;
+    add_post_baseline_constraints(&mut schema);
+    Ok(schema)
+}
+
+pub(super) fn extend_schema<'a>(
+    schema: &mut ExpectedSchema,
+    statements: impl IntoIterator<Item = &'a str>,
+) -> Result<(), DbErr> {
+    for statement in statements {
         let table = extract_table_name(statement).ok_or_else(|| {
             DbErr::Custom("canonical baseline contains an invalid CREATE TABLE statement".into())
         })?;
@@ -33,15 +42,14 @@ pub(super) fn expected_schema() -> Result<ExpectedSchema, DbErr> {
             },
         );
         add_table_parts(
-            &mut schema,
+            schema,
             &table,
             statement,
             &table_character_set,
             &table_collation,
         )?;
     }
-    add_post_baseline_constraints(&mut schema);
-    Ok(schema)
+    Ok(())
 }
 
 fn add_table_parts(
@@ -51,9 +59,11 @@ fn add_table_parts(
     table_character_set: &str,
     table_collation: &str,
 ) -> Result<(), DbErr> {
+    let mut ordinal = 0;
     for line in clauses::table_clauses(statement)? {
         let upper = line.to_ascii_uppercase();
         if line.starts_with('`') {
+            ordinal += 1;
             add_column(
                 schema,
                 table,
@@ -61,6 +71,7 @@ fn add_table_parts(
                 &upper,
                 table_character_set,
                 table_collation,
+                ordinal,
             );
         } else if upper.starts_with("PRIMARY KEY") {
             schema.indexes.insert(
@@ -119,6 +130,7 @@ fn add_column(
     upper: &str,
     table_character_set: &str,
     table_collation: &str,
+    ordinal: usize,
 ) {
     let identifiers = backtick_identifiers(line);
     let Some(column) = identifiers.first() else {
@@ -129,6 +141,9 @@ fn add_column(
         .and_then(|(_, rest)| rest.split_once('`'))
         .map(|(_, rest)| rest.trim_start())
         .unwrap_or_default();
+    schema
+        .column_order
+        .insert((table.into(), column.clone()), ordinal);
     let column_type = normalize_column_type(extract_column_type(after_name));
     let uses_character_set = column_type_uses_character_set(&column_type);
     schema.columns.insert(

@@ -151,7 +151,7 @@ fn column_differences(expected: &str, actual: &str) -> Vec<String> {
     output
 }
 
-fn split_unquoted(value: &str, separator: char) -> Vec<&str> {
+pub(super) fn split_unquoted(value: &str, separator: char) -> Vec<&str> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
     for (index, character) in value.char_indices() {

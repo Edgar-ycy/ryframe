@@ -63,7 +63,7 @@ cargo serve -- --config-dir .local-tests/dev-config
 cargo migrate -- --config-dir .local-tests/dev-config control export-sql --output .local-tests/control-init.sql --write
 ```
 
-推荐迁移初始化；需要直接导入时先导出上方完整 SQL，再选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir .local-tests/dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 一次初始化所选物理控制库内的控制面与 `shared-control` 租户数据面，包含两账本及已注册的两侧业务迁移；导入成功后直接执行 `control verify` 与 `tenant-data verify --target shared-control`，无需补初始化 `up`。独立 MySQL 租户目标仍须另行执行 `tenant-data up` 和 `verify`，不会由一份 SQL 跨实例初始化。
+推荐迁移初始化；需要直接导入时先导出上方完整 SQL，再选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir .local-tests/dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 一次初始化所选物理控制库内的控制面与 `shared-control` 租户数据面，包含两账本及已注册的两侧业务迁移；导入成功后直接执行 `control verify` 与 `tenant-data verify --target shared-control`，无需补初始化 `up`。独立 MySQL 租户目标仍须另行执行 `tenant-data up` 和 `verify`，不会由一份 SQL 跨实例初始化。SQL 在登记每次业务迁移前核验实际结构，最后复核框架结构、业务结构和账本；不一致即停止，不能把合法但偏离声明的 DDL 记为完成。
 
 租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 
