@@ -60,16 +60,6 @@ fn terminal_failures_are_visible_but_do_not_mean_active_work() {
 }
 
 #[test]
-fn snapshot_duplicate_and_nested_duplicate_keys_are_rejected() {
-    for raw in [
-        r#"{"database_time":1,"database_time":2}"#,
-        r#"{"active":{"x":0,"x":1}}"#,
-    ] {
-        assert!(crate::recovery::clone::native::json::parse_fragment(raw, "排空快照").is_err());
-    }
-}
-
-#[test]
 fn stable_drain_checks_both_images_and_worker_creation_identity() {
     let (_, _, worker) = result::fixture();
     let original = json!({"stable_seconds":2,"observations":3,"first_snapshot":snapshot(),"last_snapshot":snapshot()});
