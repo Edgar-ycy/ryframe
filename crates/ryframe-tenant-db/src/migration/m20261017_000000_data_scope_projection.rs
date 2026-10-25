@@ -5,6 +5,14 @@ use super::m20260820_000000_tenant_baseline::{
     DATA_SCOPE_DEPT_DDL, DATA_SCOPE_OWNER_DDL, DATA_SCOPE_PROJECTION_DDL,
 };
 
+pub(super) fn table_statements() -> [&'static str; 3] {
+    [
+        DATA_SCOPE_PROJECTION_DDL,
+        DATA_SCOPE_OWNER_DDL,
+        DATA_SCOPE_DEPT_DDL,
+    ]
+}
+
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -16,11 +24,7 @@ impl MigrationTrait for Migration {
                 "tenant-data data scope projection requires MySQL".into(),
             ));
         }
-        for statement in [
-            DATA_SCOPE_PROJECTION_DDL,
-            DATA_SCOPE_OWNER_DDL,
-            DATA_SCOPE_DEPT_DDL,
-        ] {
+        for statement in table_statements() {
             manager
                 .get_connection()
                 .execute_unprepared(statement)

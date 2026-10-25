@@ -82,9 +82,14 @@ pub(super) async fn import(database: &DatabaseConnection) -> Result<Export, Stri
             .execute_unprepared(&content)
             .await
             .map_err(|_| "正式 SQL 导入失败；请核对保留的私有导出与数据库现场，不自动重放")?;
-        ryframe_db::migration::verify(database).await.map_err(|_| {
-            "SQL 导入后迁移校验失败；请核对保留现场的结构和账本，不自动重放".to_owned()
-        })
+        ryframe_db::migration::verify(database)
+            .await
+            .map_err(|_| "SQL 导入后控制库校验失败；请核对保留现场，不自动重放".to_owned())?;
+        ryframe_tenant_db::migration::verify_shared_control(database)
+            .await
+            .map_err(|_| {
+                "SQL 导入后 shared-control 校验失败；禁止补 up 掩盖导出缺口，保留现场".to_owned()
+            })
     }
     .await;
     result?;

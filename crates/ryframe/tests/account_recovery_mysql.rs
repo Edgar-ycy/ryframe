@@ -273,6 +273,28 @@ async fn initial_user_login_requires_and_completes_password_change() {
             .map_err(message)?;
         assert!(admin.user_info.password_change_required);
         assert!(auth.login("system", "admin", "123456").await.is_err());
+        profile
+            .change_password(
+                &administrator(),
+                sql_initialization::ADMIN_PASSWORD,
+                "ChangedAdmin123!",
+            )
+            .await
+            .map_err(message)?;
+        assert_session_rejected(&auth, &admin).await;
+        assert!(
+            auth.login("system", "admin", sql_initialization::ADMIN_PASSWORD)
+                .await
+                .is_err()
+        );
+        assert!(
+            !auth
+                .login("system", "admin", "ChangedAdmin123!")
+                .await
+                .map_err(message)?
+                .user_info
+                .password_change_required
+        );
         exported.finish()?;
         Ok(())
     })

@@ -81,6 +81,15 @@ fn export_requires_explicit_password_and_refuses_overwrite() {
     assert!(!sql.contains("InitialAdmin123!"));
     assert!(sql.contains("$argon2id$"));
     assert!(sql.contains("CREATE TABLE `seaql_migrations`"));
+    assert!(sql.contains("CREATE TABLE `seaql_tenant_data_migrations`"));
+    assert!(sql.contains("INSERT INTO `biz_tenant_fence`"));
+    assert!(sql.contains("INSERT INTO `biz_tenant_target_slot`"));
+    assert_eq!(
+        sql.matches("CREATE TABLE `ryframe_resource_ownership`")
+            .count(),
+        1
+    );
+    assert!(!sql.contains("CREATE TABLE IF NOT EXISTS"));
     let repeated = run(&output, "--write", Some("AnotherAdmin123!"));
     assert!(!repeated.status.success());
     assert_eq!(fs::read_to_string(&output).unwrap(), sql);

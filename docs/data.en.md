@@ -14,7 +14,7 @@ cargo migrate -- tenant-data verify --target shared-control
 cargo serve
 ```
 
-`control up` is the only entry point for creating or upgrading the control database. `control verify` only validates the ledger, structure, and compile-time business catalog; it cannot replace initialization on a new empty database. First-time initialization requires `[bootstrap] admin_password` in configuration. The API and Worker only validate at startup and do not execute DDL. Non-production configurations default to `jobs.mode="embedded"`, so `cargo serve` already consumes background tasks. To validate separate processes, follow the [development guide](development.en.md#starting-the-backend) to create private API and Worker configurations, both using `jobs.mode="external"`, with different instance IDs and explicitly selected configuration directories. For every MySQL tenant target, first create an empty database, register its configuration, and run `tenant-data up/verify` separately.
+The migration path uses `control up` to create or upgrade the control database; a new empty physical database may instead use the complete SQL initialization below. `control verify` only validates the ledger, structure, and compile-time business catalog; it cannot replace initialization on a new empty database. First-time initialization requires `[bootstrap] admin_password` in configuration. The API and Worker only validate at startup and do not execute DDL. Non-production configurations default to `jobs.mode="embedded"`, so `cargo serve` already consumes background tasks. To validate separate processes, follow the [development guide](development.en.md#starting-the-backend) to create private API and Worker configurations, both using `jobs.mode="external"`, with different instance IDs and explicitly selected configuration directories. For every MySQL tenant target, first create an empty database, register its configuration, and run `tenant-data up/verify` separately.
 
 ## Control Database Initialization SQL
 
@@ -23,7 +23,7 @@ cargo migrate -- control export-sql --output .local-tests/control-init.sql --pla
 cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
 ```
 
-`control export-sql --plan` reads no passwords, application configuration or database and writes no files. Actual export with `--write` loads file configuration selected by `APP_ENV` and `--config-dir <directory>` and reads `[bootstrap] admin_password` to generate hashes, without connecting to a database. The actual export contains the control database structure, post-creation constraints, system data, registered control database business migrations, and the ledger, without plaintext passwords. Handwritten business migrations must provide schema and initialization SQL from the same source as `up`. The export contains password hashes and must be protected as credential material; the output must be a new file and cannot overwrite an existing one. Select an empty database and configure the client to stop on errors; do not use `--force`. The following example connects to a local database. Client host, port, user and database must match the selected configuration; for remote production connections, explicitly enable hostname verification with the matching CA instead of relying on client TLS defaults. In PowerShell, use:
+`control export-sql --plan` reads no passwords, application configuration or database and writes no files. Actual export with `--write` loads file configuration selected by `APP_ENV` and `--config-dir <directory>` and reads `[bootstrap] admin_password` to generate hashes, without connecting to a database. The actual export covers the control plane and `shared-control` tenant data plane in one physical database: control structures, post-creation constraints, system data, fence/slot/projection tables and initial rows, both framework migration ledgers, and registered Control and Tenant business initialization migrations with one business ledger, without plaintext passwords. Handwritten business migrations must provide schema and initialization SQL from the same source as `up`. The export contains password hashes and must be protected as credential material; the output must be a new file and cannot overwrite an existing one. Select an empty database and configure the client to stop on errors; do not use `--force`. The following example connects to a local database. Client host, port, user and database must match the selected configuration; for remote production connections, explicitly enable hostname verification with the matching CA instead of relying on client TLS defaults. In PowerShell, use:
 
 ```powershell
 mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source .local-tests/control-init.sql"
@@ -33,11 +33,10 @@ bash can use `< .local-tests/control-init.sql`. PowerShell does not support this
 
 ```powershell
 cargo migrate -- control verify
-cargo migrate -- tenant-data up --target shared-control
 cargo migrate -- tenant-data verify --target shared-control
 ```
 
-This SQL initializes only the control database. `sql/ryframe_config.sql` is a review snapshot containing placeholder hashes and no ledger; it cannot be deployed. After an interrupted import, do not guess how to complete it by repeating `up` or automatically delete objects. Confirm their purpose, then create another isolated database. MySQL DDL cannot rely on an outer transaction to roll back the entire operation.
+After successful import, run both verifications above directly without an additional `up`. Independent MySQL tenant targets are outside this physical-database export and still use their own `tenant-data up/verify`. `sql/ryframe_config.sql` is a review snapshot containing placeholder hashes and no ledger; it cannot be deployed. After an interrupted import, do not guess how to complete it by repeating `up` or automatically delete objects. Confirm their purpose, then create another isolated database. MySQL DDL cannot rely on an outer transaction to roll back the entire operation.
 
 ## Data Boundaries and Migrations
 

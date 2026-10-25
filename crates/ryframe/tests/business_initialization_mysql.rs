@@ -28,6 +28,61 @@ const TABLE_SCHEMA: &str = r#"v2|table="biz_sql_example"|engine="innodb"|charset
 const AFTER_SCHEMA: &str = r#"v2|table="biz_sql_example"|engine="innodb"|charset="utf8mb4"|collation="utf8mb4_general_ci"|columns=["id":"bigint":"NO":None:None:"PRI":None:"auto_increment":"";"code":"varchar(32)":"NO":Some("utf8mb4"):Some("utf8mb4_general_ci"):"UNI":None:"":"";"memo":"varchar(32)":"YES":Some("utf8mb4"):Some("utf8mb4_general_ci"):"":None:"":"";]|indexes=["PRIMARY":"id":1:0:"btree":None:"YES";"uk_example_code":"code":1:0:"btree":None:"YES";]|constraints=["PRIMARY":"PRIMARY KEY":"YES";"uk_example_code":"UNIQUE":"YES";]|checks=[]|foreign_keys=[]"#;
 const NEXT_FINGERPRINT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+const TENANT_DDL: &str = "CREATE TABLE biz_tenant_example (tenant_id VARCHAR(32) NOT NULL, id BIGINT NOT NULL, PRIMARY KEY(tenant_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+const TENANT_SCHEMA: &str = r#"v2|table="biz_tenant_example"|engine="innodb"|charset="utf8mb4"|collation="utf8mb4_general_ci"|columns=["tenant_id":"varchar(32)":"NO":Some("utf8mb4"):Some("utf8mb4_general_ci"):"PRI":None:"":"";"id":"bigint":"NO":None:None:"PRI":None:"":"";]|indexes=["PRIMARY":"tenant_id":1:0:"btree":None:"YES";"PRIMARY":"id":2:0:"btree":None:"YES";]|constraints=["PRIMARY":"PRIMARY KEY":"YES";]|checks=[]|foreign_keys=[]"#;
+const TENANT_TABLE: ryframe_application::ports::tenant_data::TenantDataTableDescriptor =
+    ryframe_application::ports::tenant_data::TenantDataTableDescriptor {
+        table: "biz_tenant_example",
+        copy_order: 1,
+        tenant_column: "tenant_id",
+        primary_key_cursor_columns: &["tenant_id", "id"],
+        checksum_columns: &["tenant_id", "id"],
+        column_types: &["varchar", "bigint"],
+        has_generated_columns: false,
+        foreign_key_dependencies: &[],
+        foreign_keys: &[],
+        schema_canonical: TENANT_SCHEMA,
+    };
+
+struct TenantInitial;
+impl MigrationName for TenantInitial {
+    fn name(&self) -> &str {
+        "m20261014_000000_tenant_example"
+    }
+}
+#[ryframe_sdk::async_trait]
+impl MigrationTrait for TenantInitial {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .get_connection()
+            .execute_unprepared(TENANT_DDL)
+            .await?;
+        Ok(())
+    }
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        Err(DbErr::Custom("测试不执行 down".into()))
+    }
+}
+fn tenant_migration() -> SeaOrmBusinessMigration {
+    SeaOrmBusinessMigration::new(
+        "tenant-example",
+        "m20261014_000000_tenant_example",
+        CHECKSUM,
+        BusinessMigrationSchema {
+            before_fingerprint: None,
+            after_fingerprint: CHECKSUM,
+            tables: &[BusinessTableSchema {
+                table: "biz_tenant_example",
+                before: None,
+                after: TENANT_SCHEMA,
+            }],
+        },
+        BusinessMigrationScope::Tenant,
+        TenantInitial,
+    )
+    .with_initialization_sql(&[TENANT_DDL])
+}
+
 struct Initial {
     mismatched: bool,
 }
@@ -223,12 +278,16 @@ async fn runtime_business_schema_verification_is_read_only_and_rejects_drift() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
     ryframe_db::migration::register_business_tables([("biz_sql_example", TABLE_SCHEMA)]).unwrap();
+    ryframe_tenant_db::migration::register_business_catalog([TENANT_TABLE], ["biz_sql_example"])
+        .unwrap();
     mysql::run_mysql_test("businesssql", |imported| async move {
         let migration = migration(false).with_initialization_sql(&[DDL]);
-        let statements =
-            business_initialization_statements(&[&migration]).map_err(|error| error.to_string())?;
-        let sql =
-            ryframe_db::migration::mysql_initialization_sql_with_business(&hashes()?, &statements);
+        let tenant = tenant_migration();
+        let sql = ryframe::business::shared_control_initialization_sql(
+            &hashes()?,
+            &[&migration, &tenant],
+        )
+        .map_err(|error| error.to_string())?;
         imported
             .execute_unprepared(&sql)
             .await
@@ -239,11 +298,40 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
         verify_business_migrations(&imported, BusinessMigrationScope::Control, &[&migration])
             .await
             .map_err(|error| error.to_string())?;
-        let expected = inventory(&imported).await?;
+        ryframe_tenant_db::migration::verify_shared_control(&imported)
+            .await
+            .map_err(mysql::db_error)?;
+        verify_business_migrations(&imported, BusinessMigrationScope::Tenant, &[&tenant])
+            .await
+            .map_err(|error| error.to_string())?;
+        let expected = shared_inventory(&imported).await?;
+        let nonempty = imported
+            .execute_unprepared(&sql)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            nonempty.contains("ryframe_initialization_guard"),
+            "{nonempty}"
+        );
+        assert_eq!(expected, shared_inventory(&imported).await?);
         mysql::run_mysql_test("businessup", |migrated| async move {
             ryframe_db::migration::up(&migrated, Some(&hashes()?))
                 .await
                 .map_err(mysql::db_error)?;
+            ryframe_tenant_db::migration::up_pending_business_migrations(&migrated)
+                .await
+                .map_err(mysql::db_error)?;
+            tenant
+                .up(&migrated)
+                .await
+                .map_err(|error| error.to_string())?;
+            ryframe_tenant_db::migration::verify_shared_control(&migrated)
+                .await
+                .map_err(mysql::db_error)?;
+            verify_business_migrations(&migrated, BusinessMigrationScope::Tenant, &[&tenant])
+                .await
+                .map_err(|error| error.to_string())?;
             migration
                 .up(&migrated)
                 .await
@@ -251,7 +339,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
             verify_business_migrations(&migrated, BusinessMigrationScope::Control, &[&migration])
                 .await
                 .map_err(|error| error.to_string())?;
-            assert_eq!(expected, inventory(&migrated).await?);
+            assert_eq!(expected, shared_inventory(&migrated).await?);
             migration
                 .up(&migrated)
                 .await
@@ -259,7 +347,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
             mysql::require_count(
                 &migrated,
                 "SELECT COUNT(*) AS value FROM ryframe_business_migration",
-                1,
+                2,
             )
             .await?;
             verify_shared_business_boundary(&migrated).await?;
@@ -275,12 +363,12 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
 async fn interrupted_business_sql_cannot_register_control_completion() {
     mysql::run_mysql_test("businessfail", |database| async move {
         let broken = migration(false).with_initialization_sql(&[DDL, "CREATE TABLE broken syntax"]);
-        let statements = business_initialization_statements(&[&broken]).map_err(|error| error.to_string())?;
-        let sql = ryframe_db::migration::mysql_initialization_sql_with_business(&hashes()?, &statements);
+        let sql = ryframe::business::shared_control_initialization_sql(&hashes()?, &[&broken]).map_err(|error| error.to_string())?;
         assert!(database.execute_unprepared(&sql).await.is_err());
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='biz_sql_example'", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 0).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='seaql_migrations'", 0).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='seaql_tenant_data_migrations'", 0).await?;
         assert!(ryframe_db::migration::verify(&database).await.is_err());
         Ok(())
     }).await;
@@ -312,6 +400,16 @@ async fn existing_table_preflight_and_mismatched_ddl_never_claim_success() {
         let error = migration(false).up(&database).await.unwrap_err().to_string();
         assert!(error.contains("已存在") && error.contains("尚未执行"));
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ryframe_business_migration'", 0).await?;
+        let before = ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?;
+        // 即使 DDL 被编码为 PREPARE，也不能用 IF NOT EXISTS 把已有结构当作导入成功。
+        let encoded = migration(false).with_initialization_sql(&[
+            r#"CREATE TABLE IF NOT EXISTS `biz_sql_example` (`id` BIGINT) COMMENT='fixture\\path'"#
+        ]);
+        let statements = business_initialization_statements(&[&encoded]).map_err(|error| error.to_string())?;
+        let error = database.execute_unprepared(&statements.join(";\n")).await.unwrap_err().to_string();
+        assert!(error.contains("already exists") && error.contains("biz_sql_example"), "{error}");
+        assert_eq!(ryframe_db::schema::canonical_table_schema(&database, "biz_sql_example").await.map_err(mysql::db_error)?, before);
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 0).await?;
         Ok(())
     }).await;
     mysql::run_mysql_test("businessmismatch", |database| async move {
@@ -517,26 +615,8 @@ async fn inventory(database: &DatabaseConnection) -> Result<Vec<Vec<String>>, St
 }
 
 async fn verify_shared_business_boundary(database: &DatabaseConnection) -> Result<(), String> {
-    use ryframe_application::ports::tenant_data::TenantDataTableDescriptor;
     use ryframe_tenant_db::migration as tenant;
 
-    mysql::execute(database, "CREATE TABLE biz_tenant_example (tenant_id VARCHAR(32) NOT NULL, id BIGINT NOT NULL, PRIMARY KEY(tenant_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci").await?;
-    let canonical = ryframe_db::schema::canonical_table_schema(database, "biz_tenant_example")
-        .await
-        .map_err(mysql::db_error)?;
-    let table = TenantDataTableDescriptor {
-        table: "biz_tenant_example",
-        copy_order: 1,
-        tenant_column: "tenant_id",
-        primary_key_cursor_columns: &["tenant_id", "id"],
-        checksum_columns: &["tenant_id", "id"],
-        column_types: &["varchar", "bigint"],
-        has_generated_columns: false,
-        foreign_key_dependencies: &[],
-        foreign_keys: &[],
-        schema_canonical: Box::leak(canonical.into_boxed_str()),
-    };
-    tenant::register_business_catalog([table], ["biz_sql_example"])?;
     tenant::up_pending_business_migrations(database)
         .await
         .map_err(mysql::db_error)?;
@@ -587,4 +667,26 @@ async fn verify_shared_business_boundary(database: &DatabaseConnection) -> Resul
         .to_string();
     assert!(missing.contains("biz_tenant_example") && missing.contains("缺失表"));
     Ok(())
+}
+
+async fn shared_inventory(database: &DatabaseConnection) -> Result<Vec<Vec<String>>, String> {
+    let mut result = inventory(database).await?;
+    for sql in [
+        "SELECT CONCAT_WS('|',TABLE_NAME,COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COALESCE(COLUMN_DEFAULT,'NULL'),EXTRA) AS item FROM information_schema.columns WHERE table_schema=DATABASE() AND (LEFT(table_name,4)='biz_' OR table_name='seaql_tenant_data_migrations') ORDER BY TABLE_NAME,ORDINAL_POSITION",
+        "SELECT CONCAT_WS('|',TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME) AS item FROM information_schema.statistics WHERE table_schema=DATABASE() AND (LEFT(table_name,4)='biz_' OR table_name='seaql_tenant_data_migrations') ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX",
+        "SELECT version AS item FROM seaql_tenant_data_migrations ORDER BY version",
+        "SELECT CONCAT_WS('|',tenant_id,target_key,placement_generation,state,switch_token) AS item FROM biz_tenant_fence ORDER BY tenant_id",
+        "SELECT CONCAT_WS('|',slot_id,COALESCE(tenant_id,'NULL'),COALESCE(placement_generation,0),COALESCE(switch_token,'NULL')) AS item FROM biz_tenant_target_slot ORDER BY slot_id",
+    ] {
+        let rows = database
+            .query_all_raw(Statement::from_string(DbBackend::MySql, sql))
+            .await
+            .map_err(mysql::db_error)?;
+        result.push(
+            rows.into_iter()
+                .map(|row| row.try_get("", "item").map_err(mysql::db_error))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+    Ok(result)
 }

@@ -19,11 +19,9 @@ pub fn business_initialization_statements(
                 migration.id()
             )));
         }
-        statements.extend(
-            source
-                .iter()
-                .flat_map(|sql| ryframe_db::connection::generated_mysql_ddl_statements(sql)),
-        );
+        statements.extend(source.iter().flat_map(|sql| {
+            ryframe_db::connection::generated_mysql_ddl_statements(&strict_create(sql))
+        }));
         let before = migration
             .schema()
             .before_fingerprint
@@ -47,4 +45,19 @@ fn sql_text(value: &str) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     format!("CONVERT(X'{hex}' USING utf8mb4)")
+}
+
+// 在转义形式编码前移除可吞掉已存在表的建表选项；不改写列默认值或注释正文。
+fn strict_create(statement: &str) -> String {
+    let mut rest = statement.trim_start();
+    for word in ["CREATE", "TABLE", "IF", "NOT", "EXISTS"] {
+        let end = rest
+            .find(|value: char| !value.is_ascii_alphabetic())
+            .unwrap_or(rest.len());
+        if !rest[..end].eq_ignore_ascii_case(word) {
+            return statement.into();
+        }
+        rest = rest[end..].trim_start();
+    }
+    format!("CREATE TABLE {rest}")
 }

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Complete one-pass initialization of shared-control in the same physical database through formal control export-sql. Reuse runtime tenant DDL, slot/fence data statements and migration names, strictly compare shared ownership and create one business ledger for registered Control/Tenant migrations. Verify both ledgers directly after import without another up; independent MySQL targets still migrate separately, and nonempty databases or unknown DDL outcomes are not replayed.
+
 - Fix full CRUD generation for MySQL imports with database clock defaults. Typed insert inputs omit database-generated values; updates preserve database clock semantics and return persisted values. Update fakes and existing CLI/compilation scenarios, continue rejecting unknown expressions, and retain application-managed audit clocks when no database expression is declared.
 
 - Formal adoption of existing tables uses read-only control framework ledger and physical-schema prechecks without requiring new business permissions or menus to be seeded first. Normal verify/API/Worker retain complete access-catalog verification. Confirm adoption by inspecting the original plan, explicitly run up for required access initialization, then perform full verification; preserve rejection of unknown results, schema drift and incorrect targets.

@@ -8,6 +8,8 @@ mod baseline_contract;
 mod business_catalog;
 mod catalog;
 #[cfg(feature = "migration")]
+mod initialization;
+#[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
 #[cfg(feature = "migration")]
 mod m20261017_000000_data_scope_projection;
@@ -47,3 +49,6 @@ pub use schema::{
     verify_shared_control_for_catalog,
 };
 pub use status::{MigrationStatus, TENANT_DATA_MIGRATION_LEDGER, status};
+
+#[cfg(feature = "migration")]
+pub use initialization::{SharedControlInitialization, shared_control_initialization};

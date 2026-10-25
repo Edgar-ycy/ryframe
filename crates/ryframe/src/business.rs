@@ -103,3 +103,8 @@ fn validate_business_access(
     }
     Ok(())
 }
+
+#[cfg(feature = "bin-migrate")]
+mod initialization;
+#[cfg(feature = "bin-migrate")]
+pub use initialization::shared_control_initialization_sql;
