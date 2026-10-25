@@ -121,9 +121,20 @@ async fn assignments(database: &DatabaseConnection, user: i64) -> Result<(Vec<i6
     ))
 }
 
-struct Lifetime {
+pub(super) struct Lifetime {
     shutdown: tokio::sync::watch::Sender<bool>,
-    _directory: tempfile::TempDir,
+    directory: Option<tempfile::TempDir>,
+}
+
+impl Lifetime {
+    pub(super) fn preserve(mut self) {
+        if let Some(directory) = self.directory.take() {
+            eprintln!(
+                "账号 HTTP 验收文件现场保留于 {}",
+                directory.keep().display()
+            );
+        }
+    }
 }
 
 impl Drop for Lifetime {
@@ -132,7 +143,7 @@ impl Drop for Lifetime {
     }
 }
 
-async fn state(database: &DatabaseConnection) -> Result<(AppState, Lifetime), String> {
+pub(super) async fn state(database: &DatabaseConnection) -> Result<(AppState, Lifetime), String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
     std::fs::create_dir_all(&root).map_err(message)?;
     let directory = tempfile::Builder::new()
@@ -186,7 +197,7 @@ async fn state(database: &DatabaseConnection) -> Result<(AppState, Lifetime), St
         state,
         Lifetime {
             shutdown,
-            _directory: directory,
+            directory: Some(directory),
         },
     ))
 }
