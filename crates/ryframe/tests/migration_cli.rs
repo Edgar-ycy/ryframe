@@ -279,6 +279,11 @@ fn configuration_arguments_fail_before_plan_or_runtime_access() {
         let error = String::from_utf8_lossy(&result.stderr);
         assert!(error.contains("--config-dir"), "{error}");
         assert!(!error.contains("APP_ENV"), "{error}");
+        assert!(
+            error.contains("cargo migrate -- --config-dir <当前已显示配置目录> control status")
+        );
+        assert!(!error.contains("cargo migrate -- control"));
+        assert!(!error.contains("或 tenant-data"));
     }
 }
 
@@ -293,6 +298,10 @@ fn invalid_configured_password_never_appears_in_export_diagnostics_or_output() {
     assert!(error.contains("config.bootstrap.admin_password"), "{error}");
     assert!(!error.contains(password));
     assert!(!String::from_utf8_lossy(&result.stdout).contains(password));
+    assert!(
+        error.contains("cargo migrate -- --config-dir <当前已显示配置目录> control export-sql")
+    );
+    assert!(!error.contains("cargo migrate -- control"));
     assert!(!output.exists());
 }
 
@@ -375,18 +384,40 @@ fn migration_connection_failures_keep_phase_files_and_safe_repair_without_writes
         format!(
             r#"
 [[tenant_data.targets]]
+key = "shared-control"
+mode = "shared"
+kind = "control"
+[[tenant_data.targets]]
 key = "diagnostic-mysql"
 mode = "dedicated"
 kind = "mysql"
 host = "127.0.0.1"
 port = {port}
-database = "must_not_connect"
+database = "diagnostic_tenant_only"
 username = "private-tenant-user"
 password = "private-tenant-password"
 "#
         ),
     )
     .unwrap();
+    let loaded =
+        ryframe_config::AppConfig::load(&config, ryframe_config::Environment::Test).unwrap();
+    assert!(
+        loaded
+            .tenant_data
+            .targets
+            .iter()
+            .any(|target| target.key == "shared-control"
+                && target.kind == ryframe_config::TenantDatabaseTargetKind::Control)
+    );
+    assert!(
+        loaded
+            .tenant_data
+            .targets
+            .iter()
+            .filter_map(|target| target.database.as_deref())
+            .all(|database| database != loaded.database.primary.database.as_str())
+    );
     for (scope, operation, target, phase, field) in [
         ("control", "up", None, "连接池建立", "database.primary"),
         ("control", "verify", None, "连接池建立", "database.primary"),
@@ -435,6 +466,12 @@ password = "private-tenant-password"
             "private-tenant-password",
         ] {
             assert!(!error.contains(secret), "敏感输入泄露");
+        }
+        for (suggestion, _) in error.match_indices("cargo migrate --") {
+            assert!(
+                error[suggestion..]
+                    .starts_with("cargo migrate -- --config-dir <当前已显示配置目录>")
+            );
         }
         assert!(!error.contains("Error: Database("));
         assert!(!error.contains("1045"));
@@ -502,4 +539,21 @@ fn operation_and_close_failures_keep_both_stages_and_conservative_write_state() 
     assert!(!error.contains("fixture-database-password"));
     assert!(!error.contains("unknown:unlisted"));
     assert!(!error.contains("://"));
+    let adoption = diagnostic::Context {
+        command: "control adopt --apply",
+        ..context
+    };
+    let error = adoption
+        .error(
+            "接管账本应用",
+            diagnostic::Writes::Database,
+            &std::io::Error::other("apply failed"),
+        )
+        .to_string();
+    assert!(
+        error
+            .contains("cargo migrate -- --config-dir <当前已显示配置目录> control adopt --inspect")
+    );
+    assert!(!error.contains("cargo migrate -- control"));
+    assert!(!error.contains("或 tenant-data"));
 }

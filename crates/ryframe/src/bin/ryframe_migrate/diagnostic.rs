@@ -51,7 +51,7 @@ impl Context<'_> {
             },
         );
         let message = format!(
-            "迁移命令失败：操作={}；目标={target}；阶段={phase}；配置文件={files}；配置键={field}；原因链={cause}；{state}。{}",
+            "迁移命令失败：操作={}；目标={target}；阶段={phase}；配置文件={files}；配置键={field}；原因链={cause}；{state}。{} 命令中的 <当前已显示配置目录> 必须替换为上述配置文件的父目录并按当前 shell 正确引用；PowerShell 使用单引号时，目录内单引号写为两个单引号。目录尚未确定时先修正参数，不执行占位命令。",
             self.command,
             self.repair()
         );
@@ -112,21 +112,21 @@ impl Context<'_> {
 
     fn repair(&self) -> String {
         if self.config.is_none() {
-            return "请先按当前阶段修正参数、选定文件及字段；配置加载完成前不连接数据库。修正后使用同一配置先执行 cargo migrate -- control status 或 tenant-data status --target <键>；不自动重试写入。".into();
+            return "请先按当前阶段修正参数、选定文件及字段；配置加载完成前不连接数据库。修正后使用同一配置先执行 cargo migrate -- --config-dir <当前已显示配置目录> control status 或 cargo migrate -- --config-dir <当前已显示配置目录> tenant-data status --target <键>；不自动重试写入。".into();
         }
         if self.command == "control export-sql" {
-            return "请核对选定配置的 bootstrap.admin_password、输出路径权限和文件存在性；先审阅 cargo migrate -- control export-sql --output <新路径> --plan，不覆盖原文件。".into();
+            return "请核对选定配置的 bootstrap.admin_password、输出路径权限和文件存在性；先审阅 cargo migrate -- --config-dir <当前已显示配置目录> control export-sql --output <新路径> --plan，不覆盖原文件。".into();
         }
         let adoption = if self.command.contains("adopt") {
-            " 若已生成原接管计划，另用原范围执行 cargo migrate -- control adopt --inspect <原计划> 或 tenant-data adopt --inspect <原计划> --target <键>，不能重新生成计划掩盖未知提交。"
+            " 若已生成原接管计划，另用原范围执行 cargo migrate -- --config-dir <当前已显示配置目录> control adopt --inspect <原计划> 或 cargo migrate -- --config-dir <当前已显示配置目录> tenant-data adopt --inspect <原计划> --target <键>，不能重新生成计划掩盖未知提交。"
         } else {
             ""
         };
         let commands = self.target.filter(|value| safe_name(value)).map_or_else(
             || if self.command.starts_with("tenant-data") {
-                "cargo migrate -- tenant-data status --all；cargo migrate -- tenant-data verify --all".to_owned()
-            } else { "cargo migrate -- control status；cargo migrate -- control verify".to_owned() },
-            |target| format!("cargo migrate -- tenant-data status --target {target}；cargo migrate -- tenant-data verify --target {target}"));
+                "cargo migrate -- --config-dir <当前已显示配置目录> tenant-data status --all；cargo migrate -- --config-dir <当前已显示配置目录> tenant-data verify --all".to_owned()
+            } else { "cargo migrate -- --config-dir <当前已显示配置目录> control status；cargo migrate -- --config-dir <当前已显示配置目录> control verify".to_owned() },
+            |target| format!("cargo migrate -- --config-dir <当前已显示配置目录> tenant-data status --target {target}；cargo migrate -- --config-dir <当前已显示配置目录> tenant-data verify --target {target}"));
         format!(
             "请核对选定配置中的 host、port、database、账号连接与数据库访问权限、tls_mode、tls_ca、tls_client_cert、tls_client_key 及连接超时/池容量；不可用不等于认证失败，独立 MySQL 目标的 registry 可能未保留底层原因。修正后使用同一 --config-dir 和 APP_ENV 先执行只读核对：{commands}；up 或 adopt --apply 只能在核对完整现场后显式决定，不能自动重试。{adoption}"
         )
