@@ -49,16 +49,23 @@ pub(crate) fn execute(input: &[u8]) -> (i32, Value) {
                 (0, response)
             }
         }
-        Err(error) => failure(
-            error
+        Err(error) => {
+            let reason = error
                 .downcast_ref::<evidence::HistoryError>()
                 .map(|error| error.0)
                 .or_else(|| {
                     error
                         .downcast_ref::<super::super::lifecycle::model::LifecycleError>()
                         .map(|error| error.message)
-                }),
-        ),
+                })
+                .map(str::to_owned)
+                .or_else(|| {
+                    error
+                        .downcast_ref::<crate::recovery::clone::native::cache::ObserverFailure>()
+                        .map(ToString::to_string)
+                });
+            failure(reason.as_deref())
+        }
     }
 }
 

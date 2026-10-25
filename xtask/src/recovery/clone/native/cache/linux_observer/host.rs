@@ -3,13 +3,14 @@ use super::{FileProof, Identity, ImageProof, LIMIT, Observation, Request};
 use crate::recovery::clone::native::{digest, json as document, source};
 use crate::{Result, frontend_origin::manifest};
 use ryframe_config::{LinuxObserverSettings, ToolSettings};
+#[path = "host/owned.rs"]
+pub(super) mod owned;
 use serde_json::{Value, json};
 use std::{
     fs,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
     process::Stdio,
-    time::{Duration, Instant},
 };
 
 pub(in crate::recovery::clone::native::cache) struct Observer<'a> {
@@ -138,27 +139,31 @@ impl<'a> Observer<'a> {
             .stdin(Stdio::from(stdin))
             .stdout(Stdio::from(stdout.try_clone()?))
             .stderr(Stdio::null());
+        let measure = stdout.try_clone()?;
         let mut child = command
             .spawn()
             .map_err(|_| "无法启动已绑定 Linux 观察器；核对工具配置")?;
-        let started = Instant::now();
-        let status = loop {
-            if stdout.metadata()?.len() > LIMIT as u64
-                || started.elapsed() > Duration::from_secs(20)
-            {
-                child.kill()?;
-                child.wait()?;
-                return Err("Linux 观察器超时或响应超限；保留现场，禁止自动重放".into());
-            }
-            if let Some(status) = child.try_wait()? {
-                break status;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
-        stdout.seek(SeekFrom::Start(0))?;
-        let mut bytes = Vec::new();
-        stdout.take((LIMIT + 1) as u64).read_to_end(&mut bytes)?;
-        parse_output(status.success(), &bytes)
+        owned::run(
+            &mut child,
+            || measure.metadata().map(|metadata| metadata.len()),
+            |status| {
+                if !status.success() {
+                    return Err(owned::Cause::Exit(status.code()));
+                }
+                stdout
+                    .seek(SeekFrom::Start(0))
+                    .map_err(|error| owned::Cause::Read(error.kind()))?;
+                let mut bytes = Vec::new();
+                stdout
+                    .take((LIMIT + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| owned::Cause::Read(error.kind()))?;
+                if bytes.len() > LIMIT {
+                    return Err(owned::Cause::OutputLimit);
+                }
+                parse_output(true, &bytes).map_err(|_| owned::Cause::Protocol)
+            },
+        )
     }
 }
 

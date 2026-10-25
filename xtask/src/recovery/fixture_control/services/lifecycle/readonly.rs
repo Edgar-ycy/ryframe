@@ -61,7 +61,9 @@ impl NativeRuntime {
             "cache-status" => crate::recovery::clone::native::cache::readonly::status(
                 &self.backend, &args["request"], &args["runtime"],
                 (!args["effective"].is_null()).then_some(&args["effective"]))
-                .map_err(|_| model::error("缓存原生观察失败；核对 tools.toml 的 [verification.linux_observer] 双端路径、发行版/用户/UID、来源 SHA 与完整来源/ELF 摘要，并核对冻结收据、进程代次和端口占用；保留现场，禁止回退 Python 或自动重放")),
+                .map_err(|error| if error.is::<crate::recovery::clone::native::cache::ObserverFailure>() {
+                    error
+                } else { model::error("缓存原生观察失败；核对 tools.toml 的 [verification.linux_observer] 双端路径、发行版/用户/UID、来源 SHA 与完整来源/ELF 摘要，并核对冻结收据、进程代次和端口占用；保留现场，禁止回退 Python 或自动重放") }),
             "review-successor" => {
                 let (code, result) =
                     crate::recovery::fixture_control::environment::protocol::execute(

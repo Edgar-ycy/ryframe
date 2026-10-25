@@ -4,6 +4,7 @@ mod evidence;
 mod facts;
 mod history;
 mod linux_observer;
+pub(crate) use linux_observer::Failure as ObserverFailure;
 mod markers;
 mod model;
 mod process;
@@ -57,23 +58,28 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         Ok(value) => (0, json!({"ok":true,"result":value})),
         // 解析错误和远端输出可能包含密码；只发布固定诊断，禁止重放。
         Err(error) => {
-            let category = match error
-                .downcast_ref::<std::io::Error>()
-                .map(std::io::Error::kind)
-            {
-                Some(std::io::ErrorKind::ConnectionRefused) => "CacheConnectionRefused",
-                Some(std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
-                    "CacheObservationTimeout"
+            let observer = error.downcast_ref::<ObserverFailure>();
+            let category = if observer.is_some_and(ObserverFailure::is_timeout) {
+                "CacheObservationTimeout"
+            } else {
+                match error
+                    .downcast_ref::<std::io::Error>()
+                    .map(std::io::Error::kind)
+                {
+                    Some(std::io::ErrorKind::ConnectionRefused) => "CacheConnectionRefused",
+                    Some(std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
+                        "CacheObservationTimeout"
+                    }
+                    _ if error.downcast_ref::<process::ControlFailure>().is_some() => {
+                        "CacheControlFailed"
+                    }
+                    _ => "CacheProcessRejected",
                 }
-                _ if error.downcast_ref::<process::ControlFailure>().is_some() => {
-                    "CacheControlFailed"
-                }
-                _ => "CacheProcessRejected",
             };
             (
                 1,
                 json!({"ok":false,"error":category,"exit_code":error.downcast_ref::<process::ControlFailure>().and_then(|failure| failure.0),
-                "message":error.downcast_ref::<PolicyFailure>().map_or_else(||"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。".to_string(),|failure|format!("{}；保留意图与完整前后像，核对固定请求和已登记代次后显式恢复，禁止自动重放。",failure.0))}),
+                "message":observer.map(ToString::to_string).unwrap_or_else(||error.downcast_ref::<PolicyFailure>().map_or_else(||"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。".to_string(),|failure|format!("{}；保留意图与完整前后像，核对固定请求和已登记代次后显式恢复，禁止自动重放。",failure.0)))}),
             )
         }
     };

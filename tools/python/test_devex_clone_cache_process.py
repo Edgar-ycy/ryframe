@@ -45,6 +45,23 @@ class CacheNativeTransportTests(unittest.TestCase):
         self.assertNotIn("private-secret", str(failure.exception))
         run.assert_called_once()
 
+    def test_stage_timeout_keeps_cleanup_diagnostic_and_never_replays_ports(self):
+        message = "LinuxObserverTimeout；launcher退出未确认；Linux/Git后代状态未知；禁止自动重放"
+        child = Mock()
+        child.stdin = io.BytesIO()
+        child.stdout = Mock()
+        child.stdout.readline.side_effect = [json.dumps({"ok": False, "error": "CacheObservationTimeout",
+            "message": message, "exit_code": None}).encode() + b"\n", b""]
+        child.wait.return_value = 1
+        child.poll.return_value = 1
+        with (self.binding(), patch.object(native.subprocess, "Popen", return_value=child) as spawn,
+              self.assertRaisesRegex(TimeoutError, "LinuxObserverTimeout") as failure):
+            native.stage_session("status", Path("D:/owned-run"), {"allow_close_attempt": False},
+                lambda *_: self.fail("失败响应不能执行端口"))
+        self.assertEqual(str(failure.exception), message)
+        spawn.assert_called_once()
+        child.kill.assert_not_called()
+
     def test_connection_refusal_stays_distinct_from_unknown_results(self):
         for category, expected in (("CacheConnectionRefused", ConnectionRefusedError),
                                    ("CacheObservationTimeout", TimeoutError), ("CacheProcessRejected", ValueError)):

@@ -130,7 +130,9 @@ def stage_session(action, directory, parameters, port):
                     raise pending
                 if code == 0 and isinstance(response, dict) and set(response) == {"ok", "result"} and response["ok"] is True:
                     return response["result"]
-                if code == 1 and isinstance(response, dict) and set(response) == {"ok", "error", "message", "exit_code"} and response["ok"] is False and response["error"] == "CacheProcessRejected" and response["exit_code"] is None:
+                if code == 1 and isinstance(response, dict) and set(response) == {"ok", "error", "message", "exit_code"} and response["ok"] is False and response["error"] in {"CacheProcessRejected", "CacheObservationTimeout"} and response["exit_code"] is None and isinstance(response["message"], str):
+                    if response["error"] == "CacheObservationTimeout":
+                        raise TimeoutError(response["message"])
                     raise ValueError(response["message"])
                 raise RuntimeError("缓存阶段响应或退出状态无效；禁止重放")
         finally:

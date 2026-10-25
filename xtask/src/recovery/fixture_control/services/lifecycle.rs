@@ -94,7 +94,8 @@ pub(crate) fn execute(
         )
     })();
     outcome.map_err(|failure: Box<dyn std::error::Error>| {
-        if failure.is::<model::LifecycleError>() {
+        if failure.is::<model::LifecycleError>()
+            || failure.is::<crate::recovery::clone::native::cache::ObserverFailure>() {
             failure
         } else {
             model::error("夹具生命周期未完成；检查绑定配置、来源摘要、完整账本和进程证据，保留现场，不自动重放")

@@ -12,6 +12,7 @@ mod host;
 #[cfg(target_os = "linux")]
 mod kernel;
 pub(super) use host::Observer;
+pub(crate) use host::owned::Failure;
 pub(super) const LIMIT: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
