@@ -205,15 +205,13 @@ impl {pascal}Transaction for FakeTransaction {{
             state.calls.push({pascal}Call::Insert {{ record: record.clone() }});
             fail_if_requested(&mut state, {pascal}Failure::Insert)?;
         }}
-{insert_record}{auto_id}
-        self.lock_view().insert(record.id, record.clone());
+{insert_record}{auto_id}        self.lock_view().insert(record.id, record.clone());
         Ok(record)
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
         self.ensure_tenant({record_tenant})?;
-{update_record}
-        {{
+{update_record}        {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Update {{ record: record.clone() }});
             fail_if_requested(&mut state, {pascal}Failure::Update)?;

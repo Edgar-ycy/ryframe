@@ -5,9 +5,11 @@ use ryframe_generator::command::{GenerationBuilder, GenerationOperation};
 #[path = "../../src/command/staging/snapshot.rs"]
 mod snapshot;
 
-pub(super) fn verify(frontend_source: &Path) {
-    let backend_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let backend_before = snapshot::SourceSnapshot::capture(&backend_source).unwrap();
+pub(super) fn verify(frontend_source: &Path, target_dir: &Path) {
+    let backend_before =
+        snapshot::SourceSnapshot::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .unwrap();
+    let backend_source = &backend_before.root;
     let frontend_before = snapshot::SourceSnapshot::capture(frontend_source).unwrap();
     assert!(
         backend_before
@@ -24,11 +26,11 @@ pub(super) fn verify(frontend_source: &Path) {
     let frontend = frontend_scope.path().join("frontend");
     backend_before.copy_to(&backend).unwrap();
     frontend_before.copy_to(&frontend).unwrap();
+    fs::create_dir_all(backend.join(".local-tests")).unwrap();
+    fs::write(backend.join(".local-tests/tools.toml"), format!("[workspace]\nfrontend_dir={:?}\n[generator]\ntarget_dir={:?}\npackage='pipeline-business'\nsync_frontend=true\n", frontend.to_string_lossy(), target_dir.to_string_lossy())).unwrap();
     bootstrap(&backend);
     let model = backend.join("crates/pipeline-business/src/resources/mod.rs");
     fs::write(&model, MODELS).unwrap();
-    fs::create_dir_all(backend.join(".local-tests")).unwrap();
-    fs::write(backend.join(".local-tests/tools.toml"), format!("[workspace]\nfrontend_dir={:?}\n[generator]\npackage='pipeline-business'\nsync_frontend=true\n", frontend.to_string_lossy())).unwrap();
     let before = snapshot::SourceSnapshot::capture(&backend).unwrap();
     let before_front = snapshot::SourceSnapshot::capture(&frontend).unwrap();
     generate(&backend, false).unwrap();
