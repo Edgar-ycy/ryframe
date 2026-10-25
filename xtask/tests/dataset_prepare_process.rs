@@ -165,7 +165,7 @@ fn bound_s3_configuration_errors_never_expose_file_credentials() {
     binding["sha256"] = json!(hex::encode(Sha256::digest(
         serde_json::to_vec(&binding).unwrap()
     )));
-    let request = json!({"format_version":1,"kind":"ryframe-native-s3-read","scope_id":"source","configuration_binding":{"endpoint":"http://127.0.0.1:9","region":"us-east-1","configuration":binding},"bucket":"uploads","operation":"head-object","key":"source/file","if_match":null,"version":null,"destination":null,"max_bytes":0});
+    let request = json!({"format_version":1,"kind":"ryframe-native-s3-read","scope_id":"source","configuration_binding":binding,"bucket":"uploads","operation":"head-object","key":"source/file","if_match":null,"version":null,"destination":null,"max_bytes":0});
     let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("__s3-read")
         .stdin(Stdio::piped())

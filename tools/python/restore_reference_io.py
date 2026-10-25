@@ -14,7 +14,7 @@ from urllib.parse import quote, quote_plus
 
 from artifact_digests import filesystem_path
 from restore_build import file_digest
-from native_s3_client import (_invoke as native_invoke, _read_response as native_response,
+from native_s3_client import (configuration as object_configuration, _invoke as native_invoke, _read_response as native_response,
                               NativeS3InvocationError, put_if_absent as native_put_if_absent,
                               read as native_s3_read)
 from restore_reference_plan import BUCKETS, identifier, safe_file
@@ -399,7 +399,8 @@ class ExternalTools:
                 raise ValueError("条件创建文件和证据目录不能经过链接")
         if not source.is_absolute() or file_digest(source) != expected:
             raise ValueError("条件创建本地对象与计划摘要不同")
-        config = self.plan["target"]["s3"]
+        config = object_configuration(self.plan["target"]["s3"]["configuration"])
+        binding = self.plan["target"]["s3"]["configuration"]
         request = self.work / f"object-create-{uuid.uuid4().hex}.json"
         with request.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump({"format_version": 1, "kind": "ryframe-native-s3-put-if-absent-intent",
@@ -419,7 +420,7 @@ class ExternalTools:
                     self.before_execute()
                 response, invocation = native_put_if_absent({
                     "format_version": 1, "kind": "ryframe-native-s3-put-if-absent",
-                    "scope_id": scope, "configuration_binding": config["configuration"],
+                    "scope_id": scope, "configuration_binding": binding,
                     "bucket": bucket, "key": key,
                     "source": str(source), "expected": expected, "metadata": metadata,
                 }, self.run)

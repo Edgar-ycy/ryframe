@@ -100,38 +100,56 @@ pub(crate) fn unchanged(snapshots: &[(PathBuf, Vec<u8>)]) -> Result<()> {
     Ok(())
 }
 
+/// 仅供内存比较和传输；不得将返回的凭据写入来源清单或公开收据。
+pub(crate) fn private_configuration(root: &Path, binding: &Value) -> Result<Value> {
+    let mut snapshots = Vec::new();
+    let table = load(root, binding, &mut snapshots)?;
+    let objects = table
+        .get("object_storage")
+        .and_then(toml::Value::as_table)
+        .ok_or("绑定app配置缺少object_storage")?;
+    if objects
+        .keys()
+        .any(|name| matches!(name.as_str(), "session_token" | "security_token"))
+    {
+        return Err("对象配置不接受会话令牌".into());
+    }
+    let mut value = serde_json::Map::new();
+    for name in ["endpoint", "region", "access_key", "secret_key"] {
+        let field = objects
+            .get(name)
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+            .ok_or("绑定app配置缺少有效的object_storage字段；请修正配置文件")?;
+        value.insert(name.into(), json!(field));
+    }
+    let value = Value::Object(value);
+    super::Configuration::read(&value)?;
+    unchanged(&snapshots)?;
+    Ok(value)
+}
+
+pub(crate) fn public_configuration(root: &Path, binding: &Value) -> Result<Value> {
+    let value = private_configuration(root, binding)?;
+    Ok(json!({"endpoint":value["endpoint"],"region":value["region"]}))
+}
+
 impl super::Configuration {
-    /// 与 read 分离的显式文件绑定入口；调用方必须主动选择该契约。
+    pub(crate) fn from_app_binding(root: &Path, binding: &Value) -> Result<Self> {
+        Self::read(&private_configuration(root, binding)?)
+    }
+
     pub(crate) fn read_app_binding(root: &Path, value: &Value) -> Result<Self> {
         documents::exact(
             value,
             &["endpoint", "region", "configuration"],
             "参考对象配置绑定",
         )?;
-        let mut snapshots = Vec::new();
-        let table = load(root, &value["configuration"], &mut snapshots)?;
-        let objects = table
-            .get("object_storage")
-            .and_then(toml::Value::as_table)
-            .ok_or("绑定app配置缺少object_storage")?;
-        if objects
-            .keys()
-            .any(|name| matches!(name.as_str(), "session_token" | "security_token"))
-        {
-            return Err("对象配置不接受会话令牌".into());
+        let objects = private_configuration(root, &value["configuration"])?;
+        if value["endpoint"] != objects["endpoint"] || value["region"] != objects["region"] {
+            return Err("对象连接身份与绑定配置文件不同；请重新生成来源投影".into());
         }
-        let field = |name| {
-            objects
-                .get(name)
-                .and_then(toml::Value::as_str)
-                .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
-                .ok_or("绑定app配置缺少有效的object_storage凭据字段")
-        };
-        let configuration = Self::read(
-            &json!({"endpoint":value["endpoint"],"region":value["region"],"access_key":field("access_key")?,"secret_key":field("secret_key")?}),
-        )?;
-        unchanged(&snapshots)?;
-        Ok(configuration)
+        Self::read(&objects)
     }
 }
 

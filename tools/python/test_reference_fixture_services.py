@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devex_clone_run_state import begin, finish, initialize_state
 import reference_fixture_services as services
 from workspace_directory import WorkspaceDirectory
+from restore_reference_plan import configuration_binding
 
 
 class ReferenceFixtureServicesTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
         self.settings = {"object_storage": {"access_key": "fixture-access", "secret_key": "fixture-secret"}}
         config = self.root / "config"
         config.mkdir()
-        (config / "app.test.toml").write_text('[object_storage]\naccess_key = "fixture-access"\nsecret_key = "fixture-secret"\n', encoding="utf-8")
+        (config / "app.test.toml").write_text('[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:29200"\nregion="us-east-1"\naccess_key = "fixture-access"\nsecret_key = "fixture-secret"\n', encoding="utf-8")
         self.review = {
             "future_root": str(self.future),
             "scopes": {
@@ -180,7 +181,8 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
 
         def create(request):
             calls.append(request)
-            self.assertEqual(request["configuration"]["secret_key"], self.settings["object_storage"]["secret_key"])
+            self.assertEqual(request["configuration_binding"], configuration_binding(self.backend, self.root / "config"))
+            self.assertNotIn("fixture-secret", json.dumps(request))
             self.environment_file.write_text('{"environment":{"changed":true}}', encoding="utf-8")
             return ({"status": "created_unverified", "http_status": 200,
                      "remote_write_may_have_occurred": True,

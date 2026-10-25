@@ -1,6 +1,5 @@
 """完整转储计数复用唯一严格行解析；无服务依赖。"""
 from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -10,13 +9,14 @@ import restore_reference_io as restore_io
 from devex_clone_export_verify import verify_dump_declarations
 from restore_build import file_digest
 from restore_reference_io import DATA_HEADER, ExternalTools
+from restore_reference_fixture import environment
 
 
 class DumpRowTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        backend, plan = environment(self)
+        self.root = backend / ".local-tests"
+        self.configuration = plan["source"]["s3"]["configuration"]
         self.path = self.root / "control.sql"
         self.catalog = {"sys_post": {"id": "BIGINT", "name": "TEXT"}, "sys_notice": {"id": "BIGINT"}}
         self.models = (self.catalog, {}, self.catalog, {})
@@ -25,7 +25,7 @@ class DumpRowTests(unittest.TestCase):
         self.path.write_text(content, encoding="utf-8")
         counts = {"sys_post": 0, "sys_notice": 0} if counts is None else counts
         inventory_counts = counts if inventory_counts is None else inventory_counts
-        value = {"source": {"scope_id": "source-scope", "s3": {"endpoint": "http://127.0.0.1:9000"},
+        value = {"source": {"scope_id": "source-scope", "s3": {"configuration": self.configuration},
                            "databases": [{"key": "control", "kind": "combined", "database": "source_control"}]},
                  "databases": [{"key": "control", "tables": counts,
                                 "artifact": {"file": "control.sql", **file_digest(self.path)}}]}

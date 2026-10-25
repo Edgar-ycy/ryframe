@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_seed_source as source
 from devex_clone_capture import write_json
 from devex_clone_run_state import binding
-from restore_reference_plan import plan_hash
+from restore_reference_plan import plan_hash, configuration_binding
 
 
 class PublishedSeedTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class PublishedSeedTests(unittest.TestCase):
         target_config = {
             "scope_id": "seed-scope",
             "databases": [{"server_uuid": "server-a", "database": "seed_control"}],
-            "s3": {"endpoint": "http://127.0.0.1:29200"},
+            "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1", "access_key": "access-fixture", "secret_key": "secret-fixture"},
         }
         maintenance = self.file(self.local / "maintenance.json", {"build": True})
         tools = {
@@ -55,8 +55,14 @@ class PublishedSeedTests(unittest.TestCase):
         }
         run_manifest = self.file(self.directory / "manifest.json", manifest)
         handoff = self.file(self.attempt / "handoff.json", {"api_url": "http://127.0.0.1:18210"})
+        configuration = self.local / "config"
+        configuration.mkdir(exist_ok=True)
+        (configuration / "app.test.toml").write_text(
+            '[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:29200"\nregion="us-east-1"\n'
+            'access_key="access-fixture"\nsecret_key="secret-fixture"\n', encoding="utf-8")
         request_source = {
             **target_config,
+            "s3": {"configuration": configuration_binding(self.backend, configuration)},
             "runtime_dir": str(self.directory / "seed-runtime/runtime"),
             "api_url": "http://127.0.0.1:18210",
         }
@@ -64,6 +70,7 @@ class PublishedSeedTests(unittest.TestCase):
             request_source["scope_id"] = "other-scope"
         request = {
             "source": request_source,
+            "runtime": self.file(self.local / "runtime.json", {"api_config_dir": str(configuration)}),
             "maintenance_build": maintenance,
             "tools": {**tools,
                       "mysqldump": self.file(self.local / "mysqldump.json", {"tool": "mysqldump"}),

@@ -114,7 +114,8 @@ class RestoreImages:
                     output, self.tools.run, storage_run=Path(self.arm["target_storage_run"]["path"]))
                 if initial != self.arm["initialized"] or request != self.arm["target"]:
                     raise ValueError("恢复库存实际目标代次与已绑定 arm 不同")
-                side = {**request["target"], **{key: resources.selected[key] for key in ("runtime_dir", "api_url")}}
+                side = {**request["target"], "s3": {"configuration": resources.object_configuration},
+                        **{key: resources.selected[key] for key in ("runtime_dir", "api_url")}}
                 tools = ExternalTools({"target": side, "tools": request["tools"]}, output, self.tools.run)
                 captured = capture_side_inventory(resources.execution_backend, "target", tools,
                     bound_file(self.backend, request["maintenance_build"]), output / "inventory",

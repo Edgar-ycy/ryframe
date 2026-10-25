@@ -723,12 +723,8 @@ fn source_request(
             "scope_id": "source-a",
             "runtime_dir": runtime_dir.to_string_lossy(),
             "api_url": "http://127.0.0.1:18060",
-            "s3": {
-                "endpoint": "http://127.0.0.1:19000",
-                "region": "us-east-1",
-                "access_key": "source-access",
-                "secret_key": "source-secret",
-            },
+            "s3": {"configuration": crate::recovery::clone::native::s3::app_configuration::configuration_value(
+                &super::workspace::root_dir(), &runtime_dir.join("config"), "test").unwrap()},
             "databases": databases,
         },
         "tools": {

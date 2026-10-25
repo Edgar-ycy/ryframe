@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from native_s3_client import configuration as object_configuration
 from dataclasses import replace
 import json
 import hashlib
@@ -29,7 +30,7 @@ from devex_clone_target_state import generation_lock
 from devex_clone_transfer import DatabaseBasis, GenerationObservation, TransferSteps
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 from source_fingerprints import source_check
 
 
@@ -62,10 +63,11 @@ class CloneSession:
     def bind_credentials(self) -> None:
         values = set()
         databases = []
-        for side, config in (("source", self.exported["source"]), ("target", self.target_request["target"])):
+        for side, config in (("source", self.source_request["source"]), ("target", self.target_request["target"])):
             environment = self.environment.values[side]
+            objects = object_configuration(config["s3"]["configuration"], self.backend) if side == "source" else config["s3"]
             for field in ("access_key", "secret_key"):
-                value = config["s3"].get(field)
+                value = objects.get(field)
                 if not isinstance(value, str) or not value:
                     raise ValueError("复制日志缺少配置文件中的对象凭据")
                 values.add(value)
@@ -144,7 +146,7 @@ class CloneSession:
         # 夹具执行树不在当前验收仓库的检查窗口内；采集必须在窗口外完整核验。
         with self.environment.use(side) as environment:
             captured = capture_side_inventory(execution, side, self.tools, receipt,
-                                              self.directory(side + "-inventory"), environment=environment)
+                                              self.directory(side + "-inventory"), environment=environment, evidence_root=self.backend)
         by_name = {db["database"]: db["key"] for db in config["databases"]}
         return {by_name[item.resource["database"]]: item for item in captured.observations}
 
@@ -195,10 +197,13 @@ class CloneSession:
             raise ValueError("实际新目标复验不属于外部绑定的初始化代次")
         target = initial["generation"]["selected"]
         target_config = {**self.target_request["target"], "runtime_dir": target["runtime_dir"], "api_url": target["api_url"]}
+        from devex_clone_target_binding import application_config_directory, execution_backend
+        target_config["s3"] = {"configuration": configuration_binding(
+            execution_backend(self.backend, self.target_request)[0], application_config_directory(self.backend, self.target_request))}
         tools = {"mysql": self.source_request["tools"]["mysql"]}
         if tools != self.target_request["tools"]:
             raise ValueError("两侧复制必须绑定同一 MySQL 工具")
-        self.tools = ExternalTools({"source": self.exported["source"], "target": target_config, "tools": tools}, self.output, self.run)
+        self.tools = ExternalTools({"source": self.source_request["source"], "target": target_config, "tools": tools}, self.output, self.run)
         self.source_initial = self._source_inventory()
         by_name = initial["inventory"]["observations"]
         self.initialized = {db["key"]: database_observation(by_name[db["database"]]) for db in target_config["databases"]}
@@ -214,7 +219,7 @@ class CloneSession:
         evidence = {"source_stopped": self.exported["evidence"]["generation-after"],
                     "target_initialized": {"file": (proofs / "initialized.json").relative_to(root).as_posix(), **file_digest(proofs / "initialized.json")},
                     "target_stopped": {"file": (proofs / "stopped.json").relative_to(root).as_posix(), **file_digest(proofs / "stopped.json")}}
-        self.declaration = declaration(self.backend, self.exported, self.source_initial, target_config, self.initialized,
+        self.declaration = declaration(self.backend, self.exported, self.source_initial, {**target_config, "s3": {"endpoint": object_configuration(target_config["s3"]["configuration"], self.backend)["endpoint"]}}, self.initialized,
                                        evidence, copy_id=copy_id, stage=stage,
                                        catalog_root=self._execution_root(self.source_request))
         write_json(self.output / "input.json", self.declaration)

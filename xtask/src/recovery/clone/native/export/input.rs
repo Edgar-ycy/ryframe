@@ -32,13 +32,13 @@ const REQUEST_FIELDS: &[&str] = &[
 ];
 
 /// 公开证据仅保留连接身份；原请求仍通过私有文件的字节数和摘要绑定。
-pub(crate) fn public_request(request: &Value) -> Value {
+pub(crate) fn public_request(backend: &Path, request: &Value) -> Result<Value> {
     let mut proof = request.clone();
-    proof["source"]["s3"] = serde_json::json!({
-        "endpoint": request["source"]["s3"]["endpoint"],
-        "region": request["source"]["s3"]["region"],
-    });
-    proof
+    proof["source"]["s3"] = super::super::s3::app_configuration::public_configuration(
+        backend,
+        &request["source"]["s3"]["configuration"],
+    )?;
+    Ok(proof)
 }
 
 pub(crate) struct Context {
@@ -48,6 +48,7 @@ pub(crate) struct Context {
     pub(crate) attempt: u64,
     pub(crate) manifest: Value,
     pub(crate) request: Value,
+    pub(crate) object_identity: Value,
     pub(crate) request_path: PathBuf,
     pub(crate) environment: BTreeMap<String, String>,
     pub(crate) execution_backend: PathBuf,
@@ -85,6 +86,10 @@ impl Context {
                 .ok_or("复制运行清单缺少来源环境")?,
         )?;
         let execution_backend = execution_backend(backend, &request_value)?;
+        let object_identity = super::super::s3::app_configuration::public_configuration(
+            backend,
+            &request_value["source"]["s3"]["configuration"],
+        )?;
         Ok(Self {
             backend: backend.to_path_buf(),
             run_dir: request.run_dir.to_path_buf(),
@@ -92,6 +97,7 @@ impl Context {
             attempt,
             manifest: loaded.value,
             request: request_value,
+            object_identity,
             request_path,
             environment,
             execution_backend,
@@ -122,6 +128,10 @@ impl Context {
             return Err("来源登记环境必须仅包含 APP_ENV=test".into());
         }
         let execution_backend = execution_backend(backend, &request)?;
+        let object_identity = super::super::s3::app_configuration::public_configuration(
+            backend,
+            &request["source"]["s3"]["configuration"],
+        )?;
         manifest::bound_file(backend, source_request_binding, "派生源请求", true)?;
         manifest::bound_file(backend, source_environment_binding, "来源环境", true)?;
         let after = manifest::load(backend, &manifest_path)?;
@@ -138,6 +148,7 @@ impl Context {
             attempt,
             manifest: loaded.value,
             request,
+            object_identity,
             request_path,
             environment,
             execution_backend,
@@ -305,17 +316,8 @@ fn validate_source(backend: &Path, value: &Value) -> Result<()> {
         LocalTestPathKind::ExistingDirectory,
     )?;
     endpoint(text(source.get("api_url").unwrap(), "API 地址")?)?;
-    let s3 = exact(
-        source.get("s3").unwrap(),
-        &["endpoint", "region", "access_key", "secret_key"],
-        "源对象配置",
-    )?;
-    endpoint(text(s3.get("endpoint").unwrap(), "对象端点")?)?;
-    let region = text(s3.get("region").unwrap(), "对象 region")?;
-    if !Regex::new(r"^[a-z0-9-]+$")?.is_match(region) {
-        return Err("源对象 region 无效".into());
-    }
-    super::super::s3::Configuration::read(&source["s3"])?;
+    exact(source.get("s3").unwrap(), &["configuration"], "源对象配置")?;
+    super::super::s3::Configuration::from_app_binding(backend, &source["s3"]["configuration"])?;
     let databases = source
         .get("databases")
         .and_then(Value::as_array)

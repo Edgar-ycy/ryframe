@@ -349,7 +349,8 @@ def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run,
 
 def inventory(backend: Path, request: dict, resources: Resources,
               output: Path) -> tuple[dict, tuple[dict, ...]]:
-    side = {**request["target"], "runtime_dir": resources.selected["runtime_dir"], "api_url": resources.selected["api_url"]}
+    side = {**request["target"], "s3": {"configuration": resources.object_configuration},
+            "runtime_dir": resources.selected["runtime_dir"], "api_url": resources.selected["api_url"]}
     tools = ExternalTools({"target": side, "tools": request["tools"]}, resources.output,
                           resources.runner, before_execute=resources.checkpoint)
     arguments = {"environment": resources.environment}

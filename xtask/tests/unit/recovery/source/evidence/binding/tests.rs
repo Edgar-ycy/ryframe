@@ -72,7 +72,10 @@ impl Fixture {
         }
     }
     fn args(&self) -> Value {
-        json!({"backend":self.root,"evidence_root":self.root,"source":self.source,"app_env":"test","config_dir":null})
+        let mut source = self.source.clone();
+        source["s3"] = json!({"configuration": app_configuration::configuration_value(
+            &self.root, &self.root.join("config"), "test").unwrap()});
+        json!({"backend":self.root,"evidence_root":self.root,"source":source,"app_env":"test","config_dir":null})
     }
     fn write(&self) {
         fs::write(

@@ -180,7 +180,7 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     request_path = request_file(backend, value["request"])
     request = read_json(request_path)
     validate_request(backend, request)
-    if public_request(request) != evidence["request"] or public_request(request)["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
+    if public_request(backend, request) != evidence["request"] or public_request(backend, request)["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
         raise ValueError("源导出与外部原请求不同")
     execution = execution_backend(backend, request)
     models = schema_models(execution)
@@ -237,7 +237,7 @@ def verify_export_bindings(backend: Path, verified: dict, *, selection="all") ->
     exact(verified, {"export", "binding", "request", "generation", "inventory", "captures", "proof_files"})
     if value != verified["export"]:
         raise ValueError("调用方源导出对象被修改")
-    if (public_request(verified["request"]) != read_json(root / "request.json")
+    if (public_request(backend, verified["request"]) != read_json(root / "request.json")
             or verified["generation"] != read_json(root / "generation-before.json")
             or verified["inventory"] != read_json(root / "inventory-before.json") or set(verified["captures"]) != BUCKETS):
         raise ValueError("调用方源证据快照被修改")
@@ -341,7 +341,7 @@ class _Observation:
                 page, invocation = native_s3_inspect({
                     "format_version": 1, "kind": "ryframe-native-s3-inspect",
                     "scope_id": self.plan["source"]["scope_id"],
-                    "configuration": self.plan["source"]["s3"], "bucket": bucket,
+                    "configuration_binding": self.plan["source"]["s3"]["configuration"], "bucket": bucket,
                     "operation": "list-objects-v2", "prefix": scope, "continuation": cursor,
                 }, self.reader.tools.run)
                 code, error_type = invocation["returncode"], invocation["error_type"]

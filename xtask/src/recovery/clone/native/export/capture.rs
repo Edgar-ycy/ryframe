@@ -93,7 +93,7 @@ fn capture_before(context: &Context, transport: &SystemTransport) -> Result<Capt
     let output = context.output();
     json_io::write_new(
         &output.join("request.json"),
-        &super::input::public_request(&context.request),
+        &super::input::public_request(&context.backend, &context.request)?,
     )?;
     let before = proof::generation(context)?;
     json_io::write_new(&output.join("generation-before.json"), &before)?;
@@ -255,7 +255,7 @@ fn build_export(
         },
         "source_snapshot": frame.before["source"],
         "worktree_fingerprint": context.request["worktree_fingerprint"],
-        "source": super::input::public_request(&context.request)["source"],
+        "source": super::input::public_request(&context.backend, &context.request)?["source"],
         "artifact_root": output,
         "databases": frame.dumps,
         "objects": frame.objects,
@@ -395,7 +395,7 @@ fn dump_scope(context: &Context, models: &Models, dumps: &[Value]) -> Result<Dum
             .as_str()
             .unwrap_or_default()
             .to_owned(),
-        context.source()["s3"]["endpoint"]
+        context.object_identity["endpoint"]
             .as_str()
             .unwrap_or_default()
             .to_owned(),

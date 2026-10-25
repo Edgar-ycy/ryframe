@@ -18,12 +18,12 @@ from devex_clone_run_state import begin, bind_controller_attempt, finish, initia
 from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 from reference_fixture_environment import validate_current_review_tools
 from reference_fixture_service_context import application_settings, service_run
 from reference_fixture_control_protocol import run_private
 from fixture_service_client import _invoke
-from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect
+from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect, configuration as bound_object_configuration
 
 
 def bound(path: Path) -> dict:
@@ -84,6 +84,9 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
         raise ValueError("对象桶初始化必须复用首代服务账本且不能覆盖已有证据")
     _initial_services(load_state(run))
     configuration = _bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))
+    object_configuration = configuration_binding(backend, bootstrap_file.parent / "config")
+    if configuration != bound_object_configuration(object_configuration, backend):
+        raise ValueError("对象桶连接身份与绑定配置文件不同；请复核审阅和环境准备结果")
     scope_id = review["scopes"]["seed"]["scope_id"]
     output.mkdir()
     environment_file = bootstrap_file.parent / "environment.json"
@@ -111,7 +114,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
             for bucket in sorted(BUCKETS):
                 guard()
                 request = {"format_version": 1, "kind": "ryframe-native-s3-create-bucket",
-                           "scope_id": scope_id, "configuration": configuration, "bucket": bucket}
+                           "scope_id": scope_id, "configuration_binding": object_configuration, "bucket": bucket}
                 outcome, invocation = native_create_bucket(request)
                 create_receipt = {"transport": "rust-s3-sigv4", "operation": "create-bucket",
                                   "bucket": bucket, "outcome": outcome, **invocation}
@@ -121,7 +124,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
                 guard()
                 observed, read_invocation = native_s3_inspect({
                     "format_version": 1, "kind": "ryframe-native-s3-inspect",
-                    "scope_id": scope_id, "configuration": configuration, "bucket": bucket,
+                    "scope_id": scope_id, "configuration_binding": object_configuration, "bucket": bucket,
                     "operation": "head-bucket", "prefix": None, "continuation": None,
                 })
                 head_receipt = {"transport": "rust-s3-sigv4", "operation": "head-bucket",

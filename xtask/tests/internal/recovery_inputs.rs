@@ -48,7 +48,7 @@ fn reference_product_and_bindings_native_chains_succeed() {
     assert_eq!(projected.as_object().unwrap().len(), 2);
     assert_eq!(projected["source"], reference["source"]);
     assert_eq!(projected["tools"], reference["tools"]);
-    assert_eq!(source_request["source"]["s3"].as_object().unwrap().len(), 4);
+    assert_eq!(source_request["source"]["s3"].as_object().unwrap().len(), 1);
     assert_eq!(projected["source"]["s3"].as_object().unwrap().len(), 3);
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(source_request["tools"].as_object().unwrap().len(), 3);
@@ -318,7 +318,8 @@ fn source_reference_projection_rejects_binding_runtime_and_configuration_drift()
     fs::write(&config, &config_before).unwrap();
 
     let mut wrong = request.value.clone();
-    wrong["source"]["s3"]["secret_key"] = Value::String("changed-private-value".into());
+    wrong["source"]["s3"]["configuration"]["sha256"] =
+        Value::String("changed-private-value".into());
     fs::write(&path, serde_json::to_vec(&wrong).unwrap()).unwrap();
     assert!(reference::source_projection(&fixture.backend, &descriptor).is_err());
     let rebound =
@@ -326,7 +327,7 @@ fn source_reference_projection_rejects_binding_runtime_and_configuration_drift()
     let error = reference::source_projection(&fixture.backend, &rebound)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("与绑定私有请求不一致"));
+    assert!(error.contains("应用配置绑定摘要已变化"));
     assert!(!error.contains("changed-private-value"));
     fs::write(&path, &request.raw).unwrap();
     reference::source_projection(&fixture.backend, &descriptor).unwrap();
@@ -433,7 +434,7 @@ fn source_identity_rejects_changed_reference_and_private_credentials_without_wri
     let path = fixture.root.join("source-request.json");
     let original = std::fs::read(&path).unwrap();
     let mut request = read_value(&path);
-    request["source"]["s3"]["secret_key"] = json!("different-private-secret");
+    request["source"]["s3"]["configuration"]["sha256"] = json!("different-private-secret");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     let mut changed = export.clone();
     changed["source_request"] = binding(&path);
@@ -449,7 +450,7 @@ fn source_identity_rejects_changed_reference_and_private_credentials_without_wri
     .err()
     .unwrap()
     .to_string();
-    assert!(error.contains("object_storage.secret_key与绑定私有请求不一致"));
+    assert!(error.contains("应用配置绑定摘要已变化"));
     assert!(!error.contains("different-private-secret"));
     assert!(!error.contains("source-secret"));
     assert_eq!(std::fs::read(&path).unwrap(), before);

@@ -1,7 +1,7 @@
 """开发复制源的显式配置、构建、进程代次与停止状态证明。"""
 from __future__ import annotations
 
-from native_s3_client import _invoke as native_invoke, _read_response as native_response
+from native_s3_client import _invoke as native_invoke, _read_response as native_response, configuration as object_configuration
 
 from contextlib import nullcontext
 import copy
@@ -28,10 +28,10 @@ REQUEST_FIELDS = {"format_version", "kind", "id", "source", "tools", "backend_bu
                   "worktree_fingerprint", "runtime", "processes", "producers_registry", "max_object_bytes"}
 
 
-def public_request(request: dict) -> dict:
+def public_request(backend: Path, request: dict) -> dict:
     """公开请求投影只保存对象连接身份，凭据保留在已绑定的私有原文件。"""
     proof = copy.deepcopy(request)
-    s3 = request["source"]["s3"]
+    s3 = object_configuration(request["source"]["s3"]["configuration"], backend)
     proof["source"]["s3"] = {field: s3[field] for field in ("endpoint", "region")}
     return proof
 
@@ -50,12 +50,13 @@ def validate_source(backend: Path, source: dict) -> None:
     name(source["scope_id"])
     local_path(backend, source["runtime_dir"])
     endpoint(source["api_url"])
-    exact(source["s3"], {"endpoint", "region", "access_key", "secret_key"})
-    endpoint(source["s3"]["endpoint"])
-    if not re.fullmatch(r"[a-z0-9-]+", source["s3"]["region"]):
+    exact(source["s3"], {"configuration"})
+    objects = object_configuration(source["s3"]["configuration"], backend)
+    endpoint(objects["endpoint"])
+    if not re.fullmatch(r"[a-z0-9-]+", objects["region"]):
         raise ValueError("源对象 region 无效")
     for field in ("access_key", "secret_key"):
-        if not isinstance(source["s3"][field], str) or not source["s3"][field]:
+        if not isinstance(objects[field], str) or not objects[field]:
             raise ValueError("源对象认证必须使用明确的配置文件字段")
     keys, physical = set(), set()
     if not isinstance(source["databases"], list) or not source["databases"]:

@@ -2,6 +2,7 @@
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from dataclasses import asdict
 import copy
+from native_s3_client import configuration as object_configuration
 import hashlib
 import json
 import os
@@ -34,7 +35,7 @@ from full_stack_runtime import verify_runtime, register_runtime, worker_ready_ur
 from process_sockets import verify_listener
 from restore_build import verify_build_artifacts
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
-from restore_reference_plan import plan_hash, BUCKETS
+from restore_reference_plan import plan_hash, BUCKETS, configuration_binding
 from source_fingerprints import source_check
 
 
@@ -95,13 +96,16 @@ class Context:
             self.output = output_base / f"attempt-{number:04d}"
             self.output.mkdir()
             self.target_config = {**self.target["target"], "runtime_dir": str(self.runtime), "api_url": self.selected["api_url"]}
+            self.target_config["s3"] = {"configuration": configuration_binding(
+                execution_root(backend, self.target), application_config_directory(backend, self.target))}
             self.tool_plan = {"source": self.source_config, "target": self.target_config, "tools": self.target["tools"]}
             self.build = read_json(bound_file(backend, self.request["backend_build"]))
             self.redaction = {}
             self.database_credentials = {"backend": str(backend), "databases": []}
             for side, config in (("source", self.source_config), ("target", self.target_config)):
+                objects = object_configuration(config["s3"]["configuration"], backend)
                 for field in ("access_key", "secret_key"):
-                    self.redaction[f"SECRET_{side}_{field}"] = config["s3"][field]
+                    self.redaction[f"SECRET_{side}_{field}"] = objects[field]
                 self.database_credentials["databases"].extend(copy.deepcopy(config["databases"]))
             redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
 

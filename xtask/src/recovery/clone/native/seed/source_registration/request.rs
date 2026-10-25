@@ -25,6 +25,7 @@ pub(crate) struct Inputs<'a> {
     pub(crate) target_request: &'a Value,
     pub(crate) post_request: &'a Value,
     pub(crate) runtime: &'a Path,
+    pub(crate) object_configuration: &'a Value,
     pub(crate) runtime_binding: &'a Value,
     pub(crate) handoff: &'a Value,
     pub(crate) registry: &'a Value,
@@ -46,6 +47,15 @@ pub(crate) fn build(input: Inputs<'_>) -> Result<Value> {
     if api_url.is_empty() {
         return Err("handoff缺少API地址".into());
     }
+    documents::exact(
+        input.object_configuration,
+        &["app_env", "directory", "files", "sha256"],
+        "来源对象文件绑定",
+    )?;
+    source.insert(
+        "s3".into(),
+        json!({"configuration":input.object_configuration}),
+    );
     source.insert("runtime_dir".into(), json!(runtime));
     source.insert("api_url".into(), json!(api_url));
     runtime_bindings(&input)?;

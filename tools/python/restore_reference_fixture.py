@@ -6,7 +6,7 @@ from workspace_directory import WorkspaceDirectory
 from restore_build import file_digest
 from restore_reference import artifact, now, write_json
 from restore_reference_io import DATA_HEADER
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 
 
 def environment(test):
@@ -23,9 +23,8 @@ def environment(test):
     configuration = backend / ".local-tests/config"
     configuration.mkdir()
     settings = configuration / "app.test.toml"
-    settings.write_text('[object_storage]\naccess_key="access-fixture"\nsecret_key="secret-fixture"\n', encoding="utf-8")
-    binding = {"app_env":"test", "directory":str(configuration), "files":{"app.test.toml":file_digest(settings)}}
-    binding["sha256"] = plan_hash(binding)
+    settings.write_text('[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:9000"\nregion="us-east-1"\naccess_key="access-fixture"\nsecret_key="secret-fixture"\n', encoding="utf-8")
+    binding = configuration_binding(backend, configuration)
     plan = {"format_version": 1, "id": "restore-case", "target_side": "base",
             "work_dir": str(config.parent / "reference"),
             "tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]}

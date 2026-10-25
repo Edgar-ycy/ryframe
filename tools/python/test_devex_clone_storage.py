@@ -14,6 +14,7 @@ import devex_clone_storage_request as model
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import (binding, begin, bind_controller_attempt, finish, initialize_state, run_lock)
 from full_stack_process import process_identity, write_receipt
+from restore_reference_plan import configuration_binding
 
 
 _REAL_POPEN = subprocess.Popen
@@ -37,7 +38,12 @@ class StorageTests(unittest.TestCase):
         self.credentials = {key: self.file(key + ".txt", (key + "-private").encode()) for key in ("access_key", "secret_key")}
         self.private = {"KEY": "access_key-private", "SECRET": "secret_key-private", "RUSTFS_UNDECLARED": "forbidden"}
         environment = self.json("private.json", {"environment": self.private})
-        source = self.json("source.json", {"source": {"s3": {"endpoint": "http://127.0.0.1:18290", "access_key": "access_key-private", "secret_key": "secret_key-private"}}})
+        configuration = self.root / "config"
+        configuration.mkdir()
+        (configuration / "app.test.toml").write_text(
+            '[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:18290"\nregion="us-east-1"\n'
+            'access_key="access_key-private"\nsecret_key="secret_key-private"\n', encoding="utf-8")
+        source = self.json("source.json", {"source": {"s3": {"configuration": configuration_binding(self.backend, configuration)}}})
         self.value = {"id": "same-run", "source_request": source, "initialized": self.json("initialized.json", {"fixture": True}),
                       "source_environment": environment, "target_environment": environment}
         write_json(self.directory / "manifest.json", self.value)

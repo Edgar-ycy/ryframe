@@ -19,6 +19,7 @@ from devex_clone_object_batch import WORKERS
 from devex_clone_rows import EXCLUDED
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, validate_dump
+from native_s3_client import configuration as object_configuration
 from restore_reference_plan import plan_hash
 
 PRESERVED = EXCLUDED | {"seaql_tenant_data_migrations", "ryframe_business_migration"}
@@ -140,7 +141,7 @@ class TransferSteps:
         identities = {}
         for side in ("source", "target"):
             declared, actual = self.declaration[side], self.tools.plan[side]
-            if declared["scope_id"] != actual["scope_id"] or declared["object_endpoint"] != actual["s3"]["endpoint"]:
+            if declared["scope_id"] != actual["scope_id"] or declared["object_endpoint"] != object_configuration(actual["s3"]["configuration"], self.backend)["endpoint"]:
                 raise ValueError("工具 scope 或对象端点不属于离线计划")
             expected = {item["key"]: item for item in declared["databases"]}
             observed = {item["key"]: item for item in actual["databases"]}

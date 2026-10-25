@@ -310,6 +310,21 @@ fn reject_prior(saved: &Value, current: u64) -> Result<()> {
     Ok(())
 }
 
+fn source_configuration(backend: &Path, runtime: &Value, target: &Value) -> Result<Value> {
+    use super::super::super::s3::app_configuration;
+    let runtime = common::read_bound(backend, runtime, "seed运行配置")?;
+    let binding = app_configuration::configuration_value(
+        backend,
+        Path::new(document::text(&runtime["api_config_dir"], "seed配置目录")?),
+        "test",
+    )?;
+    let objects = app_configuration::private_configuration(backend, &binding)?;
+    if objects != target["target"]["s3"] {
+        return Err("seed源运行对象配置与已初始化目标身份不同".into());
+    }
+    Ok(binding)
+}
+
 impl Derived {
     fn load(
         session: &Session<'_>,
@@ -331,6 +346,7 @@ impl Derived {
             "api":file_binding(backend, &anchors.runtime.join("api.json"))?,
             "worker":file_binding(backend, &anchors.runtime.join("worker.json"))?
         });
+        let configuration = source_configuration(backend, runtime, &target)?;
         let value = request::build(request::Inputs {
             manifest,
             original_request: &original,
@@ -338,6 +354,7 @@ impl Derived {
             post_request: &anchors.post,
             runtime: &anchors.runtime,
             runtime_binding: runtime,
+            object_configuration: &configuration,
             handoff: &anchors.handoff,
             registry,
             registry_binding,

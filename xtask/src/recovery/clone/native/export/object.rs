@@ -272,8 +272,8 @@ fn object_request(
         "kind": "devex-clone-object-capture",
         "side": "source",
         "scope_id": context.source()["scope_id"],
-        "endpoint": context.source()["s3"]["endpoint"],
-        "region": context.source()["s3"]["region"],
+        "endpoint": context.object_identity["endpoint"],
+        "region": context.object_identity["region"],
         "bucket": bucket,
         "key": key,
         "expected": expected,
@@ -316,8 +316,8 @@ fn capture_value(
         "bucket": bucket,
         "key": key,
         "scope_id": context.source()["scope_id"],
-        "endpoint": context.source()["s3"]["endpoint"],
-        "region": context.source()["s3"]["region"],
+        "endpoint": context.object_identity["endpoint"],
+        "region": context.object_identity["region"],
         "expected": expected,
         "max_bytes": max_bytes,
         "transport": "rust-s3-sigv4",
@@ -518,7 +518,10 @@ pub(super) fn object_read<T: Transport>(
     call: ObjectCall<'_>,
 ) -> Result<Value> {
     use super::super::s3::{Configuration, Operation, Request};
-    let configuration = Configuration::read(&context.source()["s3"])?;
+    let configuration = Configuration::from_app_binding(
+        &context.backend,
+        &context.source()["s3"]["configuration"],
+    )?;
     let mut if_match = None;
     let mut version = None;
     if let Some(extra) = call.extra {
@@ -549,13 +552,15 @@ pub(super) fn object_read<T: Transport>(
         },
         _ => return Err("原生对象读取操作与输出方式不匹配".into()),
     };
-    transport
+    let result: Result<Value> = transport
         .s3(Request {
             configuration,
             bucket: call.bucket.to_owned(),
             operation,
         })
-        .map_err(|error| format!("{}：{error}", call.label).into())
+        .map_err(|error| format!("{}：{error}", call.label).into());
+    Configuration::from_app_binding(&context.backend, &context.source()["s3"]["configuration"])?;
+    result
 }
 
 fn safe_key(value: &str) -> String {

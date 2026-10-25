@@ -18,6 +18,7 @@ from devex_clone_capture import capture_object
 from devex_clone_transfer import ObjectObservation
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
+from native_s3_client import configuration as object_configuration
 
 
 class FactoryTests(unittest.TestCase):
@@ -43,15 +44,15 @@ class FactoryTests(unittest.TestCase):
             self.case.guard.current[key] = initial
         value = self.case.fixture.value
         self.exported = {key: copy.deepcopy(value[key]) for key in ("artifact_root", "databases", "objects")}
-        self.exported.update(source=self.case.tools.plan["source"], source_snapshot={"head": "a" * 40, "clean": False, "patch_sha256": "f" * 64, "files": []},
+        self.exported.update(source={**self.case.tools.plan["source"], "s3": {key: object_configuration(self.case.tools.plan["source"]["s3"]["configuration"], self.backend)[key] for key in ("endpoint", "region")}}, source_snapshot={"head": "a" * 40, "clean": False, "patch_sha256": "f" * 64, "files": []},
                              worktree_fingerprint="sha256:" + "b" * 64, enabled_system_schedule_rows=[],
                              evidence={"generation-after": value["evidence"]["source_stopped"]})
         self.export_binding = self.bind(self.local / "source-export.json", {"fixture": "verified by isolated source adapter"})
         maintenance = self.bind(self.local / "maintenance.json", {"fixture": "maintenance"})
-        self.source_request = {"maintenance_build": maintenance,
+        self.source_request = {"maintenance_build": maintenance, "source": self.case.tools.plan["source"],
                                "tools": {name: copy.deepcopy(self.case.tools.plan["tools"]["mysql"])
                                          for name in ("mysql", "mysqldump", "node")}}
-        self.target_request = {"maintenance_build": maintenance, "tools": {"mysql": self.case.tools.plan["tools"]["mysql"]}, "target": self.case.tools.plan["target"]}
+        self.target_request = {"maintenance_build": maintenance, "tools": {"mysql": self.case.tools.plan["tools"]["mysql"]}, "target": {**self.case.tools.plan["target"], "s3": object_configuration(self.case.tools.plan["target"]["s3"]["configuration"], self.backend)}, "config_dir": self.case.tools.plan["target"]["s3"]["configuration"]["directory"]}
         self.initial = {"redis": {"fixture": "owner only"}, "generation": {"selected": {"runtime_dir": str(self.local / "never-started"), "api_url": "http://127.0.0.1:18400"}},
                         "inventory": {"observations": {basis.initialized.resource["database"]: json.loads(json.dumps(asdict(basis.initialized)))
                                                         for basis in self.case.guard.basis.values()}}}
@@ -107,7 +108,7 @@ class FactoryTests(unittest.TestCase):
             raise ValueError("actual initial inventory changed")
         return {"initialized": self.initialized}
 
-    def inventory(self, backend, side, tools, receipt, output, *, environment):
+    def inventory(self, backend, side, tools, receipt, output, *, environment, evidence_root):
         self.assertEqual(os.environ["CLONE_SIDE"], side)
         self.assertEqual(environment["CLONE_SIDE"], side)
         values = [basis.source for basis in self.case.guard.basis.values()] if side == "source" else list(self.case.guard.current.values())
@@ -124,14 +125,14 @@ class FactoryTests(unittest.TestCase):
                                              else (body, {**metadata, "ContentLanguage": "en"}))
         return {"fixture": "all source objects observed"}
 
-    def source_object(self, backend, tools, verified, bucket, key, output, *, environment):
+    def source_object(self, backend, tools, verified, bucket, key, output, *, environment, evidence_root):
         self.assertEqual(environment["CLONE_SIDE"], "source")
         self.assertTrue(key.startswith("clone-source/"))
 
     def target_object(self, backend, tools, bucket, key, output, **_):
         self.assertEqual(os.environ["CLONE_SIDE"], "target")
         resource = {"kind": "object", "scope_id": tools.plan["target"]["scope_id"],
-                    "endpoint": tools.plan["target"]["s3"]["endpoint"], "bucket": bucket, "key": key}
+                    "endpoint": object_configuration(tools.plan["target"]["s3"]["configuration"], backend)["endpoint"], "bucket": bucket, "key": key}
         if (bucket, key) not in self.case.runner.objects:
             return ObjectObservation(resource, None, "d" * 64)
         capture_object(tools, "target", bucket, key, output, expected=_["expected"], max_bytes=_["max_bytes"], owner_buckets=(bucket,))
@@ -283,7 +284,7 @@ class FactoryTests(unittest.TestCase):
 
         session = factory.CloneSession(self.backend, self.export_binding, self.initialized,
             self.environments["source"], self.environments["target"], self.output, denied)
-        session.exported, session.target_request = self.exported, self.target_request
+        session.exported, session.target_request, session.source_request = self.exported, self.target_request, self.source_request
         session.bind_credentials()
         with session.environment.use("target"), self.assertRaises(subprocess.CalledProcessError):
             session.command(["fixture"], input=b"private SQL body")
@@ -314,7 +315,7 @@ class FactoryTests(unittest.TestCase):
 
         session = factory.CloneSession(self.backend, self.export_binding, self.initialized,
             self.environments["source"], self.environments["target"], self.output, unknown_process)
-        session.exported, session.target_request = self.exported, self.target_request
+        session.exported, session.target_request, session.source_request = self.exported, self.target_request, self.source_request
         session.bind_credentials()
         with self.assertRaises(subprocess.CalledProcessError):
             session.command(["D:/WindowsPowerShell/powershell.exe", "-Command", "Get-CimInstance Win32_Process"])

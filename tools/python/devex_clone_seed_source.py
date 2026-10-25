@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import copy
+from native_s3_client import configuration as object_configuration
 from pathlib import Path
 
 from devex_clone_capture import read_json
@@ -11,7 +12,7 @@ from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file, validate_request
 from devex_clone_storage import current_storage_binding
 from devex_clone_target_binding import request_binding
-from restore_reference_plan import plan_hash
+from restore_reference_plan import plan_hash, configuration_binding
 
 REGISTRATION_FIELDS = {
     "format_version", "kind", "run_directory", "run_manifest", "source_to_seed",
@@ -113,13 +114,19 @@ def _registered_source(backend: Path, descriptor: dict, *, live_storage: bool,
     initialization, seed_target = _published_initialization(backend, original_manifest)
     validate_seed_target(backend, seed_target)
     handoff = read_json(bound_file(backend, registration["seed_handoff"]))
+    runtime = read_json(bound_file(backend, request["runtime"]))
+    configuration = configuration_binding(backend, Path(runtime["api_config_dir"]))
+    objects = object_configuration(configuration, backend)
     expected_source = {**copy.deepcopy(seed_target["target"]),
+                       "s3": {"configuration": configuration},
                        "runtime_dir": request["source"]["runtime_dir"],
                        "api_url": handoff["api_url"]}
     if (seed_target["side"] != "seed" or request["source"] != expected_source
+            or any(objects[field] != seed_target["target"]["s3"][field]
+                   for field in ("endpoint", "region", "access_key", "secret_key"))
             or request["maintenance_build"] != seed_target["maintenance_build"]
             or {"mysql": request["tools"]["mysql"]} != seed_target["tools"]
-            or storage["storage"]["api_url"] != request["source"]["s3"]["endpoint"]):
+            or storage["storage"]["api_url"] != objects["endpoint"]):
         raise ValueError("seed 源请求没有精确派生自原 seed 初始化")
     environment = read_json(bound_file(backend, registration["source_environment"]))
     exact(environment, {"environment"})

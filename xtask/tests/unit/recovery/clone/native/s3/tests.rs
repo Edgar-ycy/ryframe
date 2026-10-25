@@ -504,12 +504,7 @@ fn private_put_protocol_rejects_old_credentials_and_scope_escape_before_network(
         "format_version": 1,
         "kind": "ryframe-native-s3-put-if-absent",
         "scope_id": "target-scope",
-        "configuration": {
-            "endpoint": "http://127.0.0.1:1",
-            "region": "us-east-1",
-            "access_key": "private-access",
-            "secret_key": "private-secret"
-        },
+        "configuration_binding": null,
         "bucket": "uploads",
         "key": "target-scope/file.txt",
         "source": "relative.txt",
@@ -543,12 +538,7 @@ fn private_read_protocol_rejects_scope_escape_and_old_credentials_before_network
         "format_version": 1,
         "kind": "ryframe-native-s3-read",
         "scope_id": "source-scope",
-        "configuration": {
-            "endpoint": "http://127.0.0.1:1",
-            "region": "us-east-1",
-            "access_key": "private-access",
-            "secret_key": "private-secret"
-        },
+        "configuration_binding": null,
         "bucket": "uploads",
         "operation": "head-object",
         "key": "source-scope/file.txt",
@@ -584,12 +574,7 @@ fn private_inspect_protocol_restricts_operation_prefix_and_credentials_before_ne
         "format_version": 1,
         "kind": "ryframe-native-s3-inspect",
         "scope_id": "source-scope",
-        "configuration": {
-            "endpoint": "http://127.0.0.1:1",
-            "region": "us-east-1",
-            "access_key": "private-access",
-            "secret_key": "private-secret"
-        },
+        "configuration_binding": null,
         "bucket": "uploads",
         "operation": "list-objects-v2",
         "prefix": "other-scope/",

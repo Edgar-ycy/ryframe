@@ -67,6 +67,9 @@ impl Fixture {
 }
 
 fn write_support_files(backend: &Path, local: &Path) -> (PathBuf, PathBuf) {
+    let directory = local.join("config");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("app.test.toml"), "[object_storage]\nbackend='rustfs'\nendpoint='http://127.0.0.1:29200'\nregion='us-east-1'\naccess_key='private-fixture-access'\nsecret_key='private-fixture-secret'\n").unwrap();
     let runtime = local.join("runtime");
     fs::create_dir(&runtime).unwrap();
     write_json(
@@ -121,12 +124,8 @@ fn write_request(local: &Path, runtime: &Path, defaults: &Path, request: &Path) 
                 "scope_id": "fixture-source",
                 "runtime_dir": runtime,
                 "api_url": "http://127.0.0.1:18210",
-                "s3": {
-                    "endpoint": "http://127.0.0.1:29200",
-                    "region": "us-east-1",
-                    "access_key": "access",
-                    "secret_key": "secret",
-                },
+                "s3": {"configuration": native::s3::app_configuration::configuration_value(
+                    &workspace::root_dir(), &local.join("config"), "test").unwrap()},
                 "databases": [{
                     "key": "shared-control",
                     "kind": "combined",
@@ -323,6 +322,12 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
         mode: "run".into(),
         attempt: 1,
         manifest: json!({}),
+        object_identity:
+            crate::recovery::clone::native::s3::app_configuration::public_configuration(
+                &fixture.backend,
+                &request["source"]["s3"]["configuration"],
+            )
+            .unwrap(),
         request,
         request_path: fixture.local.join("source-request.json"),
         environment: std::collections::BTreeMap::from([
@@ -380,6 +385,12 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
         mode: "run".into(),
         attempt: 1,
         manifest: json!({}),
+        object_identity:
+            crate::recovery::clone::native::s3::app_configuration::public_configuration(
+                &failed.backend,
+                &failed_request["source"]["s3"]["configuration"],
+            )
+            .unwrap(),
         request: failed_request,
         request_path: failed.local.join("source-request.json"),
         environment: std::collections::BTreeMap::from([
@@ -518,47 +529,44 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 }
 
 #[test]
-fn public_source_request_excludes_credentials_and_matches_python_projection() {
-    use crate::recovery::clone::native::export::input::public_request;
-    use std::io::Write;
-    use std::process::Stdio;
-    let request = json!({"id":"fixture","source":{"scope_id":"source-scope",
-        "s3":{"endpoint":"http://127.0.0.1:29200","region":"us-east-1",
-        "access_key":"private-fixture-access","secret_key":"private-fixture-secret"}},
-        "tools":{"mysql":{"path":"fixture"}}});
+fn public_source_request_uses_bound_files_without_credentials_or_overrides() {
+    use crate::recovery::clone::native::export::input::{public_request, validate_request};
+    let fixture = Fixture::new();
+    let path = fixture.local.join("source-request.json");
+    let request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let original = request.clone();
-    let public = public_request(&request);
-    let encoded = serde_json::to_string(&public).unwrap();
-    assert!(!encoded.contains("private-fixture"));
-    assert!(!encoded.contains("access_key"));
-    assert!(!encoded.contains("secret_key"));
+    let public = public_request(&fixture.backend, &request).unwrap();
+    for value in [&public, &request] {
+        let encoded = value.to_string();
+        assert!(!encoded.contains("private-fixture"));
+        assert!(!encoded.contains("access_key"));
+        assert!(!encoded.contains("secret_key"));
+    }
     assert_eq!(
         public["source"]["s3"],
         json!({"endpoint":"http://127.0.0.1:29200","region":"us-east-1"})
     );
     assert_eq!(public["tools"], request["tools"]);
     assert_eq!(request, original);
-    let coordinator = workspace::root_dir();
-    let executable = crate::process::resolved_executable(&coordinator, "python").unwrap();
-    let mut child = Command::new(executable).args(["-B", "-c",
-        "import json,sys;sys.path.insert(0,sys.argv[1]);from devex_clone_source_proof import public_request; print(json.dumps(public_request(json.load(sys.stdin))))"])
-        .arg(coordinator.join("tools/python")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(serde_json::to_string(&request).unwrap().as_bytes())
-        .unwrap();
-    let result = child.wait_with_output().unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
-        public
-    );
+    let mut override_request = request.clone();
+    override_request["source"]["s3"]["endpoint"] = json!("http://127.0.0.1:9");
+    assert!(validate_request(&fixture.backend, &override_request).is_err());
+    override_request["source"]["s3"] = native::s3::app_configuration::private_configuration(
+        &fixture.backend,
+        &request["source"]["s3"]["configuration"],
+    )
+    .unwrap();
+    assert!(validate_request(&fixture.backend, &override_request).is_err());
+    fs::write(
+        fixture.local.join("config/app.test.toml"),
+        "[object_storage]\nsecret_key='changed-private-value'\n",
+    )
+    .unwrap();
+    let error = public_request(&fixture.backend, &request)
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("changed-private-value"));
+    assert!(validate_request(&fixture.backend, &request).is_err());
 }
 
 #[test]

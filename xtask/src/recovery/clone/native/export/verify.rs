@@ -94,7 +94,8 @@ fn validate_shape<'a>(
         || root.get("scope_id") != context.source().get("scope_id")
         || root.get("id") != context.request.get("id")
         || root.get("worktree_fingerprint") != context.request.get("worktree_fingerprint")
-        || root.get("source") != super::input::public_request(&context.request).get("source")
+        || root.get("source")
+            != super::input::public_request(&context.backend, &context.request)?.get("source")
         || root.get("remote_writes").and_then(Value::as_u64) != Some(0)
         || root.get("clone_verified").and_then(Value::as_bool) != Some(false)
         || root.get("restore_qualified").and_then(Value::as_bool) != Some(false)
@@ -152,7 +153,7 @@ fn validate_evidence(
         }
     }
     if json_io::read(&artifact_root.join("request.json"))?
-        != super::input::public_request(&context.request)
+        != super::input::public_request(&context.backend, &context.request)?
     {
         return Err("源请求公开投影与已绑定的私有原请求不一致".into());
     }

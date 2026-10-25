@@ -22,32 +22,27 @@ from restore_reference_plan import BUCKETS, plan_hash
 
 
 class ObjectRequestConfigurationTests(unittest.TestCase):
-    def test_object_requests_dispatch_inline_and_file_bound_configuration_to_their_declared_protocol_fields(self):
-        from workspace_directory import WorkspaceDirectory
-        temporary = WorkspaceDirectory(dir=Path(__file__).resolve().parents[2] / ".local-tests/object-request-mode")
-        self.addCleanup(temporary.cleanup)
-        work = Path(temporary.name)
-        for index, (field, configuration) in enumerate((
-            ("configuration", {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1", "access_key": "fixture-access", "secret_key": "fixture-secret"}),
-            ("configuration_binding", {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1", "configuration": {"app_env": "test", "directory": str(work), "files": {}, "sha256": "a" * 64}}),
-        )):
-            tools = ExternalTools({"source": {"scope_id": "restore-unit", "s3": configuration}, "tools": {}}, work)
-            with patch("restore_reference_io.native_s3_read", return_value=({"fixture": "response"}, {})) as native:
-                self.assertEqual(tools.read_object("source", "uploads", "restore-unit/system/file", work / str(index), max_bytes=4096), {"fixture": "response"})
-            request = native.call_args.args[0]
-            self.assertEqual(set(request), {"format_version", "kind", "scope_id", field, "bucket", "operation", "key", "if_match", "version", "destination", "max_bytes"})
-            self.assertEqual(request[field], configuration)
-            tools.plan["target"] = tools.plan["source"]
-            source = work / f"source-{index}"
-            source.write_bytes(b"data")
-            metadata = {name: None for name in COPY_METADATA_FIELDS}
-            metadata.update(ContentType="text/plain", Metadata={})
-            with patch("restore_reference_io.native_put_if_absent", return_value=({"status": "created_unverified", "remote_write_may_have_occurred": True}, {"returncode": 0, "error_type": None})) as put:
-                result = tools.create_object_if_absent("uploads", "restore-unit/system/file", source, metadata, file_digest(source))
-            request = put.call_args.args[0]
-            self.assertEqual(set(request), {"format_version", "kind", "scope_id", field, "bucket", "key", "source", "expected", "metadata"})
-            self.assertEqual(request[field], configuration)
-            self.assertNotIn("fixture-secret", Path(result["request_file"]).read_text(encoding="utf-8"))
+    def test_object_requests_use_only_verified_file_configuration_binding(self):
+        from restore_reference_fixture import environment
+        backend, plan = environment(self)
+        work = backend / ".local-tests"
+        configuration = plan["source"]["s3"]["configuration"]
+        tools = ExternalTools(plan, work)
+        with patch("restore_reference_io.native_s3_read", return_value=({"fixture": "response"}, {})) as native:
+            self.assertEqual(tools.read_object("source", "uploads", "source/system/file", work / "object", max_bytes=4096), {"fixture": "response"})
+        request = native.call_args.args[0]
+        self.assertEqual(set(request), {"format_version", "kind", "scope_id", "configuration_binding", "bucket", "operation", "key", "if_match", "version", "destination", "max_bytes"})
+        self.assertEqual(request["configuration_binding"], configuration)
+        source = work / "body"
+        source.write_bytes(b"data")
+        metadata = {name: None for name in COPY_METADATA_FIELDS}
+        metadata.update(ContentType="text/plain", Metadata={})
+        with patch("restore_reference_io.native_put_if_absent", return_value=({"status": "created_unverified", "remote_write_may_have_occurred": True}, {"returncode": 0, "error_type": None})) as put:
+            result = tools.create_object_if_absent("uploads", "target/system/file", source, metadata, file_digest(source))
+        request = put.call_args.args[0]
+        self.assertEqual(set(request), {"format_version", "kind", "scope_id", "configuration_binding", "bucket", "key", "source", "expected", "metadata"})
+        self.assertEqual(request["configuration_binding"], configuration)
+        self.assertNotIn("secret-fixture", Path(result["request_file"]).read_text(encoding="utf-8"))
 
 
 class ExportVerificationTests(unittest.TestCase):
@@ -97,7 +92,7 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertFalse(kwargs["check"])
         self.assertIn(command[-1], ("__s3-read", "__s3-inspect"))
         request = json.loads(kwargs["input"])
-        self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
+        self.assertEqual(request["configuration_binding"], self.fixture.object_configuration)
         operation = request["operation"]
         self.assertIn(operation, ("list-objects-v2", "head-object", "get-object"))
         bucket = request["bucket"]

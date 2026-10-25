@@ -48,7 +48,7 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
     try:
         request_digest = file_digest(request_path)
         request = read_json(request_path)
-        write_json(output / "request.json", public_request(request))
+        write_json(output / "request.json", public_request(backend, request))
         stage = "source_generation_before"
         before = verify_generation(backend, request, run, control_environment=control_environment)
         execution = execution_backend(backend, request)
@@ -97,7 +97,7 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         result = {"format_version": 1, "kind": "devex-clone-source-export", "status": "source_export_captured",
                   "id": request["id"], "scope_id": request["source"]["scope_id"], "request": {"path": str(request_path), **request_digest},
                   "source_snapshot": before["source"], "worktree_fingerprint": request["worktree_fingerprint"],
-                  "source": public_request(request)["source"], "artifact_root": str(output), "databases": dumps, "objects": objects,
+                  "source": public_request(backend, request)["source"], "artifact_root": str(output), "databases": dumps, "objects": objects,
                   "enabled_system_schedule_rows": schedules, "logical_inventory_sha256": plan_hash(logical_inventory(inventory_before)),
                   "evidence": {name: {"file": name + ".json", **file_digest(output / (name + ".json"))} for name in
                                ("request", "generation-before", "generation-after", "inventory-before", "inventory-after",

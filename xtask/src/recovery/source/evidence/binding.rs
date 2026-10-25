@@ -13,7 +13,9 @@ use super::documents;
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
-    recovery::clone::native::{digest, target_verify::input::request_physical},
+    recovery::clone::native::{
+        digest, s3::app_configuration, target_verify::input::request_physical,
+    },
 };
 
 #[cfg(test)]
@@ -41,7 +43,16 @@ pub(super) fn physical(args: &Value) -> Result<Value> {
     let table = crate::rate_limit::load_app_table(&backend, Some(&directory), "test")
         .map_err(|_| "来源配置不完整或无法安全解析；检查选定配置目录和app.test.toml")?;
     let table = serde_json::to_value(table).map_err(|_| "来源配置无法安全解析")?;
-    let value = physical_table(&evidence, &args["source"], &table)?;
+    documents::exact(
+        &args["source"]["s3"],
+        &["configuration"],
+        "来源对象文件绑定",
+    )?;
+    let binding = &args["source"]["s3"]["configuration"];
+    let mut source = args["source"].clone();
+    source["s3"] = app_configuration::private_configuration(&evidence, binding)?;
+    let value = physical_table(&evidence, &source, &table)?;
+    app_configuration::private_configuration(&evidence, binding)?;
     if configuration_files(&backend, &args["config_dir"])? != (directory, files) {
         return Err("来源配置在读取期间发生变化".into());
     }

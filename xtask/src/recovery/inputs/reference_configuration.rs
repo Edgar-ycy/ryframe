@@ -19,7 +19,7 @@ impl SourceProjection {
         let (_, runtime) = document::bound_file(backend, &request.value["runtime"], "源运行收据")?;
         let root = export::input::execution_backend(backend, &request.value)?;
         let environment = BTreeMap::from([("APP_ENV".into(), "test".into())]);
-        let (table, files) = s3::app_configuration::runtime_configuration(
+        let (_table, files) = s3::app_configuration::runtime_configuration(
             &root,
             &environment,
             &runtime.value,
@@ -29,7 +29,7 @@ impl SourceProjection {
             .as_str()
             .ok_or("源运行收据缺少 API 配置目录")?;
         let mut source = request.value["source"].clone();
-        source["s3"] = project(&root, Path::new(directory), &table, &source["s3"])?;
+        source["s3"] = source_project(&root, Path::new(directory), &source["s3"])?;
         let tools = reference_tools(&request.value)?;
         runtime.assert_unchanged()?;
         request.assert_unchanged()?;
@@ -130,6 +130,17 @@ impl Projection {
         self.source.assert_unchanged(backend, &arm.source_request)?;
         self.target.assert_unchanged(&arm.target)
     }
+}
+
+fn source_project(root: &Path, directory: &Path, private: &Value) -> Result<Value> {
+    super::super::clone::native::json::exact(private, &["configuration"], "来源对象文件绑定")?;
+    let binding = s3::app_configuration::configuration_value(root, directory, "test")?;
+    if private["configuration"] != binding {
+        return Err("来源对象配置未绑定实际API运行配置；请重新登记来源".into());
+    }
+    let mut value = s3::app_configuration::public_configuration(root, &binding)?;
+    value["configuration"] = binding;
+    Ok(value)
 }
 
 fn project(root: &Path, directory: &Path, table: &Value, private: &Value) -> Result<Value> {

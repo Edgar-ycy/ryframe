@@ -156,7 +156,7 @@ class ConcurrentSourceHeadTests(unittest.TestCase):
     def read(self, command, **kwargs):
         self.assertTrue("__s3-read" in command or "__s3-inspect" in command)
         request = json.loads(kwargs["input"])
-        self.assertEqual(request["configuration"], self.f.request["source"]["s3"])
+        self.assertEqual(request["configuration_binding"], self.f.object_configuration)
         self.assertFalse(any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"]))
         operation, bucket = request["operation"], request["bucket"]
         if operation == "list-objects-v2":

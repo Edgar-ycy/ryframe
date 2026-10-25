@@ -80,7 +80,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         "runtime": runtime,
         "processes": processes,
         "operator_declared_producers": producers,
-        "physical_binding": physical_binding(context)?,
+        "physical_binding": physical_binding(context, &runtime)?,
         "maintenance": maintenance,
         "request_sha256": digest::plan_hash(&context.request)?,
         "external_writers_discovered": false,
@@ -297,7 +297,15 @@ fn validate_identity<'a>(value: &'a Value, label: &str) -> Result<&'a Value> {
     Ok(original)
 }
 
-fn physical_binding(context: &Context) -> Result<Value> {
+fn physical_binding(context: &Context, runtime: &Value) -> Result<Value> {
+    let configuration = super::super::s3::app_configuration::configuration_value(
+        &context.execution_backend,
+        Path::new(text(&runtime["api_config_dir"], "源API配置目录")?),
+        "test",
+    )?;
+    if context.source()["s3"]["configuration"] != configuration {
+        return Err("源对象绑定不属于实际API运行配置；请重新登记来源".into());
+    }
     let mut databases = Vec::new();
     for database in context.databases()? {
         databases.push(json!({
@@ -309,7 +317,7 @@ fn physical_binding(context: &Context) -> Result<Value> {
     }
     Ok(json!({
         "scope_id": context.source()["scope_id"],
-        "object_endpoint": context.source()["s3"]["endpoint"],
+        "object_endpoint": context.object_identity["endpoint"],
         "databases": databases,
     }))
 }
@@ -418,6 +426,7 @@ mod tests {
             mode: "run".into(),
             attempt: 1,
             manifest: Value::Null,
+            object_identity: json!({}),
             request: Value::Null,
             request_path: root.join("request.json"),
             environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),

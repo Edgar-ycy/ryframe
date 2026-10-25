@@ -13,7 +13,7 @@ import uuid
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import digest, exact
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import external_file
+from devex_clone_target_binding import external_file, application_config_directory
 from devex_clone_target_storage import redis_layout, rustfs_layout
 from full_stack_process import process_identity
 from native_s3_client import (NativeS3InvocationError, inspect as native_s3_inspect,
@@ -22,7 +22,7 @@ from process_sockets import verify_listener
 from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
-from restore_reference_plan import BUCKETS, identifier, plan_hash
+from restore_reference_plan import BUCKETS, identifier, plan_hash, configuration_binding
 
 
 REDIS_MARKER_REBIND_SCRIPT = """local cursor = '0'
@@ -64,13 +64,15 @@ class Resources:
         self.cache_runtime_binding = None
         self.owned_lock_identity = owned_lock_identity
         self.lock_output = lock_output or output
+        self.object_configuration = configuration_binding(self.execution_backend, application_config_directory(backend, request))
         self.environment = dict(os.environ)
         self.redaction = dict(self.environment)
         self.database_credentials = {"backend": str(backend), "databases": copy.deepcopy(request["target"]["databases"])}
         redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = request["target"]["s3"][field]
-        self.tools = ExternalTools({"target": request["target"], "tools": request["tools"]}, output, run,
+        target = {**request["target"], "s3": {"configuration": self.object_configuration}}
+        self.tools = ExternalTools({"target": target, "tools": request["tools"]}, output, run,
                                    before_execute=self.checkpoint)
 
     def checkpoint(self) -> None:
@@ -159,8 +161,8 @@ class Resources:
             destination = request.get("destination")
             write_json(path, {"transport": "rust-s3-sigv4", "operation": request["operation"],
                              "scope_id": request["scope_id"],
-                             "endpoint": request["configuration"]["endpoint"],
-                             "configuration_sha256": plan_hash(request["configuration"]),
+                             "endpoint": self.request["target"]["s3"]["endpoint"],
+                             "configuration_sha256": plan_hash(self.request["target"]["s3"]),
                              "bucket": request["bucket"], "returncode": code,
                              "error_type": error_type, "response": response,
                              "key": request.get("key"),
@@ -176,7 +178,7 @@ class Resources:
         target = self.request["target"]
         return self._s3(stage, {
             "format_version": 1, "kind": "ryframe-native-s3-inspect",
-            "scope_id": target["scope_id"], "configuration": target["s3"],
+            "scope_id": target["scope_id"], "configuration_binding": self.object_configuration,
             "bucket": bucket, "operation": operation, "prefix": prefix,
             "continuation": continuation,
         }, native_s3_inspect)
@@ -185,7 +187,7 @@ class Resources:
         target = self.request["target"]
         return self._s3("owner-read", {
             "format_version": 1, "kind": "ryframe-native-s3-read",
-            "scope_id": target["scope_id"], "configuration": target["s3"],
+            "scope_id": target["scope_id"], "configuration_binding": self.object_configuration,
             "bucket": bucket, "operation": "get-object", "key": key,
             "if_match": None, "version": None, "destination": str(destination),
             "max_bytes": 4096,

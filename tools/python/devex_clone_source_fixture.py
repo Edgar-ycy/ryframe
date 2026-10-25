@@ -13,7 +13,6 @@ import test_devex_clone as clone_fixture
 import devex_clone_export as export
 import devex_clone_source_proof as proof
 from restore_build import ROLES, build_command, file_digest
-from rate_limit_client import load_app_table
 from full_stack_runtime import configuration_digest
 from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
@@ -41,9 +40,6 @@ class SourceFixture:
             source["databases"].append({**{key: row[key] for key in ("key", "kind", "mode", "server_uuid", "database")},
                                         "defaults_file": str(client), "defaults_sha256": file_digest(client)["sha256"]})
         self.write_config(source)
-        objects = load_app_table(self.backend, {"APP_ENV": "test"}, config_dir=self.backend / "config")["object_storage"]
-        source["s3"] = {field: objects[field] for field in ("endpoint", "region", "access_key", "secret_key")}
-        self.object_configuration = configuration_binding(self.backend, self.backend / "config")
         tool = self.local / "external.exe"
         tool.write_bytes(b"fixed-external-fixture")
         source_inventory = {
@@ -144,6 +140,8 @@ class SourceFixture:
             content += "[[tenant_data.targets]]\n" + "".join(f"{key}={json.dumps(value)}\n" for key, value in target.items())
         (config / "app.toml").write_text("# 隔离服务连接和凭据全部由 app.test.toml 提供。\n", encoding="utf-8")
         (config / "app.test.toml").write_text(content, encoding="utf-8")
+        self.object_configuration = configuration_binding(self.backend, config)
+        source["s3"] = {"configuration": self.object_configuration}
 
     def inventory(self, command):
         self.inventory_count += 1

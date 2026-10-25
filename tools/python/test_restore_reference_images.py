@@ -59,7 +59,8 @@ class RestoreImagesTests(unittest.TestCase):
         self.subject.bindings, self.subject.tools = {}, Mock()
         self.subject.environment_document = reference.read_json_document(self.write("environment.json", {"environment": {}}))
         self.subject.environment = images.Environments({}, images.configured({}))
-        self.resources = Mock(selected=self.plan["target"], execution_backend=self.backend)
+        self.resources = Mock(selected=self.plan["target"], execution_backend=self.backend,
+                              object_configuration=self.plan["target"]["s3"]["configuration"])
         self.current = copy.deepcopy(self.before)
         self.resources.objects.side_effect = lambda **_kw: copy.deepcopy(self.current["objects"])
         self.resources.redis_state.side_effect = lambda **_kw: copy.deepcopy(self.current["redis"])

@@ -145,6 +145,8 @@ class Fixture:
         for p in self.patches: test.addCleanup(p.stop)
         self.request["config_dir"] = str(self.configuration)
         self.request["configuration_sha256"] = configuration_digest(root, self.configuration)
+        from restore_reference_plan import configuration_binding
+        self.object_configuration = configuration_binding(root, self.configuration)
         self.path, self.output = self.local / "request.json", self.local / "new-generation"
         self.save_request()
         self.databases, self.redis_values, self.extra_objects, self.calls = set(), {}, {}, []
@@ -237,7 +239,7 @@ class Fixture:
             request = json.loads(kwargs["input"])
             assert request["format_version"] == 1
             assert request["scope_id"] == self.scope
-            assert request["configuration"] == self.request["target"]["s3"]
+            assert request["configuration_binding"] == self.object_configuration
             assert not any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"])
             operation, bucket = request["operation"], request["bucket"]
             assert bucket in BUCKETS

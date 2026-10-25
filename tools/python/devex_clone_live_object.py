@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from native_s3_client import configuration as object_configuration
 from pathlib import Path
 import subprocess
 
@@ -181,7 +182,7 @@ def verify_target_heads(backend: Path, tools: ExternalTools, items: list[dict], 
             bucket, key = item["bucket"], item["target_key"]
             observed = observations[bucket, key]
             resource = {"kind": "object", "scope_id": tools.plan["target"]["scope_id"],
-                        "endpoint": tools.plan["target"]["s3"]["endpoint"], "bucket": bucket, "key": key}
+                        "endpoint": object_configuration(tools.plan["target"]["s3"]["configuration"], backend)["endpoint"], "bucket": bucket, "key": key}
             if (not isinstance(observed, ObjectObservation) or observed.resource != resource
                     or observed.capture_directory is None or observed.absence_evidence_sha256 is not None):
                 raise ValueError("收尾缺少本目标真实完整下载的观察")

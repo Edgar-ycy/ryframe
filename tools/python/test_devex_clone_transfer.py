@@ -19,7 +19,8 @@ from devex_clone_ledger import CloneLedger, LedgerError
 from devex_clone_transfer import DatabaseBasis, DatabaseObservation, GenerationObservation, ObjectObservation, TransferSteps
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, ObjectCreateError
-from restore_reference_plan import plan_hash
+from restore_reference_plan import plan_hash, configuration_binding
+from native_s3_client import configuration as object_configuration
 
 GENERATION = "e" * 64
 
@@ -67,7 +68,7 @@ class OfflineGuard:
         return copy.deepcopy(self.current[key])
 
     def observe_object(self, bucket, key):
-        resource = {"kind": "object", "scope_id": "clone-target", "endpoint": self.case.tools.plan["target"]["s3"]["endpoint"], "bucket": bucket, "key": key}
+        resource = {"kind": "object", "scope_id": "clone-target", "endpoint": object_configuration(self.case.tools.plan["target"]["s3"]["configuration"], self.case.backend)["endpoint"], "bucket": bucket, "key": key}
         stored = self.case.runner.objects.get((bucket, key))
         if stored is None:
             return ObjectObservation(resource, None, "d" * 64)
@@ -186,7 +187,12 @@ class TransferTests(unittest.TestCase):
         tools_plan = {"tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]} for name in ("mysql",)}}
         for side in ("source", "target"):
             declared = self.fixture.value[side]
-            tools_plan[side] = {"scope_id": declared["scope_id"], "s3": {"endpoint": declared["object_endpoint"], "region": "us-east-1", "access_key": "fixture-access", "secret_key": "fixture-secret"},
+            configuration = self.work / side / "config"
+            configuration.mkdir(parents=True)
+            (configuration / "app.test.toml").write_text(
+                '[object_storage]\nbackend="rustfs"\n' + f'endpoint="{declared["object_endpoint"]}"\n'
+                + 'region="us-east-1"\naccess_key="fixture-access"\nsecret_key="fixture-secret"\n', encoding="utf-8")
+            tools_plan[side] = {"scope_id": declared["scope_id"], "s3": {"configuration": configuration_binding(self.backend, configuration)},
                                 "databases": [{**item, "defaults_file": str(defaults), "defaults_sha256": file_digest(defaults)["sha256"]} for item in declared["databases"]]}
         self.runner = OfflineTools(self)
         self.tools = ExternalTools(tools_plan, self.work, self.runner)

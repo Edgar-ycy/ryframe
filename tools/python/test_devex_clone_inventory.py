@@ -38,8 +38,7 @@ class InventoryTests(unittest.TestCase):
         self.client = self.local / "inventory-client.cnf"
         self.client.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n", encoding="utf-8")
         self.selected = {"scope_id": self.scope, "runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210",
-                         "s3": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1",
-                                "access_key": "access-fixture", "secret_key": "secret-fixture"}, "databases": []}
+                         "s3": {}, "databases": []}
         for key in inventory.KEYS:
             self.selected["databases"].append({"key": key, "kind": "combined" if key == "shared-control" else "tenant",
                 "mode": "dedicated" if key.startswith("dedicated-") else "shared", "server_uuid": UUID,

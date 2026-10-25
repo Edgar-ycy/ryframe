@@ -36,9 +36,9 @@ class SourceFileConfigurationTests(unittest.TestCase):
         self.assertEqual(table["database"]["primary"]["password"], "fixture-secret")
         self.assertTrue(all(target["password"] == "fixture-secret" for target in table["tenant_data"]["targets"]))
         self.assertEqual(table["redis"]["password"], "redis-fixture-secret")
-        self.assertEqual({field: table["object_storage"][field] for field in ("access_key", "secret_key")},
-                         {field: item.request["source"]["s3"][field] for field in ("access_key", "secret_key")})
-        self.assertEqual(set(item.request["source"]["s3"]), {"endpoint", "region", "access_key", "secret_key"})
+        self.assertEqual(item.request["source"]["s3"], {"configuration": item.object_configuration})
+        self.assertEqual(item.object_configuration, configuration_binding(item.backend, item.backend / "config"))
+        self.assertNotIn(table["object_storage"]["secret_key"], json.dumps(item.request))
         self.assertEqual(load_app_table(item.backend, item.environment, config_dir=item.backend / "config"), table)
         self.assertEqual((item.backend / "config/app.toml").read_text(encoding="utf-8").count("="), 0)
 
@@ -145,14 +145,14 @@ class SourceExportTests(unittest.TestCase):
         self.assertEqual((self.fixture.output / uploads["entries"][0]["artifact"]["file"]).read_bytes(), b"data")
         self.assertNotEqual(control["artifact"]["sha256"], result["logical_inventory_sha256"])
         private = self.fixture.request["source"]["s3"]
-        self.assertEqual(set(private), {"endpoint", "region", "access_key", "secret_key"})
+        self.assertEqual(private, {"configuration": self.fixture.object_configuration})
         self.assertEqual(source.read_json(self.fixture.request_path)["source"]["s3"], private)
         published = source.read_json(self.fixture.output / "request.json")["source"]["s3"]
-        self.assertEqual(published, {field: private[field] for field in ("endpoint", "region")})
+        self.assertEqual(published, {field: load_app_table(self.fixture.backend, self.fixture.environment)["object_storage"][field] for field in ("endpoint", "region")})
         for filename in ("request.json", "export.json"):
             raw = (self.fixture.output / filename).read_text(encoding="utf-8")
             for field in ("access_key", "secret_key"):
-                self.assertNotIn(private[field], raw)
+                self.assertNotIn(load_app_table(self.fixture.backend, self.fixture.environment)["object_storage"][field], raw)
 
     def test_registered_unused_target_is_exported_from_actual_target_inventory(self):
         item = self.fixture
@@ -167,7 +167,6 @@ class SourceExportTests(unittest.TestCase):
         item.request["runtime"] = item.bind(item.runtime_dir / "runtime.json", item.runtime)
         item.registry["runtime_sha256"] = item.request["runtime"]["sha256"]
         item.request["producers_registry"] = item.bind(item.local / "producers.json", item.registry)
-        item.object_configuration = configuration_binding(item.backend, item.backend / "config")
         item.save_request()
         item.backup_omits_empty = True
         result = self.export()
@@ -383,7 +382,6 @@ class SourceExportTests(unittest.TestCase):
         self.fixture.registry["runtime_sha256"] = self.fixture.request["runtime"]["sha256"]
         self.fixture.request["producers_registry"] = self.fixture.bind(
             self.fixture.local / "producers.json", self.fixture.registry)
-        self.fixture.object_configuration = configuration_binding(self.fixture.backend, self.fixture.backend / "config")
         self.fixture.save_request()
         self.fixture.missing_target = True
         self.failed("inventory_before")

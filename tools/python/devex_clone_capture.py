@@ -13,7 +13,7 @@ import stat
 import subprocess
 
 from artifact_digests import filesystem_path
-from native_s3_client import NativeS3InvocationError, read as native_s3_read
+from native_s3_client import NativeS3InvocationError, read as native_s3_read, configuration as object_configuration
 from restore_build import file_digest
 from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools, copy_object_metadata
 from restore_reference_plan import BUCKETS, plan_hash
@@ -134,12 +134,13 @@ def read_bound_json(path: Path, descriptor: dict) -> dict:
 
 def request_data(tools: ExternalTools, side: str, bucket: str, key: str, expected: dict, max_bytes: int, transport: str) -> dict:
     config = tools.plan[side]
+    objects = object_configuration(config["s3"]["configuration"])
     if transport != "rust-s3-sigv4":
         raise ValueError("对象采集只允许使用原生 Rust S3 传输")
     binding = {"transport": transport}
     return {"format_version": 1, "kind": "devex-clone-object-capture", "side": side,
-            "scope_id": config["scope_id"], "endpoint": config["s3"]["endpoint"],
-            "region": config["s3"]["region"], "bucket": bucket, "key": key,
+            "scope_id": config["scope_id"], "endpoint": objects["endpoint"],
+            "region": objects["region"], "bucket": bucket, "key": key,
             "expected": dict(expected), "max_bytes": max_bytes,
             **binding, "clone_verified": False}
 

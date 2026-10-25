@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from native_s3_client import configuration as object_configuration
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -96,7 +97,8 @@ def original_inputs(backend: Path, value: dict, request: dict) -> dict:
                 or launch.get("identity") != previous["identity"] or launch.get("arguments") != arguments(request)
                 or launch.get("credential_files") != request["credential_files"] or launch.get("environment") != configuration(request)):
             raise ValueError("目标重启不是原初始化中完整相同存储的代次过渡")
-    if selected["s3"]["endpoint"] != request["api_url"]:
+    objects = object_configuration(selected["s3"]["configuration"], backend) if side == "source" else selected["s3"]
+    if objects["endpoint"] != request["api_url"]:
         raise ValueError("存储端口不是原业务侧对象端点")
     return selected
 
@@ -128,9 +130,10 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
     exact(private, {"environment"})
     if not isinstance(private["environment"], dict) or any(type(k) is not str or type(v) is not str for k, v in private["environment"].items()):
         raise ValueError("存储环境必须是明确文本映射")
+    objects = object_configuration(selected["s3"]["configuration"], backend) if side == "source" else selected["s3"]
     for key, descriptor in request["credential_files"].items():
         contents = bound_file(backend, descriptor).read_text(encoding="utf-8").strip()
-        if not contents or contents != selected["s3"].get(key):
+        if not contents or contents != objects.get(key):
             raise ValueError("存储凭据文件与原业务认证不符")
     return copy.deepcopy(private["environment"])
 

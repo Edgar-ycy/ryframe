@@ -53,7 +53,7 @@ class GenerationImageTests(unittest.TestCase):
         if "__s3-read" in command:
             self.f.calls.append(command)
             request = json.loads(kwargs["input"])
-            self.assertEqual(request["configuration"], self.f.selected["s3"])
+            self.assertEqual(request["configuration_binding"], self.f.object_configuration)
             self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
             value = SourceFixture.object_response(self.f, request["operation"], request["bucket"],
                                                   request["key"], request["destination"])
@@ -118,7 +118,7 @@ class GenerationImageTests(unittest.TestCase):
             self.assertIs(request["write"], False)
             self.assertIn(request["operation"], {
                 "reference-plan-hash", "copy-schema-catalog",
-                "copy-database-observation", "reference-copy-metadata",
+                "copy-database-observation", "reference-configuration-binding", "reference-copy-metadata",
             })
             return native_run(command, **kwargs)
 

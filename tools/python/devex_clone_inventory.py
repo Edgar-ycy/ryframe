@@ -1,7 +1,7 @@
 """以已绑定维护 CLI 只读采集四个明确目标；不创建资源，不提供复制写入入口。"""
 from __future__ import annotations
 
-from native_s3_client import _invoke as native_invoke, _read_response as native_response
+from native_s3_client import _invoke as native_invoke, _read_response as native_response, configuration as object_configuration
 
 import copy
 from dataclasses import asdict, dataclass
@@ -244,8 +244,9 @@ class _Capture:
         self.redaction = dict(self.environment)
         self.database_credentials = {"backend": str(self.evidence_root), "databases": copy.deepcopy(list(self.databases.values()))}
         redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
+        objects = object_configuration(self.selected["s3"]["configuration"], self.evidence_root)
         for field in ("access_key", "secret_key"):
-            self.redaction[field.upper()] = self.selected["s3"][field]
+            self.redaction[field.upper()] = objects[field]
         self.evidence_names = set()
         self.tools = ExternalTools(self.plan, output, self.run, evidence_sink=self._track)
         self.artifacts = {}

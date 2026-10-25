@@ -1,4 +1,4 @@
-"""调用当前协调器的原生 S3 私有协议；对象凭据只通过标准输入传递。"""
+"""调用当前协调器的原生 S3 私有协议；对象凭据仅从绑定配置文件读取。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,28 @@ _SYSTEM_NAMES = frozenset({
     "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME", "USERPROFILE",
     "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP",
 })
+
+
+def configuration_binding(value: dict, backend: Path = ROOT) -> dict:
+    from restore_reference_plan import validate_configuration_binding
+
+    validate_configuration_binding(value, backend)
+    return value
+
+
+def configuration(value: dict, backend: Path = ROOT) -> dict:
+    """验证固定文件前后绑定；凭据只供当前调用内存使用。"""
+    from rate_limit_client import load_app_table
+
+    binding = configuration_binding(value, backend)
+    try:
+        table = load_app_table(backend, {"APP_ENV": binding["app_env"]},
+                               config_dir=Path(binding["directory"]))["object_storage"]
+        result = {field: table[field] for field in ("endpoint", "region", "access_key", "secret_key")}
+    except (KeyError, TypeError, ValueError, OSError):
+        raise ValueError("绑定对象配置加载失败；检查object_storage字段及配置文件，不回显配置内容") from None
+    configuration_binding(binding, backend)
+    return result
 
 
 class NativeS3InvocationError(RuntimeError):
