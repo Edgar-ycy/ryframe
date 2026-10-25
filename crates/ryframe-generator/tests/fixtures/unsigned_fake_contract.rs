@@ -57,13 +57,11 @@ async fn unsigned_auto_ids_cross_signed_limit_and_fail_closed_at_capacity() {
 #[tokio::test]
 async fn unsigned_explicit_ids_preserve_maximum_and_transaction_visibility() {
     let fake = SnowflakeFake::default();
-    let row = unsigned_snowflake::model::OrderRecord {
+    let row = unsigned_snowflake::model::OrderInsert {
         tenant_id: "tenant-a".into(),
         id: u64::MAX,
         name: "maximum".into(),
         status: 1,
-        created_at: chrono::Utc::now(),
-        updated_at: None,
         del_flag: 0,
     };
     let rollback = fake.begin("tenant-a").await.unwrap();
@@ -76,7 +74,18 @@ async fn unsigned_explicit_ids_preserve_maximum_and_transaction_visibility() {
             .is_none()
     );
     let transaction = fake.begin("tenant-a").await.unwrap();
-    transaction.insert(row).await.unwrap();
+    let inserted = transaction.insert(row).await.unwrap();
+    let created_at = inserted.created_at;
+    assert_eq!(created_at.timestamp_subsec_micros() % 1000, 0);
+    assert!(inserted.updated_at.is_some());
+    let mut changed = inserted;
+    let ignored = chrono::DateTime::from_timestamp(0, 0).unwrap();
+    changed.created_at = ignored;
+    changed.updated_at = Some(ignored);
+    changed.name = "changed".into();
+    let updated = transaction.update(changed).await.unwrap();
+    assert_eq!(updated.created_at, created_at);
+    assert!(updated.updated_at.unwrap() >= created_at);
     transaction
         .commit(TransactionAuditMode::Skip)
         .await

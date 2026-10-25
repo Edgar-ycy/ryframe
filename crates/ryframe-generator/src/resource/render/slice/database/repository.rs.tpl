@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use ryframe_application::generated::{name}::{{
-    {pascal}Filter, {pascal}PersistencePort, {pascal}Record{detail_import}, {pascal}Transaction,
+    {pascal}Filter, {pascal}PersistencePort, {pascal}Record{detail_import}{insert_import}, {pascal}Transaction,
 }};
 use ryframe_application::{{PersistenceTransaction, TransactionAuditMode}};
 use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
@@ -89,16 +89,14 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
             .map(to_record))
     }}
 
-    async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
+    async fn insert(&self, record: {insert_type}) -> AppResult<{pascal}Record> {{
         self.ensure_tenant({record_tenant})?;
 {insert_body}
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
         self.ensure_tenant({record_tenant})?;
-        entity::ActiveModel::from(to_entity(record))
-            .reset_all()
-            .update(&self.transaction)
+{update_body}
             .await
             .map(to_record)
             .db_conflicts(&[{unique_conflicts}], {generic_conflict:?})

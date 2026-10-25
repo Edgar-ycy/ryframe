@@ -225,6 +225,20 @@ pub struct FieldIr {
     pub enum_values: BTreeMap<String, LabelsIr>,
 }
 
+impl FieldIr {
+    pub(crate) fn database_clock(&self) -> bool {
+        self.sql_default.is_some() || self.sql_on_update.is_some()
+    }
+
+    pub(crate) fn database_default(&self) -> bool {
+        !self.usage.create && self.sql_default.is_some()
+    }
+
+    pub(crate) fn database_update(&self) -> bool {
+        !self.usage.update && self.database_clock()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldUsageIr {
     pub create: bool,

@@ -5,6 +5,23 @@ pub(super) mod migration;
 
 use super::super::{FieldIr, IndexIr, ResourceIr, StorageKind, ValueType};
 
+fn insert_type(resource: &ResourceIr) -> String {
+    let suffix = if resource.fields.iter().any(FieldIr::database_default) {
+        "Insert"
+    } else {
+        "Record"
+    };
+    format!("{}{suffix}", resource.pascal_name)
+}
+
+fn insert_import(resource: &ResourceIr) -> String {
+    if resource.fields.iter().any(FieldIr::database_default) {
+        format!(", {}Insert", resource.pascal_name)
+    } else {
+        String::new()
+    }
+}
+
 fn id_type(resource: &ResourceIr) -> &'static str {
     resource
         .fields

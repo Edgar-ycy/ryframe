@@ -6,7 +6,7 @@ use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
 
 use crate::{{PersistenceTransaction, TransactionAuditMode}};
 
-use super::model::{{{pascal}Filter, {pascal}Record{detail_import}}};
+use super::model::{{{pascal}Filter, {pascal}Record{detail_import}{insert_import}}};
 use super::port::{{{pascal}PersistencePort, {pascal}Transaction}};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,7 +16,7 @@ pub enum {pascal}Call {{
     Begin {{ tenant_id: String }},
 {control_call_variants}
     FindByIdForUpdate {{ tenant_id: String, id: {id_type} }},
-    Insert {{ record: {pascal}Record }},
+    Insert {{ record: {insert_type} }},
     Update {{ record: {pascal}Record }},
     Delete {{ tenant_id: String, id: {id_type} }},
     Commit {{ audit_mode: TransactionAuditMode }},
@@ -198,19 +198,21 @@ impl {pascal}Transaction for FakeTransaction {{
 {owner_transaction_context}        Ok(self.lock_view().get(&id){active_record_filter_method}{owner_transaction_filter}.cloned())
     }}
 
-    async fn insert(&self, {record_mut}record: {pascal}Record) -> AppResult<{pascal}Record> {{
+    async fn insert(&self, {record_mut}record: {insert_type}) -> AppResult<{pascal}Record> {{
         self.ensure_tenant({record_tenant})?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Insert {{ record: record.clone() }});
             fail_if_requested(&mut state, {pascal}Failure::Insert)?;
-{auto_id}        }}
+        }}
+{insert_record}{auto_id}
         self.lock_view().insert(record.id, record.clone());
         Ok(record)
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
         self.ensure_tenant({record_tenant})?;
+{update_record}
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Update {{ record: record.clone() }});

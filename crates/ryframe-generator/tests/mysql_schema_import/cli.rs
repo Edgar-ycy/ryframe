@@ -23,8 +23,8 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
     mysql::run_mysql_test("cliimport", |database| async move {
         let frontend = frontend::Candidate::from_control()?;
         let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
-        mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
-        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
+        mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
+        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "CREATE TABLE unsupported_table (id BIGINT NOT NULL PRIMARY KEY, payload BIT(8) NOT NULL) ENGINE=InnoDB").await?;
         mysql::execute(&database, "INSERT INTO table1(name,price) VALUES('existing','90071992547409.123456')").await?;
         let schema = database.query_one_raw(Statement::from_string(DbBackend::MySql, "SELECT DATABASE() AS name"))

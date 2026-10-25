@@ -268,7 +268,12 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
             field.name.as_str(),
             "created_at" | "updated_at" | "del_flag"
         );
-    let mutable = !field.primary_key && !field.generated && !field.read_only && !hidden;
+    let mutable = !field.primary_key
+        && !field.generated
+        && !field.read_only
+        && !hidden
+        && field.sql_default.is_none()
+        && field.sql_on_update.is_none();
     Ok(FieldSpec {
         name: field.name.clone(),
         column: (field.column != field.name).then(|| field.column.clone()),

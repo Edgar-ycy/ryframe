@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix full CRUD generation for MySQL imports with database clock defaults. Typed insert inputs omit database-generated values; updates preserve database clock semantics and return persisted values. Update fakes and existing CLI/compilation scenarios, continue rejecting unknown expressions, and retain application-managed audit clocks when no database expression is declared.
+
 - Fix initial-password-change sessions incorrectly rejecting context reads and password changes after nested routing rewrites the URI. Check the existing method and path allowlist against the original full URI, preserve business and message-ticket restrictions and normal permission checks, and cover nested behavior with HTTP middleware requests.
 
 - Fix generated business models and entities with JSON fields referencing an undeclared direct `serde_json` dependency. Generate the type through the SDK's public export and include a JSON field in the existing real business compilation scenario.

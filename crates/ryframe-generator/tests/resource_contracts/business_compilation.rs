@@ -313,7 +313,7 @@ fn import_table(name: &str) -> TableInfo {
         collation: (rust_type == "String").then(|| "utf8mb4_bin".into()),
         rust_type: rust_type.into(),
         default: match name {
-            "created_at" => Some("CURRENT_TIMESTAMP(6)".into()),
+            "created_at" | "updated_at" => Some("CURRENT_TIMESTAMP(6)".into()),
             "large_count" => Some(u64::MAX.to_string()),
             "price" => Some("0.125000".into()),
             _ => None,
@@ -323,7 +323,7 @@ fn import_table(name: &str) -> TableInfo {
         } else if name == "created_at" {
             "DEFAULT_GENERATED".into()
         } else if name == "updated_at" {
-            "on update CURRENT_TIMESTAMP(6)".into()
+            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP(6)".into()
         } else {
             String::new()
         },

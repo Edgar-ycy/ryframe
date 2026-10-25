@@ -6,7 +6,8 @@ use std::sync::{
 use invoice_business::generated::{
     dto::memo_item::{CreateMemoItemDto, MemoItemListQuery, UpdateMemoItemDto},
     models::memo_item::{
-        MemoItemFilter, MemoItemPersistencePort, MemoItemRecord, MemoItemTransaction,
+        MemoItemFilter, MemoItemInsert, MemoItemPersistencePort, MemoItemRecord,
+        MemoItemTransaction,
     },
     services::memo_item::MemoItemService,
 };
@@ -132,10 +133,22 @@ impl MemoItemTransaction for Transaction {
         self.probe.counts.reads.fetch_add(1, Ordering::SeqCst);
         Ok(Some(record()))
     }
-    async fn insert(&self, mut record: MemoItemRecord) -> AppResult<MemoItemRecord> {
+    async fn insert(&self, input: MemoItemInsert) -> AppResult<MemoItemRecord> {
         self.probe.counts.inserts.fetch_add(1, Ordering::SeqCst);
-        record.id = 42;
-        Ok(record)
+        Ok(MemoItemRecord {
+            id: 42,
+            code: input.code,
+            status: input.status,
+            tiny_count: input.tiny_count,
+            small_count: input.small_count,
+            byte_count: input.byte_count,
+            short_count: input.short_count,
+            count: input.count,
+            large_count: input.large_count,
+            price: input.price,
+            discount: input.discount,
+            ..record()
+        })
     }
     async fn update(&self, record: MemoItemRecord) -> AppResult<MemoItemRecord> {
         self.probe.counts.updates.fetch_add(1, Ordering::SeqCst);
@@ -159,8 +172,10 @@ fn record() -> MemoItemRecord {
         large_count: u64::MAX,
         price: Decimal::from_str_exact("0.125000").unwrap(),
         discount: None,
-        created_at: ryframe_sdk::chrono::Utc::now(),
-        updated_at: ryframe_sdk::chrono::Utc::now(),
+        created_at: ryframe_sdk::chrono::DateTime::from_timestamp(1_000_000_000, 123_456_000)
+            .unwrap(),
+        updated_at: ryframe_sdk::chrono::DateTime::from_timestamp(1_000_000_000, 123_456_000)
+            .unwrap(),
     }
 }
 
@@ -204,6 +219,8 @@ fn direct_sdk_calls_reject_rounding_and_preserve_default_values() {
         let saved = service.create(&actor, create_input().into()).await.unwrap();
         assert_eq!(saved.price.to_string(), "0.125000");
         assert_eq!(saved.large_count, u64::MAX);
+        assert_eq!(saved.created_at, record().created_at);
+        assert_eq!(saved.updated_at, record().updated_at);
         assert_eq!(probe.counts.inserts.load(Ordering::SeqCst), 1);
         assert_eq!(probe.counts.commits.load(Ordering::SeqCst), 1);
     });

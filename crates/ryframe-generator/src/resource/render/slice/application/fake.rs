@@ -76,6 +76,10 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     format!(
         include_str!("fake.rs.tpl"),
         header = header,
+        insert_type = super::super::insert_type(resource),
+        insert_import = super::super::insert_import(resource),
+        insert_record = super::fake_clock::insert(resource),
+        update_record = super::fake_clock::update(resource),
         scope_parameter = scope_parameter,
         owner_read_filter = owner_read_filter,
         owner_transaction_filter = owner_transaction_filter,
@@ -106,7 +110,9 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
             "&record.tenant_id"
         },
         control_methods = control_methods,
-        record_mut = if resource.id_generation == crate::IdGeneration::AutoIncrement {
+        record_mut = if resource.id_generation == crate::IdGeneration::AutoIncrement
+            && !resource.fields.iter().any(|field| field.database_default())
+        {
             "mut "
         } else {
             ""
@@ -118,7 +124,7 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
         },
         auto_id = if resource.id_generation == crate::IdGeneration::AutoIncrement {
             format!(
-                "            let maximum = state.records.values().map(|record| record.id).max().unwrap_or_default().max(state.next_id);\n            state.next_id = maximum.checked_add(1).ok_or_else(|| AppError::Conflict(\"自增 ID 已超出 {id_type} 范围\".into()))?;\n            record.id = state.next_id;\n"
+                "        {{\n            let mut state = self.lock_state();\n            let maximum = state.records.values().map(|record| record.id).max().unwrap_or_default().max(state.next_id);\n            state.next_id = maximum.checked_add(1).ok_or_else(|| AppError::Conflict(\"自增 ID 已超出 {id_type} 范围\".into()))?;\n            record.id = state.next_id;\n        }}\n"
             )
         } else {
             String::new()

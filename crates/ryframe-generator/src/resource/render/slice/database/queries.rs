@@ -294,6 +294,12 @@ pub(crate) fn delete_body(resource: &ResourceIr) -> String {
         let time_update = resource
             .audit
             .as_ref()
+            .filter(|audit| {
+                !resource
+                    .fields
+                    .iter()
+                    .any(|field| field.name == audit.updated_at && field.database_update())
+            })
             .map(|audit| {
                 let updated_at = resource
                     .fields
