@@ -178,19 +178,31 @@ fn controller_owner_source_and_argv_mismatches_are_rejected() {
     for field in [
         "controller",
         "running-digest",
+        "controller-extra",
         "owner",
+        "missing-owner",
+        "owner-key",
+        "process-extra",
+        "executable",
         "source",
         "argv",
         "phase",
+        "launch-extra",
+        "launch-controller",
+        "registration",
     ] {
         let mut fixture = Fixture::new();
         match field {
             "controller" => fixture.registered["controller"]["sha256"] = json!("0".repeat(64)),
-            "running-digest" => {
+            "running-digest" | "controller-extra" => {
                 let path = fixture.run.join("controller-0001.json");
                 let mut controller = json_io::read(&path).unwrap();
-                controller["attempt_sha256"] =
-                    json!(digest::plan_hash(&fixture.registered["attempt"]).unwrap());
+                if field == "running-digest" {
+                    controller["attempt_sha256"] =
+                        json!(digest::plan_hash(&fixture.registered["attempt"]).unwrap());
+                } else {
+                    controller["unexpected"] = json!(true);
+                }
                 fs::write(&path, serde_json::to_vec(&controller).unwrap()).unwrap();
                 fixture.registered["controller"] = common::binding(&path).unwrap();
                 let mut launch =
@@ -198,10 +210,31 @@ fn controller_owner_source_and_argv_mismatches_are_rejected() {
                 launch["controller"] = fixture.registered["controller"].clone();
                 fixture.relaunch(&launch);
             }
-            "owner" => {
+            "owner" | "missing-owner" | "owner-key" | "process-extra" | "executable" => {
                 let mut process =
                     json_io::read(&fixture.output.join("session-process.json")).unwrap();
-                process["identity_lock_owner"] = json!("abcdefab-1234-1234-8234-abcdefabcdef");
+                match field {
+                    "owner" => {
+                        process["identity_lock_owner"] =
+                            json!("abcdefab-1234-1234-8234-abcdefabcdef");
+                    }
+                    "missing-owner" | "owner-key" => {
+                        let owner = process
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("identity_lock_owner")
+                            .unwrap();
+                        if field == "owner-key" {
+                            process["producer_owner"] = owner;
+                        }
+                    }
+                    "process-extra" => process["unexpected"] = json!(true),
+                    _ => {
+                        let other = fixture.backend.join("other.exe");
+                        fs::write(&other, b"other historical tool").unwrap();
+                        process["identity"]["executable"] = json!(other);
+                    }
+                }
                 fixture.rewrite("session-process.json", &process);
             }
             _ => {
@@ -211,6 +244,14 @@ fn controller_owner_source_and_argv_mismatches_are_rejected() {
                     launch["source"]["sha256"] = json!("0".repeat(64));
                 } else if field == "phase" {
                     launch["producer_kind"] = json!("identity-verify");
+                } else if field == "launch-extra" {
+                    launch["unexpected"] = json!(true);
+                } else if field == "launch-controller" {
+                    launch["controller"] =
+                        common::binding(&fixture.run.join("manifest.json")).unwrap();
+                } else if field == "registration" {
+                    launch["registration"] =
+                        common::binding(&fixture.run.join("manifest.json")).unwrap();
                 } else {
                     launch["command"][1] = json!("__wrong-producer");
                 }

@@ -204,6 +204,10 @@ fn runtime_configuration_artifact_and_worker_url_drift_fail_closed() {
     let mut fixture = Fixture::new();
     let original = fixture.receipt.clone();
     for (field, replacement) in [
+        (
+            "api_config_dir",
+            json!(fixture.backend.join("unbound/config")),
+        ),
         ("configuration_sha256", json!("f".repeat(64))),
         ("worker_configuration_sha256", json!("d".repeat(64))),
         ("worker_ready_url", json!("http://127.0.0.1/readyz")),
