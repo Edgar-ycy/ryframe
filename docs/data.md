@@ -56,12 +56,13 @@ cargo migrate -- tenant-data verify --all
 
 ## 已有表接管
 
-已有表只能显式接管。先导入或手写模型、登记描述符并生成匹配迁移，停止 API/Worker，再保存、检查和应用计划：
+已有表只能显式接管。在正常控制库另加未登记的业务表后，启动校验拒绝未知表属于预期边界；保留表及数据，不能把生成模型后直接 `serve` 当成接管。先停止 API/Worker 等生产者，准备已登记模块及匹配模型、迁移，并使用包含该登记的当前迁移程序。以下命令要求框架账本、完整结构及业务权限/菜单已满足接管前置校验；新增访问目录未初始化也会阻断预览、核验和应用，不能跳过此门禁或靠重复 `up` 猜测补齐。满足前提后保存、检查和应用同一计划，再次 inspect 确认结果；确有已审阅的后续迁移时，在最终 verify 前显式执行对应范围的 `up`：
 
 ```powershell
 cargo migrate -- control adopt --module order --output .local-tests/order-adopt.json --write
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
+cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 cargo migrate -- control verify
 ```
 

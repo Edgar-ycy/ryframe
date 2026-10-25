@@ -56,12 +56,13 @@ Framework maintainers can use `cargo xtask data migrate check` to validate the m
 
 ## Adopting Existing Tables
 
-Existing tables can be adopted only explicitly. First import or handwrite the model, register the descriptor, and generate a matching migration. Stop the API/Worker, then save, inspect, and apply the plan:
+Existing tables require explicit adoption. If unregistered business tables are added to an initialized control database, startup rejection of unknown tables is expected. Preserve the tables and data; generating models and immediately running `serve` does not establish adoption. Stop producers including API/Worker, prepare registered modules with matching models and migrations, and use a current migration binary containing that registration. The commands below require the framework ledger, complete schema and business permissions/menus to satisfy adoption prechecks. Uninitialized new access entries also block preview, inspection and application; do not skip this gate or repeatedly run `up` to guess how to complete it. Once prerequisites hold, save, inspect and apply the same plan, then inspect again to confirm its result. If reviewed subsequent migrations are needed, explicitly run `up` for the corresponding scope before the final verify:
 
 ```powershell
 cargo migrate -- control adopt --module order --output .local-tests/order-adopt.json --write
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
+cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 cargo migrate -- control verify
 ```
 
