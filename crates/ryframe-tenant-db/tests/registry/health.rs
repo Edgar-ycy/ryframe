@@ -4,7 +4,7 @@ use std::error::Error;
 #[tokio::test]
 async fn cached_schema_and_fresh_ping_failures_keep_safe_causes_and_health() {
     let pool = Arc::new(OpenPool::new(
-        DatabaseConnection::Disconnected,
+        DatabaseConnection::default(),
         ryframe_config::DbConnection {
             password: "private-health-password".into(),
             ..Default::default()
@@ -13,7 +13,7 @@ async fn cached_schema_and_fresh_ping_failures_keep_safe_causes_and_health() {
         Arc::new(Mutex::new(TargetHealthRecord::default())),
     ));
     let lease = pool.acquire(Arc::from("health-target"));
-    // 独立覆盖 OnceCell 的错误克隆与公开健康状态，不让 Disconnected 冒充真实 schema 查询。
+    // 独立覆盖 OnceCell 的错误克隆与公开健康状态，不把默认未连接实例当作真实 schema 查询。
     let schema_error = lease.unavailable("schema", "schema drift private-health-password");
     pool.schema_verification.set(Err(schema_error)).unwrap();
     let first = lease.ensure_schema_verified().await.unwrap_err();
