@@ -93,13 +93,6 @@ impl RoleReadPort for DatabaseRoleRead {
             .map(|roles| roles.into_iter().map(to_record).collect())
     }
 
-    async fn find_super_role(&self, tenant_id: &str) -> AppResult<Option<RoleRecord>> {
-        Ok(RoleRepository
-            .find_super_role(self.database.write(), tenant_id)
-            .await?
-            .map(to_record))
-    }
-
     async fn find_role_dept_ids(&self, tenant_id: &str, role_id: i64) -> AppResult<Vec<i64>> {
         RoleRepository
             .find_role_dept_ids(self.database.write(), tenant_id, role_id)

@@ -49,8 +49,6 @@ pub trait RoleReadPort: Send + Sync {
         window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<RoleRecord>>;
 
-    async fn find_super_role(&self, tenant_id: &str) -> AppResult<Option<RoleRecord>>;
-
     async fn find_role_dept_ids(&self, tenant_id: &str, role_id: i64) -> AppResult<Vec<i64>>;
 
     async fn find_permission_codes(
