@@ -125,7 +125,7 @@ fn record_process(request: &Value) -> Result<Value> {
     if identity["executable"] != launch["tool"]["path"] {
         return Err("生产者 executable 与已授权启动工具不同".into());
     }
-    inspection::require_actual_argv(pid, &launch["command"])?;
+    inspection::require_actual_argv(&identity, &launch["command"])?;
     let kind = json_io::text(&root["kind"], "生产者类型")?;
     let mut receipt = json!({"format_version":1,"kind":"devex-post-producer","launch":common::binding(&output.join("session-launch.json"))?,"identity":identity});
     if kind != "existing" {

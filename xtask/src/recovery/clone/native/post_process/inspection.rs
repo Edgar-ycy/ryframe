@@ -1,8 +1,5 @@
 use std::path::{Path, PathBuf};
 
-#[cfg(windows)]
-use std::process::Command;
-
 use serde_json::{Value, json};
 
 use super::{
@@ -14,6 +11,8 @@ use super::{
     command, registration,
 };
 use crate::Result;
+#[cfg(windows)]
+use crate::recovery::fixture_control::services::lifecycle::readonly::process;
 
 pub(super) fn inspect(request: &Value) -> Result<Value> {
     let root = json_io::exact(
@@ -133,7 +132,7 @@ pub(super) fn inspect(request: &Value) -> Result<Value> {
         .map_err(|_| "生产者 PID 超出范围")?;
     let alive = match common::process_identity(pid)? {
         Some(current) if current == identity => {
-            if actual_argv(pid)? != values(&launch["command"])? {
+            if actual_argv(&identity)? != values(&launch["command"])? {
                 return Err("原生实际参数不属于固定 run 和 attempt".into());
             }
             true
@@ -239,8 +238,8 @@ fn values(value: &Value) -> Result<Vec<String>> {
         .collect()
 }
 
-pub(super) fn require_actual_argv(pid: u32, expected: &Value) -> Result<()> {
-    if actual_argv(pid)? != values(expected)? {
+pub(super) fn require_actual_argv(identity: &Value, expected: &Value) -> Result<()> {
+    if actual_argv(identity)? != values(expected)? {
         return Err("生产者实际参数不同于已授权启动命令".into());
     }
     Ok(())
@@ -272,7 +271,10 @@ fn path(value: &Value, label: &str) -> Result<PathBuf> {
 }
 
 #[cfg(unix)]
-fn actual_argv(pid: u32) -> Result<Vec<String>> {
+fn actual_argv(identity: &Value) -> Result<Vec<String>> {
+    let identity = common::validate_process_identity(identity)?;
+    let pid = u32::try_from(identity["pid"].as_u64().ok_or("生产者 PID 无效")?)
+        .map_err(|_| "生产者 PID 超出范围")?;
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline"))?;
     Ok(bytes
         .split(|b| *b == 0)
@@ -281,69 +283,10 @@ fn actual_argv(pid: u32) -> Result<Vec<String>> {
         .collect::<std::result::Result<_, _>>()?)
 }
 #[cfg(windows)]
-fn actual_argv(pid: u32) -> Result<Vec<String>> {
-    let script = format!(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine | ConvertTo-Json -Compress"
-    );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()?;
-    if !output.status.success() {
-        return Err("读取原生参数失败".into());
-    }
-    let line: String = serde_json::from_slice(&output.stdout)?;
-    windows_argv(&line)
+fn actual_argv(identity: &Value) -> Result<Vec<String>> {
+    process::arguments(identity)
 }
 #[cfg(not(any(unix, windows)))]
-fn actual_argv(_: u32) -> Result<Vec<String>> {
+fn actual_argv(_: &Value) -> Result<Vec<String>> {
     Err("当前平台不支持进程参数核验".into())
-}
-
-#[cfg(windows)]
-pub(super) fn windows_argv(line: &str) -> Result<Vec<String>> {
-    let mut result = Vec::new();
-    let chars = line.chars().collect::<Vec<_>>();
-    let mut i = 0;
-    while i < chars.len() {
-        while i < chars.len() && chars[i].is_whitespace() {
-            i += 1
-        }
-        if i == chars.len() {
-            break;
-        }
-        let mut value = String::new();
-        let mut quoted = false;
-        while i < chars.len() {
-            let mut slashes = 0;
-            while i < chars.len() && chars[i] == '\\' {
-                slashes += 1;
-                i += 1
-            }
-            if i < chars.len() && chars[i] == '"' {
-                value.extend(std::iter::repeat_n('\\', slashes / 2));
-                if slashes % 2 == 1 {
-                    value.push('"');
-                    i += 1
-                } else {
-                    quoted = !quoted;
-                    i += 1
-                }
-                continue;
-            }
-            value.extend(std::iter::repeat_n('\\', slashes));
-            if i == chars.len() || (!quoted && chars[i].is_whitespace()) {
-                break;
-            }
-            value.push(chars[i]);
-            i += 1
-        }
-        result.push(value);
-        while i < chars.len() && chars[i].is_whitespace() {
-            i += 1
-        }
-    }
-    if result.is_empty() {
-        return Err("原生参数为空".into());
-    }
-    Ok(result)
 }

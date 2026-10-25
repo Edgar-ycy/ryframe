@@ -77,10 +77,16 @@ fn pid_reuse_only_accepts_a_strictly_newer_generation() {
 }
 
 #[test]
-fn abnormal_cleanup_refuses_a_reused_current_pid() {
+fn producer_argv_and_cleanup_refuse_a_reused_current_pid() {
     let current = std::process::id();
     let fake = json!({"pid":current,"started":"1","executable":std::env::current_exe().unwrap()});
     assert!(protocol::terminate_process(&json!({"identity":fake})).is_err());
+    #[cfg(windows)]
+    {
+        let expected = json!(std::env::args().collect::<Vec<_>>());
+        let error = inspection::require_actual_argv(&fake, &expected).unwrap_err();
+        assert_eq!(error.to_string(), "登记进程已退出或内核创建身份变化");
+    }
 }
 
 #[test]
@@ -98,18 +104,6 @@ fn producer_kind_is_bound_to_one_stage_and_mode() {
     assert!(!command::accepts("identity-apply", "identities-verify"));
     assert!(command::accepts("session", "reconcile"));
     assert!(!command::accepts("session", "verify"));
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_argv_preserves_quotes_spaces_and_escaped_quotes() {
-    let value = inspection::windows_argv(
-        r#"D:\工具\xtask.exe __identity-producer --run-dir "D:\有 空格\run" --value "a\"b""#,
-    )
-    .unwrap();
-    assert_eq!(value[0], r"D:\工具\xtask.exe");
-    assert_eq!(value[3], r"D:\有 空格\run");
-    assert_eq!(value[5], "a\"b");
 }
 
 #[test]
