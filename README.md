@@ -10,8 +10,8 @@ RyFrame 是面向企业后台的 Rust 2024 框架，与 Vue 3 管理端配套使
 
 后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell；MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
 
-1. 安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
-2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。文件存储默认使用本地目录，也支持 RustFS、MinIO 和 S3 兼容服务。
+1. Windows 原生构建先安装 Visual Studio 或 Build Tools 的“Desktop development with C++”工作负载，包含目标架构的 MSVC C/C++ 工具与 Windows SDK，见 [rustup 官方 Windows MSVC 前置说明](https://rust-lang.github.io/rustup/installation/windows-msvc.html)。再安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
+2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。公共配置的文件存储默认使用本地目录，但 `config/app.dev.toml` 会覆盖为 RustFS；不使用对象存储服务时，须按下方片段在私有开发配置中显式改为 `local`。也支持 MinIO 和 S3 兼容服务。实时消息的 WebSocket 票据依赖可用 Redis；`redis.mode="optional"` 下应用就绪不代表实时消息可用，验收实时消息时应配置 `required` 并提供可连接的 Redis。
 3. 使用数据库客户端创建空库，例如：
 
 ```sql
@@ -67,7 +67,7 @@ cargo migrate -- --config-dir .local-tests/dev-config control export-sql --outpu
 
 租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 
-`cargo xtask dev --config-dir .local-tests/dev-config` 使用完整私有文件快照管理 API 与 Worker；保存端口或根实例编号后复用二进制切换新代次，失败恢复旧配置与旧端口。相对配置目录以后端 Workspace 根目录解析，也可在工具文件的 `[development].config_dir` 指定；`--plan` 不读配置或执行任务。该监督器改造仍待集成运行验证，不能据此声称完整验收。
+`cargo xtask dev --config-dir .local-tests/dev-config` 使用完整私有文件快照管理 API 与 Worker；保存端口或根实例编号后复用二进制切换新代次，失败恢复旧配置与旧端口。相对配置目录以后端 Workspace 根目录解析，也可在工具文件的 `[development].config_dir` 指定；`--plan` 不读配置或执行任务。
 
 ## 开发业务
 

@@ -10,8 +10,8 @@ It includes users, roles, permissions, organizations, product plans, tenancy, co
 
 Backend and frontend are separate repositories. Run these commands from the backend root. Examples use Windows PowerShell; MySQL, Redis and RustFS/MinIO/S3-compatible storage may run on any suitable platform or remote server. WSL is not required.
 
-1. Install rustup and run `rustup show` in the repository to select the stable toolchain, rustfmt and Clippy pinned by `rust-toolchain.toml`.
-2. Prepare MySQL 8.0.16 or newer (MariaDB is not a substitute) and an account with the required schema, migration and application permissions. Redis uses a RESP connection; Redis 7.x is the current acceptance baseline (CI uses 7.4.9), with AUTH, an isolated database index and TLS configured as required by the deployment. File storage defaults to a local directory and also supports RustFS, MinIO and S3-compatible services.
+1. For native Windows builds, first install the “Desktop development with C++” workload in Visual Studio or Build Tools, including MSVC C/C++ tools for the target architecture and a Windows SDK; see the [official rustup Windows MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html). Then install rustup and run `rustup show` in the repository to select the stable toolchain, rustfmt and Clippy pinned by `rust-toolchain.toml`.
+2. Prepare MySQL 8.0.16 or newer (MariaDB is not a substitute) and an account with the required schema, migration and application permissions. Redis uses a RESP connection; Redis 7.x is the current acceptance baseline (CI uses 7.4.9), with AUTH, an isolated database index and TLS configured as required by the deployment. Common configuration defaults file storage to a local directory, but `config/app.dev.toml` overrides it with RustFS. If no object storage service is used, explicitly switch the private development configuration to `local` as shown below. MinIO and S3-compatible services are also supported. Realtime messaging WebSocket tickets require available Redis; application readiness with `redis.mode="optional"` does not establish realtime messaging availability. For realtime messaging acceptance, configure `required` and provide reachable Redis.
 3. Create an empty database with a database client, for example:
 
 ```sql
@@ -67,7 +67,7 @@ Migration initialization is recommended; for direct SQL import, first export the
 
 Create and register empty tenant business databases before running `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>` and `verify`. `--target` takes the configured target key, not the database name; `--all` processes registered targets only. Use `cargo reset -- <arguments>` for controlled nonproduction rebuilding after stopping API, Worker and schedulers; see the [operations guide](docs/operations.en.md).
 
-`cargo xtask dev --config-dir .local-tests/dev-config` manages the API and Worker through complete private file snapshots. Saving ports or the root instance identifier switches generations while reusing binaries; failures restore the previous configuration and ports. Relative configuration directories resolve against the backend Workspace root and can also be selected through `[development].config_dir` in tool files. `--plan` does not read configuration or execute tasks. This supervisor change still awaits integrated runtime verification and does not establish overall acceptance.
+`cargo xtask dev --config-dir .local-tests/dev-config` manages the API and Worker through complete private file snapshots. Saving ports or the root instance identifier switches generations while reusing binaries; failures restore the previous configuration and ports. Relative configuration directories resolve against the backend Workspace root and can also be selected through `[development].config_dir` in tool files. `--plan` does not read configuration or execute tasks.
 
 ## Develop business modules
 
