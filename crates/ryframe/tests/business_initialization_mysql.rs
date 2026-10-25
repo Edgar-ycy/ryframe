@@ -17,6 +17,9 @@ mod adoption_races;
 mod adoption_unknown;
 #[path = "../src/bin/ryframe_migrate/targets.rs"]
 mod migration_targets;
+#[cfg(feature = "bin-api")]
+#[path = "business_initialization_mysql/replicas.rs"]
+mod replicas;
 #[path = "business_initialization_mysql/response_gate.rs"]
 mod response_gate;
 #[path = "business_initialization_mysql/sql_guard.rs"]

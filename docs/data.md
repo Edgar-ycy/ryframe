@@ -183,7 +183,7 @@ tls_ca = "/run/secrets/mysql-ca.pem"
 
 primary、replicas、sources 和 MySQL 租户目标均直接使用 `password` 字段，不读取凭据环境覆盖，也不接受 DSN；空密码仍须显式填写，能否认证由服务端决定。副本及 source 名称不能重复或互相冲突，source 不能使用 `primary`。MySQL 租户目标的主机、端口、库名组合不能与控制库、副本、source 或其他目标重叠；不同服务器允许同名库，不能只按库名判断身份。命名 source 可作为 primary 的显式别名，但仍受租户目标独立性检查约束。TLS 默认 `required`，它只要求加密；`verify_ca` 验证证书链，`verify_identity` 另核对主机名，两者都要求 CA；远程生产的上述连接和目标必须使用 `verify_identity`。mTLS 证书与私钥必须成对配置；隔离开发可显式禁用 TLS，但共享真实 MySQL 测试不接受 Disabled。
 
-replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询，全部不可用时在选池阶段回退 primary，不把已失败 SQL 自动切主重放；`Strong`、写后读、授权、任务、导出和状态转换使用 primary。启动不等待副本，后台重连并通过健康及结构核验后才加入路由；primary 或已配置的命名 source 连接失败则阻断启动。RyFrame 不建立 MySQL 主从复制或等待追平，延迟监控和故障切换由运维负责。`database.sources` 通过 `control_database.source("<name>")` 获取并返回 `Option`，不参与自动读路由；每个来源有独立连接池和事务，与 primary 的事务不共享提交或回滚，不自动分库，也没有跨库分布式事务。MySQL 租户目标没有副本配置，最终一致性读取也使用其自身目标池。生成器的结构来源不自动成为运行目标。
+replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询，全部不可用时在选池阶段回退 primary，不把已失败 SQL 自动切主重放；`Strong`、写后读、授权、任务、导出和状态转换使用 primary。启动不等待副本，后台重连并通过健康、框架账本/结构、访问目录及当前登记的控制库业务表结构核验后才加入路由；控制库业务表漂移立即摘除，恢复后仍须连续两次完整核验成功；primary 或已配置的命名 source 连接失败则阻断启动。RyFrame 不建立 MySQL 主从复制或等待追平，延迟监控和故障切换由运维负责。`database.sources` 通过 `control_database.source("<name>")` 获取并返回 `Option`，不参与自动读路由；每个来源有独立连接池和事务，与 primary 的事务不共享提交或回滚，不自动分库，也没有跨库分布式事务。MySQL 租户目标没有副本配置，最终一致性读取也使用其自身目标池。生成器的结构来源不自动成为运行目标。
 
 | 布局 | placement 目标 | 边界 |
 | --- | --- | --- |

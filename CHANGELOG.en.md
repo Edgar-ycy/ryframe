@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Replica admission now checks registered control-business table structures after the existing PING and framework verification. Drift removes a replica as a schema hard failure, retaining the two-second budget, three-failure/two-success thresholds and no replay of failed SQL. A same-instance two-owned-schema scenario uses a transparent TLS byte proxy to exercise the real monitor, routing, disconnection, recovery and explicit schema repair without claiming cross-instance or MySQL replication coverage.
+
 - Fix the Windows development supervisor treating a canonical path's drive prefix as a directory. Retain component-by-component link/reparse-point rejection and complete configuration snapshots.
 
 - Fix incorrect rejection of Windows maintenance-tool provenance when canonical and ordinary paths are mixed. Normalize path representation while retaining owning-worktree, link and receipt-boundary validation.

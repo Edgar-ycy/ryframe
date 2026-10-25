@@ -278,7 +278,14 @@ async fn validate_replica(
         .map_err(ReplicaProbeFailure::Connectivity)?;
     verify_database_node(name, connection)
         .await
-        .map_err(ReplicaProbeFailure::Schema)
+        .map_err(ReplicaProbeFailure::Schema)?;
+    ryframe_db::migration::verify_business_schema(connection)
+        .await
+        .map_err(|error| {
+            ReplicaProbeFailure::Schema(AppError::Internal(format!(
+                "副本 {name} 的控制库业务结构校验失败：{error}"
+            )))
+        })
 }
 
 /// 按当前迁移账本校验列、索引和外键，账本落后时同样拒绝路由。

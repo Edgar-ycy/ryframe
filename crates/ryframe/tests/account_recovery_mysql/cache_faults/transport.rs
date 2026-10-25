@@ -1,7 +1,4 @@
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::{net::SocketAddr, time::Duration};
 
 use ryframe_adapters::RedisClient;
 use ryframe_config::RedisConfig;
@@ -13,9 +10,9 @@ use tokio::{
 
 /// 仅转发本用例的回环连接，不终止 TLS，也不接触 Redis 命令或凭据。
 pub(super) struct Proxy {
-    address: SocketAddr,
+    addresses: Vec<SocketAddr>,
     upstream: (String, u16),
-    running: Option<Running>,
+    running: Vec<Running>,
 }
 
 struct Running {
@@ -25,21 +22,23 @@ struct Running {
 
 impl Proxy {
     pub(super) async fn start(config: &RedisConfig) -> Result<Self, String> {
-        let ip = match config.host.as_str() {
-            "localhost" | "127.0.0.1" => IpAddr::V4(Ipv4Addr::LOCALHOST),
-            "::1" => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
-            _ => return Err("授权缓存网络故障用例只接受明确回环 Redis；不改写 TLS 主机名".into()),
-        };
-        let listener = TcpListener::bind(SocketAddr::new(ip, 0))
-            .await
-            .map_err(|_| "无法创建本用例回环 Redis 代理")?;
-        let address = listener
-            .local_addr()
-            .map_err(|_| "无法读取本用例代理地址")?;
+        if !matches!(config.host.as_str(), "localhost" | "127.0.0.1" | "::1") {
+            return Err("故障代理只接受显式回环主机，不改写 TLS 主机名".into());
+        }
+        let listeners = bind_hostname(&config.host).await?;
+        let addresses = listeners
+            .iter()
+            .map(TcpListener::local_addr)
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|_| "无法读取代理监听地址")?;
+        eprintln!("故障代理监听回环地址：{addresses:?}");
         let upstream = (config.host.clone(), config.port);
-        let running = Some(spawn(listener, upstream.clone()));
+        let running = listeners
+            .into_iter()
+            .map(|listener| spawn(listener, upstream.clone()))
+            .collect();
         Ok(Self {
-            address,
+            addresses,
             upstream,
             running,
         })
@@ -48,36 +47,90 @@ impl Proxy {
     pub(super) fn configuration(&self, original: &RedisConfig) -> RedisConfig {
         let mut derived = original.clone();
         // host、TLS、认证、database、scope 和超时均保持原配置，仅绑定本用例端口。
-        derived.port = self.address.port();
+        derived.port = self.addresses[0].port();
         derived
     }
 
     pub(super) async fn disconnect(&mut self) -> Result<(), String> {
-        let running = self.running.take().ok_or("本用例代理没有运行")?;
-        let _ = running.stop.send(());
-        running.task.await.map_err(|_| "本用例代理停止任务异常")?
+        if self.running.is_empty() {
+            return Err("本用例代理当前未运行".into());
+        }
+        let mut tasks = Vec::new();
+        for running in self.running.drain(..) {
+            let _ = running.stop.send(());
+            tasks.push(running.task);
+        }
+        let mut errors = Vec::new();
+        for task in tasks {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => errors.push(error),
+                Err(_) => errors.push("本用例代理退出任务异常".into()),
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("；"))
+        }
     }
 
     pub(super) async fn restore(&mut self) -> Result<(), String> {
-        if self.running.is_some() {
+        if !self.running.is_empty() {
             return Err("本用例代理仍在运行，拒绝重复绑定".into());
         }
-        let listener = TcpListener::bind(self.address)
-            .await
-            .map_err(|_| "无法重新独占原代理端口；不换端口、不重建客户端，保留失败")?;
-        self.running = Some(spawn(listener, self.upstream.clone()));
+        // 全部地址成功绑定后才接收连接；恢复不换主机名、端口或地址族。
+        let mut listeners = Vec::new();
+        for address in &self.addresses {
+            listeners.push(
+                TcpListener::bind(address)
+                    .await
+                    .map_err(|_| "原代理回环地址无法重新独占；不换端口或配置，保留现场")?,
+            );
+        }
+        self.running = listeners
+            .into_iter()
+            .map(|listener| spawn(listener, self.upstream.clone()))
+            .collect();
         Ok(())
     }
 }
 
 impl Drop for Proxy {
     fn drop(&mut self) {
-        if let Some(running) = self.running.take() {
+        for running in self.running.drain(..) {
             let _ = running.stop.send(());
             // 运行任务的 JoinSet 随任务释放会中止全部连接，覆盖 panic/取消路径。
             running.task.abort();
         }
     }
+}
+
+/// 与客户端使用同一主机名解析入口，完整监听其回环地址族，共用一个端口。
+async fn bind_hostname(host: &str) -> Result<Vec<TcpListener>, String> {
+    let mut addresses = tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|_| "无法解析代理回环主机")?
+        .collect::<Vec<_>>();
+    addresses.sort_unstable();
+    addresses.dedup();
+    if addresses.is_empty() || addresses.iter().any(|address| !address.ip().is_loopback()) {
+        return Err("代理主机必须只解析到回环地址".into());
+    }
+    let mut listeners: Vec<TcpListener> = Vec::new();
+    let mut port = 0;
+    for mut address in addresses {
+        address.set_port(port);
+        let listener = TcpListener::bind(address)
+            .await
+            .map_err(|_| "无法独占代理主机的全部回环地址")?;
+        port = listener
+            .local_addr()
+            .map_err(|_| "无法读取代理端口")?
+            .port();
+        listeners.push(listener);
+    }
+    Ok(listeners)
 }
 
 fn spawn(listener: TcpListener, upstream: (String, u16)) -> Running {
@@ -105,7 +158,12 @@ fn spawn(listener: TcpListener, upstream: (String, u16)) -> Running {
                     });
                 }
                 completed = connections.join_next(), if !connections.is_empty() => {
-                    if let Some(Err(_)) = completed { break Err("本用例代理转发任务 panic".into()); }
+                    match completed {
+                        Some(Err(_)) => break Err("本用例代理转发任务 panic".into()),
+                        Some(Ok(Err(error))) => eprintln!(
+                            "回环代理连接退役：kind={:?} os_code={:?}", error.kind(), error.raw_os_error()),
+                        _ => {}
+                    }
                     // Redis 客户端正常退役或断开连接也可能产生 I/O 错误；以真实命令结果判定可用性。
                 }
             }
