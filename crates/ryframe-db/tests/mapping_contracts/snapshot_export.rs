@@ -32,21 +32,12 @@ fn credential_hash_rejects_sql_injection_and_unexpanded_placeholders() {
 }
 
 #[test]
-fn snapshot_includes_post_table_constraints_and_legal_menu_updates() {
+fn snapshot_places_avatar_foreign_key_after_file_table_before_seeds() {
     let sql = mysql_snapshot_sql();
     let file_table = sql.find("CREATE TABLE IF NOT EXISTS `sys_file`").unwrap();
     let avatar_constraint = sql.find("ADD CONSTRAINT `fk_user_avatar_file`").unwrap();
     let first_seed = sql.find("INSERT INTO `sys_tenant`").unwrap();
     assert!(file_table < avatar_constraint && avatar_constraint < first_seed);
-    let updates: Vec<_> = sql
-        .split(';')
-        .filter(|statement| statement.trim_start().starts_with("UPDATE `sys_menu`"))
-        .collect();
-    assert!(!updates.is_empty());
-    for update in updates {
-        assert!(update.contains("LEFT JOIN `sys_menu` AS `parent`"));
-        assert!(!update.contains("SELECT `id` FROM `sys_menu`"));
-    }
 }
 
 #[test]

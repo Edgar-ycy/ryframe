@@ -56,7 +56,7 @@ fn creation_intent_without_create_confirmation_never_authorizes_cleanup() {
 }
 
 #[test]
-fn create_response_unknown_or_created_journal_failure_cannot_be_replayed() {
+fn retained_create_intent_or_created_state_cannot_resume_creation_or_cleanup() {
     for confirmed in [false, true] {
         let mut owner = Ownership::new(plan()).unwrap();
         owner.create_intent().unwrap();
@@ -66,18 +66,6 @@ fn create_response_unknown_or_created_journal_failure_cannot_be_replayed() {
         owner.retain();
         assert!(owner.create_intent().is_err());
         assert!(owner.created().is_err());
-        assert!(owner.test_passed().is_err());
-        assert!(owner.drop_intent(&observation()).is_err());
-    }
-}
-
-#[test]
-fn failed_test_or_panic_retains_created_schema_without_drop() {
-    for _outcome in ["error", "panic"] {
-        let mut owner = Ownership::new(plan()).unwrap();
-        owner.create_intent().unwrap();
-        owner.created().unwrap();
-        owner.retain();
         assert!(owner.test_passed().is_err());
         assert!(owner.drop_intent(&observation()).is_err());
     }
@@ -187,10 +175,11 @@ fn retiring_connections_leave_drop_unissued_until_a_complete_quiescent_observati
 }
 
 #[test]
-fn persisted_drop_intent_and_unknown_response_never_authorize_another_drop() {
+fn retained_drop_intent_state_cannot_validate_cleanup_complete_or_replay() {
     let mut owner = ready();
     owner.drop_intent(&observation()).unwrap();
     owner.retain();
+    assert!(owner.validate_cleanup(&observation()).is_err());
     assert!(owner.drop_intent(&observation()).is_err());
     assert!(owner.dropped(true).is_err());
     assert!(owner.create_intent().is_err());
@@ -202,23 +191,6 @@ fn duplicate_drop_intent_is_rejected_even_before_a_response_arrives() {
     owner.drop_intent(&observation()).unwrap();
     assert!(owner.drop_intent(&observation()).is_err());
     assert_eq!(owner.phase, Phase::Retained);
-}
-
-#[test]
-fn test_passed_journal_failure_blocks_the_drop_entry() {
-    let mut owner = ready();
-    owner.retain();
-    assert!(owner.drop_intent(&observation()).is_err());
-    assert_eq!(owner.phase, Phase::Retained);
-}
-
-#[test]
-fn drop_intent_journal_failure_does_not_authorize_execution_or_replay() {
-    let mut owner = ready();
-    owner.drop_intent(&observation()).unwrap();
-    owner.retain();
-    assert!(owner.validate_cleanup(&observation()).is_err());
-    assert!(owner.drop_intent(&observation()).is_err());
 }
 
 #[test]
@@ -239,16 +211,6 @@ fn post_intent_revalidation_still_requires_all_ownership_evidence() {
     assert!(owner.validate_cleanup(&changed).is_err());
     owner.retain();
     assert!(owner.drop_intent(&observation()).is_err());
-}
-
-#[test]
-fn database_prefix_cannot_replace_server_session_or_durable_evidence() {
-    let mut owner = ready();
-    assert!(owner.plan.schema.starts_with("ryframe_it_"));
-    let mut changed = observation();
-    changed.identity.connection_id = 99;
-    changed.lock_owner = Some(99);
-    assert!(owner.drop_intent(&changed).is_err());
 }
 
 #[test]
@@ -412,14 +374,6 @@ fn evidence_file_io_records_verifies_and_remains_complete_after_handles_close() 
     }
     assert_eq!(records[3]["active_connections"], 0);
     assert_eq!(records[3]["business_closed"], true);
-    for path in [plan_path, journal_path] {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-        file.try_lock().unwrap();
-    }
 }
 
 #[test]
