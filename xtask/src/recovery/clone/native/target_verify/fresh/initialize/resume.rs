@@ -67,7 +67,7 @@ pub(crate) fn execute<T: Transport>(
 fn inventory<T: Transport>(w: &Window<'_, T>, attempt: &mut Attempt) -> Result<(Value, Value)> {
     let target = w.inputs.observation_dir;
     let intent=attempt.transition(w,"inventory-intent",&json!({"attempt":attempt.id,"at":attempt.now(),"failure":attempt.state["failure"],"prepared_files":attempt.state["prepared_files"]}))?;
-    attempt.publish_intent(w, &intent)?;
+    attempt.publish_intent(&intent)?;
     let mut trusted = claims::one(w, &attempt.state["files"], &attempt.intent, Some(&intent))?;
     let prepared = document::read(&target.join("prepare.json"))?;
     claims::unchanged(w, &trusted)?;

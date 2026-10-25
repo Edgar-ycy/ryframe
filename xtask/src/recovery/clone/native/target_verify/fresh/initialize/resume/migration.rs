@@ -57,7 +57,7 @@ fn begin<T: Transport>(
         return Err("后继受保护二进制不同于原续作".into());
     }
     let intent=a.transition(w,"migration-intent",&json!({"attempt":a.id,"at":a.now(),"request":w.registration.value["request"],"state":a.state,"protected_binaries":binaries}))?;
-    a.publish_intent(w, &intent)?;
+    a.publish_intent(&intent)?;
     let mut trusted = claims::one(w, &a.state["files"], &a.intent, Some(&intent))?;
     claims::unchanged(w, &trusted)?;
     let (current, candidate, cache) = w.generation()?;

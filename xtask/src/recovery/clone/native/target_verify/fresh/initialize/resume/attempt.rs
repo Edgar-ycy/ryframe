@@ -52,11 +52,7 @@ impl Attempt {
     ) -> Result<Value> {
         transition::execute(w.inputs.backend, w.inputs.observation_dir, kind, args)
     }
-    pub(in super::super) fn publish_intent<T: Transport>(
-        &mut self,
-        w: &Window<'_, T>,
-        value: &Value,
-    ) -> Result<()> {
+    pub(in super::super) fn publish_intent(&mut self, value: &Value) -> Result<()> {
         receipts::write(&self.intent, value)?;
         self.intent_binding = Some(common::binding(&self.intent)?);
         Ok(())
