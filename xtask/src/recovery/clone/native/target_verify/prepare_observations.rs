@@ -104,10 +104,7 @@ fn slots(backend: &Path, request: &Value, candidate: &Selected) -> Result<Vec<Sl
         result.push(Slot {name:format!("mysql-{}",document::text(&db["key"],"数据库 key")?),
             expected:json!({"command":command,"stdout":format!("{}\n",document::text(&db["server_uuid"],"MySQL UUID")?)})});
     }
-    for bucket in super::super::input::BUCKETS
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-    {
+    for bucket in super::super::input::BUCKETS.iter().collect::<BTreeSet<_>>() {
         for (stage, operation) in [
             ("bucket-readiness", "head-bucket"),
             ("bucket-versioning", "get-bucket-versioning"),
