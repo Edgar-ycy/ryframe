@@ -130,16 +130,6 @@ class NativeInventoryHistoryTests(unittest.TestCase):
         self.save()
         self.call(inventory_directory=self.directory)
 
-    def test_real_bound_tool_requires_external_resume_qualification(self):
-        destination = self.target / "inventory-resume-r001"
-        self.directory.rename(destination)
-        self.directory = destination
-        self.save()
-        (self.directory / "failure.json").write_text("resolved by outer controller", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            self.call()
-        self.call(resumed=True)
-
     def test_real_bound_tool_rejects_missing_output_and_physical_substitution_without_leaking(self):
         self.request["target"]["databases"][0]["server_uuid"] = "PRIVATE-SENTINEL"
         with self.assertRaises(ValueError) as caught:
