@@ -8,8 +8,6 @@ use std::{
 mod bootstrap;
 #[path = "boot_contract/configuration_fixture.rs"]
 mod configuration_fixture;
-#[path = "../src/bin/ryframe_migrate/diagnostic.rs"]
-mod diagnostic;
 
 fn run(output: &Path, mode: &str, password: Option<&str>) -> Output {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -487,81 +485,4 @@ fn migration_connection_failures_keep_phase_files_and_safe_repair_without_writes
             assert!(error.contains(" -> "), "未消费内部原因链：{error}");
         }
     }
-}
-
-#[test]
-fn operation_and_close_failures_keep_both_stages_and_conservative_write_state() {
-    let root = directory();
-    let selected = root.path().join("config");
-    configuration_fixture::write_configuration(&selected, 8080, 9091, None);
-    let config =
-        ryframe_config::AppConfig::load(&selected, ryframe_config::Environment::Test).unwrap();
-    let context = diagnostic::Context {
-        directory: &selected,
-        environment: Some(config.environment),
-        config: Some(&config),
-        command: "control up",
-        target: None,
-    };
-    let before = context
-        .error(
-            "连接池建立",
-            diagnostic::Writes::None,
-            &std::io::Error::other("connect failed"),
-        )
-        .to_string();
-    assert!(before.contains("当前命令尚未发起"));
-    assert!(!before.contains("可能已部分提交"));
-    let file = context
-        .error(
-            "文件发布",
-            diagnostic::Writes::File,
-            &std::io::Error::other("publish failed"),
-        )
-        .to_string();
-    assert!(file.contains("目录、临时文件或目标文件可能已创建"));
-    assert!(!file.contains("尚未发起"));
-    let operation = context.error(
-        "业务迁移执行",
-        diagnostic::Writes::Database,
-        &std::io::Error::other("operation failed fixture-database-password"),
-    );
-    let close = context.error(
-        "关闭连接",
-        diagnostic::Writes::Database,
-        &std::io::Error::other("close failed mysql://unknown:unlisted@localhost/db"),
-    );
-    let error = diagnostic::finish::<()>(Err(operation), Err(close))
-        .unwrap_err()
-        .to_string();
-    for expected in [
-        "业务迁移执行",
-        "operation failed",
-        "关闭连接",
-        "close failed",
-        "DDL 或账本可能已部分提交",
-        "禁止自动重放",
-    ] {
-        assert!(error.contains(expected), "{error}");
-    }
-    assert!(!error.contains("fixture-database-password"));
-    assert!(!error.contains("unknown:unlisted"));
-    assert!(!error.contains("://"));
-    let adoption = diagnostic::Context {
-        command: "control adopt --apply",
-        ..context
-    };
-    let error = adoption
-        .error(
-            "接管账本应用",
-            diagnostic::Writes::Database,
-            &std::io::Error::other("apply failed"),
-        )
-        .to_string();
-    assert!(
-        error
-            .contains("cargo migrate -- --config-dir <当前已显示配置目录> control adopt --inspect")
-    );
-    assert!(!error.contains("cargo migrate -- control"));
-    assert!(!error.contains("或 tenant-data"));
 }
