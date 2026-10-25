@@ -7,7 +7,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::super::{json as json_io, resources::common};
-use crate::Result;
+use crate::{Result, recovery::fixture_control::services::lifecycle::readonly::process};
 
 pub(super) fn proof(request: &Value) -> Result<Value> {
     let root = json_io::exact(
@@ -48,7 +48,7 @@ pub(super) fn proof(request: &Value) -> Result<Value> {
     if identity["executable"] != runtime["artifacts"]["api"]["path"] {
         return Err("API 内核进程与运行收据产物不匹配".into());
     }
-    listener(json_io::text(&root["api_url"], "API 地址")?, pid)?;
+    listener(json_io::text(&root["api_url"], "API 地址")?, &identity)?;
     Ok(json!({"runtime":runtime,"api_process":identity}))
 }
 
@@ -214,36 +214,51 @@ fn python_json(value: &Value) -> Result<String> {
     })
 }
 
-fn listener(value: &str, pid: u32) -> Result<()> {
+fn listener(value: &str, identity: &Value) -> Result<()> {
     let url = url::Url::parse(value).map_err(|_| "API 地址无效")?;
-    let host = url.host_str().ok_or("API 地址缺少主机")?;
+    let ip = match url.host() {
+        Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip),
+        Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip),
+        _ => return Err("API 地址必须使用明确 IP".into()),
+    };
     let port = url.port_or_known_default().ok_or("API 地址缺少端口")?;
-    let ip: IpAddr = host.parse().map_err(|_| "API 地址必须使用明确 IP")?;
+    process::require(identity)?;
+    let pid = u32::try_from(identity["pid"].as_u64().ok_or("API PID 无效")?)
+        .map_err(|_| "API PID 超出范围")?;
     TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(2))
         .map_err(|_| "API 监听端口不可达")?;
+    // 连接探测与所有者观察共用该完整身份窗口，不把 PID 当作代次凭据。
+    process::require(identity)?;
     listener_owner(port, pid)?;
-    Ok(())
+    process::require(identity)
 }
 
 #[cfg(windows)]
 fn listener_owner(port: u16, pid: u32) -> Result<()> {
-    let script = format!(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-NetTCPConnection -State Listen -LocalPort {port} | Select-Object LocalAddress,OwningProcess) | ConvertTo-Json -Compress"
-    );
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()?;
-    if !output.status.success() {
-        return Err("API 监听所有者无法核验".into());
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Row {
+        #[serde(rename = "LocalAddress")]
+        address: String,
+        #[serde(rename = "LocalPort")]
+        port: u16,
+        #[serde(rename = "OwningProcess")]
+        owner: u32,
+        #[serde(rename = "State")]
+        state: u8,
     }
-    let value: Value = serde_json::from_slice(&output.stdout)?;
-    let rows = value.as_array().ok_or("API 监听观察必须是列表")?;
+    let connection = wmi::WMIConnection::with_namespace_path("ROOT\\StandardCimv2")
+        .map_err(|_| "API 监听 CIM 连接失败；检查本机读取权限，保留现场")?;
+    let rows: Vec<Row> = connection.raw_query(format!(
+        "SELECT LocalAddress,LocalPort,OwningProcess,State FROM MSFT_NetTCPConnection WHERE LocalPort={port} AND State=2"))
+        .map_err(|_| "API 监听 CIM 查询失败；检查本机读取权限，保留现场")?;
+    for row in &rows {
+        if row.port != port || row.state != 2 || row.address.parse::<IpAddr>().is_err() {
+            return Err("API 监听 CIM 返回不符合固定查询的记录".into());
+        }
+    }
     if !rows.iter().any(|row| {
-        row["OwningProcess"].as_u64() == Some(u64::from(pid))
-            && matches!(
-                row["LocalAddress"].as_str(),
-                Some("127.0.0.1" | "0.0.0.0" | "::1" | "::")
-            )
+        row.owner == pid && matches!(row.address.as_str(), "127.0.0.1" | "0.0.0.0" | "::1" | "::")
     }) {
         return Err("API 监听端口不属于登记进程".into());
     }
@@ -294,4 +309,43 @@ fn path(value: &Value, label: &str) -> Result<PathBuf> {
         return Err(format!("{label}必须是绝对路径").into());
     }
     Ok(path)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+#[ignore = "需要本机 CIM 权限；仅观察本测试进程的四种回环/通配临时监听"]
+fn current_process_listener_proof_preserves_ipv4_ipv6_and_creation_identity() {
+    let identity = common::process_identity(std::process::id())
+        .unwrap()
+        .unwrap();
+    for (binding, destination) in [
+        ("127.0.0.1", "127.0.0.1"),
+        ("0.0.0.0", "127.0.0.1"),
+        ("::1", "::1"),
+        ("::", "::1"),
+    ] {
+        let ip: IpAddr = binding.parse().unwrap();
+        let socket = std::net::TcpListener::bind(SocketAddr::new(ip, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let destination: IpAddr = destination.parse().unwrap();
+        let url = format!("http://{}", SocketAddr::new(destination, port));
+        listener(&url, &identity).unwrap();
+        assert_eq!(
+            listener_owner(port, 1).unwrap_err().to_string(),
+            "API 监听端口不属于登记进程"
+        );
+        let mut reused = identity.clone();
+        reused["started"] = json!("1");
+        assert_eq!(
+            listener(&url, &reused).unwrap_err().to_string(),
+            "登记进程已退出或内核创建身份变化"
+        );
+        drop(socket);
+        assert_eq!(
+            listener_owner(port, std::process::id())
+                .unwrap_err()
+                .to_string(),
+            "API 监听端口不属于登记进程"
+        );
+    }
 }
