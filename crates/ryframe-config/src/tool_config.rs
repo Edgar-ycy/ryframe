@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn development_local_file_overrides_public_path_and_replaces_targets() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_directory("tool-config-");
         fs::create_dir(root.path().join("config")).unwrap();
         fs::create_dir(root.path().join(".local-tests")).unwrap();
         fs::write(root.path().join("config/tools.toml"),"[development]\nconfig_dir='public-config'\nverify_tenant_targets=['shared-control','tenant-a']\n").unwrap();
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn verification_python_uses_local_file_precedence_and_no_environment_override() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_directory("tool-config-");
         fs::create_dir(root.path().join("config")).unwrap();
         fs::create_dir(root.path().join(".local-tests")).unwrap();
         fs::write(
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn malformed_verification_values_and_unknown_keys_never_disclose_sentinel() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_directory("tool-config-");
         fs::create_dir(root.path().join("config")).unwrap();
         for document in [
             "[verification]\npython_program={password='SECRET_SENTINEL'}\n",

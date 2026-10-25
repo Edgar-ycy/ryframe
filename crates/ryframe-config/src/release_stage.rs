@@ -230,35 +230,24 @@ fn parse_cat_file_batch(stream: &[u8], count: usize) -> Result<Vec<String>, Stri
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        process::Command,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::{fs, path::Path, process::Command};
 
     use super::{evaluate_release_stage, release_stage, stable_version, workspace_version};
 
-    static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
-
-    struct TestRoot(PathBuf);
+    struct TestRoot(tempfile::TempDir);
 
     impl TestRoot {
         fn new() -> Self {
-            let id = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir()
-                .join(format!("ryframe-release-stage-{}-{id}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
+            Self(crate::test_directory("release-stage-"))
         }
 
         fn path(&self) -> &Path {
-            &self.0
+            self.0.path()
         }
 
         fn version(&self, value: &str) {
             fs::write(
-                self.0.join("Cargo.toml"),
+                self.path().join("Cargo.toml"),
                 format!("[workspace.package]\nversion = \"{value}\"\n"),
             )
             .unwrap();
@@ -267,7 +256,7 @@ mod tests {
         fn git(&self, arguments: &[&str]) {
             let result = Command::new("git")
                 .arg("-C")
-                .arg(&self.0)
+                .arg(self.path())
                 .args(arguments)
                 .output()
                 .unwrap();
@@ -292,7 +281,7 @@ mod tests {
             String::from_utf8(
                 Command::new("git")
                     .arg("-C")
-                    .arg(&self.0)
+                    .arg(self.path())
                     .args(["rev-parse", "HEAD"])
                     .output()
                     .unwrap()
@@ -301,12 +290,6 @@ mod tests {
             .unwrap()
             .trim()
             .to_owned()
-        }
-    }
-
-    impl Drop for TestRoot {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
         }
     }
 
