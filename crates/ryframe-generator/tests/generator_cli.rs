@@ -31,8 +31,16 @@ fn plans_do_not_spawn_cargo_or_read_database_configuration() {
     for args in [
         vec!["new-business", "order-business", "--plan"],
         vec!["resource", "--plan"],
+        vec!["resource", "--sync-frontend", "--plan"],
         vec!["import", "--table", "biz_order", "--plan"],
         vec!["import", "--tables", "biz_order,biz_order_item", "--plan"],
+        vec![
+            "import",
+            "--tables",
+            "biz_order,biz_order_item",
+            "--sync-frontend",
+            "--plan",
+        ],
         vec!["resource", "--models", "Order,OrderItem", "--plan"],
         vec!["run", "--plan"],
         vec![
@@ -51,6 +59,17 @@ fn plans_do_not_spawn_cargo_or_read_database_configuration() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("计划"));
+        if !args.contains(&"new-business") {
+            let displayed = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(
+                displayed.contains("编译候选组合根（bin-api）"),
+                !args.contains(&"--sync-frontend")
+            );
+            assert_eq!(
+                displayed.contains("导出本次候选 OpenAPI"),
+                args.contains(&"--sync-frontend")
+            );
+        }
         assert!(!root.path().join("target").exists());
         assert!(!root.path().join("crates").exists());
         assert!(!root.path().join("Cargo.lock").exists());

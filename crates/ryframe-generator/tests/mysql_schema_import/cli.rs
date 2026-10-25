@@ -18,6 +18,9 @@ mod frontend;
 #[path = "../../src/command/staging/snapshot.rs"]
 mod snapshot;
 
+#[path = "../generation_pipeline/conflicts.rs"]
+mod conflicts;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_imports_two_tables_from_business_subdirectory_without_database_writes() {
     mysql::run_mysql_test("cliimport", |database| async move {
@@ -75,6 +78,43 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
             assert!(installed.changes(&root)?.iter().all(|change| change.relative == Path::new("openapi/openapi.json")));
         }
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM table1 WHERE name='existing' AND CAST(price AS CHAR)='90071992547409.123456'", 1).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE()", 3).await?;
+        configuration.verify()?;
+        original.verify()?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actual_cli_cross_module_conflict_leaves_third_table_uninstalled() {
+    mysql::run_mysql_test("importconflict", |database| async move {
+        let (_, _, target) = crate::resource_workspace_control::load()?;
+        let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
+        for table in ["table1", "table2", "table3"] {
+            mysql::execute(&database, &format!("CREATE TABLE {table} (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")).await?;
+        }
+        mysql::execute(&database, "INSERT INTO table1 VALUES(1,'existing')").await?;
+        let schema = ryframe_db::connection::physical_identity(&database).await.map_err(message)?.database;
+        let original = snapshot::SourceSnapshot::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))?;
+        let cache = original.root.join(".local-tests/cli-import");
+        fs::create_dir_all(&cache).map_err(message)?;
+        let directory = tempfile::tempdir_in(cache).map_err(message)?;
+        let root = directory.path().join("backend");
+        original.copy_to(&root)?;
+        fs::create_dir_all(root.join(".local-tests")).map_err(message)?;
+        fs::write(root.join(".local-tests/tools.toml"), format!("[generator]\ntarget_dir={:?}\nsync_frontend=false\n", target.to_string_lossy())).map_err(message)?;
+        GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
+        let configuration = captured.prepare(&root, &schema)?;
+        verify_physical_binding(&database, &configuration).await?;
+        // 最小有效 baseline：只安装前两表，不跑前端、BIT、重复生成或空库迁移链。
+        require_success(import(&root, &configuration, "table1,table2", true)?)?;
+        let third = root.join("crates/cli-import-business/src/resources/table3.rs");
+        assert!(!third.exists());
+        conflicts::verify(&root, None, "cli_import_business", &[("resource", "业务资源名称冲突")], |_| {
+            require_success(import(&root, &configuration, "table1,table2,table3", true)?)
+        });
+        assert!(!third.exists());
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM table1 WHERE id=1 AND name='existing'", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE()", 3).await?;
         configuration.verify()?;
         original.verify()?;

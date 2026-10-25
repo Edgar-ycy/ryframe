@@ -15,6 +15,7 @@ mod frontend;
 mod install;
 mod lock;
 mod manifest;
+mod preflight;
 mod snapshot;
 mod workspace;
 
@@ -50,6 +51,7 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
         backend_allowed.insert("openapi/openapi.json".into());
         Some(frontend)
     } else {
+        preflight::validate(&backend.path, &pipeline_target)?;
         None
     };
     let backend_changes = backend.changes(&backend_allowed)?;

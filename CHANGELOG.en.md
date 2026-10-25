@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Model generation and multi-table imports validate resource, table, route and permission conflicts across all registered business modules before installation. Backend-only generation compiles the candidate composition root for authoritative preflight; frontend synchronization reuses existing OpenAPI validation. Plans show the actual stages, and preflight failures preserve both repositories' before-images while reporting causes and repair guidance.
+
 - Replica admission now checks registered control-business table structures after the existing PING and framework verification. Drift removes a replica as a schema hard failure, retaining the two-second budget, three-failure/two-success thresholds and no replay of failed SQL. A same-instance two-owned-schema scenario uses a transparent TLS byte proxy to exercise the real monitor, routing, disconnection, recovery and explicit schema repair without claiming cross-instance or MySQL replication coverage.
 
 - Fix the Windows development supervisor treating a canonical path's drive prefix as a directory. Retain component-by-component link/reparse-point rejection and complete configuration snapshots.

@@ -246,7 +246,6 @@ impl GenerationPlan {
                 "读取锁定的资源描述符",
                 "校验全部模型",
                 "渲染 CRUD 与迁移",
-                "预检所有目标文件",
             ],
             GenerationOperation::Import => vec![
                 "定位业务包",
@@ -255,22 +254,27 @@ impl GenerationPlan {
                 "校验整批表与模型",
                 "渲染模型并注册描述符",
                 "编译候选模型并生成 CRUD 与迁移",
-                "预检所有目标文件",
             ],
             GenerationOperation::Configured => unreachable!("构建计划已解析配置操作"),
         };
-        if self.sync_frontend
-            && matches!(
-                self.operation,
-                GenerationOperation::Resource | GenerationOperation::Import
-            )
-        {
-            tasks.extend([
-                "导出本次候选 OpenAPI",
-                "同步前端契约与派生文件",
-                "生成业务列表表单与路由",
-                "校验候选前端类型",
-            ]);
+        if matches!(
+            self.operation,
+            GenerationOperation::Resource | GenerationOperation::Import
+        ) {
+            if self.sync_frontend {
+                tasks.extend([
+                    "导出本次候选 OpenAPI",
+                    "同步前端契约与派生文件",
+                    "生成业务列表表单与路由",
+                    "校验候选前端类型",
+                ]);
+            } else {
+                tasks.extend([
+                    "编译候选组合根（bin-api）",
+                    "校验全部已注册业务模块、权限与路由",
+                ]);
+            }
+            tasks.push("预检所有目标文件");
         }
         tasks.push(if self.write {
             "事务写入文件"

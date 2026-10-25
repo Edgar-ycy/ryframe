@@ -17,6 +17,8 @@ mod frontend_workspace;
 mod generation_pipeline;
 #[path = "support/resource_workspace.rs"]
 mod resource_workspace_control;
+#[path = "../src/command/staging/snapshot.rs"]
+mod snapshot;
 #[path = "resource_contracts/unsigned_compilation.rs"]
 mod unsigned_compilation;
 
