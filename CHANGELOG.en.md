@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix incorrect rejection of Windows maintenance-tool provenance when canonical and ordinary paths are mixed. Normalize path representation while retaining owning-worktree, link and receipt-boundary validation.
+
 - Describe model-generation persistence targets through resource declarations, avoiding misleading reuse of configured reverse-import sources or target types. Database-import plans continue to show their actual schema source, table batch and target type.
 
 - Bind source registration, capture, inventory and recovery object calls to application configuration files, removing inline credential fallback from the native S3 protocol. Derive public source endpoints from verified files and retain configuration-drift checks, unknown-write rejection and the ban on automatic retries.

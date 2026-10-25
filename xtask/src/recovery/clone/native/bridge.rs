@@ -304,7 +304,7 @@ fn build_command(role: &str) -> Result<Vec<String>> {
 }
 
 fn maintenance_root(root: &Path, path: &Path, receipt: &Value) -> Result<PathBuf> {
-    let current = fs::canonicalize(root)?;
+    let current = crate::recovery::fixture_control::portable_path(&fs::canonicalize(root)?);
     let declared = PathBuf::from(
         receipt
             .get("backend_root")
@@ -314,7 +314,7 @@ fn maintenance_root(root: &Path, path: &Path, receipt: &Value) -> Result<PathBuf
     if !declared.is_absolute() || !declared.is_dir() {
         return Err("维护构建缺少可用的所属工作树".into());
     }
-    let declared = fs::canonicalize(declared)?;
+    let declared = crate::recovery::fixture_control::portable_path(&fs::canonicalize(declared)?);
     if declared == current {
         return Ok(current);
     }

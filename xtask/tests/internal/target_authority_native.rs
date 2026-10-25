@@ -252,7 +252,7 @@ fn observed_authority(
 
 #[test]
 fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonly() {
-    let fixture = crate::target_verify_published::complete();
+    let fixture = crate::target_verify_published_tests::complete();
     let before = tree::snapshot(&fixture.backend, &fixture.local, false).unwrap();
     let mut ports = Vec::new();
     let value = observed_authority(&fixture, &mut |url| {
@@ -295,7 +295,7 @@ fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonl
 
 #[test]
 fn native_authority_rejects_actual_config_start_history_and_changes_during_observation() {
-    let fixture = crate::target_verify_published::complete();
+    let fixture = crate::target_verify_published_tests::complete();
     let config = Path::new(fixture.request["config_dir"].as_str().unwrap()).join("app.test.toml");
     let original = fs::read(&config).unwrap();
     let mut changed = original.clone();
