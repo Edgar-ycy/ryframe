@@ -25,7 +25,7 @@ class TargetHistoryTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(Path(temporary.name), self)
         self.f.mocks[-1].side_effect = self.inventory_fixture
-        target.prepare_target(self.f.root, self.f.path, self.f.output, self.f.run)
+        self.f.prepared()
         self.f.publish_prepared_files()
         self.initialized = target.initialize_target(
             self.f.root, self.f.output, self.f.run,

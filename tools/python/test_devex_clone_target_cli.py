@@ -74,60 +74,29 @@ class TargetCliTests(unittest.TestCase):
                                request=request, environment=environment, storage_run=storage_run,
                                observation_dir=observation, write=write)
 
-    @staticmethod
-    def _prepare_stub(backend, request, target, *, storage_run, request_descriptor):
-        if not (storage_run / "run.lock").is_dir():
-            raise AssertionError("storage run lock missing")
-        if request_descriptor != binding(request):
-            raise AssertionError("request descriptor missing")
-        target.mkdir()
-        result = {"status": "fresh_creation_prepared", "request": binding(request)}
-        write_json(target / "prepare.json", result)
-        return result
+
 
     def prepare(self):
-        with patch("devex_clone_target.prepare_target", side_effect=self._prepare_stub):
-            return target_cli.prepare(self.backend, self.workspace, self.request, self.environment, self.storage_run)
+        """剩余 initialize/verify 场景只需要固定登记前像，不执行已迁走的 prepare。"""
+        self.workspace.mkdir()
+        target = self.workspace / "target"
+        target.mkdir()
+        registration = {"format_version": 1, "kind": "devex-clone-fresh-target-registration",
+                        "request": binding(self.request), "environment": binding(self.environment),
+                        "storage_run": {"path": str(self.storage_run),
+                                        "manifest": binding(self.storage_run / "manifest.json"),
+                                        "state": binding(self.storage_run / "state.json")},
+                        "target_directory": str(target)}
+        write_json(self.workspace / "registration.json", registration)
+        result = {"status": "fresh_creation_prepared", "request": registration["request"]}
+        write_json(target / "prepare.json", result)
+        files = target_cli.snapshot_evidence.write_snapshot(self.backend, self.workspace, registration,
+                                                          "prepared", expected_document=result)
+        return {"status": result["status"], "registration": binding(self.workspace / "registration.json"),
+                "target": binding(target / "prepare.json"), "files": files, "restore_qualified": False}
 
-    def test_prepare_registers_only_bindings_and_uses_safely_merged_environment(self):
-        observed = {}
 
-        def prepare(backend, request, target, *, storage_run, request_descriptor):
-            self.assertEqual(storage_run, self.storage_run)
-            self.assertEqual(request_descriptor, binding(request))
-            observed.update(os.environ)
-            return self._prepare_stub(backend, request, target, storage_run=storage_run,
-                                      request_descriptor=request_descriptor)
 
-        ambient = {"PATH": "fixture-path", "SystemRoot": "fixture-root", "SAFE_BASE": "removed",
-                   "APP_SCOPE_ID": "ambient-wrong", "RYFRAME_OLD": "ambient-secret",
-                   "SNOWFLAKE_WORKER_ID": "9", "CARGO_HOME": "unsafe", "AWS_SECRET_ACCESS_KEY": "unsafe",
-                   "RUSTFS_SECRET_KEY": "unsafe", "MYSQL_PWD": "unsafe", "HTTP_PROXY": "unsafe",
-                   "NO_PROXY": "unsafe", "GH_TOKEN": "unsafe", "PYTHONPATH": "unsafe",
-                   "NODE_OPTIONS": "unsafe"}
-        with patch.dict(os.environ, ambient, clear=True), \
-                patch("devex_clone_target.prepare_target", side_effect=prepare):
-            result = target_cli.prepare(self.backend, self.workspace, self.request, self.environment, self.storage_run)
-        self.assertEqual(result["status"], "fresh_creation_prepared")
-        folded = {key.upper(): value for key, value in observed.items()}
-        self.assertEqual(folded["PATH"], "fixture-path")
-        self.assertEqual(folded["SYSTEMROOT"], "fixture-root")
-        self.assertEqual(observed["APP_ENV"], "test")
-        self.assertNotIn("APP_SCOPE_ID", observed)
-        self.assertNotIn("RYFRAME_RESET_ADMIN_PASSWORD", observed)
-        for name in ("RYFRAME_OLD", "SNOWFLAKE_WORKER_ID", "CARGO_HOME", "AWS_SECRET_ACCESS_KEY",
-                     "RUSTFS_SECRET_KEY", "MYSQL_PWD", "HTTP_PROXY", "NO_PROXY", "SAFE_BASE",
-                     "GH_TOKEN", "PYTHONPATH", "NODE_OPTIONS"):
-            self.assertNotIn(name, observed)
-        registration = read_json(self.workspace / "registration.json")
-        self.assertEqual(registration["request"], binding(self.request))
-        self.assertEqual(registration["environment"], binding(self.environment))
-        self.assertEqual(registration["storage_run"], {
-            "path": str(self.storage_run), "manifest": binding(self.storage_run / "manifest.json"),
-            "state": binding(self.storage_run / "state.json")})
-        self.assertEqual(registration["target_directory"], str(self.workspace / "target"))
-        self.assertNotIn("private-secret", json.dumps(registration))
-        self.assertEqual(binding(self.environment), registration["environment"])
 
     def test_fixture_initial_services_remain_locked_without_being_treated_as_restarts(self):
         fixture = self.local / "fixture-services"
@@ -144,17 +113,14 @@ class TargetCliTests(unittest.TestCase):
                             ("fixture-buckets", "prepare")):
             number = run_state.begin(fixture, stage, mode, {"fixture": True})
             run_state.finish(fixture, number, result={"status": stage + "-initial"})
-        observed = {}
-
-        def prepare(backend, request, target, *, storage_run, request_descriptor):
-            observed["storage_run"] = storage_run
-            return self._prepare_stub(backend, request, target, storage_run=fixture,
-                                      request_descriptor=request_descriptor)
-
-        with patch("devex_clone_target.prepare_target", side_effect=prepare):
-            result = target_cli.prepare(self.backend, self.workspace, self.request, self.environment, fixture)
-        self.assertEqual(result["status"], "fresh_creation_prepared")
-        self.assertIsNone(observed["storage_run"])
+        self.storage_run = fixture
+        self.prepare()
+        def initialize(_backend, _target, *, storage_run):
+            self.assertIsNone(storage_run)
+            self.assertTrue((fixture / "run.lock").is_dir())
+            return {"status": "fixture-context-observed"}
+        result = target_cli._run_registered(self.backend, self.workspace, initialize)
+        self.assertEqual(result["status"], "fixture-context-observed")
         self.assertEqual(target_cli._storage_run(self.backend, read_json(self.workspace / "registration.json")["storage_run"]), fixture)
 
     def test_fixture_service_generation_reads_appended_closed_state(self):
@@ -373,32 +339,13 @@ class TargetCliTests(unittest.TestCase):
     def test_missing_managed_tool_binding_fails_before_workspace_creation(self):
         with patch("rate_limit_tool.tool_binding", return_value=None), self.assertRaisesRegex(
                 ValueError, "缺少受管 Rust 工具"):
-            target_cli.prepare(self.backend, self.workspace, self.request,
-                               self.environment, self.storage_run)
+            cli.dispatch(self.args("prepare", request=self.request, environment=self.environment,
+                                   storage_run=self.storage_run), self.backend)
         self.assertFalse(self.workspace.exists())
 
-    def test_private_environment_rejects_shell_and_case_duplicate_fields(self):
-        valid = {"TEMP": str(self.temporary), "TMP": str(self.temporary)}
-        for number, environment in enumerate((
-                {**valid, "PATH": "forbidden"},
-                {**valid, "APP_ENV": "test", "app_env": "dev"},
-                {**valid, "RYFRAME_RESET_ADMIN_PASSWORD": "forbidden-secret"},
-                {**valid, "APP_SCOPE": "forbidden"},
-                {**valid, "APP_SCOPE": 1},
-                {"APP_SCOPE": "missing-private-temp"},
-                {"TEMP": str(self.temporary), "TMP": str(self.local / "other-temp")},
-                {"TEMP": "relative-temp", "TMP": "relative-temp"},
-                {"TEMP": str(self.backend.parent), "TMP": str(self.backend.parent)},
-                {"TEMP": str(self.request), "TMP": str(self.request)},
-                {"TEMP": str(self.local / "missing-temp"), "TMP": str(self.local / "missing-temp")})):
-            with self.subTest(environment=environment):
-                candidate = self.local / f"candidate-{number}.json"
-                write_json(candidate, {"environment": environment})
-                with self.assertRaises(ValueError):
-                    target_cli.prepare(self.backend, self.workspace, self.request, candidate, self.storage_run)
-                self.assertFalse(self.workspace.exists())
 
-    def test_workspace_guard_wraps_all_mutating_stages(self):
+
+    def test_workspace_guard_wraps_remaining_initialize_and_verify_stages(self):
         active = []
         actual = target_cli.process_guard
 
@@ -416,14 +363,7 @@ class TargetCliTests(unittest.TestCase):
 
             return Guard()
 
-        def prepare(backend, request, target, *, storage_run, request_descriptor):
-            self.assertEqual(active, [(self.workspace, target_cli.WORKSPACE_GUARD)])
-            return self._prepare_stub(backend, request, target, storage_run=storage_run,
-                                      request_descriptor=request_descriptor)
-
-        with patch.object(target_cli, "process_guard", side_effect=guarded), \
-                patch("devex_clone_target.prepare_target", side_effect=prepare):
-            target_cli.prepare(self.backend, self.workspace, self.request, self.environment, self.storage_run)
+        self.prepare()
 
         def initialize(_backend, target, *, storage_run, publish_files):
             self.assertEqual(active, [(self.workspace, target_cli.WORKSPACE_GUARD)])
@@ -490,29 +430,22 @@ class TargetCliTests(unittest.TestCase):
         with patch("devex_clone_target_binding._native", return_value={"status": "fresh_target_unregistered"}) as observe:
             self.assertEqual(cli.dispatch(status, self.backend)["status"], "fresh_target_unregistered")
         observe.assert_called_once_with("fresh-status", self.backend, workspace=str(self.workspace))
+        for operation in ("prepare", "resume-prepare"):
+            args = self.args(operation, request=self.request if operation == "prepare" else None,
+                             environment=self.environment if operation == "prepare" else None,
+                             storage_run=self.storage_run if operation == "prepare" else None)
+            args.workspace = Path(".local-tests/fresh-workspace")
+            with patch("devex_clone_target_binding._native", return_value={"status": "fresh_creation_prepared"}) as native:
+                self.assertEqual(cli.dispatch(args, self.backend)["status"], "fresh_creation_prepared")
+            expected = {"workspace": str(self.workspace), "write": True}
+            if operation == "prepare":
+                expected.update(request=str(self.request), environment=str(self.environment), storage_run=str(self.storage_run))
+            native.assert_called_once_with("fresh-" + operation, self.backend, **expected)
 
 
 
-    def test_registration_only_interruption_uses_explicit_resume_prepare(self):
-        def interrupted(*_args, **_kwargs):
-            raise OSError("fixture interruption before target")
 
-        with patch("devex_clone_target.prepare_target", side_effect=interrupted), \
-                self.assertRaises(OSError):
-            target_cli.prepare(self.backend, self.workspace, self.request,
-                               self.environment, self.storage_run)
-        def resumed(_backend, target, *, storage_run, request_descriptor):
-            target.mkdir()
-            write_json(target / "request.json", read_json(self.request))
-            result = {"status": "fresh_creation_prepared", "request": request_descriptor}
-            write_json(target / "prepare.json", result)
-            return result
 
-        with patch("devex_clone_target.resume_prepare_target", side_effect=resumed):
-            result = target_cli.resume_prepare(self.backend, self.workspace)
-        self.assertTrue(result["resumed"])
-        self.assertEqual(result["status"], "fresh_creation_prepared")
-        self.assertTrue((self.workspace / "prepared-files.json").is_file())
 
 
     def test_storage_history_accepts_only_published_target_restart_append(self):
@@ -527,79 +460,15 @@ class TargetCliTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "受控目标存储阶段"):
             target_cli._storage_run(self.backend, historical)
 
-    def test_dead_controller_requires_explicit_recovery_before_same_directory_resume(self):
-        with patch("devex_clone_target.prepare_target", side_effect=OSError("interrupted")), \
-                self.assertRaises(OSError):
-            target_cli.prepare(self.backend, self.workspace, self.request, self.environment, self.storage_run)
-        registration = binding(self.workspace / "registration.json")
-        manifest = binding(self.storage_run / "manifest.json")
-        ledger = read_json(self.storage_run / "state.json")
-        lock = self.storage_run / "run.lock"
-        lock.mkdir()
-        owner = {"format_version": 1, "identity": {"pid": 10001, "started": "123", "executable": "fixture"},
-                 "directory": str(self.storage_run), "manifest_sha256": manifest["sha256"]}
-        write_json(lock / "owner.json", owner)
-        owner_binding = binding(lock / "owner.json")
-        before = self.local_files()
-        with patch.object(run_state, "process_identity", return_value=None):
-            with patch.object(target_cli, "_workspace_control") as guard, \
-                    patch("devex_clone_target.resume_prepare_target") as operation, \
-                    self.assertRaisesRegex(ValueError, "原 recover"):
-                target_cli.resume_prepare(self.backend, self.workspace)
-            guard.assert_not_called()
-            operation.assert_not_called()
-            self.assertEqual(self.local_files(), before)
-            recovered = run_state.recover_lock(self.backend, self.storage_run, owner_binding)
-        self.assertEqual(recovered["remote_writes"], 0)
-        self.assertEqual(read_json(self.storage_run / "state.json"), ledger)
 
-        def resumed(_backend, target, *, storage_run, request_descriptor):
-            target.mkdir()
-            result = {"status": "fresh_creation_prepared", "request": request_descriptor}
-            write_json(target / "prepare.json", result)
-            return result
-
-        with patch("devex_clone_target.resume_prepare_target", side_effect=resumed):
-            self.assertTrue(target_cli.resume_prepare(self.backend, self.workspace)["resumed"])
-        self.assertEqual(binding(self.workspace / "registration.json"), registration)
-        self.assertEqual(binding(self.storage_run / "manifest.json"), manifest)
-        before = self.local_files()
-        with patch.object(target_cli, "_workspace_control") as guard, self.assertRaisesRegex(ValueError, "已完整发布"):
-            target_cli.resume_prepare(self.backend, self.workspace)
-        guard.assert_not_called()
-        self.assertEqual(self.local_files(), before)
 
     def local_files(self):
         return {path.relative_to(self.local).as_posix(): binding(path)
                 for path in self.local.rglob("*") if path.is_file()}
 
-    def test_resume_rejects_unknown_writes_before_acquiring_any_guard(self):
-        with patch("devex_clone_target.prepare_target", side_effect=OSError("interrupted")), \
-                self.assertRaises(OSError):
-            target_cli.prepare(self.backend, self.workspace, self.request, self.environment, self.storage_run)
-        target = self.workspace / "target"
-        target.mkdir()
-        for name in ("reset.intent.json", "sentinel.intent.json", "create-shared.intent.json", "unknown.json"):
-            with self.subTest(name=name):
-                write_json(target / name, {})
-                before = self.local_files()
-                with patch.object(target_cli, "_workspace_control") as guard, \
-                        patch("devex_clone_target.resume_prepare_target") as operation, \
-                        self.assertRaises(ValueError):
-                    target_cli.resume_prepare(self.backend, self.workspace)
-                guard.assert_not_called()
-                operation.assert_not_called()
-                self.assertEqual(self.local_files(), before)
-                (target / name).unlink()
 
-    def test_invalid_registration_is_rejected_before_guard_creation(self):
-        self.workspace.mkdir()
-        write_json(self.workspace / "registration.json", {"kind": "invalid"})
-        before = self.local_files()
-        with patch.object(target_cli, "_workspace_control") as guard, self.assertRaises(ValueError):
-            target_cli.resume_prepare(self.backend, self.workspace)
-        guard.assert_not_called()
-        self.assertEqual(self.local_files(), before)
+
+
 
 
 

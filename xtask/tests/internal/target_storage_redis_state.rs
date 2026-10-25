@@ -21,13 +21,17 @@ impl StorageObserver for FakeObserver {
         Err("Redis 状态测试不应读取原生进程".into())
     }
 
-    fn arguments(&self, _context: &TargetContext, _identity: &Value) -> crate::Result<Vec<String>> {
+    fn arguments(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        _identity: &Value,
+    ) -> crate::Result<Vec<String>> {
         Err("Redis 状态测试不应读取原生参数".into())
     }
 
     fn listener(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _identity: &Value,
         _url: &str,
     ) -> crate::Result<()> {
@@ -36,7 +40,7 @@ impl StorageObserver for FakeObserver {
 
     fn wsl(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _redis: &Value,
         _args: &[String],
     ) -> crate::Result<String> {
@@ -45,7 +49,7 @@ impl StorageObserver for FakeObserver {
 
     fn redis(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         selected: &Value,
         parts: &[&str],
     ) -> crate::Result<Value> {
@@ -182,4 +186,46 @@ fn redis_state_rejects_repeated_cursor_without_unbounded_observation() {
     let error = redis::verify_with_observer(&context, &selected, &observer).unwrap_err();
     assert!(error.to_string().contains("游标循环"));
     assert_eq!(observer.calls.borrow().as_slice(), &[scan("0"), scan("7")]);
+}
+
+#[test]
+fn prepare_requires_empty_scope_and_null_markers_and_never_treats_protocol_failure_as_absence() {
+    for change in [
+        None,
+        Some((scan("0"), json!(["0", [OWNER]]))),
+        Some((vec!["GET".into(), OWNER.into()], json!("old-owner"))),
+        Some((vec!["GET".into(), SENTINEL.into()], json!("old-sentinel"))),
+        Some((scan("0"), json!(["0", null]))),
+    ] {
+        let (context, selected, mut observer) = fixture();
+        observer.replies.insert(scan("0"), json!(["0", []]));
+        observer
+            .replies
+            .insert(vec!["GET".into(), OWNER.into()], Value::Null);
+        observer
+            .replies
+            .insert(vec!["GET".into(), SENTINEL.into()], Value::Null);
+        if let Some((command, response)) = &change {
+            observer.replies.insert(command.clone(), response.clone());
+        }
+        let result = redis::absence_with_observer(&context.storage_inputs(), &selected, &observer);
+        if change.is_none() {
+            assert_eq!(
+                result.unwrap(),
+                json!({"keys":[],"owner":null,"sentinel":null})
+            );
+        } else {
+            assert!(result.is_err());
+        }
+        assert!(
+            observer
+                .calls
+                .borrow()
+                .iter()
+                .all(|parts| matches!(parts[0].as_str(), "GET" | "SCAN"))
+        );
+    }
+    let (context, selected, mut observer) = fixture();
+    observer.replies.clear();
+    assert!(redis::absence_with_observer(&context.storage_inputs(), &selected, &observer).is_err());
 }

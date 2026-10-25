@@ -61,12 +61,8 @@ pub(super) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     match operation {
-        "fresh-status" => {
-            json_io::exact(args, &["workspace"], "fresh 状态请求")?;
-            super::fresh::observe(
-                backend,
-                Path::new(json_io::text(&args["workspace"], "fresh 工作区")?),
-            )
+        "fresh-status" | "fresh-prepare" | "fresh-resume-prepare" => {
+            super::fresh::binding(backend, operation, args)
         }
         "reset-configuration" | "redis-configuration" => super::binding_configuration::validate(
             backend,

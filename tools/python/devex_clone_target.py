@@ -1,6 +1,6 @@
 """单侧 fresh 目标的实际初始化 API；无复制执行 CLI，不启动 API、Worker 或存储服务。
 
-prepare_target 只读核验后保存本地创建 intent；initialize_target 只执行该一次性
+prepare/resume-prepare 已由原生 Rust 入口承担；initialize_target 只执行该一次性
 intent 的四库 CREATE、同 hash reset、迁移和完整库存。任何未知结果均停止，禁止
 自动重放或清理；verify_target 只读复核原证据及当前资源，不授予正式恢复资格。
 """
@@ -8,26 +8,22 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
-import os
 from pathlib import Path
 import subprocess
-import uuid
 
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
 from devex_clone_export import cli_executable
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_model import exact, local_path
-from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import (KEYS, execution_backend, generation, request_binding,
-                                         target_files)
+from devex_clone_target_binding import execution_backend, generation, request_binding
 from devex_clone_target_resources import Resources
 from devex_clone_target_state import confirmed, failure, generation_lock, intent, now
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_evidence import evidence
 from restore_build import file_digest
-from restore_reference_io import ExternalTools, redact_object_diagnostic
+from restore_reference_io import ExternalTools
 from restore_reference_plan import plan_hash
 
 PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
@@ -38,14 +34,6 @@ FAILURE_FIELDS = {"status", "stage", "at", "error_type", "reason", "automatic_re
                   "restore_qualified"}
 
 
-def _prepare_failure(backend: Path, output: Path) -> bool:
-    return evidence("prepare-failure", backend, output, arguments={})["present"]
-
-
-def _resume_records(backend: Path, output: Path, request_descriptor: dict) -> dict:
-    return evidence("prepare-resume-records", backend, output, request_descriptor=request_descriptor)
-
-
 def _prepare_failure_resolved(backend: Path, output: Path, request_descriptor: dict) -> bool:
     return evidence("prepare-failure-resolved", backend, output,
                     arguments={"request_descriptor": request_descriptor})["resolved"]
@@ -53,87 +41,6 @@ def _prepare_failure_resolved(backend: Path, output: Path, request_descriptor: d
 
 def initialization_failure_path(backend: Path, output: Path, request_descriptor: dict) -> Path:
     return Path(evidence("initialization-failure", backend, output, request_descriptor=request_descriptor)["path"])
-
-
-def prepare_resume_state(backend: Path, output: Path, request_descriptor: dict) -> dict:
-    return evidence("prepare-resume-state", backend, output,
-                    arguments={"request_descriptor": request_descriptor})
-
-
-def _prepare_document(backend: Path, output: Path, descriptor: dict, original: dict, empty: dict) -> dict:
-    return evidence("prepare-document", backend, output, arguments={"at": now(),
-                    "request_descriptor": descriptor, "generation": original, "absence": empty})
-
-
-def _validate_prepared(backend: Path, request_file: Path, output: Path, run, storage_run: Path | None,
-                       request_descriptor: dict) -> dict:
-    result = read_json(output / "prepare.json")
-    exact(result, PREPARE_FIELDS)
-    request = read_bound_json(request_file, request_descriptor)
-    original, resources = context(backend, request, output, run, storage_run=storage_run)
-    empty = empty_resources(resources)
-    unchanged(backend, request, original, resources, run)
-    bound_file(backend, request_descriptor)
-    evidence("prepare-current", backend, output, arguments={"at": result["prepared_at"],
-             "request_descriptor": request_descriptor, "generation": original, "absence": empty,
-             "observed": result})
-    return result
-
-
-def resume_prepare_target(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None,
-                          request_descriptor: dict) -> dict:
-    """显式重做无资源写入的 prepare；原请求、失败和诊断全部保留。"""
-    backend = backend.resolve(strict=True)
-    request_file = bound_file(backend, request_descriptor)
-    output = local_path(backend, str(output), new=not output.exists())
-    state = prepare_resume_state(backend, output, request_descriptor)
-    if not state["resumable"]:
-        raise ValueError("fresh 目标 prepare 不能续作：" + state["reason"])
-    if not output.exists():
-        output.mkdir()
-    attempt = uuid.uuid4().hex
-    intent_path = output / f"resume-prepare-{attempt}.intent.json"
-    write_json(intent_path, {"format_version": 1, "kind": "devex-clone-prepare-resume-intent",
-               "attempt": attempt, "at": now(), "request": request_descriptor,
-               "files_before": {name: binding(output / name) for name in state["files"]}})
-    try:
-        if state["prepared"]:
-            result = _validate_prepared(backend, request_file, output, run, storage_run,
-                                        request_descriptor)
-        else:
-            request = read_bound_json(request_file, request_descriptor)
-            request_path = output / "request.json"
-            if request_path.exists():
-                if read_json(request_path) != request:
-                    raise ValueError("fresh 目标中断请求不同于固定 registration")
-            else:
-                write_json(request_path, request)
-            original, resources = context(backend, request, output, run, storage_run=storage_run)
-            empty = empty_resources(resources)
-            unchanged(backend, request, original, resources, run)
-            bound_file(backend, request_descriptor)
-            if read_json(request_path) != request:
-                raise ValueError("fresh 目标请求副本在 prepare 续作期间变化")
-            result = _prepare_document(backend, output, request_descriptor, original, empty)
-            write_json(output / "prepare.json", result)
-        write_json(output / f"resume-prepare-{attempt}.confirmed.json", {
-            "format_version": 1, "kind": "devex-clone-prepare-resume-confirmed",
-            "attempt": attempt, "at": now(), "intent": binding(intent_path),
-            "prepare": binding(output / "prepare.json"), "request": binding(output / "request.json"),
-            "remote_writes": 0})
-        return result
-    except BaseException as error:
-        try:
-            write_json(output / f"resume-prepare-{attempt}.failure.json", {
-                "format_version": 1, "kind": "devex-clone-prepare-resume-failure",
-                "attempt": attempt, "at": now(), "intent": binding(intent_path),
-                "error_type": type(error).__name__,
-                "reason": redact_object_diagnostic(str(error), os.environ)
-                if isinstance(error, ValueError) else "只读 prepare 未完成，核对同目录诊断",
-                "remote_writes": 0})
-        except BaseException as diagnostic_error:
-            error.add_note(f"prepare 续作失败证据保存失败：{type(diagnostic_error).__name__}")
-        raise
 
 
 def unresolved_failure(backend: Path, output: Path) -> bool:
@@ -194,38 +101,6 @@ def unchanged(backend: Path, request: dict, original: dict, resources: Resources
 def empty_resources(resources: Resources) -> dict:
     return {"databases": [resources.database_state(db, exists=False) for db in resources.request["target"]["databases"]],
             "objects": resources.objects(initialized=False), "redis": resources.redis_state(initialized=False, sentinel=False)}
-
-
-def prepare_target(backend: Path, request_file: Path, output: Path, run=subprocess.run,
-                   *, storage_run: Path | None = None, request_descriptor: dict | None = None) -> dict:
-    """只读精确目标；新目录中的 intent 不代表资源已创建。"""
-    backend = backend.resolve(strict=True)
-    request_file = local_path(backend, str(request_file))
-    output = local_path(backend, str(output), new=True)
-    if not output.parent.is_dir():
-        raise ValueError("初始化证据须位于已有父目录中的新目录")
-    output.mkdir()
-    stage = "request"
-    try:
-        request_digest = {"path": str(request_file), **file_digest(request_file)}
-        expected_request = request_digest if request_descriptor is None else request_descriptor
-        if expected_request != request_digest:
-            raise ValueError("准备请求不同于调用方固定 descriptor")
-        request = read_bound_json(request_file, expected_request)
-        write_json(output / "request.json", request)
-        stage = "prepare_binding"
-        original, resources = context(backend, request, output, run, storage_run=storage_run)
-        stage = "prepare_absence"
-        empty = empty_resources(resources)
-        unchanged(backend, request, original, resources, run)
-        if {"path": str(request_file), **file_digest(request_file)} != expected_request:
-            raise ValueError("准备期间请求文件变化")
-        result = _prepare_document(backend, output, expected_request, original, empty)
-        write_json(output / "prepare.json", result)
-        return result
-    except BaseException as error:
-        failure(output, stage, error)
-        raise
 
 
 def reset_plan(resources: Resources, maintenance: dict, request: dict, original: dict, stage: str) -> tuple[dict, str]:

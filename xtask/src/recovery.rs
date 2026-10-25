@@ -162,6 +162,11 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         println!("{}", serde_json::to_string(&value)?);
         return Ok(());
     }
+    if matches!(options.operation.as_str(), "prepare" | "resume-prepare") {
+        let value = clone::native::target_verify::fresh::dispatch(&root_dir(), options)?;
+        println!("{}", serde_json::to_string(&value)?);
+        return Ok(());
+    }
     let payload = fresh_target_protocol(options)?;
     run_with_stdin(
         &root_dir(),

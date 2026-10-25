@@ -183,7 +183,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 owned_lock_identity=lock_identity
             )
             trusted = tree_claim.claim_runtime(
-                output, trusted, state["baseline_files"],
+                backend, output, trusted, state["baseline_files"],
                 storage_runtime=resources.storage_runtime_binding,
                 cache_runtime=resources.cache_runtime_binding
             )
@@ -208,7 +208,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                     "cache_runtime": resources.cache_runtime_binding, "resources_before": before})
             write_json(started_path, started)
             trusted = tree_claim.claim_preimage(
-                output, trusted, state["baseline_files"], state["request"], started_path, started
+            backend,                output, trusted, state["baseline_files"], state["request"], started_path, started
             )
             marker_confirmation = state["prior_marker_confirmation"] if successor else None
             if restart_generation is not None and not successor:
@@ -223,7 +223,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                     arguments={"session": session, "confirmation": marker_confirmation})
                 unchanged(backend, state["request"], current, resources, run)
                 trusted = tree_claim.claim_runtime(
-                    output, trusted, state["baseline_files"],
+                    backend, output, trusted, state["baseline_files"],
                     storage_runtime=resources.storage_runtime_binding,
                     cache_runtime=resources.cache_runtime_binding
                 )
@@ -241,7 +241,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                         "operation": operation, "completed": completed_item})
                 unchanged(backend, state["request"], current, resources, run)
                 trusted = tree_claim.claim_runtime(
-                    output, trusted, state["baseline_files"],
+                    backend, output, trusted, state["baseline_files"],
                     storage_runtime=resources.storage_runtime_binding,
                     cache_runtime=resources.cache_runtime_binding
                 )
@@ -264,7 +264,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
             tree_claim.unchanged(output, trusted)
             unchanged(backend, state["request"], current, resources, run)
             trusted = tree_claim.claim_runtime(
-                output, trusted, state["baseline_files"],
+                backend, output, trusted, state["baseline_files"],
                 storage_runtime=resources.storage_runtime_binding,
                 cache_runtime=resources.cache_runtime_binding
             )

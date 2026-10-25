@@ -278,7 +278,7 @@ def dispatch(args, backend: Path) -> dict:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记必须使用原生 Rust 入口")
     if args.command == "fresh-target":
         from devex_clone_target_cli import initialize as initialize_target, reconcile_preflight
-        from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, verify
+        from devex_clone_target_cli import resume_initialize, verify
 
         workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
         from devex_clone_target_cli import validate_dispatch
@@ -288,10 +288,14 @@ def dispatch(args, backend: Path) -> dict:
             from devex_clone_target_binding import _native
             return _native("fresh-status", backend, workspace=str(workspace))
         if args.operation == "prepare":
-            return prepare(backend, workspace, evidence_path(backend, args.request),
-                           evidence_path(backend, args.environment), evidence_path(backend, args.storage_run))
+            from devex_clone_target_binding import _native
+            return _native("fresh-prepare", backend, workspace=str(workspace),
+                           request=str(evidence_path(backend, args.request)),
+                           environment=str(evidence_path(backend, args.environment)),
+                           storage_run=str(evidence_path(backend, args.storage_run)), write=True)
         if args.operation == "resume-prepare":
-            return resume_prepare(backend, workspace)
+            from devex_clone_target_binding import _native
+            return _native("fresh-resume-prepare", backend, workspace=str(workspace), write=True)
         if args.operation == "initialize":
             return initialize_target(backend, workspace)
         if args.operation == "resume-initialize":

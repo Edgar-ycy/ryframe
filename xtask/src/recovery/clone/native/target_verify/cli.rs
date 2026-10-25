@@ -62,6 +62,29 @@ pub(super) fn execute(
         }
         "cli-storage-append" => storage_append(args),
         "cli-status" => status::project(args),
+        "prepared-observations" => {
+            json_io::exact(args, &["files"], "prepare 观察基线")?;
+            let prepared = read(backend, &target.join("prepare.json"))?;
+            let request = read(backend, &bound(backend, &prepared["request"])?)?;
+            Ok(
+                json!({"files":super::resume_baseline::active(backend,target,&args["files"],&request)?}),
+            )
+        }
+        "validate-prepared-tree" => {
+            json_io::exact(
+                args,
+                &["files", "request_descriptor", "request"],
+                "prepare 快照校验",
+            )?;
+            super::resume_baseline::validate(
+                backend,
+                target,
+                &args["files"],
+                &args["request_descriptor"],
+                &args["request"],
+            )?;
+            Ok(json!({"status":"prepared_tree_verified","remote_writes":0}))
+        }
         "prepare-resume-state" => {
             json_io::exact(args, &["request_descriptor"], "prepare 状态参数")?;
             super::prepare_state::state(backend, target, &args["request_descriptor"])

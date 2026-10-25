@@ -22,30 +22,22 @@ pub(crate) fn prepared(fixture: &Fixture) -> BTreeSet<String> {
             &mut names,
             &format!("mysql-{}", db["key"].as_str().unwrap()),
             &command(
-                json!(["fixture-mysql"]),
+                json!([
+                    fixture.request["tools"]["mysql"]["path"],
+                    format!("--defaults-file={}", db["defaults_file"].as_str().unwrap()),
+                    "--connect-timeout=5",
+                    "--batch",
+                    "--raw",
+                    "--skip-column-names",
+                    "--binary-mode",
+                    "--default-character-set=utf8mb4"
+                ]),
                 json!(format!("{}\n", db["server_uuid"].as_str().unwrap())),
             ),
         );
     }
-    let pid = fixture.request["storage"]["redis"]["pid"].as_u64().unwrap();
     for _ in 0..2 {
-        for index in 0..5 {
-            let (args, stdout) = if index == 0 {
-                (
-                    json!(["/usr/bin/cat", format!("/proc/{pid}/stat")]),
-                    json!(format!("{pid} (redis) {}", vec!["1"; 20].join(" "))),
-                )
-            } else {
-                (
-                    json!(["fixture-redis", format!("observation-{index}")]),
-                    json!("fixed\n"),
-                )
-            };
-            receipt(fixture, &mut names, "redis-kernel", &command(args, stdout));
-        }
-        let name = format!("storage-layout-{}.json", uuid::Uuid::new_v4().simple());
-        write(&fixture.target.join(&name), &fixture.request["storage"]);
-        names.insert(name);
+        kernel_observations(fixture, &mut names);
     }
     object_observations(fixture, &mut names);
     names
@@ -80,4 +72,79 @@ fn object_observations(fixture: &Fixture, names: &mut BTreeSet<String>) {
             );
         }
     }
+}
+
+fn kernel_observations(fixture: &Fixture, names: &mut BTreeSet<String>) {
+    let redis = &fixture.request["storage"]["redis"];
+    let config_path = std::path::Path::new(redis["configuration"]["path"].as_str().unwrap());
+    let config = if cfg!(windows) {
+        crate::recovery::clone::native::target_verify::storage::redis_layout::wsl_path(config_path)
+            .unwrap()
+    } else {
+        config_path.to_str().unwrap().to_owned()
+    };
+    let pid = redis["pid"].as_u64().unwrap();
+    let mut fields = vec!["1"; 20];
+    fields[19] = redis["started"].as_str().unwrap();
+    let exe = redis["executable"].as_str().unwrap();
+    for (args, stdout) in [
+        (
+            vec!["/usr/bin/cat".to_owned(), format!("/proc/{pid}/stat")],
+            format!("{pid} (redis) {}\n", fields.join(" ")),
+        ),
+        (
+            vec![
+                "/usr/bin/readlink".into(),
+                "-f".into(),
+                format!("/proc/{pid}/exe"),
+            ],
+            format!("{exe}\n"),
+        ),
+        (
+            vec!["/usr/bin/sha256sum".into(), exe.into()],
+            format!("{}  {exe}\n", redis["sha256"].as_str().unwrap()),
+        ),
+        (
+            vec!["/usr/bin/readlink".into(), "-f".into(), config.clone()],
+            format!("{config}\n"),
+        ),
+        (
+            vec!["/usr/bin/sha256sum".into(), config.clone()],
+            format!(
+                "{}  {config}\n",
+                redis["configuration"]["sha256"].as_str().unwrap()
+            ),
+        ),
+    ] {
+        let mut argv = vec![
+            redis["wsl"]["path"].clone(),
+            json!("--distribution"),
+            redis["distribution"].clone(),
+            json!("--exec"),
+        ];
+        argv.extend(args.into_iter().map(Value::String));
+        receipt(
+            fixture,
+            names,
+            "redis-kernel",
+            &command(json!(argv), json!(stdout)),
+        );
+    }
+    let rustfs = &fixture.request["storage"]["rustfs"];
+    let launch: Value = serde_json::from_slice(
+        &std::fs::read(rustfs["launch_receipt"]["path"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let review: Value = serde_json::from_slice(
+        &std::fs::read(fixture.request["review"]["path"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let name = format!("storage-layout-{}.json", uuid::Uuid::new_v4().simple());
+    write(
+        &fixture.target.join(&name),
+        &json!({"process_receipt":rustfs["process_receipt"],"launch_receipt":rustfs["launch_receipt"],
+        "actual_arguments_sha256":digest::plan_hash(&launch["arguments"]).unwrap(),"data_dir":review["services"]["rustfs"]["data_dir"],
+        "environment_proof":"受控启动收据与凭据文件；不声称从内核枚举进程环境"}),
+    );
+    names.insert(name);
 }

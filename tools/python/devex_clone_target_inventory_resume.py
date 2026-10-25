@@ -90,7 +90,7 @@ def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, 
                 backend, request, output, run, storage_run=storage_run,
                 owned_lock_identity=lock_identity
             )
-            trusted = tree_claim.claim_runtime(output, trusted, state["baseline_files"])
+            trusted = tree_claim.claim_runtime(backend, output, trusted, state["baseline_files"])
             if original != prepared["generation"]:
                 raise ValueError("库存恢复前来源、工具或服务代次变化")
             tree_claim.unchanged(output, trusted)
@@ -126,7 +126,7 @@ def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, 
             redis = resources.redis_state(initialized=True, sentinel=True)
             tree_claim.unchanged(output, trusted)
             unchanged(backend, request, original, resources, run)
-            trusted = tree_claim.claim_runtime(output, trusted, state["baseline_files"])
+            trusted = tree_claim.claim_runtime(backend, output, trusted, state["baseline_files"])
             result = evidence("resume-transition", backend, output, transition="initialized",
                               arguments={"request": request, "generation": original, "reset": reset,
                                          "inventory": initial, "objects": objects, "redis": redis,

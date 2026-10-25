@@ -149,7 +149,7 @@ def validate_complete(backend: Path, output: Path, baseline: list[dict], request
     if result != read_json(output / "initialized.json"):
         raise ValueError("首次初始化最终收据内容变化")
     current = target_files(output, ignored={"initialize.lock"}, locked_guard=True)
-    validate_initialization_delta(output, current, baseline, request, required,
+    validate_initialization_delta(backend, output, current, baseline, request, required,
                                   observation_rounds=12 + len(completed),
                                   initialized_objects=result["objects"])
     return current
@@ -293,7 +293,7 @@ def _fixture_storage_layout(output: Path, prepared: list[dict], observed: str,
     return read_json(output / observed) == expected
 
 
-def claim_runtime(output: Path, before: list[dict], prepared: list[dict], *,
+def claim_runtime(backend: Path, output: Path, before: list[dict], prepared: list[dict], *,
                   storage_runtime: dict | None = None,
                   cache_runtime: dict | None = None) -> list[dict]:
     """声明 context/unchanged 各自唯一的一轮存储与 Redis 内核观察。"""
@@ -303,6 +303,9 @@ def claim_runtime(output: Path, before: list[dict], prepared: list[dict], *,
                     if re.fullmatch(rf"storage-layout-{_UUID}\.json", path)]
     if set(additions) != set(redis_paths) | set(layout_paths) or len(layout_paths) != 1:
         raise ValueError("迁移续作存储代次观察包含未知或缺失文件")
+    from devex_clone_target_prepared_files import active_observations
+
+    prepared = active_observations(backend, output, prepared)
     baseline = _baseline_stage(output, prepared, "redis-kernel")
     commands = {tuple(item["command"]): item["stdout"] for item in baseline}
     observed = [_receipt(output, path) for path in redis_paths]
@@ -395,10 +398,13 @@ def _owner_files(output: Path, additions: dict[str, dict], request: dict) -> set
     return set(receipt_paths) | set(body_paths)
 
 
-def claim_preimage(output: Path, before: list[dict], prepared: list[dict], request: dict,
+def claim_preimage(backend: Path, output: Path, before: list[dict], prepared: list[dict], request: dict,
                    started_path: Path, started: dict) -> list[dict]:
     """声明 started 前像只包含四库、五桶 owner、Redis 与当前代次。"""
     current, additions = _delta(output, before)
+    from devex_clone_target_prepared_files import active_observations
+
+    prepared = active_observations(backend, output, prepared)
     expected = _static_receipts(output, additions, prepared, request)
     expected |= _owner_files(output, additions, request)
     for database in request["target"]["databases"]:
@@ -420,6 +426,9 @@ def claim_preimage(output: Path, before: list[dict], prepared: list[dict], reque
 def claim_objects(output: Path, before: list[dict], prepared: list[dict],
                   request: dict) -> list[dict]:
     current, additions = _delta(output, before)
+    from devex_clone_target_prepared_files import active_observations
+
+    prepared = active_observations(backend, output, prepared)
     expected = _static_receipts(output, additions, prepared, request)
     expected |= _owner_files(output, additions, request)
     if set(additions) != expected:

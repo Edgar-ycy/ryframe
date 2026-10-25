@@ -1,16 +1,9 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 use serde_json::Value;
 
-use super::{TargetContext, Transport, common};
+use super::{StorageInputs, Transport, common};
 use crate::Result;
-
-pub(super) fn require_identity(identity: &Value) -> Result<()> {
-    check_identity(identity, common::process_identity)
-}
 
 pub(super) fn require_observed_identity(
     identity: &Value,
@@ -33,7 +26,7 @@ fn check_identity(
 }
 
 pub(crate) fn observe<T: Transport>(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     transport: &T,
     program: PathBuf,
     args: Vec<String>,
@@ -44,11 +37,11 @@ pub(crate) fn observe<T: Transport>(
         .run(CommandSpec {
             program,
             args,
-            cwd: context.backend.clone(),
+            cwd: context.backend.to_path_buf(),
             environment: context.environment.clone(),
             stdin: None,
             stdout: StdoutTarget::Capture,
-            work_dir: context.observation_dir.clone(),
+            work_dir: context.observation_dir.to_path_buf(),
             label: label.into(),
             timeout: Duration::from_secs(15),
         })
@@ -59,47 +52,7 @@ pub(crate) fn observe<T: Transport>(
     String::from_utf8(output.stdout).map_err(|_| "存储观察输出不是 UTF-8".into())
 }
 
-pub(super) fn powershell(context: &TargetContext) -> Result<PathBuf> {
-    let root = context
-        .environment
-        .get("SystemRoot")
-        .cloned()
-        .or_else(|| std::env::var("SystemRoot").ok())
-        .ok_or("Windows 缺少 SystemRoot")?;
-    Ok(Path::new(&root).join("System32/WindowsPowerShell/v1.0/powershell.exe"))
-}
-
-pub(super) fn argv<T: Transport>(
-    context: &TargetContext,
-    identity: &Value,
-    transport: &T,
-) -> Result<Vec<String>> {
-    if !cfg!(windows) {
-        return Err("RustFS 原生完整参数核验仅用于 Windows".into());
-    }
-    require_identity(identity)?;
-    let pid = identity["pid"].as_u64().ok_or("RustFS PID 无效")?;
-    let script = format!(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine | ConvertTo-Json -Compress"
-    );
-    let raw = observe(
-        context,
-        transport,
-        powershell(context)?,
-        vec![
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-            script,
-        ],
-        "target-storage-argv",
-    )?;
-    require_identity(identity)?;
-    let line: String = serde_json::from_str(raw.trim_start_matches('\u{feff}'))
-        .map_err(|_| "RustFS 参数观察结果无效")?;
-    windows_argv(&line)
-}
-
+#[cfg(any(windows, test))]
 pub(crate) fn windows_argv(line: &str) -> Result<Vec<String>> {
     if line.is_empty() || line.contains('\0') {
         return Err("RustFS 参数为空或包含 NUL".into());
@@ -152,44 +105,4 @@ pub(crate) fn windows_argv(line: &str) -> Result<Vec<String>> {
         result.push(argument);
     }
     Ok(result)
-}
-
-pub(super) fn listener<T: Transport>(
-    context: &TargetContext,
-    transport: &T,
-    identity: &Value,
-    url: &str,
-) -> Result<()> {
-    let (port, _) = common::endpoint(url)?;
-    require_identity(identity)?;
-    let script = format!(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); @(Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction Stop | Select-Object LocalAddress,OwningProcess) | ConvertTo-Json -Compress"
-    );
-    let raw = observe(
-        context,
-        transport,
-        powershell(context)?,
-        vec![
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-            script,
-        ],
-        "target-storage-listener",
-    )?;
-    require_identity(identity)?;
-    let listeners: Value = serde_json::from_str(raw.trim_start_matches('\u{feff}'))
-        .map_err(|_| "RustFS 监听观察结果无效")?;
-    validate_listeners(&listeners, identity)
-}
-
-pub(crate) fn validate_listeners(listeners: &Value, identity: &Value) -> Result<()> {
-    let rows = listeners.as_array().ok_or("RustFS 监听观察必须是列表")?;
-    if !rows.iter().any(|row| {
-        row.get("OwningProcess") == identity.get("pid")
-            && matches!(row["LocalAddress"].as_str(), Some("127.0.0.1" | "0.0.0.0"))
-    }) {
-        return Err("RustFS 端口监听所有者不同于登记内核进程".into());
-    }
-    Ok(())
 }

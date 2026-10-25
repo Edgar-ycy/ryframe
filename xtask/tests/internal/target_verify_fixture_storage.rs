@@ -12,10 +12,7 @@ use crate::{
     Result,
     recovery::clone::native::{
         digest, json as json_io,
-        target_verify::{
-            input::TargetContext,
-            storage::{StorageObserver, redis_layout, rustfs},
-        },
+        target_verify::storage::{StorageObserver, redis_layout, rustfs},
     },
 };
 
@@ -128,20 +125,34 @@ impl StorageObserver for ExternalFacts {
         }
     }
 
-    fn arguments(&self, _context: &TargetContext, identity: &Value) -> Result<Vec<String>> {
+    fn arguments(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        identity: &Value,
+    ) -> Result<Vec<String>> {
         assert_eq!(identity, &self.identity);
         self.arg_reads.set(self.arg_reads.get() + 1);
         Ok(self.arguments.clone())
     }
 
-    fn listener(&self, _context: &TargetContext, identity: &Value, url: &str) -> Result<()> {
+    fn listener(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        identity: &Value,
+        url: &str,
+    ) -> Result<()> {
         assert_eq!(identity, &self.identity);
         assert!(self.endpoints.contains(url));
         self.listeners.borrow_mut().insert(url.into());
         Ok(())
     }
 
-    fn wsl(&self, _context: &TargetContext, redis: &Value, args: &[String]) -> Result<String> {
+    fn wsl(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        redis: &Value,
+        args: &[String],
+    ) -> Result<String> {
         self.kernel_reads.set(self.kernel_reads.get() + 1);
         let path = args.last().ok_or("fixture WSL path")?;
         match args.first().map(String::as_str) {
@@ -165,7 +176,12 @@ impl StorageObserver for ExternalFacts {
         }
     }
 
-    fn redis(&self, context: &TargetContext, _redis: &Value, parts: &[&str]) -> Result<Value> {
+    fn redis(
+        &self,
+        context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        _redis: &Value,
+        parts: &[&str],
+    ) -> Result<Value> {
         match parts {
             ["INFO", "server"] => Ok(json!(format!(
                 "process_id:200\r\nrun_id:{}\r\nconfig_file:{}\r\n",

@@ -5,11 +5,11 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{StorageObserver, TargetContext, common, json_io, kernel};
+use super::{StorageInputs, StorageObserver, common, json_io, kernel};
 use crate::Result;
 
 pub(crate) fn verify<O: StorageObserver>(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     review: &Value,
     rustfs: &Value,
     runtime: Option<&Value>,
@@ -38,14 +38,14 @@ pub(crate) fn verify<O: StorageObserver>(
     }
     kernel::require_observed_identity(&identity, observer)?;
     let directory = common::local_directory(
-        &context.backend,
+        context.backend,
         Path::new(json_io::text(&expected["data_dir"], "RustFS 数据目录")?),
         "RustFS 数据目录",
     )?;
-    validate_directory(&context.backend, expected, rustfs, runtime, &directory)?;
+    validate_directory(context.backend, expected, rustfs, runtime, &directory)?;
     let receipt = receipt(context, expected, rustfs, runtime)?;
     let launch_path =
-        common::bound_file(&context.backend, &rustfs["launch_receipt"], "RustFS launch")?;
+        common::bound_file(context.backend, &rustfs["launch_receipt"], "RustFS launch")?;
     if launch_path
         != receipt
             .parent()
@@ -71,15 +71,7 @@ pub(crate) fn verify<O: StorageObserver>(
         )?;
     }
     kernel::require_observed_identity(&identity, observer)?;
-    let mut evidence = json!({
-        "process_receipt": rustfs["process_receipt"], "launch_receipt": rustfs["launch_receipt"],
-        "actual_arguments_sha256": super::super::super::digest::plan_hash(&json!(arguments))?,
-        "data_dir": directory,
-        "environment_proof": "受控启动收据与凭据文件；不声称从内核枚举进程环境",
-    });
-    if let Some(runtime) = runtime {
-        evidence["runtime_transition"] = runtime.clone();
-    }
+    let evidence = evidence(context.backend, review, rustfs, runtime)?;
     json_io::write_new(
         &context.observation_dir.join(format!(
             "storage-layout-{}.json",
@@ -89,14 +81,39 @@ pub(crate) fn verify<O: StorageObserver>(
     )
 }
 
+pub(crate) fn evidence(
+    backend: &Path,
+    review: &Value,
+    rustfs: &Value,
+    runtime: Option<&Value>,
+) -> Result<Value> {
+    let expected = &review["services"]["rustfs"];
+    let directory = common::local_directory(
+        backend,
+        Path::new(json_io::text(&expected["data_dir"], "RustFS 数据目录")?),
+        "RustFS 数据目录",
+    )?;
+    let arguments = arguments(expected, &rustfs["identity"], &directory)?;
+    let mut evidence = json!({
+        "process_receipt": rustfs["process_receipt"], "launch_receipt": rustfs["launch_receipt"],
+        "actual_arguments_sha256": super::super::super::digest::plan_hash(&json!(arguments))?,
+        "data_dir": directory,
+        "environment_proof": "受控启动收据与凭据文件；不声称从内核枚举进程环境",
+    });
+    if let Some(runtime) = runtime {
+        evidence["runtime_transition"] = runtime.clone();
+    }
+    Ok(evidence)
+}
+
 fn receipt(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     expected: &Value,
     rustfs: &Value,
     runtime: Option<&Value>,
 ) -> Result<PathBuf> {
     let path = common::bound_file(
-        &context.backend,
+        context.backend,
         &rustfs["process_receipt"],
         "RustFS 进程收据",
     )?;
@@ -165,7 +182,7 @@ pub(crate) fn arguments(
 }
 
 pub(crate) fn validate_launch(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     expected: &Value,
     identity: &Value,
     launch: &Value,
@@ -190,7 +207,7 @@ pub(crate) fn validate_launch(
     )?;
     let mut environment = json!({"RUSTFS_CONSOLE_ENABLE": "true"});
     for (field, binding) in credentials {
-        let credential = common::bound_file(&context.backend, binding, "RustFS 凭据文件")?;
+        let credential = common::bound_file(context.backend, binding, "RustFS 凭据文件")?;
         let expected_credential = context
             .request
             .pointer(&format!("/target/s3/{field}"))

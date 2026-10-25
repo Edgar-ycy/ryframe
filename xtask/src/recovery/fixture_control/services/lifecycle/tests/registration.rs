@@ -141,3 +141,37 @@ fn successor_tools_may_only_change_the_same_launcher_bytes() {
         json!("/other/python");
     assert!(registration::load(&mut runtime, &backend, &context, true).is_err());
 }
+
+#[test]
+fn historical_projection_keeps_the_initial_and_published_successor_and_rejects_modified_ledger() {
+    let mut runtime = frozen();
+    let services = registered(&mut runtime).unwrap();
+    let original =
+        json!({"rustfs":services["origin"]["storage"],"redis":services["origin"]["redis"]});
+    runtime.fixture.services = services;
+    runtime.execute("close", None).unwrap();
+    let result = runtime.execute("restart", Some(runtime.owner())).unwrap();
+    let backend = runtime.fixture.backend.clone();
+    let run = runtime.fixture.run.clone();
+    let before = fs::read(run.join("state.json")).unwrap();
+    runtime.events.clear();
+    let values = super::super::projection::historical(&mut runtime, &backend, &run).unwrap();
+    assert_eq!(values.as_array().unwrap().len(), 2);
+    assert_eq!(values[0]["value"], original);
+    assert_eq!(
+        values[1]["runtime"]["generation"],
+        runtime.fixture.history()["active_generation"]
+    );
+    assert_ne!(
+        values[1]["value"]["rustfs"]["identity"],
+        values[0]["value"]["rustfs"]["identity"]
+    );
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), before);
+    assert_eq!(runtime.events, ["context", "registered"]);
+    let path = Path::new(text(&result["generation"], "path").unwrap());
+    let raw = fs::read(path).unwrap();
+    fs::write(path, b"{}").unwrap();
+    assert!(super::super::projection::historical(&mut runtime, &backend, &run).is_err());
+    assert_eq!(fs::read(path).unwrap(), b"{}");
+    fs::write(path, raw).unwrap();
+}

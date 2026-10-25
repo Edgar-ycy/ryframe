@@ -16,7 +16,8 @@ pub(crate) fn verify_with_observer(
     redis: &Value,
     observer: &impl StorageObserver,
 ) -> Result<Value> {
-    let mut command = |parts: &[&str]| observer.redis(context, redis, parts);
+    let inputs = context.storage_inputs();
+    let mut command = |parts: &[&str]| observer.redis(&inputs, redis, parts);
     let scope = context.target_scope()?;
     let namespace = format!("ryframe:{{{scope}}}:");
     let ownership_key = format!("{namespace}.ryframe-owner");
@@ -76,13 +77,36 @@ pub(crate) fn verify_with_observer(
     }))
 }
 
+/// prepare 只接受完整空 namespace 和不存在的 owner/sentinel，不把协议错误当成缺失。
+pub(crate) fn absence_with_observer(
+    inputs: &super::storage::StorageInputs<'_>,
+    redis: &Value,
+    observer: &impl StorageObserver,
+) -> Result<Value> {
+    let mut command = |parts: &[&str]| observer.redis(inputs, redis, parts);
+    let scope = super::super::json::text(&inputs.request["target"]["scope_id"], "Redis scope")?;
+    let keys = scan(&mut command, &format!("ryframe:{{{scope}}}:"))?;
+    let owner = command(&["GET", &format!("ryframe:{{{scope}}}:.ryframe-owner")])?;
+    let sentinel = command(&[
+        "GET",
+        super::super::json::text(&inputs.request["reset"]["sentinel_key"], "Redis sentinel")?,
+    ])?;
+    if !keys.is_empty() || !owner.is_null() || !sentinel.is_null() {
+        return Err("目标 Redis namespace、owner 或 sentinel 并非空前像".into());
+    }
+    Ok(json!({"keys":[],"owner":null,"sentinel":null}))
+}
+
 pub(super) struct Client {
     stream: TcpStream,
     reader: BufReader<TcpStream>,
 }
 
 impl Client {
-    pub(super) fn authenticated(context: &TargetContext, redis: &Value) -> Result<Self> {
+    pub(super) fn authenticated(
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+    ) -> Result<Self> {
         let port = redis
             .get("port")
             .and_then(Value::as_u64)
@@ -92,8 +116,8 @@ impl Client {
         let root = context.execution_backend()?;
         let (directory, files) = super::input::request_configuration::fresh_files(
             &root,
-            &context.environment,
-            &context.request,
+            context.environment,
+            context.request,
         )?;
         if super::input::request_configuration::configuration_identity(&directory, &files)?
             != context.request["configuration_sha256"]
@@ -125,8 +149,8 @@ impl Client {
             .ok_or("目标 TOML 缺少 redis.password；请显式配置密码")?;
         if super::input::request_configuration::fresh_files(
             &root,
-            &context.environment,
-            &context.request,
+            context.environment,
+            context.request,
         )? != (directory, files)
         {
             return Err("目标 Redis 配置读取期间变化".into());
@@ -218,7 +242,7 @@ fn auth(client: &mut Client, password: &str) -> Result<()> {
     Ok(())
 }
 
-fn scan(
+pub(super) fn scan(
     command: &mut impl FnMut(&[&str]) -> Result<Value>,
     prefix: &str,
 ) -> Result<BTreeSet<String>> {

@@ -68,7 +68,13 @@ pub(crate) fn records(backend: &Path, target: &Path, request: &Value) -> Result<
     }
     let pending = intents
         .keys()
-        .filter(|attempt| !terminals.contains_key(*attempt))
+        .filter(|attempt| {
+            !terminals.contains_key(*attempt)
+                && !values.values().any(|later| {
+                    let name = format!("resume-prepare-{attempt}.intent.json");
+                    later["files_before"].get(&name) == intents.get(*attempt)
+                })
+        })
         .cloned()
         .collect::<Vec<_>>();
     Ok(json!({"intents":intents,"terminals":terminals,"pending":pending}))
