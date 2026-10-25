@@ -383,13 +383,40 @@ class TargetTests(unittest.TestCase):
     def test_prepare_then_config_change_refuses_all_writes(self):
         self.prepare()
         path = self.f.configuration / "app.test.toml"
+        original = path.read_bytes()
         path.write_text('[redis]\npassword="changed"\n', encoding="utf-8")
         with self.assertRaises(ValueError): self.initialize()
+        self.assertFalse(self.f.databases)
+        path.write_bytes(original)
+        calls = copy.deepcopy(self.f.calls)
+
+        def drift(_url):
+            if path.read_bytes() == original:
+                path.write_bytes(original + b"\n# observed drift\n")
+
+        with patch.object(binding, "require_closed_port", side_effect=drift), self.assertRaisesRegex(ValueError, "绑定配置发生变化"):
+            binding.generation(self.f.root, self.f.request, self.f.run)
+        self.assertEqual(path.read_bytes(), original + b"\n# observed drift\n")
+        self.assertEqual(self.f.calls, calls)
         self.assertFalse(self.f.databases)
 
     def test_seed_digest_binds_only_explicit_administrator_password(self):
         f = self.f
-        original = binding.generation(f.root, f.request, f.run)
+        request_before = copy.deepcopy(f.request)
+        with patch.object(binding, "native_invoke", wraps=binding.native_invoke) as native:
+            original = binding.generation(f.root, f.request, f.run)
+        self.assertEqual(f.request, request_before)
+        physical = [call.args[1]["arguments"]["source"] for call in native.call_args_list
+                    if call.args[1].get("operation") == "physical-binding"]
+        self.assertEqual(physical, [{**f.request["target"], "s3": {
+            "configuration": binding.configuration_binding(f.root, f.configuration)}}])
+        self.assertNotIn("secret_key", json.dumps(physical))
+        wrong = copy.deepcopy(f.request)
+        wrong["target"]["s3"]["secret_key"] = "different-private-secret"
+        with patch.object(binding, "verify_tools") as tools, self.assertRaisesRegex(ValueError, "对象连接身份") as rejected:
+            binding.generation(f.root, wrong, f.run)
+        self.assertNotIn("different-private-secret", str(rejected.exception))
+        tools.assert_not_called()
         self.assertEqual(original["seed_credentials_sha256"], plan_hash({
             "bootstrap.admin_password": "Fixture!Admin123",
         }))

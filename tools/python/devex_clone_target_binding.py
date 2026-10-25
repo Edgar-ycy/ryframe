@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from native_s3_client import (NativeS3InvocationError, _invoke as native_invoke,
-                              _read_response as native_response)
+                              _read_response as native_response, configuration as object_configuration)
 import subprocess
 
 from collections import Counter
@@ -22,7 +22,7 @@ from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
 from rate_limit_client import load_app_table
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 from source_inventory import snapshot
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
@@ -513,13 +513,17 @@ def generation(backend: Path, request: dict, run) -> dict:
     never_started(backend, selected)
     if configuration_digest(execution_root, config_dir) != digest(request["configuration_sha256"]):
         raise ValueError("新目标 APP 配置或秘密发生变化")
+    object_binding = configuration_binding(execution_root, config_dir)
+    if object_configuration(object_binding, execution_root) != request["target"]["s3"]:
+        raise ValueError("目标对象连接身份与绑定配置文件不同；请核对请求和显式配置，不回显凭据")
+    side = {**request["target"], "s3": {"configuration": object_binding}}
     maintenance = verify_tools(execution_root, bound_file(backend, request["maintenance_build"]), run)
     physical = native_response(*native_invoke(
         "__source-evidence", {"operation": "physical-binding", "write": False,
             "arguments": {
                 'backend': str(execution_root),
                 'evidence_root': str(execution_root),
-                'source': request["target"],
+                'source': side,
                 'app_env': environment.get("APP_ENV"),
                 'config_dir': str(config_dir),
             },
@@ -529,7 +533,7 @@ def generation(backend: Path, request: dict, run) -> dict:
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
             raise ValueError("目标 MySQL host/port 不是审阅计划中的地址")
-    configuration = inventory_configuration(execution_root, environment, request["target"], config_dir=config_dir)
+    configuration = inventory_configuration(execution_root, environment, side, config_dir=config_dir)
     reset_config(execution_root, request, selected)
     verify_api_address(execution_root, selected["api_url"], config_dir=config_dir)
     table = load_app_table(execution_root, environment, config_dir=config_dir)
@@ -545,6 +549,10 @@ def generation(backend: Path, request: dict, run) -> dict:
     if not isinstance(password, str) or not password.strip():
         raise ValueError("所选配置文件的 bootstrap.admin_password 必须显式提供初始化管理员密码")
     secrets = {"bootstrap.admin_password": password}
+    if (configuration_binding(execution_root, config_dir) != object_binding
+            or configuration_digest(execution_root, config_dir) != request["configuration_sha256"]
+            or inventory_configuration(execution_root, environment, side, config_dir=config_dir) != configuration):
+        raise ValueError("目标代次观察期间绑定配置发生变化；保留现场并重新核对，不自动重放")
     return {"execution": execution, "maintenance": maintenance, "physical": physical, "configuration": configuration,
             "configuration_sha256": request["configuration_sha256"],
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),

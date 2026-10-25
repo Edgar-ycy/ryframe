@@ -50,3 +50,18 @@ fn unknown_listener_observations_and_endpoint_overrides_never_prove_a_closed_por
         assert!(!error.contains("value"));
     }
 }
+
+#[cfg(windows)]
+#[test]
+#[ignore = "需要Windows本机CIM监听表读取权限；由主控在宿主显式运行"]
+fn windows_cim_provider_observes_owned_listener_and_its_release() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    assert_eq!(address.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_ne!(address.port(), 0);
+    let url = format!("http://{address}");
+    let error = require_closed(&url).unwrap_err().to_string();
+    assert!(error.contains("已有监听"), "{error}");
+    drop(listener);
+    require_closed(&url).unwrap();
+}
