@@ -311,9 +311,7 @@ pub(crate) fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str
 
 pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<String> {
     let attempt = request.attempt;
-    if !matches!(operation, "preflight" | "target-authority" | "run")
-        || (operation == "target-authority"
-            && (request.stage != "target-verify" || request.mode != "run"))
+    if !matches!(operation, "preflight" | "run")
         || (operation == "run") != attempt.is_some()
         || attempt == Some(0)
     {

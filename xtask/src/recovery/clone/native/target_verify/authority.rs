@@ -7,16 +7,20 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::super::{
+    bridge::scope::Scope,
     digest, json as json_io,
-    lifecycle::{
-        manifest,
-        stage::{self, StageRequest},
-    },
+    lifecycle::{manifest, stage::StageRequest},
+    resources::common,
 };
-use super::{input::TargetContext, tree};
+use super::{guard, input::TargetContext, published, tree};
 use crate::Result;
 
-/// 历史谱系暂由已有只读核验器提供，原生代码仍复核字段、实际摘要和完整目录树。
+#[path = "authority/generation.rs"]
+pub(crate) mod generation;
+#[path = "authority/ports.rs"]
+mod ports;
+
+/// 实际历史和代次观察均在本进程执行；测试替身不能成为执行许可。
 pub(crate) trait Observer {
     fn inspect(&self, backend: &Path, stage: &StageRequest<'_>) -> Result<Value>;
 }
@@ -29,8 +33,74 @@ impl Observer for SystemObserver {
             attempt: None,
             ..*request
         };
-        stage::invoke(backend, &readonly, "target-authority")
+        observe_with(backend, &readonly, |backend, target, environment, scope| {
+            generation::observe(
+                backend,
+                target,
+                environment,
+                &mut |root, path, receipt| scope.maintenance(root, path, receipt),
+                &mut ports::require_closed,
+            )
+        })
     }
+}
+
+/// 前后完整复核与真实代次观察共用同一来源窗口；不创建锁或观察目录。
+pub(crate) fn observe_with(
+    backend: &Path,
+    request: &StageRequest<'_>,
+    observe: impl FnOnce(
+        &Path,
+        &Value,
+        &std::collections::BTreeMap<String, String>,
+        &Scope,
+    ) -> Result<Value>,
+) -> Result<Value> {
+    if request.stage != "target-verify" || request.mode != "run" || request.attempt.is_some() {
+        return Err("目标只读权威只接受无attempt的target-verify/run观察".into());
+    }
+    let original = manifest::load(backend, &request.run_dir.join("manifest.json"))?;
+    if original.value["copy_stage"] != "source_to_seed" {
+        return Err("目标只读权威只接受source_to_seed清单".into());
+    }
+    let filename =
+        manifest::bound_file(backend, &original.value["initialized"], "目标初始化", true)?;
+    let target = filename.parent().ok_or("目标初始化缺少目录")?;
+    let scope = Scope::load(
+        backend,
+        json_io::array(&original.value["build_bridges"], "构建桥接")?,
+        &[],
+    )?;
+    let (initialized, target_request) = published::unlocked_history(backend, &filename)?;
+    let files = tree::snapshot(backend, target, false)?;
+    let inputs = guard::Inputs::open(tree::files(target, &files)?)?;
+    let environment = common::environment(backend, &original.value["target_environment"])?;
+    let generation = observe(backend, &target_request, &environment, &scope)?;
+    let mut expected = json_io::object(&initialized["generation"], "初始化generation")?.clone();
+    expected.remove("storage");
+    if generation != Value::Object(expected) {
+        return Err("目标当前源码、维护工具、配置或物理连接不同于初始化代次".into());
+    }
+    let prepare = json_io::read(&target.join("prepare.json"))?;
+    let value = json!({
+        "format_version":1,"kind":"devex-clone-target-authority",
+        "initialized":original.value["initialized"],"request":prepare["request"],
+        "initialized_files":common::binding(&target.parent().ok_or("目标缺少工作区")?.join("initialized-files.json"))?,
+        "files":files,"generation":generation,"remote_writes":0,
+        "target_ready":false,"clone_verified":false,"restore_qualified":false
+    });
+    inputs.check()?;
+    let current = manifest::load(backend, &request.run_dir.join("manifest.json"))?;
+    if published::unlocked_history(backend, &filename)? != (initialized, target_request)
+        || tree::snapshot(backend, target, false)? != files
+        || current.digest != original.digest
+        || current.value != original.value
+    {
+        return Err("目标只读权威核验期间输入或完整历史变化".into());
+    }
+    scope.assert_unchanged()?;
+    validate(backend, request.run_dir, &value)?;
+    Ok(value)
 }
 
 pub(crate) fn inspect(

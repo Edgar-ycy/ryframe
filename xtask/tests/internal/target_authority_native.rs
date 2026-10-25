@@ -10,7 +10,7 @@ use crate::recovery::clone::native::{
     target_verify::{authority, tree},
 };
 
-// 此夹具只验证私有协议与实际文件绑定；完整初始化历史另由 Python 对照测试覆盖。
+// 结构边界使用最小文件夹具；完整历史组合复用既有published夹具。
 struct Fixture {
     backend: PathBuf,
     _directory: tempfile::TempDir,
@@ -213,4 +213,136 @@ fn authority_rejects_residual_lock_without_removing_its_contents() {
         before
     );
     assert_eq!(fs::read(lock.join("unknown.json")).unwrap(), b"retain");
+}
+
+fn observed_authority(
+    fixture: &crate::target_verify_fixture::Fixture,
+    port: &mut dyn FnMut(&str) -> crate::Result<()>,
+) -> crate::Result<Value> {
+    use crate::recovery::clone::native::maintenance;
+    let stage = crate::recovery::clone::native::lifecycle::stage::StageRequest {
+        attempt: None,
+        ..fixture.stage()
+    };
+    authority::observe_with(
+        &fixture.backend,
+        &stage,
+        |backend, request, environment, scope| {
+            authority::generation::observe(
+                backend,
+                request,
+                environment,
+                &mut |root, path, receipt| {
+                    // 只替代当前工具链版本观察；文件、完整来源与冻结维护产物仍实际核对。
+                    maintenance::verify_evidence(root, path, Some(receipt))?;
+                    scope.verify_source(
+                        root,
+                        path,
+                        receipt,
+                        receipt["source"]["worktree_fingerprint"].as_str().unwrap(),
+                        None,
+                    )?;
+                    Ok(receipt.clone())
+                },
+                port,
+            )
+        },
+    )
+}
+
+#[test]
+fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonly() {
+    let fixture = crate::target_verify_published::complete();
+    let before = tree::snapshot(&fixture.backend, &fixture.local, false).unwrap();
+    let mut ports = Vec::new();
+    let value = observed_authority(&fixture, &mut |url| {
+        ports.push(url.to_owned());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        ports,
+        [
+            "http://127.0.0.1:28080",
+            "http://127.0.0.1:28081/readyz",
+            "http://127.0.0.1:28082"
+        ]
+    );
+    assert_eq!(
+        value["initialized"],
+        bound(&fixture.target.join("initialized.json"))
+    );
+    assert_eq!(value["request"], bound(&fixture.local.join("request.json")));
+    let mut expected =
+        json_io::read(&fixture.target.join("initialized.json")).unwrap()["generation"].clone();
+    expected.as_object_mut().unwrap().remove("storage");
+    assert_eq!(value["generation"], expected);
+    assert_eq!(value["remote_writes"], 0);
+    for field in ["target_ready", "clone_verified", "restore_qualified"] {
+        assert_eq!(value[field], false);
+    }
+    assert_eq!(
+        tree::snapshot(&fixture.backend, &fixture.local, false).unwrap(),
+        before
+    );
+    let error = observed_authority(&fixture, &mut |_| Err("明确观察失败".into())).unwrap_err();
+    assert!(error.to_string().contains("明确观察失败"));
+    assert_eq!(
+        tree::snapshot(&fixture.backend, &fixture.local, false).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn native_authority_rejects_actual_config_start_history_and_changes_during_observation() {
+    let fixture = crate::target_verify_published::complete();
+    let config = Path::new(fixture.request["config_dir"].as_str().unwrap()).join("app.test.toml");
+    let original = fs::read(&config).unwrap();
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"\n# drift\n");
+    fs::write(&config, &changed).unwrap();
+    let mut calls = 0;
+    assert!(
+        observed_authority(&fixture, &mut |_| {
+            calls += 1;
+            Ok(())
+        })
+        .is_err()
+    );
+    assert_eq!(calls, 0);
+    assert_eq!(fs::read(&config).unwrap(), changed);
+    fs::write(&config, original).unwrap();
+    let selected =
+        json_io::read(&fixture.target.join("initialized.json")).unwrap()["generation"]["selected"]
+            .clone();
+    let runtime = Path::new(selected["runtime_dir"].as_str().unwrap());
+    fs::create_dir(runtime).unwrap();
+    let producer = runtime.join("api.json");
+    fs::write(&producer, b"unknown producer must survive").unwrap();
+    assert!(
+        observed_authority(&fixture, &mut |_| {
+            calls += 1;
+            Ok(())
+        })
+        .is_err()
+    );
+    assert_eq!(calls, 0);
+    assert_eq!(
+        fs::read(&producer).unwrap(),
+        b"unknown producer must survive"
+    );
+    fs::remove_file(producer).unwrap();
+    fs::remove_dir(runtime).unwrap();
+    let extra = fixture.target.join("unknown-during-observation.json");
+    assert!(
+        observed_authority(&fixture, &mut |_| {
+            if !extra.exists() {
+                fs::write(&extra, b"retain").unwrap();
+            }
+            Ok(())
+        })
+        .is_err()
+    );
+    assert_eq!(fs::read(extra).unwrap(), b"retain");
+    assert!(!fixture.target.join("initialize.lock").exists());
 }

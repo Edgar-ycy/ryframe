@@ -245,7 +245,10 @@ class CloneProtocolTests(unittest.TestCase):
         self.assertEqual(dispatch.call_args.args[0].attempt, 7)
         self.assertTrue(dispatch.call_args.args[0].write)
         ordinary.assert_not_called()
-        for raw in [source.replace(b'"attempt": 7', b'"attempt": 0'),
+        retired = {**value, "request": {**value["request"], "stage": "target-verify",
+                   "operation": "target-authority", "attempt": None, "write": False}}
+        for raw in [json.dumps(retired).encode(),
+                    source.replace(b'"attempt": 7', b'"attempt": 0'),
                     source.replace(b'"write": true', b'"write": false'),
                     source + b" " * (32769 - len(source))]:
             with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(raw))), \

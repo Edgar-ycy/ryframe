@@ -97,7 +97,7 @@ fn object_observations(fixture: &fixture::Fixture, names: &mut BTreeSet<String>)
     }
 }
 
-fn complete() -> fixture::Fixture {
+pub(crate) fn complete() -> fixture::Fixture {
     let fixture = fixture::Fixture::new();
     let names = observations(&fixture);
     let files = target_tree::snapshot(&fixture.backend, &fixture.target, false).unwrap();

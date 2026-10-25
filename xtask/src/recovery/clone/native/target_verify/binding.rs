@@ -161,7 +161,7 @@ fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
     Ok(json!({"path":path,"environment":private}))
 }
 
-fn never_started(backend: &Path, selected: &Value) -> Result<()> {
+pub(super) fn never_started(backend: &Path, selected: &Value) -> Result<()> {
     let runtime = Path::new(json_io::text(&selected["runtime_dir"], "目标运行目录")?);
     validate_local_test_path(runtime, backend, LocalTestPathKind::StateDirectory)?;
     for filename in ["producer-history.json", "api.json", "worker.json"] {

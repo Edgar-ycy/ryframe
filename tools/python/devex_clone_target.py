@@ -427,41 +427,6 @@ def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storag
         raise
 
 
-def read_target_authority(backend: Path, directory: Path, run=subprocess.run) -> dict:
-    """仅复用完整历史、恢复谱系及配置来源；资源观察由 Rust 调度，不写入任何文件。"""
-    from devex_clone_factory_context import initialization_history
-    from devex_clone_run import read_manifest, environments
-    from devex_clone_target_binding import initialized_target_files
-    from source_fingerprints import artifact_sources
-
-    original = read_manifest(backend, directory)
-    if original["copy_stage"] != "source_to_seed":
-        raise ValueError("原生目标权威只接受 source_to_seed，其他阶段继续使用完整状态机")
-    filename = bound_file(backend, original["initialized"])
-    if filename.name != "initialized.json":
-        raise ValueError("目标必须绑定本代次 initialized.json")
-    output = filename.parent
-    with artifact_sources(backend, original["build_bridges"], []):
-        initialized, request = initialization_history(backend, filename)
-        with environments(backend, original).use("target"):
-            observed = generation(backend, request, run)
-        expected = {key: value for key, value in initialized["generation"].items() if key != "storage"}
-        if observed != expected:
-            raise ValueError("目标当前源码、维护工具、配置或物理连接不同于初始化代次")
-        tree = target_files(output)
-        authority = {
-            "format_version": 1, "kind": "devex-clone-target-authority",
-            "initialized": binding(filename), "request": read_json(output / "prepare.json")["request"],
-            "initialized_files": initialized_target_files(backend, output),
-            "files": tree, "generation": observed, "remote_writes": 0,
-            "target_ready": False, "clone_verified": False, "restore_qualified": False,
-        }
-        if (initialization_history(backend, filename) != (initialized, request)
-                or target_files(output) != tree or read_manifest(backend, directory) != original):
-            raise ValueError("目标只读权威核验期间输入或历史发生变化")
-        return authority
-
-
 def verify_target(backend: Path, output: Path, observation_dir: Path, run=subprocess.run,
                   *, storage_run: Path | None = None, request_descriptor: dict | None = None) -> dict:
     """只用于复制前的完整初像复验；复制中不得用它代替逐步骤 live guard。"""

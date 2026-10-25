@@ -243,13 +243,10 @@ def decode_clone_stage_protocol(source: str):
         raise StageProtocolError("clone stage 私有协议 mode 无效")
     if request["stage"] == "target-verify" and request["mode"] != "run":
         raise StageProtocolError("clone stage target-verify 只支持 run")
-    if not isinstance(request["operation"], str) or request["operation"] not in {"preflight", "target-authority", "run"}:
+    if not isinstance(request["operation"], str) or request["operation"] not in {"preflight", "run"}:
         raise StageProtocolError("clone stage 私有协议 operation 无效")
-    if request["operation"] == "target-authority" and (
-            request["stage"] != "target-verify" or request["mode"] != "run"):
-        raise StageProtocolError("clone target authority 只允许目标只读核验")
     attempt = request["attempt"]
-    if request["operation"] in {"preflight", "target-authority"}:
+    if request["operation"] == "preflight":
         if attempt is not None or request["write"] is not False:
             raise StageProtocolError("clone stage 预检不接受 attempt 或 --write")
     elif type(attempt) is not int or attempt <= 0 or request["write"] is not True:
@@ -392,10 +389,6 @@ def dispatch_stage_operation(args, backend: Path) -> dict:
     from devex_clone_run import execute_operation
 
     directory = evidence_path(backend, args.run_dir)
-    if args.operation == "target-authority":
-        from devex_clone_target import read_target_authority
-
-        return read_target_authority(backend, directory)
     return execute_operation(
         backend,
         directory,
