@@ -1,6 +1,7 @@
 """阶段发布的真实控制器退出及外层来源失败回归；不连接业务服务。"""
 from contextlib import contextmanager
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_run as run
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
+from rate_limit_tool import tool_binding
 import test_devex_clone_run as fixtures
 
 
@@ -35,24 +37,37 @@ class PublicationTests(unittest.TestCase):
         return result
 
     def test_real_exit_after_directory_lock_cleanup_is_recoverable_in_same_run(self):
+        native_tool = tool_binding()
+        self.assertIsNotNone(native_tool, "此用例必须通过安装受管工具绑定的正式检查入口运行")
         child_code = (
             "from pathlib import Path\nfrom contextlib import nullcontext\nfrom unittest.mock import patch\n"
             "import os,sys\nimport devex_clone_run as run\n"
+            "from rate_limit_tool import install_verified_binding\n"
+            "install_verified_binding(sys.argv[3])\n"
+            "def interrupt_publication(directory, number, **options):\n"
+            " if options.get('error') is not None: raise options['error']\n"
+            " assert not (directory / 'run.lock').exists()\n"
+            " assert options['result'] == {'status':'copy_completed'}\n"
+            " assert run.load_state(directory)['attempts'][-1]['status'] == 'running'\n"
+            " assert (directory / f'controller-{number:04d}.json').is_file()\n"
+            " os._exit(73)\n"
             "with patch('source_fingerprints.current_execution_source', return_value={'fixture':'child'}), "
             "patch('source_fingerprints.artifact_sources', return_value=nullcontext()), "
-            "patch.object(run,'run_export', return_value={'status':'export_verified'}), "
-            "patch.object(run,'finish', side_effect=lambda *a, **k: os._exit(73)):\n"
-            " run.execute(Path(sys.argv[1]), Path(sys.argv[2]), 'export', 'run')\n"
+            "patch.object(run,'run_copy', return_value={'status':'copy_completed'}), "
+            "patch.object(run,'finish', side_effect=interrupt_publication):\n"
+            " run.execute(Path(sys.argv[1]), Path(sys.argv[2]), 'copy', 'run')\n"
         )
         environment = dict(os.environ, PYTHONPATH=os.pathsep.join([str(Path(run.__file__).parent),
                            str(Path(sys.modules["process_guard"].__file__).parent)]))
-        child = subprocess.run([sys.executable, "-c", child_code, str(self.backend), str(self.directory)],
+        child = subprocess.run([sys.executable, "-c", child_code, str(self.backend), str(self.directory),
+                                json.dumps(native_tool, ensure_ascii=False)],
                                env=environment, capture_output=True, timeout=15,
                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         self.assertEqual(child.returncode, 73, child.stderr.decode(errors="replace"))
         self.assertFalse((self.directory / "run.lock").exists())
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "running")
         descriptor = state.pending_controller(self.directory)
+        self.assertIsNotNone(descriptor)
         self.assertEqual(Path(descriptor["path"]).name, "controller-0001.json")
         controller = state.controller_observation(self.directory)
         self.assertTrue(controller["process_missing"])
@@ -60,8 +75,8 @@ class PublicationTests(unittest.TestCase):
         result = state.recover_lock(self.backend, self.directory, descriptor)
         self.assertTrue(result["copy_requires_reconciliation"])
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["error_type"], "ControllerInterrupted")
-        with patch.object(run, "run_export", return_value={"status": "export_verified"}):
-            self.assertEqual(run.execute(self.backend, self.directory, "export", "run")["attempt"], 2)
+        with patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
+            self.assertEqual(run.execute(self.backend, self.directory, "copy", "run")["attempt"], 2)
 
     def test_finish_still_holds_kernel_guard_after_directory_lock_is_removed(self):
         real_finish = run.finish
@@ -78,8 +93,8 @@ class PublicationTests(unittest.TestCase):
             return real_finish(directory, number, **options)
 
         with patch.object(run, "finish", side_effect=publish), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
-            run.execute(self.backend, self.directory, "export", "run")
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
+            run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(checked, [True])
 
     def test_result_file_survives_state_write_failure_and_error_finalization(self):
@@ -93,13 +108,13 @@ class PublicationTests(unittest.TestCase):
             return real_write(path, value)
 
         with patch.object(state, "write_receipt", side_effect=write), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaisesRegex(OSError, "publication failed"):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         attempt = state.load_state(self.directory)["attempts"][0]
         self.assertEqual(attempt["status"], "failed")
         self.assertEqual(attempt["error_type"], "OSError")
-        self.assertEqual(read_json(Path(attempt["result"]["path"])), {"status": "export_verified"})
+        self.assertEqual(read_json(Path(attempt["result"]["path"])), {"status": "copy_completed"})
 
     def test_lock_directory_removal_failure_restores_owner_for_explicit_recovery(self):
         real_rmdir = Path.rmdir
@@ -110,9 +125,9 @@ class PublicationTests(unittest.TestCase):
                 raise OSError("fixture directory removal failed")
             return real_rmdir(path)
 
-        with patch.object(Path, "rmdir", remove), patch.object(run, "run_export", return_value={"status": "export_verified"}):
+        with patch.object(Path, "rmdir", remove), patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaisesRegex(OSError, "directory removal failed"):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         owner_binding = state.binding(lock / "owner.json")
         self.assertEqual(read_json(Path(owner_binding["path"])), read_json(self.directory / "controller-0001.json")["owner"])
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "failed")
@@ -143,17 +158,17 @@ class PublicationTests(unittest.TestCase):
         self.assertFalse(lock.exists())
 
     def test_different_existing_result_is_never_overwritten(self):
-        number = state.begin(self.directory, "export", "run", self.case.sources)
+        number = state.begin(self.directory, "copy", "run", self.case.sources)
         path = self.directory / "results/0001.json"
         write_json(path, {"original": "failure evidence"})
         before = path.read_bytes()
         with self.assertRaisesRegex(ValueError, "拒绝覆盖"):
-            state.finish(self.directory, number, result={"status": "export_verified"})
+            state.finish(self.directory, number, result={"status": "copy_completed"})
         self.assertEqual(path.read_bytes(), before)
 
     def test_old_persistent_controller_cannot_recover_a_new_running_attempt(self):
-        with patch.object(run, "run_export", return_value={"status": "export_verified"}):
-            run.execute(self.backend, self.directory, "export", "run")
+        with patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
+            run.execute(self.backend, self.directory, "copy", "run")
         descriptor = state.binding(self.directory / "controller-0001.json")
         with state.run_lock(self.directory) as owner:
             number = state.begin(self.directory, "copy", "resume", self.case.sources)

@@ -237,12 +237,10 @@ def decode_clone_stage_protocol(source: str):
         {"backend_dir", "run_dir", "stage", "mode", "operation", "attempt", "write"},
         "request",
     )
-    if not isinstance(request["stage"], str) or request["stage"] not in {"export", "target-verify", "copy"}:
+    if not isinstance(request["stage"], str) or request["stage"] != "copy":
         raise StageProtocolError("clone stage 私有协议 stage 无效")
     if not isinstance(request["mode"], str) or request["mode"] not in {"run", "reconcile", "resume"}:
         raise StageProtocolError("clone stage 私有协议 mode 无效")
-    if request["stage"] == "target-verify" and request["mode"] != "run":
-        raise StageProtocolError("clone stage target-verify 只支持 run")
     if not isinstance(request["operation"], str) or request["operation"] not in {"preflight", "run"}:
         raise StageProtocolError("clone stage 私有协议 operation 无效")
     attempt = request["attempt"]
@@ -274,6 +272,8 @@ def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
 
 
 def dispatch(args, backend: Path) -> dict:
+    if args.command == "stage" and args.stage != "copy":
+        raise ValueError("Python 阶段入口仅接受 copy")
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记必须使用原生 Rust 入口")
     if args.command == "fresh-target":

@@ -1,4 +1,4 @@
-"""固定清单驱动导出、目标复核、数据复制及环境控制，逐阶段显式继续。"""
+"""固定清单驱动数据复制及环境控制，逐阶段显式继续。"""
 from __future__ import annotations
 
 import copy
@@ -426,67 +426,6 @@ def export_binding(backend: Path, directory: Path, value: dict) -> dict:
     raise ValueError("复制前必须完成源导出阶段")
 
 
-def run_export(backend: Path, directory: Path, value: dict, environment: Environments, number: int,
-               mode: str, sources: dict) -> dict:
-    from devex_clone_export_recovery import (prepare_attempt, reconcile, record_verified,
-                                             reject_reexport, resume)
-    from devex_clone_export_verify import verify_source_export
-    from devex_clone_source import export_source
-
-    controller = Environments(dict(os.environ), {})
-
-    def control_environment():
-        if dict(os.environ) not in (controller.values["source"], environment.values["source"]):
-            raise ValueError("导出控制或服务环境在检查前变化")
-        return controller.use("source")
-
-    if mode == "reconcile":
-        if value["source_export"] is not None:
-            raise ValueError("固定清单已有外部 export，无需采用 attempt 候选")
-        return reconcile(backend, directory, value, environment, number, sources,
-                         control_environment=control_environment)
-    if mode == "resume":
-        if value["source_export"] is not None:
-            raise ValueError("固定清单已有外部 export，无需恢复 attempt 候选")
-        return resume(backend, directory, value, environment, number, sources,
-                      control_environment=control_environment)
-    if mode != "run":
-        raise ValueError("源导出模式无效")
-    with control_environment(), environment.use("source"):
-        if value["source_export"] is None:
-            reject_reexport(backend, directory, number)
-        with control_environment():
-            storage = source_storage_binding(backend, directory, value)
-        if value["source_export"] is None:
-            # 失败仅留下本地证据；新尝试保存独立短目录，固定主清单不换代。
-            output = prepare_attempt(backend, directory, value, number, sources, storage)
-            export_source(backend, bound_file(backend, value["source_request"]), output,
-                          control_environment=control_environment)
-            exported = binding(output / "export.json")
-        else:
-            exported = value["source_export"]
-        verified = verify_source_export(backend, exported)
-        if value["source_export"] is None:
-            intent = read_json(directory / f"export-{number:04d}.intent.json")
-            record_verified(directory, number, intent, exported, verified)
-        with control_environment():
-            if source_storage_binding(backend, directory, value) != storage:
-                raise ValueError("源 storage provenance 在导出前后发生变化")
-    return {"status": "export_verified", "export": exported,
-            "logical_inventory_sha256": verified["export"]["logical_inventory_sha256"],
-            "remote_writes": 0, "restore_qualified": False}
-
-
-def run_target(backend: Path, directory: Path, value: dict, environment: Environments, number: int) -> dict:
-    from devex_clone_target import verify_target
-
-    target = bound_file(backend, value["initialized"])
-    with target_storage_control(backend, directory, value) as storage_run, environment.use("target"):
-        return verify_target(
-            backend, target.parent, directory / f"v{number:04d}", storage_run=storage_run,
-        )
-
-
 def copy_binary_bindings(backend: Path, value: dict) -> list[dict]:
     """仅从已绑定请求、初始化历史和构建收据收集明确二进制；业务文件不进入保护集合。"""
     from devex_clone_source_proof import validate_request
@@ -659,8 +598,8 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
             cache_request: Path | None = None) -> dict:
     from source_fingerprints import artifact_sources, current_execution_source
 
-    if stage == "target-verify" and mode != "run":
-        raise ValueError("target-verify 只支持首次 run，不得创建 reconcile 或 resume 阶段")
+    if stage in {"export", "target-verify"}:
+        raise ValueError("导出和目标复核必须使用原生 Rust 入口")
 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
@@ -732,11 +671,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     sources = {"source_capture_error_type": type(error).__name__}
                 number = begin(directory, stage, mode, sources, verify_results=not cleanup)
                 bind_controller_attempt(directory, number, owner, verify_results=not cleanup)
-                if stage == "export":
-                    result = run_export(backend, directory, value, environment, number, mode, sources)
-                elif stage == "target-verify" and mode == "run":
-                    result = run_target(backend, directory, value, environment, number)
-                elif stage == "copy":
+                if stage == "copy":
                     result = run_copy(backend, directory, value, environment, mode)
                 elif stage in {"storage-source", "storage-target"}:
                     from devex_clone_storage import execute_storage
@@ -784,10 +719,8 @@ def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
     """只执行已拆分的资源编排；生命周期锁、attempt 和结果发布由 Rust 持有。"""
     from source_fingerprints import artifact_sources, current_execution_source
 
-    if stage not in {"export", "target-verify", "copy"} or mode not in {"run", "reconcile", "resume"}:
+    if stage != "copy" or mode not in {"run", "reconcile", "resume"}:
         raise ValueError("阶段与执行模式不匹配")
-    if stage == "target-verify" and mode != "run":
-        raise ValueError("target-verify 只支持首次 run，不得创建 reconcile 或 resume 阶段")
     if preflight != (number is None):
         raise ValueError("阶段资源编排 attempt 与预检模式不匹配")
     value = read_manifest(backend, directory)
@@ -796,13 +729,8 @@ def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
     with artifact_sources(backend, value["build_bridges"], inherited):
         if preflight:
             return {"status": "stage_operation_preflight_ready", "stage": stage, "mode": mode}
-        sources = current_execution_source(backend)
-        if stage == "export":
-            result = run_export(backend, directory, value, environment, number, mode, sources)
-        elif stage == "target-verify":
-            result = run_target(backend, directory, value, environment, number)
-        else:
-            result = run_copy(backend, directory, value, environment, mode)
+        current_execution_source(backend)
+        result = run_copy(backend, directory, value, environment, mode)
         if read_manifest(backend, directory) != value:
             raise ValueError("阶段运行期间验收清单发生变化")
         return result

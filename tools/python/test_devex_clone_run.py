@@ -65,13 +65,13 @@ class RunTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(observed, [("initialized.json", 7)])
 
-    def test_failed_export_preserves_history_and_next_stage_attempt_reuses_run(self):
-        with patch.object(run, "run_export", side_effect=ValueError("fixture")):
+    def test_failed_copy_preserves_history_and_next_stage_attempt_reuses_run(self):
+        with patch.object(run, "run_copy", side_effect=ValueError("fixture")):
             with self.assertRaises(ValueError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertFalse((self.directory / "run.lock").exists())
-        with patch.object(run, "run_export", return_value={"status": "export_verified", "remote_writes": 0}):
-            result = run.execute(self.backend, self.directory, "export", "run")
+        with patch.object(run, "run_copy", return_value={"status": "copy_completed", "remote_writes": 0}):
+            result = run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(result["attempt"], 2)
         observed = state.load_state(self.directory)
         self.assertEqual([a["status"] for a in observed["attempts"]], ["failed", "passed"])
@@ -87,57 +87,21 @@ class RunTests(unittest.TestCase):
         namespace = {}
         exec(compile("def fail():\n    password = 'fixture-secret'\n    raise ValueError(password)\n",
                      str(filename), "exec"), namespace)
-        with patch.object(run, "run_export", side_effect=lambda *args: namespace["fail"]()):
+        with patch.object(run, "run_copy", side_effect=lambda *args: namespace["fail"]()):
             with self.assertRaisesRegex(ValueError, "fixture-secret"):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         failure = read_json(self.directory / "failure-0001.json")
         self.assertEqual(failure["frames"], [{"file": "tools/python/failure_fixture.py", "function": "fail", "line": 3}])
         self.assertNotIn("fixture-secret", json.dumps(failure))
         self.assertNotIn(str(self.backend), json.dumps(failure["frames"]))
 
     def test_diagnostic_write_failure_keeps_original_error_and_failed_stage(self):
-        with patch.object(run, "run_export", side_effect=ValueError("original")), \
+        with patch.object(run, "run_copy", side_effect=ValueError("original")), \
                 patch.object(run, "record_failure", side_effect=OSError("diagnostic")):
             with self.assertRaisesRegex(ValueError, "original") as raised:
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "failed")
         self.assertEqual(raised.exception.__notes__, ["阶段位置证据保存失败：OSError"])
-
-    def test_source_storage_failure_blocks_export_before_existing_proof_is_read(self):
-        with patch("devex_clone_storage.current_storage_binding", side_effect=ValueError("latest storage stopped")) as storage, \
-                patch("devex_clone_export_verify.verify_source_export") as verify, \
-                patch("devex_clone_source.export_source") as export:
-            with self.assertRaisesRegex(ValueError, "storage stopped"):
-                run.execute(self.backend, self.directory, "export", "run")
-        storage.assert_called_once_with(self.backend, self.directory, "source")
-        verify.assert_not_called()
-        export.assert_not_called()
-        self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "failed")
-
-    def test_source_storage_failure_after_export_verification_prevents_publication(self):
-        verified = {"export": {"logical_inventory_sha256": "a" * 64}}
-        original = {key: Path(self.value[key]["path"]).read_bytes() for key in ("source_request", "source_export", "initialized")}
-        with patch("devex_clone_storage.current_storage_binding", side_effect=[None, ValueError("latest storage failed")]) as storage, \
-                patch("devex_clone_export_verify.verify_source_export", return_value=verified) as verify:
-            with self.assertRaisesRegex(ValueError, "storage failed"):
-                run.execute(self.backend, self.directory, "export", "run")
-        self.assertEqual(storage.call_count, 2)
-        verify.assert_called_once_with(self.backend, self.value["source_export"])
-        latest = state.load_state(self.directory)["attempts"][-1]
-        self.assertEqual(latest["status"], "failed")
-        self.assertIsNone(latest["result"])
-        self.assertEqual({key: Path(self.value[key]["path"]).read_bytes() for key in original}, original)
-
-    def test_source_without_storage_registration_retains_existing_export_contract(self):
-        verified = {"export": {"logical_inventory_sha256": "a" * 64}}
-        with patch("devex_clone_storage.current_storage_binding", return_value=None) as storage, \
-                patch("devex_clone_export_verify.verify_source_export", return_value=verified):
-            result = run.execute(self.backend, self.directory, "export", "run")
-        self.assertEqual(result["result"], {"status": "export_verified", "export": self.value["source_export"],
-            "logical_inventory_sha256": "a" * 64, "remote_writes": 0, "restore_qualified": False})
-        self.assertEqual(storage.call_count, 2)
-        self.assertTrue(all(item.args == (self.backend, self.directory, "source") for item in storage.call_args_list))
-        self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "passed")
 
     def test_changed_input_is_rejected_before_any_execution(self):
         Path(self.value["source_environment"]["path"]).write_text('{"environment":{}}', encoding="utf-8")
@@ -356,15 +320,6 @@ class RunTests(unittest.TestCase):
             path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()
         })
 
-    def test_target_verify_invalid_resume_fails_before_attempt_or_guard(self):
-        before = (self.directory / "state.json").read_bytes()
-        with patch.object(run, "begin") as begin, \
-                patch.object(run, "process_guard", side_effect=AssertionError("不能创建控制 guard")), \
-                self.assertRaisesRegex(ValueError, "只支持首次 run"):
-            run.execute(self.backend, self.directory, "target-verify", "resume")
-        begin.assert_not_called()
-        self.assertEqual((self.directory / "state.json").read_bytes(), before)
-
     def test_stop_does_not_require_current_source_to_match_build(self):
         with patch("source_fingerprints.artifact_sources", side_effect=ValueError("changed product")) as bridge, \
                 patch.object(run, "run_runtime", return_value={"state": "stopped"}):
@@ -464,9 +419,9 @@ class RunTests(unittest.TestCase):
 
     def test_changed_source_during_stage_cannot_publish_success(self):
         with patch("source_fingerprints.current_execution_source", side_effect=[self.sources, {"changed": True}]), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaises(ValueError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "failed")
 
     def test_final_source_check_failure_preserves_result_without_publishing_success(self):
@@ -476,9 +431,9 @@ class RunTests(unittest.TestCase):
             raise ValueError("final source check")
 
         with patch("source_fingerprints.artifact_sources", side_effect=source_context), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaises(ValueError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         attempt = state.load_state(self.directory)["attempts"][0]
         self.assertEqual(attempt["status"], "failed")
         self.assertIsNotNone(attempt["result"])
@@ -492,22 +447,22 @@ class RunTests(unittest.TestCase):
             raise OSError("lock release")
 
         with patch.object(run, "claim_run_lock", side_effect=failing_lock), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaises(OSError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "failed")
 
     def test_failed_lock_acquisition_does_not_finish_another_attempt(self):
         state.begin(self.directory, "copy", "resume", self.sources)
         with state.run_lock(self.directory), self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "export", "run")
+            run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "running")
 
     def test_concurrent_control_rejected_and_result_tampering_detected(self):
         with state.run_lock(self.directory), self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "export", "run")
-        with patch.object(run, "run_export", return_value={"status": "export_verified"}):
-            run.execute(self.backend, self.directory, "export", "run")
+            run.execute(self.backend, self.directory, "copy", "run")
+        with patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
+            run.execute(self.backend, self.directory, "copy", "run")
         (self.directory / "results/0001.json").write_text('{}', encoding="utf-8")
         with self.assertRaises(ValueError):
             state.load_state(self.directory)

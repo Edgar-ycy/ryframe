@@ -210,10 +210,8 @@ def _base(command, options):
         return {"run_dir": _path(options["run_dir"], "run_dir")}
     if command == "stage":
         _exact(options, {"run_dir", "stage", "mode"}, "stage options")
-        stage = _enum(options["stage"], {"export", "target-verify", "copy"}, "stage")
+        stage = _enum(options["stage"], {"copy"}, "stage")
         mode = _enum(options["mode"], {"run", "reconcile", "resume"}, "mode")
-        if stage == "target-verify" and mode != "run":
-            raise CloneProtocolError("clone 私有协议 target-verify 只支持 run")
         return {
             "run_dir": _path(options["run_dir"], "run_dir"),
             "stage": stage,

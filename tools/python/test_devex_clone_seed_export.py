@@ -13,7 +13,6 @@ import devex_clone_export_recovery as recovery
 import devex_clone_run as run
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
-from process_environment import Environments
 from restore_reference_plan import plan_hash
 
 
@@ -156,19 +155,12 @@ class SeedExportTests(unittest.TestCase):
         capture.assert_not_called()
         state.finish(self.directory, number, error=RuntimeError("fixture generation changed"))
 
-    def test_both_arms_bind_one_export_and_each_export_stage_only_verifies(self):
+    def test_both_arms_bind_one_export_and_reject_wrong_binding(self):
         _, result, descriptor = self.complete()
         for side in ("base", "candidate"):
             value = {"id": side, "source_export": result["export"], "source_export_result": descriptor,
                      "source_request": self.request}
             export.require_export_binding(self.backend, self.source, value)
-            with patch.object(run, "source_storage_binding", return_value=self.storage), \
-                    patch("devex_clone_source.export_source") as capture, \
-                    patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)) as verify:
-                observed = run.run_export(self.backend, self.directory, value, Environments({}, {}), 4, "run", self.sources)
-            self.assertEqual(observed["export"], result["export"])
-            capture.assert_not_called()
-            verify.assert_called_once_with(self.backend, result["export"])
         with self.assertRaises(ValueError):
             export.require_export_binding(self.backend, self.source, {"source_export_result": descriptor, "source_export": self.request})
 

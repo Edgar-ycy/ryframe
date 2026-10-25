@@ -103,10 +103,8 @@ class CloneProtocolTests(unittest.TestCase):
 
     def test_decodes_every_nested_operation_and_write_contract(self):
         cases = []
-        for stage in ("export", "target-verify", "copy"):
-            modes = ("run",) if stage == "target-verify" else ("run", "reconcile", "resume")
-            for mode in modes:
-                cases.append(("stage", {"run_dir": str(self.run), "stage": stage, "mode": mode}, True))
+        for mode in ("run", "reconcile", "resume"):
+            cases.append(("stage", {"run_dir": str(self.run), "stage": "copy", "mode": mode}, True))
         for operation in ("start", "stop", "status", "recover"):
             cases.append(("runtime", {
                 "run_dir": str(self.run), "side": "source", "operation": operation,
@@ -248,6 +246,8 @@ class CloneProtocolTests(unittest.TestCase):
         retired = {**value, "request": {**value["request"], "stage": "target-verify",
                    "operation": "target-authority", "attempt": None, "write": False}}
         for raw in [json.dumps(retired).encode(),
+                    source.replace(b'"stage": "copy"', b'"stage": "export"'),
+                    source.replace(b'"stage": "copy"', b'"stage": "target-verify"'),
                     source.replace(b'"attempt": 7', b'"attempt": 0'),
                     source.replace(b'"write": true', b'"write": false'),
                     source + b" " * (32769 - len(source))]:
