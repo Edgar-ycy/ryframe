@@ -13,6 +13,9 @@ use sea_orm::{
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
 
+#[path = "registry/pools_mysql.rs"]
+mod registry_pools;
+
 const TARGET: &str = "projection-dedicated";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
