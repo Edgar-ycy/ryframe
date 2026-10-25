@@ -94,14 +94,25 @@ fn initial_operation(context: &Context) -> Result<&'static str> {
         .iter()
         .position(|item| item["stage"] == "fixture-services")
         .unwrap_or(attempts.len());
-    let operation = ["rustfs", "redis", "buckets"]
-        .get(count)
-        .ok_or("夹具首代账本未完整就绪，必须先核实失败现场")?;
-    Ok(
-        if count > 0 && count == attempts.len() && !context.run.join(operation).exists() {
-            *operation
-        } else {
-            "reconcile-evidence"
-        },
-    )
+    if count == 0
+        || count != attempts.len()
+        || !attempts[..count]
+            .iter()
+            .all(|attempt| attempt["status"] == "passed")
+    {
+        return Ok("reconcile-evidence");
+    }
+    let Some(operation) = ["rustfs", "redis", "buckets"].get(count).copied() else {
+        return Ok("reconcile-evidence");
+    };
+    let exists = match std::fs::symlink_metadata(context.run.join(operation)) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    Ok(if exists {
+        "reconcile-evidence"
+    } else {
+        operation
+    })
 }
