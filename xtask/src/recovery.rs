@@ -157,6 +157,11 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         );
         return Ok(());
     };
+    if options.operation.as_str() == "status" {
+        let value = clone::native::target_verify::fresh::observe(&root_dir(), &options.workspace)?;
+        println!("{}", serde_json::to_string(&value)?);
+        return Ok(());
+    }
     let payload = fresh_target_protocol(options)?;
     run_with_stdin(
         &root_dir(),

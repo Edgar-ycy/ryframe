@@ -7,7 +7,9 @@ use serde_json::{Value, json};
 
 use super::{Fixture, KEYS, SCOPE, bound, database, descriptor, storage, write};
 use crate::recovery::clone::native::{
-    digest, json as json_io, maintenance, source,
+    digest, json as json_io,
+    lifecycle::state,
+    maintenance, source,
     target_verify::{
         input::{request, request_configuration},
         proof, reset, tree,
@@ -86,7 +88,7 @@ fn portable(path: &Path) -> PathBuf {
     PathBuf::from(value.strip_prefix(r"\\?\").unwrap_or(value))
 }
 
-pub(super) fn publish(fixture: &Fixture) {
+pub(super) fn publish(fixture: &Fixture, status_registration: bool) {
     write(&fixture.local.join("request.json"), &fixture.request);
     write(&fixture.target.join("request.json"), &fixture.request);
     write(
@@ -101,8 +103,9 @@ pub(super) fn publish(fixture: &Fixture) {
         &fixture.local.join("source-request.json"),
         &json!({"kind":"explicit-fixture-source-request"}),
     );
-    // 与真实初始化一致，控制锁文件在只读复核前已经存在。
-    fs::write(fixture.target.join("copy-target.guard"), [0]).unwrap();
+    if !status_registration {
+        fs::write(fixture.target.join("copy-target.guard"), [0]).unwrap();
+    }
     let binding = request::validate(&fixture.backend, &fixture.request).unwrap();
     let mut generation = request_configuration::validate(
         &fixture.backend,
@@ -120,7 +123,15 @@ pub(super) fn publish(fixture: &Fixture) {
         &fixture.target.join("prepare.json"),
         &prepared(fixture, &generation),
     );
-    lineage(fixture, "prepared");
+    if status_registration {
+        super::observations::prepared(fixture);
+    }
+    lineage(fixture, "prepared", status_registration);
+    if status_registration {
+        // prepare 已封存后才进入初始化控制窗口；不把初始化 guard 写进 prepare 前像。
+        let mut guard = fs::File::create_new(fixture.target.join("copy-target.guard")).unwrap();
+        std::io::Write::write_all(&mut guard, &[0]).unwrap();
+    }
     write(
         &fixture.target.join("initialize.started.json"),
         &json!({"at":"2026-10-18T00:01:00Z","generation_sha256":digest::plan_hash(&generation).unwrap()}),
@@ -140,7 +151,7 @@ pub(super) fn publish(fixture: &Fixture) {
         &initialized,
     );
     write(&fixture.target.join("initialized.json"), &initialized);
-    lineage(fixture, "initialized");
+    lineage(fixture, "initialized", status_registration);
     write(
         &fixture.run.join("manifest.json"),
         &json!({"format_version":1,"kind":"devex-clone-run","id":"target-verify-run",
@@ -168,17 +179,13 @@ fn prepared(fixture: &Fixture, generation: &Value) -> Value {
         "fresh_target_initialized":false,"controlled_generation_only":true,"external_writers_discovered":false,"create_intents":intents})
 }
 
-fn lineage(fixture: &Fixture, stage: &str) {
+fn lineage(fixture: &Fixture, stage: &str, status_registration: bool) {
     let registration = fixture.local.join("registration.json");
     if stage == "prepared" {
-        write(
-            &fixture.local.join("storage-run.json"),
-            &json!({"format_version":1,"kind":"explicit-fixture-storage-protocol","storage":fixture.request["storage"]}),
-        );
+        // 唯一登记在第一份阶段快照之前发布，后续快照只引用同一绑定。
         write(
             &registration,
-            &json!({"format_version":1,"kind":"devex-clone-fresh-target-registration","request":bound(&fixture.local.join("request.json")),
-            "environment":bound(&fixture.local.join("target-environment.json")),"storage_run":bound(&fixture.local.join("storage-run.json")),"target_directory":fixture.target}),
+            &registration_value(fixture, status_registration),
         );
     }
     let predecessor = if stage == "initialized" {
@@ -191,6 +198,41 @@ fn lineage(fixture: &Fixture, stage: &str) {
         &json!({"format_version":1,"kind":format!("devex-clone-fresh-target-{stage}-files"),
         "registration":bound(&registration),"predecessor":predecessor,"files":tree::snapshot(&fixture.backend,&fixture.target,false).unwrap()}),
     );
+}
+
+fn registration_value(fixture: &Fixture, status_registration: bool) -> Value {
+    let (environment, storage_run) = if status_registration {
+        let storage = fixture.backend.join(".local-tests/status-storage");
+        fs::create_dir(&storage).unwrap();
+        write(
+            &storage.join("manifest.json"),
+            &json!({"kind":"status-storage"}),
+        );
+        state::initialize(&storage).unwrap();
+        let private = fixture.local.join("status-private.json");
+        write(
+            &private,
+            &json!({"environment":{"APP_ENV":"test","TEMP":fixture.local,"TMP":fixture.local}}),
+        );
+        (
+            bound(&private),
+            json!({"path":storage,"manifest":bound(&storage.join("manifest.json")),
+            "state":bound(&storage.join("state.json"))}),
+        )
+    } else {
+        let storage = fixture.local.join("storage-run.json");
+        write(
+            &storage,
+            &json!({"format_version":1,"kind":"explicit-fixture-storage-protocol","storage":fixture.request["storage"]}),
+        );
+        (
+            bound(&fixture.local.join("target-environment.json")),
+            bound(&storage),
+        )
+    };
+    json!({"format_version":1,"kind":"devex-clone-fresh-target-registration",
+        "request":bound(&fixture.local.join("request.json")),"environment":environment,
+        "storage_run":storage_run,"target_directory":fixture.target})
 }
 
 fn creation(fixture: &Fixture) {

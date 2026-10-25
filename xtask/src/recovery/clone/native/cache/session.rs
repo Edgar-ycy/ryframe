@@ -56,6 +56,12 @@ pub(super) fn execute(
     {
         return Err(rejected("缓存阶段协议版本或类型无效"));
     }
+    let arguments = &value["arguments"];
+    if arguments["action"] == "binding" && arguments["parameters"]["owned_lock_identity"].is_null()
+    {
+        // 当前写控制器的初始化锁不能由跨进程整数冒认；其余查询不再回调 Python。
+        return super::binding::execute_stage(backend, arguments, None);
+    }
     stage::dispatch(
         backend,
         &value["arguments"],
@@ -119,5 +125,40 @@ mod tests {
             runtime.call("status", json!({})).unwrap(),
             json!({"state":"stopped"})
         );
+    }
+    #[test]
+    fn published_binding_query_uses_no_callback_messages_or_resource_writes() {
+        use crate::recovery::clone::native::{
+            json as document, lifecycle::state, resources::common,
+        };
+        let backend = crate::workspace::root_dir();
+        std::fs::create_dir_all(backend.join(".local-tests")).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("cache-binding-")
+            .tempdir_in(backend.join(".local-tests"))
+            .unwrap();
+        document::write_new(
+            &directory.path().join("manifest.json"),
+            &json!({"kind":"binding-fixture"}),
+        )
+        .unwrap();
+        state::initialize(directory.path()).unwrap();
+        let before = common::binding(&directory.path().join("state.json")).unwrap();
+        let value = json!({"format_version":1,"kind":"ryframe-cache-process","operation":"stage",
+            "arguments":{"action":"binding","directory":directory.path(),"caller":std::process::id(),
+                "parameters":{"owned_lock_identity":null,"before":null,"frozen":null}}});
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut output = Vec::new();
+        assert_eq!(
+            super::execute(&backend, &value, &mut input, &mut output).unwrap(),
+            Value::Null
+        );
+        assert!(output.is_empty());
+        assert_eq!(
+            common::binding(&directory.path().join("state.json")).unwrap(),
+            before
+        );
+        assert!(!directory.path().join("cache-target").exists());
+        assert!(!directory.path().join("run.lock").exists());
     }
 }

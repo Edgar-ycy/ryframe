@@ -128,11 +128,6 @@ class TargetCliTests(unittest.TestCase):
         self.assertEqual(registration["target_directory"], str(self.workspace / "target"))
         self.assertNotIn("private-secret", json.dumps(registration))
         self.assertEqual(binding(self.environment), registration["environment"])
-        status = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(status["status"], "fresh_creation_prepared")
-        self.assertEqual(status["last_successful_stage"], "prepared")
-        self.assertEqual(status["pending_stage"], "initialization")
-        self.assertEqual(status["next_action"], "initialize")
 
     def test_fixture_initial_services_remain_locked_without_being_treated_as_restarts(self):
         fixture = self.local / "fixture-services"
@@ -255,12 +250,6 @@ class TargetCliTests(unittest.TestCase):
                 patch("devex_clone_target.verify_target", side_effect=verify):
             verified = target_cli.verify(self.backend, self.workspace, observation)
         self.assertEqual(verified["observation"], binding(observation / "verify.json"))
-        with patch.object(target_cli, "initialization_history", return_value=initialized_history):
-            status = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(status["status"], "fresh_target_initialized")
-        self.assertEqual(status["last_successful_stage"], "initialized")
-        self.assertEqual(status["pending_stage"], "verification")
-        self.assertEqual(status["next_action"], "verify")
         with patch("devex_clone_target.initialize_target") as repeat:
             with self.assertRaises(ValueError):
                 target_cli.initialize(self.backend, self.workspace)
@@ -351,41 +340,6 @@ class TargetCliTests(unittest.TestCase):
         self.assertTrue(result["resumed"])
         operation.assert_called_once()
 
-    def test_status_reports_exact_migration_prefix_and_readonly_next_operation(self):
-        self.prepare()
-        target = self.workspace / "target"
-        write_json(target / "initialize.started.json", {"at": "fixture", "generation_sha256": "a" * 64})
-        state = {"resumable": True, "reason": None, "mode": "migration",
-                 "completed": [{"id": "control-up"}, {"id": "control-verify"},
-                               {"id": "tenant-data-dedicated-a-up"}],
-                 "next_index": 3,
-                 "operations": [{"id": "control-up", "write": True},
-                                {"id": "control-verify", "write": False},
-                                {"id": "tenant-data-dedicated-a-up", "write": True},
-                                {"id": "tenant-data-dedicated-a-verify", "write": False}]}
-        before = self.local_files()
-        with patch("devex_clone_target_resume.initialize_resume_state", return_value=state):
-            result = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(result["status"], "fresh_target_migration_resume_pending")
-        self.assertEqual(result["last_successful_stage"],
-                         "migration:tenant-data-dedicated-a-up")
-        self.assertEqual(result["next_action"], "resume-initialize")
-        self.assertEqual(result["resume"]["mode"], "migration")
-        self.assertEqual(result["resume"]["next_operation"],
-                         "tenant-data-dedicated-a-verify")
-        self.assertTrue(result["resume"]["next_operation_is_read_only"])
-        blocked_services = {"available": False, "active_generation": {"kind": "initial"},
-                            "reason": "夹具服务已正常关闭；须先执行 fixture services restart 再续作 fresh target"}
-        with patch("devex_clone_target_resume.initialize_resume_state", return_value=state), \
-                patch.object(target_cli, "_fixture_service_generation", return_value=blocked_services):
-            blocked = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(blocked["status"], "fresh_target_migration_resume_pending")
-        self.assertEqual(blocked["pending_stage"], "service_restart")
-        self.assertIsNone(blocked["next_action"])
-        self.assertFalse(blocked["evidence_valid"])
-        self.assertEqual(blocked["resume"], result["resume"])
-        self.assertIn("fixture services restart", blocked["blocking_reason"])
-        self.assertEqual(self.local_files(), before)
 
 
     def test_binding_drift_fails_after_stage_without_copying_environment(self):
@@ -529,52 +483,15 @@ class TargetCliTests(unittest.TestCase):
         for args in invalid:
             with self.subTest(operation=args.operation), self.assertRaises(ValueError):
                 cli.dispatch(args, self.backend)
-        status = self.args("status", write=False)
-        with patch.object(target_cli, "status", return_value={"status": "fresh_target_unregistered"}):
-            self.assertEqual(cli.dispatch(status, self.backend)["status"], "fresh_target_unregistered")
 
     def test_dispatch_resolves_relative_fresh_target_workspace(self):
         status = self.args("status", write=False)
         status.workspace = Path(".local-tests/fresh-workspace")
-        with patch.object(target_cli, "status", return_value={"status": "fresh_target_unregistered"}) as observe:
+        with patch("devex_clone_target_binding._native", return_value={"status": "fresh_target_unregistered"}) as observe:
             self.assertEqual(cli.dispatch(status, self.backend)["status"], "fresh_target_unregistered")
-        observe.assert_called_once_with(self.backend, self.workspace)
+        observe.assert_called_once_with("fresh-status", self.backend, workspace=str(self.workspace))
 
-    def test_status_is_local_and_marks_incomplete_workspace_for_reconciliation(self):
-        unregistered = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(unregistered["status"], "fresh_target_unregistered")
-        self.assertEqual(unregistered["next_action"], "prepare")
-        self.assertFalse((self.workspace / target_cli.WORKSPACE_GUARD).exists())
-        self.workspace.mkdir()
-        incomplete = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(incomplete["status"], "fresh_target_needs_reconciliation")
-        self.assertFalse(incomplete["evidence_valid"])
-        self.assertIsNone(incomplete["next_action"])
-        self.assertFalse((self.workspace / target_cli.WORKSPACE_GUARD).exists())
 
-    def test_status_requires_new_workspace_after_verified_preflight_reconciliation(self):
-        self.prepare()
-        target = self.workspace / "target"
-        write_json(target / "initialize.started.json", {"status": "started"})
-        write_json(target / "failure.json", {"status": "needs_reconciliation"})
-        reports = target / "reset-state"
-        reports.mkdir()
-        report = reports / "fixture.report.json"
-        write_json(report, {"status": "failed", "failed_phase": "preflight"})
-        digest = lambda path: {key: value for key, value in binding(path).items() if key != "path"}
-        before = {"databases": [{"exists": True}], "objects": {}, "redis": {}}
-        after = {"databases": [{"exists": False}], "objects": {}, "redis": {}}
-        write_json(target / "reconciliation-completed.json", {
-            "status": "preflight_failure_reconciled", "before": before, "after": after,
-            "failure": digest(target / "failure.json"), "reset_report": digest(report),
-            "automatic_retry": False, "restore_qualified": False,
-        })
-        status = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(status["status"], "fresh_target_preflight_reconciled")
-        self.assertEqual(status["last_successful_stage"], "preflight_reconciled")
-        self.assertEqual(status["pending_stage"], "new_registration")
-        self.assertEqual(status["next_action"], "prepare-new-workspace")
-        self.assertTrue(status["evidence_valid"])
 
     def test_registration_only_interruption_uses_explicit_resume_prepare(self):
         def interrupted(*_args, **_kwargs):
@@ -584,11 +501,6 @@ class TargetCliTests(unittest.TestCase):
                 self.assertRaises(OSError):
             target_cli.prepare(self.backend, self.workspace, self.request,
                                self.environment, self.storage_run)
-        status = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(status["status"], "fresh_target_prepare_interrupted")
-        self.assertEqual(status["last_successful_stage"], "registered")
-        self.assertEqual(status["next_action"], "resume-prepare")
-
         def resumed(_backend, target, *, storage_run, request_descriptor):
             target.mkdir()
             write_json(target / "request.json", read_json(self.request))
@@ -602,21 +514,6 @@ class TargetCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "fresh_creation_prepared")
         self.assertTrue((self.workspace / "prepared-files.json").is_file())
 
-    def test_status_does_not_offer_resume_when_registered_request_is_not_executable(self):
-        with patch("devex_clone_target.prepare_target", side_effect=OSError("interrupted")), \
-                self.assertRaises(OSError):
-            target_cli.prepare(self.backend, self.workspace, self.request,
-                               self.environment, self.storage_run)
-        before = self.local_files()
-        self.request_validator.side_effect = ValueError("审阅计划尚未就绪")
-        status = target_cli.status(self.backend, self.workspace)
-        self.assertEqual(status["status"], "fresh_target_needs_reconciliation")
-        self.assertEqual(status["last_successful_stage"], "registered")
-        self.assertEqual(status["pending_stage"], "reconciliation")
-        self.assertIsNone(status["next_action"])
-        self.assertFalse(status["evidence_valid"])
-        self.assertEqual(status["blocking_reason"], "固定请求未达到可执行条件")
-        self.assertEqual(self.local_files(), before)
 
     def test_storage_history_accepts_only_published_target_restart_append(self):
         self.prepare()
@@ -645,11 +542,6 @@ class TargetCliTests(unittest.TestCase):
         owner_binding = binding(lock / "owner.json")
         before = self.local_files()
         with patch.object(run_state, "process_identity", return_value=None):
-            status = target_cli.status(self.backend, self.workspace)
-            self.assertEqual(status["last_successful_stage"], "registered")
-            self.assertEqual(status["pending_stage"], "controller")
-            self.assertEqual(status["next_action"], "recover")
-            self.assertEqual(status["controller"]["owner"], owner_binding)
             with patch.object(target_cli, "_workspace_control") as guard, \
                     patch("devex_clone_target.resume_prepare_target") as operation, \
                     self.assertRaisesRegex(ValueError, "原 recover"):
@@ -660,7 +552,6 @@ class TargetCliTests(unittest.TestCase):
             recovered = run_state.recover_lock(self.backend, self.storage_run, owner_binding)
         self.assertEqual(recovered["remote_writes"], 0)
         self.assertEqual(read_json(self.storage_run / "state.json"), ledger)
-        self.assertEqual(target_cli.status(self.backend, self.workspace)["next_action"], "resume-prepare")
 
         def resumed(_backend, target, *, storage_run, request_descriptor):
             target.mkdir()
@@ -672,7 +563,6 @@ class TargetCliTests(unittest.TestCase):
             self.assertTrue(target_cli.resume_prepare(self.backend, self.workspace)["resumed"])
         self.assertEqual(binding(self.workspace / "registration.json"), registration)
         self.assertEqual(binding(self.storage_run / "manifest.json"), manifest)
-        self.assertEqual(target_cli.status(self.backend, self.workspace)["next_action"], "initialize")
         before = self.local_files()
         with patch.object(target_cli, "_workspace_control") as guard, self.assertRaisesRegex(ValueError, "已完整发布"):
             target_cli.resume_prepare(self.backend, self.workspace)
@@ -700,7 +590,6 @@ class TargetCliTests(unittest.TestCase):
                 guard.assert_not_called()
                 operation.assert_not_called()
                 self.assertEqual(self.local_files(), before)
-                self.assertIsNone(target_cli.status(self.backend, self.workspace)["next_action"])
                 (target / name).unlink()
 
     def test_invalid_registration_is_rejected_before_guard_creation(self):
@@ -712,32 +601,7 @@ class TargetCliTests(unittest.TestCase):
         guard.assert_not_called()
         self.assertEqual(self.local_files(), before)
 
-    def test_status_does_not_offer_recovery_for_live_or_reused_controller_pid(self):
-        self.prepare()
-        lock = self.storage_run / "run.lock"
-        lock.mkdir()
-        owner = {"format_version": 1, "identity": {"pid": 10001, "started": "123", "executable": "fixture"},
-                 "directory": str(self.storage_run),
-                 "manifest_sha256": binding(self.storage_run / "manifest.json")["sha256"]}
-        write_json(lock / "owner.json", owner)
-        before = self.local_files()
-        for observed in (owner["identity"], {**owner["identity"], "started": "456"}):
-            with self.subTest(observed=observed), patch.object(run_state, "process_identity", return_value=observed):
-                result = target_cli.status(self.backend, self.workspace)
-            self.assertEqual(result["last_successful_stage"], "prepared")
-            self.assertEqual(result["pending_stage"], "controller")
-            self.assertIsNone(result["next_action"])
-            self.assertFalse(result["controller"]["process_missing"])
-            self.assertEqual(self.local_files(), before)
 
-    def test_status_requires_valid_prepare_receipt_before_publication_resume(self):
-        self.prepare()
-        (self.workspace / "prepared-files.json").unlink()
-        before = self.local_files()
-        result = target_cli.status(self.backend, self.workspace)
-        self.assertFalse(result["evidence_valid"])
-        self.assertIsNone(result["next_action"])
-        self.assertEqual(self.local_files(), before)
 
     def test_storage_run_binding_drift_is_rejected_after_stage(self):
         self.prepare()

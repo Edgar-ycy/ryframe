@@ -42,6 +42,38 @@ pub(crate) fn owned_history(
     history(backend, filename, Some(owner))
 }
 
+/// 已发布来源只消费原阶段事实；当前树用于防漂移，不补称历史全树封存。
+pub(crate) fn evidence_history(
+    backend: &Path,
+    filename: &Path,
+    owner: Option<&guard::Generation>,
+) -> Result<(Value, Value)> {
+    let target = filename.parent().ok_or("初始化历史缺少目标目录")?;
+    validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
+    check(
+        filename == target.join("initialized.json"),
+        "初始化历史路径无效",
+    )?;
+    protection(target, owner)?;
+    let before = super::tree::snapshot(backend, target, owner.is_some())?;
+    let inputs = guard::Inputs::open(super::tree::files(target, &before)?)?;
+    let resolved = failure::resolved(backend, target, owner)?;
+    let initialized = read(backend, filename)?;
+    let prepared = read(backend, &target.join("prepare.json"))?;
+    let request = read(backend, &bound(backend, &prepared["request"])?)?;
+    initialization(backend, target, &initialized, &prepared, &request, resolved)?;
+    if super::tree::snapshot(backend, target, owner.is_some())? != before {
+        return Err("已发布 seed 初始化内容或当前文件树在核验期间变化".into());
+    }
+    inputs.check()?;
+    protection(target, owner)?;
+    Ok((initialized, request))
+}
+
+pub(super) fn unresolved(backend: &Path, target: &Path) -> bool {
+    failure::resolved(backend, target, None).is_err()
+}
+
 fn protection(target: &Path, owner: Option<&guard::Generation>) -> Result<()> {
     match owner {
         Some(owner) => owner.protects(target),

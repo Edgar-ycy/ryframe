@@ -25,6 +25,8 @@ use crate::{
 pub(super) mod database;
 #[path = "target_verify_fixture_history.rs"]
 mod history;
+#[path = "target_verify_fixture_observations.rs"]
+pub(super) mod observations;
 #[path = "target_verify_fixture_storage.rs"]
 mod storage;
 
@@ -44,6 +46,20 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn new() -> Self {
+        Self::build(false)
+    }
+
+    pub(super) fn for_status() -> Self {
+        let fixture = Self::build(true);
+        crate::recovery::clone::native::target_verify::published::unlocked_history(
+            &fixture.backend,
+            &fixture.target.join("initialized.json"),
+        )
+        .expect("status 夹具必须先满足完整 initialized/prepared 历史；错误仅报告模型前置原因");
+        fixture
+    }
+
+    fn build(status_registration: bool) -> Self {
         let source = crate::workspace::root_dir();
         let parent = source.join(".local-tests");
         fs::create_dir_all(&parent).unwrap();
@@ -70,7 +86,7 @@ impl Fixture {
         history::maintenance(&fixture);
         fixture.request["maintenance_build"] = bound(&fixture.local.join("maintenance/build.json"));
         fixture.seal_configuration();
-        history::publish(&fixture);
+        history::publish(&fixture, status_registration);
         fixture
     }
 

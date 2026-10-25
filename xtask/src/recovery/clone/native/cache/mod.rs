@@ -1,4 +1,5 @@
 //! 缓存恢复的请求、收据与有界控制调用；不接管外层锁或重放写入。
+pub(crate) mod binding;
 mod evidence;
 mod facts;
 mod history;

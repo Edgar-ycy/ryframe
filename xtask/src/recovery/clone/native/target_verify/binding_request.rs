@@ -11,7 +11,7 @@ use super::{
 };
 use crate::Result;
 
-pub(super) fn validate(backend: &Path, value: &Value, predecessor: &Value) -> Result<Value> {
+pub(crate) fn validate(backend: &Path, value: &Value, predecessor: &Value) -> Result<Value> {
     json_io::exact(value, &request::fields(value), "新目标请求")?;
     request::config_directory(backend, value)?;
     check(

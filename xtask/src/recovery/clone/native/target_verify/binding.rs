@@ -61,6 +61,13 @@ pub(super) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     match operation {
+        "fresh-status" => {
+            json_io::exact(args, &["workspace"], "fresh 状态请求")?;
+            super::fresh::observe(
+                backend,
+                Path::new(json_io::text(&args["workspace"], "fresh 工作区")?),
+            )
+        }
         "reset-configuration" | "redis-configuration" => super::binding_configuration::validate(
             backend,
             args,
@@ -122,7 +129,7 @@ fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     }
 }
 
-fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
+pub(super) fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
     let path = bound(backend, descriptor)?;
     let document = read(backend, &path)?;
     json_io::exact(&document, &["environment"], "目标私有环境")?;
@@ -191,7 +198,7 @@ pub(super) fn never_started(backend: &Path, selected: &Value) -> Result<()> {
     Ok(())
 }
 
-fn reconciliation(backend: &Path, target: &Path) -> Result<Value> {
+pub(super) fn reconciliation(backend: &Path, target: &Path) -> Result<Value> {
     validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
     let completed = target.join("reconciliation-completed.json");
     let descriptor = binding(backend, &completed)?;

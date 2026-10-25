@@ -41,6 +41,10 @@ impl NativeRuntime {
         }
     }
 
+    pub(crate) fn observe_controller(&mut self, run: &Path) -> Result<Value> {
+        self.primitive("controller", json!({"run":run}))
+    }
+
     fn primitive(&mut self, operation: &str, args: Value) -> Result<Value> {
         super::primitive::validate(&self.backend, operation, &args)?;
         match operation {

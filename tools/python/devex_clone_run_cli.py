@@ -278,14 +278,15 @@ def dispatch(args, backend: Path) -> dict:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记必须使用原生 Rust 入口")
     if args.command == "fresh-target":
         from devex_clone_target_cli import initialize as initialize_target, reconcile_preflight
-        from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, status as target_status, verify
+        from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, verify
 
         workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
         from devex_clone_target_cli import validate_dispatch
 
         validate_dispatch(backend, workspace, args)
         if args.operation == "status":
-            return target_status(backend, workspace)
+            from devex_clone_target_binding import _native
+            return _native("fresh-status", backend, workspace=str(workspace))
         if args.operation == "prepare":
             return prepare(backend, workspace, evidence_path(backend, args.request),
                            evidence_path(backend, args.environment), evidence_path(backend, args.storage_run))

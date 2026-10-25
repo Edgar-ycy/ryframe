@@ -276,7 +276,7 @@ pub(crate) fn reset(value: &Value, selected: &Value) -> Result<()> {
     Ok(())
 }
 
-fn execution_backend(
+pub(crate) fn execution_backend(
     backend: &Path,
     declared: Option<&Value>,
     observer: &dyn SourceObserver,

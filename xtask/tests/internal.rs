@@ -285,6 +285,8 @@ mod target_configuration_fixture;
 mod target_database_native;
 #[path = "internal/target_evidence_aggregate.rs"]
 mod target_evidence_aggregate_tests;
+#[path = "internal/target_fresh_status.rs"]
+mod target_fresh_status_tests;
 #[path = "internal/target_guard_native.rs"]
 mod target_guard_native_tests;
 #[path = "internal/target_physical_file.rs"]
