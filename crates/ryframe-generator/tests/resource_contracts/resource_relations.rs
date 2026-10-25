@@ -35,14 +35,39 @@ fn content<'a>(catalog: &'a ryframe_generator::GeneratedCatalog, suffix: &str) -
 
 fn physical_resources() -> Vec<ResourceIr> {
     let make = |name: &str| {
-        let source = include_str!("../fixtures/order.toml").replace("order", name);
-        let mut spec = ResourceSpec::parse(&source, "physical.toml").unwrap();
+        let mut spec =
+            ResourceSpec::parse(include_str!("../fixtures/order.toml"), "physical.toml").unwrap();
+        spec.resource.name = name.into();
+        spec.database.table = format!("biz_{name}");
+        for value in [
+            &mut spec.api.path,
+            &mut spec.api.operations.create,
+            &mut spec.api.operations.read,
+            &mut spec.api.operations.list,
+            &mut spec.api.operations.update,
+            &mut spec.api.operations.delete,
+            &mut spec.access.permissions.create,
+            &mut spec.access.permissions.read,
+            &mut spec.access.permissions.list,
+            &mut spec.access.permissions.update,
+            &mut spec.access.permissions.delete,
+            &mut spec.menu.key,
+            &mut spec.route.key,
+            &mut spec.route.path,
+        ] {
+            *value = value.replace("order", name);
+        }
+        for permission in [
+            &mut spec.access.permissions.create,
+            &mut spec.access.permissions.read,
+            &mut spec.access.permissions.list,
+            &mut spec.access.permissions.update,
+            &mut spec.access.permissions.delete,
+        ] {
+            *permission = permission.replace('_', "-");
+        }
+        spec.access.capability = Some(format!("business.{name}"));
         spec.database.primary_key = vec!["tenant_id".into(), "id".into()];
-        spec.database.indexes.push(ryframe_generator::IndexSpec {
-            name: format!("uk_{name}_id"),
-            fields: vec!["id".into()],
-            unique: true,
-        });
         spec
     };
     let parent = make("z_parent");
@@ -93,8 +118,25 @@ fn physical_foreign_keys_reject_unresolved_cycles_scope_and_incompatible_columns
             1 => resources[0].foreign_keys[0].referenced_table = "unmanaged".into(),
             2 => resources[1].storage = ryframe_generator::StorageKind::ControlRow,
             3 => {
-                resources[0].foreign_keys[0].columns = vec!["id".into()];
-                resources[0].foreign_keys[0].referenced_columns = vec!["id".into()];
+                resources[0].foreign_keys[0].columns = vec!["name".into(), "tenant_id".into()];
+                resources[0].foreign_keys[0].referenced_columns =
+                    vec!["tenant_id".into(), "name".into()];
+                for resource in &mut resources {
+                    resource
+                        .fields
+                        .iter_mut()
+                        .find(|field| field.name == "name")
+                        .unwrap()
+                        .validation
+                        .max_length = Some(64);
+                }
+                resources[0]
+                    .indexes
+                    .iter_mut()
+                    .find(|index| index.unique)
+                    .unwrap()
+                    .fields
+                    .reverse();
             }
             4 => resources[0].foreign_keys[0].referenced_columns.reverse(),
             5 => {
@@ -121,7 +163,10 @@ fn physical_foreign_keys_reject_unresolved_cycles_scope_and_incompatible_columns
                     ryframe_generator::import::ForeignKeyAction::SetNull
             }
         }
-        assert!(render_resources(&resources).is_err(), "scenario={scenario}");
+        let failure = render_resources(&resources).unwrap_err();
+        if scenario == 3 {
+            assert!(failure.to_string().contains("tenant_id"), "{failure}");
+        }
     }
 }
 
