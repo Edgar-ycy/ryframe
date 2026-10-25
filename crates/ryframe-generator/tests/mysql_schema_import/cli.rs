@@ -39,9 +39,7 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         let directory = tempfile::tempdir_in(cache).map_err(message)?;
         let root = directory.path().join("backend");
         original.copy_to(&root)?;
-        if let Some(frontend) = &frontend {
-            frontend.configure_target(&root)?;
-        }
+        frontend::configure_target(&root, &original.root)?;
         GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
         let configuration = captured.prepare(&root, &schema)?;
         verify_physical_binding(&database, &configuration).await?;
@@ -88,7 +86,6 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_cross_module_conflict_leaves_third_table_uninstalled() {
     mysql::run_mysql_test("importconflict", |database| async move {
-        let (_, _, target) = crate::resource_workspace_control::load()?;
         let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
         for table in ["table1", "table2", "table3"] {
             mysql::execute(&database, &format!("CREATE TABLE {table} (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")).await?;
@@ -101,8 +98,7 @@ async fn actual_cli_cross_module_conflict_leaves_third_table_uninstalled() {
         let directory = tempfile::tempdir_in(cache).map_err(message)?;
         let root = directory.path().join("backend");
         original.copy_to(&root)?;
-        fs::create_dir_all(root.join(".local-tests")).map_err(message)?;
-        fs::write(root.join(".local-tests/tools.toml"), format!("[generator]\ntarget_dir={:?}\nsync_frontend=false\n", target.to_string_lossy())).map_err(message)?;
+        frontend::configure_target(&root, &original.root)?;
         GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
         let configuration = captured.prepare(&root, &schema)?;
         verify_physical_binding(&database, &configuration).await?;

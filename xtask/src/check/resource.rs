@@ -12,6 +12,11 @@ use crate::{
 use super::context::resolve_target_dir;
 
 const RESOURCE_WORKSPACE_TEST: &str = "resource_workspace_compilation";
+const CONFLICT_TEST_TARGET: &str = "generation_pipeline";
+const CONFLICT_TESTS: [&str; 2] = [
+    "cross_module_structure_conflicts_reject_before_install_with_or_without_frontend_sync",
+    "cross_module_permission_conflict_rejects_before_install_with_or_without_frontend_sync",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResourceWorkspaceProfile {
@@ -65,36 +70,73 @@ fn resource_workspace_compilation_with_profile(
         .into());
     }
     let jobs = jobs.to_string();
-    let output = command_output_with_env(
-        root,
-        "cargo",
-        &[
-            "test",
-            "--locked",
-            "--target-dir",
-            target_dir,
-            "-p",
-            "ryframe-generator",
-            "--test",
-            RESOURCE_WORKSPACE_TEST,
-            "--no-run",
-            "--message-format=json-render-diagnostics",
-        ],
-        &[("CARGO_BUILD_JOBS", jobs.as_str())],
-    )?;
-    let executable = resource_test_executable_from_messages(&output)?;
+    let (executable, conflicts) = compile_resource_tests(root, target_dir, &jobs, profile)?;
     let executable = executable
         .to_str()
         .ok_or("资源 Workspace 测试可执行文件路径不是有效 UTF-8")?;
     let shared_target = resolve_target_dir(root, target_dir);
     let control = resource_workspace_control(root, &frontend_dir, &shared_target, profile)?;
+    if let Some(path) = &conflicts {
+        let program = path.to_str().ok_or("冲突测试程序路径不是有效 UTF-8")?;
+        let listed = command_output_with_env(
+            control.path(),
+            program,
+            &["--list", "--ignored", "cross_module_"],
+            &[("CARGO_BUILD_JOBS", jobs.as_str())],
+        )?;
+        validate_resource_conflict_tests(&listed)?;
+    }
     run_with_env_removed(
         control.path(),
         executable,
         &["--ignored", "--nocapture"],
         &[("CARGO_BUILD_JOBS", jobs.as_str())],
         &[],
-    )
+    )?;
+    if let Some(path) = conflicts {
+        run_with_env_removed(
+            control.path(),
+            path.to_str().ok_or("冲突测试程序路径不是有效 UTF-8")?,
+            &["--ignored", "--nocapture", "cross_module_"],
+            &[("CARGO_BUILD_JOBS", jobs.as_str())],
+            &[],
+        )?;
+    }
+    Ok(())
+}
+
+fn compile_resource_tests(
+    root: &Path,
+    target_dir: &str,
+    jobs: &str,
+    profile: ResourceWorkspaceProfile,
+) -> Result<(PathBuf, Option<PathBuf>)> {
+    let mut args = vec![
+        "test",
+        "--locked",
+        "--target-dir",
+        target_dir,
+        "-p",
+        "ryframe-generator",
+        "--test",
+        RESOURCE_WORKSPACE_TEST,
+        "--no-run",
+        "--message-format=json-render-diagnostics",
+    ];
+    if profile == ResourceWorkspaceProfile::Full {
+        args.extend(["--test", CONFLICT_TEST_TARGET]);
+    }
+    let output = command_output_with_env(root, "cargo", &args, &[("CARGO_BUILD_JOBS", jobs)])?;
+    let executable = resource_test_executable_from_messages(&output, RESOURCE_WORKSPACE_TEST)?;
+    let conflicts = if profile == ResourceWorkspaceProfile::Full {
+        Some(resource_test_executable_from_messages(
+            &output,
+            CONFLICT_TEST_TARGET,
+        )?)
+    } else {
+        None
+    };
+    Ok((executable, conflicts))
 }
 
 pub(crate) fn resolve_frontend_dir(root: &Path, frontend_dir: &Path) -> Result<PathBuf> {
@@ -159,22 +201,52 @@ fn absolute_text(path: &Path, label: &str) -> Result<String> {
         .ok_or_else(|| format!("资源 Workspace {label} 必须是无控制字符的 UTF-8 路径").into())
 }
 
-pub(crate) fn resource_test_executable_from_messages(output: &str) -> Result<PathBuf> {
-    output
+pub(crate) fn resource_test_executable_from_messages(
+    output: &str,
+    target: &str,
+) -> Result<PathBuf> {
+    let mut matches = output
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|message| {
+        .filter(|message| {
             message.get("reason").and_then(serde_json::Value::as_str) == Some("compiler-artifact")
                 && message
                     .pointer("/target/name")
                     .and_then(serde_json::Value::as_str)
-                    == Some(RESOURCE_WORKSPACE_TEST)
+                    == Some(target)
+                && message
+                    .pointer("/target/kind")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("test")))
         })
-        .and_then(|message| {
+        .filter_map(|message| {
             message
                 .get("executable")
                 .and_then(serde_json::Value::as_str)
                 .map(PathBuf::from)
-        })
-        .ok_or_else(|| "Cargo 输出缺少资源 Workspace 测试可执行文件".into())
+        });
+    let executable = matches
+        .next()
+        .ok_or_else(|| format!("Cargo 输出缺少测试目标 {target} 的可执行文件"))?;
+    if matches.next().is_some() {
+        return Err(format!("Cargo 输出含多个测试目标 {target} 的可执行文件，拒绝猜测").into());
+    }
+    Ok(executable)
+}
+
+pub(crate) fn validate_resource_conflict_tests(output: &str) -> Result<()> {
+    let mut actual = output
+        .lines()
+        .filter_map(|line| line.strip_suffix(": test"))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = CONFLICT_TESTS;
+    expected.sort_unstable();
+    if actual != expected {
+        return Err(format!(
+            "资源冲突测试清单不完整或不明确：预期 {expected:?}，实际 {actual:?}；未运行资源场景"
+        )
+        .into());
+    }
+    Ok(())
 }

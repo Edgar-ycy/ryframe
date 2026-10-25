@@ -353,18 +353,8 @@ fn verify_job_budget_reserves_capacity_for_both_cargo_branches() {
     assert!(verify_job_budget_from(Some("invalid"), 22).is_err());
 }
 
-#[test]
-fn resource_test_executable_is_read_from_cargo_json_messages() {
-    let output = concat!(
-        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"other\"},\"executable\":null}\n",
-        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"resource_workspace_compilation\"},",
-        "\"executable\":\"D:\\\\target\\\\resource-test.exe\"}\n"
-    );
-    assert_eq!(
-        resource_test_executable_from_messages(output).unwrap(),
-        Path::new("D:\\target\\resource-test.exe")
-    );
-}
+#[path = "check/resource.rs"]
+mod resource;
 
 #[test]
 fn resource_workspace_control_binds_selected_paths_and_profile() {

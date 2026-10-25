@@ -6,30 +6,17 @@ use std::{
 
 pub(super) struct Candidate {
     path: PathBuf,
-    target: PathBuf,
     original: SourceSnapshot,
     _directory: tempfile::TempDir,
 }
 
 impl Candidate {
     pub(super) fn from_control() -> Result<Option<Self>, String> {
-        let control = std::env::current_dir()
-            .map_err(message)?
-            .join("resource-workspace-control.json");
-        match fs::symlink_metadata(&control) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                eprintln!("本次仅核验导入后端闭环；跨仓页面校验需从受管控制目录启动");
-                return Ok(None);
-            }
-            Err(error) => {
-                return Err(format!(
-                    "无法检查资源 Workspace 控制文件 {}：{error}",
-                    control.display()
-                ));
-            }
-            Ok(_) => {}
+        if !control_exists()? {
+            eprintln!("本次仅核验导入后端闭环；跨仓页面校验需从受管控制目录启动");
+            return Ok(None);
         }
-        let (root, _profile, target) = crate::resource_workspace_control::load()?;
+        let (root, _profile, _target) = crate::resource_workspace_control::load()?;
         let original = SourceSnapshot::capture(&root)?;
         let cache = root.join(".local-tests/mysql-cli-import");
         fs::create_dir_all(&cache).map_err(message)?;
@@ -39,29 +26,9 @@ impl Candidate {
         println!("→ 真实两表反向导入继续核验候选契约和前端页面");
         Ok(Some(Self {
             path,
-            target,
             original,
             _directory: directory,
         }))
-    }
-
-    pub(super) fn configure_target(&self, backend: &Path) -> Result<(), String> {
-        fs::create_dir_all(backend.join(".local-tests")).map_err(message)?;
-        let mut generator = toml::Table::new();
-        generator.insert(
-            "target_dir".into(),
-            self.target
-                .to_str()
-                .ok_or("受管构建目录不是有效 UTF-8")?
-                .into(),
-        );
-        let mut tools = toml::Table::new();
-        tools.insert("generator".into(), generator.into());
-        fs::write(
-            backend.join(".local-tests/tools.toml"),
-            toml::to_string(&tools).map_err(message)?,
-        )
-        .map_err(message)
     }
 
     pub(super) fn configure(&self, backend: &Path) -> Result<(), String> {
@@ -115,4 +82,47 @@ impl Candidate {
         }
         self.original.verify()
     }
+}
+
+fn control_exists() -> Result<bool, String> {
+    let control = std::env::current_dir()
+        .map_err(message)?
+        .join("resource-workspace-control.json");
+    match fs::symlink_metadata(&control) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "无法检查资源 Workspace 控制文件 {}：{error}",
+            control.display()
+        )),
+        Ok(_) => Ok(true),
+    }
+}
+
+pub(super) fn configure_target(backend: &Path, original: &Path) -> Result<(), String> {
+    let target = if control_exists()? {
+        crate::resource_workspace_control::load()?.2
+    } else {
+        // 只解析原 Workspace 的公开计划，不能在深层候选中重新选择缓存根。
+        ryframe_generator::command::GenerationBuilder::new(original)
+            .operation(
+                ryframe_generator::command::GenerationOperation::NewBusiness("cli-import".into()),
+            )
+            .plan()?
+            .target_dir
+    };
+    let target = std::path::absolute(target).map_err(message)?;
+    fs::create_dir_all(backend.join(".local-tests")).map_err(message)?;
+    let mut generator = toml::Table::new();
+    generator.insert(
+        "target_dir".into(),
+        target.to_str().ok_or("受管构建目录不是有效 UTF-8")?.into(),
+    );
+    generator.insert("sync_frontend".into(), false.into());
+    let mut tools = toml::Table::new();
+    tools.insert("generator".into(), generator.into());
+    fs::write(
+        backend.join(".local-tests/tools.toml"),
+        toml::to_string(&tools).map_err(message)?,
+    )
+    .map_err(message)
 }

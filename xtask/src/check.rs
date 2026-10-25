@@ -109,7 +109,7 @@ pub(crate) use policy_tasks::{
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,
     resource_workspace_compilation, resource_workspace_control,
-    targeted_resource_workspace_compilation,
+    targeted_resource_workspace_compilation, validate_resource_conflict_tests,
 };
 #[allow(unused_imports)]
 pub(crate) use selection::{
