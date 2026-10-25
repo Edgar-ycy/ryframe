@@ -14,6 +14,7 @@ use super::{TargetHealthRecord, TenantDataError, TenantDatabaseTargetHealthStatu
 
 pub(super) struct OpenPool {
     pub(super) connection: DatabaseConnection,
+    diagnostic_config: ryframe_config::DbConnection,
     pub(super) max_connections: u32,
     pub(super) leases: AtomicUsize,
     last_used: Mutex<Instant>,
@@ -25,11 +26,13 @@ pub(super) struct OpenPool {
 impl OpenPool {
     pub(super) fn new(
         connection: DatabaseConnection,
+        diagnostic_config: ryframe_config::DbConnection,
         max_connections: u32,
         health: Arc<Mutex<TargetHealthRecord>>,
     ) -> Self {
         Self {
             connection,
+            diagnostic_config,
             max_connections,
             leases: AtomicUsize::new(0),
             last_used: Mutex::new(Instant::now()),
@@ -93,10 +96,7 @@ impl TenantDatabasePoolLease {
                 crate::migration::verify_mysql_target(&self.pool.connection)
                     .await
                     .map_err(|error| {
-                        tracing::warn!(target = %self.target_key, %error, "租户数据目标 schema 不兼容");
-                        TenantDataError::TargetUnavailable {
-                            target_key: self.target_key.to_string(),
-                        }
+                        self.unavailable("租户数据目标 schema 不兼容", &error.to_string())
                     })
             })
             .await
@@ -156,16 +156,13 @@ impl TenantDatabasePoolLease {
         let result = async {
             ryframe_db::connection::ping(&self.pool.connection)
                 .await
-                .map_err(|_| TenantDataError::TargetUnavailable {
-                    target_key: self.target_key.to_string(),
+                .map_err(|error| {
+                    self.unavailable("租户数据目标健康检查失败", &error.to_string())
                 })?;
             crate::migration::verify_mysql_target_for_catalog(&self.pool.connection, catalog)
                 .await
                 .map_err(|error| {
-                    tracing::warn!(target = %self.target_key, %error, "租户数据目标实时 schema 校验失败");
-                    TenantDataError::TargetUnavailable {
-                        target_key: self.target_key.to_string(),
-                    }
+                    self.unavailable("租户数据目标实时 schema 校验失败", &error.to_string())
                 })
         }
         .await;
@@ -181,6 +178,16 @@ impl TenantDatabasePoolLease {
             TenantDatabaseTargetHealthStatus::Unavailable
         };
         result
+    }
+
+    fn unavailable(&self, phase: &str, message: &str) -> TenantDataError {
+        let source =
+            crate::error::SafeDatabaseCause::from_connection(&self.pool.diagnostic_config, message);
+        tracing::warn!(target = %self.target_key, error = %source, "{phase}");
+        TenantDataError::TargetUnavailable {
+            target_key: self.target_key.to_string(),
+            source: Some(source),
+        }
     }
 
     pub fn is_schema_verified(&self) -> bool {
@@ -214,3 +221,7 @@ impl Drop for TenantDatabasePoolLease {
         self.pool.leases.fetch_sub(1, Ordering::AcqRel);
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/registry/health.rs"]
+mod health_tests;

@@ -21,7 +21,7 @@ mod registry;
 mod router;
 
 #[cfg(feature = "connection")]
-pub use error::TenantDataError;
+pub use error::{SafeDatabaseCause, TenantDataError};
 #[cfg(feature = "repositories")]
 pub use placement::{
     TenantDataAccess, TenantDataPlacement, TenantDataState, TenantRuntimeSnapshot,

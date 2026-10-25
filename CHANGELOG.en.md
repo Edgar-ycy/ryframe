@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Preserve redacted underlying causes for independent tenant database migration and internal diagnostics, share failures across concurrent pool waiters, and keep public error responses unchanged.
 - Every migration repair command explicitly carries a `--config-dir` directory placeholder and quoting guidance, preventing a custom-configuration failure from directing checks to another default database. Connection-failure coverage uses distinct schemas and explicitly retains the shared-control target without bypassing alias validation.
 
 - Migration commands reuse startup credential redaction, including independent tenant targets, and report the phase, selected configuration, repair commands, and conservative write state on stderr while retaining operation and close failures. Successful output and non-executing plans are unchanged; unknown DDL, ledger, or file publication outcomes are never replayed automatically, and discarded independent-target causes are not inferred.

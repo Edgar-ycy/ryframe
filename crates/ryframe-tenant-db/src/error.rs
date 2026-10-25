@@ -26,7 +26,11 @@ pub enum TenantDataError {
     #[error("租户 {tenant_id} 的数据 placement 正在维护，generation={generation}")]
     TenantDataMaintenance { tenant_id: String, generation: i64 },
     #[error("租户数据目标 {target_key} 暂不可用")]
-    TargetUnavailable { target_key: String },
+    TargetUnavailable {
+        target_key: String,
+        #[source]
+        source: Option<SafeDatabaseCause>,
+    },
     #[error("租户数据连接池预算已耗尽: open={open_targets}, limit={max_open_targets}")]
     PoolCapacityExhausted {
         open_targets: usize,
@@ -54,4 +58,20 @@ pub enum TenantDataError {
         expected: i64,
         actual: Option<i64>,
     },
+}
+
+/// 只保存已经按实际连接脱敏的内部诊断，不持有驱动错误或连接配置。
+#[derive(Clone, Debug, Error)]
+#[error("{0}")]
+pub struct SafeDatabaseCause(String);
+
+impl SafeDatabaseCause {
+    #[cfg(feature = "connection")]
+    pub(crate) fn from_connection(config: &ryframe_config::DbConnection, message: &str) -> Self {
+        Self(ryframe_db::connection::redact_database_diagnostic(
+            [config],
+            std::iter::empty(),
+            message,
+        ))
+    }
 }

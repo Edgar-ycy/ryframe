@@ -6,7 +6,7 @@
 
 先创建隔离的空 MySQL database，再通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`。`config/app.toml` 可省略，所选 `config/app.<environment>.toml` 必须存在；省略公共文件时，环境文件须完整提供必填配置；数据库密码、JWT 和 `[bootstrap] admin_password` 直接写入明文配置，准备方式见 [README](../README.md#下载后首次运行)。用 `--config-dir <directory>` 选择其他目录，应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，从后端根目录依次运行： 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
-`cargo migrate` 的失败诊断写入 stderr，标明实际阶段、已选择的配置文件、配置键和脱敏原因；成功输出保持原契约。连接或配置失败时尚未执行迁移；进入 `up` 或 `adopt --apply` 后，DDL 或账本可能已部分提交，不代表整体回滚。保留现场，修正原因后使用同一 `--config-dir` 和 `APP_ENV` 先执行 `status` 与 `verify`，不能自动重放写入；导出失败也须先核对已创建的目录、临时文件或目标文件。独立 MySQL 目标的 registry 可能不保留底层连接原因，不可据“不可用”猜测认证错误。 建议命令均显式携带 `--config-dir` 目录占位，必须先替换为诊断中显示配置文件的父目录，再按当前 shell 正确引用；PowerShell 单引号内的单引号须写成两个单引号，不得照抄占位或省略目录后检查默认另一库。
+`cargo migrate` 的失败诊断写入 stderr，标明实际阶段、已选择的配置文件、配置键和脱敏原因；成功输出保持原契约。连接或配置失败时尚未执行迁移；进入 `up` 或 `adopt --apply` 后，DDL 或账本可能已部分提交，不代表整体回滚。保留现场，修正原因后使用同一 `--config-dir` 和 `APP_ENV` 先执行 `status` 与 `verify`，不能自动重放写入；导出失败也须先核对已创建的目录、临时文件或目标文件。独立 MySQL 目标保留已脱敏的连接、健康及结构校验原因供内部诊断；公开 API 不包含该原因，无底层错误时不可据“不可用”猜测认证错误。 建议命令均显式携带 `--config-dir` 目录占位，必须先替换为诊断中显示配置文件的父目录，再按当前 shell 正确引用；PowerShell 单引号内的单引号须写成两个单引号，不得照抄占位或省略目录后检查默认另一库。
 
 ```powershell
 cargo migrate -- control up

@@ -480,7 +480,11 @@ fn migration_connection_failures_keep_phase_files_and_safe_repair_without_writes
         assert!(!error.contains("Error: Database("));
         assert!(!error.contains("1045"));
         if target == Some("diagnostic-mysql") {
-            assert!(error.contains("未保留底层原因"));
+            assert!(
+                error.contains("数据库连接失败"),
+                "未传播真实底层连接阶段：{error}"
+            );
+            assert!(error.contains(" -> "), "未消费内部原因链：{error}");
         }
     }
 }

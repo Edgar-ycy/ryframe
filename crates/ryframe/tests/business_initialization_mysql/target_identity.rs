@@ -24,12 +24,20 @@ async fn aliases_of_one_physical_database_fail_before_any_migration() {
         };
         let registry =
             TenantDatabaseTargetRegistry::new(&config, SqlLogLevel::Off, 200).map_err(message)?;
+        let context = diagnostic::Context {
+            directory: std::path::Path::new(".local-tests/mysql/config"),
+            environment: Some(ryframe_config::Environment::Test),
+            config: None,
+            command: "tenant-data verify",
+            target: None,
+        };
         let result = migration_targets::preflight(
             &registry,
             &primary,
             SqlLogLevel::Off,
             200,
             &["first".into(), "second".into()],
+            &context,
         )
         .await;
         let plan = migration_targets::preflight(
@@ -38,6 +46,7 @@ async fn aliases_of_one_physical_database_fail_before_any_migration() {
             SqlLogLevel::Off,
             200,
             &["shared-control".into()],
+            &context,
         )
         .await;
         for key in ["first", "second"] {
