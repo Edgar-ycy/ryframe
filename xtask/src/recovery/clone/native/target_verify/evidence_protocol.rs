@@ -406,9 +406,10 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
         "initialization-failure" => {
             super::evidence_prepare::failure_path(backend, target, &value["request_descriptor"])
         }
-        "migration-operations" => {
-            super::resume_prefix::operations(json_io::text(&value["executable"], "迁移程序")?)
-        }
+        "migration-operations" => super::resume_prefix::operations(
+            json_io::text(&value["executable"], "迁移程序")?,
+            &json_io::read(&target.join("request.json"))?,
+        ),
         "migration-prefix" => super::resume_prefix::prefix(
             backend,
             target,
@@ -432,6 +433,7 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
             Path::new(json_io::text(&value["path"], "reset 命令收据")?),
             json_io::text(&value["executable"], "reset 程序")?,
             &value["plan"],
+            &json_io::read(&target.join("request.json"))?,
         ),
         "history" => super::proof::history(backend, target),
         "initial-inventory" => {

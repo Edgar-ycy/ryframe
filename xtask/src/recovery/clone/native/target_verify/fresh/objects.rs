@@ -55,7 +55,7 @@ pub(crate) fn absence(inputs: &StorageInputs<'_>, transport: &impl Transport) ->
     Ok(Value::Object(result))
 }
 
-fn observe(
+pub(super) fn observe(
     inputs: &StorageInputs<'_>,
     transport: &impl Transport,
     bucket: &str,
@@ -84,12 +84,38 @@ fn observe(
         Operation::HeadBucket => "head-bucket",
         Operation::Versioning => "get-bucket-versioning",
         Operation::List { .. } => "list-objects-v2",
-        _ => return Err("prepare 拒绝非只读对象操作".into()),
+        Operation::Get { key, max_bytes, .. }
+            if key
+                == &format!(
+                    "{}/.ryframe-owner",
+                    document::text(&inputs.request["target"]["scope_id"], "对象scope")?
+                )
+                && *max_bytes == 4096 =>
+        {
+            "get-object"
+        }
+        _ => return Err("fresh 只读对象端口拒绝未授权操作".into()),
     };
     let path = inputs.observation_dir.join(format!(
         "{stage}-{}.command.json",
         uuid::Uuid::new_v4().simple()
     ));
+    let (key, destination, continuation) = match &operation {
+        Operation::Get {
+            key, destination, ..
+        } => (
+            json!(key),
+            json!(
+                destination
+                    .file_name()
+                    .and_then(|v| v.to_str())
+                    .ok_or("对象owner文件名无效")?
+            ),
+            Value::Null,
+        ),
+        Operation::List { continuation, .. } => (Value::Null, Value::Null, json!(continuation)),
+        _ => (Value::Null, Value::Null, Value::Null),
+    };
     let result = transport.s3(Request {
         configuration,
         bucket: bucket.into(),
@@ -100,8 +126,8 @@ fn observe(
         &path,
         &json!({"transport":"rust-s3-sigv4","operation":operation_name,"bucket":bucket,
         "returncode":if error.is_none() {Some(0)} else {None},"error_type":error,"response":result.as_ref().ok(),
-        "key":null,"destination":null,"remote_writes":0,"scope_id":inputs.request["target"]["scope_id"],
-        "endpoint":expected["endpoint"],"configuration_sha256":digest::plan_hash(expected)?,"prefix":prefix,"continuation":null}),
+        "key":key,"destination":destination,"remote_writes":0,"scope_id":inputs.request["target"]["scope_id"],
+        "endpoint":expected["endpoint"],"configuration_sha256":digest::plan_hash(expected)?,"prefix":prefix,"continuation":continuation}),
     )?;
     app_configuration::unchanged(&snapshots)?;
     if request_configuration::fresh_files(&root, inputs.environment, inputs.request)?

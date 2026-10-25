@@ -68,6 +68,12 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
         split > 0 && split < operations.len() && operations[split]["write"] == false,
         "迁移成功确认没有从首个只读 verify 开始",
     )?;
+    if let Some((index, _)) = super::resume_prefix::failed_readonly(backend, target)? {
+        check(
+            index == split,
+            "原始失败只读收据不属于成功确认绑定的原始前缀",
+        )?;
+    }
     resume_runtime::started(backend, &initialized["generation"], &started)?;
     let initialize_started = binding(backend, &target.join("initialize.started.json"))?;
     let context = Context {
@@ -149,10 +155,10 @@ fn completed(
     target: &Path,
     initialized: &Value,
 ) -> Result<(Vec<Value>, Vec<Value>)> {
-    let operations = super::resume_prefix::operations(executable(
-        &initialized["generation"]["maintenance"],
-        "migrate",
-    )?)?["operations"]
+    let operations = super::resume_prefix::operations(
+        executable(&initialized["generation"]["maintenance"], "migrate")?,
+        &read(backend, &target.join("request.json"))?,
+    )?["operations"]
         .clone();
     let prefix =
         super::resume_prefix::prefix(backend, target, &operations, true)?["completed"].clone();
@@ -427,6 +433,16 @@ fn intent_fields(context: &Context<'_>, proof: &FinalProof<'_>) -> Result<()> {
         ..
     } = proof;
     let attempt = json_io::text(&value["attempt"], "attempt")?;
+    super::resume_prefix::prior_failed_stage(
+        context.backend,
+        context.target,
+        &intent["files_before"],
+        json_io::text(
+            &context.operations[context.prefix.len()]["stage"],
+            "原始缺失阶段",
+        )?,
+    )?;
+
     check(
         intent["format_version"] == 1
             && intent["kind"] == "devex-clone-migration-resume-intent"

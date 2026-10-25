@@ -52,6 +52,7 @@ pub(super) const INTENT: &[&str] = &[
     "creation",
     "migration_prefix",
     "prepared_files",
+    "files_before",
     "next_operation",
     "protected_binaries",
     "remote_write_operations_before_resume",

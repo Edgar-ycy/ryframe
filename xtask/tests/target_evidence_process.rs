@@ -146,6 +146,11 @@ fn migration_protocol_refuses_private_bad_output_and_binds_successful_operation(
     let parent = backend.join(".local-tests/target-evidence-process");
     std::fs::create_dir_all(&parent).unwrap();
     let directory = tempfile::tempdir_in(parent).unwrap();
+    std::fs::write(
+        directory.path().join("request.json"),
+        serde_json::to_vec(&json!({"config_dir":directory.path().join("bound/config")})).unwrap(),
+    )
+    .unwrap();
     let request = json!({"format_version":1,"operation":"migration-operations",
         "backend":backend,"target":directory.path(),"executable":"fixture-migrate.exe"});
     let output = invoke(

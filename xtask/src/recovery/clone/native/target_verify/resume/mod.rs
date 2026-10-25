@@ -5,7 +5,7 @@ mod inventory_records;
 mod protocol;
 mod records;
 mod session;
-mod transition;
+pub(super) mod transition;
 
 pub(super) use protocol::{diagnostic, execute};
 

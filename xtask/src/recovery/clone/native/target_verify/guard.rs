@@ -165,7 +165,15 @@ impl Generation {
         Ok(())
     }
 
-    pub(crate) fn finish<T>(mut self, result: Result<T>) -> Result<T> {
+    pub(crate) fn finish<T>(self, result: Result<T>) -> Result<T> {
+        self.finish_publishing(result, |_| Ok(()))
+    }
+
+    pub(crate) fn finish_publishing<T>(
+        mut self,
+        result: Result<T>,
+        publish: impl FnOnce(&T) -> Result<()>,
+    ) -> Result<T> {
         let released = (|| {
             self.check()?;
             let lock = self.lock.take().ok_or("目标初始化目录锁已释放")?;
@@ -177,13 +185,32 @@ impl Generation {
             self.process.check()
         })();
         match (result, released) {
-            (Ok(value), Ok(())) => Ok(value),
+            (Ok(value), Ok(())) => {
+                self.after_unlock()?;
+                let published = publish(&value);
+                let checked = self.after_unlock();
+                match (published, checked) {
+                    (Ok(()), Ok(())) => Ok(value),
+                    (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+                    (Err(error), Err(check)) => {
+                        Err(format!("{error}；目标guard收尾同时失败：{check}").into())
+                    }
+                }
+            }
             (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
             (Err(primary), Err(release)) => Err(format!(
                 "{primary}；目标锁释放同时失败：{release}；保留现场，不自动重放或清理"
             )
             .into()),
         }
+    }
+    fn after_unlock(&self) -> Result<()> {
+        if self.lock.is_some() {
+            return Err("初始化目录锁尚未释放，不能发布外层快照".into());
+        }
+        self.root.check()?;
+        self.guard_file.check()?;
+        self.process.check()
     }
 }
 

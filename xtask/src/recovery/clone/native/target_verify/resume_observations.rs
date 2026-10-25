@@ -437,7 +437,7 @@ fn mysql(
     Ok(())
 }
 
-fn owner_reads(
+pub(super) fn owner_reads(
     backend: &Path,
     target: &Path,
     remaining: &mut BTreeSet<String>,
@@ -467,6 +467,7 @@ fn owner_reads(
         )?;
         let owner = format!("ryframe-owner:v1:{scope}:object-storage:{bucket}");
         let key = format!("{scope}/.ryframe-owner");
+        super::fresh::initialized_objects::metadata(&value["response"], owner.len())?;
         crate::local_test_path::validate_local_test_path(
             &target.join(body),
             backend,

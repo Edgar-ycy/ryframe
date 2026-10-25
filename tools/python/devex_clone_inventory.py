@@ -328,7 +328,8 @@ class _Capture:
                 raise ValueError("调用库存 CLI 前来源或配置已变化")
             executable = cli_executable(maintenance, "tenant-data")
             path = self.output / f"{phase}-target-{key}.json"
-            self.run([executable, "target-inventory", "--target", key, "--output", str(path)],
+            self.run([executable, "--config-dir", expected["configuration"]["directory"],
+                      "target-inventory", "--target", key, "--output", str(path)],
                      cwd=self.backend, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800,
                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             value = read_json(path)

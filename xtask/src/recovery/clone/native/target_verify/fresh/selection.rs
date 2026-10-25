@@ -13,13 +13,21 @@ pub(crate) struct Selected {
     pub(crate) runtime: Option<Value>,
 }
 
-pub(super) fn load(backend: &Path, request: &Value, run: Option<&Path>) -> Result<Selected> {
+pub(super) fn transition(
+    backend: &Path,
+    request: &Value,
+    run: Option<&Path>,
+    owner: Option<&super::super::guard::Generation>,
+) -> Result<(Selected, Option<Value>)> {
     let expected = &request["storage"];
     let Some(run) = run else {
-        return Ok(Selected {
-            value: expected.clone(),
-            runtime: None,
-        });
+        return Ok((
+            Selected {
+                value: expected.clone(),
+                runtime: None,
+            },
+            None,
+        ));
     };
     let manifest = document::read(&run.join("manifest.json"))?;
     let fixture = manifest["kind"] == "reference-fixture-service-run";
@@ -39,7 +47,7 @@ pub(super) fn load(backend: &Path, request: &Value, run: Option<&Path>) -> Resul
     } else {
         (
             storage::registered::registered(backend, run, CloneSide::Target, None)?,
-            non_null(&cache::binding::load(backend, run, None)?),
+            non_null(&cache::binding::load(backend, run, owner)?),
         )
     };
     if let Some(runtime) = &runtime
@@ -54,7 +62,7 @@ pub(super) fn load(backend: &Path, request: &Value, run: Option<&Path>) -> Resul
     }
     let redis = redis(backend, &expected["redis"], cache.as_ref(), fixture)?;
     let value = json!({"rustfs":runtime.as_ref().map(|v| &v["storage"]).unwrap_or(&expected["rustfs"]),"redis":redis});
-    Ok(Selected { value, runtime })
+    Ok((Selected { value, runtime }, cache))
 }
 
 fn non_null(value: &Value) -> Option<Value> {

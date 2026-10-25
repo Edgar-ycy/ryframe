@@ -19,7 +19,7 @@ pub(super) fn failure(value: &Value) -> Result<bool> {
         .all(|field| value[*field] == false))
 }
 
-pub(super) fn state(
+pub(in super::super) fn state(
     backend: &Path,
     target: &Path,
     descriptor: &Value,
@@ -86,10 +86,10 @@ pub(super) fn state(
         },
         None,
     )?;
-    let operations = resume_prefix::operations(executable(
-        &prepared["generation"]["maintenance"],
-        "migrate",
-    )?)?;
+    let operations = resume_prefix::operations(
+        executable(&prepared["generation"]["maintenance"], "migrate")?,
+        &request,
+    )?;
     let prefix = resume_prefix::prefix(backend, target, &operations["operations"], true)?;
     let mut required =
         super::super::evidence_creation::paths(target, &creation, &reset, &prefix["completed"])?;

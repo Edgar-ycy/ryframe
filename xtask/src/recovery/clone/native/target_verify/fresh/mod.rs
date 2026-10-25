@@ -1,8 +1,11 @@
-//! fresh-target 原生 prepare、显式只读续作及完整状态观察；不执行资源写入。
+//! fresh-target 正式生命周期；写操作保持显式意图、真实前后像和持锁发布。
 mod status;
 mod storage;
 pub(crate) use status::observe;
 
+mod failure;
+pub(crate) mod initialize;
+pub(crate) mod initialized_objects;
 pub(crate) mod objects;
 mod prepare;
 mod receipts;
@@ -39,7 +42,9 @@ pub(crate) fn dispatch(
                 .ok_or("prepare 缺少存储运行")?,
         ),
         "resume-prepare" => resume_prepare(backend, &options.workspace),
-        _ => Err("原生 prepare 入口拒绝其他生命周期操作".into()),
+        "initialize" => initialize::execute(backend, &options.workspace, false),
+        "resume-initialize" => initialize::execute(backend, &options.workspace, true),
+        _ => Err("原生 fresh 入口拒绝未接线的生命周期操作".into()),
     }
 }
 

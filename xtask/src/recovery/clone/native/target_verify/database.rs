@@ -3,7 +3,10 @@ use std::{collections::BTreeMap, fs, path::Path};
 use serde_json::{Value, json};
 
 use super::super::{digest, export::transport::Transport, json as json_io};
-use super::input::{TargetContext, request::KEYS};
+use super::{
+    input::{TargetContext, request::KEYS},
+    storage::StorageInputs,
+};
 use crate::Result;
 
 mod binding;
@@ -21,14 +24,27 @@ pub(crate) fn capture_with<T: Transport>(
     transport: &T,
     checkpoint: &impl Fn() -> Result<()>,
 ) -> Result<Captured> {
+    capture_at(
+        &context.storage_inputs(),
+        &context.observation_dir.join("inventory"),
+        transport,
+        checkpoint,
+    )
+}
+
+pub(crate) fn capture_at<T: Transport>(
+    context: &StorageInputs<'_>,
+    directory: &Path,
+    transport: &T,
+    checkpoint: &impl Fn() -> Result<()>,
+) -> Result<Captured> {
     checkpoint()?;
-    let directory = context.observation_dir.join("inventory");
-    fs::create_dir(&directory)?;
+    fs::create_dir(directory)?;
     let mut capture = Capture {
         context,
         transport,
         checkpoint,
-        directory: &directory,
+        directory,
         evidence: evidence::Evidence::default(),
         artifacts: BTreeMap::new(),
         stage: "inputs",
@@ -50,7 +66,7 @@ pub(crate) fn capture_with<T: Transport>(
 }
 
 struct Capture<'a, T, F> {
-    context: &'a TargetContext,
+    context: &'a StorageInputs<'a>,
     transport: &'a T,
     checkpoint: &'a F,
     directory: &'a Path,

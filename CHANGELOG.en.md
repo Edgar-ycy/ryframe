@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Route fresh-target initialize and resume-initialize through the formal Rust entry, binding configuration directories, reset and migration receipts, inventories and guarded publication, and remove the old Python initialization writer. Bind migration resumes to the complete interrupted file before-image, preserving and strictly distinguishing historical failed read-only receipts from newly produced evidence. Cover registered-restart markers, read-only publication successors and confirmation failure after successful writes; unknown writes remain ineligible for replay.
+
 - Preserve redacted underlying causes for independent tenant database migration and internal diagnostics, share failures across concurrent pool waiters, and keep public error responses unchanged.
 - Every migration repair command explicitly carries a `--config-dir` directory placeholder and quoting guidance, preventing a custom-configuration failure from directing checks to another default database. Connection-failure coverage uses distinct schemas and explicitly retains the shared-control target without bypassing alias validation.
 

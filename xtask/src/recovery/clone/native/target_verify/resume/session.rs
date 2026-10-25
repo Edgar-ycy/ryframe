@@ -59,7 +59,7 @@ pub(super) fn execute(
                     && args["index"].as_u64() == Some(session.next_index as u64),
                 "目标续作状态转换不能越过未确认操作",
             )?;
-            let operation = operation(&args["operation"], session.next_index)?;
+            let operation = operation(backend, target, &args["operation"], session.next_index)?;
             session.active_write = operation["write"]
                 .as_bool()
                 .filter(|write| *write)
@@ -102,9 +102,16 @@ pub(super) fn execute(
     Ok(serde_json::to_value(session)?)
 }
 
-fn operation(value: &Value, index: usize) -> Result<&Value> {
-    let sequence =
-        super::super::resume_prefix::operations(json_io::text(&value["command"][0], "迁移程序")?)?;
+fn operation<'a>(
+    backend: &Path,
+    target: &Path,
+    value: &'a Value,
+    index: usize,
+) -> Result<&'a Value> {
+    let sequence = super::super::resume_prefix::operations(
+        json_io::text(&value["command"][0], "迁移程序")?,
+        &read(backend, &target.join("request.json"))?,
+    )?;
     check(
         sequence["operations"].get(index) == Some(value),
         "目标续作收据状态与固定前像不同",
@@ -113,7 +120,7 @@ fn operation(value: &Value, index: usize) -> Result<&Value> {
 }
 
 fn complete(backend: &Path, target: &Path, session: &mut Session, args: &Value) -> Result<()> {
-    let operation = operation(&args["operation"], session.next_index)?;
+    let operation = operation(backend, target, &args["operation"], session.next_index)?;
     check(
         session.active_operation.is_some()
             && session.active_write.as_deref()

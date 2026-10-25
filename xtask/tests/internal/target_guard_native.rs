@@ -41,7 +41,17 @@ fn generation_holds_shared_copy_guard_and_releases_only_its_directory_lock() {
         1
     );
     assert!(guard::Generation::acquire(&fixture.backend, &fixture.target).is_err());
-    generation.finish(Ok(())).unwrap();
+    generation
+        .finish_publishing(Ok(()), |_| {
+            assert!(!fixture.target.join("initialize.lock").exists());
+            assert!(guard::Generation::acquire(&fixture.backend, &fixture.target).is_err());
+            assert_eq!(
+                tree::snapshot(&fixture.backend, &fixture.target, true)?,
+                tree_before
+            );
+            Ok(())
+        })
+        .unwrap();
     assert_eq!(
         tree::snapshot(&fixture.backend, &fixture.target, false).unwrap(),
         tree_before
@@ -57,6 +67,12 @@ fn generation_holds_shared_copy_guard_and_releases_only_its_directory_lock() {
         .finish::<()>(Err("已确认的测试失败".into()))
         .unwrap_err();
     assert!(error.to_string().contains("已确认的测试失败"));
+    assert!(!fixture.target.join("initialize.lock").exists());
+    let generation = guard::Generation::acquire(&fixture.backend, &fixture.target).unwrap();
+    let error = generation
+        .finish_publishing(Ok(()), |_| Err("快照发布失败".into()))
+        .unwrap_err();
+    assert!(error.to_string().contains("快照发布失败"));
     assert!(!fixture.target.join("initialize.lock").exists());
 }
 

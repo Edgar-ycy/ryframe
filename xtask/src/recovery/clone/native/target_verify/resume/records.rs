@@ -140,6 +140,8 @@ fn migration_intent(backend: &Path, target: &Path, args: &Value) -> Result<Value
     for key in ["initialize_started", "reset", "creation", "prepared_files"] {
         value[key] = state[key].clone();
     }
+    super::super::resume_observations::file_map(&state["files"])?;
+    value["files_before"] = state["files"].clone();
     value["migration_prefix"] = state["completed"].clone();
     value["next_operation"] = operation["id"].clone();
     value["remote_write_operations_before_resume"] =

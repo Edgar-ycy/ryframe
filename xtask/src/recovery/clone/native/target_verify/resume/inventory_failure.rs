@@ -1,6 +1,8 @@
 //! 失败库存目录的闭集：原始四库前缀、命令及 stdout 必须全部可归属。
 use super::*;
 
+mod native;
+
 const KEYS: [&str; 4] = ["shared-control", "shared", "dedicated-a", "dedicated-b"];
 
 pub(super) fn files(
@@ -67,6 +69,8 @@ pub(super) fn files(
         known.insert("binding-after.json".into());
     }
     let pattern = regex::Regex::new(r"^command-[a-f0-9]{32}\.json$")?;
+    let native_pattern =
+        regex::Regex::new(r"^mysql-(identity|ownership)(-retry)?-[a-f0-9]{32}\.json$")?;
     let mut stdout_files = BTreeSet::new();
     let mut references = BTreeSet::new();
     for path in &paths {
@@ -80,6 +84,8 @@ pub(super) fn files(
                     "库存失败 stdout 文件被多个命令收据重复引用",
                 )?;
             }
+        } else if native_pattern.is_match(name) {
+            native::receipt(backend, &directory, name, request)?;
         } else if !name.contains('/') && name.ends_with(".stdout") {
             stdout_files.insert(name.to_owned());
         } else {

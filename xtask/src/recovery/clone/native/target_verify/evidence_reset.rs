@@ -59,6 +59,7 @@ pub(crate) fn aggregate(
         &first,
         &second,
         &completed,
+        request,
     )?;
     Ok(
         json!({"plan":binding(backend,&target.join("reset-plan.json"))?,
@@ -74,6 +75,7 @@ fn commands(
     first: &Value,
     second: &Value,
     completed: &Value,
+    request: &Value,
 ) -> Result<Value> {
     let all = names(target, r"^reset-.*\.command\.json$")?;
     let executable = executable(maintenance, "reset")?;
@@ -101,6 +103,7 @@ fn commands(
                 &path,
                 executable,
                 if stage == "reset-plan" { first } else { second },
+                request,
             )?
         } else {
             let value = read(backend, &path)?;
@@ -115,14 +118,17 @@ fn commands(
                 json_io::text(&completed["completed_at"], "reset 完成时间")?,
                 report.display()
             );
-            let wanted = json!([
+            let wanted = json!(super::resume_prefix::configured_command(
                 executable,
-                "execute",
-                "--plan-hash",
-                first["plan_hash"],
-                "--confirm-reset",
-                first["manifest"]["confirmation_phrase"]
-            ]);
+                request,
+                vec![
+                    "execute".into(),
+                    "--plan-hash".into(),
+                    json_io::text(&first["plan_hash"], "reset hash")?.into(),
+                    "--confirm-reset".into(),
+                    json_io::text(&first["manifest"]["confirmation_phrase"], "reset确认")?.into()
+                ]
+            )?);
             check(
                 value["returncode"].as_i64() == Some(0)
                     && value["error_type"].is_null()

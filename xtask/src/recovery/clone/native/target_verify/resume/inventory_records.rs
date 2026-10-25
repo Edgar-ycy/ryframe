@@ -222,6 +222,7 @@ fn retry_plan(context: &Context<'_>, attempt: &str) -> Result<BTreeSet<String>> 
         &context.target.join(command),
         context.executable,
         context.plan,
+        context.request,
     )?;
     Ok(BTreeSet::from([name, command.clone()]))
 }

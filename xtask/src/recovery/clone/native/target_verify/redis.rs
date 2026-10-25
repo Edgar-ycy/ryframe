@@ -83,18 +83,57 @@ pub(crate) fn absence_with_observer(
     redis: &Value,
     observer: &impl StorageObserver,
 ) -> Result<Value> {
-    let mut command = |parts: &[&str]| observer.redis(inputs, redis, parts);
+    state_with_observer(inputs, redis, false, false, observer)
+}
+
+pub(crate) fn state_with_observer(
+    inputs: &super::storage::StorageInputs<'_>,
+    redis: &Value,
+    initialized: bool,
+    sentinel: bool,
+    observer: &impl StorageObserver,
+) -> Result<Value> {
+    state(inputs, initialized, sentinel, &mut |parts| {
+        observer.redis(inputs, redis, parts)
+    })
+}
+
+pub(super) fn state(
+    inputs: &super::storage::StorageInputs<'_>,
+    initialized: bool,
+    sentinel: bool,
+    command: &mut impl FnMut(&[&str]) -> Result<Value>,
+) -> Result<Value> {
     let scope = super::super::json::text(&inputs.request["target"]["scope_id"], "Redis scope")?;
-    let keys = scan(&mut command, &format!("ryframe:{{{scope}}}:"))?;
-    let owner = command(&["GET", &format!("ryframe:{{{scope}}}:.ryframe-owner")])?;
-    let sentinel = command(&[
-        "GET",
+    let namespace = format!("ryframe:{{{scope}}}:");
+    let owner_key = format!("{namespace}.ryframe-owner");
+    let keys = scan(command, &namespace)?;
+    let owner = get(command, &owner_key)?;
+    let marker = get(
+        command,
         super::super::json::text(&inputs.request["reset"]["sentinel_key"], "Redis sentinel")?,
-    ])?;
-    if !keys.is_empty() || !owner.is_null() || !sentinel.is_null() {
-        return Err("目标 Redis namespace、owner 或 sentinel 并非空前像".into());
+    )?;
+    let expected_keys = if initialized {
+        BTreeSet::from([owner_key])
+    } else {
+        BTreeSet::new()
+    };
+    let expected_owner = initialized.then(|| format!("ryframe-owner:v1:{scope}:redis"));
+    let expected_marker = if sentinel {
+        Some(
+            super::super::json::text(
+                &inputs.request["reset"]["sentinel_value"],
+                "Redis sentinel值",
+            )?
+            .to_owned(),
+        )
+    } else {
+        None
+    };
+    if keys != expected_keys || owner != expected_owner || marker != expected_marker {
+        return Err("目标Redis namespace、owner或sentinel不同于精确前后像".into());
     }
-    Ok(json!({"keys":[],"owner":null,"sentinel":null}))
+    Ok(json!({"keys":keys,"owner":owner,"sentinel":marker}))
 }
 
 pub(super) struct Client {

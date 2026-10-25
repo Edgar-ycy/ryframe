@@ -4,7 +4,7 @@ use crate::{
         export::transport::Transport,
         json as document,
         target_verify::{
-            fresh::{objects, resources::database_absence},
+            fresh::{initialized_objects, objects, resources::database_absence},
             input::request_physical,
             storage::StorageInputs,
         },
@@ -18,6 +18,7 @@ use crate::{
     target_verify_fixture::Fixture,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 
 struct ReadOnly {
@@ -51,7 +52,7 @@ impl Transport for ReadOnly {
         })
     }
     fn s3(&self, request: Request) -> Result<Value> {
-        self.calls.borrow_mut().push(request.bucket);
+        self.calls.borrow_mut().push(request.bucket.clone());
         if self.object_case == "denied" {
             return Err("403 fixture-access fixture-secret".into());
         }
@@ -60,6 +61,33 @@ impl Transport for ReadOnly {
                 Ok(json!({"Status":"Enabled"}))
             }
             Operation::HeadBucket | Operation::Versioning => Ok(json!({})),
+            Operation::Get {
+                key,
+                destination,
+                max_bytes,
+                if_match,
+                version,
+            } => {
+                assert!(matches!(
+                    self.object_case,
+                    "initialized" | "wrong-owner" | "wrong-metadata"
+                ));
+                assert_eq!(key, "seed-scope/.ryframe-owner");
+                assert_eq!(max_bytes, 4096);
+                assert!(if_match.is_none() && version.is_none());
+                let owner = if self.object_case == "wrong-owner" {
+                    "foreign-owner".to_owned()
+                } else {
+                    format!(
+                        "ryframe-owner:v1:seed-scope:object-storage:{}",
+                        request.bucket
+                    )
+                };
+                std::fs::write(destination, owner.as_bytes()).unwrap();
+                Ok(
+                    json!({"ContentLength":owner.len(),"ETag":"\"owner\"","ContentType":"text/plain","LastModified":"2026-10-26T00:00:00Z","Metadata":if self.object_case=="wrong-metadata" {json!(false)}else{json!({})}}),
+                )
+            }
             Operation::List {
                 prefix,
                 continuation,
@@ -67,7 +95,7 @@ impl Transport for ReadOnly {
                 assert_eq!(prefix, "seed-scope/");
                 assert!(continuation.is_none());
                 Ok(json!({"IsTruncated":self.object_case == "truncated",
-                    "Contents":if self.object_case == "nonempty" {json!([{"Key":"seed-scope/owned"}])} else {json!([])}}))
+                    "Contents":if self.object_case == "nonempty" {json!([{"Key":"seed-scope/owned"}])} else if matches!(self.object_case,"initialized"|"wrong-owner"|"wrong-metadata") {json!([{"Key":"seed-scope/.ryframe-owner"}])} else {json!([])}}))
             }
             _ => panic!("prepare 不得写对象或读取 owner"),
         }
@@ -171,6 +199,55 @@ fn five_bucket_absence_is_complete_and_denied_reads_never_become_empty_or_expose
             assert_public_object_receipt(&receipt, object_case == "denied");
         }
         assert!(!output.join("prepare.json").exists());
+    }
+}
+
+#[test]
+fn initialized_objects_require_all_five_exact_owners_and_reject_unknown_or_changed_bodies() {
+    let f = Fixture::for_status();
+    for object_case in ["initialized", "wrong-owner", "wrong-metadata", "nonempty"] {
+        let output = f.local.join(format!("owner-{object_case}"));
+        std::fs::create_dir(&output).unwrap();
+        let transport = ReadOnly {
+            mysql: String::new(),
+            defaults_file: String::new(),
+            object_case,
+            calls: RefCell::new(Vec::new()),
+        };
+        let inputs = StorageInputs {
+            backend: &f.backend,
+            request: &f.request,
+            environment: &f.environment,
+            observation_dir: &output,
+        };
+        let result = initialized_objects::observe(&inputs, &transport);
+        if object_case == "initialized" {
+            let value = result.unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 5);
+            assert_eq!(transport.calls.borrow().len(), 20);
+            for bucket in crate::recovery::clone::native::input::BUCKETS {
+                let bytes =
+                    format!("ryframe-owner:v1:seed-scope:object-storage:{bucket}").into_bytes();
+                assert_eq!(value[bucket]["keys"], json!(["seed-scope/.ryframe-owner"]));
+                assert_eq!(
+                    value[bucket]["owner"],
+                    json!({"bytes":bytes.len(),"sha256":hex::encode(Sha256::digest(&bytes))})
+                );
+            }
+        } else {
+            assert!(result.is_err(), "{object_case}");
+            assert_eq!(
+                transport.calls.borrow().len(),
+                if object_case == "nonempty" { 3 } else { 4 }
+            );
+        }
+        for entry in std::fs::read_dir(&output).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|value| value == "json") {
+                assert_public_object_receipt(&document::read(&path).unwrap(), false);
+            }
+        }
+        assert!(!output.join("initialized.json").exists());
     }
 }
 

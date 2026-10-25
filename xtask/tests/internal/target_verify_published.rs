@@ -252,7 +252,15 @@ fn inventory_recovered() -> fixture::Fixture {
             "resume-reset-plan-{attempt}-{}.command.json",
             "b".repeat(32)
         )),
-        &command(json!([executable, "plan"]), json!(stdout)),
+        &command(
+            json!([
+                executable,
+                "--config-dir",
+                fixture.request["config_dir"],
+                "plan"
+            ]),
+            json!(stdout),
+        ),
     );
     initialized["completed_at"] = json!("2026-10-18T00:05:00Z");
     initialized["inventory"]["receipt"] = binding(&resumed.join("inventory.json")).unwrap();

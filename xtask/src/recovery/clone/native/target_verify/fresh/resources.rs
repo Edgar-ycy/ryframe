@@ -21,6 +21,13 @@ pub(super) struct Resources<'a, T> {
 
 impl<T: Transport> Resources<'_, T> {
     pub(super) fn generation(&self) -> Result<Value> {
+        Ok(self.generation_owned(None)?.0)
+    }
+
+    pub(super) fn generation_owned(
+        &self,
+        owner: Option<&super::super::guard::Generation>,
+    ) -> Result<(Value, selection::Selected, Option<Value>)> {
         let mut generation = authority::generation::observe(
             self.inputs.backend,
             self.inputs.request,
@@ -28,7 +35,8 @@ impl<T: Transport> Resources<'_, T> {
             &mut |root, path, value| self.scope.maintenance(root, path, value),
             &mut authority::require_closed,
         )?;
-        let selected = selection::load(self.inputs.backend, self.inputs.request, self.run)?;
+        let (selected, cache) =
+            selection::transition(self.inputs.backend, self.inputs.request, self.run, owner)?;
         let mut descriptor =
             document::object(&self.inputs.request["review"], "fresh 审阅绑定")?.clone();
         descriptor.remove("canonical_sha256");
@@ -52,8 +60,8 @@ impl<T: Transport> Resources<'_, T> {
             &selected.value["rustfs"]["identity"],
             &observer,
         )?;
-        generation["storage"] = selected.value;
-        Ok(generation)
+        generation["storage"] = selected.value.clone();
+        Ok((generation, selected, cache))
     }
 
     pub(super) fn absence(&self) -> Result<Value> {
@@ -82,16 +90,42 @@ pub(crate) fn database_absence(
     transport: &impl Transport,
     database: &Value,
 ) -> Result<Value> {
-    let before = request_physical::defaults_connection(inputs.backend, database)?;
-    let tool = request::external_file(&inputs.request["tools"]["mysql"])?;
-    let defaults = document::text(&database["defaults_file"], "MySQL 私有配置")?;
     let name = document::text(&database["database"], "数据库名")?;
-    // request::validate 已限定标识符；此处仍不允许 SQL 元字符进入固定查询。
+    let raw = mysql(
+        inputs,
+        transport,
+        database,
+        &format!(
+            "SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';"
+        ),
+    )?;
+    if raw.trim().lines().collect::<Vec<_>>()
+        != [document::text(&database["server_uuid"], "MySQL UUID")?]
+    {
+        return Err("目标 MySQL UUID或精确数据库不存在前像不同".into());
+    }
+    Ok(
+        json!({"server_uuid":database["server_uuid"],"database":name,"exists":false,"empty_checked":false}),
+    )
+}
+
+pub(super) fn mysql(
+    inputs: &StorageInputs<'_>,
+    transport: &impl Transport,
+    database: &Value,
+    sql: &str,
+) -> Result<String> {
+    let before = request_physical::defaults_connection(inputs.backend, database)?;
+    let name = document::text(&database["database"], "数据库名")?;
     if name.is_empty() || !name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_') {
         return Err("数据库名称不是已审阅的安全标识符".into());
     }
+    let tool = request::external_file(&inputs.request["tools"]["mysql"])?;
     let args = vec![
-        format!("--defaults-file={defaults}"),
+        format!(
+            "--defaults-file={}",
+            document::text(&database["defaults_file"], "MySQL 私有配置")?
+        ),
         "--connect-timeout=5".into(),
         "--batch".into(),
         "--raw".into(),
@@ -99,27 +133,19 @@ pub(crate) fn database_absence(
         "--binary-mode".into(),
         "--default-character-set=utf8mb4".into(),
     ];
-    let sql = format!(
-        "SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';"
-    );
     let raw = receipts::command(
         inputs,
         transport,
         tool,
         args,
-        Some(sql.into_bytes()),
+        Some(sql.as_bytes().to_vec()),
         &format!("mysql-{}", document::text(&database["key"], "数据库 key")?),
     )?;
-    if raw.trim().lines().collect::<Vec<_>>()
-        != [document::text(&database["server_uuid"], "MySQL UUID")?]
-        || request_physical::defaults_connection(inputs.backend, database)? != before
-    {
-        return Err("目标 MySQL UUID、精确数据库不存在前像或私有配置不同".into());
+    if request_physical::defaults_connection(inputs.backend, database)? != before {
+        return Err("目标MySQL私有配置在命令期间变化".into());
     }
     request::external_file(&inputs.request["tools"]["mysql"])?;
-    Ok(
-        json!({"server_uuid":database["server_uuid"],"database":name,"exists":false,"empty_checked":false}),
-    )
+    Ok(raw)
 }
 
 struct Observer<'a, T> {

@@ -124,19 +124,6 @@ def _preflight_reconciliation(backend: Path, target: Path) -> dict:
     return _native("preflight-reconciliation", backend, target=str(target))["binding"]
 
 
-def _prepared(backend: Path, workspace: Path, value: dict) -> dict:
-    path = Path(value["target_directory"]) / "prepare.json"
-    descriptor = binding(path)
-    prepared = read_bound_json(path, descriptor)
-    if prepared.get("request") != value["request"]:
-        raise ValueError("fresh 目标 prepare 请求不属于固定 registration")
-    proof = snapshot_evidence.snapshot(workspace, value, "prepared")
-    if binding(path) != descriptor:
-        raise ValueError("fresh 目标 prepare 证据在快照核对期间变化")
-    bound_file(backend, value["request"])
-    return proof
-
-
 def _prepare_binding(backend: Path, value: dict) -> dict:
     path = Path(value["target_directory"]) / "prepare.json"
     descriptor = binding(path)
@@ -227,67 +214,6 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
                     or binding(storage_run / "state.json") != storage_state):
                 raise ValueError("fresh 目标 storage run 在阶段期间变化")
     return result
-
-
-def initialize(backend: Path, workspace: Path) -> dict:
-    from devex_clone_target import initialize_target
-
-    backend = backend.resolve(strict=True)
-    workspace = local_path(backend, str(workspace))
-    with _workspace_control(workspace):
-        _, value, _ = _registration(backend, workspace)
-        prepared = _prepared(backend, workspace, value)
-        published = []
-
-        def invoke(root, target, *, storage_run):
-            return initialize_target(
-                root, target, storage_run=storage_run,
-                publish_files=lambda files: published.append(
-                    snapshot_evidence.write_snapshot(
-                        backend, workspace, value, "initialized", files, locked_guard=True))
-            )
-
-        result = _run_registered(backend, workspace, invoke)
-        if binding(workspace / "prepared-files.json") != prepared:
-            raise ValueError("fresh 目标 initialize 期间 prepare 文件快照变化")
-        if (len(published) != 1
-                or snapshot_evidence.snapshot(workspace, value, "initialized") != published[0]):
-            raise ValueError("fresh 目标 initialize 未在目标控制锁内发布唯一文件快照")
-        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "target": binding(workspace / "target/initialized.json"), "files": published[0],
-                "restore_qualified": False}
-
-
-def resume_initialize(backend: Path, workspace: Path) -> dict:
-    from devex_clone_target_resume import initialize_resume_state, resume_initialize_target
-
-    backend, workspace = backend.resolve(strict=True), local_path(backend, str(workspace))
-    with _workspace_control(workspace):
-        _, value, _ = _registration(backend, workspace)
-        _prepare_binding(backend, value)
-        prepared_files = snapshot_evidence.resume_prepared_files(workspace, value)
-        state = initialize_resume_state(backend, Path(value["target_directory"]), value["request"],
-                                        prepared_files)
-        if not state["resumable"]:
-            raise ValueError("fresh 目标 initialize 不能续作：" + state["reason"])
-        published = []
-
-        def invoke(root, target, *, storage_run):
-            return resume_initialize_target(root, target, storage_run=storage_run,
-                                            request_descriptor=value["request"],
-                                            prepared_files=prepared_files,
-                                            publish_files=lambda files: published.append(
-                                                snapshot_evidence.write_snapshot(
-                                                    backend, workspace, value, "initialized", files,
-                                                    locked_guard=True)))
-
-        result = _run_registered(backend, workspace, invoke)
-        if (len(published) != 1
-                or snapshot_evidence.snapshot(workspace, value, "initialized") != published[0]):
-            raise ValueError("fresh 目标续作未在目标控制锁内发布唯一文件快照")
-        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "target": binding(workspace / "target/initialized.json"), "files": published[0],
-                "resumed": True, "restore_qualified": False}
 
 
 def reconcile_preflight(backend: Path, workspace: Path) -> dict:

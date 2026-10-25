@@ -244,9 +244,10 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
     let hash = hex::encode(Sha256::digest(document.as_bytes()));
     let plan = json!({"manifest":{"scope_id":"审阅目标"},"plan_hash":hash});
     let path = fixture.target.join("plan.command.json");
-    let valid = json!({"command":["reset.exe","plan"],"returncode":0,
+    let request = json!({"config_dir":fixture.target.join("bound/config")});
+    let valid = json!({"command":["reset.exe","--config-dir",request["config_dir"],"plan"],"returncode":0,
         "error_type":null,"stdout":format!("{document}\nplan_hash={hash}\n"),"stderr":""});
-    for case in 0..10 {
+    for case in 0..12 {
         let mut value = valid.clone();
         match case {
             0 => {}
@@ -256,8 +257,10 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
             4 => value["stderr"] = json!("warning"),
             5 => value["stdout"] = json!(format!("{document}\nplan_hash={hash}")),
             6 => value["stdout"] = json!(format!("{{\"scope_id\":\"other\"}}\nplan_hash={hash}\n")),
-            7 => value["command"] = json!(["other.exe", "plan"]),
+            7 => value["command"][0] = json!("other.exe"),
             8 => value["extra"] = json!(true),
+            10 => value["command"][2] = json!(fixture.target.join("other/config")),
+            11 => value["command"] = json!(["reset.exe", "plan"]),
             _ => {
                 value["stdout"] = json!(format!(
                     "{{\"scope_id\":1,\"scope_id\":2}}\nplan_hash={hash}\n"
@@ -265,8 +268,14 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
             }
         }
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        let observed =
-            reset::plan_receipt(&fixture.backend, &fixture.target, &path, "reset.exe", &plan);
+        let observed = reset::plan_receipt(
+            &fixture.backend,
+            &fixture.target,
+            &path,
+            "reset.exe",
+            &plan,
+            &request,
+        );
         assert_eq!(observed.is_ok(), case == 0, "case {case}");
     }
     let outside = fixture
@@ -281,7 +290,8 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
             &fixture.target,
             &outside,
             "reset.exe",
-            &plan
+            &plan,
+            &request
         )
         .is_err()
     );

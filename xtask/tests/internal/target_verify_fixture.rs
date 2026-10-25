@@ -46,11 +46,11 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn new() -> Self {
-        Self::build(false)
+        Self::build(false, false, "fixture")
     }
 
     pub(super) fn for_status() -> Self {
-        let fixture = Self::build(true);
+        let fixture = Self::build(true, false, "fixture");
         crate::recovery::clone::native::target_verify::published::unlocked_history(
             &fixture.backend,
             &fixture.target.join("initialized.json"),
@@ -59,7 +59,19 @@ impl Fixture {
         fixture
     }
 
-    fn build(status_registration: bool) -> Self {
+    pub(super) fn for_initialization() -> Self {
+        Self::build(true, true, "fixture")
+    }
+
+    pub(super) fn for_recovery() -> Self {
+        Self::build(
+            true,
+            true,
+            &format!("fixture-恢复窗口-中文 空格-{}", "e".repeat(120)),
+        )
+    }
+
+    fn build(status_registration: bool, decoy: bool, workspace_name: &str) -> Self {
         let source = crate::workspace::root_dir();
         let parent = source.join(".local-tests");
         fs::create_dir_all(&parent).unwrap();
@@ -68,7 +80,7 @@ impl Fixture {
             .tempdir_in(parent)
             .unwrap();
         let backend = directory.path().join("backend");
-        let local = backend.join(".local-tests").join("fixture");
+        let local = backend.join(".local-tests").join(workspace_name);
         fs::create_dir_all(&local).unwrap();
         source_repository(&source, &backend);
         fs::create_dir(local.join("target")).unwrap();
@@ -83,6 +95,19 @@ impl Fixture {
             environment: environment(),
         };
         fixture.write_request();
+        if decoy {
+            fs::create_dir(fixture.backend.join("config")).unwrap();
+            fs::write(
+                fixture.backend.join("config/app.toml"),
+                "[invalid-default\n",
+            )
+            .unwrap();
+            fs::write(
+                fixture.backend.join("config/app.test.toml"),
+                "# 明确诱饵，禁止默认目录回退\n",
+            )
+            .unwrap();
+        }
         history::maintenance(&fixture);
         fixture.request["maintenance_build"] = bound(&fixture.local.join("maintenance/build.json"));
         fixture.seal_configuration();
@@ -127,7 +152,10 @@ impl Fixture {
             "database":database_name("seed","shared-control"),"username":"fixture","password":"fixture-secret","tls_mode":"disabled"}},"tenant_data":{"targets":targets},
             "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","access_key":"fixture-access","secret_key":"fixture-secret","use_ssl":false},
             "reset":{"legacy_mysql_exclusive":true,"legacy_redis_exclusive":true,"legacy_object_storage_exclusive":true,"credential_version":"fixture-v1",
-                "redis_outside_sentinel_key":self.request["reset"]["sentinel_key"]}});
+                "redis_outside_sentinel_key":self.request["reset"]["sentinel_key"],
+                "services_stopped":true,"state_directory":self.target.join("reset-state"),
+                "source_sha":crate::recovery::clone::native::source::binding_value(
+                    &crate::recovery::clone::native::source::capture(&self.backend).unwrap().source)["snapshot"]["head"]}});
         fs::write(
             self.local.join("config/app.toml"),
             crate::target_configuration_fixture::toml_text(&table),

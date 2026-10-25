@@ -98,6 +98,12 @@ pub(super) fn records(context: &Context<'_>, predecessor: Option<&Value>) -> Res
         files,
         path_failure,
     } = load(context, &failure_path, attempt, next)?;
+    let historical = super::resume_prefix::prior_failed_stage(
+        backend,
+        target,
+        &intent["files_before"],
+        json_io::text(&next["stage"], "阶段")?,
+    )?;
     check(
         path_failure
             && intent["format_version"] == 1
@@ -145,7 +151,9 @@ pub(super) fn records(context: &Context<'_>, predecessor: Option<&Value>) -> Res
                     &names(target, r"^.*$")?,
                     json_io::text(&next["stage"], "阶段")?,
                 )?
-                .is_empty()),
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+                    == historical),
         "迁移后继的前驱失败、只读操作或证据闭集无效",
     )?;
     let marker_value = read(backend, &bound(backend, &marker.confirmation)?)?;

@@ -57,7 +57,12 @@ impl Fixture {
         let context = json!({"failure":{"path":"source","bytes":0,"sha256":"a".repeat(64)},
             "source_failure_at":"2026-10-23T00:00:00Z","prepared_files":{},
             "plan":{"manifest":{},"plan_hash":hex::encode(Sha256::digest(b"{}"))},
-            "executable":"fixed-reset.exe","request":{"target":{"scope_id":"fixture","databases":[]}},"available":[]});
+            "executable":"fixed-reset.exe","request":{"config_dir":directory.path().join("bound/config"),"target":{"scope_id":"fixture","databases":[]}},"available":[]});
+        fs::write(
+            directory.path().join("request.json"),
+            serde_json::to_vec(&context["request"]).unwrap(),
+        )
+        .unwrap();
         Self {
             backend,
             directory,
@@ -112,7 +117,7 @@ impl Fixture {
             &format!("resume-reset-plan-{attempt}.json"),
             &self.context["plan"],
         );
-        self.write(&format!("resume-reset-plan-{attempt}-{}.command.json", "a".repeat(32)), &json!({"command":["fixed-reset.exe","plan"],"returncode":0,"error_type":null,
+        self.write(&format!("resume-reset-plan-{attempt}-{}.command.json", "a".repeat(32)), &json!({"command":["fixed-reset.exe","--config-dir",self.context["request"]["config_dir"],"plan"],"returncode":0,"error_type":null,
             "stdout":format!("{{}}\nplan_hash={}\n", self.context["plan"]["plan_hash"].as_str().unwrap()),"stderr":""}));
         let directory = self
             .directory
@@ -468,9 +473,9 @@ fn operation_confirmation_requires_successful_bound_receipt_and_preserves_unknow
     let fixture = Fixture::new();
     let attempt = "a".repeat(32);
     let intent = fixture.write(&format!("resume-migrate-{attempt}-03.intent.json"), &json!({
-        "format_version":1,"kind":"devex-clone-migration-operation-intent","attempt":attempt,"index":3,"at":"2026-10-23T00:00:01Z","resume":{},"failure":{},"operation":{"id":"tenant-data-dedicated-a-verify","command":["migrate","tenant-data","verify","--target","dedicated-a"],"write":false}}));
+        "format_version":1,"kind":"devex-clone-migration-operation-intent","attempt":attempt,"index":3,"at":"2026-10-23T00:00:01Z","resume":{},"failure":{},"operation":{"id":"tenant-data-dedicated-a-verify","command":["migrate","--config-dir",fixture.context["request"]["config_dir"],"tenant-data","verify","--target","dedicated-a"],"write":false}}));
     let path = "migrate-tenant-data---target-dedicated-a-verify-00000000000000000000000000000000.command.json";
-    let receipt = fixture.write(path, &json!({"command":["migrate","tenant-data","verify","--target","dedicated-a"],"returncode":0,"error_type":null,"stdout":"scope=tenant-data target=dedicated-a migration_ledger=current schema=verified\n","stderr":""}));
+    let receipt = fixture.write(path, &json!({"command":["migrate","--config-dir",fixture.context["request"]["config_dir"],"tenant-data","verify","--target","dedicated-a"],"returncode":0,"error_type":null,"stdout":"scope=tenant-data target=dedicated-a migration_ledger=current schema=verified\n","stderr":""}));
     let mut arguments = json!({"attempt":attempt,"index":3,"at":"2026-10-23T00:00:02Z","intent":intent,"receipt":receipt,"write":false});
     assert_eq!(
         fixture.invoke(
@@ -488,7 +493,7 @@ fn operation_confirmation_requires_successful_bound_receipt_and_preserves_unknow
         false
     );
     arguments["write"] = json!(false);
-    let failed = fixture.write(path, &json!({"command":["migrate","tenant-data","verify","--target","dedicated-a"],"returncode":1,"error_type":"TimeoutExpired","stdout":"verified","stderr":""}));
+    let failed = fixture.write(path, &json!({"command":["migrate","--config-dir",fixture.context["request"]["config_dir"],"tenant-data","verify","--target","dedicated-a"],"returncode":1,"error_type":"TimeoutExpired","stdout":"verified","stderr":""}));
     arguments["receipt"] = failed;
     assert_eq!(
         fixture.invoke(
@@ -832,7 +837,7 @@ fn reset_plan_process_binds_original_document_bytes_instead_of_equivalent_json()
     let hash = hex::encode(Sha256::digest(document.as_bytes()));
     let plan = json!({"manifest":manifest,"plan_hash":hash});
     let path = fixture.directory.path().join("reset-plan.command.json");
-    let receipt = json!({"command":["D:/中文 空格/reset.exe","plan"],"returncode":0,"error_type":null,
+    let receipt = json!({"command":["D:/中文 空格/reset.exe","--config-dir",fixture.context["request"]["config_dir"],"plan"],"returncode":0,"error_type":null,
         "stdout":format!("{document}\nplan_hash={hash}\n"),"stderr":""});
     fixture.write("reset-plan.command.json", &receipt);
     let check = || {
