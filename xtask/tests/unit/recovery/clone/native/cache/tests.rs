@@ -1,7 +1,9 @@
+#[cfg(windows)]
 use super::{
     super::{digest, json as document, resources::common},
-    evidence, facts, model, process,
+    evidence,
 };
+use super::{facts, model, process};
 use serde_json::{Value, json};
 use std::io::Cursor;
 

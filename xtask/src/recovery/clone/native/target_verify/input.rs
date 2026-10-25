@@ -46,6 +46,15 @@ pub(crate) struct TargetContext {
 }
 
 impl TargetContext {
+    pub(crate) fn storage_inputs(&self) -> super::storage::StorageInputs<'_> {
+        super::storage::StorageInputs {
+            backend: &self.backend,
+            request: &self.request,
+            environment: &self.environment,
+            observation_dir: &self.observation_dir,
+        }
+    }
+
     pub(crate) fn load(backend: &Path, request: &StageRequest<'_>) -> Result<Self> {
         let attempt = request.attempt.ok_or("target-verify 执行缺少阶段序号")?;
         let inputs = read_inputs(backend, request)?;

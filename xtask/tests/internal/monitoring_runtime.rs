@@ -1,7 +1,5 @@
-use super::process_liveness::process_is_running;
-
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
@@ -17,13 +15,14 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{
-    recovery::monitoring::{
-        config,
-        contract::{Binding, ROLES, process_identity, read_document},
-        http, lifecycle, observe, receipts, repository, staging, supervisor, webhook,
-    },
-    workspace::root_dir,
+use super::recovery::monitoring::contract::{Binding, read_document};
+use super::recovery::monitoring::{config, http, observe, repository, staging, webhook};
+use super::workspace::root_dir;
+
+#[cfg(windows)]
+use super::recovery::monitoring::{
+    contract::{ROLES, process_identity},
+    lifecycle, receipts, supervisor,
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -36,6 +35,7 @@ mod cleanup;
 #[path = "monitoring_runtime_driver.rs"]
 mod driver;
 
+#[cfg(windows)]
 use driver::FakeRuntime;
 
 #[derive(Clone)]
@@ -490,8 +490,8 @@ fn supervisor_registers_stops_and_reaps_a_short_lived_process_tree() {
     supervisor::request_stop(&tree, false).unwrap();
     let proof = supervisor::wait_stopped(&tree, Duration::from_secs(10)).unwrap();
     assert_eq!(proof["status"], "stopped");
-    assert!(!process_is_running(product_pid));
-    assert!(!process_is_running(supervisor_pid));
+    assert!(!super::process_liveness::process_is_running(product_pid));
+    assert!(!super::process_liveness::process_is_running(supervisor_pid));
     let _ = child.wait();
     assert!(
         runtime
@@ -546,7 +546,7 @@ fn supervisor_records_natural_exit_and_missing_process_without_faking_success() 
     let proof = supervisor::wait_stopped(&tree, Duration::from_secs(10)).unwrap();
     assert_eq!(proof["status"], "stopped");
     assert!(tree["process"]["pid"].as_u64().is_some());
-    assert!(!process_is_running(
+    assert!(!super::process_liveness::process_is_running(
         tree["process"]["pid"].as_u64().unwrap() as u32
     ));
     let _ = child.wait();
@@ -862,7 +862,7 @@ fn start_publishes_last_and_close_stops_all_roles_in_reverse_order() {
             .unwrap()
             .keys()
             .cloned()
-            .collect::<BTreeSet<_>>(),
+            .collect::<std::collections::BTreeSet<_>>(),
         ROLES.iter().map(|value| (*value).to_owned()).collect()
     );
     let observations = ROLES
@@ -928,8 +928,8 @@ fn start_failure_reaps_already_started_trees_and_never_publishes_success() {
             .unwrap()
             .keys()
             .cloned()
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["webhook".to_owned()])
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["webhook".to_owned()])
     );
     assert!(config::verify_ports_closed(&binding.value).is_ok());
 }

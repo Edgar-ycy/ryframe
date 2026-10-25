@@ -317,3 +317,10 @@ mod target_verify_published_tests;
 mod watch_tests;
 #[path = "internal/workspace.rs"]
 mod workspace_tests;
+
+#[path = "unit/recovery/clone/native/target_verify/prepare_history.rs"]
+mod target_prepare_history_tests;
+#[path = "unit/recovery/clone/native/target_verify/fresh/ports.rs"]
+mod target_prepare_ports_tests;
+#[path = "unit/recovery/clone/native/target_verify/fresh/registration.rs"]
+mod target_prepare_registration_tests;

@@ -131,3 +131,9 @@ fn environment(backend: &Path, args: &Value) -> Result<Value> {
     )?;
     Ok(json!([path, value, private]))
 }
+
+/// 原生 prepare 只读核定全部历史代次，不增加跨进程操作或控制权限。
+pub(crate) fn storage_history(backend: &Path, run: &Path) -> Result<Value> {
+    let mut runtime = readonly::NativeRuntime::new(backend);
+    projection::historical(&mut runtime, backend, run)
+}

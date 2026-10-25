@@ -265,7 +265,9 @@ pub(super) fn delta(
         required.iter().all(|name| current.contains_key(name)),
         "fresh 初始化缺少固定阶段文件",
     )?;
-    let before = baseline.keys().cloned().collect::<BTreeSet<_>>();
+    let prepared_files = Value::Array(baseline.values().cloned().collect());
+    let active = super::resume_baseline::active(backend, target, &prepared_files, request)?;
+    let before = file_map(&active)?.into_keys().collect::<BTreeSet<_>>();
     let mut remaining = current
         .keys()
         .filter(|name| {

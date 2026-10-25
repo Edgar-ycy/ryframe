@@ -200,39 +200,23 @@ fn lineage(fixture: &Fixture, stage: &str, status_registration: bool) {
     );
 }
 
-fn registration_value(fixture: &Fixture, status_registration: bool) -> Value {
-    let (environment, storage_run) = if status_registration {
-        let storage = fixture.backend.join(".local-tests/status-storage");
-        fs::create_dir(&storage).unwrap();
-        write(
-            &storage.join("manifest.json"),
-            &json!({"kind":"status-storage"}),
-        );
-        state::initialize(&storage).unwrap();
-        let private = fixture.local.join("status-private.json");
-        write(
-            &private,
-            &json!({"environment":{"APP_ENV":"test","TEMP":fixture.local,"TMP":fixture.local}}),
-        );
-        (
-            bound(&private),
-            json!({"path":storage,"manifest":bound(&storage.join("manifest.json")),
-            "state":bound(&storage.join("state.json"))}),
-        )
-    } else {
-        let storage = fixture.local.join("storage-run.json");
-        write(
-            &storage,
-            &json!({"format_version":1,"kind":"explicit-fixture-storage-protocol","storage":fixture.request["storage"]}),
-        );
-        (
-            bound(&fixture.local.join("target-environment.json")),
-            bound(&storage),
-        )
-    };
+fn registration_value(fixture: &Fixture, _status_registration: bool) -> Value {
+    let storage = fixture.backend.join(".local-tests/status-storage");
+    fs::create_dir(&storage).unwrap();
+    write(
+        &storage.join("manifest.json"),
+        &json!({"kind":"status-storage"}),
+    );
+    state::initialize(&storage).unwrap();
+    let private = fixture.local.join("status-private.json");
+    write(
+        &private,
+        &json!({"environment":{"APP_ENV":"test","TEMP":fixture.local,"TMP":fixture.local}}),
+    );
     json!({"format_version":1,"kind":"devex-clone-fresh-target-registration",
-        "request":bound(&fixture.local.join("request.json")),"environment":environment,
-        "storage_run":storage_run,"target_directory":fixture.target})
+        "request":bound(&fixture.local.join("request.json")),"environment":bound(&private),
+        "storage_run":{"path":storage,"manifest":bound(&storage.join("manifest.json")),"state":bound(&storage.join("state.json"))},
+        "target_directory":fixture.target})
 }
 
 fn creation(fixture: &Fixture) {

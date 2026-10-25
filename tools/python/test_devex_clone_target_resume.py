@@ -114,7 +114,7 @@ class TargetResumeTests(unittest.TestCase):
         self.f = Fixture(Path(temporary.name), self)
 
     def prepare(self):
-        result = target.prepare_target(self.f.root, self.f.path, self.f.output, self.f.run)
+        result = self.f.prepared()
         self.f.publish_prepared_files()
         return result
 
@@ -165,8 +165,8 @@ class TargetResumeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         base = Path(temporary.name)
         self.addCleanup(shutil.rmtree, filesystem_path(base), True)
-        suffix = len(str(Path(".local-tests") / "new-generation")) + 1
-        label = "中文 空格-"
+        suffix = len(str(Path(".local-tests") / "fresh-workspace" / "target")) + 1
+        label = "中文 空格"
         padding = 167 - len(str(base)) - suffix - 1 - len(label)
         self.assertGreaterEqual(padding, 0, "长路径夹具的父目录已超过精确边界")
         root = base / (label + "x" * padding)
@@ -535,11 +535,7 @@ class TargetResumeTests(unittest.TestCase):
     def test_migration_resume_accepts_valid_completed_prepare_resume_evidence(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
-        with patch.object(target, "context", side_effect=OSError("fixture interruption")), \
-                self.assertRaises(OSError):
-            target.prepare_target(f.root, f.path, f.output, f.run)
-        target.resume_prepare_target(
-            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor)
+        f.prepared_history()
         f.publish_prepared_files()
         self.interrupt_migration_prefix(3, prepared=True)
 
@@ -555,7 +551,7 @@ class TargetResumeTests(unittest.TestCase):
     def test_prepared_tree_requires_one_mysql_output_line_with_platform_ending(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
-        target.prepare_target(f.root, f.path, f.output, f.run)
+        f.prepared()
         receipt = next(f.output.glob("mysql-shared-control-*.command.json"))
         value = read_json(receipt)
         self.assertEqual(value["stdout"], f.uuid + "\r\n")
@@ -575,7 +571,7 @@ class TargetResumeTests(unittest.TestCase):
     def test_prepared_tree_compares_stable_redis_proc_identity(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
-        target.prepare_target(f.root, f.path, f.output, f.run)
+        f.prepared()
         receipts = []
         for path in f.output.glob("redis-kernel-*.command.json"):
             value = read_json(path)
@@ -599,36 +595,11 @@ class TargetResumeTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Redis"):
                     self.validate_current_prepare_tree(descriptor)
 
-    def test_prepared_tree_rejects_unclaimed_prepare_history_files(self):
-        f = self.f
-        descriptor = {"path": str(f.path), **file_digest(f.path)}
-        with patch.object(target, "context", side_effect=OSError("fixture interruption")), \
-                self.assertRaises(OSError):
-            target.prepare_target(f.root, f.path, f.output, f.run)
-        target.resume_prepare_target(
-            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor,
-        )
-        self.validate_current_prepare_tree(descriptor)
-        attempt = next(f.output.glob("resume-prepare-*.intent.json")).name.split(".")[0]
-
-        for name in ("resume-prepare-unclaimed.bin", attempt + ".intent.json.bak",
-                     "resume-prepare-extra.json"):
-            with self.subTest(name=name):
-                extra = f.output / name
-                extra.write_text("{}", encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "未声明|无法归属"):
-                    self.validate_current_prepare_tree(descriptor)
-                extra.unlink()
 
     def test_inventory_resume_accepts_failure_after_completed_prepare_resume(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
-        with patch.object(target, "context", side_effect=OSError("fixture interruption")), \
-                self.assertRaises(OSError):
-            target.prepare_target(f.root, f.path, f.output, f.run)
-        target.resume_prepare_target(
-            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor
-        )
+        f.prepared_history()
         f.publish_prepared_files()
         with patch.object(target, "inventory", side_effect=inventory_capture_failure), \
                 self.assertRaises(InventoryCaptureError):
@@ -654,7 +625,7 @@ class TargetResumeTests(unittest.TestCase):
 
         self.assertTrue((f.output / "initialized.json").is_file())
         self.assertTrue((f.output / "initialize.lock").is_dir())
-        self.assertFalse((f.local / "initialized-files.json").exists())
+        self.assertFalse((f.workspace / "initialized-files.json").exists())
         self.assertEqual(len(list(f.output.glob("resume-initialize-*.failure.json"))), 1)
         self.assertTrue(target.unresolved_failure(f.root, f.output))
 

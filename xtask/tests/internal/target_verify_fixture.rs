@@ -231,6 +231,7 @@ fn review(fixture: &Fixture, services: &Value) -> Value {
     let mut tools = fixture.request["tools"].clone();
     tools["mysqldump"] = tools["mysql"].clone();
     tools["rustfs"] = tool(&fixture.local.join("rustfs"));
+    tools["wsl"] = tool(&fixture.local.join("wsl"));
     tools["redis_server"] = json!({"distribution":"fixture","resolved_path":"/usr/bin/redis-server","sha256":"9".repeat(64)});
     json!({"kind":"review-only-perf-resource-plan-with-readonly-preflight","ready_for_execution":true,"scopes":scopes,"tools":tools,"services":services,
         "reference":{"source":{"databases":[{"server_uuid":UUID,"database":"protected_source"}]},"protected_target":{"databases":[{"server_uuid":UUID,"database":"protected_target"}]}}})

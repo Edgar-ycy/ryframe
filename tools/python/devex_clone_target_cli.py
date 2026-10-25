@@ -6,11 +6,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from artifact_digests import protect_binaries
-from devex_clone_capture import read_bound_json, write_json
+from devex_clone_capture import read_bound_json
 from devex_clone_factory_context import initialization_history
 from process_environment import Environments, configured
 from devex_clone_model import exact, linked, local_path
-from devex_clone_run_state import binding, controller_observation, historical_state, load_state, run_lock
+from devex_clone_run_state import binding, historical_state, load_state, run_lock
 from devex_clone_source_proof import bound_file
 import devex_clone_target_tree_claim as snapshot_evidence
 from process_guard import process_guard
@@ -227,80 +227,6 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
                     or binding(storage_run / "state.json") != storage_state):
                 raise ValueError("fresh 目标 storage run 在阶段期间变化")
     return result
-
-
-def prepare(backend: Path, workspace: Path, request_file: Path, environment_file: Path, storage_run: Path) -> dict:
-    from devex_clone_target import prepare_target
-
-    backend = backend.resolve(strict=True)
-    workspace = local_path(backend, str(workspace), new=True)
-    if not workspace.parent.is_dir():
-        raise ValueError("fresh 目标 workspace 必须位于已有父目录")
-    request = local_path(backend, str(request_file))
-    environment = local_path(backend, str(environment_file))
-    storage = local_path(backend, str(storage_run))
-    _disjoint(backend, workspace, storage)
-    request_binding, environment_binding = binding(request), binding(environment)
-    bound_file(backend, request_binding)
-    _, private = _private_environment(backend, environment_binding)
-    storage_binding = {"path": str(storage), "manifest": binding(storage / "manifest.json"),
-                       "state": binding(storage / "state.json")}
-    _storage_run(backend, storage_binding)
-    workspace.mkdir()
-    with _workspace_control(workspace):
-        bound_file(backend, request_binding)
-        _, current_private = _private_environment(backend, environment_binding)
-        if current_private != private:
-            raise ValueError("fresh 目标私有环境在 workspace 取得控制锁前变化")
-        _storage_run(backend, storage_binding)
-        registration = {"format_version": 1, "kind": "devex-clone-fresh-target-registration",
-                        "request": request_binding, "environment": environment_binding,
-                        "storage_run": storage_binding,
-                        "target_directory": str(workspace / "target")}
-        write_json(workspace / "registration.json", registration)
-        def invoke(root, target, *, storage_run):
-            return prepare_target(root, request, target, storage_run=storage_run,
-                                  request_descriptor=request_binding)
-        result = _run_registered(backend, workspace, invoke)
-        snapshot = snapshot_evidence.write_snapshot(
-            backend, workspace, registration, "prepared", expected_document=result)
-        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "target": binding(workspace / "target/prepare.json"), "files": snapshot,
-                "restore_qualified": False}
-
-
-def resume_prepare(backend: Path, workspace: Path) -> dict:
-    from devex_clone_target import prepare_resume_state, resume_prepare_target
-
-    backend = backend.resolve(strict=True)
-    workspace = local_path(backend, str(workspace))
-    path, registered, private = _registration(backend, workspace)
-    if (workspace / "prepared-files.json").exists():
-        _prepared(backend, workspace, registered)
-        raise ValueError("fresh 目标 prepare 已完整发布，不能重复续作")
-    resumable = prepare_resume_state(backend, Path(registered["target_directory"]), registered["request"])
-    if not resumable["resumable"]:
-        raise ValueError("fresh 目标 prepare 不能续作：" + resumable["reason"])
-    storage = _storage_run(backend, registered["storage_run"])
-    if controller_observation(storage) is not None:
-        raise ValueError("fresh 目标控制锁尚未收尾；先核对 status，再使用原 recover 入口")
-    with _workspace_control(workspace):
-        _unchanged(backend, path, registered, private)
-        _, value, _ = _registration(backend, workspace)
-        if (workspace / "prepared-files.json").exists():
-            _prepared(backend, workspace, value)
-            raise ValueError("fresh 目标 prepare 已完整发布，不能重复续作")
-
-        def invoke(root, target, *, storage_run):
-            return resume_prepare_target(root, target, storage_run=storage_run,
-                                         request_descriptor=value["request"])
-
-        result = _run_registered(backend, workspace, invoke)
-        snapshot = snapshot_evidence.write_snapshot(
-            backend, workspace, value, "prepared", expected_document=result)
-        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "target": binding(workspace / "target/prepare.json"), "files": snapshot,
-                "resumed": True, "restore_qualified": False}
 
 
 def initialize(backend: Path, workspace: Path) -> dict:

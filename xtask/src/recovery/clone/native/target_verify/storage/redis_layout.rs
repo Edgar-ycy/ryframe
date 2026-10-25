@@ -2,25 +2,25 @@ use std::{collections::BTreeMap, path::Path};
 
 use serde_json::{Value, json};
 
-use super::{StorageObserver, TargetContext, common, json_io};
+use super::{StorageInputs, StorageObserver, common, json_io};
 use crate::Result;
 
 pub(crate) fn verify<O: StorageObserver>(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     review: &Value,
     redis: &Value,
     observer: &O,
 ) -> Result<()> {
     validate_identity(context, review, redis)?;
     let directory = common::local_directory(
-        &context.backend,
+        context.backend,
         Path::new(json_io::text(
             &review["services"]["redis"]["directory"],
             "Redis 审阅目录",
         )?),
         "Redis 配置目录",
     )?;
-    let config = common::bound_file(&context.backend, &redis["configuration"], "Redis 配置")?;
+    let config = common::bound_file(context.backend, &redis["configuration"], "Redis 配置")?;
     if config != directory.join("redis.conf") {
         return Err("Redis 配置不是审阅目录中的 redis.conf".into());
     }
@@ -73,11 +73,11 @@ pub(crate) fn verify<O: StorageObserver>(
         observer.redis(context, redis, parts)
     })?;
     // 观察结束仍核对配置文件摘要，不能让 CONFIG GET 窗口中的替换通过。
-    common::bound_file(&context.backend, &redis["configuration"], "Redis 配置")?;
+    common::bound_file(context.backend, &redis["configuration"], "Redis 配置")?;
     Ok(())
 }
 
-fn validate_identity(context: &TargetContext, review: &Value, redis: &Value) -> Result<()> {
+fn validate_identity(context: &StorageInputs<'_>, review: &Value, redis: &Value) -> Result<()> {
     json_io::exact(
         redis,
         &[

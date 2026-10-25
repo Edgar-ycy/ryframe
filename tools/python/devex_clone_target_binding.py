@@ -356,7 +356,7 @@ def _redis_observations(target: Path, remaining: set[str], prepared: dict,
     remaining.difference_update(current_paths)
 
 
-def validate_initialization_delta(target: Path, current: list[dict], prepared: list[dict],
+def validate_initialization_delta(backend: Path, target: Path, current: list[dict], prepared: list[dict],
                                   request: dict,
                                   required: set[str], *, observation_rounds: int,
                                   inventory_failed: bool = False,
@@ -375,6 +375,9 @@ def validate_initialization_delta(target: Path, current: list[dict], prepared: l
     if missing:
         raise ValueError("fresh 初始化缺少固定阶段文件：" + ", ".join(sorted(missing)))
     remaining = set(additions) - required - {"copy-target.guard"}
+    from devex_clone_target_prepared_files import active_observations
+
+    prepared_map = _file_map(active_observations(backend, target, prepared))
     objects_initialized = initialized_objects is not None
     for stage in ("bucket-readiness", "bucket-versioning", "scoped-list"):
         _static_observations(
@@ -414,14 +417,14 @@ def _native(operation: str, backend: Path, **arguments) -> dict:
     if tool_binding() is None:
         raise ValueError("目标绑定缺少受管 Rust 工具；请通过 run_checks.py 或正式 xtask 入口执行")
     def invoke(command, **options):
-        options["timeout"] = 30
+        options["timeout"] = 600 if operation in {"fresh-prepare", "fresh-resume-prepare"} else 30
         return subprocess.run(command, **options)
 
     try:
         result, response = native_invoke(
             "__target-binding", {"format_version": 1, "operation": operation,
                                   "backend": str(backend), "arguments": arguments},
-            invoke, may_write=False,
+            invoke, may_write=operation in {"fresh-prepare", "fresh-resume-prepare"},
         )
     except NativeS3InvocationError as error:
         raise ValueError("原生目标绑定进程未完成：" + str(error.error_type)

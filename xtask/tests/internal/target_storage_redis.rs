@@ -6,10 +6,7 @@ use serde_json::{Value, json};
 
 use crate::recovery::clone::native::{
     resources::common,
-    target_verify::{
-        input::TargetContext,
-        storage::{StorageObserver, redis_layout},
-    },
+    target_verify::storage::{StorageObserver, redis_layout},
 };
 
 struct FakeObserver {
@@ -23,13 +20,17 @@ impl StorageObserver for FakeObserver {
         Err("Redis 布局测试不应读取 RustFS 进程".into())
     }
 
-    fn arguments(&self, _context: &TargetContext, _identity: &Value) -> crate::Result<Vec<String>> {
+    fn arguments(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        _identity: &Value,
+    ) -> crate::Result<Vec<String>> {
         Err("Redis 布局测试不应读取 RustFS 参数".into())
     }
 
     fn listener(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _identity: &Value,
         _url: &str,
     ) -> crate::Result<()> {
@@ -38,7 +39,7 @@ impl StorageObserver for FakeObserver {
 
     fn wsl(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _redis: &Value,
         args: &[String],
     ) -> crate::Result<String> {
@@ -51,7 +52,7 @@ impl StorageObserver for FakeObserver {
 
     fn redis(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _redis: &Value,
         parts: &[&str],
     ) -> crate::Result<Value> {
@@ -148,7 +149,7 @@ fn redis_fake_observer_keeps_real_file_hash_path_and_tool_validation() {
     let mut context = super::target_storage_model_tests::context(&backend, directory, directory);
     context.request["side"] = json!("seed");
     let mut fake = observer(&configuration, &redis_layout::wsl_path(directory).unwrap());
-    redis_layout::verify(&context, &review, &redis, &fake).unwrap();
+    redis_layout::verify(&context.storage_inputs(), &review, &redis, &fake).unwrap();
     assert_eq!(fake.calls.borrow().len(), 14);
     fake.wsl.insert(
         vec![
@@ -158,13 +159,13 @@ fn redis_fake_observer_keeps_real_file_hash_path_and_tool_validation() {
         ],
         "/wrong/config".into(),
     );
-    assert!(redis_layout::verify(&context, &review, &redis, &fake).is_err());
+    assert!(redis_layout::verify(&context.storage_inputs(), &review, &redis, &fake).is_err());
     let calls = fake.calls.borrow().len();
     fs::write(&config, "changed configuration").unwrap();
-    assert!(redis_layout::verify(&context, &review, &redis, &fake).is_err());
+    assert!(redis_layout::verify(&context.storage_inputs(), &review, &redis, &fake).is_err());
     assert_eq!(fake.calls.borrow().len(), calls);
     fs::write(&config, "bind 127.0.0.1\n").unwrap();
     fs::write(&wsl, "changed tool").unwrap();
-    assert!(redis_layout::verify(&context, &review, &redis, &fake).is_err());
+    assert!(redis_layout::verify(&context.storage_inputs(), &review, &redis, &fake).is_err());
     assert_eq!(fake.calls.borrow().len(), calls);
 }

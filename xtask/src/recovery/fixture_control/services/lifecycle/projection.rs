@@ -115,3 +115,41 @@ fn recorded(context: &Context, history: &Value) -> Result<Vec<Value>> {
     }
     Ok(recorded)
 }
+
+/// 复用完整登记校验后投影所有已发布代次；不观察旧 PID 活体，不把 latest 当作历史。
+pub(super) fn historical(runtime: &mut dyn Runtime, backend: &Path, run: &Path) -> Result<Value> {
+    let manifest = read(&run.join("manifest.json"))?;
+    let state = state::load(run, true)?;
+    let history = history::validate(run, &state, true, true)?;
+    let (review, bootstrap) = active_inputs(&manifest, &state, &history)?;
+    let value = runtime.call(
+        "context",
+        json!({"review":review["path"],"environment":bootstrap["path"]}),
+    )?;
+    let context = Context::load(backend, value)?;
+    check(
+        context.run == run && context.value["state"] == state,
+        "服务历史读取期间完整账本变化",
+    )?;
+    let services = registered(runtime, &context, true)?;
+    let mut result = vec![
+        json!({"value":{"rustfs":services["origin"]["storage"],"redis":services["origin"]["redis"]},"runtime":null}),
+    ];
+    for attempt in state::attempts(&state)? {
+        if attempt["stage"] != "fixture-services"
+            || attempt["mode"] != "restart"
+            || attempt["status"] != "passed"
+        {
+            continue;
+        }
+        let outer = history::evidence::bound(run, &attempt["result"])?;
+        let generation = history::evidence::bound(run, &outer["generation"])?;
+        let request = history::evidence::bound(run, &generation["rustfs"]["request"])?;
+        let storage = storage(&generation["rustfs"]["storage"])?;
+        let runtime = json!({"storage":storage,"data_directory":request["data_directory"],
+            "api_url":request["api_url"],"console_url":request["console_url"],"generation":attempt["result"]});
+        result.push(json!({"value":{"rustfs":storage,"redis":generation["redis"]["runtime"]["redis"]},"runtime":runtime}));
+    }
+    context.guard(None)?;
+    Ok(json!(result))
+}

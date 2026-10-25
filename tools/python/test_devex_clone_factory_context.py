@@ -25,7 +25,7 @@ class TargetHistoryTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(Path(temporary.name), self)
         self.f.mocks[-1].side_effect = self.inventory_fixture
-        target.prepare_target(self.f.root, self.f.path, self.f.output, self.f.run)
+        self.f.prepared()
         self.f.publish_prepared_files()
         self.initialized = target.initialize_target(
             self.f.root, self.f.output, self.f.run,
@@ -41,7 +41,8 @@ class TargetHistoryTests(unittest.TestCase):
             observations.append(replace(original, resource={"kind": "database", "scope_id": self.f.scope,
                                 "server_uuid": db["server_uuid"], "database": db["database"]}))
         raw_files = {}
-        for key in context.KEYS:
+        keys = [database["key"] for database in self.f.request["target"]["databases"]]
+        for key in keys:
             for phase in ("before", "after"):
                 name = f"{phase}-target-{key}.json"
                 self.write(output / name, {"offline_test_fixture": key})
@@ -50,7 +51,7 @@ class TargetHistoryTests(unittest.TestCase):
             self.write(output / f"binding-{phase}.json", {"offline_test_fixture": True})
         mapping = {db["key"]: asdict(image) for db, image in zip(self.f.request["target"]["databases"], observations, strict=True)}
         receipt_value = {"format_version": 1, "status": "side_inventory_captured", "side": "target",
-                         "scope_id": self.f.scope, "keys": list(context.KEYS), "observations": mapping,
+                         "scope_id": self.f.scope, "keys": keys, "observations": mapping,
                          "inventories": raw_files, "binding_sha256": plan_hash({"offline_test_fixture": True})}
         self.write(output / "inventory.json", receipt_value)
         value.observations = tuple(observations)

@@ -150,7 +150,11 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         combine(self.inner.process_identity(pid), self.frame.checkpoint())
     }
 
-    fn arguments(&self, context: &TargetContext, identity: &Value) -> Result<Vec<String>> {
+    fn arguments(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        identity: &Value,
+    ) -> Result<Vec<String>> {
         self.frame.checkpoint()?;
         combine(
             self.inner.arguments(context, identity),
@@ -158,7 +162,12 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         )
     }
 
-    fn listener(&self, context: &TargetContext, identity: &Value, url: &str) -> Result<()> {
+    fn listener(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        identity: &Value,
+        url: &str,
+    ) -> Result<()> {
         self.frame.checkpoint()?;
         combine(
             self.inner.listener(context, identity, url),
@@ -166,7 +175,12 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         )
     }
 
-    fn wsl(&self, context: &TargetContext, redis: &Value, args: &[String]) -> Result<String> {
+    fn wsl(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+        args: &[String],
+    ) -> Result<String> {
         self.frame.checkpoint()?;
         combine(
             self.inner.wsl(context, redis, args),
@@ -174,7 +188,12 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         )
     }
 
-    fn redis(&self, context: &TargetContext, redis: &Value, parts: &[&str]) -> Result<Value> {
+    fn redis(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+        parts: &[&str],
+    ) -> Result<Value> {
         self.frame.checkpoint()?;
         combine(
             self.inner.redis(context, redis, parts),
