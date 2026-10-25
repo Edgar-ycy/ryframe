@@ -373,13 +373,7 @@ impl Evidence {
 }
 
 fn mysql_arguments(context: &TargetContext, database: &Value, check: &str) -> Result<Vec<String>> {
-    let sql = match check {
-        "identity" => "SELECT @@server_uuid, DATABASE();",
-        "ownership" => {
-            "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;"
-        }
-        _ => return Err("数据库核验只允许固定 identity 或 ownership 查询".into()),
-    };
+    let sql = verification_sql(check)?;
     request_physical::defaults_connection(&context.backend, database)?;
     Ok(vec![
         format!(
@@ -397,7 +391,17 @@ fn mysql_arguments(context: &TargetContext, database: &Value, check: &str) -> Re
     ])
 }
 
-fn mysql_receipt(
+pub(crate) fn verification_sql(check: &str) -> Result<&'static str> {
+    Ok(match check {
+        "identity" => "SELECT @@server_uuid, DATABASE();",
+        "ownership" => {
+            "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;"
+        }
+        _ => return Err("数据库核验只允许固定 identity 或 ownership 查询".into()),
+    })
+}
+
+pub(crate) fn mysql_receipt(
     database: &Value,
     check: &str,
     output: &stdout::VerifiedStdout,

@@ -45,6 +45,15 @@ impl NativeRuntime {
         self.primitive("controller", json!({"run":run}))
     }
 
+    pub(crate) fn observe_listener(&mut self, identity: &Value, url: &str) -> Result<()> {
+        common::validate_process_identity(identity)?;
+        let actual = self.primitive("identity", json!({"pid":identity["pid"]}))?;
+        if actual != *identity {
+            return Err("登记 API 进程已退出或内核创建身份变化".into());
+        }
+        process::listener(identity, url)
+    }
+
     fn primitive(&mut self, operation: &str, args: Value) -> Result<Value> {
         super::primitive::validate(&self.backend, operation, &args)?;
         match operation {

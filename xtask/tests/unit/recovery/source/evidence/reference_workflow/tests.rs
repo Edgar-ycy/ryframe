@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 
-fn temporary() -> tempfile::TempDir {
+pub(super) fn temporary() -> tempfile::TempDir {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -100,7 +100,7 @@ fn artifact(root: &std::path::Path, relative: &str, resource: &str) -> Value {
     json!({"relative_path":relative,"resource":resource,"bytes":digest.bytes,"sha256":digest.sha256})
 }
 
-fn formalize(plan: &mut Value, root: &std::path::Path) {
+pub(super) fn formalize(plan: &mut Value, root: &std::path::Path) {
     let tool = root.join("tool.exe");
     fs::write(&tool, b"fixture-tool").unwrap();
     let defaults = root.join("client.cnf");

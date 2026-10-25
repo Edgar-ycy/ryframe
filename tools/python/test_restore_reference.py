@@ -184,41 +184,6 @@ class ReferenceTests(unittest.TestCase):
         tools.mysql.return_value = "0"
         reference.require_empty_source(self.plan, tools)
 
-    def test_existing_check_defaults_to_target_and_accepts_explicit_source_without_empty_check(self):
-        reference.work_directory(self.plan)
-        path = self.backend / "plan.json"
-        path.write_text(json.dumps(self.plan))
-        original = path.read_bytes()
-        for options, side in (([], "target"), (["--side", "source"], "source"),
-                              (["--side", "target"], "target")):
-            output = io.StringIO()
-            request = reference.ReferenceRequest(command="check-existing", backend_dir=self.backend,
-                                                 plan=path, write=False, side=side)
-            with contextlib.redirect_stdout(output), \
-                    patch.object(reference, "ExternalTools"), patch.object(reference, "check_api") as check, \
-                    patch.object(reference, "require_empty_source") as empty:
-                reference.main(request)
-            self.assertEqual(check.call_args.args[2], side)
-            empty.assert_not_called()
-            self.assertEqual(json.loads(output.getvalue()), {"plan_sha256": reference.plan_hash(self.plan),
-                                                            "side": side, "scope_id": self.plan[side]["scope_id"]})
-        self.assertEqual(path.read_bytes(), original)
-
-
-    def test_dataset_check_stays_source_and_requires_empty_source(self):
-        reference.work_directory(self.plan)
-        path = self.backend / "plan.json"
-        path.write_text(json.dumps(self.plan))
-        request = reference.ReferenceRequest(command="check-dataset", backend_dir=self.backend,
-                                             plan=path, write=False)
-        with contextlib.redirect_stdout(io.StringIO()), \
-                patch.object(reference, "ExternalTools"), patch.object(reference, "check_api") as check, \
-                patch.object(reference, "require_empty_source") as empty:
-            reference.main(request)
-        self.assertEqual(check.call_args.args[2], "source")
-        empty.assert_called_once()
-
-
     def test_dataset_uses_long_stage_timeout_and_preserves_timeout_failure(self):
         self.plan["dataset"] = {"timeout_seconds": 21600}
         work = reference.work_directory(self.plan)

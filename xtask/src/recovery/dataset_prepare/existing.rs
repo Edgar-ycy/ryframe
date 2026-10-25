@@ -6,7 +6,7 @@ use super::{
 use crate::{Result, check::consumer_context::python};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{process::Stdio, time::Duration};
 
 pub(super) struct Counts {
     pub tenants: u64,
@@ -23,32 +23,34 @@ pub(super) struct Options {
 
 pub(super) fn ownership(inputs: &Inputs) -> Result<()> {
     let request = json!({"format_version":1,"kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":inputs.root,"format_version":1,"operation":"check-existing","plan":inputs.plan_path,"side":inputs.side,"write":false}});
-    let native_tool = serde_json::to_string(&crate::check::python_suite::native_tool_binding()?)?;
-    let program = python::selected_program(&inputs.root)?;
-    let command = python::command(
-        &inputs.root,
-        &program,
-        &[
-            "-X",
-            "utf8",
-            "-B",
-            "tools/python/restore_reference.py",
-            "--native-tool",
-            &native_tool,
-            "--stdin",
-        ],
-    );
+    let tool = crate::check::python_suite::native_tool_binding()?;
+    let program = tool["path"].as_str().ok_or("原生协调器路径缺失")?;
+    let payload = json!({"operation":"reference-readonly",
+        "arguments":{"raw":serde_json::to_string(&request)?},"write":false});
+    let mut command = crate::process::child_command(program);
+    command
+        .args([crate::recovery::source::evidence::MARKER])
+        .current_dir(&inputs.root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let output = python::output(
         &inputs.root,
         batch::scrub(command),
-        Some(&serde_json::to_vec(&request)?),
+        Some(&serde_json::to_vec(&payload)?),
         Duration::from_secs(60),
     )?;
+    if crate::check::python_suite::native_tool_binding()? != tool {
+        return Err("原生协调器绑定在 ownership 检查期间变化".into());
+    }
     if !output.status.success() {
         return Err("已有数据ownership或运行进程核验失败；没有业务写入，请检查参考阶段收据".into());
     }
-    let result =
+    let response =
         documents::parse_fragment(std::str::from_utf8(&output.stdout)?, "ownership核验结果")?;
+    if response["ok"] != true {
+        return Err("原生 ownership 观察拒绝；保留本地检查收据".into());
+    }
+    let result = &response["result"]["value"];
     if result["plan_sha256"] != model::hash(&inputs.plan)?
         || result["side"] != inputs.side
         || result["scope_id"] != inputs.plan[&inputs.side]["scope_id"]

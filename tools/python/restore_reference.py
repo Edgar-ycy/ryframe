@@ -272,16 +272,6 @@ def main(args: ReferenceRequest) -> None:
         result = execute_plan(args, backend, plan)
         print(json.dumps(result if result is not None else _coordinate("summary", {"plan": plan}), ensure_ascii=False))
         return
-    if args.command in ("check-dataset", "check-existing"):
-        work = Path(plan["work_dir"])
-        _coordinate("work-verify", {"plan": plan})
-        side = "source" if args.command == "check-dataset" else args.side or "target"
-        check_api(plan, ExternalTools(plan, work), side)
-        if args.command == "check-dataset":
-            require_empty_source(plan, ExternalTools(plan, work))
-        print(json.dumps({"plan_sha256": plan_hash(plan), "side": side,
-                          "scope_id": plan[side]["scope_id"]}))
-        return
     if not args.write:
         raise ReferenceProtocolError("所有执行阶段必须显式授权写入")
     if args.command == "restore":

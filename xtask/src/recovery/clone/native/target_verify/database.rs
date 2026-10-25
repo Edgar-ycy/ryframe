@@ -7,7 +7,7 @@ use super::input::{TargetContext, request::KEYS};
 use crate::Result;
 
 mod binding;
-mod evidence;
+pub(crate) mod evidence;
 pub(crate) mod model;
 
 pub(crate) struct Captured {

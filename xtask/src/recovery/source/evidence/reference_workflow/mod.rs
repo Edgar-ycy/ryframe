@@ -1,4 +1,4 @@
-//! 参考恢复的纯协调、文件证据与阶段收据；不启动外部资源操作。
+//! 参考恢复协调、文件证据与阶段收据；只读检查仅观察绑定资源。
 use std::path::{Component, Path};
 
 use serde_json::Value;
@@ -13,6 +13,7 @@ mod local;
 mod model;
 mod proof;
 mod protocol;
+mod readonly;
 mod receipts;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/source/evidence/reference_workflow/tests.rs"]
@@ -26,6 +27,7 @@ pub(crate) fn handles(operation: &str) -> bool {
     matches!(
         operation,
         "reference-request"
+            | "reference-readonly"
             | "reference-dataset-protocol"
             | "reference-work-directory"
             | "reference-work-verify"
@@ -51,6 +53,7 @@ pub(crate) fn handles(operation: &str) -> bool {
 pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
     match operation {
         "reference-request" => protocol::request(args),
+        "reference-readonly" => readonly::execute(args),
         "reference-dataset-protocol" => protocol::dataset(args),
         "reference-work-directory" => files::work(args, true),
         "reference-work-verify" => files::work(args, false),

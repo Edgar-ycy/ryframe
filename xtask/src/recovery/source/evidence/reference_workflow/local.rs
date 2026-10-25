@@ -17,6 +17,9 @@ impl Drop for Lock {
 pub(super) fn run(raw: &str) -> Result<Option<Value>> {
     let request = protocol::request(&json!({"raw":raw}))?;
     let command = request["command"].as_str().ok_or("参考操作缺失")?;
+    if matches!(command, "check-dataset" | "check-existing") {
+        return super::readonly::run(&request).map(Some);
+    }
     if !matches!(command, "plan" | "copy" | "damage") {
         return Ok(None);
     }
