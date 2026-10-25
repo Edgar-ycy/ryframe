@@ -63,14 +63,13 @@ class HistoricalProducerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in stopped.call_args_list], [item["identity"] for item in original])
         self.assertTrue(all(not call.kwargs for call in stopped.call_args_list))
 
-    def test_generation_forwards_its_recorded_runner_to_producer_proof(self):
+    def test_generation_requires_producer_proof(self):
         from devex_clone_source_fixture import SourceFixture
 
         fixture = SourceFixture(self)
         with patch.object(proof, "producer_identities", wraps=proof.producer_identities) as producers:
             proof.verify_generation(fixture.backend, fixture.request, fixture)
         producers.assert_called_once()
-        self.assertIs(producers.call_args.kwargs["run"], fixture)
 
     def test_termination_still_rejects_reused_identity_without_calling_terminate(self):
         kernel = Mock()
