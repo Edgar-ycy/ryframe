@@ -149,6 +149,19 @@ pub(crate) fn arguments(request: &Value) -> Result<Vec<String>> {
         api,
         "--console-address".into(),
         console,
+        "--console-enable".into(),
+        "--access-key-file".into(),
+        json_io::text(
+            &request["credential_files"]["access_key"]["path"],
+            "RustFS access key 文件路径",
+        )?
+        .into(),
+        "--secret-key-file".into(),
+        json_io::text(
+            &request["credential_files"]["secret_key"]["path"],
+            "RustFS secret key 文件路径",
+        )?
+        .into(),
         request
             .pointer("/data_directory/path")
             .and_then(Value::as_str)
@@ -157,36 +170,17 @@ pub(crate) fn arguments(request: &Value) -> Result<Vec<String>> {
     ])
 }
 
-pub(crate) fn configuration(request: &Value) -> Result<BTreeMap<String, String>> {
-    let mut result = BTreeMap::from([("RUSTFS_CONSOLE_ENABLE".to_owned(), "true".to_owned())]);
-    let credentials = request
-        .get("credential_files")
-        .and_then(Value::as_object)
-        .ok_or("RustFS 请求缺少凭据")?;
-    for (key, descriptor) in credentials {
-        let path = descriptor
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or("RustFS 凭据路径无效")?;
-        result.insert(
-            format!("RUSTFS_{}_FILE", key.to_ascii_uppercase()),
-            path.into(),
-        );
+pub(crate) fn clear_overrides(command: &mut std::process::Command) {
+    let keys = command
+        .get_envs()
+        .filter_map(|(key, _)| {
+            let name = key.to_str()?.to_ascii_uppercase();
+            (name.starts_with("RUSTFS_") || name.starts_with("MINIO_")).then(|| key.to_owned())
+        })
+        .collect::<Vec<_>>();
+    for key in keys {
+        command.env_remove(key);
     }
-    Ok(result)
-}
-
-pub(crate) fn private_environment(
-    environment: &BTreeMap<String, String>,
-    request: &Value,
-) -> Result<BTreeMap<String, String>> {
-    let mut result = environment
-        .iter()
-        .filter(|(key, _)| !key.to_ascii_uppercase().starts_with("RUSTFS_"))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<BTreeMap<_, _>>();
-    result.extend(configuration(request)?);
-    Ok(result)
 }
 
 fn original_inputs(
@@ -324,6 +318,17 @@ fn target_inputs(
     ready: &Value,
     identity: &Value,
 ) -> Result<Value> {
+    json_io::exact(
+        launch,
+        &[
+            "format_version",
+            "scope_id",
+            "identity",
+            "arguments",
+            "credential_files",
+        ],
+        "RustFS launch",
+    )?;
     let initialized = origin::initialized(
         backend,
         manifest
@@ -379,7 +384,6 @@ fn target_inputs(
                 arguments(request)?.into_iter().map(Value::String).collect(),
             ))
         || launch.get("credential_files") != request.get("credential_files")
-        || launch.get("environment") != Some(&serde_json::to_value(configuration(request)?)?)
     {
         return Err("目标重启不是原初始化中完整相同存储的代次过渡".into());
     }

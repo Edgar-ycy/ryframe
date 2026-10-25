@@ -34,8 +34,8 @@ pub(super) fn files(fixture: &mut Fixture) -> Value {
     }
     write(
         &storage.join("launch.json"),
-        &json!({"format_version":1,"scope_id":SCOPE,"identity":identity,"arguments":rustfs::arguments(&expected,&identity,&data).unwrap(),
-        "environment":{"RUSTFS_CONSOLE_ENABLE":"true","RUSTFS_ACCESS_KEY_FILE":credentials["access_key"]["path"],"RUSTFS_SECRET_KEY_FILE":credentials["secret_key"]["path"]},"credential_files":credentials}),
+        &json!({"format_version":1,"scope_id":SCOPE,"identity":identity,"arguments":rustfs::arguments(&expected,&identity,&data,&credentials).unwrap(),
+        "credential_files":credentials}),
     );
     write(
         &storage.join("process.json"),

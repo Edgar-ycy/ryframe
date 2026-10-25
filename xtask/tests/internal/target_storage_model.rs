@@ -56,10 +56,8 @@ impl Fixture {
             credentials[key] = common::binding(&path).unwrap();
         }
         let launch = json!({"format_version":1, "scope_id":"storage-fixture", "identity":identity,
-            "arguments":rustfs::arguments(&expected, &identity, &data).unwrap(),
-            "environment":{"RUSTFS_CONSOLE_ENABLE":"true",
-                "RUSTFS_ACCESS_KEY_FILE":credentials["access_key"]["path"],
-                "RUSTFS_SECRET_KEY_FILE":credentials["secret_key"]["path"]}, "credential_files":credentials});
+            "arguments":rustfs::arguments(&expected, &identity, &data, &credentials).unwrap(),
+            "credential_files":credentials});
         let process = json!({"format_version":1, "role":"rustfs", "scope_id":"storage-fixture",
             "lifecycle":"running", "identity":identity, "api_url":expected["api"],
             "console_url":expected["console"], "data_dir":data});
@@ -129,7 +127,7 @@ fn rustfs_process_receipt_checks_every_fixed_field() {
 }
 
 #[test]
-fn rustfs_launch_rejects_unknown_fields_and_credential_or_environment_changes() {
+fn rustfs_launch_rejects_unknown_fields_and_credential_or_argument_changes() {
     let fixture = Fixture::new();
     let check = |launch: &Value| {
         rustfs::validate_launch(
@@ -141,13 +139,7 @@ fn rustfs_launch_rejects_unknown_fields_and_credential_or_environment_changes() 
         )
     };
     check(&fixture.launch).unwrap();
-    for pointer in [
-        "/format_version",
-        "/scope_id",
-        "/identity",
-        "/arguments",
-        "/environment",
-    ] {
+    for pointer in ["/format_version", "/scope_id", "/identity", "/arguments"] {
         let mut changed = fixture.launch.clone();
         *changed.pointer_mut(pointer).unwrap() = Value::Null;
         assert!(check(&changed).is_err(), "{pointer}");

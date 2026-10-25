@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from workspace_directory import WorkspaceDirectory
 import devex_clone_seed_segment as segment
+from devex_clone_storage_request import arguments as storage_arguments
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
@@ -27,13 +28,18 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
         self.output = self.root / "a0008"
         self.output.mkdir(parents=True)
         executable = str((self.directory / "rustfs.exe").resolve())
+        credentials = {}
+        for key in ("access_key", "secret_key"):
+            path = self.data / (key + ".txt")
+            path.write_text("fixture-" + key, encoding="utf-8")
+            credentials[key] = binding(path)
         self.request = {
             "manifest": binding(self.directory / "manifest.json"), "side": "target",
             "scope_id": "fixed-scope", "executable": {"path": executable, "sha256": "a" * 64},
             "data_directory": {"path": str(self.data), "device": self.data.stat().st_dev,
                                "inode": self.data.stat().st_ino},
             "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
-            "credential_files": {},
+            "credential_files": credentials,
         }
         write_json(self.root / "request.json", self.request)
         self.request_binding = binding(self.root / "request.json")
@@ -57,13 +63,10 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
                                           "attempt_sha256": plan_hash(initial)})
         self.controller = binding(self.controller_path)
         self.process = {"pid": 24580, "started": "134339570871974524", "executable": executable}
-        arguments = [executable, "server", "--address", "127.0.0.1:29200",
-                     "--console-address", "127.0.0.1:29201", str(self.data)]
-        environment = {"RUSTFS_CONSOLE_ENABLE": "true"}
+        arguments = storage_arguments(self.request)
         write_json(self.output / "intent.json", {
             "format_version": 1, "kind": "devex-clone-storage-intent", "request": self.request_binding,
-            "controller": self.controller, "attempt": 8, "arguments": arguments,
-            "environment": environment})
+            "controller": self.controller, "attempt": 8, "arguments": arguments})
         intent = binding(self.output / "intent.json")
         write_json(self.output / "spawned.json", {"pid": self.process["pid"], "identity_pending": True})
         write_json(self.output / "process.json", {
@@ -72,7 +75,7 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
             "console_url": self.request["console_url"], "data_dir": str(self.data), "intent": intent})
         write_json(self.output / "launch.json", {
             "format_version": 1, "scope_id": "fixed-scope", "identity": self.process,
-            "arguments": arguments, "environment": environment, "credential_files": {}})
+            "arguments": arguments, "credential_files": credentials})
         write_json(self.output / "failure-cleanup.json", {
             "intent": intent, "identity": self.process, "pid": self.process["pid"], "returncode": 0})
         (self.output / "stdout.log").write_bytes(b"closed")

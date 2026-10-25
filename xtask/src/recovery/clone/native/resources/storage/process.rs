@@ -63,7 +63,6 @@ pub(crate) fn inspect_attempt(
             "controller",
             "attempt",
             "arguments",
-            "environment",
         ],
         "存储启动意图",
     )?;
@@ -80,10 +79,6 @@ pub(crate) fn inspect_attempt(
                     .map(Value::String)
                     .collect(),
             ))
-        || object.get("environment")
-            != Some(&serde_json::to_value(super::model::configuration(
-                &request,
-            )?)?)
     {
         return Err("存储意图不属于原注册与对应控制阶段".into());
     }
@@ -137,7 +132,6 @@ pub(crate) fn inspect_attempt(
             "scope_id": request["scope_id"],
             "identity": identity,
             "arguments": super::model::arguments(&request)?,
-            "environment": super::model::configuration(&request)?,
             "credential_files": request["credential_files"],
         });
         if launch != expected {
@@ -247,7 +241,6 @@ pub(crate) fn start(
     mut guard: impl FnMut() -> Result<()>,
 ) -> Result<Value> {
     let args = super::model::arguments(request)?;
-    let config = super::model::configuration(request)?;
     let intent_path = output.join("intent.json");
     common::write_new(
         &intent_path,
@@ -258,15 +251,14 @@ pub(crate) fn start(
             "controller": controller,
             "attempt": number,
             "arguments": args,
-            "environment": config,
         }),
     )?;
     let executable = request
         .pointer("/executable/path")
         .and_then(Value::as_str)
         .ok_or("存储请求缺少可执行文件")?;
-    let private = super::model::private_environment(environment, request)?;
-    let mut command = common::command_line(executable, &args, &private, output)?;
+    let mut command = common::command_line(executable, &args, environment, output)?;
+    super::model::clear_overrides(&mut command);
     common::pipe_to_file(
         &mut command,
         &output.join("stdout.log"),
@@ -323,7 +315,6 @@ pub(crate) fn start(
                 "scope_id": request["scope_id"],
                 "identity": identity,
                 "arguments": args,
-                "environment": config,
                 "credential_files": request["credential_files"],
             }),
         )?;
