@@ -23,7 +23,7 @@ pub(super) fn maintenance(fixture: &Fixture) {
     let target = fixture.backend.join("target").join("ci").join("backend");
     fs::create_dir_all(&target).unwrap();
     let original = target.join("fixture-cargo-artifact.exe");
-    fs::copy(std::env::current_exe().unwrap(), &original).unwrap();
+    fs::write(&original, b"RyFrame mock-maintenance-artifact-v1\n").unwrap();
     let canonical = portable(&fs::canonicalize(&original).unwrap());
     assert!(canonical.starts_with(portable(&fs::canonicalize(&target).unwrap())));
     let saved = directory.join("fixture-maintenance.exe");
