@@ -128,85 +128,10 @@ fn safe_database_target(value: &str) -> &str {
 }
 
 fn redact_database_diagnostic(config: &AppConfig, message: &str) -> String {
-    // DbResultExt 已保留驱动文本；这里遮蔽所有数据库角色的凭据及其实际 URL 编码，
-    // 不向日志输出完整连接配置，也不读取 TLS 私钥文件。
-    let mut secrets = Vec::new();
-    for connection in std::iter::once(&config.database.primary)
-        .chain(
-            config
-                .database
-                .replicas
-                .iter()
-                .map(|replica| &replica.connection),
-        )
-        .chain(
-            config
-                .database
-                .sources
-                .iter()
-                .map(|source| &source.connection),
-        )
-    {
-        for value in [
-            Some(connection.username.as_str()),
-            Some(connection.password.as_str()),
-            connection.tls_ca.as_deref(),
-            connection.tls_client_cert.as_deref(),
-            connection.tls_client_key.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|value| !value.is_empty())
-        {
-            secrets.push(value.to_owned());
-            secrets.push(value.replace('\\', "\\\\").replace('\'', "\\'"));
-            secrets.push(value.replace('\'', "''"));
-            let escaped = format!("{value:?}");
-            secrets.push(escaped[1..escaped.len() - 1].to_owned());
-        }
-        let url = connection.connection_url();
-        if let Some((credentials, _)) = url
-            .strip_prefix("mysql://")
-            .and_then(|value| value.split_once('@'))
-        {
-            secrets.extend(
-                credentials
-                    .split(':')
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            );
-        }
-        if let Some((_, query)) = url.split_once('?') {
-            secrets.extend(
-                query
-                    .split('&')
-                    .filter_map(|part| part.split_once('='))
-                    .filter(|(key, _)| matches!(*key, "ssl-ca" | "ssl-cert" | "ssl-key"))
-                    .map(|(_, value)| value.to_owned()),
-            );
-        }
-    }
-    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
-    secrets.dedup();
-    // 先遮蔽完整 URL，避免特殊凭据替换改变 URI 分隔符后漏判连接地址。
-    let mut redacted = message
-        .split_whitespace()
-        .map(|part| {
-            if part.contains("://") {
-                "<连接地址已隐藏>"
-            } else {
-                part
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    for secret in secrets {
-        redacted = redacted.replace(&secret, "<已隐藏>");
-    }
-    if redacted.contains("-----BEGIN") && redacted.contains("PRIVATE KEY-----") {
+    if message.contains("-----BEGIN") && message.contains("PRIVATE KEY-----") {
         return "数据库启动诊断包含私钥材料，已隐藏；本次进程启动已中止，尚未进入服务监听阶段；请核对所选配置的数据库 TLS 字段及私钥格式后重新启动".into();
     }
-    redacted
+    crate::database_diagnostic::redact(config, message)
 }
 
 /// 校验主库迁移账本与结构。滚动迁移期间副本可能滞后，健康检查通过前不得参与路由。

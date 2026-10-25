@@ -24,3 +24,7 @@ pub mod healthcheck;
 
 #[cfg(feature = "bin-reset")]
 pub mod reset;
+
+#[cfg(any(feature = "bin-api", feature = "bin-worker", feature = "bin-migrate"))]
+#[doc(hidden)]
+pub mod database_diagnostic;

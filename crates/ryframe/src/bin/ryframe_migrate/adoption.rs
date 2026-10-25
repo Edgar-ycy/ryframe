@@ -65,8 +65,10 @@ fn read_plan(path: &Path) -> Result<BusinessAdoptionPlan, Box<dyn Error>> {
     }
     serde_json::from_slice(&fs::read(&path)?).map_err(|error| {
         format!(
-            "接管计划 {} 格式错误：{error}；重新选择原始计划，尚未连接数据库",
-            path.display()
+            "接管计划 {} 格式错误：第 {} 行第 {} 列；重新选择原始计划，尚未连接数据库",
+            path.display(),
+            error.line(),
+            error.column()
         )
         .into()
     })
