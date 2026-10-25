@@ -113,13 +113,32 @@ class GenerationImageTests(unittest.TestCase):
 
         def readonly_native(command, **kwargs):
             self.assertEqual(Path(command[0]), Path(native_binding["path"]))
-            self.assertEqual(command[1:], ["__source-evidence"])
             request = json.loads(kwargs["input"])
-            self.assertIs(request["write"], False)
-            self.assertIn(request["operation"], {
-                "reference-plan-hash", "copy-schema-catalog",
-                "copy-database-observation", "reference-configuration-binding", "reference-copy-metadata",
-            })
+            if command[1:] == ["__rate-limit", "load-table"]:
+                self.assertEqual(set(request), {"backend", "app_env", "config_dir"})
+                self.assertIn(Path(request["backend"]), {
+                    self.backend.resolve(), Path(__file__).resolve().parents[2],
+                })
+                self.assertEqual({key: request[key] for key in ("app_env", "config_dir")}, {
+                    "app_env": self.f.object_configuration["app_env"],
+                    "config_dir": self.f.object_configuration["directory"],
+                })
+            else:
+                self.assertEqual(command[1:], ["__source-evidence"])
+                self.assertIs(request["write"], False)
+                self.assertIn(request["operation"], {
+                    "reference-plan-hash", "copy-schema-catalog",
+                    "copy-database-observation", "reference-configuration-binding", "reference-copy-metadata",
+                    "reference-safe-file",
+                })
+                if request["operation"] == "reference-safe-file":
+                    self.assertEqual(request["arguments"]["root"], str(self.output))
+                    self.assertIs(request["arguments"]["exists"], True)
+                    self.assertIn(request["arguments"]["relative"], {
+                        f"inventory-{phase}-{name}.json"
+                        for phase in ("before", "after")
+                        for name in ("runtime", *(f"target-{key}" for key in images.KEYS))
+                    })
             return native_run(command, **kwargs)
 
         with patch("subprocess.run", side_effect=readonly_native):

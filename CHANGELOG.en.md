@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Bind source registration, capture, inventory and recovery object calls to application configuration files, removing inline credential fallback from the native S3 protocol. Derive public source endpoints from verified files and retain configuration-drift checks, unknown-write rejection and the ban on automatic retries.
+
 - Return 503 with retry guidance consistently for tenant business reads and writes when data-scope projections are missing, unready or stale. Preserve strict versions and transaction fences, avoid misleading product-configuration or login-refresh errors, and apply the same classification in generated repositories.
 
 - Fix valid user-role assignment returning 404 in ordinary tenants that intentionally have no super-administrator role. Remove the redundant super-role precheck while preserving self-assignment restrictions, transactional role ownership and super-administrator checks, and old-token invalidation after authorization changes.
