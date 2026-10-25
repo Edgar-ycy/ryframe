@@ -32,7 +32,7 @@ class CacheFixture(unittest.TestCase):
         self.previous = {"port": 16390, "wsl": {key: wsl[key] for key in ("path", "sha256")},
             "distribution": "Ubuntu-24.04", "pid": 610000, "started": "100", "executable": "/usr/bin/redis-check-rdb",
             "sha256": "b" * 64, "configuration": config, "run_id": "a" * 40}
-        self.private = {"APP_ENV": "test"}
+        self.private = {"APP_ENV": "test", "TEMP": str(self.root), "TMP": str(self.root)}
         self.config = self.root / "config"
         self.config.mkdir()
         self.application = self.config / "app.test.toml"

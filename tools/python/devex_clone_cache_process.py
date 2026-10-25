@@ -376,13 +376,14 @@ def start(request, environment, output, guard):
     from full_stack_process import process_identity
     from devex_clone_target_storage import actual_windows_argv
     output = Path(output)
-    if (not isinstance(environment, dict) or any(key != "APP_ENV" for key in environment)
-            or "APP_ENV" in environment and environment["APP_ENV"] != "test"):
-        raise ValueError("Redis 子进程应用环境只允许 APP_ENV；密码只能来自绑定请求")
+    from devex_clone_cache_native import invoke
+    private = invoke("environment-select", private={"environment": environment})
     host_names = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "USERPROFILE", "HOME",
                   "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP"}
-    child_environment = {key: value for key, value in os.environ.items() if key.upper() in host_names}
-    child_environment.update(environment)
+    private_names = {key.upper() for key in private}
+    child_environment = {key: value for key, value in os.environ.items()
+                         if key.upper() in host_names and key.upper() not in private_names}
+    child_environment.update(private)
     prepare(request, output)
     guard()
     require_closed_port(f"http://127.0.0.1:{request['port']}")

@@ -54,7 +54,7 @@ def dispatch(backend, operation, args):
     def checked():
         guard(value, args["running"])
     if operation == "cache-start":
-        return start(args["request"], configured(args["private"]), Path(args["output"]), checked)
+        return start(args["request"], args["private"], Path(args["output"]), checked)
     from devex_clone_storage_process import start as storage_start
     return storage_start(backend, args["request"], configured(args["private"]), Path(args["output"]),
                          args["manifest"], args["controller"], args["number"], checked, supervised=True)

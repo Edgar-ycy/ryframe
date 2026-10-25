@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Redis first-generation startup and cache recovery distinguish APP_ENV application selection from OS runtime fields such as TEMP/TMP, reusing restricted child-environment construction and retaining the bound private environment. Arbitrary application and credential overrides remain rejected before side effects, without changes to requests, locks, markers or recovery receipts.
+
 - RustFS first-generation startup and storage restart use explicit credential-file arguments and the console flag, removing inherited RUSTFS/MINIO environment overrides. Startup intents, historical registration and target verification bind the same complete arguments and credential files without a service environment configuration map, retaining private environment files and process-tree, identity, endpoint and fail-closed checks.
 
 - The formal browser credential broker now strictly reads the current administrator TOML bound by the bootstrap, reusing file-binding and account parsing checks plus the existing password policy. Missing, changed, or invalid credentials fail closed; the broker no longer reads the initial password and retains the actual credential-read requirement and existing local protocol.
