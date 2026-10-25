@@ -395,8 +395,17 @@ fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &
         command_receipt(
             fixture,
             stage,
-            vec![executable.into(), "plan".into(), "--json".into()],
-            plan.to_string(),
+            vec![
+                executable.into(),
+                "--config-dir".into(),
+                fixture.request["config_dir"].as_str().unwrap().into(),
+                "plan".into(),
+            ],
+            format!(
+                "{}\nplan_hash={}\n",
+                plan["manifest"],
+                plan["plan_hash"].as_str().unwrap()
+            ),
         );
     }
     command_receipt(
@@ -404,6 +413,8 @@ fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &
         "reset-execute",
         vec![
             executable.into(),
+            "--config-dir".into(),
+            fixture.request["config_dir"].as_str().unwrap().into(),
             "execute".into(),
             "--plan-hash".into(),
             plan["plan_hash"].as_str().unwrap().into(),
@@ -434,7 +445,13 @@ fn migrations(fixture: &Fixture, maintenance: &Value) {
         .chain(keys.into_iter().map(|key| ("tenant-data", Some(key))))
     {
         for action in ["up", "verify"] {
-            let mut command = vec![executable.into(), scope.into(), action.into()];
+            let mut command = vec![
+                executable.into(),
+                "--config-dir".into(),
+                fixture.request["config_dir"].as_str().unwrap().into(),
+                scope.into(),
+                action.into(),
+            ];
             let mut stdout = format!("scope={scope} ");
             let mut stage = format!("migrate-{scope}");
             if let Some(key) = key {

@@ -28,7 +28,7 @@ pub(crate) struct StorageInputs<'a> {
     pub(crate) observation_dir: &'a Path,
 }
 
-impl StorageInputs<'_> {
+impl<'a> StorageInputs<'a> {
     pub(crate) fn execution_backend(&self) -> Result<PathBuf> {
         match self
             .request
@@ -41,6 +41,53 @@ impl StorageInputs<'_> {
             )?)),
             None => Ok(self.backend.to_path_buf()),
         }
+    }
+
+    pub(crate) fn target(&self) -> &'a Value {
+        self.request.get("target").expect("已校验目标请求")
+    }
+    pub(crate) fn target_scope(&self) -> Result<&'a str> {
+        self.target()
+            .get("scope_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "目标请求缺少 scope".into())
+    }
+    pub(crate) fn databases(&self) -> Result<Vec<Value>> {
+        self.target()
+            .get("databases")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "目标请求缺少数据库".into())
+    }
+    pub(crate) fn tool(&self, name: &str) -> Result<PathBuf> {
+        super::input::request::external_file(
+            self.request
+                .pointer(&format!("/tools/{name}"))
+                .ok_or("目标请求缺少工具")?,
+        )
+    }
+    pub(crate) fn maintenance_executable(&self, role: &str) -> Result<PathBuf> {
+        let path = super::super::lifecycle::manifest::bound_file(
+            self.backend,
+            self.request
+                .get("maintenance_build")
+                .ok_or("目标请求缺少维护构建")?,
+            "目标维护构建",
+            true,
+        )?;
+        let receipt = json_io::read(&path)?;
+        let executable = receipt
+            .pointer(&format!("/artifacts/{role}/executable"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("目标维护构建缺少 {role} 工具"))?;
+        let executable = PathBuf::from(executable);
+        let artifact = receipt
+            .pointer(&format!("/artifacts/{role}"))
+            .ok_or("维护工具产物缺失")?;
+        super::input::request::external_file(
+            &serde_json::json!({"path": executable, "sha256": artifact.get("sha256").ok_or("维护工具缺少摘要")?}),
+        )?;
+        Ok(executable)
     }
 }
 

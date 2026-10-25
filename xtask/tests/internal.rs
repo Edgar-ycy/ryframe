@@ -324,3 +324,6 @@ mod target_prepare_history_tests;
 mod target_prepare_ports_tests;
 #[path = "unit/recovery/clone/native/target_verify/fresh/registration.rs"]
 mod target_prepare_registration_tests;
+
+#[path = "internal/target_initialize_native.rs"]
+mod target_initialize_native_tests;

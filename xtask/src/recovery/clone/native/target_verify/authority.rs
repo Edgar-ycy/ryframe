@@ -18,7 +18,8 @@ use crate::Result;
 #[path = "authority/generation.rs"]
 pub(crate) mod generation;
 #[path = "authority/ports.rs"]
-pub(crate) mod ports;
+mod ports;
+pub(crate) use ports::require_closed;
 
 /// 实际历史和代次观察均在本进程执行；测试替身不能成为执行许可。
 pub(crate) trait Observer {

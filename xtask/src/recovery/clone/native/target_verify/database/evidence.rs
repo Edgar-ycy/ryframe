@@ -9,7 +9,8 @@ use super::super::{
         export::transport::{CommandOutput, CommandSpec, StdoutTarget, Transport},
         json::{self as json_io, text},
     },
-    input::{TargetContext, request_physical},
+    input::request_physical,
+    storage::StorageInputs,
 };
 use crate::Result;
 
@@ -72,7 +73,7 @@ pub(super) struct Evidence {
 }
 
 pub(super) struct Port<'a, T, F> {
-    pub(super) context: &'a TargetContext,
+    pub(super) context: &'a StorageInputs<'a>,
     pub(super) transport: &'a T,
     pub(super) checkpoint: &'a F,
     pub(super) directory: &'a Path,
@@ -186,13 +187,23 @@ impl Evidence {
             .and_then(|name| name.to_str())
             .and_then(|name| name.split_once("-target-").map(|(_, key)| key))
             .ok_or("库存输出文件名无效")?;
-        let args = vec![
-            "target-inventory".into(),
-            "--target".into(),
-            key.into(),
-            "--output".into(),
-            output.display().to_string(),
-        ];
+        let args = super::super::resume_prefix::configured_command(
+            port.context
+                .maintenance_executable("tenant-data")?
+                .to_str()
+                .ok_or("库存工具路径不是UTF8")?,
+            port.context.request,
+            vec![
+                "target-inventory".into(),
+                "--target".into(),
+                key.into(),
+                "--output".into(),
+                output.display().to_string(),
+            ],
+        )?
+        .into_iter()
+        .skip(1)
+        .collect();
         let result = self.command(
             port,
             port.context.maintenance_executable("tenant-data")?,
@@ -273,7 +284,7 @@ impl Evidence {
         stdout: Option<&mut stdout::VerifiedStdout>,
     ) -> Result<CommandOutput> {
         (port.checkpoint)()?;
-        let mut environment = port.context.environment.clone();
+        let mut environment = (*port.context.environment).clone();
         environment.remove("MYSQL_PWD");
         let login = port.directory.join("unused-login.cnf");
         if fs::symlink_metadata(&login).is_ok() {
@@ -372,15 +383,13 @@ impl Evidence {
     }
 }
 
-fn mysql_arguments(context: &TargetContext, database: &Value, check: &str) -> Result<Vec<String>> {
-    let sql = match check {
-        "identity" => "SELECT @@server_uuid, DATABASE();",
-        "ownership" => {
-            "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;"
-        }
-        _ => return Err("数据库核验只允许固定 identity 或 ownership 查询".into()),
-    };
-    request_physical::defaults_connection(&context.backend, database)?;
+fn mysql_arguments(
+    context: &StorageInputs<'_>,
+    database: &Value,
+    check: &str,
+) -> Result<Vec<String>> {
+    let sql = verification_sql(check)?;
+    request_physical::defaults_connection(context.backend, database)?;
     Ok(vec![
         format!(
             "--defaults-file={}",
@@ -397,7 +406,17 @@ fn mysql_arguments(context: &TargetContext, database: &Value, check: &str) -> Re
     ])
 }
 
-fn mysql_receipt(
+pub(crate) fn verification_sql(check: &str) -> Result<&'static str> {
+    Ok(match check {
+        "identity" => "SELECT @@server_uuid, DATABASE();",
+        "ownership" => {
+            "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;"
+        }
+        _ => return Err("数据库核验只允许固定 identity 或 ownership 查询".into()),
+    })
+}
+
+pub(crate) fn mysql_receipt(
     database: &Value,
     check: &str,
     output: &stdout::VerifiedStdout,
@@ -439,7 +458,7 @@ fn response(output: &CommandOutput) -> Result<String> {
         .to_owned())
 }
 
-fn secrets(context: &TargetContext) -> Result<Vec<String>> {
+fn secrets(context: &StorageInputs<'_>) -> Result<Vec<String>> {
     let mut result = context
         .environment
         .values()
@@ -447,7 +466,7 @@ fn secrets(context: &TargetContext) -> Result<Vec<String>> {
         .cloned()
         .collect::<Vec<_>>();
     for db in context.databases()? {
-        let connection = request_physical::defaults_connection(&context.backend, &db)?;
+        let connection = request_physical::defaults_connection(context.backend, &db)?;
         if let Some(password) = connection["password"]
             .as_str()
             .filter(|value| !value.is_empty())

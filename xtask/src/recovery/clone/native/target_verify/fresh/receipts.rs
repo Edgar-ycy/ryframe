@@ -16,6 +16,25 @@ pub(super) fn command(
     stdin: Option<Vec<u8>>,
     label: &str,
 ) -> Result<String> {
+    command_with_deadline(
+        inputs,
+        transport,
+        program,
+        args,
+        stdin,
+        (label, Duration::from_secs(30)),
+    )
+}
+
+pub(super) fn command_with_deadline(
+    inputs: &StorageInputs<'_>,
+    transport: &impl Transport,
+    program: PathBuf,
+    args: Vec<String>,
+    stdin: Option<Vec<u8>>,
+    command_window: (&str, Duration),
+) -> Result<String> {
+    let (label, timeout) = command_window;
     let path = inputs.observation_dir.join(format!(
         "{label}-{}.command.json",
         uuid::Uuid::new_v4().simple()
@@ -40,7 +59,7 @@ pub(super) fn command(
                 .ok_or("fresh 缺少已绑定 TEMP")?,
         ),
         label: label.into(),
-        timeout: Duration::from_secs(30),
+        timeout,
     });
     let (code, stdout, error) = match &result {
         Ok(output) if output.status.success() && !output.stderr.is_empty() => (
@@ -53,22 +72,50 @@ pub(super) fn command(
             Err(_) => (output.status.code(), String::new(), Some("InvalidUtf8")),
         },
         Ok(output) => (output.status.code(), String::new(), Some("CommandFailed")),
-        Err(_) => (None, String::new(), Some("CommandFailed")),
+        Err(error) => (
+            None,
+            String::new(),
+            Some(super::failure::category(error.as_ref())),
+        ),
     };
     // 成功 stdout 仅允许固定查询返回；失败原文可能包含私有连接信息，绝不写入公开证据。
     let diagnostic = super::super::super::maintenance::redact_with(&stdout, secrets);
-    document::write_new(
+    write(
         &path,
         &json!({"command":command,"returncode":code,"error_type":error,
         "stdout":diagnostic,"stderr":""}),
     )?;
     if error.is_some() {
-        return Err("固定只读命令失败；核对私有文件配置、工具与服务，保留现场显式续作".into());
+        return Err(Box::new(super::failure::StageFailure {
+            category: if code.is_some() {
+                "CalledProcessError"
+            } else {
+                error.unwrap_or("OSError")
+            },
+        }));
     }
     Ok(stdout)
 }
 
-fn command_environment(inputs: &StorageInputs<'_>) -> std::collections::BTreeMap<String, String> {
+pub(super) fn write(path: &std::path::Path, value: &Value) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| super::failure::publication(path, error))?;
+    let mut encoded = serde_json::to_vec_pretty(value)?;
+    encoded.push(b'\n');
+    file.write_all(&encoded)
+        .map_err(|error| super::failure::publication(path, error))?;
+    file.sync_all()
+        .map_err(|error| super::failure::publication(path, error))?;
+    Ok(())
+}
+
+pub(super) fn command_environment(
+    inputs: &StorageInputs<'_>,
+) -> std::collections::BTreeMap<String, String> {
     let mut environment = std::env::vars()
         .filter(|(name, _)| {
             let key = name.to_ascii_uppercase();

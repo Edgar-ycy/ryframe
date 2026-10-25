@@ -22,14 +22,39 @@ pub(crate) struct Operation {
     stdout: String,
 }
 
-pub(crate) fn operations(executable: &str) -> Result<Value> {
+pub(crate) fn operations(executable: &str, request: &Value) -> Result<Value> {
     if executable.is_empty() || executable.chars().any(char::is_control) {
         return Err("迁移程序路径必须是非空且无控制字符的文本".into());
     }
-    Ok(json!({"operations": sequence(executable)}))
+    let configuration = config_directory(request)?;
+    Ok(json!({"operations": sequence(executable, configuration)}))
 }
 
-fn sequence(executable: &str) -> Vec<Operation> {
+pub(crate) fn config_directory(request: &Value) -> Result<&str> {
+    let directory = json_io::text(&request["config_dir"], "显式维护配置目录")?;
+    if !Path::new(directory).is_absolute() || directory.chars().any(char::is_control) {
+        return Err("维护命令必须绑定绝对配置目录；请核对固定请求config_dir".into());
+    }
+    Ok(directory)
+}
+pub(crate) fn configured_command(
+    executable: &str,
+    request: &Value,
+    args: Vec<String>,
+) -> Result<Vec<String>> {
+    let mut command = command_prefix(executable, config_directory(request)?);
+    command.extend(args);
+    Ok(command)
+}
+
+fn command_prefix(executable: &str, configuration: &str) -> Vec<String> {
+    vec![
+        executable.to_owned(),
+        "--config-dir".into(),
+        configuration.into(),
+    ]
+}
+fn sequence(executable: &str, configuration: &str) -> Vec<Operation> {
     let mut scopes = vec![("control", None)];
     let mut keys = super::input::request::KEYS.map(|(key, _, _)| key);
     keys.sort();
@@ -38,7 +63,8 @@ fn sequence(executable: &str) -> Vec<Operation> {
         .into_iter()
         .flat_map(|(scope, target)| {
             ["up", "verify"].into_iter().map(move |action| {
-                let mut command = vec![executable.to_owned(), scope.into(), action.into()];
+                let mut command = command_prefix(executable, configuration);
+                command.extend([scope.into(), action.into()]);
                 let (id, stage, stdout) = match target {
                     Some(target) => {
                         command.extend(["--target".into(), target.into()]);
@@ -72,14 +98,15 @@ fn sequence(executable: &str) -> Vec<Operation> {
         .collect()
 }
 
-fn parse_operations(value: &Value) -> Result<Vec<Operation>> {
+fn parse_operations(value: &Value, request: &Value) -> Result<Vec<Operation>> {
     let operations: Vec<Operation> =
         serde_json::from_value(value.clone()).map_err(|_| "迁移操作必须符合固定序列结构")?;
     let executable = operations
         .first()
         .and_then(|item| item.command.first())
         .ok_or("迁移固定序列不能为空")?;
-    if executable.is_empty() || operations != sequence(executable) {
+    let configuration = config_directory(request)?;
+    if executable.is_empty() || operations != sequence(executable, configuration) {
         return Err("迁移操作不同于固定完整序列".into());
     }
     Ok(operations)
@@ -138,39 +165,28 @@ pub(crate) fn prefix(
     value: &Value,
     complete: bool,
 ) -> Result<Value> {
-    let operations = parse_operations(value)?;
-    let patterns = operations.iter().map(pattern).collect::<Result<Vec<_>>>()?;
-    let mut receipts = BTreeMap::new();
-    for path in candidates(target, "migrate-")? {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or("迁移收据名称无效")?;
-        let matched = patterns
-            .iter()
-            .enumerate()
-            .filter(|(_, pattern)| pattern.is_match(name))
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        if matched.len() != 1 {
-            return Err("迁移前缀包含未知命令收据".into());
-        }
-        let operation = &operations[matched[0]];
-        let receipt = validate_receipt(backend, &path, operation)?;
-        if receipts.insert(operation.id.clone(), receipt).is_some() {
-            return Err("迁移前缀包含重复命令收据".into());
-        }
-    }
+    let request = json_io::read(&target.join("request.json"))?;
+    let operations = parse_operations(value, &request)?;
+    let receipts = scan(backend, target, &operations)?;
     let mut completed = Vec::new();
     for operation in &operations {
-        let Some(receipt) = receipts.get(&operation.id) else {
+        let Some(receipt) = receipts.success.get(&operation.id) else {
             break;
         };
         completed.push(json!({"id":operation.id,"receipt":receipt}));
     }
     let next = completed.len();
-    if receipts.len() != next {
+    if receipts.success.len() != next {
         return Err("迁移收据越过首个缺失操作，不能证明连续前缀".into());
+    }
+    if receipts.failed.as_ref().is_some_and(|(index, _)| {
+        if complete {
+            *index >= next
+        } else {
+            *index != next
+        }
+    }) {
+        return Err("失败只读收据不属于原始首个缺失verify；保留现场，禁止续作".into());
     }
     if complete {
         if next != operations.len() {
@@ -186,20 +202,107 @@ pub(crate) fn operation_record(backend: &Path, target: &Path, value: &Value) -> 
     let operation: Operation =
         serde_json::from_value(value.clone()).map_err(|_| "迁移操作结构无效")?;
     let executable = operation.command.first().ok_or("迁移操作命令为空")?;
-    if !sequence(executable).contains(&operation) {
+    let request = json_io::read(&target.join("request.json"))?;
+    if !sequence(executable, config_directory(&request)?).contains(&operation) {
         return Err("迁移操作不同于固定完整序列".into());
     }
-    let paths = candidates(target, &format!("{}-", operation.stage))?;
-    let pattern = pattern(&operation)?;
-    if paths.len() != 1
-        || !pattern.is_match(
-            paths[0]
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default(),
-        )
-    {
-        return Err("续作操作没有产生唯一成功命令收据".into());
+    scan(
+        backend,
+        target,
+        &sequence(executable, config_directory(&request)?),
+    )?
+    .success
+    .remove(&operation.id)
+    .ok_or_else(|| "续作操作没有产生唯一成功命令收据".into())
+}
+
+struct Receipts {
+    success: BTreeMap<String, Value>,
+    failed: Option<(usize, String)>,
+}
+
+fn scan(backend: &Path, target: &Path, operations: &[Operation]) -> Result<Receipts> {
+    let patterns = operations.iter().map(pattern).collect::<Result<Vec<_>>>()?;
+    let mut receipts = Receipts {
+        success: BTreeMap::new(),
+        failed: None,
+    };
+    for path in candidates(target, "migrate-")? {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("迁移收据名称无效")?;
+        let matched = patterns
+            .iter()
+            .enumerate()
+            .filter(|(_, pattern)| pattern.is_match(name))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if matched.len() != 1 {
+            return Err("迁移前缀包含未知命令收据".into());
+        }
+        let index = matched[0];
+        let operation = &operations[index];
+        validate_local_test_path(&path, backend, LocalTestPathKind::ExistingFile)?;
+        let value = json_io::read(&path)?;
+        if value["error_type"] == "FileNotFoundError" {
+            failed_read(backend, target, &path, &value, operation)?;
+            if receipts.failed.replace((index, name.to_owned())).is_some() {
+                return Err("迁移前缀包含重复失败只读收据".into());
+            }
+        } else {
+            let receipt = validate_receipt(backend, &path, operation)?;
+            if receipts
+                .success
+                .insert(operation.id.clone(), receipt)
+                .is_some()
+            {
+                return Err("迁移前缀包含重复命令收据".into());
+            }
+        }
     }
-    validate_receipt(backend, &paths[0], &operation)
+    Ok(receipts)
+}
+
+fn failed_read(
+    backend: &Path,
+    target: &Path,
+    path: &Path,
+    value: &Value,
+    operation: &Operation,
+) -> Result<()> {
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)?;
+    json_io::exact(
+        value,
+        &["command", "returncode", "error_type", "stdout", "stderr"],
+        "迁移只读中断收据",
+    )?;
+    validate_local_test_path(
+        &target.join("failure.json"),
+        backend,
+        LocalTestPathKind::ExistingFile,
+    )?;
+    if operation.write
+        || value["command"] != json!(operation.command)
+        || !value["returncode"].is_null()
+        || value["stdout"] != ""
+        || value["stderr"] != ""
+        || !super::resume_model::failure(&json_io::read(&target.join("failure.json"))?)?
+    {
+        return Err("迁移失败收据不是已登记的FileNotFound只读verify中断；禁止重放".into());
+    }
+    Ok(())
+}
+
+pub(super) fn failed_readonly(backend: &Path, target: &Path) -> Result<Option<(usize, String)>> {
+    let prepared = json_io::read(&target.join("prepare.json"))?;
+    let executable =
+        super::evidence_model::executable(&prepared["generation"]["maintenance"], "migrate")?;
+    let request = json_io::read(&target.join("request.json"))?;
+    Ok(scan(
+        backend,
+        target,
+        &sequence(executable, config_directory(&request)?),
+    )?
+    .failed)
 }

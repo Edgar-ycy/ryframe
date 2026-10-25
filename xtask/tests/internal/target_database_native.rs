@@ -184,7 +184,12 @@ impl<'a> Fake<'a> {
     fn cli(&self, spec: &CommandSpec) -> Result<Vec<u8>> {
         let count = self.inventories.get() + 1;
         self.inventories.set(count);
-        let key = &spec.args[2];
+        assert_eq!(spec.args[0], "--config-dir");
+        assert_eq!(
+            spec.args[1],
+            self.fixture.context.request["config_dir"].as_str().unwrap()
+        );
+        let key = &spec.args[4];
         self.order.borrow_mut().push(key.clone());
         let mut raw = self.fixture.raw(key);
         if self.effect == "round" && count == 5 {
@@ -194,7 +199,7 @@ impl<'a> Fake<'a> {
         if self.effect == "schema" && count == 2 {
             raw["control_schema_fingerprint"] = json!("e".repeat(16));
         }
-        json_io::write_new(Path::new(&spec.args[4]), &raw)?;
+        json_io::write_new(Path::new(&spec.args[6]), &raw)?;
         if self.effect == "extra" && count == 8 {
             fs::write(spec.work_dir.join("injected.json"), "{}")?;
         }
@@ -230,7 +235,7 @@ impl Transport for Fake<'_> {
         );
         let mut stdout = if spec
             .args
-            .first()
+            .get(2)
             .is_some_and(|arg| arg == "target-inventory")
         {
             self.cli(&spec)?
@@ -885,6 +890,9 @@ fn fixed_topology_rejects_missing_duplicate_and_wrong_mode_targets() {
             "wrong-mode" => databases[1]["mode"] = json!("dedicated"),
             _ => unreachable!(),
         }
-        assert!(model::databases(&fixture.context).is_err(), "{effect}");
+        assert!(
+            model::databases(&fixture.context.storage_inputs()).is_err(),
+            "{effect}"
+        );
     }
 }

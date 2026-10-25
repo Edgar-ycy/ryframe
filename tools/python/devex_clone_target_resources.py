@@ -25,27 +25,6 @@ from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import BUCKETS, identifier, plan_hash, configuration_binding
 
 
-REDIS_MARKER_REBIND_SCRIPT = """local cursor = '0'
-local rounds = 0
-repeat
-  local page = redis.call('SCAN', cursor, 'MATCH', ARGV[1], 'COUNT', '1000')
-  cursor = page[1]
-  if #page[2] ~= 0 then
-    return redis.error_reply('scope namespace is not empty')
-  end
-  rounds = rounds + 1
-  if rounds > 10000 then
-    return redis.error_reply('scope scan exceeded limit')
-  end
-until cursor == '0'
-if redis.call('EXISTS', KEYS[2]) ~= 0 then
-  return redis.error_reply('sentinel exists')
-end
-redis.call('SET', KEYS[1], ARGV[2])
-redis.call('SET', KEYS[2], ARGV[3])
-return 2"""
-
-
 def fixture_redis_tool_wsl(backend: Path, cache_binding: dict) -> dict:
     """读取夹具缓存代次请求中由账本签发的 WSL 工具指纹；绑定不符时失败关闭。"""
     outer = read_json(bound_file(backend, cache_binding["generation"]))
@@ -132,9 +111,6 @@ class Resources:
                 raise ValueError("本次新库出现非空表或 view，拒绝 reset 接管")
         return {"server_uuid": db["server_uuid"], "database": name, "exists": exists, "empty_checked": empty}
 
-    def create_database(self, db: dict) -> None:
-        self.database_state(db, exists=False)
-        self._mysql(db, f"CREATE DATABASE `{identifier(db['database'])}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;")
 
     def drop_empty_database(self, db: dict) -> None:
         """只回收已由当前 fresh 代次确认为空的精确数据库。"""
@@ -317,22 +293,6 @@ class Resources:
             raise ValueError("Redis owner 或精确 sentinel 与新代次不符")
         return {"keys": sorted(found), "owner": owner, "sentinel": marker}
 
-    def create_sentinel(self) -> None:
-        reset = self.request["reset"]
-        if self._redis(["SET", reset["sentinel_key"], reset["sentinel_value"], "NX"]) != "OK":
-            raise ValueError("Redis sentinel NX 未确认创建，禁止覆盖或重放")
-
-    def rebind_restart_redis_markers(self) -> int:
-        """在单条 Redis 脚本内复核空前像并同时恢复 owner 与 sentinel。"""
-        redis, reset = self.selected["redis"], self.request["reset"]
-        result = self._redis([
-            "EVAL", REDIS_MARKER_REBIND_SCRIPT, "2",
-            redis["ownership_key"], reset["sentinel_key"], redis["namespace"] + "*",
-            redis["ownership_value"], reset["sentinel_value"],
-        ])
-        if result != 2:
-            raise ValueError("Redis owner 与 sentinel 原子重绑结果未确认")
-        return result
 
     def remove_sentinel(self) -> None:
         reset = self.request["reset"]

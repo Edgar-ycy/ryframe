@@ -11,10 +11,12 @@ use super::super::super::{
     input::digest_shape,
     json::{array, exact, text},
 };
-use super::super::input::{TargetContext, request::KEYS};
+use super::super::input::request::KEYS;
 use crate::Result;
 
-pub(crate) fn databases(context: &TargetContext) -> Result<BTreeMap<String, Value>> {
+pub(crate) fn databases(
+    context: &super::super::storage::StorageInputs<'_>,
+) -> Result<BTreeMap<String, Value>> {
     let entries = context.databases()?;
     let mut result = BTreeMap::new();
     let mut physical = BTreeSet::new();
@@ -255,7 +257,7 @@ pub(crate) fn owners(response: &str) -> Result<Vec<Value>> {
 }
 
 pub(crate) fn physical_images(
-    context: &TargetContext,
+    context: &super::super::storage::StorageInputs<'_>,
     logical: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>> {
     let mut result = BTreeMap::new();

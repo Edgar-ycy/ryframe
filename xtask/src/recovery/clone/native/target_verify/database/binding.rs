@@ -6,16 +6,17 @@ use super::super::{
         json::{self as json_io, text},
         lifecycle::manifest,
     },
-    input::{TargetContext, request_physical},
+    input::request_physical,
+    storage::StorageInputs,
 };
 use crate::Result;
 
-pub(super) fn capture(context: &TargetContext) -> Result<Value> {
+pub(super) fn capture(context: &StorageInputs<'_>) -> Result<Value> {
     let execution = context.execution_backend()?;
     let review = &context.request["review"];
     let descriptor =
         json!({"path": review["path"], "bytes": review["bytes"], "sha256": review["sha256"]});
-    let review_path = manifest::bound_file(&context.backend, &descriptor, "审阅计划", true)?;
+    let review_path = manifest::bound_file(context.backend, &descriptor, "审阅计划", true)?;
     let review_value = json_io::read(&review_path)?;
     if digest::plan_hash(&review_value)? != text(&review["canonical_sha256"], "审阅规范摘要")?
     {
@@ -54,14 +55,14 @@ pub(super) fn capture(context: &TargetContext) -> Result<Value> {
     )?;
     // 配置从执行工作树读取；凭据和物理资源的边界仍属于协调后端。
     let physical = request_physical::binding(
-        &context.backend,
+        context.backend,
         context.target(),
         &table,
-        &context.environment,
+        context.environment,
         selected,
     )?;
     let maintenance_path = manifest::bound_file(
-        &context.backend,
+        context.backend,
         &context.request["maintenance_build"],
         "维护构建",
         true,
@@ -74,12 +75,14 @@ pub(super) fn capture(context: &TargetContext) -> Result<Value> {
         .ok_or("维护构建缺少来源绑定")?;
     context.maintenance_executable("tenant-data")?;
     context.tool("mysql")?;
+    target["s3"] = json!({"configuration":super::super::super::s3::app_configuration::configuration_value(
+        &execution, std::path::Path::new(text(&configuration["directory"], "库存配置目录")?), "test")?});
     let plan = json!({"target": target, "tools": context.request["tools"]});
     let result = json!({"side": "target", "tools_plan_sha256": digest::plan_hash(&plan)?, "configuration": configuration,
         "physical": physical, "maintenance": maintenance_digest, "source": source});
-    manifest::bound_file(&context.backend, &descriptor, "审阅计划", true)?;
+    manifest::bound_file(context.backend, &descriptor, "审阅计划", true)?;
     manifest::bound_file(
-        &context.backend,
+        context.backend,
         &context.request["maintenance_build"],
         "维护构建",
         true,
@@ -87,12 +90,12 @@ pub(super) fn capture(context: &TargetContext) -> Result<Value> {
     Ok(result)
 }
 
-pub(super) fn configuration(context: &TargetContext) -> Result<Value> {
+pub(super) fn configuration(context: &StorageInputs<'_>) -> Result<Value> {
     let execution = context.execution_backend()?;
     let (directory, files) = super::super::input::request_configuration::fresh_files(
         &execution,
-        &context.environment,
-        &context.request,
+        context.environment,
+        context.request,
     )?;
     Ok(
         json!({"directory": manifest::path_text(&directory, "config_dir")?, "files": files,

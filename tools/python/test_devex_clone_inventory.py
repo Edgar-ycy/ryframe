@@ -141,18 +141,20 @@ class InventoryTests(unittest.TestCase):
                     result += "\nextra\tother\tother"
             return mysql_output(command, kwargs, result.encode())
         self.assertEqual(command[0], self.maintenance["artifacts"]["tenant-data"]["executable"])
-        self.assertEqual(command[1], "target-inventory")
-        self.assertEqual(len(command), 6)
+        execution = getattr(self, "execution_backend", self.backend)
+        self.assertEqual(command[1:3], ["--config-dir", str(execution / "config")])
+        self.assertEqual(command[3], "target-inventory")
+        self.assertEqual(len(command), 8)
         self.assertTrue(kwargs["check"])
         self.assertEqual(kwargs["cwd"], getattr(self, "execution_backend", self.backend))
-        key = command[3]
+        key = command[5]
         value = self.raw(key)
         self.cli_count += 1
         if self.effect:
             self.effect(self.cli_count, value)
         if self.raw_override != "missing":
             content = json.dumps(value, ensure_ascii=False) if self.raw_override is None else self.raw_override
-            Path(command[5]).write_text(content, encoding="utf-8")
+            Path(command[7]).write_text(content, encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "完成".encode(), b"")
 
     def capture(self, side="source"):

@@ -39,6 +39,11 @@ impl<'a> FakeTransport<'a> {
         if self.fail {
             return Ok(output(1, Vec::new()));
         }
+        assert_eq!(spec.args[0], "--config-dir");
+        assert_eq!(
+            spec.args[1],
+            self.fixture.request["config_dir"].as_str().unwrap()
+        );
         let key = argument(&spec.args, "--target")?;
         let path = Path::new(argument(&spec.args, "--output")?);
         let mut value = raw(self.fixture, key);
@@ -116,7 +121,7 @@ impl Transport for FakeTransport<'_> {
         assert!(spec.work_dir.starts_with(&self.fixture.local));
         let mut result = if spec
             .args
-            .first()
+            .get(2)
             .is_some_and(|arg| arg == "target-inventory")
         {
             self.inventory(&spec)
@@ -292,13 +297,23 @@ fn inventory_target(
         directory,
         transport,
         executable,
-        vec![
-            "target-inventory".into(),
-            "--target".into(),
-            key.into(),
-            "--output".into(),
-            path.display().to_string(),
-        ],
+        crate::recovery::clone::native::target_verify::resume_prefix::configured_command(
+            generation["maintenance"]["artifacts"]["tenant-data"]["executable"]
+                .as_str()
+                .unwrap(),
+            &fixture.request,
+            vec![
+                "target-inventory".into(),
+                "--target".into(),
+                key.into(),
+                "--output".into(),
+                path.display().to_string(),
+            ],
+        )
+        .unwrap()
+        .into_iter()
+        .skip(1)
+        .collect(),
     );
     let db = fixture.request["target"]["databases"]
         .as_array()

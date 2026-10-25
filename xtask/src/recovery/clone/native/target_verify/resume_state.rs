@@ -60,10 +60,10 @@ pub(crate) fn state(
     let prepare_names = super::evidence_prepare::stages(backend, target, descriptor)?;
     let reset =
         super::evidence_reset::aggregate(backend, target, &request, &prepared["generation"])?;
-    let operations = super::resume_prefix::operations(executable(
-        &prepared["generation"]["maintenance"],
-        "migrate",
-    )?)?["operations"]
+    let operations = super::resume_prefix::operations(
+        executable(&prepared["generation"]["maintenance"], "migrate")?,
+        &request,
+    )?["operations"]
         .clone();
     let prefix = super::resume_prefix::prefix(backend, target, &operations, false)?;
     let initialize_started = binding(backend, &target.join("initialize.started.json"))?;
@@ -112,6 +112,10 @@ fn verify_tree(
         context.reset,
         &json!(context.prefix),
     )?;
+    if let Some((_, name)) = super::resume_prefix::failed_readonly(context.backend, context.target)?
+    {
+        required.insert(name);
+    }
     required.insert(model::descriptor_name(context.failure)?);
     required.extend(prepare_names.iter().cloned());
     let mut current = files.clone();

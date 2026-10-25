@@ -76,22 +76,15 @@ impl TargetContext {
         })
     }
     pub(crate) fn target(&self) -> &Value {
-        self.request.get("target").expect("已校验目标请求")
+        self.storage_inputs().target()
     }
 
     pub(crate) fn target_scope(&self) -> Result<&str> {
-        self.target()
-            .get("scope_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "目标请求缺少 scope".into())
+        self.storage_inputs().target_scope()
     }
 
     pub(crate) fn databases(&self) -> Result<Vec<Value>> {
-        self.target()
-            .get("databases")
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| "目标请求缺少数据库".into())
+        self.storage_inputs().databases()
     }
 
     pub(crate) fn storage(&self) -> &Value {
@@ -119,34 +112,7 @@ impl TargetContext {
     }
 
     pub(crate) fn tool(&self, name: &str) -> Result<PathBuf> {
-        request::external_file(
-            self.request
-                .pointer(&format!("/tools/{name}"))
-                .ok_or("目标请求缺少工具")?,
-        )
-    }
-    pub(crate) fn maintenance_executable(&self, role: &str) -> Result<PathBuf> {
-        let path = manifest::bound_file(
-            &self.backend,
-            self.request
-                .get("maintenance_build")
-                .ok_or("目标请求缺少维护构建")?,
-            "目标维护构建",
-            true,
-        )?;
-        let receipt = json_io::read(&path)?;
-        let executable = receipt
-            .pointer(&format!("/artifacts/{role}/executable"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("目标维护构建缺少 {role} 工具"))?;
-        let executable = PathBuf::from(executable);
-        let artifact = receipt
-            .pointer(&format!("/artifacts/{role}"))
-            .ok_or("维护工具产物缺失")?;
-        request::external_file(
-            &serde_json::json!({"path": executable, "sha256": artifact.get("sha256").ok_or("维护工具缺少摘要")?}),
-        )?;
-        Ok(executable)
+        self.storage_inputs().tool(name)
     }
 }
 

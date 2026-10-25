@@ -35,6 +35,7 @@ pub(crate) fn plan_receipt(
     path: &Path,
     executable: &str,
     plan: &Value,
+    request: &Value,
 ) -> Result<Value> {
     if path.parent() != Some(target) {
         return Err("reset 命令收据不属于当前目标目录".into());
@@ -51,7 +52,12 @@ pub(crate) fn plan_receipt(
         .ok_or("reset plan 输出缺少摘要")?;
     let parsed = json_io::parse_fragment(document, "reset plan 输出")?;
     let hash = json_io::text(&plan["plan_hash"], "reset plan 摘要")?;
-    if value["command"] != json!([executable, "plan"])
+    if value["command"]
+        != json!(super::resume_prefix::configured_command(
+            executable,
+            request,
+            vec!["plan".into()]
+        )?)
         || value["returncode"].as_i64() != Some(0)
         || !value.get("error_type").is_some_and(Value::is_null)
         || value["stderr"] != ""

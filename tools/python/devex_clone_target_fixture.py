@@ -3,25 +3,18 @@ from __future__ import annotations
 from mysql_verification_fixture import mysql_input
 
 import copy
-import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
-from types import SimpleNamespace
 from unittest.mock import patch
 
-import devex_clone_target as target
 import devex_clone_target_binding as binding
-PHASES = {"preflight", "object_storage", "redis", "databases", "control_baseline",
-          "tenant_baselines", "verification", "release"}
 from artifact_digests import filesystem_path
 import devex_clone_target_resources as resources
 import devex_clone_target_storage as storage
-from devex_clone_transfer import DatabaseObservation
 from devex_clone_run_state import binding as receipt_binding
 from full_stack_runtime import configuration_digest
-from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
 
@@ -143,8 +136,7 @@ class Fixture:
                         patch.object(binding, "require_closed_port"), patch.object(resources, "process_identity", side_effect=lambda _: self.identity),
                         patch.object(resources, "verify_listener"), patch.object(resources.Resources, "_redis", side_effect=self.redis),
                         patch.object(storage, "actual_windows_argv", side_effect=lambda *_: self.actual_argv),
-                        patch.object(storage, "verify_listener"), patch.object(storage, "wsl_path", side_effect=self.linux_path),
-                        patch.object(target, "capture_side_inventory", side_effect=self.inventory)]
+                        patch.object(storage, "verify_listener"), patch.object(storage, "wsl_path", side_effect=self.linux_path)]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches: test.addCleanup(p.stop)
         self.request["config_dir"] = str(self.configuration)
@@ -154,8 +146,8 @@ class Fixture:
         self.path = self.local / "request.json"
         self.save_request()
         self.databases, self.redis_values, self.extra_objects, self.calls = set(), {}, {}, []
-        self.initialized = False; self.unknown_create = False; self.reset_status = "completed"
-        self.plan_changed = False; self.plan_count = 0; self.storage_restarted = False
+        self.initialized = False
+        self.storage_restarted = False
         self.prepared_files = None
 
     @staticmethod
@@ -291,15 +283,6 @@ class Fixture:
                                "registration": registered, "predecessor": None}
         return self.prepared_files
 
-    def publish_initialized_files(self, files=None) -> dict:
-        snapshot = self.workspace / "initialized-files.json"
-        snapshot.write_text(json.dumps({
-            "format_version": 1, "kind": "devex-clone-fresh-target-initialized-files",
-            "registration": receipt_binding(self.workspace / "registration.json"),
-            "predecessor": receipt_binding(self.workspace / "prepared-files.json"),
-            "files": binding.target_files(self.output) if files is None else files,
-        }), encoding="utf-8")
-        return receipt_binding(snapshot)
 
     def redis(self, args):
         if args[:2] == ["INFO", "server"]:
@@ -322,24 +305,6 @@ class Fixture:
         if args[0] == "SCAN": return ["0", [key for key in self.redis_values if key.startswith(args[3][:-1])]]
         raise AssertionError(args)
 
-    def manifest(self):
-        result = {"manifest_version": 4, "environment": "test", "scope_id": self.scope, "code_sha": "1" * 40,
-                  "config_sha": "5" * 64, "credential_version": "fixture-v1", "confirmation_phrase": "RESET-RYFRAME-test-" + self.scope,
-                  "legacy_ownership": self.request["reset"]["legacy_ownership"], "databases": []}
-        for db in self.request["target"]["databases"]:
-            kinds = ("control", "tenant-data") if db["kind"] == "combined" else ("tenant-data",)
-            result["databases"].append({"host": "127.0.0.1", "port": 3306, "database": db["database"],
-                "target_keys": [db["key"]], "control_baseline": db["kind"] == "combined", "tenant_baseline": True,
-                "ownership_markers": {kind: f"ryframe-owner:v1:{self.scope}:{kind}" for kind in kinds},
-                "connection": {"tls_mode": "disabled", "username": "root"}})
-        result["object_storage"] = {"backend": "rustfs", "endpoint": "http://127.0.0.1:29200", "region": "us-east-1", "use_ssl": False,
-            "prefixes": [{"bucket": bucket, "prefix": self.scope + "/", "ownership_marker_key": self.scope + "/.ryframe-owner",
-                          "ownership_marker": f"ryframe-owner:v1:{self.scope}:object-storage:{bucket}"} for bucket in sorted(BUCKETS)]}
-        redis = self.review["scopes"]["seed"]["redis"]
-        result["redis"] = {"host": "127.0.0.1", "port": 16390, "database": 0, "tls": False, "namespace": redis["namespace"],
-            "ownership_marker_key": redis["ownership_key"], "ownership_marker": redis["ownership_value"],
-            "outside_sentinel_key_sha256": hashlib.sha256(self.request["reset"]["sentinel_key"].encode()).hexdigest()}
-        return result
 
     def run(self, command, **kwargs):
         self.calls.append(command)
@@ -380,69 +345,12 @@ class Fixture:
                 name = sql.split("SCHEMA_NAME = '")[1].split("'")[0]
                 rows = [self.uuid, *([name] if name in self.databases else [])]
                 raw = ("\r\n".join(rows) + "\r\n").encode()
-            elif sql.startswith("CREATE DATABASE"):
-                name = sql.split('`')[1]
-                if name in self.databases: raise AssertionError("duplicate CREATE")
-                self.databases.add(name)
-                if self.unknown_create: raise subprocess.TimeoutExpired(command, 30, stderr=b"db-secret timeout")
-            elif not sql.startswith("SELECT TABLE_NAME"): raise AssertionError(sql)
+            else: raise AssertionError("只读夹具拒绝数据库写入")
         elif role == "wsl":
             operation = command[command.index("--exec") + 1]
             linux_config = self.linux_path(Path(self.request["storage"]["redis"]["configuration"]["path"]))
             raw = ({"/usr/bin/cat": "200 (redis-server) " + " ".join(["S"] + ["0"] * 18 + ["67890"]),
                     "/usr/bin/readlink": linux_config if command[-1] == linux_config else "/usr/bin/redis-server",
                     "/usr/bin/sha256sum": (self.request["storage"]["redis"]["configuration"]["sha256"] if command[-1] == linux_config else "9" * 64) + "  " + command[-1]}[operation] + "\r\n").encode()
-        elif role == "reset":
-            manifest = self.manifest()
-            if command[1] == "plan":
-                self.plan_count += 1
-                if self.plan_changed and self.plan_count == 2: manifest["config_sha"] = "6" * 64
-                text = json.dumps(manifest, indent=2); raw = (text + "\nplan_hash=" + hashlib.sha256(text.encode()).hexdigest() + "\n").encode()
-            else:
-                self.initialized = True
-                redis = self.review["scopes"]["seed"]["redis"]; self.redis_values[redis["ownership_key"]] = redis["ownership_value"]
-                sha = command[command.index("--plan-hash") + 1]
-                table = load_app_table(self.root, {"APP_ENV": kwargs["env"].get("APP_ENV")})
-                directory = Path(table["reset"]["state_directory"])
-                phases = {phase: {"status": "complete", "completed_at": "2026-09-04T00:00:00Z"}
-                          for phase in PHASES}
-                common = {**{key: manifest[key] for key in ("environment", "scope_id", "code_sha", "config_sha", "credential_version")},
-                          "plan_hash": sha, "phases": phases, "resources": {"resource": {"status": "complete"}},
-                          "updated_at": "2026-09-04T00:00:01Z"}
-                ledger = directory / f"test-{self.scope}-{sha}.ledger.json"
-                final = {**common, "ledger_version": 4}
-                previous = copy.deepcopy(final)
-                previous["updated_at"] = "2026-09-04T00:00:00Z"
-                previous["phases"]["release"] = {"status": "running", "completed_at": None}
-                self.bound(directory / ("." + ledger.name + ".previous"), previous)
-                self.bound(ledger, final)
-                report = directory / f"test-{self.scope}-{sha}.report.json"
-                self.bound(report, {**common, "report_version": 2, "status": self.reset_status,
-                    "failed_phase": None, "completed_at": phases["release"]["completed_at"],
-                    "databases": [f"127.0.0.1:3306/{db['database']}" for db in self.request["target"]["databases"]],
-                    "redis_namespace": redis["namespace"], "object_prefixes": [bucket + ":" + self.scope + "/" for bucket in BUCKETS]})
-                raw = (f"reset_status={self.reset_status}\n"
-                       f"reset_completed_at={phases['release']['completed_at']}\n"
-                       f"reset_report={report}\n").encode()
-        elif role == "migrate":
-            scope, operation = command[1:3]
-            target_name = command[4] if len(command) == 5 and command[3] == "--target" else None
-            text = f"scope={scope} " + (f"target={target_name} " if target_name else "")
-            text += "migration=completed schema=verified\n" if operation == "up" \
-                else "migration_ledger=current schema=verified\n"
-            raw = text.encode()
         else: raise AssertionError(command)
         return subprocess.CompletedProcess(command, 0, raw, b"")
-
-    def inventory(self, backend, side, tools, receipt, output, *, environment):
-        output.mkdir()
-        observations = []
-        for db in self.request["target"]["databases"]:
-            tables = {"biz_tenant_fence": {"rows": 0, "sha256": "a" * 64}, "biz_tenant_target_slot": {"rows": 1, "sha256": "b" * 64}}
-            observations.append(DatabaseObservation({"database": db["database"]}, "7" * 64, tables, {}, tuple(tables), ()))
-        value = {"status": "offline_fixture_only", "inventories": {}}
-        receipt = self.bound(output / "inventory.json", value)
-        return SimpleNamespace(
-            observations=tuple(observations), receipt_file=receipt,
-            evidence_files=tuple(binding.target_files(output)),
-        )

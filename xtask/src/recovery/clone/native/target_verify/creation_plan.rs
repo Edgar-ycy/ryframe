@@ -116,7 +116,9 @@ fn configuration(target: &Path, args: &Value) -> Result<Value> {
     let backend = Path::new(json_io::text(&args["execution_backend"], "reset 执行树")?);
     validate_absolute_path(backend, LocalTestPathKind::ExistingDirectory)?;
     let environment = json_io::text(&args["app_env"], "APP_ENV")?;
-    let table = crate::rate_limit::load_app_table(backend, None, environment)
+    let request = json_io::read(&target.join("request.json"))?;
+    let directory = super::resume_prefix::config_directory(&request)?;
+    let table = crate::rate_limit::load_app_table(backend, Some(Path::new(directory)), environment)
         .map_err(|_| DIAGNOSTICS[6])?;
     let table = serde_json::to_value(table)?;
     reset_configuration(target, &table, &args["maintenance"])

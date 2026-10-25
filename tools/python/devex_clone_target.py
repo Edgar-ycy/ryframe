@@ -1,9 +1,4 @@
-"""单侧 fresh 目标的实际初始化 API；无复制执行 CLI，不启动 API、Worker 或存储服务。
-
-prepare/resume-prepare 已由原生 Rust 入口承担；initialize_target 只执行该一次性
-intent 的四库 CREATE、同 hash reset、迁移和完整库存。任何未知结果均停止，禁止
-自动重放或清理；verify_target 只读复核原证据及当前资源，不授予正式恢复资格。
-"""
+"""目标历史、预检失败收尾和只读复核；初始化与显式续作由正式Rust入口执行。"""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -13,18 +8,16 @@ import subprocess
 
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
-from devex_clone_export import cli_executable
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_model import exact, local_path
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import execution_backend, generation, request_binding
 from devex_clone_target_resources import Resources
-from devex_clone_target_state import confirmed, failure, generation_lock, intent, now
+from devex_clone_target_state import failure, generation_lock
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_evidence import evidence
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
-from restore_reference_plan import plan_hash
 
 PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
                   "generation", "absence", "fresh_target_initialized", "controlled_generation_only",
@@ -96,73 +89,6 @@ def unchanged(backend: Path, request: dict, original: dict, resources: Resources
     actual["storage"] = resources.storage_identity()
     if actual != original:
         raise ValueError("目标源码、配置、凭据、维护产物或存储进程代次变化")
-
-
-def empty_resources(resources: Resources) -> dict:
-    return {"databases": [resources.database_state(db, exists=False) for db in resources.request["target"]["databases"]],
-            "objects": resources.objects(initialized=False), "redis": resources.redis_state(initialized=False, sentinel=False)}
-
-
-def reset_plan(resources: Resources, maintenance: dict, request: dict, original: dict, stage: str) -> tuple[dict, str]:
-    reset_execution_configuration(resources, maintenance)
-    raw = resources.command(
-        stage,
-        [cli_executable(maintenance, "reset"), "plan"],
-        env=resources.environment,
-    ).stdout
-    value = evidence("reset-plan-output", backend=resources.backend, target=resources.output,
-                     arguments={"text": raw.decode("utf-8"), "request": request, "original": original})
-    write_json(resources.output / f"{stage}.json", value)
-    return value["manifest"], value["plan_hash"]
-
-
-def reset_execution_configuration(resources: Resources, maintenance: dict) -> Path:
-    result = evidence("reset-execution-configuration", resources.backend, resources.output,
-                      arguments={"execution_backend": str(resources.execution_backend),
-                                 "app_env": resources.environment.get("APP_ENV"), "maintenance": maintenance})
-    return Path(result["path"])
-
-
-def initialize_databases(backend: Path, request: dict, original: dict, resources: Resources, run) -> dict:
-    for db in sorted(request["target"]["databases"], key=lambda item: item["key"]):
-        unchanged(backend, request, original, resources, run)
-        stage = "create-" + db["key"]
-        intent(resources.output, stage, {key: db[key] for key in ("key", "server_uuid", "database")})
-        resources.create_database(db)
-        observed = resources.database_state(db, exists=True, empty=True)
-        unchanged(backend, request, original, resources, run)
-        confirmed(resources.output, stage, observed)
-    resources.objects(initialized=False)
-    resources.redis_state(initialized=False, sentinel=False)
-    intent(resources.output, "sentinel", {"key": request["reset"]["sentinel_key"]})
-    resources.create_sentinel()
-    confirmed(resources.output, "sentinel", resources.redis_state(initialized=False, sentinel=True))
-    for db in request["target"]["databases"]:
-        resources.database_state(db, exists=True, empty=True)
-    maintenance = original["maintenance"]
-    first = reset_plan(resources, maintenance, request, original, "reset-plan")
-    unchanged(backend, request, original, resources, run)
-    if first != reset_plan(resources, maintenance, request, original, "reset-plan-confirm"):
-        raise ValueError("reset plan 即时复核变化")
-    manifest, sha = first
-    state = reset_execution_configuration(resources, maintenance)
-    state.mkdir()
-    unchanged(backend, request, original, resources, run)
-    for db in request["target"]["databases"]:
-        resources.database_state(db, exists=True, empty=True)
-    resources.objects(initialized=False)
-    resources.redis_state(initialized=False, sentinel=True)
-    intent(resources.output, "reset", {"plan_hash": sha})
-    resources.command("reset-execute", [cli_executable(maintenance, "reset"), "execute", "--plan-hash", sha,
-                      "--confirm-reset", manifest["confirmation_phrase"]],
-                      env=resources.environment, timeout=1800)
-    completed = evidence("reset-completed", backend, resources.output, manifest=manifest, sha=sha)
-    confirmed(resources.output, "reset", completed)
-    for operation in evidence("migration-operations", backend, resources.output,
-                              executable=cli_executable(maintenance, "migrate"))["operations"]:
-        unchanged(backend, request, original, resources, run)
-        resources.command(operation["stage"], operation["command"], timeout=1800)
-    return completed
 
 
 def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None = None,
@@ -237,69 +163,6 @@ def inventory(backend: Path, request: dict, resources: Resources,
     evidence("initial-inventory-shape", backend, resources.output,
              arguments={"databases": request["target"]["databases"], "images": images})
     return {"receipt": captured.receipt_file, "observations": images}, captured.evidence_files
-
-
-def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None = None,
-                      request_descriptor: dict | None = None, publish_files=None) -> dict:
-    """仅首次调用可写；中断、失败、已初始化均不自动重放。"""
-    backend = backend.resolve(strict=True)
-    output = local_path(backend, str(output))
-    if unresolved_failure(backend, output) or (output / "initialize.started.json").exists():
-        raise ValueError("初始化已有尝试；只能只读核对，禁止重放或自动清理")
-    stage, claimed = "initialize_binding", False
-    after_unlock = [] if publish_files is not None else None
-    try:
-        with generation_lock(output, after_initialize_unlock=after_unlock) as lock_identity:
-            if unresolved_failure(backend, output) or (output / "initialize.started.json").exists():
-                raise ValueError("本代次已有执行记录，不能重复初始化")
-            claimed = True
-            prepared_digest = file_digest(output / "prepare.json")
-            prepared = read_json(output / "prepare.json")
-            expected_request = prepared["request"] if request_descriptor is None else request_descriptor
-            if prepared["request"] != expected_request:
-                raise ValueError("initialize 请求不同于固定 registration")
-            request = read_bound_json(local_path(backend, expected_request["path"]), expected_request)
-            if request != read_json(output / "request.json") or plan_hash(request) != prepared["request_sha256"]:
-                raise ValueError("prepare 请求文件已变化")
-            from devex_clone_target_tree_claim import prepared_baseline, validate_complete
-            baseline = prepared_baseline(backend, output, expected_request, request)
-            original, resources = context(
-                backend, request, output, run, storage_run=storage_run,
-                owned_lock_identity=lock_identity
-            )
-            from devex_clone_target_prepared_files import validate_prepared_tree
-            validate_prepared_tree(
-                backend, output, baseline, expected_request, request, locked_guard=True)
-            if prepared["generation"] != original or prepared["absence"] != empty_resources(resources):
-                raise ValueError("准备后来源或目标缺失状态变化")
-            write_json(output / "initialize.started.json", {"at": now(), "generation_sha256": plan_hash(original)})
-            stage = "create_and_reset"
-            reset = initialize_databases(backend, request, original, resources, run)
-            stage = "inventory"
-            initial, inventory_files = inventory(backend, request, resources, output / "inventory-initial")
-            objects = resources.objects(initialized=True)
-            redis = resources.redis_state(initialized=True, sentinel=True)
-            unchanged(backend, request, original, resources, run)
-            bound_file(backend, prepared["request"])
-            if file_digest(output / "prepare.json") != prepared_digest:
-                raise ValueError("初始化期间 prepare 证据变化")
-            result = {"format_version": 1, "status": "fresh_target_initialized", "id": request["id"],
-                      "scope_id": request["target"]["scope_id"], "completed_at": now(), "generation": original,
-                      "prepare_sha256": file_digest(output / "prepare.json")["sha256"], "reset": reset,
-                      "inventory": initial, "objects": objects, "redis": redis, "history": evidence("history", backend, output),
-                      "controlled_generation_never_started": True, "external_writers_discovered": False,
-                      "target_ready": False, "clone_verified": False, "restore_qualified": False}
-            write_json(output / "initialized-candidate.json", result)
-            write_json(output / "initialized.json", result)
-            files = validate_complete(backend, output, baseline, request, original, initial,
-                                      inventory_files, result)
-            if after_unlock is not None:
-                after_unlock.append(lambda: publish_files(files))
-        return result
-    except BaseException as error:
-        if claimed:
-            failure(output, stage, error)
-        raise
 
 
 def verify_target(backend: Path, output: Path, observation_dir: Path, run=subprocess.run,

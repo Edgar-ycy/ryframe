@@ -18,31 +18,6 @@ def _trusted_predecessor(backend: Path, expected: dict, descriptor: dict) -> Non
     _trusted_started(backend, expected, failure["started"])
 
 
-def migration_resume_state(backend: Path, output: Path, request_descriptor: dict,
-                           prepared_files: dict, *,
-                           owned_lock_identity: int | None = None) -> dict:
-    """锁身份由持锁控制器复核，证据与连续前缀由 Rust 核验。"""
-    backend = backend.resolve(strict=True)
-    output = local_path(backend, str(output))
-    if owned_lock_identity is not None:
-        lock = output / "initialize.lock"
-        if not lock.is_dir() or lock.stat().st_ino != owned_lock_identity:
-            raise ValueError("目标初始化锁身份变化")
-    result = evidence("migration-resume-state", backend, output,
-                      request_descriptor=request_descriptor, prepared_files=prepared_files,
-                      owned_lock=owned_lock_identity is not None)
-    if result.get("resumable") and result.get("predecessor") is not None:
-        _trusted_predecessor(backend, result["prepared"]["generation"], result["predecessor"])
-        if evidence("migration-resume-state", backend, output,
-                    request_descriptor=request_descriptor, prepared_files=prepared_files,
-                    owned_lock=owned_lock_identity is not None) != result:
-            raise ValueError("可信运行代次核验期间迁移续作证据发生变化")
-    if owned_lock_identity is not None and (
-            not lock.is_dir() or lock.stat().st_ino != owned_lock_identity):
-        raise ValueError("目标初始化锁身份变化")
-    return result
-
-
 def migration_resume_confirmed(backend: Path, output: Path, initialized: dict) -> bool:
     """畸形或漂移的成功确认保持原失败，消费者不得接受初始化。"""
     try:
