@@ -22,18 +22,14 @@ use std::cell::RefCell;
 
 struct ReadOnly {
     mysql: String,
+    defaults_file: String,
     object_case: &'static str,
     calls: RefCell<Vec<String>>,
 }
 impl Transport for ReadOnly {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
-        assert_eq!(
-            spec.args[0],
-            format!(
-                "--defaults-file={}",
-                spec.cwd.join(".local-tests/fixture/mysql.cnf").display()
-            )
-        );
+        let defaults = spec.args[0].strip_prefix("--defaults-file=").unwrap();
+        assert_eq!(defaults, self.defaults_file);
         let sql = String::from_utf8(spec.stdin.unwrap()).unwrap();
         assert!(sql.starts_with("SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '"));
         assert!(!sql.contains("CREATE") && !sql.contains("DROP"));
@@ -96,6 +92,10 @@ fn four_database_absence_checks_require_the_exact_uuid_and_do_not_issue_write_sq
     ] {
         let transport = ReadOnly {
             mysql: format!("{uuid}\r\n"),
+            defaults_file: f.request["target"]["databases"][0]["defaults_file"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
             object_case: "empty",
             calls: RefCell::new(Vec::new()),
         };
@@ -138,6 +138,10 @@ fn five_bucket_absence_is_complete_and_denied_reads_never_become_empty_or_expose
         std::fs::create_dir(&output).unwrap();
         let transport = ReadOnly {
             mysql: String::new(),
+            defaults_file: f.request["target"]["databases"][0]["defaults_file"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
             object_case,
             calls: RefCell::new(Vec::new()),
         };
