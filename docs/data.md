@@ -4,7 +4,7 @@
 
 ## 全新环境初始化
 
-先创建隔离的空 MySQL database，再通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`。`config/app.toml` 提供公共默认值，所选 `config/app.<environment>.toml` 必须存在；数据库密码、JWT 和 `[bootstrap] admin_password` 直接写入明文配置，准备方式见 [README](../README.md#下载后首次运行)。用 `--config-dir <directory>` 选择其他目录，应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，从后端根目录依次运行： 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
+先创建隔离的空 MySQL database，再通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`。`config/app.toml` 可省略，所选 `config/app.<environment>.toml` 必须存在；省略公共文件时，环境文件须完整提供必填配置；数据库密码、JWT 和 `[bootstrap] admin_password` 直接写入明文配置，准备方式见 [README](../README.md#下载后首次运行)。用 `--config-dir <directory>` 选择其他目录，应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，从后端根目录依次运行： 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
 ```powershell
 cargo migrate -- control up
@@ -23,7 +23,7 @@ cargo migrate -- control export-sql --output .local-tests/control-init.sql --pla
 cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
 ```
 
-`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式导出包含控制库结构、后置约束、系统数据、已注册控制库业务迁移和账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。选择空库并使用客户端遇错停止，不使用 `--force`。PowerShell 使用：
+`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式导出包含控制库结构、后置约束、系统数据、已注册控制库业务迁移和账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管；输出文件必须新建，不能覆盖旧文件。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选文件一致，远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 使用：
 
 ```powershell
 mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source .local-tests/control-init.sql"
@@ -92,15 +92,15 @@ cargo xtask data target inventory --target <target-key> --output .local-tests/ba
 
 ## 文件配置与凭据
 
-`APP_ENV` 是唯一项目配置环境入口，只接受 `dev`、`test`、`prod`。API、Worker、迁移和 reset 从 `--config-dir <directory>` 指定的目录读取可选公共 `app.toml`，再递归合并必须存在的 `app.<environment>.toml`；公共文件确实不存在时，环境文件须完整提供必填字段，已存在但损坏、不可读或为悬空链接的公共文件仍会报错；默认目录为 `config`，相对路径以当前工作目录解析。生产连接、密钥强度、TLS、实例编号和资源隔离校验继续保留。 本地化使用 TOML 的 `app.locales_dir`，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`。资源缺失或加载失败时生产严格失败，开发环境可内嵌回退。
+`APP_ENV` 是唯一项目配置环境入口，只接受精确的 `dev`、`test`、`prod`，不接受大小写变体或空白；普通 API、Worker 和迁移进程未设置时选 `dev`，reset 则要求显式设置，操作示例始终主动选择环境。API、Worker、迁移和 reset 从 `--config-dir <directory>` 指定的目录读取可选公共 `app.toml`，再递归合并必须存在的 `app.<environment>.toml`；公共文件确实不存在时，环境文件须完整提供必填字段，已存在但损坏、不可读或为悬空链接的公共文件仍会报错；默认目录为 `config`，相对路径以当前工作目录解析。生产连接、密钥强度、TLS、实例编号和资源隔离校验继续保留。 本地化使用 TOML 的 `app.locales_dir`，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`。资源缺失或加载失败时生产严格失败，开发环境可内嵌回退。
 
 数据库、Redis、对象存储、JWT、监控 token 和初始管理员密码直接写入对应明文字段；真实配置只保存在忽略的本机目录，不进入日志、公开收据或版本库。根字段 `snowflake_worker_id` 在同一部署的每个实例上必须不同；`[bootstrap] admin_password` 显式提供管理员初始密码。普通初始化用户 `user`、新建和导入的普通用户仍使用 `123456` 并强制首次改密。数组在环境文件中整体替换：`cors.allow_origins`、`proxy.trusted_cidrs` 使用 TOML 字符串数组；`database.replicas`、`database.sources` 和 `tenant_data.targets` 使用完整 TOML 表数组，不能只覆盖其中一项。
 
-生成器的 `--config-dir <directory>` 和 Builder `.configuration_directory(path)` 以后端 Workspace 根目录解析相对路径，从业务 crate 的 `src` 运行也不改变默认的 `workspace/config`。优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件中的 `[generator] config_dir` 可省略。共享 MySQL 测试固定读取后端根 `.local-tests/mysql/config` 的 `app.toml` 与 `app.test.toml`，完整连接与 TLS 参数来自 `database.primary`，不接受 Disabled；目录缺失仅跳过且未验收，已有非法或链接路径、缺失文件及无效配置均失败。文件 `scope_id` 参与唯一 schema，详细 opt-in 与证据边界见[集成验证](development.md#集成验证)；真实协议未验收。部署模板与私有配置目录的结构及 CI 工具测试已通过，真实容器、镜像和整链仍未验收，不能以局部测试代替整体门禁。
+生成器的 `--config-dir <directory>` 和 Builder `.configuration_directory(path)` 以后端 Workspace 根目录解析相对路径，从业务 crate 的 `src` 运行也不改变默认的 `workspace/config`。优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件中的 `[generator] config_dir` 可省略。共享 MySQL 测试固定读取后端根 `.local-tests/mysql/config`，公共 `app.toml` 可省略，`app.test.toml` 必须存在；完整连接与 TLS 参数来自 `database.primary`，不接受 Disabled。目录缺失仅跳过且未验收；已有非法或链接路径、缺失环境文件及无效配置均失败。文件 `scope_id` 参与唯一 schema，详细 opt-in 与证据边界见[集成验证](development.md#集成验证)；仅实际运行的用例构成对应服务证据，配置或门禁入口本身不代表完整真实链路验收。部署模板与私有配置目录的结构及 CI 工具测试已通过，真实容器、镜像和整链仍未验收，不能以局部测试代替整体门禁。
 
 ## 租户路由
 
-`database.primary` 是控制库唯一写库，也是强一致读取和 `shared-control` 的来源；`database.replicas` 是同一控制库的只读副本；`database.sources` 是业务显式选择的命名 MySQL 来源。三者都不替代租户 placement。以下是一个完整连接拓扑；密码占位值必须替换，证书路径按运行进程平台解析：
+`database.primary` 是控制库唯一写库，也是强一致读取和 `shared-control` 的来源；`database.replicas` 是同一控制库的只读副本；`database.sources` 是业务显式选择的命名 MySQL 来源。三者都不替代租户 placement。以下是数据库连接拓扑片段，须合并进完整应用配置，并非可单独启动的配置文件；密码占位值必须替换，证书路径按运行进程平台解析：
 
 ```toml
 scope_id = "orders-production"
@@ -180,18 +180,18 @@ tls_mode = "verify_identity"
 tls_ca = "/run/secrets/mysql-ca.pem"
 ```
 
-primary、replicas、sources 和 MySQL 租户目标均直接使用 `password` 字段；租户目标允许空密码，但字段必须存在，不接受 DSN。连接名称必须唯一，source 不能使用 `primary`，租户目标必须与其他控制库、来源和目标使用不同 schema。远程生产连接和租户目标必须 `verify_identity` 并配置 CA；`verify_ca` 也要求 CA，mTLS 证书与私钥必须成对配置。
+primary、replicas、sources 和 MySQL 租户目标均直接使用 `password` 字段，不读取凭据环境覆盖，也不接受 DSN；空密码仍须显式填写，能否认证由服务端决定。副本及 source 名称不能重复或互相冲突，source 不能使用 `primary`。MySQL 租户目标的主机、端口、库名组合不能与控制库、副本、source 或其他目标重叠；不同服务器允许同名库，不能只按库名判断身份。命名 source 可作为 primary 的显式别名，但仍受租户目标独立性检查约束。TLS 默认 `required`，它只要求加密；`verify_ca` 验证证书链，`verify_identity` 另核对主机名，两者都要求 CA；远程生产的上述连接和目标必须使用 `verify_identity`。mTLS 证书与私钥必须成对配置；隔离开发可显式禁用 TLS，但共享真实 MySQL 测试不接受 Disabled。
 
-replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询，全部不可用时回退 primary；`Strong`、写后读、授权、任务、导出和状态转换使用 primary。RyFrame 不建立 MySQL 主从复制或等待追平，延迟监控和故障切换由运维负责。`database.sources` 通过 `control_database.source("<name>")` 获取并返回 `Option`；每个来源有独立连接池和事务，不自动分库，也没有跨库分布式事务。生成器的结构来源不自动成为运行目标。
+replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询，全部不可用时在选池阶段回退 primary，不把已失败 SQL 自动切主重放；`Strong`、写后读、授权、任务、导出和状态转换使用 primary。启动不等待副本，后台重连并通过健康及结构核验后才加入路由；primary 或已配置的命名 source 连接失败则阻断启动。RyFrame 不建立 MySQL 主从复制或等待追平，延迟监控和故障切换由运维负责。`database.sources` 通过 `control_database.source("<name>")` 获取并返回 `Option`，不参与自动读路由；每个来源有独立连接池和事务，与 primary 的事务不共享提交或回滚，不自动分库，也没有跨库分布式事务。MySQL 租户目标没有副本配置，最终一致性读取也使用其自身目标池。生成器的结构来源不自动成为运行目标。
 
 | 布局 | placement 目标 | 边界 |
 | --- | --- | --- |
-| 共享控制库 | 隐式 `shared-control`，`kind="control"`、`mode="shared"` | 默认单租户和系统租户；复用 primary 池，租户业务仍有独立迁移账本 |
+| 共享控制库 | 隐式 `shared-control`，`kind="control"`、`mode="shared"` | 默认单租户和系统租户；复用控制库池及显式一致性读策略，租户业务仍有独立迁移账本 |
 | 共享业务库 | `kind="mysql"`、`mode="shared"` | 多租户共享 `biz_*` 表，查询仍按 `tenant_id` 隔离 |
 | 独立业务库 | `kind="mysql"`、`mode="dedicated"` | 同一时刻一个 active 租户，可使用独立账号、容量和备份 |
 
-新配置默认 `multi_tenancy.enabled=false`；在配置文件中显式设为 `true` 才开放租户选择和管理。`tenant_data.targets[].key` 是迁移、健康检查、API 和 placement 的稳定身份，数据库名不能代替。生成器 `source="local"` 是简写：`database=control` 时读取 primary；存储范围为 tenant 时读取 `tenant_data.default_target`，因此该键必须是 MySQL 目标，隐式 `shared-control` 不能作为 local 结构来源，也可直接写 `primary` 或 `tenant_data.targets.<key>` 消除歧义。新租户开通仍显式提交 `data_target_key`，运行时只以控制库 placement 为准；缺 placement 或未知目标时失败关闭。
+新配置默认 `multi_tenancy.enabled=false`；在配置文件中显式设为 `true` 才开放租户选择和管理。`tenant_data.targets[].key` 是迁移、健康检查、API 和 placement 的稳定身份，数据库名不能代替。生成器 `source="local"` 是简写：`database=control` 时读取 primary；存储范围为 tenant 时读取 `tenant_data.default_target`，因此该键必须是 MySQL 目标，隐式 `shared-control` 不能作为 local 结构来源，也可直接写 `primary` 或 `tenant_data.targets.<key>` 消除歧义。新租户开通仍显式提交 `data_target_key`，运行时只以控制库 placement 为准；缺 placement、未知或不可达目标、fence 或代次不符时失败关闭，不退回 `default_target` 或 `shared-control`。
 
 从单租户 `shared-control` 演进时，先在配置中增加共享或独立目标，创建空库并在目标的 `password` 字段填写密码，运行 `cargo migrate -- tenant-data up --target <target-key>` 与 `verify`，在“平台管理 → 数据目标”完成实时探测。新租户开通时选择目标键；已有非系统租户改用租户数据放置/迁移流程，先预览和校验 placement generation、计划哈希与幂等键，再复制数据并切换 placement。修改 `default_target`、DNS 或复制 schema 都不会迁移既有数据；系统租户禁止迁移业务数据，独立目标被占用时先完成迁移或清理。
 
-独立目标池按需建立，默认上限为 `max_total_connections / max_open_targets`，目标 `max_connections` 可覆盖；API 与 Worker 各自计数。`tenant-data up/verify/status` 使用目标键，`--all` 只处理登记目标；多个目标先核对物理实例与 schema，别名重复时在 DDL 前拒绝，失败后先查状态，不自动重放已完成目标。
+独立目标池按需建立，每池默认上限为 `max_total_connections / max_open_targets` 的整数商，目标 `max_connections` 可覆盖；两项预算仅约束 MySQL 租户目标，不包含 primary、replicas、sources 或复用控制库池的 `shared-control`，API 与 Worker 各自计数。达到预算时仅回收无活动租约的闲置池；仍不足则拒绝新池，不挤占活动会话。`tenant-data up/verify/status` 使用目标键，`--all` 只处理登记目标；多个目标先核对物理实例与 schema，别名重复时在 DDL 前拒绝，失败后先查状态，不自动重放已完成目标。
