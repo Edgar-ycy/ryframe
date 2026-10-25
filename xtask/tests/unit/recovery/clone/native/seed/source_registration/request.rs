@@ -73,10 +73,6 @@ fn short_boundary_and_long_source_ids_are_stable_without_character_conversion() 
         source_id(&"a".repeat(48)).unwrap(),
         "seed-97daac0ee9998dfcad6c9c0970da5ca4"
     );
-    assert_eq!(
-        source_id(&"a".repeat(48)).unwrap(),
-        source_id(&"a".repeat(48)).unwrap()
-    );
     assert_ne!(
         source_id(&"a".repeat(48)).unwrap(),
         source_id(&"b".repeat(48)).unwrap()
@@ -104,7 +100,6 @@ fn request_has_exact_twelve_fields_and_uses_each_authoritative_source_without_mu
         "runtime":fixture.documents["runtime_binding"],"processes":fixture.documents["process_bindings"],
         "producers_registry":fixture.documents["registry_binding"],"max_object_bytes":12345})
     );
-    assert_eq!(result.as_object().unwrap().len(), 12);
     assert_eq!(fixture.documents, before);
 }
 

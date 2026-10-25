@@ -27,6 +27,17 @@ fn history(numbers: &[u64]) -> Value {
 
 #[test]
 fn all_seven_prefixes_resume_the_unique_old_attempt_without_rewriting() {
+    assert_eq!(
+        FILES,
+        [
+            "producer-lineage.json",
+            "source-storage.json",
+            "producers.json",
+            "source-request.json",
+            "generation-verified.json",
+            "source-registration.json",
+        ]
+    );
     for length in 0..=FILES.len() {
         let (_directory, backend, run) = fixture();
         let old = run.join("seed-runtime/attempt-0001");

@@ -169,14 +169,37 @@ fn any_unapproved_stage_after_close_rejects_regardless_of_status() {
 fn all_twenty_one_permitted_failed_records_leave_the_passed_close_usable() {
     let fixture = Fixture::new();
     let mut state = fixture.state();
-    for (index, (stage, mode)) in ALLOWED_AFTER_CLOSE.iter().enumerate() {
+    let allowed = [
+        ("seed-runtime", "source-register"),
+        ("seed-runtime", "source-rebind"),
+        ("seed-runtime", "source-generation-start"),
+        ("seed-runtime", "source-generation-stop"),
+        ("seed-runtime", "source-generation-recover"),
+        ("seed-runtime", "source-export"),
+        ("seed-runtime", "source-export-reconcile"),
+        ("seed-runtime", "arm-input"),
+        ("seed-runtime", "stop"),
+        ("seed-runtime", "recover"),
+        ("seed-runtime", "recover-session"),
+        ("storage-target", "restart"),
+        ("storage-target", "status"),
+        ("storage-target", "stop"),
+        ("storage-target", "recover"),
+        ("cache-target", "restart"),
+        ("cache-target", "status"),
+        ("cache-target", "stop"),
+        ("cache-target", "recover"),
+        ("cache-target", "reconcile"),
+        ("cache-target", "resume"),
+    ];
+    for (index, (stage, mode)) in allowed.iter().enumerate() {
         state["attempts"]
             .as_array_mut()
             .unwrap()
             .push(json!({"number":index+2,
             "stage":stage,"mode":mode,"status":"failed","result":null}));
     }
-    let current = ALLOWED_AFTER_CLOSE.len() as u64 + 2;
+    let current = allowed.len() as u64 + 2;
     assert_eq!(fixture.latest(&state, current).unwrap(), fixture.descriptor);
 }
 

@@ -23,9 +23,23 @@ fn files() -> Files {
 
 #[test]
 fn materialize_documents_preserve_python_schema_and_keep_private_inputs_out() {
+    let public_fields = [
+        "run_manifest",
+        "source_to_seed",
+        "post_copy",
+        "post_verify",
+        "seed_registration",
+        "seed_registration_stage",
+        "capacity",
+        "departments",
+        "identity",
+        "seed_handoff",
+        "seed_close",
+        "source_environment",
+    ];
     let run = crate::workspace::root_dir().join(".local-tests/schema-only-run");
     let mut anchors = json!({"storage":{"evidence":"storage"},"lineage":{"evidence":"lineage"}});
-    for name in PUBLIC_FIELDS {
+    for name in public_fields {
         anchors[name] = json!({"evidence":name});
     }
     anchors["post"] = json!({"private":"not-a-public-anchor"});
@@ -57,9 +71,9 @@ fn materialize_documents_preserve_python_schema_and_keep_private_inputs_out() {
         "outbox_drained",
         "restore_qualified",
     ]);
-    expected.extend(PUBLIC_FIELDS);
+    expected.extend(public_fields);
     assert_eq!(fields(&registration), expected);
-    for name in PUBLIC_FIELDS {
+    for name in public_fields {
         assert_eq!(registration[name], anchors[name]);
     }
     assert_eq!(registration["producer_lineage"], files.lineage);
