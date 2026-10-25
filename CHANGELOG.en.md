@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- The formal browser credential broker now strictly reads the current administrator TOML bound by the bootstrap, reusing file-binding and account parsing checks plus the existing password policy. Missing, changed, or invalid credentials fail closed; the broker no longer reads the initial password and retains the actual credential-read requirement and existing local protocol.
+
 - Preserve redacted underlying causes for independent tenant database migration and internal diagnostics, share failures across concurrent pool waiters, and keep public error responses unchanged.
 - Every migration repair command explicitly carries a `--config-dir` directory placeholder and quoting guidance, preventing a custom-configuration failure from directing checks to another default database. Connection-failure coverage uses distinct schemas and explicitly retains the shared-control target without bypassing alias validation.
 

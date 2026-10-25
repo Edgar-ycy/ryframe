@@ -165,6 +165,8 @@ cargo xtask check recovery clone seed-runtime --operation source-register --run-
 
 fresh 参考夹具环境准备会在源 bootstrap 输出目录独占创建私有 `administrator.toml`，内容严格为 `[administrator]` 下的 `tenant_id = "system"`、`username = "admin"` 和 `password`。当前密码由 Rust 随机生成并与 `bootstrap.admin_password` 不同；两份配置必须在生成参考计划前固定。公开 bootstrap 收据与参考计划的 `dataset.administrator_credentials` 只保存该文件的 `path`、`bytes` 和 `sha256`，不包含明文。初始化密码仅用于 fresh 系统管理员及十个新租户 owner 的受限登录；每个账号先核对受限 context，落盘独占 intent，再发一次改密请求，记录确认后丢弃旧会话，使用显式当前密码重新登录并验证同一主体、首次改密状态和必要权限，最后发布激活完成收据。十一账号只在这个隔离夹具内共用该当前密码。
 
+正式 `fixture runtime browser` 的本机凭据代理只读取 bootstrap 的 `administrator_credentials` 所绑定的当前 `administrator.toml`，校验普通文件、无链接路径、大小、字节数、SHA-256、`system/admin` 身份及密码策略；缺失、漂移或内容无效时拒绝启动，不回退到 `secret_files` 中的初始化密码。先完成正常首次改密并确认当前凭据可用，再运行浏览器验收；代理不代替账号激活，成功验收必须实际读取代理凭据。
+
 改密超时、响应中断、服务端错误、确认落盘失败或遗留 intent 都必须保留现场并停止，不能重新发送改密、尝试旧密码、清除数据库标志或改写凭据文件补签。已有数据的 target/source 核验及 source/clone 原生复验只读取绑定的当前凭据；遇受限会话直接失败，绝不自动改密。
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
