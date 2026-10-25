@@ -5,7 +5,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
     match operation {
         "service-registered" => {
             exact(args, &["value", "settled"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             registration::load(
                 &mut runtime,
                 backend,
@@ -29,7 +29,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
         }
         "service-context" => {
             exact(args, &["review", "environment"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             context::load(
                 &mut runtime,
                 backend,
@@ -58,7 +58,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
         }
         "service-transition" => {
             exact(args, &["run", "expected"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             projection::transition(
                 &mut runtime,
                 backend,
@@ -121,7 +121,7 @@ fn environment(backend: &Path, args: &Value) -> Result<Value> {
     exact(args, &["review_file", "review", "environment"])?;
     let (review_file, review) = context::document(backend, Path::new(text(args, "review_file")?))?;
     check(review == args["review"], "夹具审阅与传入快照不同")?;
-    let mut runtime = runtime::PythonRuntime::new(backend)?;
+    let mut runtime = readonly::NativeRuntime::new(backend);
     let (path, value, private) = context::environment(
         &mut runtime,
         backend,

@@ -134,6 +134,9 @@ fn wait_primitive(
 }
 impl Runtime for PythonRuntime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if super::readonly::handles(operation) {
+            return super::readonly::NativeRuntime::new(&self.backend).call(operation, arguments);
+        }
         if operation == "context" {
             let backend = self.backend.clone();
             super::context::load(

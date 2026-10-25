@@ -36,6 +36,8 @@ mod projection;
 pub(crate) mod protocol;
 #[path = "lifecycle/query.rs"]
 pub(crate) mod query;
+#[path = "lifecycle/readonly.rs"]
+pub(crate) mod readonly;
 #[path = "lifecycle/reconcile.rs"]
 mod reconcile;
 #[path = "lifecycle/recover.rs"]

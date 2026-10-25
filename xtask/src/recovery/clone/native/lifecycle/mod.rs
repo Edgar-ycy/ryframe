@@ -16,7 +16,7 @@ mod recover;
 pub(crate) mod source;
 pub(crate) mod stage;
 pub(crate) mod state;
-mod status;
+pub(crate) mod status;
 
 pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
     match command {

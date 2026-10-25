@@ -28,19 +28,13 @@ def _context(value, backend):
 
 def dispatch(backend, operation, args):
     from reference_fixture_service_context import guard
-    from devex_clone_run_state import controller_observation, recover_run_lock
+    from devex_clone_run_state import recover_run_lock
     from process_environment import configured
-    from full_stack_process import process_identity
-    from full_stack_process_tree import read_process_tree, terminate_owned_process_tree
-    from full_stack_process_monitor import completion_binding
+    from full_stack_process_tree import terminate_owned_process_tree
     from devex_clone_cache_process import start, stop
     schemas = {
-        "review-successor": {"previous", "review"},
         "cache-status": {"request", "runtime", "effective"},
-        "storage-running": {"identity", "request"}, "members-wait": {"tree"},
-        "controller": {"run"}, "identity": {"pid"},
-        "completion": {"tree"}, "tree-stop": {"tree", "crash"},
-        "tree-read": {"output", "scope_id"}, "recover-controller": {"run", "owner"},
+        "tree-stop": {"tree", "crash"}, "recover-controller": {"run", "owner"},
         "cache-stop": {"request", "private", "runtime", "output"},
         "cache-start": {"request", "private", "output", "context", "running"},
         "storage-start": {"request", "private", "output", "manifest", "controller", "number", "context", "running"},
@@ -51,32 +45,12 @@ def dispatch(backend, operation, args):
     for key in ("output", "run"):
         if key in args:
             local_path(backend, args[key])
-    if operation == "review-successor":
-        from reference_fixture_environment import validate_preflight_successor
-        validate_preflight_successor(args["previous"], args["review"])
-        return None
     if operation == "cache-status":
         from devex_clone_cache_process import status, predecessor_status
         return (status(args["request"], args["runtime"]) if args["effective"] is None else
                 predecessor_status(args["request"], args["runtime"], args["effective"]))
-    if operation == "storage-running":
-        from devex_clone_storage_process import running
-        from devex_clone_storage_request import arguments
-        request = args["request"]
-        return running(args["identity"], arguments(request), (request["api_url"], request["console_url"]))
-    if operation == "members-wait":
-        from full_stack_process_monitor import wait_members
-        return wait_members(args["tree"], timeout=0)
-    if operation == "controller":
-        return controller_observation(Path(args["run"]))
-    if operation == "identity":
-        return process_identity(args["pid"])
-    if operation == "completion":
-        return completion_binding(args["tree"])
     if operation == "tree-stop":
         return terminate_owned_process_tree(args["tree"], crash=args["crash"])
-    if operation == "tree-read":
-        return read_process_tree(Path(args["output"]), "rustfs", args["scope_id"])
     if operation == "recover-controller":
         return recover_run_lock(backend, Path(args["run"]), args["owner"], verify_results=True)
     if operation == "cache-stop":

@@ -61,6 +61,15 @@ fn context_loading_and_guard_are_read_only_and_bind_every_document() {
     let state_before = fs::read(input.run.join("state.json")).unwrap();
     let value = input.load(&mut runtime).unwrap();
     assert!(runtime.events.is_empty());
+    let native = query::dispatch(
+        &input.backend,
+        "service-context",
+        &json!({
+            "review":input.review,"environment":input.bootstrap
+        }),
+    )
+    .unwrap();
+    assert_eq!(native, value);
     assert_eq!(value["history"]["initial_complete"], false);
     assert_eq!(
         fs::read(input.run.join("state.json")).unwrap(),

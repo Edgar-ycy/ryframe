@@ -42,7 +42,7 @@ pub(crate) fn run(backend: &Path, run_dir: &Path) -> Result<Value> {
     }))
 }
 
-fn observe_controller(run_dir: &Path, state_value: &Value) -> Result<Value> {
+pub(crate) fn observe_controller(run_dir: &Path, state_value: &Value) -> Result<Value> {
     let state_before = json_io::read(&run_dir.join("state.json"))?;
     let owner = lock::owner_observation(run_dir)?;
     let observed = if let Some((descriptor, value)) = owner {
