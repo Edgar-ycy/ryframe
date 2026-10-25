@@ -25,7 +25,7 @@ def transport(backend, request, private, checkpoint, *, password=None):
 
 
 def _port(backend, directory, operation, arguments):
-    from devex_clone_cache_process import inspect_start, observe, predecessor_status, start, status, stop
+    from devex_clone_cache_process import inspect_start, observe, start, stop
     manifest = lambda: read_json(directory / "manifest.json")
     checkpoint = lambda spec: _invoke(backend, directory, "guard", **spec)
     if operation == "validate":
@@ -40,10 +40,6 @@ def _port(backend, directory, operation, arguments):
         return None
     if operation == "inspect":
         return inspect_start(arguments["request"], Path(arguments["output"]))
-    if operation == "status":
-        return status(arguments["request"], arguments["runtime"])
-    if operation == "predecessor":
-        return predecessor_status(arguments["request"], arguments["runtime"], arguments["effective"])
     if operation == "stop":
         return stop(arguments["request"], arguments["private"], arguments["runtime"], Path(arguments["output"]))
     if operation == "observe":

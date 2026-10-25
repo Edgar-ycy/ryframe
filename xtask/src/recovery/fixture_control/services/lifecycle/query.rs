@@ -15,7 +15,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
         }
         "service-observe" => {
             exact(args, &["services"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             observation::observe(&mut runtime, backend, &args["services"])
         }
         "service-run" => {

@@ -19,6 +19,7 @@ pub(super) fn handles(operation: &str) -> bool {
     matches!(
         operation,
         "review-successor"
+            | "cache-status"
             | "storage-running"
             | "members-wait"
             | "controller"
@@ -57,6 +58,10 @@ impl NativeRuntime {
     fn primitive(&mut self, operation: &str, args: Value) -> Result<Value> {
         super::primitive::validate(&self.backend, operation, &args)?;
         match operation {
+            "cache-status" => crate::recovery::clone::native::cache::readonly::status(
+                &self.backend, &args["request"], &args["runtime"],
+                (!args["effective"].is_null()).then_some(&args["effective"]))
+                .map_err(|_| model::error("缓存原生观察失败；核对 tools.toml 的 [verification.linux_observer] 双端路径、发行版/用户/UID、来源 SHA 与完整来源/ELF 摘要，并核对冻结收据、进程代次和端口占用；保留现场，禁止回退 Python 或自动重放")),
             "review-successor" => {
                 let (code, result) =
                     crate::recovery::fixture_control::environment::protocol::execute(
@@ -153,6 +158,10 @@ impl Runtime for NativeRuntime {
     fn call(&mut self, operation: &str, args: Value) -> Result<Value> {
         let backend = self.backend.clone();
         match operation {
+            "observe" => {
+                document::exact(&args, &["services"], "只读服务观察")?;
+                super::observation::observe(self, &backend, &args["services"])
+            }
             "context" => {
                 document::exact(&args, &["review", "environment"], "只读服务上下文")?;
                 context::load(

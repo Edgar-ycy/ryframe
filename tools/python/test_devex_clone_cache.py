@@ -132,7 +132,6 @@ class CacheFixture(unittest.TestCase):
         stack.enter_context(patch.object(cache, "transport", return_value=self.call))
         for name in ("start", "inspect", "observe", "stop"):
             stack.enter_context(patch.object(process, "inspect_start" if name == "inspect" else name, side_effect=getattr(self, name)))
-        stack.enter_context(patch.object(process, "status", side_effect=lambda *_: {"state": "running" if self.alive else "stopped"}))
         return stack
 
     def execute(self, mode, *, outer_failure=False):

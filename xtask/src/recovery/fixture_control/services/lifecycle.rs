@@ -71,6 +71,17 @@ pub(crate) fn execute(
     write: bool,
 ) -> Result<Value> {
     let outcome = (|| {
+        if operation == "status" {
+            return execute_with(
+                &mut readonly::NativeRuntime::new(backend),
+                backend,
+                operation,
+                review,
+                environment,
+                owner,
+                write,
+            );
+        }
         let mut runtime = runtime::PythonRuntime::new(backend)?;
         execute_with(
             &mut runtime,

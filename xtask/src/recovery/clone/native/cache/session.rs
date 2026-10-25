@@ -11,6 +11,7 @@ pub(super) trait Runtime {
 }
 
 struct Stream<'a, R, W> {
+    backend: &'a Path,
     input: &'a mut R,
     output: &'a mut W,
     sequence: u64,
@@ -18,6 +19,9 @@ struct Stream<'a, R, W> {
 
 impl<R: BufRead, W: Write> Runtime for Stream<'_, R, W> {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if matches!(operation, "status" | "predecessor") {
+            return super::readonly::port(self.backend, operation, &arguments);
+        }
         self.sequence += 1;
         writeln!(
             self.output,
@@ -57,7 +61,9 @@ pub(super) fn execute(
         return Err(rejected("缓存阶段协议版本或类型无效"));
     }
     let arguments = &value["arguments"];
-    if arguments["action"] == "binding" && arguments["parameters"]["owned_lock_identity"].is_null()
+    if arguments["action"] == "status"
+        || (arguments["action"] == "binding"
+            && arguments["parameters"]["owned_lock_identity"].is_null())
     {
         // 当前写控制器的初始化锁不能由跨进程整数冒认；其余查询不再回调 Python。
         return super::binding::execute_stage(backend, arguments, None);
@@ -66,6 +72,7 @@ pub(super) fn execute(
         backend,
         &value["arguments"],
         &mut Stream {
+            backend,
             input,
             output,
             sequence: 0,
@@ -91,6 +98,7 @@ mod tests {
             let mut input = Cursor::new(format!("{reply}\n").into_bytes());
             let mut output = Vec::new();
             let mut runtime = Stream {
+                backend: std::path::Path::new("."),
                 input: &mut input,
                 output: &mut output,
                 sequence: 0,
@@ -106,6 +114,7 @@ mod tests {
         let mut input = Cursor::new(vec![b' '; 1024 * 1024 + 1]);
         let mut output = Vec::new();
         let mut runtime = Stream {
+            backend: std::path::Path::new("."),
             input: &mut input,
             output: &mut output,
             sequence: 0,
@@ -117,12 +126,13 @@ mod tests {
         );
         let mut output = Vec::new();
         let mut runtime = Stream {
+            backend: std::path::Path::new("."),
             input: &mut input,
             output: &mut output,
             sequence: 0,
         };
         assert_eq!(
-            runtime.call("status", json!({})).unwrap(),
+            runtime.call("inspect", json!({})).unwrap(),
             json!({"state":"stopped"})
         );
     }
@@ -160,5 +170,21 @@ mod tests {
         );
         assert!(!directory.path().join("cache-target").exists());
         assert!(!directory.path().join("run.lock").exists());
+    }
+
+    #[test]
+    fn status_and_predecessor_reject_invalid_requests_without_python_callbacks() {
+        for operation in ["status", "predecessor"] {
+            let mut input = Cursor::new(Vec::<u8>::new());
+            let mut output = Vec::new();
+            let mut runtime = Stream {
+                backend: std::path::Path::new("."),
+                input: &mut input,
+                output: &mut output,
+                sequence: 0,
+            };
+            assert!(runtime.call(operation, json!({})).is_err());
+            assert!(output.is_empty());
+        }
     }
 }

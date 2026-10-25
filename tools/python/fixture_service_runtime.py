@@ -33,7 +33,6 @@ def dispatch(backend, operation, args):
     from full_stack_process_tree import terminate_owned_process_tree
     from devex_clone_cache_process import start, stop
     schemas = {
-        "cache-status": {"request", "runtime", "effective"},
         "tree-stop": {"tree", "crash"}, "recover-controller": {"run", "owner"},
         "cache-stop": {"request", "private", "runtime", "output"},
         "cache-start": {"request", "private", "output", "context", "running"},
@@ -45,10 +44,6 @@ def dispatch(backend, operation, args):
     for key in ("output", "run"):
         if key in args:
             local_path(backend, args[key])
-    if operation == "cache-status":
-        from devex_clone_cache_process import status, predecessor_status
-        return (status(args["request"], args["runtime"]) if args["effective"] is None else
-                predecessor_status(args["request"], args["runtime"], args["effective"]))
     if operation == "tree-stop":
         return terminate_owned_process_tree(args["tree"], crash=args["crash"])
     if operation == "recover-controller":

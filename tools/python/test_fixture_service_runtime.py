@@ -33,17 +33,6 @@ class FixtureServiceRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.dispatch(ROOT, "tree-stop", {"tree": {"exact": True}, "crash": False}), False)
         stop.assert_called_once_with({"exact": True}, crash=False)
 
-    def test_cache_status_preserves_original_and_explicit_successor_requests(self):
-        request, receipt, successor = {"original": True}, {"runtime": True}, {"successor": True}
-        with (patch("devex_clone_cache_process.status", return_value={"state": "stopped"}) as status,
-              patch("devex_clone_cache_process.predecessor_status", return_value={"state": "running"}) as predecessor):
-            self.assertEqual(runtime.dispatch(ROOT, "cache-status", {"request": request,
-                             "runtime": receipt, "effective": None}), {"state": "stopped"})
-            self.assertEqual(runtime.dispatch(ROOT, "cache-status", {"request": request,
-                             "runtime": receipt, "effective": successor}), {"state": "running"})
-        status.assert_called_once_with(request, receipt)
-        predecessor.assert_called_once_with(request, receipt, successor)
-
     def test_start_passes_supervision_and_guard_callback_without_stage_logic(self):
         context = {"backend": str(ROOT), "run": str(ROOT / ".local-tests/run")}
         arguments = {"request": {}, "private": {}, "output": str(ROOT / ".local-tests/output"),

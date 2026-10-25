@@ -18,10 +18,27 @@ pub struct ToolSettings {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct VerificationSettings {
+    pub linux_observer: Option<LinuxObserverSettings>,
     /// 检查工具的 Python 入口；相对路径以后端工作区为基准，不得包含父跳转或控制字符。
     pub python_program: Option<PathBuf>,
     /// 检查工具的 Node 入口；相对路径以后端工作区为基准，不得包含父跳转或控制字符。
     pub node_program: Option<PathBuf>,
+}
+
+/// 只读 Linux 观察器的显式双端路径与冻结来源；不读取环境覆盖。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LinuxObserverSettings {
+    pub distribution: String,
+    pub user: String,
+    pub uid: u32,
+    pub program: PathBuf,
+    pub linux_program: String,
+    pub source_root: PathBuf,
+    pub linux_source_root: String,
+    pub source_commit: String,
+    pub sha256: String,
+    pub source_sha256: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -145,6 +162,38 @@ fn merge(base: &mut toml::Value, overlay: toml::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_observer_is_optional_and_rejects_partial_unknown_or_mistyped_bindings() {
+        assert!(
+            ToolSettings::default()
+                .verification
+                .linux_observer
+                .is_none()
+        );
+        let value = r#"[verification.linux_observer]
+distribution='Ubuntu-24.04'
+user='fixture'
+uid=1000
+program='D:/tool/xtask'
+linux_program='/mnt/d/tool/xtask'
+source_root='D:/source'
+linux_source_root='/mnt/d/source'
+source_commit='0123456789012345678901234567890123456789'
+sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+"#;
+        let settings: ToolSettings = toml::from_str(value).unwrap();
+        assert_eq!(settings.verification.linux_observer.unwrap().uid, 1000);
+        for invalid in [
+            value.replace("uid=1000", "uid=true"),
+            value.replace("uid=1000", "uid=-1"),
+            value.replace("uid=1000", ""),
+            format!("{value}password_env='APP_PASSWORD'\n"),
+        ] {
+            assert!(toml::from_str::<ToolSettings>(&invalid).is_err());
+        }
+    }
 
     #[test]
     fn development_local_file_overrides_public_path_and_replaces_targets() {

@@ -270,6 +270,43 @@ fn frozen_receipts_bind_generation_tools_directory_and_fail_unknown_launches() {
     let unknown = Fixture::new();
     unknown.intent();
     assert!(evidence::inspect(&unknown.request, &unknown.output).is_err());
+    let before = std::fs::read_dir(&unknown.output).unwrap().count();
+    assert!(
+        super::readonly::status(
+            &crate::workspace::root_dir(),
+            &unknown.request,
+            &json!({"output":unknown.output}),
+            None
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read_dir(&unknown.output).unwrap().count(), before);
+
+    let partial = Fixture::new();
+    partial.intent();
+    partial.write(
+        "partial.json",
+        json!({"state":"not_started",
+        "request_sha256":digest::plan_hash(&partial.request).unwrap(),
+        "intent":common::binding(&partial.output.join("intent.json")).unwrap(),
+        "launcher_pid":std::process::id(),"launcher_returncode":1,
+        "authorization_sent":false,"linux_cleanup":null}),
+    );
+    let receipt = evidence::inspect(&partial.request, &partial.output).unwrap();
+    let before = std::fs::read(partial.output.join("partial.json")).unwrap();
+    let error = super::readonly::status(
+        &crate::workspace::root_dir(),
+        &partial.request,
+        &receipt,
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("launcher 仍存活"));
+    assert_eq!(
+        std::fs::read(partial.output.join("partial.json")).unwrap(),
+        before
+    );
 }
 
 #[cfg(windows)]

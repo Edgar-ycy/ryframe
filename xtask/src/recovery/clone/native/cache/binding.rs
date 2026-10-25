@@ -70,6 +70,7 @@ struct BindingRuntime<'a> {
 impl session::Runtime for BindingRuntime<'_> {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
         match operation {
+            "status" | "predecessor" => super::readonly::port(self.backend, operation, &arguments),
             "validate" => {
                 document::exact(
                     &arguments,

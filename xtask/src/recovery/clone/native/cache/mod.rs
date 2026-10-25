@@ -3,9 +3,11 @@ pub(crate) mod binding;
 mod evidence;
 mod facts;
 mod history;
+mod linux_observer;
 mod markers;
 mod model;
 mod process;
+pub(crate) mod readonly;
 mod request;
 mod session;
 mod stage;
@@ -16,6 +18,9 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = linux_observer::run_hidden_if_requested() {
+        return Some(code);
+    }
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.first().map(String::as_str) != Some("__cache-process") {
         return None;
