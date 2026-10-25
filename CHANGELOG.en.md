@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- The formal browser credential broker now strictly reads the current administrator TOML bound by the bootstrap, reusing file-binding and account parsing checks plus the existing password policy. Missing, changed, or invalid credentials fail closed; the broker no longer reads the initial password and retains the actual credential-read requirement and existing local protocol.
+
 - Route fresh-target initialize and resume-initialize through the formal Rust entry, binding configuration directories, reset and migration receipts, inventories and guarded publication, and remove the old Python initialization writer. Bind migration resumes to the complete interrupted file before-image, preserving and strictly distinguishing historical failed read-only receipts from newly produced evidence. Cover registered-restart markers, read-only publication successors and confirmation failure after successful writes; unknown writes remain ineligible for replay.
 
 - Preserve redacted underlying causes for independent tenant database migration and internal diagnostics, share failures across concurrent pool waiters, and keep public error responses unchanged.
