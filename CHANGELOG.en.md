@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Return 503 with retry guidance consistently for tenant business reads and writes when data-scope projections are missing, unready or stale. Preserve strict versions and transaction fences, avoid misleading product-configuration or login-refresh errors, and apply the same classification in generated repositories.
+
 - Fix valid user-role assignment returning 404 in ordinary tenants that intentionally have no super-administrator role. Remove the redundant super-role precheck while preserving self-assignment restrictions, transactional role ownership and super-administrator checks, and old-token invalidation after authorization changes.
 
 - Classify driver-reported foreign-key violations consistently: deleting a referenced parent or writing a reference to a missing parent returns 409, while connection and transaction failures retain their 503 classification. Do not infer foreign-key violations from error text or expose underlying SQL or field values in conflict responses.
