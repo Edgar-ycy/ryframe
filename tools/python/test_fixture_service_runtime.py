@@ -44,6 +44,15 @@ class FixtureServiceRuntimeTests(unittest.TestCase):
             start.call_args.args[7]()
             self.assertTrue(start.call_args.kwargs["supervised"])
             guard.assert_called_once_with(context, {"bound": True})
+        private = {"APP_ENV": "test", "TEMP": str(ROOT / ".local-tests/tmp"), "TMP": str(ROOT / ".local-tests/tmp")}
+        cache = {key: arguments[key] for key in ("request", "output", "context", "running")}
+        cache["private"] = private
+        with (patch("devex_clone_cache_process.start", return_value={"started": True}) as start,
+              patch("reference_fixture_service_context.guard") as guard):
+            self.assertEqual(runtime.dispatch(ROOT, "cache-start", cache), {"started": True})
+            self.assertIs(start.call_args.args[1], private)
+            start.call_args.args[3]()
+        guard.assert_called_once_with(context, arguments["running"])
 
     def test_private_process_rejects_bad_protocol_without_echoing_input(self):
         cases = [b'{"format_version":1,"format_version":2,"password":"private-marker"}',

@@ -410,15 +410,17 @@ class CacheProcessTests(unittest.TestCase):
         self.assertFalse((self.output / "partial.json").exists())
 
     def test_child_environment_contains_only_selector_and_host_runtime(self):
+        private = {"APP_ENV": "test", "TEMP": str(self.root), "TMP": str(self.root)}
         with patch.dict(os.environ, {"APP_REDIS_PASSWORD": "ambient-secret", "APP_ENV": "prod",
                                      "AWS_SECRET_ACCESS_KEY": "ambient-aws", "RYFRAME_SECRET": "ambient-private"}), \
                 patch("devex_clone_source_proof.require_closed_port"), \
                 patch.object(process, "launch_process", side_effect=OSError("constructor unknown")) as popen:
             with self.assertRaises(OSError):
-                process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
+                process.start(self.request, private, self.output, lambda: None)
         child_environment = popen.call_args.kwargs["env"]
         self.assertEqual({key: value for key, value in child_environment.items() if key.upper().startswith("APP_")},
                          {"APP_ENV": "test"})
+        self.assertEqual({key: child_environment[key] for key in private}, private)
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", child_environment)
         self.assertNotIn("RYFRAME_SECRET", child_environment)
         public = ["intent.json", "failure.json"]
@@ -429,10 +431,16 @@ class CacheProcessTests(unittest.TestCase):
         self.assertNotIn(self.request["password"], json.dumps(popen.call_args.args))
 
     def test_legacy_child_environment_rejected_before_any_launch_intent(self):
-        with patch.object(process, "launch_process") as popen, self.assertRaises(ValueError):
-            process.start(self.request, {"APP_REDIS_PASSWORD": "ambient-secret"}, self.output, lambda: None)
-        popen.assert_not_called()
-        self.assertEqual(list(self.output.iterdir()), [])
+        for environment in ({"APP_REDIS_PASSWORD": "ambient-secret"},
+                            {"APP_ENV": "test", "AWS_SECRET_ACCESS_KEY": "ambient-secret"},
+                            {"APP_ENV": "test", "rediscli_auth": "ambient-secret"},
+                            {"APP_ENV": "test", "PATH": "unbound-host-path"},
+                            {"APP_ENV": "prod"}, {"APP_ENV": "test", "TEMP": 123},
+                            {"APP_ENV": "test", "TEMP": "one", "temp": "two"}):
+            with self.subTest(keys=list(environment)), patch.object(process, "launch_process") as popen, self.assertRaises(ValueError):
+                process.start(self.request, environment, self.output, lambda: None)
+            popen.assert_not_called()
+            self.assertEqual(list(self.output.iterdir()), [])
 
     def test_guard_before_popen_has_no_intent(self):
         with patch.object(process, "launch_process") as popen, self.assertRaises(RuntimeError):

@@ -36,6 +36,29 @@ fn validates_exact_request_predecessor_and_direct_password() {
         let error = model::password(&invalid).unwrap_err();
         assert!(!error.to_string().contains("hidden-secret"));
     }
+    let private = json!({"APP_ENV":"test","TEMP":"D:/private/tmp","TMP":"D:/private/tmp"});
+    assert_eq!(
+        super::request::run(
+            "environment-select",
+            &json!({"private":{"environment":private}})
+        )
+        .unwrap(),
+        private
+    );
+    for environment in [
+        json!({"APP_ENV":"test","APP_REDIS_PASSWORD":"hidden-secret"}),
+        json!({"APP_ENV":"test","PATH":"unbound-path"}),
+        json!({"APP_ENV":"prod"}),
+        json!({"APP_ENV":"test","TEMP":123}),
+        json!({"APP_ENV":"test","TEMP":"one","temp":"two"}),
+    ] {
+        let error = super::request::run(
+            "environment-select",
+            &json!({"private":{"environment":environment}}),
+        )
+        .unwrap_err();
+        assert!(!error.to_string().contains("hidden-secret"));
+    }
     let mut wrong = request.clone();
     wrong["port"] = json!(true);
     assert!(model::validate(&root, &wrong, false).is_err());

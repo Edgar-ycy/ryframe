@@ -33,14 +33,7 @@ pub(super) fn run(operation: &str, a: &Value) -> Result<Value> {
     match operation {
         "environment-select" => {
             doc::exact(a, &["private"], "缓存私有配置选择")?;
-            doc::exact(&a["private"], &["environment"], "缓存私有环境")?;
-            if a["private"]["environment"] != json!({"APP_ENV":"test"}) {
-                return Err(
-                    "缓存恢复私有环境只能包含 APP_ENV=test；连接与密码必须来自已绑定配置文件"
-                        .into(),
-                );
-            }
-            Ok(a["private"]["environment"].clone())
+            private_environment(&a["private"])
         }
         "environment-model" => {
             doc::exact(a, &["request", "redis"], "缓存配置端点")?;
@@ -101,6 +94,31 @@ pub(super) fn run(operation: &str, a: &Value) -> Result<Value> {
         _ => Err(rejected("未知缓存模型操作")),
     }
 }
+fn private_environment(private: &Value) -> Result<Value> {
+    doc::exact(private, &["environment"], "缓存私有环境")?;
+    let values = doc::object(&private["environment"], "缓存私有环境映射")?;
+    let mut names = std::collections::BTreeSet::new();
+    for (key, value) in values {
+        let name = key.to_ascii_uppercase();
+        if !matches!(name.as_str(), "APP_ENV" | "TEMP" | "TMP")
+            || !names.insert(name)
+            || !value
+                .as_str()
+                .is_some_and(|text| !text.is_empty() && !text.contains('\0'))
+        {
+            return Err(rejected(
+                "缓存私有环境只允许唯一的 APP_ENV、TEMP、TMP 文本字段；请将连接与密码写入绑定配置文件",
+            ));
+        }
+    }
+    if values.get("APP_ENV") != Some(&json!("test")) {
+        return Err(rejected(
+            "缓存恢复必须明确选择 APP_ENV=test；请核对绑定的私有环境文件",
+        ));
+    }
+    Ok(private["environment"].clone())
+}
+
 fn environment(request: &Value, redis: &Value) -> Result<()> {
     doc::object(redis, "缓存恢复配置文件的 redis 配置表")?;
     let expected =

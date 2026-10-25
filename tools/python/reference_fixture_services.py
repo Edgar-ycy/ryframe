@@ -275,7 +275,7 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
         number = begin(run, "cache-target", "initial", sources)
         controller = bind_controller_attempt(run, number, owner)
         try:
-            runtime = start_redis(request, configured(private), output, guard)
+            runtime = start_redis(request, private, output, guard)
             result = {"service": "redis", "runtime": runtime, "request_sha256": plan_hash(request),
                       "controller": controller, "remote_writes": 0}
             finish(run, number, result=result)
