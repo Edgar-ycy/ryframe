@@ -6,7 +6,7 @@ use std::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use super::{ALLOWED_AFTER_CLOSE, latest};
+use super::latest;
 use crate::recovery::clone::native::{json as document, resources::common};
 
 struct Fixture {
