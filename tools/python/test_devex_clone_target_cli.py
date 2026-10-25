@@ -401,14 +401,16 @@ class TargetCliTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cli.dispatch(prepare, self.backend)
         prepare.write = True
-        with patch.object(target_cli, "prepare", return_value={"status": "prepared"}) as operation:
+        with patch("devex_clone_target_binding._native", return_value={"status": "prepared"}) as operation:
             self.assertEqual(cli.dispatch(prepare, self.backend)["status"], "prepared")
-            operation.assert_called_once_with(self.backend, self.workspace, self.request,
-                                              self.environment, self.storage_run)
+            operation.assert_called_once_with(
+                "fresh-prepare", self.backend, workspace=str(self.workspace), request=str(self.request),
+                environment=str(self.environment), storage_run=str(self.storage_run), write=True)
         resume = self.args("resume-prepare")
-        with patch.object(target_cli, "resume_prepare", return_value={"status": "prepared"}) as operation:
+        with patch("devex_clone_target_binding._native", return_value={"status": "prepared"}) as operation:
             self.assertEqual(cli.dispatch(resume, self.backend)["status"], "prepared")
-            operation.assert_called_once_with(self.backend, self.workspace)
+            operation.assert_called_once_with("fresh-resume-prepare", self.backend,
+                                              workspace=str(self.workspace), write=True)
         resume_initialize = self.args("resume-initialize")
         with patch.object(target_cli, "resume_initialize", return_value={"status": "initialized"}) as operation:
             self.assertEqual(cli.dispatch(resume_initialize, self.backend)["status"], "initialized")

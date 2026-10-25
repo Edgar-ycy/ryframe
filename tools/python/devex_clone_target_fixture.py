@@ -130,7 +130,8 @@ class Fixture:
         config = redis_dir / "redis.conf"; config.write_text("bind 127.0.0.1\n", encoding="utf-8")
         self.request["storage"]["redis"]["configuration"] = {"path": str(config), **file_digest(config)}
         self.request["review"] = {**self.bound(self.local / "review.json", self.review), "canonical_sha256": plan_hash(self.review)}
-        self.linux_path = lambda path: storage.wsl_path(path) if path.drive else path.as_posix()
+        windows_path = storage.wsl_path
+        self.linux_path = lambda path: windows_path(path) if path.drive else path.as_posix()
         self.redis_config = {"bind": "127.0.0.1", "port": "16390", "dir": self.linux_path(redis_dir), "databases": "1",
                              "protected-mode": "yes", "save": "", "appendonly": "no"}
         self.environment = {"APP_ENV": "test"}
