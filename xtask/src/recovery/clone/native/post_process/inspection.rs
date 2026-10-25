@@ -1,7 +1,7 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+use std::process::Command;
 
 use serde_json::{Value, json};
 

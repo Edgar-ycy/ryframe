@@ -35,7 +35,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt", "signal", "net", "time", "sync", "fs", "io-util", "process"] }
+tokio = { workspace = true, features = ["rt", "signal", "net", "time", "sync", "fs", "io-util", "process", "macros"] }
 toml = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 zip = { workspace = true }
