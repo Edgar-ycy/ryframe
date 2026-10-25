@@ -24,7 +24,7 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         let frontend = frontend::Candidate::from_control()?;
         let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
         mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
-        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
+        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_table2_reference(reference_id), CONSTRAINT fk_table2_reference FOREIGN KEY(reference_id) REFERENCES table1(id) ON UPDATE RESTRICT ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "CREATE TABLE unsupported_table (id BIGINT NOT NULL PRIMARY KEY, payload BIT(8) NOT NULL) ENGINE=InnoDB").await?;
         mysql::execute(&database, "INSERT INTO table1(name,price) VALUES('existing','90071992547409.123456')").await?;
         let schema = database.query_one_raw(Statement::from_string(DbBackend::MySql, "SELECT DATABASE() AS name"))
@@ -59,6 +59,7 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
             }
         }
         let installed = snapshot::SourceSnapshot::capture(&root)?;
+        verify_generated_schema(&business).await?;
         let delta = before.changes(&root)?;
         assert!(delta.iter().any(|change| change.relative == Path::new("crates/cli-import-business/src/resources/table1.rs") && change.before.is_none() && change.after.is_some()));
         require_success(import(&root, &configuration, "table1,table2", true)?)?;
@@ -95,6 +96,35 @@ fn import(
     let output = command.output().map_err(message)?;
     configuration.verify()?;
     Ok(output)
+}
+
+async fn verify_generated_schema(business: &Path) -> Result<(), String> {
+    let history: serde_json::Value = serde_json::from_slice(
+        &fs::read(business.join("src/generated/migrations/history.json")).map_err(message)?,
+    )
+    .map_err(message)?;
+    let business = business.to_owned();
+    mysql::run_mysql_test("cli-import-fresh", |database| async move {
+        for resource in history["resources"].as_array().ok_or("缺少迁移资源")? {
+            let initial = &resource["versions"][0];
+            let id = initial["id"].as_str().ok_or("缺少初始迁移 ID")?;
+            super::business_evolution::execute_migration(
+                &database,
+                &business.join(format!("migrations/{id}.rs")),
+            )
+            .await?;
+            let table = resource["descriptor"]["table"]
+                .as_str()
+                .ok_or("缺少迁移表名")?;
+            let actual = ryframe_db::schema::canonical_table_schema(&database, table)
+                .await
+                .map_err(mysql::db_error)?;
+            assert_eq!(actual, initial["canonical"].as_str().ok_or("缺少初始结构")?);
+        }
+        Ok(())
+    })
+    .await;
+    Ok(())
 }
 
 fn import_command(

@@ -19,6 +19,12 @@ pub struct TypedModel {
 #[test]
 fn model_types_compile_without_runtime_api_or_database_features() {
     let descriptor = TypedModel::descriptor();
+    assert!(
+        ryframe_sdk::serde_json::to_value(descriptor)
+            .unwrap()
+            .get("foreign_keys")
+            .is_none()
+    );
     assert_eq!(descriptor.fields.len(), 4);
     assert_eq!(descriptor.frontend_page, Some("@/views/custom/index.vue"));
     assert_eq!(descriptor.primary_key, ["id"]);
@@ -39,6 +45,7 @@ fn model_types_compile_without_runtime_api_or_database_features() {
 
 #[derive(ResourceModel)]
 #[resource(name = "ordered", table = "biz_ordered", database = "tenant", primary_key = ["tenant_id", "id"])]
+#[resource(foreign_key(name="fk_ordered_parent", columns=["tenant_id","order_id"], referenced_table="biz_parent", referenced_columns=["tenant_id","id"], update_rule="CASCADE", delete_rule="RESTRICT", match_option="NONE"))]
 pub struct OrderedModel {
     #[resource(primary_key, auto_increment, column = "order_id")]
     pub id: i64,
@@ -50,6 +57,18 @@ pub struct OrderedModel {
 #[test]
 fn explicit_key_order_is_independent_of_model_field_and_physical_column_order() {
     let descriptor = OrderedModel::descriptor();
+    let key = descriptor.foreign_keys[0];
+    assert_eq!(key.columns, ["tenant_id", "order_id"]);
+    assert_eq!(key.referenced_columns, ["tenant_id", "id"]);
+    assert_eq!(
+        key.update_rule,
+        ryframe_sdk::ResourceForeignKeyAction::Cascade
+    );
+    assert_eq!(
+        key.delete_rule,
+        ryframe_sdk::ResourceForeignKeyAction::Restrict
+    );
+    assert_eq!(key.match_option, ryframe_sdk::ResourceForeignKeyMatch::None);
     assert_eq!(descriptor.frontend_page, None);
     assert_eq!(descriptor.primary_key, ["tenant_id", "id"]);
     assert_eq!(

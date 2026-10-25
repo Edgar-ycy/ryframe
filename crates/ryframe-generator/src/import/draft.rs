@@ -116,7 +116,7 @@ pub fn draft_resource_from_table(
         })
         .chain(table.foreign_keys.iter().map(|foreign_key| {
             format!(
-                "外键 {} 不进入平面资源 DSL，关联行为必须人工确认",
+                "物理外键 {} 已保留；应用关联行为必须人工确认",
                 foreign_key.name
             )
         }))
@@ -142,6 +142,11 @@ pub fn draft_resource_from_table(
             resource: metadata.identity,
             storage: metadata.storage,
             database: DatabaseSpec {
+                foreign_keys: table
+                    .foreign_keys
+                    .iter()
+                    .map(crate::resource::ForeignKeySpec::from)
+                    .collect(),
                 id_generation: if table
                     .columns
                     .iter()

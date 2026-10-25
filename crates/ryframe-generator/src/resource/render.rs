@@ -9,6 +9,7 @@ mod aggregate;
 pub(crate) mod business;
 mod catalog;
 pub(crate) use catalog::access_catalog;
+mod foreign_key;
 mod format;
 pub(crate) use format::rust_assets_in_workspace;
 mod schema;
@@ -79,6 +80,11 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
         }
     }
     validate_relation_targets(&ordered)?;
+    let order = super::foreign_key::order(&ordered)?;
+    let ordered = order
+        .iter()
+        .map(|index| ordered[*index].clone())
+        .collect::<Vec<_>>();
     if let Some(resource) = ordered
         .iter()
         .find(|resource| resource.module == "business")

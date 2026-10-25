@@ -168,6 +168,8 @@ fn table_import_is_deterministic_and_keeps_business_semantics_pending() {
     );
     assert!(first.spec.database.soft_delete.is_none());
     assert!(first.spec.database.audit.is_none());
+    assert_eq!(first.spec.database.foreign_keys[0].name, "fk_order_tenant");
+    assert_eq!(first.spec.database.foreign_keys[0].columns, ["tenant_id"]);
     assert!(!first.spec.database.bootstrap_migration);
     assert_eq!(
         first.pending_fields,

@@ -139,6 +139,8 @@ pub struct ResourceIr {
     pub schema_hash: String,
     pub schema_revision: Option<String>,
     pub indexes: Vec<IndexIr>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub foreign_keys: Vec<super::super::ForeignKeySpec>,
     pub soft_delete: Option<SoftDeleteIr>,
     pub audit: Option<AuditIr>,
     pub fields: Vec<FieldIr>,

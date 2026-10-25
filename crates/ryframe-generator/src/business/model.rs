@@ -111,6 +111,7 @@ pub(super) fn descriptor_to_ir(
             bootstrap_migration: true,
             schema_revision: None,
             indexes,
+            foreign_keys: descriptor.foreign_keys.clone(),
             soft_delete,
             audit,
         },

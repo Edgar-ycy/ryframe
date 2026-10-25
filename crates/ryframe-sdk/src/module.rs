@@ -158,9 +158,15 @@ impl BusinessModuleBuilder {
         #[cfg(feature = "migration")]
         {
             let mut module = self.module;
-            module
-                .migrations
-                .sort_by(|left, right| left.id().cmp(right.id()));
+            if module
+                .resources
+                .iter()
+                .all(|resource| resource.foreign_keys.is_empty())
+            {
+                module
+                    .migrations
+                    .sort_by(|left, right| left.id().cmp(right.id()));
+            }
             module
         }
         #[cfg(not(feature = "migration"))]

@@ -33,6 +33,98 @@ fn content<'a>(catalog: &'a ryframe_generator::GeneratedCatalog, suffix: &str) -
         .content
 }
 
+fn physical_resources() -> Vec<ResourceIr> {
+    let make = |name: &str| {
+        let source = include_str!("../fixtures/order.toml").replace("order", name);
+        let mut spec = ResourceSpec::parse(&source, "physical.toml").unwrap();
+        spec.database.primary_key = vec!["tenant_id".into(), "id".into()];
+        spec.database.indexes.push(ryframe_generator::IndexSpec {
+            name: format!("uk_{name}_id"),
+            fields: vec!["id".into()],
+            unique: true,
+        });
+        spec
+    };
+    let parent = make("z_parent");
+    let mut child = make("a_child");
+    child
+        .database
+        .foreign_keys
+        .push(ryframe_generator::ForeignKeySpec {
+            name: "fk_child_parent".into(),
+            columns: vec!["tenant_id".into(), "id".into()],
+            referenced_table: parent.database.table.clone(),
+            referenced_columns: vec!["tenant_id".into(), "id".into()],
+            update_rule: ryframe_generator::import::ForeignKeyAction::Cascade,
+            delete_rule: ryframe_generator::import::ForeignKeyAction::Restrict,
+            match_option: ryframe_generator::import::ForeignKeyMatch::None,
+        });
+    vec![child, parent]
+        .into_iter()
+        .map(|spec| normalize_resource(spec, "physical.toml", "physical").unwrap())
+        .collect()
+}
+
+#[test]
+fn physical_foreign_keys_preserve_tenant_boundary_and_parent_first_catalog() {
+    let resources = physical_resources();
+    let catalog = render_resources(&resources).unwrap();
+    let migration = content(&catalog, "a_child/migration.rs");
+    assert!(migration.contains("FOREIGN KEY (`tenant_id`, `id`) REFERENCES `biz_z_parent` (`tenant_id`, `id`) ON UPDATE CASCADE ON DELETE RESTRICT"));
+    let tables = content(&catalog, "ryframe-tenant-db/src/generated/catalog.rs");
+    assert!(
+        tables.find("table: \"biz_z_parent\"").unwrap()
+            < tables.find("table: \"biz_a_child\"").unwrap()
+    );
+    assert!(tables.contains("foreign_key_dependencies: &[\"biz_z_parent\"]"));
+    assert!(tables.contains("FOREIGN KEY") && tables.contains("CASCADE"));
+    assert!(!content(&catalog, "a_child/model.rs").contains("Detail"));
+    for resource in &resources {
+        assert!(resource.relations.is_empty());
+    }
+}
+
+#[test]
+fn physical_foreign_keys_reject_unresolved_cycles_scope_and_incompatible_columns() {
+    for scenario in 0..9 {
+        let mut resources = physical_resources();
+        match scenario {
+            0 => resources[0].foreign_keys[0].referenced_table = "outside_schema.parent".into(),
+            1 => resources[0].foreign_keys[0].referenced_table = "unmanaged".into(),
+            2 => resources[1].storage = ryframe_generator::StorageKind::ControlRow,
+            3 => {
+                resources[0].foreign_keys[0].columns = vec!["id".into()];
+                resources[0].foreign_keys[0].referenced_columns = vec!["id".into()];
+            }
+            4 => resources[0].foreign_keys[0].referenced_columns.reverse(),
+            5 => {
+                resources[1]
+                    .fields
+                    .iter_mut()
+                    .find(|field| field.name == "id")
+                    .unwrap()
+                    .sql_type = Some("INT".into())
+            }
+            6 => {
+                let mut key = resources[0].foreign_keys[0].clone();
+                key.name = "fk_parent_child".into();
+                key.referenced_table = resources[0].table.clone();
+                resources[1].foreign_keys.push(key);
+            }
+            7 => {
+                let mut key = resources[0].foreign_keys[0].clone();
+                key.referenced_table = resources[0].table.clone();
+                resources[1].foreign_keys.push(key);
+            }
+            _ => {
+                resources[0].foreign_keys[0].delete_rule =
+                    ryframe_generator::import::ForeignKeyAction::SetNull
+            }
+        }
+        assert!(render_resources(&resources).is_err(), "scenario={scenario}");
+    }
+}
+
 #[test]
 fn belongs_to_relation_generates_one_read_slice_and_all_registrations() {
     let order = related_order("id", "order");

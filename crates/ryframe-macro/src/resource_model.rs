@@ -3,6 +3,7 @@ use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Field, Fields, LitStr, parse_macro_input};
 
 mod field;
+mod foreign_key;
 mod index;
 
 pub(crate) fn expand(input: TokenStream) -> TokenStream {
@@ -37,6 +38,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         .collect::<syn::Result<Vec<_>>>()?;
     let primary_key = ordered_primary_key(attributes.primary_key, &parsed_fields, input)?;
     let indexes = index::tokens(&attributes.indexes, &parsed_fields, input)?;
+    let foreign_keys = foreign_key::tokens(&attributes.foreign_keys)?;
     let field_descriptors = parsed_fields.iter().map(|field| &field.tokens);
     let model = &input.ident;
     let route = optional_string(attributes.route);
@@ -62,6 +64,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     menu_order: #menu_order,
                     primary_key: &[#(#primary_key),*],
                     indexes: &[#(#indexes),*],
+                    foreign_keys: &[#(#foreign_keys),*],
                     fields: &[#(#field_descriptors),*],
                 }
             }
@@ -82,6 +85,7 @@ struct ResourceAttributes {
     menu_order: u16,
     primary_key: Option<syn::ExprArray>,
     indexes: Vec<index::Index>,
+    foreign_keys: Vec<foreign_key::ForeignKey>,
 }
 
 fn parse_resource_attributes(input: &DeriveInput) -> syn::Result<ResourceAttributes> {
@@ -97,6 +101,7 @@ fn parse_resource_attributes(input: &DeriveInput) -> syn::Result<ResourceAttribu
     let mut menu_order = 100_u16;
     let mut primary_key = None;
     let mut indexes = Vec::new();
+    let mut foreign_keys = Vec::new();
     for attribute in &input.attrs {
         if !attribute.path().is_ident("resource") {
             continue;
@@ -127,6 +132,8 @@ fn parse_resource_attributes(input: &DeriveInput) -> syn::Result<ResourceAttribu
                     return Err(meta.error("primary_key 只能声明一次"));
                 }
                 primary_key = Some(meta.value()?.parse::<syn::ExprArray>()?);
+            } else if meta.path.is_ident("foreign_key") {
+                foreign_keys.push(foreign_key::parse(&meta)?);
             } else if meta.path.is_ident("index") {
                 indexes.push(index::parse(&meta)?);
             } else {
@@ -148,6 +155,7 @@ fn parse_resource_attributes(input: &DeriveInput) -> syn::Result<ResourceAttribu
         menu_order,
         primary_key,
         indexes,
+        foreign_keys,
     })
 }
 
@@ -346,6 +354,21 @@ mod tests {
                 .to_string()
                 .contains("sql_type 只能声明一次")
         );
+    }
+
+    #[test]
+    fn physical_foreign_key_rules_reject_unknown_or_unsupported_actions() {
+        for (update, matching) in [
+            ("UNKNOWN", "NONE"),
+            ("SET DEFAULT", "NONE"),
+            ("CASCADE", "FULL"),
+        ] {
+            let source = format!(
+                "#[resource(name=\"item\", table=\"biz_item\", database=\"control\", foreign_key(name=\"fk_item_parent\", columns=[\"id\"], referenced_table=\"parent\", referenced_columns=[\"id\"], update_rule={update:?}, delete_rule=\"RESTRICT\", match_option={matching:?}))] struct Item {{ #[resource(primary_key)] id: i64 }}"
+            );
+            let input = syn::parse_str(&source).unwrap();
+            assert!(super::expand_inner(&input).is_err());
+        }
     }
 
     #[test]

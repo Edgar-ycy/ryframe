@@ -23,7 +23,13 @@ pub(super) fn render(resources: &[&ResourceIr], header: &str) -> String {
     let entries = resources
         .iter()
         .enumerate()
-        .map(|(order, resource)| descriptor(resource, order + 1))
+        .map(|(order, resource)| {
+            descriptor(
+                resource,
+                order + 1,
+                "ryframe_application::ports::tenant_data::TenantDataForeignKeyDescriptor",
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let fingerprint = schema_fingerprint(&resources);
@@ -37,7 +43,13 @@ pub(crate) fn render_business_tenant_catalog(resources: &[ResourceIr]) -> String
         .iter()
         .filter(|resource| resource.storage == StorageKind::TenantData)
         .enumerate()
-        .map(|(order, resource)| descriptor(resource, order + 1))
+        .map(|(order, resource)| {
+            descriptor(
+                resource,
+                order + 1,
+                "ryframe_sdk::TenantDataForeignKeyDescriptor",
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
@@ -58,8 +70,8 @@ pub(crate) fn business_tenant_manifest(
             "checksum_columns": resource.fields.iter().map(|field| field.column.as_str()).collect::<Vec<_>>(),
             "column_types": resource.fields.iter().map(schema::data_type).collect::<Vec<_>>(),
             "has_generated_columns": false,
-            "foreign_key_dependencies": [],
-            "foreign_keys": [],
+            "foreign_key_dependencies": super::foreign_key::dependencies(resource),
+            "foreign_keys": super::foreign_key::manifest(resource),
             "schema_canonical": canonical_schema(resource),
         })).collect::<Vec<_>>();
     serde_json::to_string_pretty(&serde_json::json!({"format_version": 1, "tables": tables}))
@@ -104,7 +116,7 @@ fn catalog_entry(resource: &ResourceIr, order: usize) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{}:{}:{}:{}:{}::{}",
+        "{}:{}:{}:{}:{}:{}:{}",
         resource.table,
         order,
         resource.column(
@@ -115,11 +127,14 @@ fn catalog_entry(resource: &ResourceIr, order: usize) -> String {
         ),
         primary_key,
         columns,
+        super::foreign_key::dependencies(resource).join(","),
         canonical_schema(resource),
     )
 }
 
-fn descriptor(resource: &ResourceIr, order: usize) -> String {
+fn descriptor(resource: &ResourceIr, order: usize, foreign_key_type: &str) -> String {
+    let dependencies = super::foreign_key::dependencies(resource);
+    let foreign_keys = super::foreign_key::descriptor(resource, foreign_key_type);
     let primary_key = resource
         .primary_key
         .iter()
@@ -137,7 +152,7 @@ fn descriptor(resource: &ResourceIr, order: usize) -> String {
         .collect::<Vec<_>>();
     let canonical = canonical_schema(resource);
     format!(
-        "    TenantDataTableDescriptor {{\n        table: {table:?},\n        copy_order: {order},\n        tenant_column: {tenant:?},\n        primary_key_cursor_columns: &{primary_key:?},\n        checksum_columns: &{columns:?},\n        column_types: &{types:?},\n        has_generated_columns: false,\n        foreign_key_dependencies: &[],\n        foreign_keys: &[],\n        schema_canonical: {canonical:?},\n    }},",
+        "    TenantDataTableDescriptor {{\n        table: {table:?},\n        copy_order: {order},\n        tenant_column: {tenant:?},\n        primary_key_cursor_columns: &{primary_key:?},\n        checksum_columns: &{columns:?},\n        column_types: &{types:?},\n        has_generated_columns: false,\n        foreign_key_dependencies: &{dependencies:?},\n        foreign_keys: &[{foreign_keys}],\n        schema_canonical: {canonical:?},\n    }},",
         table = resource.table,
         tenant = resource.column(
             resource
@@ -185,18 +200,31 @@ pub(crate) fn canonical_schema(resource: &ResourceIr) -> String {
         }
     }
     output.push_str("]|constraints=[");
-    for (name, _, unique) in indexes {
-        if unique {
-            let kind = if name == "PRIMARY" {
-                "PRIMARY KEY"
-            } else {
-                "UNIQUE"
-            };
-            write!(output, "{name:?}:{kind:?}:{:?};", "YES").expect("写入 String 不会失败");
-        }
+    let mut constraints = indexes
+        .iter()
+        .filter(|(_, _, unique)| *unique)
+        .map(|(name, _, _)| {
+            (
+                *name,
+                if *name == "PRIMARY" {
+                    "PRIMARY KEY"
+                } else {
+                    "UNIQUE"
+                },
+            )
+        })
+        .chain(
+            resource
+                .foreign_keys
+                .iter()
+                .map(|key| (key.name.as_str(), "FOREIGN KEY")),
+        )
+        .collect::<Vec<_>>();
+    constraints.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+    for (name, kind) in constraints {
+        write!(output, "{name:?}:{kind:?}:{:?};", "YES").expect("写入 String 不会失败");
     }
-    // 当前资源 DDL 不生成 CHECK 或外键；逻辑关联不能伪装成物理约束。
-    output.push_str("]|checks=[]|foreign_keys=[]");
+    super::foreign_key::canonical(&mut output, &resource.foreign_keys);
     output
 }
 

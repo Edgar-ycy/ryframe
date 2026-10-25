@@ -221,12 +221,26 @@ fn import_batch(backend: &Path) {
         .clone();
     deleted.name = "del_flag".into();
     soft_minimal.columns.push(deleted);
-    let tables = [
-        import_table("biz_memo"),
-        import_table("biz_memo_item"),
-        minimal,
-        soft_minimal,
-    ];
+    let mut memo_item = import_table("biz_memo_item");
+    memo_item
+        .foreign_keys
+        .push(ryframe_generator::import::ForeignKeyInfo {
+            name: "fk_memo_item_memo".into(),
+            columns: vec!["status".into()],
+            referenced_table: "biz_memo".into(),
+            referenced_columns: vec!["status".into()],
+            update_rule: ryframe_generator::import::ForeignKeyAction::Cascade,
+            delete_rule: ryframe_generator::import::ForeignKeyAction::Restrict,
+            match_option: ryframe_generator::import::ForeignKeyMatch::None,
+        });
+    let mut memo = import_table("biz_memo");
+    memo.indexes.push(IndexInfo {
+        name: "uk_memo_status".into(),
+        columns: vec!["status".into()],
+        unique: true,
+        index_type: "BTREE".into(),
+    });
+    let tables = [memo, memo_item, minimal, soft_minimal];
     plan_import_models(backend, &root, &tables, "control", Some("biz_"))
         .unwrap()
         .write()

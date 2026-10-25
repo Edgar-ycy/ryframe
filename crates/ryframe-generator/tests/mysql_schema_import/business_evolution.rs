@@ -143,7 +143,10 @@ fn generate(
     .map_err(message)
 }
 
-async fn execute_migration(database: &DatabaseConnection, path: &Path) -> Result<(), String> {
+pub(super) async fn execute_migration(
+    database: &DatabaseConnection,
+    path: &Path,
+) -> Result<(), String> {
     let source = syn::parse_file(&fs::read_to_string(path).map_err(message)?).map_err(message)?;
     let constant = source
         .items

@@ -19,6 +19,10 @@ pub(super) fn statements(
     {
         review.push("表名、存储范围、ID 策略或物理主键变化，需要单独审阅数据迁移".to_owned());
     }
+    if before.foreign_keys != after.foreign_keys {
+        review
+            .push("物理外键发生新增、删除或变更，需要单独审阅安全增量迁移；不自动删除约束".into());
+    }
     let old = before
         .fields
         .iter()

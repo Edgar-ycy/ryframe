@@ -41,6 +41,8 @@ pub(crate) struct OwnedResourceDescriptor {
     pub primary_key: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub indexes: Vec<OwnedIndexDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign_keys: Vec<crate::resource::ForeignKeySpec>,
     pub fields: Vec<OwnedFieldDescriptor>,
 }
 

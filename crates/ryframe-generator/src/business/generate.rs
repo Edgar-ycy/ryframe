@@ -37,6 +37,15 @@ pub fn generate_business_package(
         .iter()
         .map(|descriptor| descriptor_to_ir(&package, descriptor))
         .collect::<Result<Vec<_>, _>>()?;
+    let order = crate::resource::foreign_key::order(&resources)?;
+    let resources = order
+        .iter()
+        .map(|index| resources[*index].clone())
+        .collect::<Vec<_>>();
+    let descriptors = order
+        .iter()
+        .map(|index| descriptors[*index].clone())
+        .collect::<Vec<_>>();
     let mut assets = Vec::new();
     for resource in &resources {
         assets.extend(
@@ -212,6 +221,12 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         StorageKind::ControlRow => "ryframe_sdk::ResourceDatabase::Control",
         StorageKind::TenantData => "ryframe_sdk::ResourceDatabase::Tenant",
     };
+    let foreign_keys = descriptor
+        .foreign_keys
+        .iter()
+        .map(crate::resource::foreign_key::descriptor_literal)
+        .collect::<Vec<_>>()
+        .join(", ");
     let fields = descriptor
         .fields
         .iter()
@@ -240,7 +255,7 @@ fn descriptor_literal(resource: &ResourceIr, descriptor: &OwnedResourceDescripto
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "ryframe_sdk::ResourceDescriptor {{ name: {:?}, title: {:?}, table: {:?}, collation: {}, database: {database}, model_module: {:?}, model_type: {:?}, route: {}, frontend_page: {}, owner_field: {}, menu_parent: {}, menu_order: {}, primary_key: &{:?}, indexes: &[{indexes}], fields: &[{fields}] }}",
+        "ryframe_sdk::ResourceDescriptor {{ name: {:?}, title: {:?}, table: {:?}, collation: {}, database: {database}, model_module: {:?}, model_type: {:?}, route: {}, frontend_page: {}, owner_field: {}, menu_parent: {}, menu_order: {}, primary_key: &{:?}, indexes: &[{indexes}], foreign_keys: &[{foreign_keys}], fields: &[{fields}] }}",
         descriptor.name,
         descriptor.title,
         descriptor.table,

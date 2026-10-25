@@ -23,7 +23,7 @@ pub struct IndexInfo {
     pub columns: Vec<String>,
 }
 
-/// 只读来源约束；保留引用动作不代表生成器能够写入该外键。
+/// 只读来源约束；完整候选还须验证受管目标、类型和租户边界。
 #[derive(Debug, Clone, Serialize)]
 pub struct ForeignKeyInfo {
     pub name: String,
@@ -185,6 +185,17 @@ pub(super) fn rust_model_source_named(
             fields,
             if index.unique { ", unique" } else { "" }
         ));
+    }
+    let keys = table
+        .foreign_keys
+        .iter()
+        .map(crate::resource::ForeignKeySpec::from)
+        .collect::<Vec<_>>();
+    crate::resource::foreign_key::local(&keys).map_err(|error| error.to_string())?;
+    for key in &keys {
+        output.push_str(&format!("#[resource(foreign_key(name = {:?}, columns = {:?}, referenced_table = {:?}, referenced_columns = {:?}, update_rule = {:?}, delete_rule = {:?}, match_option = {:?}))]\n",
+            key.name, key.columns, key.referenced_table, key.referenced_columns,
+            crate::resource::foreign_key::action(key.update_rule), crate::resource::foreign_key::action(key.delete_rule), "NONE"));
     }
     output.push_str(&format!("pub struct {model} {{\n"));
     for column in &table.columns {
