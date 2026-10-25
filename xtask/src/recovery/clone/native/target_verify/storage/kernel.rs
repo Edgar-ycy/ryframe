@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::{StorageInputs, Transport, common};
 use crate::Result;
 
-pub(super) fn require_observed_identity(
+pub(crate) fn require_observed_identity(
     identity: &Value,
     observer: &impl super::StorageObserver,
 ) -> Result<()> {

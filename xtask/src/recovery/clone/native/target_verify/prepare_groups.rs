@@ -62,7 +62,7 @@ pub(super) fn partition(
             && union.union(&metadata).cloned().collect::<BTreeSet<_>>() == *names,
         "prepare 文件未被唯一消耗或包含未绑定增量",
     )?;
-    publication_order(backend, target, &groups, &intents, records)?;
+    publication_order(target, &groups, &intents, records)?;
     Ok(groups)
 }
 
@@ -140,7 +140,6 @@ fn metadata(name: &str) -> bool {
 }
 
 fn publication_order(
-    backend: &Path,
     target: &Path,
     groups: &[Group],
     intents: &[(String, Value)],

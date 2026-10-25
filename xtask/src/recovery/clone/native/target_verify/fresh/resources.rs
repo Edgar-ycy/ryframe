@@ -26,7 +26,7 @@ impl<T: Transport> Resources<'_, T> {
             self.inputs.request,
             self.inputs.environment,
             &mut |root, path, value| self.scope.maintenance(root, path, value),
-            &mut authority::ports::require_closed,
+            &mut authority::require_closed,
         )?;
         let selected = selection::load(self.inputs.backend, self.inputs.request, self.run)?;
         let mut descriptor =
