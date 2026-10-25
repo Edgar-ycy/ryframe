@@ -8,9 +8,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::{initialize, message, mysql, role_assignment, sql_initialization};
 
-#[path = "imported_accounts/http.rs"]
-mod http;
-use http::Server;
+use super::account_http::Server;
 
 const USERS: [&str; 2] = ["import_account_a", "import_account_b"];
 const CHOSEN_PASSWORDS: [&str; 2] = ["ImportedAccountA123!", "ImportedAccountB123!"];

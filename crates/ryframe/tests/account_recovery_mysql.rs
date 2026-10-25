@@ -18,6 +18,10 @@ use ryframe_db::{ControlDatabaseCluster, application_ports, migration};
 use ryframe_kernel::{ActorContext, DataScope};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
+#[path = "account_recovery_mysql/imported_accounts/http.rs"]
+mod account_http;
+#[path = "account_recovery_mysql/cache_faults.rs"]
+mod cache_faults;
 #[path = "boot_contract/configuration_fixture.rs"]
 mod configuration_fixture;
 #[path = "account_recovery_mysql/imported_accounts.rs"]
@@ -75,7 +79,7 @@ async fn initial_user_real_redis_repairs_lagging_authorization_after_password_ch
 
 async fn real_redis_password_change(
     database: DatabaseConnection,
-    redis: &RedisClient,
+    redis: &redis_configuration::ScopedClient<RedisClient>,
 ) -> Result<(), String> {
     let hashes = migration::BootstrapHashes::new(
         password::hash("ExplicitAdmin123!").map_err(message)?,
@@ -86,10 +90,11 @@ async fn real_redis_password_change(
         .await
         .map_err(message)?;
     let cache = ryframe::boot::authorization_cache::cache(
-        Some(redis.clone()),
+        Some(redis.client.clone()),
         CacheAvailabilityPolicy::Required,
     );
     let (_, auth) = services_with_cache(database.clone(), cache.clone())?;
+    let auth = Arc::new(auth);
     let initial = auth
         .login("system", "user", "123456")
         .await
@@ -129,6 +134,7 @@ async fn real_redis_password_change(
     assert!(claims.user_authorization_version > initial_version);
     assert_lagging_cache_repaired(redis, &cache, &auth, &claims).await?;
     assert_session_rejected(&auth, &initial).await;
+    cache_faults::verify(&database, redis, &cache, auth, &changed).await?;
     Ok(())
 }
 
