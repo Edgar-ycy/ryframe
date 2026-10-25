@@ -46,11 +46,11 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn new() -> Self {
-        Self::build(false, false)
+        Self::build(false, false, "fixture")
     }
 
     pub(super) fn for_status() -> Self {
-        let fixture = Self::build(true, false);
+        let fixture = Self::build(true, false, "fixture");
         crate::recovery::clone::native::target_verify::published::unlocked_history(
             &fixture.backend,
             &fixture.target.join("initialized.json"),
@@ -60,10 +60,18 @@ impl Fixture {
     }
 
     pub(super) fn for_initialization() -> Self {
-        Self::build(true, true)
+        Self::build(true, true, "fixture")
     }
 
-    fn build(status_registration: bool, decoy: bool) -> Self {
+    pub(super) fn for_recovery() -> Self {
+        Self::build(
+            true,
+            true,
+            &format!("fixture-恢复窗口-中文 空格-{}", "e".repeat(120)),
+        )
+    }
+
+    fn build(status_registration: bool, decoy: bool, workspace_name: &str) -> Self {
         let source = crate::workspace::root_dir();
         let parent = source.join(".local-tests");
         fs::create_dir_all(&parent).unwrap();
@@ -72,7 +80,7 @@ impl Fixture {
             .tempdir_in(parent)
             .unwrap();
         let backend = directory.path().join("backend");
-        let local = backend.join(".local-tests").join("fixture");
+        let local = backend.join(".local-tests").join(workspace_name);
         fs::create_dir_all(&local).unwrap();
         source_repository(&source, &backend);
         fs::create_dir(local.join("target")).unwrap();

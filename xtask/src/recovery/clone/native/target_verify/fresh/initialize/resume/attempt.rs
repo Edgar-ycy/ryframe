@@ -13,6 +13,7 @@ pub(crate) struct Attempt {
     pub(in super::super) session: Value,
     pub(in super::super) intent: PathBuf,
     pub(in super::super) started: PathBuf,
+    intent_binding: Option<Value>,
 }
 impl Attempt {
     pub(crate) fn new(reg: &Registration, state: Value) -> Result<Self> {
@@ -37,6 +38,7 @@ impl Attempt {
             id,
             state,
             session,
+            intent_binding: None,
         })
     }
     pub(in super::super) fn now(&self) -> String {
@@ -50,24 +52,84 @@ impl Attempt {
     ) -> Result<Value> {
         transition::execute(w.inputs.backend, w.inputs.observation_dir, kind, args)
     }
+    pub(in super::super) fn publish_intent<T: Transport>(
+        &mut self,
+        w: &Window<'_, T>,
+        value: &Value,
+    ) -> Result<()> {
+        receipts::write(&self.intent, value)?;
+        self.intent_binding = Some(common::binding(&self.intent)?);
+        Ok(())
+    }
     pub(in super::super) fn command_paths<T: Transport>(
         &self,
         w: &Window<'_, T>,
         label: &str,
+        before: &Value,
     ) -> Result<Vec<PathBuf>> {
-        let prefix = format!("{label}-");
+        use super::super::super::super::{resume_observations, resume_prefix, tree};
+        let intent = common::read_bound(
+            w.inputs.backend,
+            self.intent_binding
+                .as_ref()
+                .ok_or("续作命令缺少已发布intent绑定")?,
+            "续作命令intent",
+        )?;
+        if self.state["mode"] != "inventory" && intent["files_before"] != self.state["files"] {
+            return Err("迁移intent完整前像不同于本次已核验状态".into());
+        }
+        let old = resume_observations::file_map(before)?;
+        let current = resume_observations::file_map(&tree::snapshot(
+            w.inputs.backend,
+            w.inputs.observation_dir,
+            true,
+        )?)?;
+        if old
+            .iter()
+            .any(|(name, value)| current.get(name) != Some(value))
+        {
+            return Err("续作命令期间历史文件缺失或改写，禁止吸收新收据".into());
+        }
+        let historical = if self.state["mode"] == "inventory" {
+            std::collections::BTreeSet::new()
+        } else {
+            resume_prefix::prior_failed_stage(
+                w.inputs.backend,
+                w.inputs.observation_dir,
+                &intent["files_before"],
+                label,
+            )?
+        };
+        let names = current.keys().cloned().collect();
         let mut paths = Vec::new();
-        for entry in std::fs::read_dir(w.inputs.observation_dir)? {
-            let path = entry?.path();
-            let name = path
-                .file_name()
-                .and_then(|v| v.to_str())
-                .ok_or("命令收据文件名无效")?;
-            if name.starts_with(&prefix) && name.ends_with(".command.json") {
+        for name in resume_observations::stage(&names, label)? {
+            let path = w.inputs.observation_dir.join(&name);
+            if old.contains_key(&name) {
+                common::bound_file(w.inputs.backend, &self.state["failure"], "原始失败")?;
+                if !historical.contains(&name) {
+                    return Err("历史同阶段收据没有严格原失败绑定".into());
+                }
+            } else {
                 paths.push(path);
             }
         }
-        paths.sort();
+        let claimed = paths
+            .iter()
+            .filter_map(|path| path.file_name().and_then(|v| v.to_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if current
+            .keys()
+            .filter(|name| !old.contains_key(*name))
+            .any(|name| {
+                !claimed.contains(name.as_str())
+                    && !(self.state["mode"] == "inventory" && *name == format!("{label}.json"))
+            })
+        {
+            return Err("命令观察出现未绑定的新增文件或目录，保留现场并拒绝续作".into());
+        }
+        if paths.len() > 1 {
+            return Err("同一操作产生重复命令收据，保留现场并拒绝续作".into());
+        }
         Ok(paths)
     }
     pub(in super::super) fn confirmation<T: Transport>(

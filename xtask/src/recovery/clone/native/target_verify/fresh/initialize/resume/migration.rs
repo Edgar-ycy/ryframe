@@ -48,7 +48,7 @@ pub(super) fn execute<T: Transport>(w: &Window<'_, T>, a: &mut Attempt) -> Resul
 }
 fn begin<T: Transport>(
     w: &Window<'_, T>,
-    a: &Attempt,
+    a: &mut Attempt,
     successor: bool,
 ) -> Result<(Value, Value, Value, Value)> {
     let binaries =
@@ -57,7 +57,7 @@ fn begin<T: Transport>(
         return Err("后继受保护二进制不同于原续作".into());
     }
     let intent=a.transition(w,"migration-intent",&json!({"attempt":a.id,"at":a.now(),"request":w.registration.value["request"],"state":a.state,"protected_binaries":binaries}))?;
-    receipts::write(&a.intent, &intent)?;
+    a.publish_intent(w, &intent)?;
     let mut trusted = claims::one(w, &a.state["files"], &a.intent, Some(&intent))?;
     claims::unchanged(w, &trusted)?;
     let (current, candidate, cache) = w.generation()?;
@@ -160,7 +160,7 @@ fn run_operation<T: Transport>(
         document::array(&operation["command"], "固定argv")?,
         1800,
     );
-    let paths = a.command_paths(w, stage)?;
+    let paths = a.command_paths(w, stage, trusted)?;
     a.session["active_operation"]["command_receipts"] = json!(
         paths
             .iter()
@@ -179,7 +179,7 @@ fn run_operation<T: Transport>(
     let confirmation=a.transition(w,"operation-confirmed",&json!({"attempt":a.id,"index":index,"at":a.now(),"intent":common::binding(&path)?,"receipt":receipt,"write":operation["write"]}))?;
     a.session["active_operation"]["phase"] = json!("operation-confirmation-publish");
     let path = target.join(format!("resume-migrate-{}-{index:02}.confirmed.json", a.id));
-    receipts::write(&path, &confirmation)?;
+    receipts::publish(w.transport, &path, &confirmation)?;
     *trusted = claims::one(w, trusted, &path, Some(&confirmation))?;
     Ok(json!({"id":operation["id"],"receipt":receipt,"confirmation":common::binding(&path)?}))
 }

@@ -67,7 +67,7 @@ pub(crate) fn execute<T: Transport>(
 fn inventory<T: Transport>(w: &Window<'_, T>, attempt: &mut Attempt) -> Result<(Value, Value)> {
     let target = w.inputs.observation_dir;
     let intent=attempt.transition(w,"inventory-intent",&json!({"attempt":attempt.id,"at":attempt.now(),"failure":attempt.state["failure"],"prepared_files":attempt.state["prepared_files"]}))?;
-    receipts::write(&attempt.intent, &intent)?;
+    attempt.publish_intent(w, &intent)?;
     let mut trusted = claims::one(w, &attempt.state["files"], &attempt.intent, Some(&intent))?;
     let prepared = document::read(&target.join("prepare.json"))?;
     claims::unchanged(w, &trusted)?;
@@ -79,7 +79,7 @@ fn inventory<T: Transport>(w: &Window<'_, T>, attempt: &mut Attempt) -> Result<(
     claims::unchanged(w, &trusted)?;
     let label = format!("resume-reset-plan-{}", attempt.id);
     let plan = operations::reset_plan(w, &current, &label)?;
-    let command = attempt.command_paths(w, &label)?;
+    let command = attempt.command_paths(w, &label, &trusted)?;
     if command.len() != 1 {
         return Err("库存恢复没有唯一reset plan命令收据".into());
     }

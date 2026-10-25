@@ -68,6 +68,12 @@ impl CommandOutput {
 pub(crate) trait Transport {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput>;
     fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value>;
+    /// 本地证据只允许独占新建、完整写入并同步；不覆盖已有现场。
+    fn publish_evidence(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    }
 }
 
 pub(crate) struct SystemTransport;

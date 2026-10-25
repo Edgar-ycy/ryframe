@@ -433,6 +433,16 @@ fn intent_fields(context: &Context<'_>, proof: &FinalProof<'_>) -> Result<()> {
         ..
     } = proof;
     let attempt = json_io::text(&value["attempt"], "attempt")?;
+    super::resume_prefix::prior_failed_stage(
+        context.backend,
+        context.target,
+        &intent["files_before"],
+        json_io::text(
+            &context.operations[context.prefix.len()]["stage"],
+            "原始缺失阶段",
+        )?,
+    )?;
+
     check(
         intent["format_version"] == 1
             && intent["kind"] == "devex-clone-migration-resume-intent"

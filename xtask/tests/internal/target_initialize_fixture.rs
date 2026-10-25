@@ -2,7 +2,7 @@
 use crate::{
     Result,
     recovery::clone::native::{
-        export::transport::{CommandOutput, CommandSpec, Transport},
+        export::transport::{CommandOutput, CommandSpec, SystemTransport, Transport},
         s3::{Operation, Request},
         target_verify::{
             fresh::selection::Selected,
@@ -19,6 +19,9 @@ use std::{
     fs,
 };
 
+#[path = "target_initialize_restart_fixture.rs"]
+mod restart;
+
 pub(super) struct Resources<'a> {
     pub(super) fixture: &'a Fixture,
     inventory: FakeTransport<'a>,
@@ -29,6 +32,12 @@ pub(super) struct Resources<'a> {
     redis: RefCell<BTreeMap<String, Value>>,
     plan: Value,
     reset_files: BTreeMap<String, Vec<u8>>,
+    restart: RefCell<Option<restart::Restart>>,
+    pub(super) receipt_failures: Cell<usize>,
+    pub(super) confirmation_failure: Cell<bool>,
+    pub(super) failed_publications: RefCell<Vec<std::path::PathBuf>>,
+    pub(super) redis_calls: RefCell<Vec<Vec<String>>>,
+    pub(super) lose_eval_reply: Cell<bool>,
 }
 impl<'a> Resources<'a> {
     pub(super) fn new(f: &'a Fixture) -> Self {
@@ -49,6 +58,12 @@ impl<'a> Resources<'a> {
             created: RefCell::new(BTreeSet::new()),
             reset: Cell::new(false),
             fail: Cell::new(None),
+            restart: RefCell::new(None),
+            receipt_failures: Cell::new(0),
+            confirmation_failure: Cell::new(false),
+            failed_publications: RefCell::new(Vec::new()),
+            redis_calls: RefCell::new(Vec::new()),
+            lose_eval_reply: Cell::new(false),
             redis: RefCell::new(BTreeMap::new()),
             reset_files,
             plan: crate::recovery::clone::native::json::read(&f.target.join("reset-plan.json"))
@@ -56,10 +71,16 @@ impl<'a> Resources<'a> {
         }
     }
     pub(super) fn generation(&self) -> Result<(Value, Selected, Option<Value>)> {
-        let candidate = Selected {
-            value: self.fixture.request["storage"].clone(),
-            runtime: None,
+        let restart = self.restart.borrow();
+        let (value, runtime, cache) = match restart.as_ref() {
+            Some(value) => (
+                json!({"rustfs":value.storage["storage"],"redis":value.cache["redis"]}),
+                Some(value.storage.clone()),
+                Some(value.cache.clone()),
+            ),
+            None => (self.fixture.request["storage"].clone(), None, None),
         };
+        let candidate = Selected { value, runtime };
         for slot in
             prepare_observations::slots(&self.fixture.backend, &self.fixture.request, &candidate)?
                 .into_iter()
@@ -102,7 +123,30 @@ impl<'a> Resources<'a> {
         )?;
         value["storage"] = candidate.value.clone();
         scope.assert_unchanged()?;
-        Ok((value, candidate, None))
+        Ok((value, candidate, cache))
+    }
+    pub(super) fn registered_restart(&self) {
+        assert!(self.reset.get());
+        *self.restart.borrow_mut() = Some(restart::register(self.fixture));
+        self.redis.borrow_mut().clear();
+    }
+    pub(super) fn eval_calls(&self) -> usize {
+        self.redis_calls
+            .borrow()
+            .iter()
+            .filter(|parts| parts.first().map(String::as_str) == Some("EVAL"))
+            .count()
+    }
+    pub(super) fn redis_image(&self) -> Value {
+        json!(*self.redis.borrow())
+    }
+    pub(super) fn existing_sentinel(&self) {
+        let key = self.fixture.request["reset"]["sentinel_key"]
+            .as_str()
+            .unwrap();
+        self.redis
+            .borrow_mut()
+            .insert(key.into(), json!("unexpected"));
     }
     fn maintenance(&self, spec: CommandSpec) -> Result<CommandOutput> {
         assert_eq!(spec.args.first().map(String::as_str), Some("--config-dir"));
@@ -213,6 +257,25 @@ impl<'a> Resources<'a> {
     }
 }
 impl Transport for Resources<'_> {
+    fn publish_evidence(&self, path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+        let name = path.file_name().and_then(|v| v.to_str()).unwrap();
+        if name.starts_with("migrate-tenant-data---target-dedicated-a-verify-")
+            && self.receipt_failures.get() > 0
+        {
+            self.receipt_failures.set(self.receipt_failures.get() - 1);
+            self.failed_publications.borrow_mut().push(path.to_owned());
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
+        if name.starts_with("resume-migrate-")
+            && name.ends_with("-04.confirmed.json")
+            && self.confirmation_failure.replace(false)
+        {
+            self.failed_publications.borrow_mut().push(path.to_owned());
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
+        SystemTransport.publish_evidence(path, bytes)
+    }
+
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
         let mut call = vec![spec.program.to_string_lossy().into_owned()];
         call.extend(spec.args.clone());
@@ -264,6 +327,9 @@ impl StorageObserver for Resources<'_> {
         panic!("编排替身不探测WSL")
     }
     fn redis(&self, inputs: &StorageInputs<'_>, _: &Value, parts: &[&str]) -> Result<Value> {
+        self.redis_calls
+            .borrow_mut()
+            .push(parts.iter().map(|value| (*value).to_owned()).collect());
         let mut values = self.redis.borrow_mut();
         match parts[0] {
             "SCAN" => Ok(json!([
@@ -274,6 +340,21 @@ impl StorageObserver for Resources<'_> {
                     .collect::<Vec<_>>()
             ])),
             "GET" => Ok(values.get(parts[1]).cloned().unwrap_or(Value::Null)),
+            "EVAL" => {
+                assert_eq!(parts[2], "2");
+                assert_eq!(parts[3], format!("ryframe:{{{SCOPE}}}:.ryframe-owner"));
+                assert_eq!(
+                    parts[4],
+                    inputs.request["reset"]["sentinel_key"].as_str().unwrap()
+                );
+                assert!(values.is_empty(), "原子marker输入必须是完整空前像");
+                values.insert(parts[3].into(), json!(parts[6]));
+                values.insert(parts[4].into(), json!(parts[7]));
+                if self.lose_eval_reply.replace(false) {
+                    return Err(std::io::ErrorKind::TimedOut.into());
+                }
+                Ok(json!(2))
+            }
             "SET" => {
                 assert_eq!(parts[3], "NX");
                 assert!(self.fixture.target.join("sentinel.intent.json").is_file());

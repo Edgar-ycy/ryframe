@@ -80,7 +80,8 @@ pub(super) fn command_with_deadline(
     };
     // 成功 stdout 仅允许固定查询返回；失败原文可能包含私有连接信息，绝不写入公开证据。
     let diagnostic = super::super::super::maintenance::redact_with(&stdout, secrets);
-    write(
+    publish(
+        transport,
         &path,
         &json!({"command":command,"returncode":code,"error_type":error,
         "stdout":diagnostic,"stderr":""}),
@@ -95,6 +96,18 @@ pub(super) fn command_with_deadline(
         }));
     }
     Ok(stdout)
+}
+
+pub(super) fn publish(
+    transport: &impl Transport,
+    path: &std::path::Path,
+    value: &Value,
+) -> Result<()> {
+    let mut encoded = serde_json::to_vec_pretty(value)?;
+    encoded.push(b'\n');
+    transport
+        .publish_evidence(path, &encoded)
+        .map_err(|error| super::failure::publication(path, error))
 }
 
 pub(super) fn write(path: &std::path::Path, value: &Value) -> Result<()> {

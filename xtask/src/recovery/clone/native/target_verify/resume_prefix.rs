@@ -306,3 +306,63 @@ pub(super) fn failed_readonly(backend: &Path, target: &Path) -> Result<Option<(u
     )?
     .failed)
 }
+
+/// 仅核验已在intent完整前像中绑定的原始失败只读收据，不枚举本次未完成写入。
+pub(super) fn original_failed_read(backend: &Path, target: &Path, path: &Path) -> Result<()> {
+    if path.parent() != Some(target) {
+        return Err("原始失败收据不属于固定目标目录".into());
+    }
+    let prepared = json_io::read(&target.join("prepare.json"))?;
+    let request = json_io::read(&target.join("request.json"))?;
+    let executable =
+        super::evidence_model::executable(&prepared["generation"]["maintenance"], "migrate")?;
+    let operations = sequence(executable, config_directory(&request)?);
+    let name = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or("原始收据名称无效")?;
+    let mut matched = operations
+        .iter()
+        .filter_map(|operation| match pattern(operation) {
+            Ok(pattern) if pattern.is_match(name) => Some(Ok(operation)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        });
+    let operation = matched.next().ok_or("原始失败收据阶段未知")??;
+    if matched.next().is_some() {
+        return Err("原始失败收据阶段不唯一".into());
+    }
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)?;
+    let value = json_io::read(path)?;
+    if value["error_type"] != "FileNotFoundError" {
+        return Err("历史同阶段文件不是已核验原始失败只读收据".into());
+    }
+    failed_read(backend, target, path, &value, operation)
+}
+
+/// 原失败只读收据必须既属于完整intent前像，也仍保持原字节；其他历史同阶段文件不排除。
+pub(super) fn prior_failed_stage(
+    backend: &Path,
+    target: &Path,
+    files: &Value,
+    stage: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let old = super::resume_observations::file_map(files)?;
+    let current =
+        super::resume_observations::file_map(&super::tree::snapshot(backend, target, true)?)?;
+    if old
+        .iter()
+        .any(|(name, value)| current.get(name) != Some(value))
+    {
+        return Err("intent绑定的完整历史前像发生变化".into());
+    }
+    let names = old.keys().cloned().collect();
+    let names = super::resume_observations::stage(&names, stage)?;
+    if names.len() > 1 {
+        return Err("intent前像包含重复同阶段命令收据".into());
+    }
+    for name in &names {
+        original_failed_read(backend, target, &target.join(name))?;
+    }
+    Ok(names.into_iter().collect())
+}
