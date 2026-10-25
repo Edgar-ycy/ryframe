@@ -102,6 +102,7 @@ fn server_uuid_or_connection_change_cannot_be_repaired_by_a_later_retry() {
         } else {
             changed.identity.connection_id += 1;
         }
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
         assert_eq!(owner.phase, Phase::Retained);
         assert!(owner.drop_intent(&observation()).is_err());
@@ -114,6 +115,7 @@ fn unowned_missing_or_ambiguous_session_lock_never_allows_drop() {
         let mut owner = ready();
         let mut changed = observation();
         changed.lock_owner = holder;
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
         assert!(owner.drop_intent(&observation()).is_err());
     }
@@ -126,6 +128,11 @@ fn active_schema_connections_or_partial_process_visibility_block_drop() {
         let mut changed = observation();
         changed.active_connections = active;
         changed.process_visibility = visible;
+        if visible {
+            assert!(!owner.cleanup_quiescent(&changed).unwrap());
+        } else {
+            assert!(owner.cleanup_quiescent(&changed).is_err());
+        }
         assert!(owner.drop_intent(&changed).is_err());
         assert!(owner.drop_intent(&observation()).is_err());
     }
@@ -141,6 +148,7 @@ fn plan_identity_plan_content_or_journal_change_latches_retention() {
             1 => changed.plan_content_matches = false,
             _ => changed.journal_matches = false,
         }
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
         assert_eq!(owner.phase, Phase::Retained);
         assert!(owner.drop_intent(&observation()).is_err());
@@ -154,8 +162,28 @@ fn open_business_pool_or_missing_schema_forbids_drop() {
         let mut changed = observation();
         changed.business_closed = closed;
         changed.schema_exists = !closed;
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
     }
+}
+
+#[test]
+fn retiring_connections_leave_drop_unissued_until_a_complete_quiescent_observation() {
+    let mut owner = ready();
+    let mut observed = observation();
+    observed.active_connections = 1;
+    assert!(!owner.cleanup_quiescent(&observed).unwrap());
+    assert_eq!(owner.phase, Phase::TestPassed);
+    observed.active_connections = 0;
+    assert!(owner.cleanup_quiescent(&observed).unwrap());
+    assert_eq!(owner.phase, Phase::TestPassed);
+    owner.drop_intent(&observed).unwrap();
+    observed.active_connections = 1;
+    assert!(owner.validate_cleanup(&observed).is_err());
+    owner.retain();
+    observed.active_connections = 0;
+    assert!(owner.cleanup_quiescent(&observed).is_err());
+    assert!(owner.drop_intent(&observed).is_err());
 }
 
 #[test]

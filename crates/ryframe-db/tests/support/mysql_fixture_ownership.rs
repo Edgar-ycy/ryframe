@@ -145,6 +145,13 @@ impl Ownership {
     }
 
     pub fn validate_cleanup(&self, observed: &Observation) -> Result<(), String> {
+        if !self.cleanup_quiescent(observed)? {
+            return Err("fixture 仍有活动连接，禁止 DROP".into());
+        }
+        Ok(())
+    }
+
+    pub fn cleanup_quiescent(&self, observed: &Observation) -> Result<bool, String> {
         if !matches!(self.phase, Phase::TestPassed | Phase::DropIntent)
             || self.plan.identity != observed.identity
             || observed.lock_owner != Some(self.plan.identity.connection_id)
@@ -154,11 +161,10 @@ impl Ownership {
             || !observed.business_closed
             || !observed.schema_exists
             || !observed.process_visibility
-            || observed.active_connections != 0
         {
             return Err("fixture 清理归属未获完整确认，禁止 DROP".into());
         }
-        Ok(())
+        Ok(observed.active_connections == 0)
     }
 
     pub fn drop_intent(&mut self, observed: &Observation) -> Result<(), String> {
