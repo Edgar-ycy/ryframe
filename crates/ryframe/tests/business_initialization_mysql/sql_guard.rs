@@ -248,7 +248,11 @@ async fn sql_valid_incremental_chain_records_only_verified_shapes() {
         let sql =
             ryframe::business::shared_control_initialization_sql(&hashes()?, &[&initial, &next])
                 .map_err(|e| e.to_string())?;
-        mysql::execute(&database, &sql).await?;
+        // 完整导出含会话设置、临时表和登记事务，必须在同一连接以多语句执行。
+        database
+            .execute_unprepared(&sql)
+            .await
+            .map_err(mysql::db_error)?;
         verify_business_migrations(
             &database,
             BusinessMigrationScope::Control,
