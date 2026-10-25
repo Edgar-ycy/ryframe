@@ -8,6 +8,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::{initialize, message, mysql, role_assignment, sql_initialization};
 
+#[path = "imported_accounts/http.rs"]
 mod http;
 use http::Server;
 
@@ -187,11 +188,11 @@ async fn verify_account(
     assert!(initial.user_info.roles.is_empty());
     assert!(initial.user_info.perms.is_empty());
     let profile = server
-        .get("/api/v1/auth/profile/", &initial.access_token)
+        .get("/api/v1/auth/profile", &initial.access_token)
         .await?;
     assert_eq!(profile.status, 403);
     let business = server
-        .get("/api/v1/system/users/", &initial.access_token)
+        .get("/api/v1/system/users", &initial.access_token)
         .await?;
     assert_eq!(business.status, 403);
     assert_eq!(business.body["error_key"], "permission_denied");
@@ -205,7 +206,7 @@ async fn verify_account(
     ));
     assert_eq!(
         server
-            .get("/api/v1/auth/profile/", &initial.access_token)
+            .get("/api/v1/auth/profile", &initial.access_token)
             .await?
             .status,
         401
@@ -227,13 +228,13 @@ async fn verify_account(
     assert!(changed.user_info.roles.is_empty());
     assert!(changed.user_info.perms.is_empty());
     let profile = server
-        .get("/api/v1/auth/profile/", &changed.access_token)
+        .get("/api/v1/auth/profile", &changed.access_token)
         .await?;
     assert_eq!(profile.status, 200);
     assert_eq!(profile.body["data"]["username"], username);
     assert_eq!(
         server
-            .get("/api/v1/system/users/", &changed.access_token)
+            .get("/api/v1/system/users", &changed.access_token)
             .await?
             .status,
         403

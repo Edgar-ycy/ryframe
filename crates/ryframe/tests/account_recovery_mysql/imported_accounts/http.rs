@@ -83,7 +83,7 @@ impl Server {
         let mut body = b"--account-import-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"accounts.xlsx\"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n".to_vec();
         body.extend(workbook);
         body.extend_from_slice(b"\r\n--account-import-boundary--\r\n");
-        self.request("POST", "/api/v1/system/user-imports/", token,
+        self.request("POST", "/api/v1/system/user-imports", token,
             "Content-Type: multipart/form-data; boundary=account-import-boundary\r\nIdempotency-Key: imported-accounts-password-cycle\r\n", body).await
     }
 
@@ -131,8 +131,12 @@ impl Server {
                 .ok_or("账号导入 HTTP 响应缺少状态码")?
                 .parse()
                 .map_err(message)?;
-            let body = serde_json::from_slice(&bytes[separator + 4..])
-                .map_err(|_| "账号导入 HTTP 响应不是完整 JSON")?;
+            let body = serde_json::from_slice(&bytes[separator + 4..]).map_err(|_| {
+                format!(
+                    "账号导入 HTTP 响应不是完整 JSON：status={status}，body_bytes={}",
+                    bytes.len() - separator - 4
+                )
+            })?;
             Ok(Response { status, body })
         })
         .await
