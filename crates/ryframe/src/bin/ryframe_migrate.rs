@@ -11,6 +11,8 @@ use sea_orm::DatabaseConnection;
 mod adoption;
 #[path = "ryframe_migrate/bootstrap.rs"]
 mod bootstrap;
+#[path = "ryframe_migrate/diagnostic.rs"]
+mod diagnostic;
 #[path = "ryframe_migrate/private_artifact.rs"]
 mod private_artifact;
 #[path = "ryframe_migrate/sql_export.rs"]
@@ -50,11 +52,35 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ryframe::crypto::install_crypto_provider()?;
-    let arguments = ConfigurationArgs::parse(std::env::args().skip(1).collect())?;
-    let command = parse_command(arguments.arguments)?;
+async fn main() -> std::process::ExitCode {
+    match execute().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
 
+async fn execute() -> Result<(), diagnostic::Failure> {
+    use diagnostic::{Context, Writes};
+    let initial = Context {
+        directory: std::path::Path::new("（配置目录尚未解析）"),
+        environment: None,
+        config: None,
+        command: "参数与运行环境",
+        target: None,
+    };
+    ryframe::crypto::install_crypto_provider()
+        .map_err(|error| initial.error("加密提供者初始化", Writes::None, &error))?;
+    let arguments = ConfigurationArgs::parse(std::env::args().skip(1).collect())
+        .map_err(|error| initial.error("配置参数解析", Writes::None, &error))?;
+    let initial = Context {
+        directory: &arguments.directory,
+        ..initial
+    };
+    let command = parse_command(arguments.arguments)
+        .map_err(|error| initial.error("命令解析", Writes::None, error.as_ref()))?;
     let (scope, operation) = match command {
         Command::Migrate { scope, operation } => (scope, operation),
         Command::ExportSql { output, write } => {
@@ -62,16 +88,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Adopt(options) => return adoption::run(&arguments.directory, options).await,
     };
-    let environment = Environment::from_env()?;
-    let config = AppConfig::load(&arguments.directory, environment)?;
-    let business_modules = ryframe::business::registered_business_modules()?;
+    let command = format!(
+        "{} {}",
+        match &scope {
+            MigrationScope::Control => "control",
+            MigrationScope::TenantData(_) => "tenant-data",
+        },
+        operation.name()
+    );
+    let selected_target = match &scope {
+        MigrationScope::TenantData(TargetSelection::One(target)) => Some(target.clone()),
+        _ => None,
+    };
+    let initial = Context {
+        command: &command,
+        target: selected_target.as_deref(),
+        ..initial
+    };
+    let environment = Environment::from_env().map_err(|_| {
+        initial.error(
+            "APP_ENV 选择",
+            Writes::None,
+            &std::io::Error::other("APP_ENV 必须为 dev、test 或 prod"),
+        )
+    })?;
+    let initial = Context {
+        environment: Some(environment),
+        ..initial
+    };
+    let config = AppConfig::load(&arguments.directory, environment)
+        .map_err(|error| initial.error("配置加载", Writes::None, &error))?;
+    let context = Context {
+        config: Some(&config),
+        ..initial
+    };
+    let modules = ryframe::business::registered_business_modules()
+        .map_err(|error| context.error("业务模块登记", Writes::None, &error))?;
     match scope {
-        MigrationScope::Control => run_control(operation, &config, &business_modules).await?,
+        MigrationScope::Control => run_control(operation, &config, &modules, &context).await,
         MigrationScope::TenantData(selection) => {
-            run_tenant_data(operation, selection, &config, &business_modules).await?
+            run_tenant_data(operation, selection, &config, &modules, &context).await
         }
     }
-    Ok(())
+}
+
+impl Operation {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Up => "up",
+            Self::Verify => "verify",
+            Self::Status => "status",
+        }
+    }
+    fn writes(self) -> diagnostic::Writes {
+        if matches!(self, Self::Up) {
+            diagnostic::Writes::Database
+        } else {
+            diagnostic::Writes::None
+        }
+    }
 }
 
 fn parse_command(args: Vec<String>) -> Result<Command, Box<dyn std::error::Error>> {
@@ -109,9 +184,12 @@ async fn run_control(
     operation: Operation,
     config: &AppConfig,
     business_modules: &[RyFrameBusinessModule],
+    context: &diagnostic::Context<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let hashes = if matches!(operation, Operation::Up) {
-        bootstrap::load_hashes(config)?
+        bootstrap::load_hashes(config).map_err(|error| {
+            context.error("初始化密码哈希", diagnostic::Writes::None, error.as_ref())
+        })?
     } else {
         None
     };
@@ -120,7 +198,13 @@ async fn run_control(
         config.database.sql_log_level,
         config.database.sql_slow_threshold_ms,
     )
-    .await?;
+    .await
+    .map_err(|error| context.error("连接池建立", diagnostic::Writes::None, &error))?;
+    let mut phase = match operation {
+        Operation::Up => "控制库框架迁移",
+        Operation::Verify => "控制库框架账本/结构核验",
+        Operation::Status => "控制库迁移状态读取",
+    };
     let result = async {
         match operation {
             Operation::Up => {
@@ -136,6 +220,11 @@ async fn run_control(
                 print_control_status("control", &status);
             }
         }
+        phase = match operation {
+            Operation::Up => "业务迁移与最终结构核验",
+            Operation::Verify => "业务账本与结构只读核验",
+            Operation::Status => "业务账本预检与状态读取",
+        };
         run_business_migrations(
             operation,
             BusinessMigrationScope::Control,
@@ -148,9 +237,10 @@ async fn run_control(
     }
     .await;
     let close_result = database.close().await;
-    result?;
-    close_result?;
-    Ok(())
+    diagnostic::finish(
+        result.map_err(|error| context.error(phase, operation.writes(), &error)),
+        close_result.map_err(|error| context.error("关闭连接", operation.writes(), &error)),
+    )
 }
 
 async fn run_tenant_data(
@@ -158,12 +248,14 @@ async fn run_tenant_data(
     selection: TargetSelection,
     config: &AppConfig,
     business_modules: &[RyFrameBusinessModule],
-) -> Result<(), Box<dyn std::error::Error>> {
+    context: &diagnostic::Context<'_>,
+) -> Result<(), diagnostic::Failure> {
     let registry = TenantDatabaseTargetRegistry::new(
         &config.tenant_data,
         config.database.sql_log_level,
         config.database.sql_slow_threshold_ms,
-    )?;
+    )
+    .map_err(|error| context.error("目标登记", diagnostic::Writes::None, &error))?;
     let targets = match selection {
         TargetSelection::One(target) => vec![target],
         TargetSelection::All => registry.target_keys(),
@@ -172,7 +264,6 @@ async fn run_tenant_data(
         println!("scope=tenant-data targets=0 result=no-configured-targets");
         return Ok(());
     }
-
     let identities = targets::preflight(
         &registry,
         &config.database.primary,
@@ -180,53 +271,100 @@ async fn run_tenant_data(
         config.database.sql_slow_threshold_ms,
         &targets,
     )
-    .await?;
+    .await
+    .map_err(|error| {
+        context.error(
+            "所选目标连接/物理身份预检",
+            diagnostic::Writes::None,
+            error.as_ref(),
+        )
+    })?;
+    let mut previous_writes = false;
     for target in targets {
+        let report = diagnostic::Context {
+            target: Some(&target),
+            ..*context
+        };
         let expected = identities.get(&target).ok_or("迁移预检遗漏目标身份")?;
-        match registry.target_kind(&target) {
-            Some(TenantDatabaseTargetKind::Control) => {
-                let database = ryframe_db::connection::connect_with_sql_logging(
-                    &config.database.primary,
-                    config.database.sql_log_level,
-                    config.database.sql_slow_threshold_ms,
-                )
-                .await?;
-                let result = async {
-                    targets::verify_identity(&database, &target, expected).await?;
-                    run_tenant_data_operation(
-                        operation,
-                        &target,
-                        &database,
-                        false,
-                        business_modules,
-                    )
-                    .await?;
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                }
-                .await;
-                let close_result = database.close().await;
-                result?;
-                close_result?;
-            }
-            Some(TenantDatabaseTargetKind::Mysql) => {
-                let lease = registry.acquire(&target).await?;
-                targets::verify_identity(lease.connection(), &target, expected).await?;
-                run_tenant_data_operation(
-                    operation,
-                    &target,
-                    lease.connection(),
-                    true,
-                    business_modules,
-                )
-                .await?;
-                drop(lease);
-            }
-            None => {
-                return Err(format!("unknown tenant-data target: {target}").into());
-            }
-        }
+        run_target(
+            operation,
+            &target,
+            expected,
+            &registry,
+            business_modules,
+            &report,
+            previous_writes,
+        )
+        .await?;
+        previous_writes |= matches!(operation, Operation::Up);
     }
     Ok(())
+}
+
+async fn run_target(
+    operation: Operation,
+    target: &str,
+    expected: &ryframe_db::connection::DatabaseIdentity,
+    registry: &TenantDatabaseTargetRegistry,
+    modules: &[RyFrameBusinessModule],
+    context: &diagnostic::Context<'_>,
+    previous_writes: bool,
+) -> Result<(), diagnostic::Failure> {
+    let config = context.config.ok_or("迁移上下文缺少配置")?;
+    let prior = if previous_writes {
+        diagnostic::Writes::Database
+    } else {
+        diagnostic::Writes::None
+    };
+    let mut phase = "目标物理身份复核";
+    match registry.target_kind(target) {
+        Some(TenantDatabaseTargetKind::Control) => {
+            let database = ryframe_db::connection::connect_with_sql_logging(
+                &config.database.primary,
+                config.database.sql_log_level,
+                config.database.sql_slow_threshold_ms,
+            )
+            .await
+            .map_err(|error| context.error("连接池建立", prior, &error))?;
+            let mut writes = prior;
+            let result = async {
+                targets::verify_identity(&database, target, expected).await?;
+                if matches!(operation, Operation::Up) {
+                    writes = diagnostic::Writes::Database;
+                }
+                run_tenant_data_operation(operation, target, &database, false, modules, &mut phase)
+                    .await?;
+                Ok::<(), diagnostic::Failure>(())
+            }
+            .await;
+            let closed = database.close().await;
+            diagnostic::finish(
+                result.map_err(|error| context.error(phase, writes, error.as_ref())),
+                closed.map_err(|error| context.error("关闭连接", writes, &error)),
+            )
+        }
+        Some(TenantDatabaseTargetKind::Mysql) => {
+            let lease = registry.acquire(target).await.map_err(|error| {
+                context.error("独立目标连接池获取（registry 不可用）", prior, &error)
+            })?;
+            targets::verify_identity(lease.connection(), target, expected)
+                .await
+                .map_err(|error| context.error(phase, prior, error.as_ref()))?;
+            run_tenant_data_operation(
+                operation,
+                target,
+                lease.connection(),
+                true,
+                modules,
+                &mut phase,
+            )
+            .await
+            .map_err(|error| context.error(phase, operation.writes(), &error))?;
+            drop(lease);
+            Ok(())
+        }
+        None => Err(context.error("目标选择", prior, &std::io::Error::other("目标未登记"))),
+    }
 }
 
 async fn run_tenant_data_operation(
@@ -235,13 +373,17 @@ async fn run_tenant_data_operation(
     database: &DatabaseConnection,
     mysql_target: bool,
     business_modules: &[RyFrameBusinessModule],
+    phase: &mut &'static str,
 ) -> Result<(), sea_orm::DbErr> {
+    *phase = "租户框架/边界只读核验";
     match operation {
         Operation::Up => {
             if mysql_target {
                 ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?;
             }
+            *phase = "租户框架迁移";
             ryframe_tenant_db::migration::up_pending_business_migrations(database).await?;
+            *phase = "租户业务迁移";
             run_business_migrations(
                 operation,
                 BusinessMigrationScope::Tenant,
@@ -250,6 +392,7 @@ async fn run_tenant_data_operation(
                 &format!("tenant-data/{target}"),
             )
             .await?;
+            *phase = "租户最终结构核验";
             if mysql_target {
                 ryframe_tenant_db::migration::verify_mysql_target(database).await?;
             } else {
@@ -274,6 +417,7 @@ async fn run_tenant_data_operation(
             print_tenant_data_status(&format!("tenant-data/{target}"), &status);
         }
     }
+    *phase = "租户业务账本与结构核验";
     run_business_migrations(
         operation,
         BusinessMigrationScope::Tenant,

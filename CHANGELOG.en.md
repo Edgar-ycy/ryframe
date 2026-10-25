@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Migration commands reuse startup credential redaction, including independent tenant targets, and report the phase, selected configuration, repair commands, and conservative write state on stderr while retaining operation and close failures. Successful output and non-executing plans are unchanged; unknown DDL, ledger, or file publication outcomes are never replayed automatically, and discarded independent-target causes are not inferred.
+
 - Reviewed existing kernel, config, and auth tests, removing assertions that only compare distinct derived enum variants. The obsolete-environment override probe now runs explicitly through its parent test, which still verifies exactly one successful probe; file configuration, tenant isolation, and authentication security checks remain intact.
 
 - Cache read-only status uses a managed Linux xtask for ordinary, registered-successor, partial, and closed generations. Actual exclusive bind followed by close proves port closure, with explicit WSL user/UID, dual-path ELF, and complete compiled-source bindings. Replaced Python status dispatch is removed while startup/shutdown and historical creation evidence remain.

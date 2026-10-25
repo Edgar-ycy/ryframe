@@ -22,16 +22,34 @@ pub(super) async fn preflight(
                     sql_log_level,
                     slow_threshold_ms,
                 )
-                .await?;
+                .await
+                .map_err(|error| target_failure(target, "目标连接预检", &error))?;
                 let identity = physical_identity(&database).await;
                 let closed = database.close().await;
-                let identity = identity?;
-                closed?;
-                identity
+                match (identity, closed) {
+                    (Ok(identity), Ok(())) => identity,
+                    (Err(error), Ok(())) => {
+                        return Err(target_failure(target, "目标物理身份预检", &error));
+                    }
+                    (Ok(_), Err(error)) => {
+                        return Err(target_failure(target, "预检关闭连接", &error));
+                    }
+                    (Err(error), Err(close)) => {
+                        return Err(format!(
+                            "{}；关闭连接时另有错误：{close}",
+                            target_failure(target, "目标物理身份预检", &error)
+                        )
+                        .into());
+                    }
+                }
             }
             Some(TenantDatabaseTargetKind::Mysql) => {
-                let lease = registry.acquire(target).await?;
-                physical_identity(lease.connection()).await?
+                let lease = registry.acquire(target).await.map_err(|error| {
+                    target_failure(target, "独立目标连接预检（registry 不可用）", &error)
+                })?;
+                physical_identity(lease.connection())
+                    .await
+                    .map_err(|error| target_failure(target, "目标物理身份预检", &error))?
             }
             None => {
                 return Err(format!(
@@ -44,6 +62,10 @@ pub(super) async fn preflight(
     }
     reject_duplicates(&selected)?;
     Ok(selected)
+}
+
+fn target_failure(target: &str, phase: &str, error: &dyn Error) -> Box<dyn Error> {
+    format!("目标={target}；阶段={phase}；{error}").into()
 }
 
 pub(super) fn reject_duplicates(

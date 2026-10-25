@@ -8,6 +8,8 @@ use std::{
 mod bootstrap;
 #[path = "boot_contract/configuration_fixture.rs"]
 mod configuration_fixture;
+#[path = "../src/bin/ryframe_migrate/diagnostic.rs"]
+mod diagnostic;
 
 fn run(output: &Path, mode: &str, password: Option<&str>) -> Output {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -224,19 +226,23 @@ fn adoption_rejects_ambiguous_scopes_missing_values_and_implicit_writes() {
 fn malformed_adoption_plan_fails_before_loading_runtime_configuration() {
     let directory = directory();
     let path = directory.path().join("bad-plan.json");
-    fs::write(&path, "{invalid").unwrap();
-    let result = adoption(&[
-        "control",
-        "adopt",
-        "--apply",
-        path.to_str().unwrap(),
-        "--write",
-    ]);
-    assert!(!result.status.success());
-    let error = String::from_utf8_lossy(&result.stderr);
-    assert!(error.contains("格式错误"), "{error}");
-    assert!(!error.contains("must-not-read-for-plan"));
-    assert_eq!(fs::read_to_string(path).unwrap(), "{invalid");
+    for malformed in ["{invalid", r#"{"manifest":"PRIVATE-PLAN-VALUE"}"#] {
+        fs::write(&path, malformed).unwrap();
+        let result = adoption(&[
+            "control",
+            "adopt",
+            "--apply",
+            path.to_str().unwrap(),
+            "--write",
+        ]);
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("格式错误"), "{error}");
+        assert!(!error.contains("must-not-read-for-plan"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+        assert!(!error.contains("PRIVATE-PLAN-VALUE"));
+        assert!(error.contains("阶段=读取原接管计划"));
+    }
 }
 
 #[test]
@@ -346,4 +352,154 @@ fn bootstrap_allows_existing_database_without_password_and_keeps_initial_user_ha
         ryframe_auth::password::verify(ryframe_auth::password::INITIAL_USER_PASSWORD, hash).unwrap()
     }));
     assert!(!sql.contains("InitialAdmin123!"));
+}
+
+#[test]
+fn migration_connection_failures_keep_phase_files_and_safe_repair_without_writes() {
+    let root = directory();
+    let config = root.path().join("config");
+    configuration_fixture::write_configuration(&config, 8080, 9091, None);
+    // 只保留测试自己的 TCP 监听，不提供 MySQL 握手，任何命令都不可能发出 SQL。
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = fs::read_to_string(config.join("app.toml"))
+        .unwrap()
+        .replace("port = 1\n", &format!("port = {port}\n"))
+        .replace(
+            "min_connections = 0",
+            "min_connections = 1\nconnect_timeout_secs = 1\nacquire_timeout_secs = 1",
+        );
+    fs::write(config.join("app.toml"), base).unwrap();
+    fs::write(
+        config.join("app.test.toml"),
+        format!(
+            r#"
+[[tenant_data.targets]]
+key = "diagnostic-mysql"
+mode = "dedicated"
+kind = "mysql"
+host = "127.0.0.1"
+port = {port}
+database = "must_not_connect"
+username = "private-tenant-user"
+password = "private-tenant-password"
+"#
+        ),
+    )
+    .unwrap();
+    for (scope, operation, target, phase, field) in [
+        ("control", "up", None, "连接池建立", "database.primary"),
+        ("control", "verify", None, "连接池建立", "database.primary"),
+        ("control", "status", None, "连接池建立", "database.primary"),
+        (
+            "tenant-data",
+            "up",
+            Some("shared-control"),
+            "目标连接预检",
+            "database.primary",
+        ),
+        (
+            "tenant-data",
+            "verify",
+            Some("diagnostic-mysql"),
+            "独立目标连接预检",
+            "tenant_data.targets",
+        ),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"));
+        command
+            .args([scope, operation, "--config-dir"])
+            .arg(&config)
+            .env("APP_ENV", "test");
+        if let Some(target) = target {
+            command.args(["--target", target]);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        for expected in [
+            phase,
+            field,
+            "app.test.toml",
+            "原因链=",
+            "当前命令尚未发起",
+            "cargo migrate --",
+            "tls_client_key",
+        ] {
+            assert!(error.contains(expected), "缺少 {expected}：{error}");
+        }
+        for secret in [
+            "fixture-database-password",
+            "private-tenant-user",
+            "private-tenant-password",
+        ] {
+            assert!(!error.contains(secret), "敏感输入泄露");
+        }
+        assert!(!error.contains("Error: Database("));
+        assert!(!error.contains("1045"));
+        if target == Some("diagnostic-mysql") {
+            assert!(error.contains("未保留底层原因"));
+        }
+    }
+}
+
+#[test]
+fn operation_and_close_failures_keep_both_stages_and_conservative_write_state() {
+    let root = directory();
+    let selected = root.path().join("config");
+    configuration_fixture::write_configuration(&selected, 8080, 9091, None);
+    let config =
+        ryframe_config::AppConfig::load(&selected, ryframe_config::Environment::Test).unwrap();
+    let context = diagnostic::Context {
+        directory: &selected,
+        environment: Some(config.environment),
+        config: Some(&config),
+        command: "control up",
+        target: None,
+    };
+    let before = context
+        .error(
+            "连接池建立",
+            diagnostic::Writes::None,
+            &std::io::Error::other("connect failed"),
+        )
+        .to_string();
+    assert!(before.contains("当前命令尚未发起"));
+    assert!(!before.contains("可能已部分提交"));
+    let file = context
+        .error(
+            "文件发布",
+            diagnostic::Writes::File,
+            &std::io::Error::other("publish failed"),
+        )
+        .to_string();
+    assert!(file.contains("目录、临时文件或目标文件可能已创建"));
+    assert!(!file.contains("尚未发起"));
+    let operation = context.error(
+        "业务迁移执行",
+        diagnostic::Writes::Database,
+        &std::io::Error::other("operation failed fixture-database-password"),
+    );
+    let close = context.error(
+        "关闭连接",
+        diagnostic::Writes::Database,
+        &std::io::Error::other("close failed mysql://unknown:unlisted@localhost/db"),
+    );
+    let error = diagnostic::finish::<()>(Err(operation), Err(close))
+        .unwrap_err()
+        .to_string();
+    for expected in [
+        "业务迁移执行",
+        "operation failed",
+        "关闭连接",
+        "close failed",
+        "DDL 或账本可能已部分提交",
+        "禁止自动重放",
+    ] {
+        assert!(error.contains(expected), "{error}");
+    }
+    assert!(!error.contains("fixture-database-password"));
+    assert!(!error.contains("unknown:unlisted"));
+    assert!(!error.contains("://"));
 }

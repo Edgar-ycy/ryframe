@@ -174,3 +174,57 @@ fn diagnostic_configuration() -> AppConfig {
 
     config
 }
+
+#[test]
+fn shared_database_redaction_also_covers_tenant_target_encodings() {
+    let mut config = diagnostic_configuration();
+    let target: ryframe_config::TenantDatabaseTargetConfig = toml::from_str(
+        r#"
+key = "diagnostic-tenant"
+kind = "mysql"
+mode = "dedicated"
+host = "127.0.0.1"
+port = 3306
+database = "diagnostic_scope"
+username = "tenant_operator_81@ops"
+password = "Tenant'Private\\42!"
+tls_mode = "verify_identity"
+tls_ca = "/tenant/ca path.pem"
+tls_client_cert = "/tenant/client cert.pem"
+tls_client_key = "D:\\tenant\\private key.pem"
+"#,
+    )
+    .unwrap();
+    let connection = DbConnection {
+        username: target.username.clone().unwrap(),
+        password: target.password.clone().unwrap(),
+        tls_ca: target.tls_ca.clone(),
+        tls_client_cert: target.tls_client_cert.clone(),
+        tls_client_key: target.tls_client_key.clone(),
+        ..DbConnection::default()
+    };
+    config.tenant_data.targets.push(target);
+    let url = connection.connection_url();
+    let mut forbidden = vec![
+        connection.username,
+        connection.password,
+        connection.tls_ca.unwrap(),
+        connection.tls_client_cert.unwrap(),
+        connection.tls_client_key.unwrap(),
+    ];
+    let (_, query) = url.split_once('?').unwrap();
+    forbidden.extend(
+        query
+            .split('&')
+            .filter_map(|part| part.split_once('='))
+            .filter(|(key, _)| matches!(*key, "ssl-ca" | "ssl-cert" | "ssl-key"))
+            .map(|(_, value)| value.to_owned()),
+    );
+    let source = format!("access denied {} {url}", forbidden.join(" | "));
+    let redacted = crate::database_diagnostic::redact(&config, &source);
+    for value in forbidden {
+        assert!(!redacted.contains(&value), "租户目标凭据未隐藏");
+    }
+    assert!(!redacted.contains("://"));
+    assert!(redacted.contains("access denied"));
+}
