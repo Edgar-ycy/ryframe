@@ -6,7 +6,7 @@ use std::{
 };
 
 use ryframe_config::{AppConfig, Environment, JobWorkerMode, LoggerOutput, MigrationMode};
-use tempfile::{TempDir, tempdir};
+use tempfile::TempDir;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -22,7 +22,12 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let directory = tempdir().unwrap();
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".local-tests/dev-runtime-config");
+        fs::create_dir_all(&parent).unwrap();
+        let directory = tempfile::tempdir_in(parent).unwrap();
         let source = directory.path().join("source");
         fs::create_dir(&source).unwrap();
         write_table(&source.join("app.toml"), &base_table());
@@ -162,8 +167,14 @@ fn assert_error_redacted(error: impl std::fmt::Display) {
 fn snapshot_preserves_every_file_byte_all_plaintext_credentials_and_arrays() {
     let fixture = Fixture::new();
     let before = files_at(&fixture.source);
-    let config = RuntimeConfig::capture(&fixture.source).unwrap();
-    let target = fixture.target("snapshot");
+    let source = fixture.source.canonicalize().unwrap();
+    let config = RuntimeConfig::capture(&source).unwrap();
+    let target = fixture
+        .directory
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("snapshot");
     config.snapshot_to(&target).unwrap();
     assert_eq!(files_at(&target), before);
     assert_eq!(files_at(&fixture.source), before);

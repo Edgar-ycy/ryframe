@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the Windows development supervisor treating a canonical path's drive prefix as a directory. Retain component-by-component link/reparse-point rejection and complete configuration snapshots.
+
 - Fix incorrect rejection of Windows maintenance-tool provenance when canonical and ordinary paths are mixed. Normalize path representation while retaining owning-worktree, link and receipt-boundary validation.
 
 - Describe model-generation persistence targets through resource declarations, avoiding misleading reuse of configured reverse-import sources or target types. Database-import plans continue to show their actual schema source, table batch and target type.

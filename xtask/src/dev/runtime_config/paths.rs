@@ -11,7 +11,8 @@ pub(super) fn plain_directory_chain(path: &Path) -> Result<()> {
     // 按路径分量检查，避免先消去 .. 而漏查被跨过的链接祖先。
     for component in absolute.components() {
         prefix.push(component);
-        if !prefix.has_root() {
+        // Windows 规范路径的驱动器前缀尚不是完整根目录，须等 RootDir 后再访问。
+        if matches!(component, std::path::Component::Prefix(_)) || !prefix.has_root() {
             continue;
         }
         let metadata = fs::symlink_metadata(&prefix).map_err(|error| {
