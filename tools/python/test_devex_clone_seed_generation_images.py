@@ -17,6 +17,7 @@ import test_devex_clone_inventory as inventory_fixtures
 from devex_clone_source_fixture import SourceFixture
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
+import rate_limit_tool
 from restore_reference_plan import BUCKETS, plan_hash
 
 
@@ -105,8 +106,25 @@ class GenerationImageTests(unittest.TestCase):
     def test_capture_and_readonly_verify_retain_all_raw_databases_five_owners_and_observed_inventory(self):
         descriptor = self.capture()
         before = {str(path): path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
-        with patch("subprocess.run", side_effect=AssertionError("保存像复核不得执行命令")):
+        original_calls = copy.deepcopy(self.f.calls)
+        native_run = subprocess.run
+        native_binding = rate_limit_tool.tool_binding()
+        self.assertIsNotNone(native_binding)
+
+        def readonly_native(command, **kwargs):
+            self.assertEqual(Path(command[0]), Path(native_binding["path"]))
+            self.assertEqual(command[1:], ["__source-evidence"])
+            request = json.loads(kwargs["input"])
+            self.assertIs(request["write"], False)
+            self.assertIn(request["operation"], {
+                "reference-plan-hash", "copy-schema-catalog",
+                "copy-database-observation", "reference-copy-metadata",
+            })
+            return native_run(command, **kwargs)
+
+        with patch("subprocess.run", side_effect=readonly_native):
             value = self.verify(descriptor)
+        self.assertEqual(self.f.calls, original_calls)
         self.assertEqual(len(value["raw_inventories"]), 8)
         self.assertEqual(len(value["owner_evidence"]), 10)
         self.assertEqual(len(value["schema_evidence"]), 8)
