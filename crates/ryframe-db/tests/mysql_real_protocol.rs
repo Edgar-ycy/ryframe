@@ -14,6 +14,8 @@ use mysql::{
 
 #[path = "mysql_real_protocol/linked_job_states.rs"]
 mod linked_job_states;
+#[path = "mysql_real_protocol/named_sources.rs"]
+mod named_sources;
 
 #[cfg(feature = "migration")]
 fn bootstrap_hashes() -> ryframe_db::migration::BootstrapHashes {
