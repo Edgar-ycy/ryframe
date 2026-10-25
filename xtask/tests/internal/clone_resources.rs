@@ -87,7 +87,61 @@ fn storage_request_and_original_generation_are_exactly_bound() {
     )
     .unwrap();
     assert_eq!(validated.private["PATH"], "fixture-bin");
-    assert_eq!(storage_model::arguments(&request).unwrap()[1], "server");
+    assert_eq!(
+        storage_model::arguments(&request).unwrap(),
+        vec![
+            request["executable"]["path"].as_str().unwrap(),
+            "server",
+            "--address",
+            request["api_url"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("http://")
+                .unwrap(),
+            "--console-address",
+            request["console_url"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("http://")
+                .unwrap(),
+            "--console-enable",
+            "--access-key-file",
+            request["credential_files"]["access_key"]["path"]
+                .as_str()
+                .unwrap(),
+            "--secret-key-file",
+            request["credential_files"]["secret_key"]["path"]
+                .as_str()
+                .unwrap(),
+            request["data_directory"]["path"].as_str().unwrap(),
+        ]
+    );
+    let mut command = std::process::Command::new("rustfs");
+    command.env_clear().envs(&validated.private);
+    for key in [
+        "RUSTFS_ACCESS_KEY_FILE",
+        "rustfs_console_enable",
+        "MINIO_ROOT_PASSWORD",
+        "minio_access_key",
+    ] {
+        command.env(key, "forbidden");
+    }
+    storage_model::clear_overrides(&mut command);
+    let retained = command
+        .get_envs()
+        .filter_map(|(key, value)| {
+            value.map(|value| (key.to_str().unwrap(), value.to_str().unwrap()))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        retained,
+        std::collections::BTreeMap::from([
+            ("PATH", "fixture-bin"),
+            ("APP_ENV", "test"),
+            ("CARGO_HOME", "fixture-cargo"),
+            ("COREPACK_HOME", "fixture-corepack")
+        ])
+    );
 
     let mut changed = request.clone();
     changed["timeout_seconds"] = json!(true);
@@ -145,7 +199,6 @@ fn storage_failure_identity_and_unknown_write_receipts_fail_closed() {
             "controller": controller,
             "attempt": 1,
             "arguments": storage_model::arguments(&request).unwrap(),
-            "environment": storage_model::configuration(&request).unwrap(),
         }),
     )
     .unwrap();
@@ -298,6 +351,9 @@ fn storage_parts(fixture: &Fixture) -> StorageParts {
     let private = json!({
         "environment": {
             "PATH": "fixture-bin",
+            "APP_ENV": "test",
+            "CARGO_HOME": "fixture-cargo",
+            "COREPACK_HOME": "fixture-corepack",
             "RUSTFS_UNDECLARED": "forbidden",
         }
     });

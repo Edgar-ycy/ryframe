@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import subprocess
 import uuid
-from urllib.parse import urlsplit
 
 from devex_clone import read_json
 from devex_clone_capture import write_json
@@ -93,7 +92,7 @@ def rustfs_layout(resources, rustfs: dict, *, runtime: dict | None = None) -> di
     if launch_path != receipt_path.parent / "launch.json":
         raise ValueError("RustFS launch 必须属于同一存储目录")
     launch = read_json(launch_path)
-    exact(launch, {"format_version", "scope_id", "identity", "arguments", "environment", "credential_files"})
+    exact(launch, {"format_version", "scope_id", "identity", "arguments", "credential_files"})
     exact(launch["credential_files"], {"access_key", "secret_key"})
     for field, binding in launch["credential_files"].items():
         credential = bound_file(backend, binding)
@@ -102,13 +101,13 @@ def rustfs_layout(resources, rustfs: dict, *, runtime: dict | None = None) -> di
             raise ValueError("目标对象存储配置缺少明文凭据")
         if credential.read_text(encoding="utf-8").strip() != actual:
             raise ValueError("RustFS 启动凭据文件与本次认证不同")
-    environment = {"RUSTFS_CONSOLE_ENABLE": "true", **{"RUSTFS_" + field.upper() + "_FILE": value["path"]
-                   for field, value in launch["credential_files"].items()}}
-    urls = [urlsplit(expected[field]) for field in ("api", "console")]
-    args = [rustfs["identity"]["executable"], "server", "--address", f"{urls[0].hostname}:{urls[0].port}",
-            "--console-address", f"{urls[1].hostname}:{urls[1].port}", str(directory)]
+    from devex_clone_storage_request import arguments
+
+    args = arguments({"executable": {"path": rustfs["identity"]["executable"]},
+                      "api_url": expected["api"], "console_url": expected["console"],
+                      "data_directory": {"path": str(directory)}, "credential_files": launch["credential_files"]})
     if (launch["format_version"] != 1 or launch["scope_id"] != expected["scope_id"] or launch["identity"] != rustfs["identity"]
-            or launch["arguments"] != args or launch["environment"] != environment or actual_windows_argv(resources, rustfs["identity"]) != args):
+            or launch["arguments"] != args or actual_windows_argv(resources, rustfs["identity"]) != args):
         raise ValueError("RustFS 当前完整参数或受控启动声明不符")
     verify_listener(rustfs["identity"]["pid"], expected["console"])
     result = {"process_receipt": rustfs["process_receipt"], "launch_receipt": rustfs["launch_receipt"],

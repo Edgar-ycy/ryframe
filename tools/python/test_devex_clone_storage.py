@@ -36,7 +36,10 @@ class StorageTests(unittest.TestCase):
         self.alive = False
         self.controller = process_identity(os.getpid())
         self.credentials = {key: self.file(key + ".txt", (key + "-private").encode()) for key in ("access_key", "secret_key")}
-        self.private = {"KEY": "access_key-private", "SECRET": "secret_key-private", "RUSTFS_UNDECLARED": "forbidden"}
+        self.private = {"KEY": "access_key-private", "SECRET": "secret_key-private", "RUSTFS_UNDECLARED": "forbidden",
+                        "rustfs_access_key_file": "wrong-file", "MINIO_ROOT_PASSWORD": "forbidden",
+                        "minio_secret_key": "forbidden", "APP_ENV": "test", "PATH": "fixture-bin",
+                        "CARGO_HOME": "fixture-cargo", "COREPACK_HOME": "fixture-corepack"}
         environment = self.json("private.json", {"environment": self.private})
         configuration = self.root / "config"
         configuration.mkdir()
@@ -97,8 +100,9 @@ class StorageTests(unittest.TestCase):
         return _REAL_POPEN(*args, **kwargs)
 
     def popen(self, *_args, **kwargs):
-        self.assertNotIn("RUSTFS_UNDECLARED", kwargs["env"])
-        self.assertEqual(kwargs["env"]["RUSTFS_SECRET_KEY_FILE"], self.credentials["secret_key"]["path"])
+        self.assertEqual(_args[0], model.arguments(self.request))
+        self.assertEqual(kwargs["env"], {key: value for key, value in self.private.items()
+                                        if key in {"KEY", "SECRET", "APP_ENV", "PATH", "CARGO_HOME", "COREPACK_HOME"}})
         self.new = {**self.new, "pid": self.new["pid"] + 1, "started": str(int(self.new["started"]) + 1)}
         self.child.pid = self.new["pid"]
         self.alive = True

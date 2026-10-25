@@ -113,13 +113,15 @@ class Fixture:
             "redis": {"directory": str(redis_dir)}}
         process = {"format_version": 1, "role": "rustfs", "scope_id": "perf-storage-fixture", "lifecycle": "running", "identity": self.identity,
                    "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201", "data_dir": str(data_dir)}
-        self.actual_argv = [str(self.paths["rustfs"]), "server", "--address", "127.0.0.1:29200", "--console-address", "127.0.0.1:29201", str(data_dir)]
         credential_files = {}
         for field, value in (("access_key", "access"), ("secret_key", "secret")):
             path = self.storage_dir / (field + ".txt"); path.write_text(value, encoding="utf-8")
             credential_files[field] = {"path": str(path), **file_digest(path)}
+        from devex_clone_storage_request import arguments
+        self.actual_argv = arguments({"executable": {"path": str(self.paths["rustfs"])},
+            "api_url": process["api_url"], "console_url": process["console_url"],
+            "data_directory": {"path": str(data_dir)}, "credential_files": credential_files})
         launch = {"format_version": 1, "scope_id": "perf-storage-fixture", "identity": self.identity, "arguments": self.actual_argv,
-                  "environment": {"RUSTFS_CONSOLE_ENABLE": "true", **{"RUSTFS_" + key.upper() + "_FILE": value["path"] for key, value in credential_files.items()}},
                   "credential_files": credential_files}
         self.request["storage"]["rustfs"].update(process_receipt=self.bound(self.storage_dir / "process.json", process),
                                                  launch_receipt=self.bound(self.storage_dir / "launch.json", launch))

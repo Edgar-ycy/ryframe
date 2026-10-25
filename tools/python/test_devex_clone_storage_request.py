@@ -25,7 +25,7 @@ class RequestTests(unittest.TestCase):
         old["lifecycle"] = "running"
         process = self.json("target-process.json", old)
         launch = self.json("target-launch.json", {"format_version": 1, "scope_id": request["scope_id"], "identity": self.old,
-            "arguments": model.arguments(request), "environment": model.configuration(request), "credential_files": self.credentials})
+            "arguments": model.arguments(request), "credential_files": self.credentials})
         previous.update(process_receipt=process, ready_receipt=process, launch_receipt=launch)
         review = {"services": {"rustfs": {"scope_id": request["scope_id"], "data_dir": str(self.data),
                    "api": request["api_url"], "console": request["console_url"]}}}

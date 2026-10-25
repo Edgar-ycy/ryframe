@@ -9,23 +9,37 @@ fn frozen() -> FakeRuntime {
     fs::create_dir(&data).unwrap();
     let (device, inode) = common::device_inode_for(&data, &fs::metadata(&data).unwrap()).unwrap();
     let identity = json!({"pid":12345,"started":"1","executable":std::env::current_exe().unwrap()});
+    let mut credentials = json!({});
+    for key in ["access_key", "secret_key"] {
+        let path = data.join(format!("{key}.txt"));
+        fs::write(&path, format!("fixture-{key}")).unwrap();
+        credentials[key] = binding(&path).unwrap();
+    }
     let request = json!({"scope_id":"services-fixture-seed","executable":{"path":identity["executable"],"sha256":"1".repeat(64)},
-        "data_directory":{"path":data,"device":device,"inode":inode},"credential_files":{},
+        "data_directory":{"path":data,"device":device,"inode":inode},"credential_files":credentials,
         "api_url":"http://127.0.0.1:29200","console_url":"http://127.0.0.1:29201"});
     json_io::write_replace(&output.join("request.json"), &request).unwrap();
     let controller = fixture.run.join("controller-0001.json");
     json_io::write_new(&controller, &json!({"fixture":true})).unwrap();
     let manifest = binding(&fixture.run.join("manifest.json")).unwrap();
-    json_io::write_new(&output.join("intent.json"), &json!({"format_version":1,"kind":"devex-clone-storage-intent",
+    json_io::write_new(
+        &output.join("intent.json"),
+        &json!({"format_version":1,"kind":"devex-clone-storage-intent",
         "request":manifest,"controller":binding(&controller).unwrap(),"attempt":1,
-        "arguments":storage::model::arguments(&request).unwrap(),"environment":storage::model::configuration(&request).unwrap()})).unwrap();
+        "arguments":storage::model::arguments(&request).unwrap()}),
+    )
+    .unwrap();
     let process = json!({"format_version":1,"role":"rustfs","scope_id":request["scope_id"],"lifecycle":"running",
         "identity":identity,"api_url":request["api_url"],"console_url":request["console_url"],
         "data_dir":request["data_directory"]["path"],"intent":binding(&output.join("intent.json")).unwrap()});
     json_io::write_new(&output.join("process.json"), &process).unwrap();
-    json_io::write_new(&output.join("launch.json"), &json!({"format_version":1,"scope_id":request["scope_id"],
+    json_io::write_new(
+        &output.join("launch.json"),
+        &json!({"format_version":1,"scope_id":request["scope_id"],
         "identity":identity,"arguments":storage::model::arguments(&request).unwrap(),
-        "environment":storage::model::configuration(&request).unwrap(),"credential_files":request["credential_files"]})).unwrap();
+        "credential_files":request["credential_files"]}),
+    )
+    .unwrap();
     let mut tree = read(&output.join("rustfs-tree.json")).unwrap();
     tree["process"] = identity.clone();
     json_io::write_replace(&output.join("rustfs-tree.json"), &tree).unwrap();

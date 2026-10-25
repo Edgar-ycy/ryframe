@@ -192,7 +192,7 @@ fn inspect(
         intent
             == json!({"format_version":1,"kind":"devex-clone-storage-intent",
         "request":registration,"controller":controller,"attempt":number,
-        "arguments":storage::model::arguments(&request)?,"environment":storage::model::configuration(&request)?}),
+        "arguments":storage::model::arguments(&request)?}),
         "存储意图不属于原注册与对应控制阶段",
     )?;
     let receipt_path = output.join("process.json");
@@ -212,7 +212,7 @@ fn inspect(
             read(&launch_path)?
                 == json!({"format_version":1,"scope_id":request["scope_id"],
             "identity":identity,"arguments":storage::model::arguments(&request)?,
-            "environment":storage::model::configuration(&request)?,"credential_files":request["credential_files"]}),
+            "credential_files":request["credential_files"]}),
             "存储启动参数收据变化",
         )?;
         binding(&launch_path)?
