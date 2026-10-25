@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reviewed existing kernel, config, and auth tests, removing assertions that only compare distinct derived enum variants. The obsolete-environment override probe now runs explicitly through its parent test, which still verifies exactly one successful probe; file configuration, tenant isolation, and authentication security checks remain intact.
+
 - Cache read-only status uses a managed Linux xtask for ordinary, registered-successor, partial, and closed generations. Actual exclusive bind followed by close proves port closure, with explicit WSL user/UID, dual-path ELF, and complete compiled-source bindings. Replaced Python status dispatch is removed while startup/shutdown and historical creation evidence remain.
 
 - Model generation and multi-table imports validate resource, table, route and permission conflicts across all registered business modules before installation. Backend-only generation compiles the candidate composition root for authoritative preflight; frontend synchronization reuses existing OpenAPI validation. Plans show the actual stages, and preflight failures preserve both repositories' before-images while reporting causes and repair guidance.

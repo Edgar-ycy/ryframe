@@ -7,6 +7,7 @@ use support::{Fixture, PRODUCTION};
 fn removed_environment_entries_cannot_override_file_configuration_in_a_subprocess() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
+            "--ignored",
             "--exact",
             "removed_environment_probe_uses_its_own_files",
             "--nocapture",
@@ -35,6 +36,7 @@ fn removed_environment_entries_cannot_override_file_configuration_in_a_subproces
 }
 
 #[test]
+#[ignore = "仅由父用例在注入已退役配置变量的独立子进程中执行"]
 fn removed_environment_probe_uses_its_own_files() {
     let fixture = Fixture::new();
     fixture.write(
