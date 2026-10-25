@@ -6,7 +6,9 @@ use ryframe_config::{
 };
 use ryframe_db::{ControlDatabaseCluster, migration::BootstrapHashes};
 use ryframe_tenant_db::{TenantDataError, TenantDatabaseRouter};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait,
+};
 
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
@@ -99,8 +101,12 @@ async fn exercise(
         ControlDatabaseCluster::single(control.clone()),
         router.clone(),
     );
+    let transaction = target.begin().await.map_err(message)?;
+    require_write_projection_unavailable(&transaction, 2).await?;
+    transaction.rollback().await.map_err(message)?;
     publisher.publish(&event(2)).await.map_err(message)?;
     assert_projection(control, target, router, 2, 10).await?;
+    assert_write_projection_guard(target).await?;
     let published_token = load_metadata(target).await?.build_token;
     let published = projection_image(target).await?;
     publisher.publish(&event(2)).await.map_err(message)?;
@@ -150,6 +156,45 @@ async fn require_stale(router: &TenantDatabaseRouter) -> Result<(), String> {
             .await,
         Err(TenantDataError::DataScopeProjectionStale { .. })
     ));
+    Ok(())
+}
+
+async fn require_write_projection_unavailable<C: ConnectionTrait>(
+    target: &C,
+    expected: i64,
+) -> Result<(), String> {
+    let error = ryframe_db::data_scope::lock_projected_build(target, "system", expected)
+        .await
+        .expect_err("缺失、落后或未就绪投影必须拒绝写入");
+    let ryframe_kernel::AppError::TenantDataTargetUnavailable(detail, retry_after) = error else {
+        return Err("投影写入栅栏必须报告业务数据暂不可用，不能要求刷新产品会话".into());
+    };
+    assert_eq!(retry_after, 5);
+    assert!(detail.contains("system"));
+    assert!(!detail.contains("刷新会话"));
+    Ok(())
+}
+
+async fn assert_write_projection_guard(target: &DatabaseConnection) -> Result<(), String> {
+    let before = projection_image(target).await?;
+    let expected_token = load_metadata(target).await?.build_token;
+    let transaction = target.begin().await.map_err(message)?;
+    let token = ryframe_db::data_scope::lock_projected_build(&transaction, "system", 2)
+        .await
+        .map_err(message)?;
+    assert_eq!(token, expected_token);
+    require_write_projection_unavailable(&transaction, 3).await?;
+    transaction.rollback().await.map_err(message)?;
+    for sql in [
+        "UPDATE biz_data_scope_projection SET ready=0 WHERE tenant_id='system'",
+        "UPDATE biz_data_scope_projection SET build_token='invalid' WHERE tenant_id='system'",
+    ] {
+        let transaction = target.begin().await.map_err(message)?;
+        transaction.execute_unprepared(sql).await.map_err(message)?;
+        require_write_projection_unavailable(&transaction, 2).await?;
+        transaction.rollback().await.map_err(message)?;
+        assert_eq!(projection_image(target).await?, before);
+    }
     Ok(())
 }
 

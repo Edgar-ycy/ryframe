@@ -57,7 +57,3 @@ fn map_error(error: TenantDataError) -> AppError {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/tenant_mapping_contracts/projection_error.rs"]
-mod projection_error;

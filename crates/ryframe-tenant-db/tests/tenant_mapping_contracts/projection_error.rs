@@ -1,9 +1,17 @@
-use super::map_error;
 use crate::TenantDataError;
 use ryframe_kernel::AppError;
 
 #[test]
-fn projection_missing_or_behind_is_retryable_data_unavailability() {
+fn general_projection_failure_is_retryable_data_unavailability() {
+    assert_projection_mapping(super::super::super::map_error);
+}
+
+#[test]
+fn provisioning_projection_failure_is_retryable_data_unavailability() {
+    assert_projection_mapping(super::map_error);
+}
+
+fn assert_projection_mapping(map_error: fn(TenantDataError) -> AppError) {
     for actual in [None, Some(8)] {
         let error = map_error(TenantDataError::DataScopeProjectionStale {
             tenant_id: "projection-tenant".into(),

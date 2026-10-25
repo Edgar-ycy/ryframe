@@ -84,7 +84,7 @@ The unified error envelope exposes only allowlisted values in `details.reason`: 
 - 413: the number of matching export rows or the request body exceeds the limit.
 - 501/503: a deployment capability is unavailable or a dependency is temporarily unavailable.
 
-When the data-scope projection for a tenant business read is missing, not ready, or differs from the authoritative control-database version, the read is rejected with HTTP 503, `error_key=tenant_data_target_unavailable`, and `Retry-After: 5`. Business data is temporarily unavailable: wait for projection synchronization before retrying. Refreshing the login session does not repair a lagging projection. This condition does not use `stale_runtime_epoch`, which denotes a change in the product runtime epoch.
+When the data-scope projection for a tenant business read or write is missing, not ready, or differs from the authoritative control-database version, the operation is rejected with HTTP 503, `error_key=tenant_data_target_unavailable`, and `Retry-After: 5`. Business data is temporarily unavailable: wait for projection synchronization before retrying. Refreshing the login session does not repair a lagging projection. This condition does not use `stale_runtime_epoch`, which denotes a change in the product runtime epoch.
 
 ## Filtered Exports
 
