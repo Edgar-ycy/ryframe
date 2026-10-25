@@ -184,7 +184,7 @@ fn constraints(s: &ExpectedSchema, table: &str) -> SchemaAssertion {
             ]);
         }
     }
-    for ((t, name), _) in &s.foreign_keys {
+    for (t, name) in s.foreign_keys.keys() {
         if t == table {
             expected.push(vec![
                 eq("constraint_name", Some(name)),
