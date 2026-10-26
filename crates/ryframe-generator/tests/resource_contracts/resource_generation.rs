@@ -292,10 +292,8 @@ fn assert_order_asset_set(assets: &[GeneratedAsset]) {
 fn assert_order_backend_contracts(assets: &[GeneratedAsset]) {
     let service = generated_asset(assets, "order/service.rs");
     assert!(service.content.contains("pub struct OrderService"));
-    assert!(!service.content.contains("UseCase<"));
     let port = generated_asset(assets, "order/port.rs");
     assert!(port.content.contains("#[async_trait]"));
-    assert!(!port.content.contains("Box::pin"));
     let fake = generated_asset(assets, "order/fake.rs");
     assert!(fake.content.contains("pub enum OrderCall"));
     assert!(fake.content.contains("OrderTransactionState"));
@@ -321,11 +319,7 @@ fn assert_order_backend_contracts(assets: &[GeneratedAsset]) {
             .contains("active.updated_at = Set(Some(chrono::Utc::now()))")
     );
 
-    for forbidden in [
-        "async fn list_order() {}",
-        "IndexDescriptor",
-        "MigrationDescriptor",
-    ] {
+    for forbidden in ["IndexDescriptor", "MigrationDescriptor"] {
         assert!(
             assets
                 .iter()

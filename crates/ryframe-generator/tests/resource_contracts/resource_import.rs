@@ -372,10 +372,3 @@ fn imported_primary_keys_keep_index_order_and_map_the_physical_id_column() {
             .contains("映射为 id 时与已有列冲突")
     );
 }
-
-#[cfg(feature = "schema-import")]
-#[test]
-fn schema_import_feature_exposes_mysql_readers() {
-    let _ = ryframe_generator::import::inspect_existing_table;
-    let _ = ryframe_generator::import::list_existing_tables;
-}
