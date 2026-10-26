@@ -311,31 +311,7 @@ impl Transport for FakeS3 {
 #[test]
 fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
     let fixture = Fixture::new();
-    let run_dir = fixture.run.clone();
-    fs::create_dir(run_dir.join("e0001")).unwrap();
-    let request: Value =
-        serde_json::from_slice(&fs::read(fixture.local.join("source-request.json")).unwrap())
-            .unwrap();
-    let context = Context {
-        backend: fixture.backend.clone(),
-        run_dir,
-        mode: "run".into(),
-        attempt: 1,
-        manifest: json!({}),
-        object_identity:
-            crate::recovery::clone::native::s3::app_configuration::public_configuration(
-                &fixture.backend,
-                &request["source"]["s3"]["configuration"],
-            )
-            .unwrap(),
-        request,
-        request_path: fixture.local.join("source-request.json"),
-        environment: std::collections::BTreeMap::from([
-            ("TEST_ACCESS".to_owned(), "access".to_owned()),
-            ("TEST_SECRET".to_owned(), "secret".to_owned()),
-        ]),
-        execution_backend: fixture.backend.clone(),
-    };
+    let context = object_capture_context(&fixture);
     let inventory = json!({
         "objects": [
             {"bucket": "uploads", "entries": [{"key": "fixture-source/file.txt", "bytes": 4, "sha256": sha(b"data")}]},
@@ -374,31 +350,7 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
     assert_python_capture_compatible(&fixture, &capture_dir);
 
     let failed = Fixture::new();
-    fs::create_dir(failed.run.join("e0001")).unwrap();
-    let mut failed_request: Value =
-        serde_json::from_slice(&fs::read(failed.local.join("source-request.json")).unwrap())
-            .unwrap();
-    failed_request["source"]["scope_id"] = json!("fixture-source");
-    let failed_context = Context {
-        backend: failed.backend.clone(),
-        run_dir: failed.run.clone(),
-        mode: "run".into(),
-        attempt: 1,
-        manifest: json!({}),
-        object_identity:
-            crate::recovery::clone::native::s3::app_configuration::public_configuration(
-                &failed.backend,
-                &failed_request["source"]["s3"]["configuration"],
-            )
-            .unwrap(),
-        request: failed_request,
-        request_path: failed.local.join("source-request.json"),
-        environment: std::collections::BTreeMap::from([
-            ("TEST_ACCESS".to_owned(), "access".to_owned()),
-            ("TEST_SECRET".to_owned(), "secret".to_owned()),
-        ]),
-        execution_backend: failed.backend.clone(),
-    };
+    let failed_context = object_capture_context(&failed);
     assert!(
         object::capture(
             &failed_context,
@@ -408,6 +360,34 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
         )
         .is_err()
     );
+}
+
+fn object_capture_context(fixture: &Fixture) -> Context {
+    let run_dir = fixture.run.clone();
+    fs::create_dir(run_dir.join("e0001")).unwrap();
+    let request: Value =
+        serde_json::from_slice(&fs::read(fixture.local.join("source-request.json")).unwrap())
+            .unwrap();
+    Context {
+        backend: fixture.backend.clone(),
+        run_dir,
+        mode: "run".into(),
+        attempt: 1,
+        manifest: json!({}),
+        object_identity:
+            crate::recovery::clone::native::s3::app_configuration::public_configuration(
+                &fixture.backend,
+                &request["source"]["s3"]["configuration"],
+            )
+            .unwrap(),
+        request,
+        request_path: fixture.local.join("source-request.json"),
+        environment: std::collections::BTreeMap::from([
+            ("TEST_ACCESS".to_owned(), "access".to_owned()),
+            ("TEST_SECRET".to_owned(), "secret".to_owned()),
+        ]),
+        execution_backend: fixture.backend.clone(),
+    }
 }
 
 fn assert_python_capture_compatible(fixture: &Fixture, capture_dir: &Path) {
