@@ -29,10 +29,6 @@ class RateLimitClientTests(unittest.TestCase):
         ))
 
     def invoke(self, operation, environment, *, config_dir=None):
-        if operation == "login-budget":
-            return rate_limit_client.login_budget_environment(
-                ROOT, environment, ROOT / ".local-tests/budget.json", config_dir=config_dir
-            )
         function = {
             "load-table": rate_limit_client.load_app_table,
             "settings": rate_limit_client.rate_limit_settings,
@@ -113,24 +109,6 @@ class RateLimitClientTests(unittest.TestCase):
             run.assert_not_called()
             self.assertNotIn("untrusted", str(raised.exception))
 
-    def test_login_budget_uses_file_request_and_returns_exact_fields(self):
-        response = {
-            "ok": True,
-            "result": {
-                "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(
-                    ROOT / ".local-tests/budget.json"
-                ),
-                "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "5",
-                "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "60",
-            },
-        }
-        value, call = self.call(response, operation="login-budget")
-        self.assertEqual(set(value), set(response["result"]))
-        body = json.loads(call.kwargs["input"].decode("utf-8"))
-        self.assertEqual(body["app_env"], "test")
-        self.assertEqual(body["state_path"], str(ROOT / ".local-tests/budget.json"))
-        self.assertEqual(set(body), {"backend", "app_env", "state_path"})
-
     def test_error_codes_map_to_stable_python_exceptions_without_private_values(self):
         missing = {
             "ok": False,
@@ -195,7 +173,7 @@ class RateLimitClientTests(unittest.TestCase):
             {"APP_ENV": "test", "APP_DATABASE_PASSWORD": 1, "APP_RATE_LIMIT_FILE": False},
             {"APP_ENV": "test", "APP_UNKNOWN": b"private-value", 42: object()},
         ]
-        result = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        result = {}
         completed = subprocess.CompletedProcess(
             [], 0, json.dumps({"ok": True, "result": result}).encode("utf-8")
         )
@@ -204,8 +182,6 @@ class RateLimitClientTests(unittest.TestCase):
                 expected = {"backend": str(ROOT), "app_env": "test"}
                 if config_dir is not None:
                     expected["config_dir"] = config_dir
-                if operation == "login-budget":
-                    expected["state_path"] = str(ROOT / ".local-tests/budget.json")
                 payloads = []
                 for environment in variants:
                     with (
@@ -241,7 +217,7 @@ class RateLimitClientTests(unittest.TestCase):
             def __len__(self):
                 raise AssertionError("不得扫描配置映射")
 
-        result = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        result = {}
         for operation in sorted(rate_limit_client.OPERATIONS):
             with (
                 self.subTest(operation=operation),
@@ -274,7 +250,7 @@ class RateLimitClientTests(unittest.TestCase):
                 return "自定义 配置"
 
         values = ("./配置 目录/../选定", Path("配置 目录"), ROOT / "绝对 配置", Directory())
-        result = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
+        result = {}
         for operation in sorted(rate_limit_client.OPERATIONS):
             for directory in values:
                 with (
@@ -307,13 +283,6 @@ class RateLimitClientTests(unittest.TestCase):
                     str(raised.exception), "config_dir 必须是非空且不含控制字符的文本路径"
                 )
                 self.assertNotIn("private-value", str(raised.exception))
-
-    def test_login_budget_rejects_missing_extra_or_non_text_result_fields(self):
-        valid = {key: "fixture" for key in rate_limit_client.LOGIN_BUDGET_FIELDS}
-        for result in ([], {}, {**valid, "extra": "private-value"},
-                       {**valid, "RYFRAME_E2E_LOGIN_BUDGET_STATE": 1}):
-            with self.subTest(result=result), self.assertRaisesRegex(RuntimeError, "登录预算环境"):
-                self.call({"ok": True, "result": result}, operation="login-budget")
 
 
 if __name__ == "__main__":

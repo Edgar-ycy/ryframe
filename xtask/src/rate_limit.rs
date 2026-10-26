@@ -12,7 +12,7 @@ mod protocol;
 #[allow(unused_imports)]
 pub(crate) use config::{
     DEFAULT_API_WINDOW_SECS, DEFAULT_LOGIN_CAPACITY, LOGIN_RULE, RateLimitError, authority,
-    load_app_table, login_budget_environment, login_rate_limit, settings,
+    load_app_table, settings,
 };
 
 const MARKER: &str = "__rate-limit";

@@ -130,37 +130,6 @@ fn missing_config_and_invalid_values_use_stable_redacted_errors() {
 }
 
 #[test]
-fn login_budget_protocol_returns_only_the_three_runtime_values() {
-    let fixture = Fixture::new();
-    let file = fixture.backend.join("config/app.toml");
-    fs::write(
-        &file,
-        format!(
-            "[auth]\njwt_secret='private-value'\n{}",
-            fs::read_to_string(&file).unwrap()
-        ),
-    )
-    .unwrap();
-    let state = fixture.backend.join("budget.json");
-    let request = json!({
-        "backend": fixture.backend,
-        "app_env": "test",
-        "state_path": state
-    });
-    let (code, response) = invoke("login-budget", &request);
-    assert_eq!(code, 0);
-    assert_eq!(
-        response["result"],
-        json!({
-            "RYFRAME_E2E_LOGIN_BUDGET_STATE": state,
-            "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "5",
-            "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "60"
-        })
-    );
-    assert!(!response.to_string().contains("private-value"));
-}
-
-#[test]
 fn hidden_binary_is_absent_from_help_and_reads_the_request_from_stdin() {
     let help = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("--help")
@@ -319,10 +288,7 @@ fn file_context_rejects_old_overrides_unknown_fields_and_invalid_selectors() {
     ] {
         let mut request = fixture.request();
         request[field] = json!({"APP_ENV": "test", "value": "private-value"});
-        for operation in ["load-table", "settings", "authority", "login-budget"] {
-            if operation == "login-budget" {
-                request["state_path"] = json!(fixture.backend.join("budget.json"));
-            }
+        for operation in ["load-table", "settings", "authority"] {
             let (code, response) = invoke(operation, &request);
             assert_eq!(code, 2);
             assert_eq!(response["error"]["code"], "invalid_request");
@@ -358,11 +324,8 @@ fn file_context_rejects_old_overrides_unknown_fields_and_invalid_selectors() {
 #[test]
 fn omitted_and_null_configuration_directories_use_the_same_default() {
     let fixture = Fixture::new();
-    for operation in ["load-table", "settings", "authority", "login-budget"] {
-        let mut omitted = fixture.request();
-        if operation == "login-budget" {
-            omitted["state_path"] = json!(fixture.backend.join("budget.json"));
-        }
+    for operation in ["load-table", "settings", "authority"] {
+        let omitted = fixture.request();
         let expected = invoke(operation, &omitted);
         assert_eq!(expected.0, 0);
         let mut nullable = omitted;
@@ -401,14 +364,6 @@ fn explicit_file_context_selects_relative_or_absolute_directories_and_exact_envi
                 };
                 assert_eq!(actual, &json!(capacity));
             }
-            request["state_path"] = json!(fixture.backend.join("budget.json"));
-            let (code, response) = invoke("login-budget", &request);
-            assert_eq!(code, 0, "{response}");
-            assert_eq!(
-                response["result"]["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"],
-                "5"
-            );
-            assert_eq!(response["result"].as_object().unwrap().len(), 3);
         }
     }
     assert_eq!(
