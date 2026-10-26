@@ -5167,6 +5167,7 @@ dependencies = [
  "chrono",
  "file-id",
  "futures-util",
+ "glob",
  "hex",
  "hmac",
  "nix 0.29.0",

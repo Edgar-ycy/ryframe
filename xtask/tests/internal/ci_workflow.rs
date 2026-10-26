@@ -2,8 +2,28 @@
 use crate::check::supply_chain::yaml::{self, YamlValue};
 use std::fs;
 
+#[path = "ci_workflow_artifacts.rs"]
+mod artifacts;
 #[path = "ci_workflow_gates.rs"]
 mod gates;
+
+fn fixture_configuration(job: &YamlValue) -> (usize, toml::Value) {
+    let (index, step) = steps(job)
+        .iter()
+        .enumerate()
+        .find(|(_, step)| {
+            step.get("name").and_then(YamlValue::as_str)
+                == Some("写入当前 Job 的隔离数据库文件配置")
+        })
+        .unwrap();
+    // 只读取 TOML 数据；端口是既有控制器输出，不解释或执行 Shell。
+    let data = regex::Regex::new(r#"(?ms)<<['"]?EOF['"]?\r?\n(.*?)^\s*EOF\s*$"#).unwrap();
+    let document = data.captures(text(step, "run")).unwrap()[1].replace(
+        "$(cat \"$RUNNER_TEMP/ryframe-full-stack/worker-health-port\")",
+        "19210",
+    );
+    (index, toml::from_str(&document).unwrap())
+}
 
 fn workflow(name: &str) -> YamlValue {
     yaml::parse(

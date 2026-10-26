@@ -75,21 +75,7 @@ fn full_stack_native_stages_keep_failure_collection_and_required_artifacts() {
             .is_some()
     );
     let job = job(&extended, "full-stack-e2e");
-    let (configured, settings) = steps(job)
-        .iter()
-        .enumerate()
-        .find(|(_, step)| {
-            step.get("name").and_then(YamlValue::as_str)
-                == Some("写入当前 Job 的隔离数据库文件配置")
-        })
-        .unwrap();
-    // 只提取当前配置数据，不验证写入语句或执行 Shell；健康端口以合成控制器结果渲染。
-    let data = regex::Regex::new(r#"(?ms)<<['"]?EOF['"]?\r?\n(.*?)^\s*EOF\s*$"#).unwrap();
-    let document = data.captures(text(settings, "run")).unwrap()[1].replace(
-        "$(cat \"$RUNNER_TEMP/ryframe-full-stack/worker-health-port\")",
-        "19210",
-    );
-    let configuration: toml::Value = toml::from_str(&document).unwrap();
+    let (configured, configuration) = fixture_configuration(job);
     assert_eq!(configuration["api_docs"]["enabled"].as_bool(), Some(false));
     assert_eq!(
         configuration["reset"]["legacy_mysql_exclusive"].as_bool(),
