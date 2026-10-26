@@ -132,5 +132,3 @@ fn to_entity(record: {pascal}Record) -> entity::Model {{
 }}
 
 {relation_mappers}
-
-{tenant_error}

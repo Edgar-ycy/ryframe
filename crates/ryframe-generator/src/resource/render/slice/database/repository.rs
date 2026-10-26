@@ -41,11 +41,6 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let unique_conflicts = unique_conflict_mappings(resource);
     let generic_conflict = format!("{}已存在", resource.labels.zh_cn);
     let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
-    let tenant_error = if resource.storage == StorageKind::TenantData {
-        tenant_error_mapper()
-    } else {
-        String::new()
-    };
     let pagination = match resource.storage {
         StorageKind::ControlRow => "crate::pagination::paginate",
         StorageKind::TenantData => "ryframe_db::pagination::paginate",
@@ -139,8 +134,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
             "&record.tenant_id"
         },
         relation_mappers = relation_mappers,
-        tenant_error = tenant_error,
-    )
+    ) + "\n"
 }
 
 fn projected_write_scope(resource: &ResourceIr) -> (String, String) {

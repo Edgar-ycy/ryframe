@@ -7,6 +7,12 @@ use ryframe_kernel::AppError;
 
 use crate::TenantDataError;
 
+impl From<TenantDataError> for AppError {
+    fn from(error: TenantDataError) -> Self {
+        map_error(error)
+    }
+}
+
 fn map_error(error: TenantDataError) -> AppError {
     let category = match &error {
         TenantDataError::DataScopeProjectionStale { .. } => Some("data_scope_projection_stale"),
@@ -94,7 +100,7 @@ mod cause_tests {
         let config = ryframe_config::DbConnection::default();
         let source =
             crate::SafeDatabaseCause::from_connection(&config, "internal-driver-cause-1045");
-        let mapped = map_error(TenantDataError::TargetUnavailable {
+        let mapped = AppError::from(TenantDataError::TargetUnavailable {
             target_key: "private-target".into(),
             source: Some(source),
         });

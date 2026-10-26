@@ -3,6 +3,7 @@
 [简体中文](CHANGELOG.md)
 
 ## [Unreleased]
+- Generated tenant-business persistence reuses the shared safe error conversion and removes its duplicate mapper. Add internal diagnostics for missing or stale transactional data-scope projections and readiness, preserving public responses and fail-closed behavior.
 - Preserve both candidate workspaces and nested rollback backups when frontend business generation fails, preventing outer temporary-directory cleanup from invalidating recovery paths. Successful generation still cleans its caches, with unchanged formal installation rules.
 - Record request-correlated categories and safe causes before tenant-data access returns 503, distinguishing projection versions, target connections, placement, and capacity problems. Redacted driver causes remain internal to logs; public responses continue to hide internal causes, with maintenance and fail-closed rules unchanged.
 - Fix procedural macros potentially reusing another worktree's source artifacts when sharing a Cargo target. Every build verifies the current macro sources and preserves the generated fingerprint's modification time when its content is unchanged; a source mismatch or occupied watch sentinel fails explicitly. A real offline, locked regression verifies A→B→A macro expansion, source additions, edits and deletions, and unchanged output, retaining failure evidence without automatically deleting unknown cache objects.
