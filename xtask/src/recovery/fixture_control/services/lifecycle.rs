@@ -26,6 +26,8 @@ mod ledger;
 pub(super) mod model;
 #[path = "lifecycle/observation.rs"]
 mod observation;
+#[path = "lifecycle/partial.rs"]
+pub(super) mod partial;
 #[path = "lifecycle/prepared.rs"]
 mod prepared;
 #[path = "lifecycle/primitive.rs"]

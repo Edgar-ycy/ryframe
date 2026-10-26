@@ -7,6 +7,7 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
     let unknown = context.unknown()?;
     let mut observations = Value::Null;
     let mut reconciliation = Value::Null;
+    let mut partial_close_rejection = None;
     let next = if !unknown.is_empty() {
         "reconcile-evidence"
     } else if !controller.is_null() {
@@ -25,8 +26,11 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         } else {
             "reconcile-evidence"
         }
+    } else if history["initial_complete"] != true && history["closed"] == true {
+        observations = partial::verify_closed(runtime, context)?;
+        "new-scenario"
     } else if history["initial_complete"] != true {
-        initial_operation(context)?
+        initial(runtime, context, &mut partial_close_rejection)?
     } else {
         let services = registered(runtime, context, true)?;
         observations = observe(runtime, &services)?;
@@ -64,11 +68,38 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         next
     };
     context.guard(None)?;
-    Ok(
-        json!({"status":"service_status","run":context.run,"controller":controller,"state":context.value["sources"]["state_before"],
+    let mut status = json!({"status":"service_status","run":context.run,"controller":controller,"state":context.value["sources"]["state_before"],
         "services":observations,"unsettled":history["unsettled"],"unknown_recoveries":unknown,"reconciliation":reconciliation,
-        "next_operation":next,"remote_writes":0}),
-    )
+        "next_operation":next,"remote_writes":0});
+    if let Some(rejection) = partial_close_rejection {
+        status["partial_close_rejection"] = rejection;
+    }
+    Ok(status)
+}
+
+fn initial(
+    runtime: &mut dyn Runtime,
+    context: &Context,
+    rejection: &mut Option<Value>,
+) -> Result<&'static str> {
+    let next = initial_operation(context)?;
+    if next != "reconcile-evidence" {
+        return Ok(next);
+    }
+    match partial::can_close(runtime, context) {
+        Ok(()) => Ok("close"),
+        Err(error) => {
+            let reason = error.downcast_ref::<model::LifecycleError>().map_or(
+                "部分关闭资格核验未完成，原始证据、文件或进程身份无法安全确认",
+                |error| error.message,
+            );
+            *rejection = Some(
+                json!({"category":model::category(error.as_ref()),"reason":reason,
+                "advice":"核对原始首代账本、冻结请求、控制器、启动收据与完整进程树；保留现场，不重签绑定、不重放启动，不绕过状态执行关闭"}),
+            );
+            Ok(next)
+        }
+    }
 }
 
 fn reconcilable(runtime: &mut dyn Runtime, context: &Context, history: &Value) -> bool {

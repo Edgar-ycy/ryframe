@@ -1,6 +1,10 @@
 use super::*;
 
 pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value> {
+    let initial = history::validate(&context.run, &context.value["state"], false, true)?;
+    if initial["initial_complete"] != true {
+        return partial::close(runtime, context, &initial);
+    }
     let history = context.history(true)?;
     context.no_unknown()?;
     check(

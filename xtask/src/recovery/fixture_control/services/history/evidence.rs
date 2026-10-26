@@ -25,7 +25,10 @@ pub(super) fn check(valid: bool, message: &'static str) -> Result<()> {
     }
 }
 
-pub(super) fn exact(value: &Value, fields: &[&str]) -> Result<()> {
+pub(in crate::recovery::fixture_control::services) fn exact(
+    value: &Value,
+    fields: &[&str],
+) -> Result<()> {
     json_io::exact(value, fields, "夹具历史证据")
         .map(|_| ())
         .map_err(|_| {
@@ -41,7 +44,7 @@ pub(super) fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .ok_or_else(|| format!("夹具历史证据缺少字符串字段 {key}").into())
 }
 
-pub(super) fn path_is(value: &Value, path: &Path) -> bool {
+pub(in crate::recovery::fixture_control::services) fn path_is(value: &Value, path: &Path) -> bool {
     value.as_str().is_some_and(|value| Path::new(value) == path)
 }
 
@@ -204,7 +207,10 @@ pub(crate) fn close_evidence(
     Ok((evidence, controller(run, failed)?))
 }
 
-pub(super) fn members(proof: &Value, run: &Path) -> Result<()> {
+pub(in crate::recovery::fixture_control::services) fn members(
+    proof: &Value,
+    run: &Path,
+) -> Result<()> {
     let tree = &proof["tree"];
     check(
         proof["state"] == "stopped" && tree["format_version"] == 2,

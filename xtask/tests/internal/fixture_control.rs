@@ -491,7 +491,10 @@ fn parses_review_request_and_all_service_operations() {
             parsed,
             FixtureControlCommand::Services(FixtureServicesCommand::Run(_))
         ));
-        if matches!(operation, "close" | "reconcile" | "recover" | "restart") {
+        if matches!(
+            operation,
+            "status" | "close" | "reconcile" | "recover" | "restart"
+        ) {
             assert!(private_invocation_at(&parsed, &root_dir()).is_err());
         }
     }
@@ -770,12 +773,13 @@ fn private_protocol_selects_fixed_script_and_never_contains_argv_fields() {
     let fixture = Fixture::new();
     let command = parse_control(command(
         "services",
-        Some("status"),
+        Some("buckets"),
         vec![
             "--review".to_owned(),
             text(&fixture.input),
             "--environment".to_owned(),
             text(&fixture.input_two),
+            "--write".to_owned(),
         ],
     ))
     .unwrap();
@@ -789,8 +793,8 @@ fn private_protocol_selects_fixed_script_and_never_contains_argv_fields() {
     assert_eq!(protocol["format_version"], 1);
     assert_eq!(protocol["kind"], "ryframe-reference-fixture-control");
     assert_eq!(protocol["domain"], "services");
-    assert_eq!(protocol["operation"], "status");
-    assert_eq!(protocol["write"], false);
+    assert_eq!(protocol["operation"], "buckets");
+    assert_eq!(protocol["write"], true);
     assert_eq!(protocol["review"], text(&fixture.input));
     assert_eq!(protocol["environment"], text(&fixture.input_two));
     assert!(protocol.get("arguments").is_none());

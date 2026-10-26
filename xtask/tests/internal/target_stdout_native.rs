@@ -58,7 +58,7 @@ impl Fixture {
             initialized_binding: json!({}),
             initialized: json!({}),
             request_path: local.join("request.json"),
-            request: json!({"target": {"scope_id": "stdout-fixture", "databases": [database]}, "tools": {"mysql": {"path": mysql, "sha256": digest::file(&mysql).unwrap().sha256}}}),
+            request: json!({"config_dir":root.join("config"),"target": {"scope_id": "stdout-fixture", "databases": [database]}, "tools": {"mysql": {"path": mysql, "sha256": digest::file(&mysql).unwrap().sha256}}}),
             environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),
             observation_dir: local,
         };

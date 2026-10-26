@@ -1,7 +1,7 @@
 use super::*;
 use crate::recovery::clone::native::resources::{common, storage};
 
-fn frozen() -> FakeRuntime {
+pub(super) fn frozen() -> FakeRuntime {
     let mut runtime = FakeRuntime::new();
     let fixture = &mut runtime.fixture;
     let output = fixture.run.join("rustfs");

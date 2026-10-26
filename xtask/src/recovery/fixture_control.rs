@@ -61,7 +61,8 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
             if matches!(
                 options.operation,
-                crate::cli::FixtureServiceOperation::Close
+                crate::cli::FixtureServiceOperation::Status
+                    | crate::cli::FixtureServiceOperation::Close
                     | crate::cli::FixtureServiceOperation::Recover
                     | crate::cli::FixtureServiceOperation::Reconcile
                     | crate::cli::FixtureServiceOperation::Restart
@@ -77,7 +78,10 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
                 &options.review,
                 &options.environment,
                 options.owner_binding.as_deref(),
-                true,
+                !matches!(
+                    options.operation,
+                    crate::cli::FixtureServiceOperation::Status
+                ),
             )?;
             return print_json(&value);
         }
@@ -113,7 +117,8 @@ pub(crate) fn private_invocation_at(
         return Err("该夹具操作由 Rust 原生实现".into());
     }
     if matches!(command, FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
-        if matches!(options.operation, crate::cli::FixtureServiceOperation::Close
+        if matches!(options.operation, crate::cli::FixtureServiceOperation::Status
+            | crate::cli::FixtureServiceOperation::Close
             | crate::cli::FixtureServiceOperation::Recover | crate::cli::FixtureServiceOperation::Reconcile
             | crate::cli::FixtureServiceOperation::Restart))
     {

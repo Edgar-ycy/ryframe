@@ -132,6 +132,12 @@ fn close(
         history["external_recovery"].is_null(),
         "夹具外部终止核对后必须重启，不能补造正常关闭",
     )?;
+    if history["initial_complete"] != true {
+        check(history["closed"] == false, "部分关闭不能重复追加或续建首代")?;
+        super::lifecycle::partial::proof::validate(run, number, item, result)?;
+        history["closed"] = json!(true);
+        return Ok(());
+    }
     check(
         history["closed"] == false
             && result["status"] == "services_closed"

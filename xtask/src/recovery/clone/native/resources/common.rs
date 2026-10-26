@@ -266,11 +266,28 @@ pub(crate) fn pipe_to_file(command: &mut Command, stdout: &Path, stderr: &Path) 
 
 #[cfg(windows)]
 pub(crate) fn device_inode_for(path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
-    let information = windows_file_information(path)?;
-    let inode =
-        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-    Ok((u64::from(information.dwVolumeSerialNumber), inode))
+    let path = windows_path(path)?;
+    high_res_identity(file_id::get_high_res_file_id(Path::new(&path))?)
 }
+
+#[cfg(windows)]
+fn high_res_identity(identity: file_id::FileId) -> Result<(u64, u64)> {
+    match identity {
+        file_id::FileId::HighRes {
+            volume_serial_number,
+            file_id,
+        } => {
+            let inode = u64::try_from(file_id)
+                .map_err(|_| "Windows 高精度文件 ID 超过现有 inode u64 合同，拒绝截断或降级")?;
+            Ok((volume_serial_number, inode))
+        }
+        _ => Err("Windows 文件身份必须为高精度 FILE_ID_INFO，拒绝低精度回退".into()),
+    }
+}
+
+#[cfg(all(test, windows))]
+#[path = "../../../../../tests/unit/recovery/clone/native/resources/common.rs"]
+mod tests;
 
 #[cfg(windows)]
 pub(crate) fn link_count_for(path: &Path, _metadata: &fs::Metadata) -> Result<u64> {

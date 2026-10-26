@@ -106,7 +106,7 @@ pub(super) fn receipt(tree: &Value, suffix: &str) -> Result<PathBuf> {
         .join(format!("rustfs-members-{operation}-{suffix}.json")))
 }
 
-fn closed(request: &Value) -> Result<()> {
+pub(super) fn closed(request: &Value) -> Result<()> {
     for key in ["api_url", "console_url"] {
         common::require_closed_port(text(request, key)?)?;
     }

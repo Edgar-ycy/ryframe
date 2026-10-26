@@ -17,6 +17,8 @@ mod support;
 #[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/wait.rs"]
 mod wait;
 use support::*;
+#[path = "partial_close.rs"]
+mod partial_close;
 
 #[test]
 fn write_and_owner_policy_reject_before_context_or_service_access() {

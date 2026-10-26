@@ -554,25 +554,7 @@ fn device_inode(path: &Path) -> (u64, u64) {
     }
     #[cfg(windows)]
     {
-        use winsafe::{self as w, co, prelude::*};
-        let (handle, _) = w::HFILE::CreateFile(
-            path.to_str().unwrap(),
-            co::GENERIC::default(),
-            Some(co::FILE_SHARE::READ | co::FILE_SHARE::WRITE | co::FILE_SHARE::DELETE),
-            None,
-            co::DISPOSITION::OPEN_EXISTING,
-            co::FILE_ATTRIBUTE::NORMAL,
-            Some(co::FILE_FLAG::BACKUP_SEMANTICS),
-            None,
-            None,
-        )
-        .unwrap();
-        let mut info = w::BY_HANDLE_FILE_INFORMATION::default();
-        handle.GetFileInformationByHandle(&mut info).unwrap();
-        (
-            u64::from(info.dwVolumeSerialNumber),
-            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-        )
+        common::device_inode_for(path, &_metadata).unwrap()
     }
     #[cfg(not(any(unix, windows)))]
     {

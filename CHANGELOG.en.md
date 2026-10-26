@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Windows resource-directory identity uses a safe third-party high-resolution API and preserves the full 64-bit volume serial number. A 128-bit file ID must convert exactly into the existing u64 inode contract; oversized or non-high-resolution results are rejected without truncation or low-resolution fallback, while hard-link counting remains unchanged.
+
+- Fixture services support strict partial closure when the initial generation fails before bucket writes. Only started services with complete ownership proof are stopped, unstarted steps are checked for absence of side-effect evidence, and failed ledgers and files are retained. Partial closure cannot precede resumed initialization or restart, and unknown outcomes are never replayed automatically.
+
 - Fix source domains for real frontend builds: configuration and identity modules indirectly imported by Vite bind both product and tool digests. The generated-page acceptance configuration is a tool input; test type configuration retains its product binding and also records a tool digest. Complete source validation and conservative product ownership for unknown files remain effective.
 
 - Remove the unused login-budget environment-mapping interface, its private operation, and its dedicated derived-reader chain. Formal login budgets continue to use file configuration and managed ledgers, retaining rate-limit, concurrency, and failure checks.

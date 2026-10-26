@@ -33,7 +33,7 @@ struct FrozenEntry {
 impl FrozenEntry {
     fn open(path: &Path, directory: bool, allow_write: bool) -> Result<Self> {
         let before = path_identity(path, directory)?;
-        let handle = open_handle(path, directory, allow_write)?;
+        let handle = open_handle(path, directory, allow_write, false)?;
         if handle_identity(&handle, directory)? != before
             || path_identity(path, directory)? != before
         {
@@ -222,6 +222,20 @@ fn absent_lock(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(windows)]
+fn path_identity(path: &Path, directory: bool) -> Result<Identity> {
+    let kind = if directory {
+        LocalTestPathKind::ExistingDirectory
+    } else {
+        LocalTestPathKind::ExistingFile
+    };
+    validate_absolute_path(path, kind)?;
+    // 私有 guard 身份只比较各自真实句柄的原生表示，不与公共资源的完整卷号混用。
+    let candidate = open_handle(path, directory, true, true)?;
+    handle_identity(&candidate, directory)
+}
+
+#[cfg(not(windows))]
 fn path_identity(path: &Path, directory: bool) -> Result<Identity> {
     let kind = if directory {
         LocalTestPathKind::ExistingDirectory
@@ -248,7 +262,12 @@ fn path_identity(path: &Path, directory: bool) -> Result<Identity> {
 }
 
 #[cfg(windows)]
-fn open_handle(path: &Path, directory: bool, allow_write: bool) -> Result<Handle> {
+fn open_handle(
+    path: &Path,
+    directory: bool,
+    allow_write: bool,
+    metadata_only: bool,
+) -> Result<Handle> {
     use winsafe::{self as w, co, prelude::*};
     let flags = co::FILE_FLAG::OPEN_REPARSE_POINT
         | if directory {
@@ -258,7 +277,11 @@ fn open_handle(path: &Path, directory: bool, allow_write: bool) -> Result<Handle
         };
     let (handle, _) = w::HFILE::CreateFile(
         &common::windows_path(path)?,
-        co::GENERIC::READ,
+        if metadata_only {
+            co::GENERIC::default()
+        } else {
+            co::GENERIC::READ
+        },
         Some(if directory || allow_write {
             co::FILE_SHARE::READ | co::FILE_SHARE::WRITE
         } else {
@@ -276,9 +299,18 @@ fn open_handle(path: &Path, directory: bool, allow_write: bool) -> Result<Handle
 
 #[cfg(windows)]
 fn handle_identity(handle: &Handle, directory: bool) -> Result<Identity> {
-    use winsafe::prelude::*;
+    use winsafe::{co, prelude::*};
     let mut info = winsafe::BY_HANDLE_FILE_INFORMATION::default();
     handle.GetFileInformationByHandle(&mut info)?;
+    if info.dwFileAttributes.has(co::FILE_ATTRIBUTE::REPARSE_POINT) {
+        return Err("目标保护句柄不能指向链接或重解析点".into());
+    }
+    if info.dwFileAttributes.has(co::FILE_ATTRIBUTE::DIRECTORY) != directory {
+        return Err("目标保护句柄的节点类型不符".into());
+    }
+    if !directory && info.nNumberOfLinks == 0 {
+        return Err("目标保护输入的硬链接数量无效".into());
+    }
     Ok(Identity {
         device: u64::from(info.dwVolumeSerialNumber),
         inode: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
@@ -296,7 +328,12 @@ fn handle_identity(handle: &Handle, directory: bool) -> Result<Identity> {
 }
 
 #[cfg(not(windows))]
-fn open_handle(path: &Path, _directory: bool, _allow_write: bool) -> Result<Handle> {
+fn open_handle(
+    path: &Path,
+    _directory: bool,
+    _allow_write: bool,
+    _metadata_only: bool,
+) -> Result<Handle> {
     Ok(fs::File::open(path)?)
 }
 

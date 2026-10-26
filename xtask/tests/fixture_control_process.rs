@@ -190,7 +190,10 @@ fn invalid_arguments_exit_two_before_python_starts() {
 #[test]
 fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     let fixture = Fixture::new();
-    let result = invoke(&fixture.valid());
+    let mut arguments = fixture.valid();
+    arguments[4] = "buckets".to_owned();
+    arguments.push("--write".to_owned());
+    let result = invoke(&arguments);
     assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
@@ -212,6 +215,28 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
         "{stderr}"
     );
     assert!(!stderr.contains("protocol_error"), "{stderr}");
+}
+
+#[test]
+fn status_uses_native_readonly_validation_and_preserves_original_inputs() {
+    let fixture = Fixture::new();
+    let original = br#"{"private_marker":"must-not-be-printed"}"#;
+    for path in [&fixture.review, &fixture.environment] {
+        fs::write(path, original).unwrap();
+    }
+    let result = invoke(&fixture.valid());
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stdout.is_empty());
+    let error = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        error.contains("夹具环境尚未准备完成或已经发生服务副作用"),
+        "{error}"
+    );
+    assert!(!error.contains("must-not-be-printed"));
+    for path in [&fixture.review, &fixture.environment] {
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+    assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
 }
 
 #[test]

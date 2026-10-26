@@ -172,7 +172,7 @@ fn validate_storage(
     )
 }
 
-fn inspect(
+pub(super) fn inspect(
     backend: &Path,
     output: &Path,
     registration: &Value,
@@ -198,13 +198,47 @@ fn inspect(
     let receipt_path = output.join("process.json");
     let receipt = read(&receipt_path)?;
     let identity = common::validate_process_identity(&receipt["identity"])?;
-    check(
-        receipt
-            == json!({"format_version":1,"role":"rustfs","scope_id":request["scope_id"],
+    let expected = json!({"format_version":1,"role":"rustfs","scope_id":request["scope_id"],
         "lifecycle":"running","identity":identity,"api_url":request["api_url"],"console_url":request["console_url"],
-        "data_dir":request["data_directory"]["path"],"intent":binding(&intent_path)?})
-            && identity["executable"] == request["executable"]["path"],
-        "存储进程收据不属于该启动意图或实际工具",
+        "data_dir":request["data_directory"]["path"],"intent":binding(&intent_path)?});
+    for (field, reason) in [
+        (
+            "format_version",
+            "存储进程收据版本不符；保留现场并核对原启动工具",
+        ),
+        ("role", "存储进程收据角色不符；保留现场并核对原请求"),
+        ("scope_id", "存储进程收据 scope 不符；保留现场并核对原请求"),
+        (
+            "lifecycle",
+            "存储进程收据生命周期不符；保留现场核对启动结果",
+        ),
+        ("identity", "存储进程收据身份不符；禁止操作未确认进程"),
+        (
+            "api_url",
+            "存储进程收据 API 端点不符；核对冻结请求，不改写原收据",
+        ),
+        (
+            "console_url",
+            "存储进程收据控制台端点不符；核对冻结请求，不改写原收据",
+        ),
+        (
+            "data_dir",
+            "存储进程收据数据目录不符；核对冻结请求，不改写原收据",
+        ),
+        (
+            "intent",
+            "存储进程收据意图绑定不符；核对原 intent 文件完整字节，不重新签发",
+        ),
+    ] {
+        check(receipt[field] == expected[field], reason)?;
+    }
+    check(
+        receipt == expected,
+        "存储进程收据字段集合不符；保留原文件核对未知字段",
+    )?;
+    check(
+        identity["executable"] == request["executable"]["path"],
+        "存储进程可执行文件不符；核对原请求，禁止操作其他程序",
     )?;
     let launch_path = output.join("launch.json");
     let launch = if launch_path.exists() {
