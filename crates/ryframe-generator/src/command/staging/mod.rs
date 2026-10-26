@@ -41,13 +41,16 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     let mut frontend_allowed = BTreeSet::new();
     let frontend = if let Some(root) = &frontend_root {
         let frontend = CandidateWorkspace::create(root, false)?;
-        frontend_allowed = frontend::generate(
+        frontend_allowed = match frontend::generate(
             &backend.path,
             &frontend,
             root,
             &pipeline_target,
             &catalog_target,
-        )?;
+        ) {
+            Ok(allowed) => allowed,
+            Err(error) => return Err(backend.retain(frontend.retain(error))),
+        };
         backend_allowed.insert("openapi/openapi.json".into());
         Some(frontend)
     } else {

@@ -73,4 +73,45 @@ impl CandidateWorkspace {
             )
         })
     }
+
+    pub(super) fn retain(self, error: String) -> String {
+        let path = self.directory.keep();
+        format!(
+            "{error}；候选现场保留于 {}；正式文件未安装，先核对候选及其恢复目录，不自动重放或删除",
+            path.display()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_candidate_preserves_nested_recovery_and_success_closes_cache() {
+        let cache = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
+        fs::create_dir_all(&cache).unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("candidate-recovery-")
+            .tempdir_in(cache)
+            .unwrap();
+        fs::write(root.path().join("model.rs"), b"original").unwrap();
+        let candidate = CandidateWorkspace::create(root.path(), false).unwrap();
+        let candidate_root = candidate.directory.path().to_path_buf();
+        let backup = candidate
+            .path
+            .join(".ryframe-stage-failed/.backup/model.rs");
+        fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        fs::write(&backup, b"before-image").unwrap();
+        let error = candidate.retain("安装失败，回滚未完成".into());
+        assert!(error.contains(candidate_root.to_str().unwrap()));
+        assert_eq!(fs::read(&backup).unwrap(), b"before-image");
+        assert_eq!(fs::read(root.path().join("model.rs")).unwrap(), b"original");
+
+        let successful = CandidateWorkspace::create(root.path(), false).unwrap();
+        let successful_root = successful.directory.path().to_path_buf();
+        successful.close().unwrap();
+        assert!(!successful_root.exists());
+        assert_eq!(fs::read(&backup).unwrap(), b"before-image");
+    }
 }
