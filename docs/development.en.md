@@ -156,4 +156,4 @@ In `.local-tests/devex/runtime.json` for task performance samples, `bindings.job
 
 ### Cargo tool source verification
 
-See [Architecture: Cargo tool source verification](architecture.en.md#cargo-tool-source-verification) for the complete mechanism, failure handling, and managed-tool protocol.
+See [Architecture: Cargo tool source verification](architecture.en.md#cargo-tool-source-verification) for the complete mechanism, failure handling, and managed-tool protocol. That section also covers the procedural-macro shared-cache regression and its command.

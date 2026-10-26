@@ -3397,7 +3397,11 @@ dependencies = [
  "axum",
  "proc-macro2",
  "quote",
+ "serde_json",
+ "sha2 0.11.0",
  "syn 3.0.6",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

@@ -156,4 +156,4 @@ Full Resource Workspace 门禁在同一次 Cargo 编译中准备 `resource_works
 
 ### Cargo 工具来源核验
 
-完整机制、失败处理及受管工具协议见[架构说明：Cargo 工具来源核验](architecture.md#cargo-工具来源核验)。
+完整机制、失败处理及受管工具协议见[架构说明：Cargo 工具来源核验](architecture.md#cargo-工具来源核验)。过程宏共享缓存回归及运行命令也见该节。
