@@ -261,6 +261,11 @@ pub trait TenantDataMigrationTransaction:
         tenant_id: &'a str,
     ) -> ryframe_kernel::AppResult<i64>;
 
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32>;
+
     async fn lock_placement<'a>(
         &'a self,
         tenant_id: &'a str,

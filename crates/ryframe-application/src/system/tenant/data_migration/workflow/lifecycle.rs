@@ -138,57 +138,7 @@ impl TenantDataMigrationService {
         let transaction = self.persistence.begin().await?;
         self.renew_operation_lease(&*transaction, &snapshot, now)
             .await?;
-        let tenant = transaction
-            .lock_tenant(&snapshot.tenant_id, Some(&snapshot.switch_token))
-            .await?;
-        let mut placement = transaction.lock_placement(&snapshot.tenant_id).await?;
-        let mut migration = transaction.lock_migration(snapshot.id).await?;
-        ensure_not_cancel_requested(&migration)?;
-        if migration.state == TenantDataMigrationRecord::STATE_SUCCEEDED {
-            transaction
-                .commit(crate::TransactionAuditMode::Skip)
-                .await?;
-            return Ok(migration);
-        }
-        if migration.state != TenantDataMigrationRecord::STATE_ACTIVATING {
-            return Err(AppError::TenantOperationConflict(
-                "迁移状态不允许激活 placement".into(),
-            ));
-        }
-        if placement.current_target_key != migration.target_key
-            || placement.placement_generation != migration.target_generation
-            || placement.switch_token != migration.switch_token
-        {
-            return Err(AppError::StalePlacementGeneration(
-                "激活前 placement 已变化".into(),
-            ));
-        }
-        let changed = placement.state != TenantDataPlacementRecord::STATE_ACTIVE;
-        placement.state = TenantDataPlacementRecord::STATE_ACTIVE.into();
-        placement.updated_at = now;
-        transaction.save_placement(placement).await?;
-        if changed {
-            transaction
-                .increment_runtime_epoch(&migration.tenant_id)
-                .await?;
-            transaction
-                .record_data_scope_change(&migration.tenant_id)
-                .await?;
-        }
-        migration.state = TenantDataMigrationRecord::STATE_SUCCEEDED.into();
-        migration.activated_at.get_or_insert(now);
-        migration.succeeded_at.get_or_insert(now);
-        migration.updated_at = now;
-        migration = transaction.save_migration(migration).await?;
-        transaction
-            .commit(crate::TransactionAuditMode::Skip)
-            .await?;
-        if changed {
-            self.authorization_cache
-                .publish_tenant_context_changed(&migration.tenant_id, tenant.authorization_epoch)
-                .await;
-        }
-        Ok(migration)
+        activate(transaction, &snapshot, now, &self.authorization_cache).await
     }
 
     pub(super) async fn enter_retention(
@@ -264,3 +214,73 @@ impl TenantDataMigrationService {
         Ok(migration)
     }
 }
+
+async fn activate(
+    transaction: Box<dyn crate::ports::tenant_data::TenantDataMigrationTransaction>,
+    snapshot: &TenantDataMigrationRecord,
+    now: chrono::DateTime<Utc>,
+    authorization_cache: &crate::AuthorizationCache,
+) -> AppResult<TenantDataMigrationRecord> {
+    transaction
+        .lock_tenant(&snapshot.tenant_id, Some(&snapshot.switch_token))
+        .await?;
+    let mut placement = transaction.lock_placement(&snapshot.tenant_id).await?;
+    let mut migration = transaction.lock_migration(snapshot.id).await?;
+    ensure_not_cancel_requested(&migration)?;
+    if migration.state == TenantDataMigrationRecord::STATE_SUCCEEDED {
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
+        return Ok(migration);
+    }
+    if migration.state != TenantDataMigrationRecord::STATE_ACTIVATING {
+        return Err(AppError::TenantOperationConflict(
+            "迁移状态不允许激活 placement".into(),
+        ));
+    }
+    if placement.current_target_key != migration.target_key
+        || placement.placement_generation != migration.target_generation
+        || placement.switch_token != migration.switch_token
+    {
+        return Err(AppError::StalePlacementGeneration(
+            "激活前 placement 已变化".into(),
+        ));
+    }
+    let changed = placement.state != TenantDataPlacementRecord::STATE_ACTIVE;
+    placement.state = TenantDataPlacementRecord::STATE_ACTIVE.into();
+    placement.updated_at = now;
+    transaction.save_placement(placement).await?;
+    let epoch = if changed {
+        transaction
+            .increment_runtime_epoch(&migration.tenant_id)
+            .await?;
+        transaction
+            .record_data_scope_change(&migration.tenant_id)
+            .await?;
+        Some(
+            transaction
+                .increment_authorization_epoch(&migration.tenant_id)
+                .await?,
+        )
+    } else {
+        None
+    };
+    migration.state = TenantDataMigrationRecord::STATE_SUCCEEDED.into();
+    migration.activated_at.get_or_insert(now);
+    migration.succeeded_at.get_or_insert(now);
+    migration.updated_at = now;
+    migration = transaction.save_migration(migration).await?;
+    transaction
+        .commit(crate::TransactionAuditMode::Skip)
+        .await?;
+    if let Some(epoch) = epoch {
+        authorization_cache
+            .sync_tenant_epoch(&migration.tenant_id, epoch)
+            .await?;
+    }
+    Ok(migration)
+}
+
+#[cfg(test)]
+#[path = "../../../../../tests/tenant_data_migration/activation.rs"]
+mod tests;

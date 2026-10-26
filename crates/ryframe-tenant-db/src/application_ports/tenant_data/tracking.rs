@@ -30,14 +30,22 @@ pub use mappers::{
 
 struct TenantDataMigrationPersistence {
     database: ControlDatabaseCluster,
+    authorization_cache: ryframe_application::AuthorizationCache,
 }
 
 struct TenantDataMigrationWorkUnit {
     transaction: DatabasePortTransaction,
+    authorization_cache: ryframe_application::AuthorizationCache,
 }
 
-pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantDataMigrationPersistencePort> {
-    Arc::new(TenantDataMigrationPersistence { database })
+pub fn port(
+    database: ControlDatabaseCluster,
+    authorization_cache: ryframe_application::AuthorizationCache,
+) -> Arc<dyn TenantDataMigrationPersistencePort> {
+    Arc::new(TenantDataMigrationPersistence {
+        database,
+        authorization_cache,
+    })
 }
 
 #[async_trait::async_trait]
@@ -178,12 +186,22 @@ impl TenantDataMigrationPersistencePort for TenantDataMigrationPersistence {
         let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(TenantDataMigrationWorkUnit {
             transaction: transaction.into(),
+            authorization_cache: self.authorization_cache.clone(),
         }) as Box<dyn TenantDataMigrationTransaction>)
     }
 }
 
 #[async_trait::async_trait]
 impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32> {
+        self.authorization_cache
+            .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
+            .await
+    }
+
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction {
         &self.transaction
     }
