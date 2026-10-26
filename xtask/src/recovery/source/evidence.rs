@@ -121,6 +121,13 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("copy-administrator-credentials") => {
             crate::recovery::clone::native::session::credentials::validate_request(args)
         }
+        Some("frontend-build-validation") => {
+            let authority =
+                crate::check::consumer_context::existing_origin(&crate::workspace::root_dir())?;
+            let result = crate::recovery::frontend_build::recovery_request(args);
+            authority.verify()?;
+            result
+        }
         Some("source-inventory") => super::super::clone::native::source::protocol::request(args),
         Some("physical-binding") => binding::physical(args),
         Some("lineage-derive") => lineage::derive(args),

@@ -36,36 +36,60 @@ struct Description {
     sources: Vec<Source>,
 }
 
+struct SourceSnapshot {
+    sources: serde_json::Value,
+    token: serde_json::Value,
+}
+
 pub(crate) struct OriginBinding {
     pub(super) binding: HeldFile,
     held: Vec<HeldFile>,
-    evidence: PathBuf,
+    evidence: Option<PathBuf>,
     source_root: PathBuf,
     source_paths: Vec<String>,
+    root_identity: Option<Identity>,
+    snapshot: Option<SourceSnapshot>,
 }
 
 impl OriginBinding {
     pub(crate) fn verify(&self) -> Result<()> {
         let result = (|| {
             self.binding.verify()?;
+            if let Some(root) = &self.root_identity {
+                root.verify(&self.source_root)?;
+            }
             if sources::discover(&self.source_root)? != self.source_paths {
                 return Err(INVALID.into());
             }
             for file in &self.held {
                 file.verify()?;
             }
+            if let Some(snapshot) = &self.snapshot {
+                let current = crate::frontend_origin::verify_compiled_sources(
+                    &self.source_root,
+                    &snapshot.sources,
+                )
+                .map_err(|_| INVALID)?;
+                if current != snapshot.token {
+                    return Err(INVALID.into());
+                }
+            }
             Ok(())
         })();
-        if result.is_err() {
-            super::record_failure(&self.evidence);
+        if result.is_err()
+            && let Some(evidence) = &self.evidence
+        {
+            super::record_failure(evidence);
         }
         result
     }
 
     pub(crate) fn finish(self, result: Result<()>) -> Result<()> {
         let verification = self.verify();
-        if result.is_err() {
-            super::record_failure(&self.evidence);
+        if result.is_err()
+            && let Some(evidence) = &self.evidence
+        {
+            super::record_failure(evidence);
         }
         super::finish_verified_result(result, verification)
     }
@@ -95,7 +119,9 @@ pub(super) fn prepare(root: &Path, evidence: &Path) -> Result<OriginBinding> {
     Ok(OriginBinding {
         binding,
         held,
-        evidence: evidence.to_owned(),
+        evidence: Some(evidence.to_owned()),
+        root_identity: None,
+        snapshot: None,
         source_root: root.to_owned(),
         source_paths: description
             .sources
@@ -105,8 +131,40 @@ pub(super) fn prepare(root: &Path, evidence: &Path) -> Result<OriginBinding> {
     })
 }
 
+/// 只读消费已发布绑定；不更新缓存、不创建失败文件，也不启动描述子进程。
+pub(crate) fn existing(root: &Path) -> Result<OriginBinding> {
+    let root = files::absolute_directory(root)?;
+    let mut binding = HeldFile::open(&root.join(".local-tests/frontend-origin-tool.json"))?;
+    let description = parse(&binding.read(LIMIT)?)?;
+    let current = crate::frontend_origin::describe().map_err(|_| INVALID)?;
+    if parse(&serde_json::to_vec(&current)?)? != description {
+        return Err(INVALID.into());
+    }
+    let sources = current["sources"].clone();
+    let token =
+        crate::frontend_origin::verify_compiled_sources(&root, &sources).map_err(|_| INVALID)?;
+    let held = validate_current(&root, &description, &std::env::current_exe()?)?;
+    let root_identity = Some(Identity::open(&root, true)?);
+    // 只读基线已由完整 source guard 建立；调用方输出前再比较聚合 token。
+    Ok(OriginBinding {
+        binding,
+        held,
+        evidence: None,
+        root_identity,
+        snapshot: Some(SourceSnapshot { sources, token }),
+        source_root: root,
+        source_paths: description
+            .sources
+            .iter()
+            .map(|file| file.path.clone())
+            .collect(),
+    })
+}
+
 fn parse(bytes: &[u8]) -> Result<Description> {
-    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| INVALID)?;
+    let text = std::str::from_utf8(bytes).map_err(|_| INVALID)?;
+    let value = crate::recovery::clone::native::json::parse_fragment(text, "origin binding")
+        .map_err(|_| INVALID)?;
     if !value.is_object()
         || !value["executable"].is_object()
         || !value["sources"]

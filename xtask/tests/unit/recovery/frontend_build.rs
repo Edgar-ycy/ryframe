@@ -1,0 +1,110 @@
+use super::{configuration, files, source, validate};
+use serde_json::{Value, json};
+use std::{fs, path::Path, process::Command};
+
+fn git(root: &Path, arguments: &[&str]) {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(arguments);
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// 使用真实 Git、配置和产物验证组件边界；这不是 Vite 产品构建证明。
+fn fixture() -> tempfile::TempDir {
+    let parent = crate::workspace::root_dir().join(".local-tests/frontend-build-unit");
+    fs::create_dir_all(&parent).unwrap();
+    let temporary = tempfile::tempdir_in(parent).unwrap();
+    let root = temporary.path();
+    for directory in ["config", "dist/.vite", ".local-tests/build"] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    fs::write(root.join(".gitignore"), "/dist/\n/.local-tests/\n").unwrap();
+    fs::write(root.join("config/app.test.toml"),
+        "api_origin=\"\"\n[server]\nhost=\"localhost\"\nport=5173\nproxy_target=\"http://localhost:8080\"\n").unwrap();
+    fs::write(root.join("dist/index.html"), "fixture asset").unwrap();
+    fs::write(root.join("dist/.vite/manifest.json"), "{}").unwrap();
+    git(root, &["init", "--quiet"]);
+    git(root, &["config", "core.autocrlf", "false"]);
+    git(root, &["add", "."]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    );
+    temporary
+}
+
+fn write_receipt(root: &Path, commit: &str, inventory: &Value) {
+    fs::write(
+        root.join(".local-tests/build/source.json"),
+        serde_json::to_vec(&json!({"format_version":1,"frontend_commit":commit})).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("dist/build-identity.json"),
+        serde_json::to_vec(&json!({"frontend_commit":commit})).unwrap(),
+    )
+    .unwrap();
+    let inputs = configuration::capture(root, "test").unwrap();
+    let domains = source::protocol::request(&json!({
+        "action":"domains", "repository":"frontend", "inventory":inventory,
+    }))
+    .unwrap();
+    let receipt = json!({"format_version":3,"kind":"restore-frontend-build",
+        "sources":domains,"files":files::artifacts(root).unwrap().files,
+        "build":{"command":["vite","build"],"mode":"production","target":"vite-default",
+            "toolchain":{"node":"fixture","vite":"fixture",
+                "pnpm":{"pinned":"fixture","observed":"fixture"}},
+            "configuration":inputs.configuration,"identity":inputs.identity}});
+    fs::write(
+        root.join("dist").join(files::RECEIPT),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn inferred_and_explicit_full_inventory_accept_real_clean_source_and_reject_mismatched_head() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    for commit in ["development", head] {
+        write_receipt(root, commit, &inventory);
+        for supplied in [None, Some(&inventory)] {
+            let proof = validate(root, supplied, None).unwrap();
+            assert_eq!(proof.inventory, inventory);
+            proof.verify().unwrap();
+        }
+    }
+    let wrong_head = if head == "0".repeat(40) {
+        "1".repeat(40)
+    } else {
+        "0".repeat(40)
+    };
+    write_receipt(root, &wrong_head, &inventory);
+    assert!(validate(root, None, None).is_err());
+}

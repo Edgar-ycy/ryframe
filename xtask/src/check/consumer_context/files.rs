@@ -29,17 +29,17 @@ pub(super) struct Binding {
     pub(super) sha256: String,
 }
 
-pub(super) struct HeldFile {
-    pub(super) path: PathBuf,
-    pub(super) bytes: u64,
-    pub(super) sha256: String,
+pub(crate) struct HeldFile {
+    pub(crate) path: PathBuf,
+    pub(crate) bytes: u64,
+    pub(crate) sha256: String,
     file: File,
     identity: Identity,
     parent: Identity,
 }
 
 impl HeldFile {
-    pub(super) fn open(path: &Path) -> Result<Self> {
+    pub(crate) fn open(path: &Path) -> Result<Self> {
         no_links(path)?;
         let mut options = OpenOptions::new();
         options.read(true);
@@ -76,7 +76,7 @@ impl HeldFile {
         Ok(held)
     }
 
-    pub(super) fn read(&mut self, limit: u64) -> Result<Vec<u8>> {
+    pub(crate) fn read(&mut self, limit: u64) -> Result<Vec<u8>> {
         if self.bytes > limit {
             return Err(FILE_ERROR.into());
         }
@@ -92,7 +92,7 @@ impl HeldFile {
         Ok(bytes)
     }
 
-    pub(super) fn verify(&self) -> Result<()> {
+    pub(crate) fn verify(&self) -> Result<()> {
         self.parent.verify(self.path.parent().ok_or(FILE_ERROR)?)?;
         self.identity.verify(&self.path)?;
         let held = Identity::for_file(&self.path, &self.file)?;

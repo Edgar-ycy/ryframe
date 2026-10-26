@@ -28,8 +28,7 @@ SECRET = "PRIVATE-SENTINEL-DO-NOT-PRINT"
 
 class FrontendConfigurationTests(unittest.TestCase):
     def setUp(self):
-        # 与正式入口使用同一个 backend 根固定绑定；缺失绑定直接报配置错误。
-        self.assertEqual(normalize_origin("", allow_empty=True), "")
+        # 真实文件夹具通过正式原生适配完成配置核验。
         temporary = WorkspaceDirectory(ROOT / ".local-tests/python-unit")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name) / "中文 空格"
@@ -69,7 +68,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         self.assertEqual(len(build["configuration"]["files"]), 1)
         verify_frontend_inputs(self.root, build)
         selected.unlink()
-        self.safe_failure(lambda: verify_frontend_inputs(self.root, build), "app.dev.toml")
+        self.safe_failure(lambda: verify_frontend_inputs(self.root, build), "必需文件")
 
     def test_optional_managed_json_can_have_missing_parent_directories(self):
         (self.root / IDENTITY).unlink()
@@ -89,7 +88,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         (self.root / ".local-tests/frontend-tools.json").write_text(
             '{"application_config_dir":"missing/child"}', encoding="utf-8"
         )
-        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "IO code")
+        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "父目录")
 
     def test_local_tool_priority_unicode_directory_and_absolute_source(self):
         directory = self.root.parent / "外部 公开目录"
@@ -118,10 +117,10 @@ class FrontendConfigurationTests(unittest.TestCase):
             original = file.read_bytes()
             file.write_bytes(original + b"\n")
             with self.subTest(relative=relative):
-                self.safe_failure(lambda: validate_frontend_build(self.root), "不一致")
+                self.safe_failure(lambda: validate_frontend_build(self.root), "不同")
             file.write_bytes(original)
         write_json(self.root / ".local-tests/frontend-tools.json", {})
-        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "不一致")
+        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "不同")
 
     def test_before_after_detects_byte_change_even_without_semantic_change(self):
         inputs = verify_frontend_inputs(self.root, self.build)
@@ -141,7 +140,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         for text in malformed:
             selected.write_text(text, encoding="utf-8")
             with self.subTest(kind=text.split("=")[0]):
-                self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "app.dev.toml")
+                self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build))
         selected.write_bytes(SECRET.encode() + b"\xff")
         self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "UTF8")
 
@@ -168,7 +167,7 @@ class FrontendConfigurationTests(unittest.TestCase):
                 self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build))
         (self.root / "config/app.toml").unlink()
         selected.write_text('api_origin=""', encoding="utf-8")
-        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "必需字段")
+        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "缺少 api_origin 或 server.host/port/proxy_target")
 
     def test_integer_valued_toml_float_port_matches_frontend_number_is_integer(self):
         (self.root / "config/app.dev.toml").write_text("[server]\nport=5173.0\n", encoding="utf-8")
@@ -180,6 +179,14 @@ class FrontendConfigurationTests(unittest.TestCase):
             self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "api_origin 为空")
 
     def test_tools_and_identity_json_are_strict_safe_and_not_toml(self):
+        tool = self.root / "config/tools.json"
+        write_json(tool, {"api_contract": {"private": SECRET}, "real_browser": SECRET,
+                          "browser_smoke": [SECRET]})
+        inputs = verify_frontend_inputs(self.root, frontend_context(self.root))
+        self.assertNotIn(SECRET, json.dumps(inputs.observed))
+        self.assertNotIn(SECRET, json.dumps(inputs.configuration))
+        inputs.assert_unchanged()
+        write_json(tool, {})
         for relative in (".local-tests/frontend-tools.json", IDENTITY):
             file = self.root / relative
             original = file.read_bytes() if file.exists() else None
@@ -203,7 +210,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         validate_registered_frontend(self.root, self.head)
         self.safe_failure(lambda: validate_registered_frontend(self.root, "0" * 40), "干净")
         write_json(self.root / "dist/build-identity.json", {"frontend_commit": "0" * 40})
-        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "frontend_commit")
+        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "身份")
 
     def test_source_identity_accepts_json_number_one_point_zero_with_real_fixture(self):
         source = self.root / IDENTITY
@@ -220,7 +227,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         for version in (True, False, 1.5, float("nan"), float("inf"), float("-inf"), 0, 2, "1"):
             write_json(self.root / IDENTITY, {"format_version": version, "frontend_commit": self.head})
             with self.subTest(kind=type(version).__name__):
-                self.safe_failure(lambda: frontend_context(self.root), "source.json")
+                self.safe_failure(lambda: frontend_context(self.root))
 
     def test_external_build_rejects_wrong_sha_and_legacy_layout_without_invocation(self):
         forbidden = unittest.mock.Mock(side_effect=AssertionError("禁止执行外部构建"))
@@ -252,7 +259,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         write_json(self.root / "dist/build-identity.json", {"frontend_commit": "development"})
         save_receipt(self.root)
         validate_frontend_build(self.root)
-        self.safe_failure(lambda: validate_registered_frontend(self.root, self.head), "frontend_commit")
+        self.safe_failure(lambda: validate_registered_frontend(self.root, self.head), "身份")
         (self.root / IDENTITY).unlink()
         save_receipt(self.root)
         validate_frontend_build(self.root)
@@ -341,7 +348,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         file = self.root / "config/app.dev.toml"
         file.unlink()
         file.mkdir()
-        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "普通")
+        self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "错误类型")
         file.rmdir()
         # 未知 reparse tag 不要求管理员构造；附加属性协议以窄 lstat 适配器检查。
         original_lstat = os.lstat
@@ -382,7 +389,7 @@ class FrontendConfigurationTests(unittest.TestCase):
         self.assertEqual(names, sorted(names, key=lambda name: name.encode("utf-8")))
         file = self.root / "dist/assets/中文.txt"
         file.write_bytes(b"changed")
-        self.safe_failure(lambda: validate_frontend_build(self.root), "不一致")
+        self.safe_failure(lambda: validate_frontend_build(self.root), "不同")
         file.unlink()
         file.symlink_to(self.root / "config/app.toml")
         self.addCleanup(file.unlink)
@@ -392,16 +399,17 @@ class FrontendConfigurationTests(unittest.TestCase):
         import restore_frontend_build
 
         save_receipt(self.root)
-        original = restore_frontend_build.frontend_snapshots
+        original = restore_frontend_build.artifact_snapshot
+        added = self.root / "dist/new.txt"
 
-        def files_then_add(root):
-            result = original(root)
-            (root / "dist/new.txt").write_text("new", encoding="utf-8")
+        def read_then_add(path):
+            result = original(path)
+            added.write_text("new", encoding="utf-8")
             return result
 
-        with patch.object(restore_frontend_build, "frontend_snapshots", side_effect=files_then_add):
-            self.safe_failure(lambda: validate_frontend_build(self.root), "文件集合")
-        (self.root / "dist/new.txt").unlink()
+        with patch.object(restore_frontend_build, "artifact_snapshot", side_effect=read_then_add):
+            self.safe_failure(lambda: restore_frontend_build.frontend_snapshots(self.root), "文件集合")
+        added.unlink()
         (self.root / "dist/.vite/manifest.json").unlink()
         self.safe_failure(lambda: validate_frontend_build(self.root), "manifest.json")
 
@@ -419,15 +427,10 @@ class FrontendConfigurationTests(unittest.TestCase):
         save_receipt(self.root)
         inventory = capture_inventory(self.root)
         request = json.dumps({"frontend_inventories": [inventory], "backend_inventories": []})
-        command = [
-            sys.executable,
-            "-B",
-            "-X",
-            "utf8",
-            str(ROOT / "tools/python/source_domain_contract.py"),
-            "--frontend-dir",
-            str(self.root),
-        ]
+        from rate_limit_tool import tool_binding, verified_tool
+
+        binding = tool_binding()
+        command = [binding["path"], "__frontend-build-contract", "--frontend-dir", str(self.root)]
         options = {
             "input": request,
             "text": True,
@@ -435,21 +438,22 @@ class FrontendConfigurationTests(unittest.TestCase):
             "capture_output": True,
             "env": {**os.environ, "APP_ENV": "prod", "VITE_APP_API_ORIGIN": SECRET},
         }
-        result = subprocess.run(command, **options)
+        with verified_tool(binding):
+            result = subprocess.run(command, **options)
         self.assertEqual(result.returncode, 0, result.stderr)
         value = json.loads(result.stdout)
         self.assertEqual(value["frontend_build"]["configuration"], self.build["configuration"])
         self.assertNotIn("environment_files", value)
         (self.root / "config/app.dev.toml").write_text(f'password="{SECRET}"', encoding="utf-8")
-        failure = subprocess.run(command, **options)
+        with verified_tool(binding):
+            failure = subprocess.run(command, **options)
         self.assertNotEqual(failure.returncode, 0)
         self.assertEqual(failure.stdout, "")
         self.assertNotIn(SECRET, failure.stderr)
-        self.assertIn("app.dev.toml", failure.stderr)
+        self.assertIn("FrontendBuildRejected", failure.stderr)
+        self.assertIn("重新构建", failure.stderr)
 
     def test_rust_origin_normalization_preserves_frontend_url_semantics(self):
-        from restore_frontend_configuration import _origin
-
         for value, expected in (
             ("http://127.1", "http://127.0.0.1"),
             ("http://0x7f000001", "http://127.0.0.1"),
@@ -459,9 +463,9 @@ class FrontendConfigurationTests(unittest.TestCase):
             ("\ufeff", ""),
         ):
             with self.subTest(expected=expected):
-                self.assertEqual(_origin(value, "配置", "api_origin", empty=True), expected)
+                self.assertEqual(normalize_origin(value, allow_empty=True), expected)
         for value in ("http://999.999.999.999", "http://256.0.0.1", "\u0085"):
-            self.safe_failure(lambda: _origin(value, "配置", "api_origin", empty=True))
+            self.safe_failure(lambda: normalize_origin(value, allow_empty=True))
 
     def test_ecmascript_host_and_same_origin_whitespace_remain_distinct(self):
         selected = self.root / "config/app.dev.toml"
