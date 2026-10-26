@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the retired administrator-password environment lookup from copy diagnostics and keep only APP_ENV in normal target-verification fixtures. Redaction of actual file-bound credentials and negative checks against retired environment overrides remain intact.
+
 - Redis first-generation startup and cache recovery distinguish APP_ENV application selection from OS runtime fields such as TEMP/TMP, reusing restricted child-environment construction and retaining the bound private environment. Arbitrary application and credential overrides remain rejected before side effects, without changes to requests, locks, markers or recovery receipts.
 
 - Fixture service status recommends continuing only after every preceding initial step has passed and no evidence exists for the next step. Failed or running initial steps, or existing evidence for the next step, require evidence reconciliation instead of suggesting a step based on attempt count. Status queries remain read-only.

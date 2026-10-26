@@ -64,7 +64,6 @@ class CloneSession:
         values = set()
         databases = []
         for side, config in (("source", self.source_request["source"]), ("target", self.target_request["target"])):
-            environment = self.environment.values[side]
             objects = object_configuration(config["s3"]["configuration"], self.backend) if side == "source" else config["s3"]
             for field in ("access_key", "secret_key"):
                 value = objects.get(field)
@@ -72,8 +71,6 @@ class CloneSession:
                     raise ValueError("复制日志缺少配置文件中的对象凭据")
                 values.add(value)
             databases.extend(config["databases"])
-            if environment.get("RYFRAME_RESET_ADMIN_PASSWORD"):
-                values.add(environment["RYFRAME_RESET_ADMIN_PASSWORD"])
         self.secret_redaction = {f"COPY_PASSWORD_{index}": value for index, value in enumerate(sorted(values))}
         self.database_credentials = {"backend": str(self.backend), "databases": copy.deepcopy(databases)}
         redact_object_diagnostic("", {}, database_credentials=self.database_credentials)

@@ -224,25 +224,7 @@ impl authority::Observer for Authority {
 }
 
 fn environment() -> BTreeMap<String, String> {
-    [
-        ("APP_ENV", "test"),
-        ("APP_SCOPE_ID", SCOPE),
-        ("APP_JOBS_MODE", "external"),
-        ("APP_JOBS_HEALTH_HOST", "127.0.0.1"),
-        ("APP_JOBS_HEALTH_PORT", "28081"),
-        ("APP_REDIS_HOST", "127.0.0.1"),
-        ("APP_REDIS_PORT", "26379"),
-        ("APP_REDIS_DATABASE", "0"),
-        ("APP_REDIS_TLS", "false"),
-        ("APP_REDIS_PASSWORD", "fixture-redis"),
-        ("APP_TENANT_PASSWORD", "fixture-secret"),
-        ("APP_OBJECT_STORAGE_ACCESS_KEY", "fixture-access"),
-        ("APP_OBJECT_STORAGE_SECRET_KEY", "fixture-secret"),
-        ("RYFRAME_RESET_ADMIN_PASSWORD", "Fixture!Admin123"),
-    ]
-    .into_iter()
-    .map(|(key, value)| (key.into(), value.into()))
-    .collect()
+    BTreeMap::from([("APP_ENV".into(), "test".into())])
 }
 
 fn review(fixture: &Fixture, services: &Value) -> Value {
