@@ -1,20 +1,10 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::ffi::OsString;
 
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use super::FileContext;
 use super::config::{self, RateLimitError};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LoginBudgetRequest {
-    backend: PathBuf,
-    app_env: String,
-    #[serde(default)]
-    config_dir: Option<PathBuf>,
-    state_path: String,
-}
 
 pub(super) fn execute(arguments: &[OsString], input: &[u8]) -> (i32, String) {
     let result = execute_inner(arguments, input);
@@ -63,17 +53,6 @@ fn execute_inner(arguments: &[OsString], input: &[u8]) -> Result<Value, Failure>
                 &request.backend,
                 request.config_dir.as_deref(),
                 &request.app_env,
-            )
-            .and_then(to_value)
-            .map_err(Failure::Config)
-        }
-        "login-budget" => {
-            let request = decode::<LoginBudgetRequest>(input)?;
-            config::login_budget_environment(
-                &request.backend,
-                request.config_dir.as_deref(),
-                &request.app_env,
-                &request.state_path,
             )
             .and_then(to_value)
             .map_err(Failure::Config)

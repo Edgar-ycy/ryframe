@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused login-budget environment-mapping interface, its private operation, and its dedicated derived-reader chain. Formal login budgets continue to use file configuration and managed ledgers, retaining rate-limit, concurrency, and failure checks.
+
 - CI Required aggregation accepts an explicit JSON input file. The workflow passes the event, action and complete needs document to Rust as data without custom environment fields, retaining existing success, failure, cancellation and skipped-job rules.
 
 - Resource-gate replay validates its manifest before loading test-role configuration, so an invalid manifest reports its own cause instead of an unrelated local service-configuration error.

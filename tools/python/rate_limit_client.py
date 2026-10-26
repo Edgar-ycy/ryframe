@@ -12,12 +12,7 @@ from rate_limit_tool import tool_binding, verified_tool
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
-OPERATIONS = frozenset({"authority", "load-table", "settings", "login-budget"})
-LOGIN_BUDGET_FIELDS = frozenset({
-    "RYFRAME_E2E_LOGIN_BUDGET_STATE",
-    "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY",
-    "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS",
-})
+OPERATIONS = frozenset({"authority", "load-table", "settings"})
 _ENCODING_NAMES = frozenset({"PYTHONUTF8", "PYTHONIOENCODING"})
 _HOST_PROCESS_NAMES = frozenset({
     "PATH",
@@ -56,25 +51,6 @@ def rate_limit_authority(
     backend: Path, environment: Mapping[str, str], *, config_dir: Path | str | None = None
 ) -> dict:
     return _table_request("authority", backend, environment, config_dir=config_dir)
-
-
-def login_budget_environment(
-    backend: Path,
-    environment: Mapping[str, str],
-    state_path: Path,
-    *,
-    config_dir: Path | str | None = None,
-) -> dict[str, str]:
-    request = _file_request(backend, environment, config_dir=config_dir)
-    request["state_path"] = str(state_path)
-    result = _invoke("login-budget", request)
-    if (
-        not isinstance(result, dict)
-        or set(result) != LOGIN_BUDGET_FIELDS
-        or any(not isinstance(value, str) for value in result.values())
-    ):
-        raise RuntimeError("限流配置入口返回了无效的登录预算环境")
-    return result
 
 
 def _table_request(

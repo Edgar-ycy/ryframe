@@ -189,11 +189,6 @@ class ToolFixture(unittest.TestCase):
         self.executable.write_bytes(self.content)
 
     def invoke(self, operation):
-        if operation == "login-budget":
-            return client.login_budget_environment(
-                self.directory, {"APP_ENV": "test"}, self.directory / "budget.json",
-                config_dir="配置 目录",
-            )
         function = {
             "authority": client.rate_limit_authority,
             "load-table": client.load_app_table,
@@ -205,9 +200,7 @@ class ToolFixture(unittest.TestCase):
 class BoundClientTests(ToolFixture):
     def test_all_operations_use_exact_bound_argv_and_private_stdin(self):
         for operation in sorted(client.OPERATIONS):
-            result = {} if operation != "login-budget" else {
-                key: "fixture" for key in client.LOGIN_BUDGET_FIELDS
-            }
+            result = {}
             completed = subprocess.CompletedProcess(
                 [], 0, json.dumps({"ok": True, "result": result}).encode("utf-8")
             )
@@ -238,8 +231,6 @@ class BoundClientTests(ToolFixture):
             expected = {
                 "backend": str(self.directory), "app_env": "test", "config_dir": "配置 目录"
             }
-            if operation == "login-budget":
-                expected["state_path"] = str(self.directory / "budget.json")
             self.assertEqual(request, expected)
             self.assert_released()
 
