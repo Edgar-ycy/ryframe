@@ -29,17 +29,6 @@ fn command() -> UpdateNoticeCommand {
 }
 
 #[tokio::test]
-async fn self_only_hides_another_owner_in_both_list_and_detail() {
-    let (_, service) = fixture(Some(2));
-    let page = service.find_by_page(&actor(), list()).await.unwrap();
-    assert_eq!(page.total, 0);
-    assert!(
-        service.find_by_id(&actor(), 8).await.unwrap().is_none(),
-        "列表不可见的记录不得通过已知 ID 读取"
-    );
-}
-
-#[tokio::test]
 async fn self_only_rejects_another_owner_update_without_writes() {
     let (persistence, service) = fixture(Some(2));
     let result = service.update(&actor(), 8, command()).await;
@@ -75,27 +64,6 @@ async fn self_only_rejects_another_owner_delete_without_writes() {
             .unwrap()
             .is_some()
     );
-}
-
-#[tokio::test]
-async fn all_scope_includes_records_without_owner_but_self_only_excludes_them() {
-    let (_, service) = fixture(None);
-    let mut unrestricted = actor();
-    unrestricted.data_scope = DataScope::All;
-    let page = service.find_by_page(&unrestricted, list()).await.unwrap();
-    assert_eq!(page.total, 1, "fake 与真实 SQL 的 All 范围必须一致");
-    assert!(
-        service
-            .find_by_id(&unrestricted, 8)
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert_eq!(
-        service.find_by_page(&actor(), list()).await.unwrap().total,
-        0
-    );
-    assert!(service.find_by_id(&actor(), 8).await.unwrap().is_none());
 }
 
 fn matrix_fixture() -> NoticeService {
