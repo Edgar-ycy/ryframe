@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- CI Required aggregation accepts an explicit JSON input file. The workflow passes the event, action and complete needs document to Rust as data without custom environment fields, retaining existing success, failure, cancellation and skipped-job rules.
+
+- Resource-gate replay validates its manifest before loading test-role configuration, so an invalid manifest reports its own cause instead of an unrelated local service-configuration error.
+
 - The kernel build script checks the actual workspace's source commit on every build and writes the generated constant only when its contents change, preventing shared build caches from retaining another worktree's source or repeatedly updating identical output. Development-source semantics, exact SHA validation, and failure behavior are preserved.
 
 - Remove the retired administrator-password environment lookup from copy diagnostics and keep only APP_ENV in normal target-verification fixtures. Redaction of actual file-bound credentials and negative checks against retired environment overrides remain intact.

@@ -687,13 +687,14 @@ jobs:
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
+      - name: 构建汇总工具
+        run: cargo build --locked --target-dir target/xtask-run -p xtask --bin xtask
+
       - name: 汇总必须门禁
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: >-
-          cargo xtask check ci required
-          --event "$EVENT_NAME"
-          --action "$EVENT_ACTION"
-          --needs-json "$NEEDS_JSON"
+        shell: ${{ github.workspace }}/target/xtask-run/debug/xtask check ci required --input {0}
+        run: |
+          {
+            "event": ${{ toJSON(github.event_name) }},
+            "action": ${{ toJSON(github.event.action) }},
+            "needs": ${{ toJSON(needs) }}
+          }

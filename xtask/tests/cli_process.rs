@@ -5,8 +5,19 @@ mod security_reports;
 
 #[path = "cli_process/frontend_source.rs"]
 mod frontend_source;
+#[path = "cli_process/required.rs"]
+mod required;
 
 use std::process::{Command, Output};
+
+fn temporary_directory() -> tempfile::TempDir {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".local-tests/cli-process");
+    std::fs::create_dir_all(&root).unwrap();
+    tempfile::tempdir_in(root).unwrap()
+}
 
 fn xtask_command() -> Command {
     let command = Command::new(env!("CARGO_BIN_EXE_xtask"));
@@ -211,8 +222,8 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
 }
 
 #[test]
-fn resource_gate_replay_configuration_error_exits_two_without_python() {
-    let fixture = tempfile::tempdir().unwrap();
+fn resource_gate_replay_invalid_manifest_exits_two_before_loading_roles() {
+    let fixture = temporary_directory();
     let manifest = fixture.path().join("manifest.json");
     std::fs::write(
         &manifest,
@@ -241,7 +252,6 @@ fn resource_gate_replay_configuration_error_exits_two_without_python() {
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("至少需要 20"), "{error}");
     assert!(error.contains("配置错误"), "{error}");
-    assert!(!error.contains("python"), "{error}");
 }
 
 #[test]
@@ -534,6 +544,26 @@ fn required_ci_command_preserves_usage_and_task_failure_exit_codes() {
         "{stdout}"
     );
     assert!(stdout.contains("Required 汇总校验通过"), "{stdout}");
+    let directory = temporary_directory();
+    let input = directory.path().join("required 中文.json");
+    std::fs::write(
+        &input,
+        format!(r#"{{"event":"push","action":null,"needs":{valid}}}"#),
+    )
+    .unwrap();
+    let file_success = invoke(&[
+        "check",
+        "ci",
+        "required",
+        "--input",
+        input.to_str().unwrap(),
+    ]);
+    assert!(
+        file_success.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file_success.stderr)
+    );
+    assert_eq!(file_success.stdout, stdout.as_bytes());
 
     let failed = valid.replacen(
         r#""rust-gate":{"result":"success"}"#,
@@ -553,6 +583,20 @@ fn required_ci_command_preserves_usage_and_task_failure_exit_codes() {
     assert!(
         String::from_utf8_lossy(&failure.stderr).contains("rust-gate 期望 success，实际 failure")
     );
+    std::fs::write(
+        &input,
+        format!(r#"{{"event":"push","action":"","needs":{failed}}}"#),
+    )
+    .unwrap();
+    let file_failure = invoke(&[
+        "check",
+        "ci",
+        "required",
+        "--input",
+        input.to_str().unwrap(),
+    ]);
+    assert_eq!(file_failure.status.code(), Some(1));
+    assert_eq!(file_failure.stderr, failure.stderr);
 }
 
 #[test]

@@ -178,14 +178,14 @@ pub(crate) fn finish(run: &ReplayRun, activation_gate: bool) -> Result<()> {
 }
 
 fn execute(request: &ReplayRequest, runtime: ReplayRuntime<'_>) -> ReplayStep<ReplayRun> {
-    let activation = std::sync::Arc::new(activation::Activation::load(
-        &request.backend,
-        request.activation_gate,
-    )?);
     let manifest = load_manifest(&request.manifest)?;
     if request.activation_gate {
         validate_activation_commands(&manifest)?;
     }
+    let activation = std::sync::Arc::new(activation::Activation::load(
+        &request.backend,
+        request.activation_gate,
+    )?);
     let manifest_fingerprint = sha256_file(&request.manifest)?;
     let backend = repository_identity(&request.backend, "后端", "Cargo.toml")?;
     let frontend = repository_identity(&request.frontend, "前端", "package.json")?;
