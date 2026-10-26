@@ -68,7 +68,7 @@ cargo migrate -- control up
 cargo migrate -- control verify
 ```
 
-租户表的接管、inspect、目标迁移和 verify 使用 `tenant-data` 并显式提供 `--target business-shared`，不接受 `--all`；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
+租户表的接管与 inspect 使用 `tenant-data adopt`，必须显式提供单个 `--target business-shared`，不接受 `--all`。后续 `tenant-data up`、`verify` 和 `status` 可选择单个 `--target`，也可显式使用 `--all` 处理全部已登记目标；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
 
 授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。可接受陈旧的列表读才使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。租户数据范围由 `sys_tenant.data_scope_version` 驱动：控制库事务写入 outbox，Worker 在 placement 目标发布并原子切换投影；认证主体版本落后或投影不可用时失败关闭。用户创建、更新、删除，以及实际插入用户的导入批次，在记录数据范围变更的同一事务内推进租户授权代次，缓存启用时按既有策略写入镜像 outbox；提交后同步租户授权缓存，使其他主体的旧快照失效并在下次请求重建。更新和删除仍推进目标用户授权版本、拒绝旧令牌；无实际插入的导入批次及回滚不推进代次。提交后镜像同步失败按现有缓存策略报告，已提交写入不重放，由持久 outbox 恢复。数据迁移只有在激活阶段实际将 placement 转为 active 时，同事务推进 scope 和授权代次，并按既有缓存策略登记镜像 outbox；提交后同步新授权代次并发布上下文变化通知。重复 succeeded、已经 active 和回滚不重复推进；进入维护与 cutover 原有运行代次、fence 和租约规则不变。两个数据库之间没有分布式事务，已并发进入租户库的写入不能被控制库回滚。
 
