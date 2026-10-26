@@ -1,3 +1,5 @@
+#[path = "recovery/frontend_build.rs"]
+pub(crate) mod frontend_build;
 use std::path::Path;
 
 use crate::{

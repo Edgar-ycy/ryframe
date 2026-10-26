@@ -27,7 +27,7 @@ fn arguments() -> Vec<String> {
 }
 
 #[test]
-fn context_has_exact_seven_fields_and_ordered_configuration() {
+fn context_has_exact_six_fields_and_ordered_configuration() {
     let root = fixture();
     std::fs::create_dir(root.path().join("config")).unwrap();
     std::fs::create_dir(root.path().join(".local-tests")).unwrap();
@@ -43,7 +43,6 @@ fn context_has_exact_seven_fields_and_ordered_configuration() {
     let bytes = encode(
         root.path(),
         root.path(),
-        &root.path().join("venv/python"),
         &arguments(),
         &configuration.rows,
         binding,
@@ -63,7 +62,6 @@ fn context_has_exact_seven_fields_and_ordered_configuration() {
             "arguments",
             "backend_root",
             "frontend_root",
-            "python_program",
             "origin_tool_binding",
             "tool_configuration"
         ]
@@ -119,17 +117,7 @@ fn all_context_paths_must_be_absolute() {
         bytes: 1,
         sha256: "a".repeat(64),
     };
-    assert!(
-        encode(
-            root.path(),
-            root.path(),
-            Path::new("python"),
-            &arguments(),
-            &[],
-            binding
-        )
-        .is_err()
-    );
+    assert!(encode(root.path(), root.path(), &arguments(), &[], binding).is_err());
 }
 
 #[test]

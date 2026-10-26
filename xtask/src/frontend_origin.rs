@@ -107,7 +107,7 @@ fn run_check() -> (Value, i32) {
     }
 }
 
-fn normalize_origin(value: &str, allow_empty: bool) -> Result<String, &'static str> {
+pub(crate) fn normalize_origin(value: &str, allow_empty: bool) -> Result<String, &'static str> {
     // JS trim 不移除 U+0085，但会移除 U+FEFF。
     let value = value.trim_matches(|character: char| {
         (character.is_whitespace() && character != '\u{85}') || character == '\u{feff}'
@@ -136,6 +136,17 @@ fn normalize_origin(value: &str, allow_empty: bool) -> Result<String, &'static s
     Ok(origin)
 }
 
+pub(crate) fn verify_compiled_sources(
+    root: &std::path::Path,
+    files: &Value,
+) -> Result<Value, &'static str> {
+    let bytes = serde_json::to_vec(&json!({"format_version":1,"root":root,"sources":files}))
+        .map_err(|_| EXECUTABLE_READ)?;
+    let token =
+        source_guard::execute(&mut std::io::Cursor::new(bytes)).map_err(|_| EXECUTABLE_READ)?;
+    serde_json::to_value(token).map_err(|_| EXECUTABLE_READ)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CompiledSources {
@@ -145,7 +156,7 @@ struct CompiledSources {
     files: Vec<Value>,
 }
 
-fn describe() -> Result<Value, &'static str> {
+pub(crate) fn describe() -> Result<Value, &'static str> {
     let path = env::current_exe()
         .and_then(std::fs::canonicalize)
         .map_err(|_| EXECUTABLE_PATH)?;

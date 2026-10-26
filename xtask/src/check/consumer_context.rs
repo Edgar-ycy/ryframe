@@ -18,9 +18,10 @@ mod origin;
 #[path = "consumer_context/python.rs"]
 pub(crate) mod python;
 
+pub(crate) use files::HeldFile;
 pub(crate) use files::selected_frontend_directory;
-use files::{Binding, HeldFile, Source};
-pub(crate) use origin::OriginBinding;
+use files::{Binding, Source};
+pub(crate) use origin::{OriginBinding, existing as existing_origin};
 
 const CONFIGURATION: [&str; 2] = ["config/tools.toml", ".local-tests/tools.toml"];
 
@@ -72,7 +73,6 @@ struct Document<'a> {
     arguments: &'a [String],
     backend_root: &'a Path,
     frontend_root: &'a Path,
-    python_program: &'a Path,
     origin_tool_binding: Binding,
     tool_configuration: &'a [Source],
 }
@@ -171,12 +171,10 @@ fn prepare_in(
 ) -> Result<ConsumerContext> {
     validate_arguments(&arguments)?;
     let configuration = Configuration::capture(root)?;
-    let program = python::selected_program(root)?;
     let origin = origin::prepare(root, evidence)?;
     let bytes = encode(
         root,
         frontend,
-        &program,
         &arguments,
         &configuration.rows,
         origin.binding.binding()?,
@@ -220,18 +218,13 @@ fn validate_arguments(arguments: &[String]) -> Result<()> {
 fn encode(
     root: &Path,
     frontend: &Path,
-    program: &Path,
     arguments: &[String],
     configuration: &[Source],
     binding: Binding,
 ) -> Result<Vec<u8>> {
     validate_arguments(arguments)?;
-    if !root.is_absolute()
-        || !frontend.is_absolute()
-        || !program.is_absolute()
-        || !binding.path.is_absolute()
-    {
-        return Err("consumer context 必须绑定绝对工作区、Python 和 origin 工具路径。".into());
+    if !root.is_absolute() || !frontend.is_absolute() || !binding.path.is_absolute() {
+        return Err("consumer context 必须绑定绝对工作区和 origin 工具路径。".into());
     }
     if binding.path != root.join(".local-tests/frontend-origin-tool.json")
         || binding.bytes == 0
@@ -258,7 +251,6 @@ fn encode(
         arguments,
         backend_root: root,
         frontend_root: frontend,
-        python_program: program,
         origin_tool_binding: binding,
         tool_configuration: configuration,
     })?)
