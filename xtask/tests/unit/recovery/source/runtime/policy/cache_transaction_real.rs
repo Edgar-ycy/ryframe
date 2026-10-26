@@ -33,9 +33,9 @@ struct Fixture {
 impl Fixture {
     fn open(case: &str) -> Result<Self> {
         let backend = crate::workspace::root_dir();
-        let source = backend.join(".local-tests/service-tests/redis/config");
+        let source = backend.join(".local-tests/service-tests/source-watch/config");
         if !files::directory_available(&source)? {
-            return Err("真实 Redis 未验收：缺少 service-tests/redis/config；请由控制器准备隔离文件配置后显式运行".into());
+            return Err("真实 Redis 未验收：缺少 service-tests/source-watch/config；请由控制器准备隔离文件配置后显式运行".into());
         }
         let captured = Captured::load(&source, false)?;
         let redis = captured
@@ -130,8 +130,10 @@ impl Fixture {
         for (keys, values) in self
             .comparison
             .keys
-            .chunks_exact(3)
-            .zip(self.comparison.values.chunks_exact(5))
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(self.comparison.values.as_chunks::<5>().0.iter())
         {
             for (key, value) in keys.iter().zip(values).take(2) {
                 if client.transaction_command(&["SET", key, value, "NX"])? != json!("OK") {
