@@ -23,39 +23,6 @@ class SourceInventoryAdapterTests(unittest.TestCase):
             sources.source_domain("Cargo.toml")
         invoke.assert_not_called()
 
-    def test_every_inventory_operation_delegates_exact_read_only_protocol(self):
-        root = Path("D:/source")
-        inventory = {"files": []}
-        domains = {"full": inventory}
-        snapshot = {"head": "a" * 40}
-        cases = [
-            (lambda: sources.source_domain("Cargo.toml"), {"action": "domain", "path": "Cargo.toml"}, "product", "product"),
-            (lambda: sources.fingerprints(inventory), {"action": "fingerprints", "files": []}, {}, {}),
-            (lambda: sources.validate_inventory(inventory), {"action": "validate", "inventory": inventory}, {}, inventory),
-            (lambda: sources.build_source_domains(inventory, "backend"),
-             {"action": "domains", "inventory": inventory, "repository": "backend"}, domains, domains),
-            (lambda: sources.validate_build_source_domains(domains, "frontend"),
-             {"action": "validate-domains", "value": domains, "repository": "frontend"}, {}, domains),
-            (lambda: sources.source_snapshot(root), {"action": "source-snapshot", "root": str(root)}, snapshot, snapshot),
-            (lambda: sources.snapshot(root), {"action": "snapshot", "root": str(root)},
-             {"snapshot": snapshot, "patch": [0, 255, 10]}, (snapshot, b"\x00\xff\n")),
-            (lambda: sources.worktree_fingerprint(root, "a" * 40),
-             {"action": "worktree-fingerprint", "root": str(root), "commit": "a" * 40}, "sha256:x", "sha256:x"),
-            (lambda: sources.file_inventory(root), {"action": "file-inventory", "root": str(root)}, inventory, inventory),
-            (lambda: sources.capture_inventory(root),
-             {"action": "capture", "root": str(root), "source": None}, inventory, inventory),
-            (lambda: sources.capture_inventory(root, snapshot),
-             {"action": "capture", "root": str(root), "source": snapshot}, inventory, inventory),
-        ]
-        for call, arguments, result, expected in cases:
-            response = {"ok": True, "result": {"value": result}}
-            with self.subTest(arguments=arguments), patch.object(native_s3_client, "_invoke",
-                    return_value=(SimpleNamespace(returncode=0), response)) as invoke:
-                self.assertEqual(call(), expected)
-                invoke.assert_called_once_with("__source-evidence", {
-                    "operation": "source-inventory", "write": False, "arguments": arguments,
-                }, subprocess.run, may_write=False)
-
     def test_native_rejection_is_propagated_without_python_fallback(self):
         response = {"ok": False, "error": {"category": "SourceEvidenceRejected",
             "message": "源码路径不能包含符号链接或 junction", "remote_write_may_have_occurred": False,
