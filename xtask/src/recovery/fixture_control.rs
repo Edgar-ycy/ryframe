@@ -26,6 +26,15 @@ mod artifact;
 pub(crate) fn verify_full_stack_runtime(root: &Path, directory: &Path) -> Result<Value> {
     artifact::runtime::verify(root, directory).map(|binding| binding.receipt)
 }
+
+pub(crate) fn full_stack_runtime_contract(
+    root: &Path,
+    directory: &Path,
+    api: &Path,
+    worker: &Path,
+) -> Result<Value> {
+    artifact::runtime::contract(root, directory, api, worker)
+}
 #[path = "fixture_control/dataset.rs"]
 mod dataset;
 #[path = "fixture_control/environment.rs"]

@@ -17,7 +17,7 @@ mod current;
 pub(crate) use current::Current;
 
 #[path = "seed/generation.rs"]
-mod generation;
+pub(crate) mod generation;
 #[path = "seed/history.rs"]
 pub(crate) mod history;
 #[path = "seed/identity.rs"]

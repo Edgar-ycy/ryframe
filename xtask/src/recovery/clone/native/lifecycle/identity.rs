@@ -151,7 +151,7 @@ fn platform(pid: u32) -> Result<Option<Value>> {
 }
 
 #[cfg(windows)]
-fn windows_snapshot(handle: &winsafe::HPROCESS, pid: u32) -> Result<Value> {
+pub(crate) fn windows_snapshot(handle: &winsafe::HPROCESS, pid: u32) -> Result<Value> {
     use winsafe::{FILETIME, co, prelude::kernel_Hprocess};
 
     let mut creation = FILETIME::default();

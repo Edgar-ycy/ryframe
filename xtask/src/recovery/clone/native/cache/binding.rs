@@ -6,7 +6,7 @@ use super::{
 #[path = "readonly/request.rs"]
 mod request;
 #[path = "readonly/source.rs"]
-mod source;
+pub(crate) mod source;
 #[path = "readonly/tools.rs"]
 mod tools;
 #[path = "binding/tools.rs"]
@@ -35,7 +35,7 @@ pub(crate) fn query(
     execute_stage(backend, &args, owner)
 }
 
-pub(super) fn execute_stage(
+pub(crate) fn execute_stage(
     backend: &Path,
     args: &Value,
     owner: Option<&target_verify::guard::Generation>,

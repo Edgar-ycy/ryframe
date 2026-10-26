@@ -46,6 +46,10 @@ impl NativeRuntime {
         self.primitive("controller", json!({"run":run}))
     }
 
+    pub(crate) fn complete_registered_tree(&mut self, tree: &Value) -> Result<Value> {
+        self.primitive("completion", json!({"tree":tree}))
+    }
+
     pub(crate) fn observe_listener(&mut self, identity: &Value, url: &str) -> Result<()> {
         common::validate_process_identity(identity)?;
         let actual = self.primitive("identity", json!({"pid":identity["pid"]}))?;

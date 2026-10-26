@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 #[path = "lineage.rs"]
 mod lineage;
 #[path = "coordinator_receipts.rs"]
-mod receipts;
+pub(crate) mod receipts;
 #[cfg(test)]
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/generation/coordinator_tests.rs"]
 mod tests;
@@ -33,7 +33,7 @@ const REQUEST: &[&str] = &[
     "source_environment",
 ];
 
-pub(super) fn dispatch(value: &Value) -> Result<Value> {
+pub(crate) fn dispatch(value: &Value) -> Result<Value> {
     document::exact(value, &["action", "input"], "生成编排模型")?;
     let args = &value["input"];
     match value["action"].as_str() {
@@ -240,7 +240,7 @@ fn preflight_finish(args: &Value) -> Result<Value> {
     Ok(json!({"ready":true}))
 }
 
-fn request(value: &Value) -> Result<()> {
+pub(crate) fn request(value: &Value) -> Result<()> {
     document::exact(value, REQUEST, "source-generation 请求")?;
     if value["format_version"].as_u64() != Some(1)
         || value["kind"] != "devex-clone-seed-source-generation"

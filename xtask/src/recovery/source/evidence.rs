@@ -7,23 +7,41 @@ use super::super::clone::native::json as documents;
 use crate::Result;
 
 #[path = "evidence/binding.rs"]
-mod binding;
+pub(crate) mod binding;
 #[path = "runtime/cache.rs"]
 mod cache;
+#[path = "runtime/control.rs"]
+pub(crate) mod control;
+#[path = "runtime/environment.rs"]
+mod environment;
+#[path = "runtime/execution.rs"]
+pub(super) mod execution;
+#[path = "runtime/images.rs"]
+mod images;
 #[path = "runtime/inventory.rs"]
 mod inventory;
 #[path = "evidence/lineage.rs"]
 mod lineage;
 #[path = "evidence/model.rs"]
 mod model;
+#[path = "runtime/producer.rs"]
+mod producer;
 #[path = "runtime/ready.rs"]
 mod ready;
 #[path = "evidence/reference.rs"]
 mod reference;
 #[path = "evidence/reference_workflow/mod.rs"]
 pub(crate) mod reference_workflow;
+#[path = "runtime/resources.rs"]
+mod resources;
+#[path = "runtime/running.rs"]
+mod running;
+#[path = "runtime/session.rs"]
+mod session;
 #[path = "evidence/staging.rs"]
 mod staging;
+#[path = "runtime/stopped.rs"]
+mod stopped;
 #[cfg(test)]
 #[path = "../../../tests/unit/recovery/source/evidence/tests.rs"]
 mod tests;
@@ -67,17 +85,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 }
 
 fn execute(bytes: &[u8]) -> Result<Value> {
-    if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
-        return Err("来源证据请求为空或超过16MiB".into());
-    }
-    let text = std::str::from_utf8(bytes).map_err(|_| "来源证据请求必须为UTF-8")?;
-    let request = documents::parse_fragment(text, "来源证据请求")
-        .map_err(|_| "来源证据请求不是唯一字段的严格JSON")?;
-    documents::exact(
-        &request,
-        &["operation", "arguments", "write"],
-        "来源证据请求",
-    )?;
+    let request = parse_request(bytes)?;
     let writes = if request["operation"] == "runtime-generation" {
         crate::recovery::runtime::generation::writes(&request["arguments"])
     } else {
@@ -102,22 +110,12 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     let args = &request["arguments"];
     match request["operation"].as_str() {
         Some("recorded-process-stopped") => recorded_process_stopped(args),
+        Some("source-runtime-stopped") => stopped::request(args),
         Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),
         Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
         Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
-            documents::exact(args, &["backend"], "业务目录参数")?;
-            let backend = binding::path(&args["backend"])?;
-            use crate::recovery::clone::native::business;
-            if operation == "business-catalog" {
-                let loaded = business::load(&backend)?;
-                let columns = loaded.ordered_columns()?;
-                Ok(json!({"tables": loaded.tables, "columns": columns}))
-            } else {
-                Ok(serde_json::to_value(business::ledger_column_pairs(
-                    &backend,
-                )?)?)
-            }
+            business_catalog(operation, args)
         }
         Some("copy-administrator-credentials") => {
             crate::recovery::clone::native::session::credentials::validate_request(args)
@@ -210,4 +208,34 @@ fn schema_catalog(args: &Value) -> Result<Value> {
         }),
         None => json!({"control": loaded.control, "tenant": loaded.tenant}),
     })
+}
+
+fn business_catalog(operation: &str, args: &Value) -> Result<Value> {
+    documents::exact(args, &["backend"], "业务目录参数")?;
+    let backend = binding::path(&args["backend"])?;
+    use crate::recovery::clone::native::business;
+    if operation == "business-catalog" {
+        let loaded = business::load(&backend)?;
+        let columns = loaded.ordered_columns()?;
+        Ok(json!({"tables": loaded.tables, "columns": columns}))
+    } else {
+        Ok(serde_json::to_value(business::ledger_column_pairs(
+            &backend,
+        )?)?)
+    }
+}
+
+fn parse_request(bytes: &[u8]) -> Result<Value> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
+        return Err("来源证据请求为空或超过16MiB".into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "来源证据请求必须为UTF-8")?;
+    let request = documents::parse_fragment(text, "来源证据请求")
+        .map_err(|_| "来源证据请求不是唯一字段的严格JSON")?;
+    documents::exact(
+        &request,
+        &["operation", "arguments", "write"],
+        "来源证据请求",
+    )?;
+    Ok(request)
 }

@@ -22,7 +22,7 @@ use crate::{
 #[path = "../../../../tests/unit/recovery/source/evidence/binding/tests.rs"]
 mod tests;
 
-pub(super) fn physical(args: &Value) -> Result<Value> {
+pub(crate) fn physical(args: &Value) -> Result<Value> {
     documents::exact(
         args,
         &[

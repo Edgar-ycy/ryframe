@@ -187,9 +187,17 @@ pub(crate) fn object_index(value: &Value) -> Result<BTreeMap<(String, String), V
 }
 
 fn complete(runtime: &Value, targets: Vec<Value>, context: &Context) -> Result<Value> {
-    let declared = context
-        .databases()?
-        .into_iter()
+    complete_selected(runtime, targets, context.source())
+}
+
+/// 合成运行中观察和停机库存共用的四目标事实，不改变两类时间字段的含义。
+pub(crate) fn complete_selected(
+    runtime: &Value,
+    targets: Vec<Value>,
+    selected: &Value,
+) -> Result<Value> {
+    let declared = json_io::array(&selected["databases"], "来源数据库")?
+        .iter()
         .map(|item| item["key"].as_str().unwrap_or_default().to_owned())
         .collect::<BTreeSet<_>>();
     let time_field = if runtime.get("observed_at").is_some() {
@@ -212,16 +220,17 @@ fn complete(runtime: &Value, targets: Vec<Value>, context: &Context) -> Result<V
     let mut seen = BTreeSet::new();
     check_runtime_databases(runtime, &by_key, &mut seen)?;
     check_empty_targets(&declared, &by_key, &seen)?;
-    Ok(json!({
+    let mut value = json!({
         "scope_id": runtime["scope_id"],
         "source_sha": runtime["source_sha"],
-        "quiesced_at": runtime["quiesced_at"],
         "captured_at": runtime["captured_at"],
         "control_schema_fingerprint": runtime["control_schema_fingerprint"],
         "tenant_schema_fingerprint": runtime["tenant_schema_fingerprint"],
         "databases": declared.into_iter().map(|key| by_key.get(&key).unwrap().clone()).collect::<Vec<_>>(),
         "objects": runtime["objects"],
-    }))
+    });
+    value[time_field] = runtime[time_field].clone();
+    Ok(value)
 }
 
 fn collect_targets(
@@ -354,6 +363,25 @@ fn validate(
     quiesced_at: &str,
     observed: bool,
 ) -> Result<()> {
+    validate_selected(
+        value,
+        context.source(),
+        models,
+        source_sha,
+        quiesced_at,
+        observed,
+    )
+}
+
+/// 来源运行完整像复用同一库存模型，不借用停机导出的执行资格。
+pub(crate) fn validate_selected(
+    value: &Value,
+    selected: &Value,
+    models: &Models,
+    source_sha: &str,
+    quiesced_at: &str,
+    observed: bool,
+) -> Result<()> {
     let time_field = if observed {
         "observed_at"
     } else {
@@ -370,11 +398,9 @@ fn validate(
         "objects",
     ];
     let root = exact(value, &fields, "源库存")?;
-    let scope = context.source()["scope_id"]
-        .as_str()
-        .ok_or("源 scope 无效")?;
+    let scope = selected["scope_id"].as_str().ok_or("源 scope 无效")?;
     inventory_validate::header(root, scope, source_sha, quiesced_at, observed)?;
-    let declared_values = context.databases()?.into_iter().collect::<Vec<_>>();
+    let declared_values = json_io::array(&selected["databases"], "来源数据库")?;
     let declared = declared_values
         .iter()
         .map(|item| {

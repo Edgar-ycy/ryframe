@@ -3,7 +3,7 @@ use super::{RECOVER, STOP, attempts, matches_source, prefix_matches, reject, req
 use crate::{Result, recovery::clone::native::json as document};
 use serde_json::{Value, json};
 
-const START_FIELDS: &[&str] = &[
+pub(crate) const START_FIELDS: &[&str] = &[
     "status",
     "request",
     "source_registration",

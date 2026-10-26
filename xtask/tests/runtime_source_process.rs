@@ -1,4 +1,4 @@
-//! Runtime/Source 公开入口只通过固定私有协议启动 Python，不把证据路径放入 argv。
+//! Runtime 与 comparison 保留受管协议；来源验证的失败请求直接由原生入口拒绝。
 
 use std::{
     fs,
@@ -163,4 +163,94 @@ fn source_comparison_verify_uses_stdin_ignores_ambient_protocol_and_preserves_fi
         .collect::<std::collections::BTreeMap<_, _>>();
     assert_eq!(before, after);
     assert!(!fixture.capture.exists());
+}
+
+#[test]
+fn source_verify_and_recover_reject_unregistered_start_without_python_or_new_evidence() {
+    let fixture = Fixture::new();
+    let verification = fixture.directory.join("g0001/verification");
+    fs::create_dir_all(&verification).unwrap();
+    let input = fs::read(&fixture.registration).unwrap();
+    let before = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<std::collections::BTreeSet<_>>();
+    for operation in ["verify", "verify-recover"] {
+        let arguments = vec![
+            "check".into(),
+            "recovery".into(),
+            "source".into(),
+            operation.into(),
+            "--source-generation".into(),
+            fixture.registration.to_string_lossy().into_owned(),
+            "--output".into(),
+            verification
+                .join("source-runtime.json")
+                .to_string_lossy()
+                .into_owned(),
+            "--write".into(),
+        ];
+        let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(
+            stderr.contains("来源 START 必须属于原账本 results"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("Traceback"), "{stderr}");
+        assert!(!stderr.contains("restore_source.py"), "{stderr}");
+        assert_eq!(fs::read(&fixture.registration).unwrap(), input);
+        assert!(fs::read_dir(&verification).unwrap().next().is_none());
+        assert!(!fixture.directory.join("run.lock").exists());
+        assert!(!fixture.capture.exists());
+        assert!(!fixture.directory.join("__pycache__").exists());
+    }
+    let after = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn generation_control_rejects_missing_native_manifest_without_python_or_stage_publication() {
+    let fixture = Fixture::new();
+    let before = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (path.clone(), fs::read(path).unwrap())
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for operation in ["source-generation-stop", "source-generation-recover"] {
+        let arguments = vec![
+            "check".into(),
+            "recovery".into(),
+            "clone".into(),
+            "seed-runtime".into(),
+            "--operation".into(),
+            operation.into(),
+            "--run-dir".into(),
+            fixture.directory.to_string_lossy().into_owned(),
+            "--request".into(),
+            fixture.source_receipt.to_string_lossy().into_owned(),
+            "--write".into(),
+        ];
+        let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(stderr.contains("复制运行清单无效"), "{stderr}");
+        assert!(!stderr.contains("Traceback"), "{stderr}");
+        assert!(!fixture.capture.exists());
+    }
+    let after = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (path.clone(), fs::read(path).unwrap())
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(before, after);
 }

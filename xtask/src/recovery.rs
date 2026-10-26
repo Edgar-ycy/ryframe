@@ -66,6 +66,14 @@ fn clone_stdin(payload: &str) -> Result<std::process::Stdio> {
 
 fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
     let root = root_dir();
+    if matches!(
+        options.operation,
+        SeedSourceOperation::GenerationStop | SeedSourceOperation::GenerationRecover
+    ) {
+        let result = source::evidence::control::run(&root, options)?;
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(());
+    }
     if options.operation == SeedSourceOperation::Register {
         if !options.write || options.request.is_some() {
             return Err("来源登记要求 --write，且不接受外部请求文件".into());

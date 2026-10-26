@@ -14,14 +14,14 @@ use crate::Result;
 
 pub(crate) type ObjectIndex = BTreeMap<(String, String), Value>;
 
-pub(super) struct ObjectCall<'a> {
-    pub(super) operation: &'a str,
-    pub(super) bucket: &'a str,
-    pub(super) key: &'a str,
-    pub(super) stdout: StdoutTarget,
-    pub(super) extra: Option<&'a [String]>,
-    pub(super) label: &'a str,
-    pub(super) max_bytes: u64,
+pub(crate) struct ObjectCall<'a> {
+    pub(crate) operation: &'a str,
+    pub(crate) bucket: &'a str,
+    pub(crate) key: &'a str,
+    pub(crate) stdout: StdoutTarget,
+    pub(crate) extra: Option<&'a [String]>,
+    pub(crate) label: &'a str,
+    pub(crate) max_bytes: u64,
 }
 
 pub(crate) fn verify_owners<T: Transport>(
@@ -512,7 +512,7 @@ fn object_json<T: Transport>(
     Ok(value)
 }
 
-pub(super) fn object_read<T: Transport>(
+pub(crate) fn object_read<T: Transport>(
     context: &Context,
     transport: &T,
     call: ObjectCall<'_>,

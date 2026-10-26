@@ -423,6 +423,7 @@ mod tests {
         let context = Context {
             backend: root.clone(),
             run_dir: root.clone(),
+            output_dir: root.join("e0001"),
             mode: "run".into(),
             attempt: 1,
             manifest: Value::Null,

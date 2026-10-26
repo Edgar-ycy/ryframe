@@ -30,6 +30,18 @@ pub(super) fn run(command: &SourceCommand, root: &Path) -> Result<()> {
         }
         return Ok(());
     }
+    let native = match command {
+        SourceCommand::Verify(options) => Some((options, false)),
+        SourceCommand::VerifyRecover(options) => Some((options, true)),
+        _ => None,
+    };
+    if let Some((options, recover)) = native {
+        validate_command(command, root)?;
+        let value =
+            evidence::execution::run(root, &options.source_generation, &options.output, recover)?;
+        println!("{}", serde_json::to_string(&value)?);
+        return Ok(());
+    }
     let invocation = private_invocation_at(command, root)?;
     run_with_stdin(
         root,

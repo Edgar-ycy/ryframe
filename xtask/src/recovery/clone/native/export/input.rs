@@ -44,6 +44,7 @@ pub(crate) fn public_request(backend: &Path, request: &Value) -> Result<Value> {
 pub(crate) struct Context {
     pub(crate) backend: PathBuf,
     pub(crate) run_dir: PathBuf,
+    pub(crate) output_dir: PathBuf,
     pub(crate) mode: String,
     pub(crate) attempt: u64,
     pub(crate) manifest: Value,
@@ -93,6 +94,7 @@ impl Context {
         Ok(Self {
             backend: backend.to_path_buf(),
             run_dir: request.run_dir.to_path_buf(),
+            output_dir: request.run_dir.join(format!("e{attempt:04}")),
             mode: request.mode.to_owned(),
             attempt,
             manifest: loaded.value,
@@ -144,6 +146,7 @@ impl Context {
         Ok(Self {
             backend: backend.to_path_buf(),
             run_dir: run.to_path_buf(),
+            output_dir: run.join(format!("e{attempt:04}")),
             mode: "source-register".into(),
             attempt,
             manifest: loaded.value,
@@ -156,7 +159,7 @@ impl Context {
     }
 
     pub(crate) fn output(&self) -> PathBuf {
-        self.run_dir.join(format!("e{:04}", self.attempt))
+        self.output_dir.clone()
     }
 
     pub(crate) fn source(&self) -> &Value {

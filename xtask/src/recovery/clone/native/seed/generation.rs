@@ -11,9 +11,9 @@ use std::path::Path;
 #[path = "../../../../../tests/unit/recovery/clone/native/seed/generation/build_tests.rs"]
 mod build_tests;
 #[path = "generation/builds.rs"]
-mod builds;
+pub(crate) mod builds;
 #[path = "generation/coordinator.rs"]
-mod coordinator;
+pub(crate) mod coordinator;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/seed/generation/tests.rs"]
 mod tests;
@@ -84,7 +84,7 @@ pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<V
     Ok(json!({"verified":true,"remote_writes":0,"automatic_retry_permitted":false}))
 }
 
-fn lineage_receipt(value: &Value) -> Result<()> {
+pub(crate) fn lineage_receipt(value: &Value) -> Result<()> {
     document::exact(
         value,
         &[

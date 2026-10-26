@@ -12,6 +12,66 @@ pub(crate) struct Binding {
     pub scope: String,
 }
 
+/// 正式登记只组合现有配置摘要和校验；不从环境选择目录，也不创建配置或运行收据。
+pub(crate) fn contract(root: &Path, directory: &Path, api: &Path, worker: &Path) -> Result<Value> {
+    if api.file_name().and_then(|v| v.to_str()) != Some("config")
+        || worker.file_name().and_then(|v| v.to_str()) != Some("worker-config")
+        || api.parent() != worker.parent()
+    {
+        return Err("运行登记必须显式绑定同一受管根内的 config 与 worker-config".into());
+    }
+    let mut tables = Vec::new();
+    let mut digests = Vec::new();
+    for path in [api, worker] {
+        validate_absolute_path(path, LocalTestPathKind::ExistingDirectory)?;
+        tables.push(
+            crate::rate_limit::load_app_table(root, Some(path), "test").map_err(
+                |_| "运行登记配置读取失败；检查绑定目录的 app.test.toml 和字段类型，不回显配置正文",
+            )?,
+        );
+        digests.push(configuration_digest(path)?);
+    }
+    let binaries = read_json(
+        &directory.join("binaries.json"),
+        "全栈二进制清单",
+        64 * 1024,
+    )?;
+    let mut artifacts = serde_json::Map::new();
+    for (role, name) in [("api", "ryframe"), ("worker", "ryframe-worker")] {
+        let path = Path::new(text_field(&binaries, name, "全栈二进制清单")?);
+        validate_absolute_path(path, LocalTestPathKind::ExistingFile)?;
+        let binding = file_binding(path, "运行产物")?;
+        artifacts.insert(
+            role.into(),
+            json!({"path":binding["path"],"sha256":binding["sha256"]}),
+        );
+    }
+    let scope = tables[0]
+        .get("scope_id")
+        .and_then(toml::Value::as_str)
+        .ok_or("运行配置缺少 scope_id")?;
+    let port = tables[1]
+        .get("jobs")
+        .and_then(toml::Value::as_table)
+        .and_then(|jobs| jobs.get("health_port"))
+        .and_then(toml::Value::as_integer)
+        .filter(|v| (1..=65535).contains(v))
+        .ok_or("运行配置 jobs.health_port 无效")?;
+    let receipt = json!({"format_version":1,"backend_root":root,"scope_id":scope,
+        "api_config_dir":api,"worker_config_dir":worker,"api_configuration_sha256":digests[0],
+        "worker_configuration_sha256":digests[1],"configuration_sha256":hash(&json!(digests))?,
+        "worker_ready_url":format!("http://127.0.0.1:{port}/readyz"),"artifacts":artifacts});
+    validate_tables(&receipt, tables)?;
+    verify_binaries(directory, &receipt)?;
+    super::source::verify(root, directory)?;
+    if configuration_digest(api)? != receipt["api_configuration_sha256"]
+        || configuration_digest(worker)? != receipt["worker_configuration_sha256"]
+    {
+        return Err("运行登记期间显式绑定配置发生变化，保留现场，禁止重放".into());
+    }
+    Ok(receipt)
+}
+
 pub(crate) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
     let receipt = read_json(&directory.join("runtime.json"), "全栈运行收据", 64 * 1024)?;
     exact_object(

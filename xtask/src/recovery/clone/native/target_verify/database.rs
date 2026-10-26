@@ -19,6 +19,14 @@ pub(crate) struct Captured {
     pub(crate) evidence_files: Vec<Value>,
 }
 
+/// 由来源父控制区间传入已绑定的原始计划和当前构建作用域，不携带远端写入资格。
+pub(crate) struct SourceBinding<'a> {
+    pub(crate) selected: &'a Value,
+    pub(crate) tools: &'a Value,
+    pub(crate) maintenance: &'a Value,
+    pub(crate) scope: &'a super::super::bridge::scope::Scope,
+}
+
 pub(crate) fn capture_with<T: Transport>(
     context: &TargetContext,
     transport: &T,
@@ -38,6 +46,26 @@ pub(crate) fn capture_at<T: Transport>(
     transport: &T,
     checkpoint: &impl Fn() -> Result<()>,
 ) -> Result<Captured> {
+    capture_observed(context, directory, transport, checkpoint, None)
+}
+
+pub(crate) fn capture_source_at<T: Transport>(
+    context: &StorageInputs<'_>,
+    directory: &Path,
+    transport: &T,
+    checkpoint: &impl Fn() -> Result<()>,
+    source: &SourceBinding<'_>,
+) -> Result<Captured> {
+    capture_observed(context, directory, transport, checkpoint, Some(source))
+}
+
+fn capture_observed<T: Transport>(
+    context: &StorageInputs<'_>,
+    directory: &Path,
+    transport: &T,
+    checkpoint: &impl Fn() -> Result<()>,
+    source: Option<&SourceBinding<'_>>,
+) -> Result<Captured> {
     checkpoint()?;
     fs::create_dir(directory)?;
     let mut capture = Capture {
@@ -48,6 +76,7 @@ pub(crate) fn capture_at<T: Transport>(
         evidence: evidence::Evidence::default(),
         artifacts: BTreeMap::new(),
         stage: "inputs",
+        source,
     };
     let result = capture.collect();
     if let Err(error) = &result {
@@ -73,6 +102,7 @@ struct Capture<'a, T, F> {
     evidence: evidence::Evidence,
     artifacts: BTreeMap<String, Value>,
     stage: &'static str,
+    source: Option<&'a SourceBinding<'a>>,
 }
 
 #[derive(PartialEq)]
@@ -106,7 +136,10 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
 
     fn binding(&self) -> Result<Value> {
         (self.checkpoint)()?;
-        let value = binding::capture(self.context)?;
+        let value = match self.source {
+            Some(source) => binding::capture_source(self.context, source)?,
+            None => binding::capture(self.context)?,
+        };
         (self.checkpoint)()?;
         Ok(value)
     }
@@ -207,7 +240,7 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
         }
         let images = model::physical_images(self.context, &round.observations)?;
         let receipt = json!({
-            "format_version": 1, "status": "side_inventory_captured", "side": "target",
+            "format_version": 1, "status": "side_inventory_captured", "side": if self.source.is_some() { "source" } else { "target" },
             "scope_id": self.context.target_scope()?, "binding_sha256": digest::plan_hash(before)?,
             "keys": KEYS.map(|(key, _, _)| key), "inventories": self.artifacts,
             "observations": round.observations, "remote_writes": 0,

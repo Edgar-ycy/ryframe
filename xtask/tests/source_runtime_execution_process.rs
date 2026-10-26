@@ -41,12 +41,14 @@ fn source_runtime_dispatch_preserves_no_producer_replay_and_explicit_write_bound
     assert!(!status.success());
     assert_eq!(response["error"]["remote_write_may_have_occurred"], false);
     assert_eq!(response["error"]["automatic_retry_permitted"], false);
-    for write in [false, true] {
-        let (status, response) = invoke(&json!({"operation":"runtime-cache-cleanup",
-            "write":write,"arguments":{"private-source-secret":true}}));
-        assert!(!status.success());
-        assert_eq!(response["error"]["remote_write_may_have_occurred"], false);
-        assert!(!response.to_string().contains("private-source-secret"));
+    for operation in ["runtime-cache-cleanup", "source-runtime-stopped"] {
+        for write in [false, true] {
+            let (status, response) = invoke(&json!({"operation":operation,
+                "write":write,"arguments":{"private-source-secret":true}}));
+            assert!(!status.success());
+            assert_eq!(response["error"]["remote_write_may_have_occurred"], false);
+            assert!(!response.to_string().contains("private-source-secret"));
+        }
     }
 }
 

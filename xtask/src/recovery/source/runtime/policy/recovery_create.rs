@@ -128,6 +128,7 @@ pub(super) fn failure(directory: &std::path::Path) -> Result<()> {
             value["error"].as_str(),
             Some(
                 "ValueError"
+                    | "SourceRuntimeError"
                     | "NativeS3InvocationError"
                     | "OSError"
                     | "PermissionError"

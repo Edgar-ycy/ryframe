@@ -86,7 +86,7 @@ fn members_once(backend: &Path, tree: &Value) -> Result<Option<Value>> {
     common::local_directory(backend, root, "进程树目录")?;
     let role = document::text(&tree["role"], "进程树角色")?;
     let operation = document::text(&tree["operation_id"], "进程树操作")?;
-    if role != "rustfs"
+    if !matches!(role, "rustfs" | "api" | "worker")
         || operation.len() != 32
         || !operation
             .bytes()

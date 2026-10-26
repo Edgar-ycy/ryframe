@@ -1,0 +1,169 @@
+//! 发布后历史的证明任务逐项消费；纯模型选择不能代替文件、缓存和控制锁核验。
+use super::{model, prelaunch};
+use crate::{
+    Result,
+    recovery::clone::native::{
+        cache, json as document,
+        lifecycle::{identity, lock, state},
+        resources::common,
+    },
+};
+use serde_json::{Value, json};
+use std::path::Path;
+
+pub(super) fn inspect(
+    backend: &Path,
+    run: &Path,
+    saved: &Value,
+    descriptor: &Value,
+) -> Result<Value> {
+    let attempts = state::attempts(saved)?;
+    let current = model("active-read", json!({"attempts":attempts}))?["current"].clone();
+    let archive = prelaunch::closed(backend, run, attempts)?;
+    let segment = if archive.is_null() {
+        Value::Null
+    } else {
+        super::segment::read(backend, run, attempts, &archive, descriptor, &current)?
+    };
+    let prefix = if attempts.last().is_some_and(|row| row["number"] == current) {
+        &attempts[..attempts.len() - 1]
+    } else {
+        attempts
+    };
+    let pending = if archive.is_null()
+        && prefix.last().is_some_and(|row| {
+            row["stage"] == "seed-runtime"
+                && row["mode"] == "source-generation-recover"
+                && row["status"] == "failed"
+        }) {
+        let (start, _) = prelaunch::origin(backend, run, prefix)?;
+        let index = prefix
+            .iter()
+            .position(|row| *row == start)
+            .ok_or("未启动恢复缺少原 START")?;
+        json!(&prefix[index..])
+    } else {
+        json!([])
+    };
+    let selected_archive = if archive.is_null() {
+        Value::Null
+    } else {
+        json!({"receipt":archive["receipt"],"records":archive["records"]})
+    };
+    let selected_segment = if segment.is_null() {
+        Value::Null
+    } else {
+        json!({"records":segment["records"]})
+    };
+    let exists = if let Some(row) = attempts.last() {
+        let number = row["number"].as_u64().ok_or("后续历史序号无效")?;
+        run.join(format!("g{number:04}")).try_exists()?
+    } else {
+        false
+    };
+    let planned = model(
+        "history",
+        json!({"attempts":attempts,"descriptor":descriptor,"current":current,
+        "archive":selected_archive,"segment":selected_segment,"pending":pending,
+        "backend_available":true,"cache_recovery":false,"generation_output_exists":exists}),
+    )?;
+    let mut proofs = Vec::new();
+    for action in document::array(&planned["actions"], "完整历史证明任务")? {
+        consume(
+            backend,
+            run,
+            saved,
+            descriptor,
+            &archive,
+            action,
+            &mut proofs,
+        )?;
+    }
+    Ok(json!({"later":planned["later"],"archive":archive,"segment":segment}))
+}
+
+fn consume(
+    backend: &Path,
+    run: &Path,
+    saved: &Value,
+    descriptor: &Value,
+    archive: &Value,
+    action: &Value,
+    proofs: &mut Vec<Value>,
+) -> Result<()> {
+    let frozen = &archive["receipt"]["review_successor"];
+    match document::text(&action["kind"], "历史证明类型")? {
+        "cache" => {
+            let successor = cache_call(
+                backend,
+                run,
+                "history-proof",
+                json!({"attempt":action["record"],
+                "source_result":descriptor,"frozen_successor":frozen}),
+            )?;
+            proofs.push(json!({"kind":"cache","successor":successor}));
+            model("history-proofs", json!({"proofs":proofs}))?;
+            if document::boolean(&action["owner"], "当前缓存控制器")? {
+                owner(run)?;
+            }
+        }
+        "registered-cache" => {
+            let frozen = if frozen.is_null() {
+                Value::Null
+            } else {
+                json!([descriptor, frozen])
+            };
+            cache::binding::query(backend, run, None, &archive["recovery"]["number"], &frozen)?;
+        }
+        "rebind-cache" => {
+            let value = common::read_bound(backend, &action["record"]["result"], "缓存重绑定结果")?;
+            proofs.push(json!({"kind":"rebind-cache","successor":value["review_successor"]}));
+            model("history-proofs", json!({"proofs":proofs}))?;
+        }
+        "owner" => owner(run)?,
+        "zero-output" => {
+            prelaunch::proof(backend, run, &action["record"])?;
+        }
+        "export-reconcile" => {
+            let current =
+                model("active-read", json!({"attempts":saved["attempts"]}))?["current"].clone();
+            if !super::export::reconciles(
+                backend,
+                run,
+                saved,
+                &action["origin"],
+                &current,
+                descriptor,
+            )? {
+                return Err("seed 发布后存在失败或未收尾阶段".into());
+            }
+        }
+        _ => return Err("重绑定模型返回未知证明任务".into()),
+    }
+    Ok(())
+}
+
+pub(super) fn cache_call(
+    backend: &Path,
+    run: &Path,
+    action: &str,
+    parameters: Value,
+) -> Result<Value> {
+    cache::binding::execute_stage(
+        backend,
+        &json!({"action":action,"directory":run,
+        "caller":std::process::id(),"parameters":parameters}),
+        None,
+    )
+}
+
+pub(super) fn owner(run: &Path) -> Result<()> {
+    let before = lock::owner_observation(run)?.ok_or("当前历史控制阶段缺少运行锁")?;
+    if before.1["identity"] != identity::current()? {
+        return Err("当前历史控制阶段必须由实际进程持有运行锁，不能委托或提升资格".into());
+    }
+    if lock::owner_observation(run)? != Some(before) {
+        return Err("历史证明期间控制锁身份变化；保留现场，禁止重放".into());
+    }
+    Ok(())
+}

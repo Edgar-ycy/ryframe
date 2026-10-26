@@ -6,12 +6,12 @@ use super::lifecycle::{manifest, stage::StageRequest};
 use crate::Result;
 
 mod capture;
-mod database;
+pub(crate) mod database;
 pub(crate) mod input;
-mod inventory;
+pub(crate) mod inventory;
 mod inventory_validate;
 pub(crate) mod object;
-mod object_owner;
+pub(crate) mod object_owner;
 pub(crate) mod proof;
 pub(crate) mod recovery;
 pub(crate) mod transport;

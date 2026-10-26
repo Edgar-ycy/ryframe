@@ -12,7 +12,7 @@ use std::path::Path;
 #[path = "source/relationship.rs"]
 mod relationship;
 
-pub(super) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
+pub(crate) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
     let relation = relationship::load(backend, descriptor)?;
     let historical = canonical(backend, &relation["predecessor_request"])?;
     let mut source = registered(

@@ -3,6 +3,7 @@
 [简体中文](CHANGELOG.md)
 
 ## [Unreleased]
+- Connect the Rust parent execution paths for source verification, verification recovery, generation stop and stop recovery, sharing lock ownership and complete source/process-tree checks. Preserve unknown-write, no-replay and failure-evidence rules. Remaining Python generation start, status, restart and comparison paths still await migration; full positive recovery acceptance is not yet complete.
 - Move independently valuable CI workflow wiring checks into the sole Rust internal test entry, using real YAML/TOML parsing to protect commit ranges, frontend sources, gate scheduling, isolated file configuration, and failure diagnostics. Remove duplicate supply-chain, fixed-count, and retired Python dependency-lock assertions and the original Python test file; workflow behavior is unchanged.
 - Generated tenant-business persistence reuses the shared safe error conversion and removes its duplicate mapper. Add internal diagnostics for missing or stale transactional data-scope projections and readiness, preserving public responses and fail-closed behavior.
 - Preserve both candidate workspaces and nested rollback backups when frontend business generation fails, preventing outer temporary-directory cleanup from invalidating recovery paths. Successful generation still cleans its caches, with unchanged formal installation rules.

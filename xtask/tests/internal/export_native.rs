@@ -370,6 +370,7 @@ fn object_capture_context(fixture: &Fixture) -> Context {
             .unwrap();
     Context {
         backend: fixture.backend.clone(),
+        output_dir: run_dir.join("e0001"),
         run_dir,
         mode: "run".into(),
         attempt: 1,
@@ -659,4 +660,82 @@ fn source_registration_context_rejects_wrong_stage_environment_and_tool_drift() 
         )
         .is_err()
     );
+}
+
+// 此处只验证正式父入口拒绝未完成的 C69，不把最小导出夹具当作有效 START。
+#[test]
+fn native_generation_recovery_rejects_unqualified_c69_before_claiming_a_new_attempt() {
+    use crate::cli::{SeedSourceOperation, SeedSourceOptions};
+    use crate::recovery::source::evidence::control;
+
+    let sources = native::source::current(&workspace::root_dir()).unwrap();
+    for (error_type, published) in [
+        (Some("StageError"), false),
+        (Some("SourceChanged"), true),
+        (None, false),
+    ] {
+        let fixture = Fixture::new();
+        append_unqualified_c69(&fixture, &sources, error_type, published);
+        let before = snapshot(&fixture.run);
+        let options = SeedSourceOptions {
+            operation: SeedSourceOperation::GenerationRecover,
+            run_dir: fixture.run.clone(),
+            request: Some(fixture.local.join("source-request.json")),
+            write: true,
+        };
+        let error = control::run(&fixture.backend, &options).unwrap_err();
+        let expected = if error_type.is_some() {
+            "C69 谱系恢复失败或未发布，不能授权重试"
+        } else {
+            "源控制预检不能接管正在运行的阶段，保留控制器现场"
+        };
+        assert_eq!(error.to_string(), expected);
+        assert_eq!(snapshot(&fixture.run), before);
+        assert_eq!(
+            state::attempts(&state::load(&fixture.run, true).unwrap())
+                .unwrap()
+                .len(),
+            69
+        );
+        assert!(!fixture.run.join("run.lock").exists());
+        assert!(!fixture.run.join("results/0070.json").exists());
+    }
+}
+
+fn append_unqualified_c69(
+    fixture: &Fixture,
+    sources: &Value,
+    error_type: Option<&str>,
+    published: bool,
+) {
+    for expected in 1..=68 {
+        let (number, _) = state::begin(&fixture.run, "post-copy", "run", sources).unwrap();
+        assert_eq!(number, expected);
+        state::finish(&fixture.run, number, None, Some("StageError")).unwrap();
+    }
+    let (number, _) = state::begin(
+        &fixture.run,
+        "seed-runtime",
+        "source-generation-recover",
+        sources,
+    )
+    .unwrap();
+    assert_eq!(number, 69);
+    let output = fixture.run.join("seed-runtime/attempt-0069");
+    fs::create_dir_all(&output).unwrap();
+    fs::write(
+        output.join("partial-evidence.json"),
+        b"{\"partial\":true}\n",
+    )
+    .unwrap();
+    if let Some(error_type) = error_type {
+        let receipt = json!({"status":"unqualified-local-result"});
+        state::finish(
+            &fixture.run,
+            number,
+            published.then_some(&receipt),
+            Some(error_type),
+        )
+        .unwrap();
+    }
 }

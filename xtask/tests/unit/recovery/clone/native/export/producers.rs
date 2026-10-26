@@ -103,6 +103,7 @@ fn runtime_receipts_bind_both_roles_scope_and_the_verified_artifact_executable()
     let mut context = Context {
         backend: backend.clone(),
         run_dir: holder.path().to_owned(),
+        output_dir: holder.path().join("e0001"),
         mode: "run".into(),
         attempt: 1,
         manifest: Value::Null,
@@ -174,6 +175,7 @@ fn full_runtime_fixture(root: &Path) -> (Context, Value) {
     let context = Context {
         backend: crate::workspace::root_dir(),
         run_dir: root.to_owned(),
+        output_dir: root.join("e0001"),
         mode: "source-register".into(),
         attempt: 1,
         manifest: Value::Null,

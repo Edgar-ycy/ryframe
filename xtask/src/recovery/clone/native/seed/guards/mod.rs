@@ -9,7 +9,7 @@ use std::path::Path;
 
 mod checkpoint;
 mod close;
-mod rebind;
+pub(crate) mod rebind;
 mod result;
 #[cfg(test)]
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/guards/tests.rs"]
@@ -108,7 +108,7 @@ fn transition(original: &Value, current: &Value) -> Result<()> {
     Ok(())
 }
 
-fn rebind_receipt(input: &Value) -> Result<()> {
+pub(crate) fn rebind_receipt(input: &Value) -> Result<()> {
     let value = &input["value"];
     document::exact(
         value,

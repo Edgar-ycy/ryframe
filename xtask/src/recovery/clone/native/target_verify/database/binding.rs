@@ -5,11 +5,44 @@ use super::super::{
         digest,
         json::{self as json_io, text},
         lifecycle::manifest,
+        resources::common,
     },
     input::request_physical,
     storage::StorageInputs,
 };
 use crate::Result;
+
+pub(super) fn capture_source(
+    context: &StorageInputs<'_>,
+    source: &super::SourceBinding<'_>,
+) -> Result<Value> {
+    let execution = context.execution_backend()?;
+    let configuration_value = configuration(context)?;
+    let selected = source.selected;
+    if selected["scope_id"] != context.target()["scope_id"]
+        || selected["databases"] != context.target()["databases"]
+        || source.tools["mysql"] != context.request["tools"]["mysql"]
+        || *source.maintenance != context.request["maintenance_build"]
+    {
+        return Err("来源四库采集端口与已绑定原始计划、维护构建或 MySQL 工具不同".into());
+    }
+    let physical = crate::recovery::source::evidence::binding::physical(&json!({
+        "backend":execution,"evidence_root":context.backend,"source":selected,"app_env":"test",
+        "config_dir":configuration_value["directory"]}))?;
+    let path = common::bound_file(context.backend, source.maintenance, "来源维护构建")?;
+    let value = json_io::read(&path)?;
+    let maintenance = source.scope.maintenance(&execution, &path, &value)?;
+    context.maintenance_executable("tenant-data")?;
+    context.tool("mysql")?;
+    let observed = json!({"side":"source","tools_plan_sha256":digest::plan_hash(&json!({"source":selected,"tools":source.tools}))?,
+        "configuration":configuration_value,"physical":physical,"maintenance":common::binding(&path)?,"source":maintenance["source"]});
+    common::bound_file(context.backend, source.maintenance, "来源维护构建")?;
+    if configuration(context)? != observed["configuration"] {
+        return Err("来源四库配置在读取期间变化".into());
+    }
+    source.scope.assert_unchanged()?;
+    Ok(observed)
+}
 
 pub(super) fn capture(context: &StorageInputs<'_>) -> Result<Value> {
     let execution = context.execution_backend()?;
