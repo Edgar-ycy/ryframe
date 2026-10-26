@@ -132,8 +132,8 @@ pub(super) fn remote_writes(args: &Value) -> Result<Value> {
     let expired = documents::array(&cleanup["expired_snapshot_keys"], "来源过期快照")?.len();
     let after = documents::array(&cleanup["after"], "来源缓存后像")?.len();
     let reconciled = match cleanup["execution"].as_str() {
-        Some("confirmed_lua_result") => false,
-        Some("reconciled_unknown_lua_result") if recovered && cleanup["deleted"].is_null() => true,
+        Some("confirmed_watch_exec") => false,
+        Some("reconciled_unknown_exec_result") if recovered && cleanup["deleted"].is_null() => true,
         _ => return Err("来源授权缓存执行类型无效，未知写入不能推定成功或重放".into()),
     };
     if !reconciled
@@ -145,9 +145,9 @@ pub(super) fn remote_writes(args: &Value) -> Result<Value> {
     }
     Ok(json!({"api_session_commands":22,"authorization_cache":{
         "confirmed_commands":u8::from(!reconciled),
-        "unknown_result_commands":if recovered {Value::Null} else {json!(0)},
+        "unknown_result_commands":if reconciled {Value::Null} else {json!(0)},
         "phase":if recovered {"recovery"} else {"initial_verification"},
-        "historical_cleanup":if recovered {"unknown"} else {"not_applicable"},
+        "historical_cleanup":if recovered {super::cache_attempt::historical(cleanup)?} else {"not_applicable"},
         "deleted_keys":cleanup["deleted"],"expired_snapshot_keys":expired,"observed_absent_keys":after},
         "confirmed_total_commands":22+u8::from(!reconciled)}))
 }

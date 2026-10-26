@@ -1,11 +1,20 @@
-//! 来源运行纯策略。通过现有生产者证据入口分派，不引入新的环境或命令入口。
+//! 来源运行策略与固定授权缓存事务。通过现有生产者证据入口分派，不引入新的环境或命令入口。
 use super::super::documents;
 use crate::Result;
 use serde_json::Value;
 #[path = "policy/audit.rs"]
 mod audit;
+#[path = "policy/cache_attempt.rs"]
+pub(crate) mod cache_attempt;
+#[path = "policy/cache_context.rs"]
+mod cache_context;
 #[path = "policy/cache_io.rs"]
 mod cache_io;
+#[path = "policy/cache_transaction.rs"]
+pub(crate) mod cache_transaction;
+#[cfg(test)]
+#[path = "../../../../tests/unit/recovery/source/runtime/policy/cache_transaction.rs"]
+mod cache_transaction_tests;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/source/runtime/policy/evidence_tests.rs"]
 mod evidence_tests;
@@ -36,8 +45,6 @@ pub(super) fn request(args: &Value) -> Result<Value> {
     match args["action"].as_str() {
         Some("cache-read-plans") => cache_io::read_plans(input),
         Some("cache-observe") => cache_io::observation(input),
-        Some("cache-command") => cache_io::command(input),
-        Some("cache-result") => cache_io::result(input),
         Some("cache-keys") => cache_io::keys(input),
         Some("control-database") => operations::control_database(input),
         Some("paths") => operations::paths(input),

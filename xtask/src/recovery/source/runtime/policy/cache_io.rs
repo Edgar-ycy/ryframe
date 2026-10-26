@@ -4,8 +4,6 @@ use super::{documents, model};
 use crate::Result;
 use serde_json::{Value, json};
 
-const CLEANUP: &str = include_str!("cache_cleanup.lua");
-
 pub(super) fn keys(args: &Value) -> Result<Value> {
     documents::exact(args, &["plan"], "来源缓存键参数")?;
     Ok(json!(cache::keys(&args["plan"])?))
@@ -122,7 +120,13 @@ pub(super) fn observation(args: &Value) -> Result<Value> {
     Ok(json!({"before":before,"comparisons":comparisons}))
 }
 
-pub(super) fn command(args: &Value) -> Result<Value> {
+pub(super) struct Comparison {
+    pub(super) keys: Vec<String>,
+    pub(super) values: Vec<String>,
+    pub(super) expired: Vec<String>,
+}
+
+pub(super) fn comparison(args: &Value) -> Result<Comparison> {
     documents::exact(
         args,
         &["observation", "comparisons"],
@@ -156,22 +160,23 @@ pub(super) fn command(args: &Value) -> Result<Value> {
             return Err("来源缓存清理过期快照比较值无效".into());
         }
     }
-    let mut command = vec![json!("EVAL"), json!(CLEANUP), json!("33")];
-    command.extend(cache::keys(&observation["plan"])?);
-    command.extend_from_slice(comparisons);
-    Ok(json!(command))
-}
-
-pub(super) fn result(args: &Value) -> Result<Value> {
-    documents::exact(args, &["value"], "来源缓存原子结果参数")?;
-    let result = documents::array(&args["value"], "来源缓存原子结果")?;
-    if result.len() != 2
-        || result[0].as_u64().is_none()
-        || result[1]
-            .as_array()
-            .is_none_or(|values| values.iter().any(|key| !key.is_string()))
-    {
-        return Err("来源授权缓存原子清理返回无效".into());
-    }
-    Ok(json!({"deleted":result[0],"expired":result[1]}))
+    let keys = cache::keys(&observation["plan"])?;
+    let keys = keys
+        .iter()
+        .map(|key| documents::text(key, "来源缓存键").map(str::to_owned))
+        .collect::<Result<Vec<_>>>()?;
+    let values = comparisons
+        .iter()
+        .map(|value| documents::text(value, "来源缓存比较值").map(str::to_owned))
+        .collect::<Result<Vec<_>>>()?;
+    let expired = rows
+        .iter()
+        .filter(|row| row["snapshot"]["type"] == "none")
+        .map(|row| documents::text(&row["snapshot"]["key"], "来源过期快照").map(str::to_owned))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Comparison {
+        keys,
+        values,
+        expired,
+    })
 }

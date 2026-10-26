@@ -516,6 +516,15 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
         "source-runtime.json", "failed.json", "source-verification-recovery-intent.json",
         "source-verification-recovery.json", RECOVERY_AUDIT,
     }
+    if names & {"cache-cleanup-attempt.json", "cache-cleanup-execution.json"}:
+        cache = _source_policy(
+            "runtime-cache-state", backend=str(backend), directory=str(directory),
+            output=str(directory / "cache-cleanup.json"),
+        )
+        if cache["attempt"] is not None:
+            allowed.add("cache-cleanup-attempt.json")
+        if cache["execution"] is not None:
+            allowed.add("cache-cleanup-execution.json")
     if names - allowed or PROCESS not in names or INTENT not in names:
         raise ValueError("来源验收缺少已登记进程身份或包含未知证据")
     from process_environment import configured

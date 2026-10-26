@@ -136,13 +136,13 @@ pub(super) fn state(
     Ok(json!({"keys":keys,"owner":owner,"sentinel":marker}))
 }
 
-pub(super) struct Client {
+pub(crate) struct Client {
     stream: TcpStream,
     reader: BufReader<TcpStream>,
 }
 
 impl Client {
-    pub(super) fn authenticated(
+    pub(crate) fn authenticated(
         context: &super::storage::StorageInputs<'_>,
         redis: &Value,
     ) -> Result<Self> {
@@ -212,28 +212,52 @@ impl Client {
     }
 
     pub(super) fn command(&mut self, parts: &[&str]) -> Result<Value> {
+        self.exchange(parts, false)
+    }
+
+    pub(crate) fn transaction_command(&mut self, parts: &[&str]) -> Result<Value> {
+        self.exchange(parts, true)
+    }
+
+    fn exchange(&mut self, parts: &[&str], integers: bool) -> Result<Value> {
         let mut request = format!("*{}\r\n", parts.len());
         for part in parts {
             request.push_str(&format!("${}\r\n{}\r\n", part.len(), part));
         }
         self.stream.write_all(request.as_bytes())?;
         self.stream.flush()?;
-        self.response(0)
+        self.response(0, integers, integers && parts == ["EXEC"])
     }
 
-    fn response(&mut self, depth: usize) -> Result<Value> {
+    fn response(&mut self, depth: usize, integers: bool, exec: bool) -> Result<Value> {
         if depth > 8 {
             return Err("目标 Redis 响应嵌套过深".into());
         }
         let mut line = String::new();
-        if self.reader.read_line(&mut line)? == 0 || !line.ends_with("\r\n") || line.len() < 3 {
-            return Err("目标 Redis 响应不完整".into());
+        let count = if integers {
+            (&mut self.reader).take(1_048_577).read_line(&mut line)?
+        } else {
+            self.reader.read_line(&mut line)?
+        };
+        if count == 0
+            || !line.ends_with("\r\n")
+            || line.len() < 3
+            || integers && line.len() > 1_048_576
+        {
+            return Err("目标 Redis 响应不完整或超限".into());
         }
         let line = line.trim_end_matches("\r\n");
-        let (kind, value) = line.split_at(1);
+        let (kind, value) = line.split_at_checked(1).ok_or("目标 Redis 响应前缀无效")?;
+        if exec && kind != "*" {
+            return Err("目标 Redis EXEC 必须返回数组或被 WATCH 中止的 nil 数组".into());
+        }
         match kind {
             "+" => Ok(Value::String(value.to_owned())),
             "-" => Err("目标 Redis 认证或固定核验命令失败".into()),
+            ":" if integers => value
+                .parse::<i64>()
+                .map(|value| json!(value))
+                .map_err(|_| "目标 Redis 整数响应无效".into()),
             ":" => Ok(Value::String(value.to_owned())),
             "$" => {
                 let length = value
@@ -242,7 +266,12 @@ impl Client {
                 if length == -1 {
                     return Ok(Value::Null);
                 }
-                if !(0..=16 * 1024 * 1024).contains(&length) {
+                let limit = if integers {
+                    1024 * 1024
+                } else {
+                    16 * 1024 * 1024
+                };
+                if !(0..=limit).contains(&length) {
                     return Err("目标 Redis bulk 长度越界".into());
                 }
                 let mut body = vec![0; length as usize + 2];
@@ -259,11 +288,14 @@ impl Client {
                 let count = value
                     .parse::<i64>()
                     .map_err(|_| "目标 Redis 数组长度无效")?;
+                if count == -1 && integers {
+                    return Ok(Value::Null);
+                }
                 if !(0..=10_000).contains(&count) {
                     return Err("目标 Redis 数组长度越界".into());
                 }
                 (0..count)
-                    .map(|_| self.response(depth + 1))
+                    .map(|_| self.response(depth + 1, integers, false))
                     .collect::<Result<Vec<_>>>()
                     .map(Value::Array)
             }

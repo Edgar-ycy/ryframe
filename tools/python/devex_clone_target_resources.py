@@ -265,6 +265,21 @@ class Resources:
                     raise ValueError("Redis 必须使用所选配置文件中的密码和 database 0")
                 return send(parts)
 
+    def _cache_cleanup_native(self, observation: dict, comparisons: list[str], output: Path) -> dict:
+        """固定写端口持有同一 Redis 连接；不拆分 WATCH/EXEC、不自动重试。"""
+        from native_s3_client import _invoke, _read_response
+
+        self.checkpoint()
+        result = _read_response(*_invoke("__source-evidence", {
+            "operation": "runtime-cache-cleanup", "write": True,
+            "arguments": {"backend": str(self.backend), "request": self.request,
+                          "directory": str(output.parent), "output": str(output),
+                          "environment": {"APP_ENV": self.environment.get("APP_ENV")},
+                          "observation": observation, "comparisons": comparisons},
+        }, self.runner, may_write=True))[0]["value"]
+        self.checkpoint()
+        return result
+
     def redis_state(self, *, initialized: bool, sentinel: bool) -> dict:
         redis, reset = self.selected["redis"], self.request["reset"]
         found, cursors, cursor = set(), set(), "0"

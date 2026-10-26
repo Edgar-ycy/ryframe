@@ -3,6 +3,8 @@
 [简体中文](CHANGELOG.md)
 
 ## [Unreleased]
+- Replace the fixed 33-key source authorization-cache cleanup Lua with Rust WATCH/MULTI/EXEC on one connection, comparing the complete snapshot before queueing one UNLINK. Conflicts, TTL/ABA changes and unknown EXEC results never retry automatically; receipts distinguish confirmed results from complete-after-image reconciliation, without exposing credentials or cache values in diagnostics. A unique attempt is persisted before Redis commands and binds the original source, producer, and complete frozen observation; its separate execution record distinguishes confirmed results, pre-execution failures, WATCH conflicts, and unknown results. Known no-write outcomes cannot reconcile as success, while a lost receipt for a confirmed result only republishes that result.
+
 
 - Windows resource-directory identity uses a safe third-party high-resolution API and preserves the full 64-bit volume serial number. A 128-bit file ID must convert exactly into the existing u64 inode contract; oversized or non-high-resolution results are rejected without truncation or low-resolution fallback, while hard-link counting remains unchanged.
 

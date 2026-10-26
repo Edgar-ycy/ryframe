@@ -22,7 +22,8 @@ fn fixture() -> (Value, Value) {
     let receipt = json!({"format_version":2,"kind":"restore-source-authorization-cache-cleanup","status":"cleaned",
         "namespace":observation["namespace"],"before":before,"deleted":33-expired.as_array().unwrap().len(),
         "expired_snapshot_keys":expired,"after":keys(&plan).unwrap().iter().map(|key| json!({"key":key,"type":"none"})).collect::<Vec<_>>(),
-        "execution":"confirmed_lua_result","cleaned_at":"2026-10-23T00:00:00+00:00"});
+        "attempt":{"path":std::env::current_dir().unwrap().join("attempt.json"),"bytes":1,"sha256":"b".repeat(64)},
+        "execution_record":null,"attempt_phase":"normal","execution":"confirmed_watch_exec","cleaned_at":"2026-10-23T00:00:00+00:00"});
     (observation, receipt)
 }
 
@@ -59,21 +60,42 @@ fn cache_receipts_bind_all_subjects_expired_snapshots_and_exact_33_key_order() {
 #[test]
 fn unknown_result_preserves_null_count_and_never_allows_mixed_state_replay() {
     let (observation, mut value) = fixture();
-    value["execution"] = json!("reconciled_unknown_lua_result");
+    value["execution"] = json!("reconciled_unknown_exec_result");
     value["deleted"] = Value::Null;
     assert!(receipt(&json!({"value":value,"subjects":observation["subjects"]})).is_ok());
     value["deleted"] = json!(27);
     assert!(receipt(&json!({"value":value,"subjects":observation["subjects"]})).is_err());
-    let mut args = json!({"frozen":observation,"types":vec!["none";33],"observed":null});
-    assert_eq!(resume(&args).unwrap()["action"], "reconcile");
-    args["frozen"]["plan"][0]["keys"]["tenant_epoch"] = json!("unknown-key");
-    assert!(resume(&args).is_err());
-    args["frozen"] = observation.clone();
+    let mut args = json!({"frozen":observation,"types":vec!["none";33],"observed":null,
+        "attempt":{"status":"unknown_exec","observation":observation}});
+    assert_eq!(resume(&args).unwrap()["action"], "publish");
+    for status in ["pre_exec_failed", "watch_conflict", "not_attempted"] {
+        args["attempt"]["status"] = json!(status);
+        assert!(
+            resume(&args).is_err(),
+            "{status}: absence cannot invent unknown cleanup"
+        );
+    }
+    args["attempt"]["status"] = json!("confirmed");
+    assert_eq!(resume(&args).unwrap()["action"], "publish");
     args["types"][0] = json!("string");
-    assert!(resume(&args).is_err());
-    args["observed"] = observation;
+    args["observed"] = observation.clone();
+    for status in [
+        "confirmed",
+        "unknown_exec",
+        "pre_exec_failed",
+        "watch_conflict",
+    ] {
+        args["attempt"]["status"] = json!(status);
+        assert!(
+            resume(&args).is_err(),
+            "{status}: equal values never authorize replay"
+        );
+    }
+    args["attempt"]["status"] = json!("not_attempted");
     assert_eq!(resume(&args).unwrap()["action"], "execute");
     args["observed"]["before"][0]["tenant_epoch"]["value"] = json!("3");
+    assert!(resume(&args).is_err());
+    args["frozen"]["plan"][0]["keys"]["tenant_epoch"] = json!("unknown-key");
     assert!(resume(&args).is_err());
 }
 

@@ -84,7 +84,8 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         matches!(
             request["operation"].as_str(),
             Some(
-                "staging-create"
+                "runtime-cache-cleanup"
+                    | "staging-create"
                     | "database-configuration"
                     | "reference-sql-normalize"
                     | "reference-work-directory"
@@ -145,9 +146,11 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         Some("producer-inputs") => inventory::request(args, true),
         Some("producer-files") => inventory::files_request(args),
         Some("producer-ready") => ready::verify(args),
+        Some("runtime-cache-cleanup") => ready::policy::cache_transaction::cleanup(args),
+        Some("runtime-cache-state") => ready::policy::cache_attempt::state(args),
         Some("runtime-cache-observation") => cache::observation(args),
-        Some("runtime-cache-receipt") => cache::receipt(args),
-        Some("runtime-cache-resume") => cache::resume(args),
+        Some("runtime-cache-receipt") => ready::policy::cache_attempt::receipt(args),
+        Some("runtime-cache-resume") => ready::policy::cache_attempt::resume(args),
         Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
         Some("runtime-generation") => crate::recovery::runtime::generation::request(args),
         Some(operation)

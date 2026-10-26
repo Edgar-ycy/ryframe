@@ -31,6 +31,8 @@ const PRODUCER_FILES: &[&str] = &[
 ];
 const DIRECTORIES: &[&str] = &["before", "after", "audit", "source-tools", "recovery-audit"];
 const POST_FILES: &[&str] = &[
+    "cache-cleanup-attempt.json",
+    "cache-cleanup-execution.json",
     "failed.json",
     "cache-cleanup.json",
     "source-runtime.json",
