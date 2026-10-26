@@ -164,6 +164,11 @@ pub trait UserImportTransaction:
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32>;
+
     async fn find_by_idempotency<'a>(
         &'a self,
         tenant_id: &'a str,

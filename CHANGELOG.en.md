@@ -3,6 +3,7 @@
 [简体中文](CHANGELOG.md)
 
 ## [Unreleased]
+- Fix user creation, updates, deletion, and import batches that insert users advancing the data-scope version without invalidating authorization snapshots for other subjects. The same transaction advances the tenant authorization epoch and records the mirror outbox according to the existing cache policy, followed by synchronization of the existing cache after commit. Target-user old-token rejection, batch cursors, and rollback guarantees remain; batches without inserts do not advance the epoch.
 - Replace the fixed 33-key source authorization-cache cleanup Lua with Rust WATCH/MULTI/EXEC on one connection, comparing the complete snapshot before queueing one UNLINK. Conflicts, TTL/ABA changes and unknown EXEC results never retry automatically; receipts distinguish confirmed results from complete-after-image reconciliation, without exposing credentials or cache values in diagnostics. A unique attempt is persisted before Redis commands and binds the original source, producer, and complete frozen observation; its separate execution record distinguishes confirmed results, pre-execution failures, WATCH conflicts, and unknown results. Known no-write outcomes cannot reconcile as success, while a lost receipt for a confirmed result only republishes that result.
 
 

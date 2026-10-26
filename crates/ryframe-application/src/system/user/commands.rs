@@ -55,13 +55,17 @@ impl UserService {
                     .await?;
             }
             transaction.record_data_scope_change(tenant_id).await?;
-            Ok(saved)
+            let epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            Ok((saved, epoch))
         }
         .await;
         match result {
-            Ok(saved) => {
+            Ok((saved, epoch)) => {
                 transaction
                     .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
+                self.authorization_cache
+                    .sync_tenant_epoch(tenant_id, epoch)
                     .await?;
                 Ok(UserVo::from(saved))
             }
@@ -109,13 +113,17 @@ impl UserService {
                 .increment_authorization_versions(tenant_id, &[saved.id])
                 .await?;
             transaction.record_data_scope_change(tenant_id).await?;
-            Ok((saved, versions))
+            let epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            Ok((saved, versions, epoch))
         }
         .await;
         match result {
-            Ok((saved, versions)) => {
+            Ok((saved, versions, epoch)) => {
                 transaction
                     .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
+                self.authorization_cache
+                    .sync_tenant_epoch(tenant_id, epoch)
                     .await?;
                 self.authorization_cache
                     .sync_user_versions(tenant_id, &versions)
@@ -180,13 +188,17 @@ impl UserService {
             if affected != ids.len() as u64 {
                 return Err(AppError::NotFound("用户不存在".into()));
             }
-            Ok((affected, versions))
+            let epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            Ok((affected, versions, epoch))
         }
         .await;
         match result {
-            Ok((affected, versions)) => {
+            Ok((affected, versions, epoch)) => {
                 transaction
                     .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
+                self.authorization_cache
+                    .sync_tenant_epoch(tenant_id, epoch)
                     .await?;
                 self.authorization_cache
                     .sync_user_versions(tenant_id, &versions)

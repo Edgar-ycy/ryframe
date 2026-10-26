@@ -32,6 +32,8 @@ mod mysql;
 mod redis_configuration;
 #[path = "account_recovery_mysql/role_assignment.rs"]
 mod role_assignment;
+#[path = "account_recovery_mysql/scope_coherence.rs"]
+mod scope_coherence;
 #[path = "account_recovery_mysql/sql_initialization.rs"]
 mod sql_initialization;
 
@@ -134,7 +136,8 @@ async fn real_redis_password_change(
     assert!(claims.user_authorization_version > initial_version);
     assert_lagging_cache_repaired(redis, &cache, &auth, &claims).await?;
     assert_session_rejected(&auth, &initial).await;
-    cache_faults::verify(&database, redis, &cache, auth, &changed).await?;
+    cache_faults::verify(&database, redis, &cache, auth.clone(), &changed).await?;
+    scope_coherence::verify(&database, &cache, &auth, &claims).await?;
     Ok(())
 }
 

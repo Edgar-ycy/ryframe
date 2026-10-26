@@ -26,16 +26,24 @@ use ryframe_application::{
     },
 };
 
-pub fn port(database: ControlDatabaseCluster) -> Arc<dyn UserImportPersistencePort> {
-    Arc::new(DatabaseUserImportPersistence { database })
+pub fn port(
+    database: ControlDatabaseCluster,
+    authorization_cache: ryframe_application::AuthorizationCache,
+) -> Arc<dyn UserImportPersistencePort> {
+    Arc::new(DatabaseUserImportPersistence {
+        database,
+        authorization_cache,
+    })
 }
 
 struct DatabaseUserImportPersistence {
     database: ControlDatabaseCluster,
+    authorization_cache: ryframe_application::AuthorizationCache,
 }
 
 struct DatabaseUserImportTransaction {
     transaction: DatabasePortTransaction,
+    authorization_cache: ryframe_application::AuthorizationCache,
 }
 
 #[async_trait::async_trait]
@@ -44,6 +52,7 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
         let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseUserImportTransaction {
             transaction: transaction.into(),
+            authorization_cache: self.authorization_cache.clone(),
         }) as Box<dyn UserImportTransaction>)
     }
 
@@ -201,6 +210,15 @@ impl BackgroundJobTransaction for DatabaseUserImportTransaction {
 
 #[async_trait::async_trait]
 impl UserImportTransaction for DatabaseUserImportTransaction {
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32> {
+        self.authorization_cache
+            .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
+            .await
+    }
+
     async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
         crate::repositories::database_utc_now(&self.transaction).await
     }
