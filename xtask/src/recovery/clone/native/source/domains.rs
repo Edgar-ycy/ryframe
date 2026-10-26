@@ -142,6 +142,8 @@ pub(super) fn frontend_tool(relative: &str) -> bool {
         "eslint.config.js"
             | "playwright.config.ts"
             | "playwright.real.config.ts"
+            | "playwright.generated.config.ts"
+            | "tsconfig.test.json"
             | "prettier.config.mjs"
             | "stylelint.config.js"
             | "vitest.config.ts"
@@ -150,6 +152,20 @@ pub(super) fn frontend_tool(relative: &str) -> bool {
 }
 
 pub(super) fn frontend_product(relative: &str) -> bool {
+    // 与 Node 生产者一致：Vite 的配置依赖同时属于产品和工具输入。
+    if matches!(
+        relative,
+        "scripts/application-config.mjs"
+            | "scripts/application-config-files.mjs"
+            | "scripts/application-config-paths.mjs"
+            | "scripts/application-config-toml.mjs"
+            | "scripts/frontend-tool-config.mjs"
+            | "scripts/build-identity.mjs"
+            | "scripts/resource-render/json.mjs"
+            | "tsconfig.test.json"
+    ) {
+        return true;
+    }
     if matches!(
         relative.split('/').next(),
         Some("src" | "public" | "openapi")

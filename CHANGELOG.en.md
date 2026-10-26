@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix source domains for real frontend builds: configuration and identity modules indirectly imported by Vite bind both product and tool digests. The generated-page acceptance configuration is a tool input; test type configuration retains its product binding and also records a tool digest. Complete source validation and conservative product ownership for unknown files remain effective.
+
 - Remove the unused login-budget environment-mapping interface, its private operation, and its dedicated derived-reader chain. Formal login budgets continue to use file configuration and managed ledgers, retaining rate-limit, concurrency, and failure checks.
 
 - CI Required aggregation accepts an explicit JSON input file. The workflow passes the event, action and complete needs document to Rust as data without custom environment fields, retaining existing success, failure, cancellation and skipped-job rules.
