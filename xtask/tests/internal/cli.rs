@@ -730,6 +730,33 @@ fn parses_required_ci_inputs_before_execution() {
 }
 
 #[test]
+fn required_file_and_direct_pr_inputs_produce_the_same_typed_command() {
+    let needs = r#"{"plan":{"result":"success"}}"#;
+    let pr = parse_command(&[
+        "check",
+        "ci",
+        "required",
+        "--event",
+        "pull_request",
+        "--action",
+        "synchronize",
+        "--needs-json",
+        needs,
+    ])
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("required.json");
+    std::fs::write(
+        &file,
+        format!(r#"{{"event":"pull_request","action":"synchronize","needs":{needs}}}"#),
+    )
+    .unwrap();
+    let from_file =
+        parse_command(&["check", "ci", "required", "--input", file.to_str().unwrap()]).unwrap();
+    assert_eq!(from_file, pr);
+}
+
+#[test]
 fn parses_build_and_development_options() {
     assert_eq!(
         parse_command(&["dev", "--measure-once"]).unwrap(),

@@ -206,9 +206,19 @@ fn workflow_calls_xtask_required_with_the_complete_needs_document() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
     let required = workflow.split("\n  required:\n").nth(1).unwrap();
-    assert!(required.contains("cargo xtask check ci required"));
+    assert!(
+        required.contains(
+            "run: cargo build --locked --target-dir target/xtask-run -p xtask --bin xtask"
+        )
+    );
+    assert!(required.contains("shell: target/xtask-run/debug/xtask check ci required --input {0}"));
     assert!(required.contains("${{ toJSON(needs) }}"));
-    assert!(required.contains("--action \"$EVENT_ACTION\""));
+    assert!(required.contains("\"event\": ${{ toJSON(github.event_name) }}"));
+    assert!(required.contains("\"action\": ${{ toJSON(github.event.action) }}"));
+    assert!(!required.contains("env:"));
+    for retired in ["EVENT_NAME", "EVENT_ACTION", "NEEDS_JSON", "--needs-json"] {
+        assert!(!required.contains(retired));
+    }
     assert!(required.contains("dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30"));
     assert!(!required.contains("check_required_jobs.py"));
     assert!(!root.join("scripts/check_required_jobs.py").exists());
