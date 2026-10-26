@@ -103,7 +103,7 @@ async fn exercise(database: &DatabaseConnection, state: &AppState) -> Result<(),
     Ok(())
 }
 
-async fn workbook(database: &DatabaseConnection) -> Result<Vec<u8>, String> {
+pub(super) async fn workbook(database: &DatabaseConnection) -> Result<Vec<u8>, String> {
     let department = database.query_one_raw(Statement::from_string(DbBackend::MySql,
         "SELECT name FROM sys_dept WHERE tenant_id='system' AND parent_id IS NULL AND status='1' AND del_flag='0' ORDER BY id LIMIT 1"))
         .await.map_err(message)?.ok_or("正式 SQL 未初始化可用根部门")?;
@@ -124,7 +124,7 @@ async fn workbook(database: &DatabaseConnection) -> Result<Vec<u8>, String> {
         .map_err(message)
 }
 
-async fn execute_claimed_import(
+pub(super) async fn execute_claimed_import(
     database: &DatabaseConnection,
     state: &AppState,
     import_id: i64,

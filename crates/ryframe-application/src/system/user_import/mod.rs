@@ -58,6 +58,7 @@ pub struct UserImportService {
     hash_permits: Arc<Semaphore>,
     spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
     persistence: Arc<dyn UserImportPersistencePort>,
+    authorization_cache: crate::AuthorizationCache,
 }
 
 include!("models.rs");

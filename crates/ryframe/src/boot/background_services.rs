@@ -261,7 +261,8 @@ fn build_extended_services(
         user.clone(),
         file.clone(),
         super::spreadsheet::document_processor(),
-        ryframe_db::application_ports::users::import(database.clone()),
+        ryframe_db::application_ports::users::import(database.clone(), authorization_cache.clone()),
+        authorization_cache.clone(),
         policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

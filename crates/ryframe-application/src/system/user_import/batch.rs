@@ -128,11 +128,6 @@ impl UserImportService {
             return Ok(CommitBatchOutcome::Committed);
         }
         let now = transaction.database_now().await?;
-        let usernames = prepared
-            .users
-            .iter()
-            .map(|item| item.candidate.data.username.clone())
-            .collect::<Vec<_>>();
         let authorization = transaction
             .lock_authorization(&import.tenant_id, import.requester_user_id, now)
             .await?;
@@ -143,51 +138,61 @@ impl UserImportService {
             transaction.rollback().await?;
             return Ok(CommitBatchOutcome::AuthorizationChanged);
         }
-        let existing = transaction
-            .existing_usernames(&import.tenant_id, &usernames)
-            .await?
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let new_users = partition_users_for_quota(
-            transaction.as_ref(),
-            &import.tenant_id,
-            &mut prepared,
-            &existing,
-        )
-        .await?;
-
-        let users = new_users
-            .into_iter()
-            .map(|prepared| build_user_record(&import.tenant_id, prepared, now))
-            .collect::<AppResult<Vec<_>>>()?;
-        let (success_count, skipped_count, failure_count) =
-            batch_counts(users.len(), &prepared.issues)?;
-
-        let imported_count = users.len();
-        transaction.insert_users(&import.tenant_id, users).await?;
-        if imported_count > 0 {
-            transaction
-                .record_data_scope_change(&import.tenant_id)
+        let (counts, epoch) =
+            insert_prepared_users(transaction.as_ref(), &import.tenant_id, &mut prepared, now)
                 .await?;
-        }
         let row_records = prepared
             .issues
             .into_iter()
             .map(|issue| issue.into_record(&import.tenant_id, import_id, now))
             .collect::<AppResult<Vec<_>>>()?;
         transaction.insert_rows(row_records).await?;
-        apply_batch_progress(
-            &mut import,
-            next_offset,
-            (success_count, skipped_count, failure_count),
-            now,
-        )?;
+        apply_batch_progress(&mut import, next_offset, counts, now)?;
+        let tenant_id = import.tenant_id.clone();
         transaction.save(import).await?;
         transaction
             .commit(crate::TransactionAuditMode::Skip)
             .await?;
+        if let Some(epoch) = epoch {
+            self.authorization_cache
+                .sync_tenant_epoch(&tenant_id, epoch)
+                .await?;
+        }
         Ok(CommitBatchOutcome::Committed)
     }
+}
+
+async fn insert_prepared_users(
+    transaction: &dyn crate::ports::users::UserImportTransaction,
+    tenant_id: &str,
+    prepared: &mut PreparedBatch,
+    now: DateTime<Utc>,
+) -> AppResult<((i32, i32, i32), Option<i32>)> {
+    let usernames = prepared
+        .users
+        .iter()
+        .map(|item| item.candidate.data.username.clone())
+        .collect::<Vec<_>>();
+    let existing = transaction
+        .existing_usernames(tenant_id, &usernames)
+        .await?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let new_users = partition_users_for_quota(transaction, tenant_id, prepared, &existing).await?;
+    let users = new_users
+        .into_iter()
+        .map(|prepared| build_user_record(tenant_id, prepared, now))
+        .collect::<AppResult<Vec<_>>>()?;
+    let imported_count = users.len();
+    let counts = batch_counts(imported_count, &prepared.issues)?;
+    transaction.insert_users(tenant_id, users).await?;
+    let epoch = if imported_count > 0 {
+        transaction.record_data_scope_change(tenant_id).await?;
+        Some(transaction.increment_authorization_epoch(tenant_id).await?)
+    } else {
+        None
+    };
+    Ok((counts, epoch))
 }
 
 fn apply_batch_progress(
