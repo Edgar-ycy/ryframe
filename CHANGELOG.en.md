@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- The kernel build script checks the actual workspace's source commit on every build and writes the generated constant only when its contents change, preventing shared build caches from retaining another worktree's source or repeatedly updating identical output. Development-source semantics, exact SHA validation, and failure behavior are preserved.
+
 - Remove the retired administrator-password environment lookup from copy diagnostics and keep only APP_ENV in normal target-verification fixtures. Redaction of actual file-bound credentials and negative checks against retired environment overrides remain intact.
 
 - Redis first-generation startup and cache recovery distinguish APP_ENV application selection from OS runtime fields such as TEMP/TMP, reusing restricted child-environment construction and retaining the bound private environment. Arbitrary application and credential overrides remain rejected before side effects, without changes to requests, locks, markers or recovery receipts.
