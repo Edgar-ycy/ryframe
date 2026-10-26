@@ -13,6 +13,9 @@ mod cache_io;
 #[path = "policy/cache_transaction.rs"]
 pub(crate) mod cache_transaction;
 #[cfg(test)]
+#[path = "../../../../tests/unit/recovery/source/runtime/policy/cache_transaction_real.rs"]
+mod cache_transaction_real_tests;
+#[cfg(test)]
 #[path = "../../../../tests/unit/recovery/source/runtime/policy/cache_transaction.rs"]
 mod cache_transaction_tests;
 #[cfg(test)]
