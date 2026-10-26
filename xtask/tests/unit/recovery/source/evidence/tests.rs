@@ -2,6 +2,13 @@ use serde_json::{Value, json};
 
 use super::{execute, model};
 
+#[expect(
+    dead_code,
+    reason = "消费者契约须导入完整产品键工厂；其中三个租户 namespace 函数不属于本授权缓存契约"
+)]
+#[path = "../../../../../../crates/ryframe/src/boot/authorization_cache_keyspace.rs"]
+mod product_authorization_keyspace;
+
 #[path = "business_catalog.rs"]
 mod business_catalog;
 
@@ -71,8 +78,34 @@ fn cache_plan_requires_exact_namespace_unique_subjects_and_33_registered_keys() 
     assert_eq!(plan.as_array().unwrap().len(), 11);
     assert_eq!(
         plan[1]["keys"]["snapshot"],
-        "ryframe:{seed-unit}:ryframe:authorization:{origin-unit-01}:user:9007199254740994:snapshots"
+        "ryframe:{seed-unit}:authorization:{origin-unit-01}:user:9007199254740994:snapshots:v4"
     );
+    // 产品 RedisNamespace::key 的物理规则由 adapters 独立契约覆盖：只剥离一次逻辑 ryframe:。
+    // 此处直接调用产品纯键函数，避免来源计划与自身错误 fixture 相互证明。
+    let namespace = args["namespace"].as_str().unwrap();
+    for row in plan.as_array().unwrap() {
+        let tenant = row["tenant_id"].as_str().unwrap();
+        let user = row["user_id"].as_str().unwrap().parse::<i64>().unwrap();
+        let logical = [
+            (
+                "tenant_epoch",
+                product_authorization_keyspace::tenant_epoch_key(tenant),
+            ),
+            (
+                "user_version",
+                product_authorization_keyspace::user_version_key(tenant, user),
+            ),
+            (
+                "snapshot",
+                product_authorization_keyspace::snapshot_hash_key(tenant, user),
+            ),
+        ];
+        assert_eq!(row["keys"].as_object().unwrap().len(), 3);
+        for (role, key) in logical {
+            let physical = format!("{namespace}{}", key.strip_prefix("ryframe:").unwrap());
+            assert_eq!(row["keys"][role], physical, "{role}");
+        }
+    }
     for namespace in ["", "ryframe:seed-unit:", "ryframe:{bad scope}:"] {
         let mut changed = args.clone();
         changed["namespace"] = json!(namespace);

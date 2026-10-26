@@ -195,6 +195,7 @@ class FakeResources:
                 "versions": {
                     "tenant_authorization_epoch": 1,
                     "user_authorization_version": 1,
+                    "data_scope_version": 1,
                 },
                 "tenant_session_version": 1,
                 "principal": {
@@ -207,8 +208,12 @@ class FakeResources:
                         "data_scope": "all",
                         "custom_dept_ids": [],
                         "include_self": True,
+                        "data_scope_version": 1,
                         "is_super_admin": False,
                     },
+                    "password_change_required": False,
+                    "user_authorization_version": 1,
+                    "data_scope_version": 1,
                     "tenant_authorization_epoch": 1,
                     "preferred_locale": None,
                     "roles": [],

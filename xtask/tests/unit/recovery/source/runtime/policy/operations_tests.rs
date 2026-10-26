@@ -25,10 +25,10 @@ pub(super) fn cache_fixture() -> (Value, Value) {
     )
     .unwrap();
     let payloads = subjects.as_array().unwrap().iter().enumerate().map(|(index, subject)| {
-        let payload = json!({"versions":{"tenant_authorization_epoch":2,"user_authorization_version":1},"tenant_session_version":1,
+        let payload = json!({"versions":{"tenant_authorization_epoch":2,"user_authorization_version":1,"data_scope_version":1},"tenant_session_version":1,
             "principal":{"actor":{"user_id":subject["user_id"],"tenant_id":subject["tenant_id"],"username":"owner","dept_id":null,
-                "dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":true,"is_super_admin":false},
-                "tenant_authorization_epoch":2,"preferred_locale":null,"roles":[],"role_ids":[],"permissions":[],"tenant_request_limit_per_minute":600}}).to_string();
+                "dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":true,"data_scope_version":1,"is_super_admin":false},
+                "password_change_required":false,"user_authorization_version":1,"data_scope_version":1,"tenant_authorization_epoch":2,"preferred_locale":null,"roles":[],"role_ids":[],"permissions":[],"tenant_request_limit_per_minute":600}}).to_string();
         let absent = index % 2 == 0;
         json!({"types":{"tenant_epoch":"string","user_version":"string","snapshot":if absent {"none"} else {"hash"}},
             "tenant_epoch":"2","user_version":"1","fields":if absent {json!([])} else {json!(["2:1"])},

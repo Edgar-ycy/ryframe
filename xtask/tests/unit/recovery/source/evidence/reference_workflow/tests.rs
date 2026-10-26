@@ -114,7 +114,7 @@ pub(super) fn formalize(plan: &mut Value, root: &std::path::Path) {
     let settings = config.join("app.test.toml");
     fs::write(
         &settings,
-        "[object_storage]\naccess_key='fixture-access'\nsecret_key='fixture-secret'\n",
+        "[object_storage]\nendpoint='http://127.0.0.1:9000'\nregion='us-east-1'\naccess_key='fixture-access'\nsecret_key='fixture-secret'\n",
     )
     .unwrap();
     let digest = native::digest::file(&settings).unwrap();
