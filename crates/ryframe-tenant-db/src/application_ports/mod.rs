@@ -8,6 +8,31 @@ use ryframe_kernel::AppError;
 use crate::TenantDataError;
 
 fn map_error(error: TenantDataError) -> AppError {
+    let category = match &error {
+        TenantDataError::DataScopeProjectionStale { .. } => Some("data_scope_projection_stale"),
+        TenantDataError::TargetUnavailable { .. } => Some("target_unavailable"),
+        TenantDataError::UnknownTarget { .. } => Some("unknown_target"),
+        TenantDataError::PlacementUnavailable { .. } => Some("placement_unavailable"),
+        TenantDataError::InvalidPlacement { .. } => Some("invalid_placement"),
+        TenantDataError::PoolCapacityExhausted { .. } => Some("pool_capacity_exhausted"),
+        TenantDataError::ConnectionBudgetExhausted { .. } => Some("connection_budget_exhausted"),
+        _ => None,
+    };
+    if let Some(category) = category {
+        let cause = match &error {
+            TenantDataError::TargetUnavailable { source, .. } => {
+                source.as_ref().map(ToString::to_string)
+            }
+            _ => None,
+        };
+        // 先保留请求关联的安全诊断，再转换为不携带内部原因的公开错误。
+        tracing::warn!(
+            tenant_data_error = category,
+            reason = %error,
+            safe_cause = ?cause,
+            "租户数据访问未就绪；检查对应目标、投影版本或连接预算，不自动重放写入"
+        );
+    }
     match error {
         TenantDataError::InvalidConfiguration(message) => AppError::Config(message),
         TenantDataError::InvalidTenantId(message) => AppError::Validation(message),

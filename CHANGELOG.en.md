@@ -3,6 +3,7 @@
 [简体中文](CHANGELOG.md)
 
 ## [Unreleased]
+- Record request-correlated categories and safe causes before tenant-data access returns 503, distinguishing projection versions, target connections, placement, and capacity problems. Redacted driver causes remain internal to logs; public responses continue to hide internal causes, with maintenance and fail-closed rules unchanged.
 - Fix procedural macros potentially reusing another worktree's source artifacts when sharing a Cargo target. Every build verifies the current macro sources and preserves the generated fingerprint's modification time when its content is unchanged; a source mismatch or occupied watch sentinel fails explicitly. A real offline, locked regression verifies A→B→A macro expansion, source additions, edits and deletions, and unchanged output, retaining failure evidence without automatically deleting unknown cache objects.
 - Clarify that tenant-table adoption accepts only one target, while subsequent migrations, verification, and status queries support explicit `--all` over registered targets, correcting the documentation's scope ambiguity.
 - Fix tenant-data migration activation advancing scope without invalidating authorization snapshots. An actual transition back to active advances the existing authorization epoch and mirror outbox in the same transaction, followed by synchronization and notification with the new epoch after commit. Idempotency, already-active placement, rollback, and post-commit failures retain fail-closed and no-replay rules; maintenance and cutover are unchanged.
