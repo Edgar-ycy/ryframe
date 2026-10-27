@@ -15,7 +15,11 @@ pub(in crate::recovery::source::evidence) mod failure;
 #[path = "lineage/retry.rs"]
 mod retry;
 
-pub(super) fn authority(backend: &Path, run: &Path, attempts: &[Value]) -> Result<Value> {
+pub(in crate::recovery::source::evidence) fn authority(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+) -> Result<Value> {
     let plan = model("replay-plan", json!({"attempts":attempts}))?;
     if plan["record"].is_null() {
         return Ok(Value::Null);

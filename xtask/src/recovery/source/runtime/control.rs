@@ -32,6 +32,10 @@ mod prelaunch;
 mod publication;
 #[path = "control/recover.rs"]
 mod recover;
+#[path = "control/start.rs"]
+mod start;
+#[path = "control/status.rs"]
+mod status;
 #[path = "control/stop.rs"]
 mod stop;
 #[path = "control/trees.rs"]
@@ -40,12 +44,21 @@ mod trees;
 mod window;
 
 pub(crate) fn run(backend: &Path, options: &SeedSourceOptions) -> Result<Value> {
+    if options.operation == SeedSourceOperation::GenerationStatus {
+        if options.write || options.request.is_some() {
+            return Err("source-generation-status 只读且不接受替代请求".into());
+        }
+        let run = run_directory(backend, &options.run_dir)?;
+        return status::run(backend, &run);
+    }
     if !matches!(
         options.operation,
-        SeedSourceOperation::GenerationStop | SeedSourceOperation::GenerationRecover
+        SeedSourceOperation::GenerationStop
+            | SeedSourceOperation::GenerationRecover
+            | SeedSourceOperation::GenerationStart
     ) || !options.write
     {
-        return Err("原生源控制只接受正式 source-generation-stop/recover --write".into());
+        return Err("原生源控制只接受正式 source-generation-start/stop/recover --write".into());
     }
     let receipt = options
         .request
@@ -57,12 +70,21 @@ pub(crate) fn run(backend: &Path, options: &SeedSourceOptions) -> Result<Value> 
         receipt: receipt.clone(),
         mode: options.operation.as_str(),
     };
+    let run = run_directory(backend, &options.run_dir)?;
     stage::run_named(
         backend,
-        &options.run_dir,
+        &run,
         "seed-runtime",
         options.operation.as_str(),
         &runner,
+    )
+}
+
+fn run_directory(backend: &Path, path: &Path) -> Result<PathBuf> {
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingDirectory)?;
+    // 新控制记录与角色引擎使用同一真实目录拼法；不改写任何既有描述符。
+    crate::recovery::clone::native::target_verify::input::request_configuration::canonical_path(
+        path,
     )
 }
 
@@ -89,7 +111,9 @@ impl StageRunner for GenerationRunner {
         if state::running_attempt(&saved)?.is_some() {
             return Err("源控制预检不能接管正在运行的阶段，保留控制器现场".into());
         }
-        if self.mode == "source-generation-stop" {
+        if self.mode == "source-generation-start" {
+            start::preflight(&self.backend, run, state::attempts(&saved)?, &self.receipt)?;
+        } else if self.mode == "source-generation-stop" {
             preflight_stop(&self.backend, run, &saved)?;
         } else {
             recover::preflight(&self.backend, run, &saved, &self.receipt)?;
@@ -111,7 +135,9 @@ impl StageRunner for GenerationRunner {
         }
         frame::stage(request)?;
         let frame = frame::Frame::load(request)?;
-        let result = if self.mode == "source-generation-stop" {
+        let result = if self.mode == "source-generation-start" {
+            start::run(&frame, &self.receipt, &SystemTransport)
+        } else if self.mode == "source-generation-stop" {
             stop::run(&frame, &self.receipt, &SystemTransport)
         } else {
             recover::run(&frame, &self.receipt, &SystemTransport)

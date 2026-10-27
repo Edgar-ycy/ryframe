@@ -240,6 +240,24 @@ fn once(role: Role, action: &str, backend: &Path, directory: &Path, timeout: f64
     }
     start(backend, &runtime, &source, &op, guard, timeout)
 }
+pub(super) fn reserved_start(
+    reservation: &super::start::Reservation,
+    timeout: f64,
+) -> Result<Value> {
+    let guard = guard(reservation.role, &reservation.directory, Duration::ZERO)?;
+    reservation.verify()?;
+    let (runtime, source) = inputs(
+        reservation.role,
+        "start",
+        &reservation.backend,
+        &reservation.directory,
+    )?;
+    let op = Operation::claim_reserved(reservation, &runtime, timeout)?;
+    guard.check()?;
+    reservation.verify()?;
+    start(&reservation.backend, &runtime, &source, &op, guard, timeout)
+}
+
 fn start(
     backend: &Path,
     runtime: &Value,

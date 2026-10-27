@@ -1,6 +1,7 @@
 //! 外部 Worker 的原生控制、独立监督与有界收据协议。
 pub(crate) mod controller;
 mod documents;
+mod environment;
 mod finite;
 mod guard;
 mod launch;
@@ -10,6 +11,7 @@ mod process;
 mod receipts;
 pub(crate) mod role;
 mod runtime;
+pub(crate) mod start;
 mod supervisor;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/full_stack/worker/tests.rs"]

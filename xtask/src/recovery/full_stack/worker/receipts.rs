@@ -81,6 +81,13 @@ fn operation(
     if role == Role::Frontend {
         fields.push("request_binding");
     }
+    if let Some(binding) = request.get("environment_binding") {
+        if role == Role::Frontend || request["operation"] != "start" {
+            return reject("冻结启动环境只能绑定API或Worker的start操作");
+        }
+        super::environment::Environment::shape(binding)?;
+        fields.push("environment_binding");
+    }
     doc::fields(request, &fields, "角色控制请求字段无效")?;
     let operation = request["operation"].as_str().unwrap_or_default();
     let expected_log = if operation == "start" {

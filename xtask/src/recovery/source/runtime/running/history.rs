@@ -24,7 +24,7 @@ mod reboot;
 #[path = "history/resolution.rs"]
 mod resolution;
 #[path = "history/segment.rs"]
-mod segment;
+pub(in crate::recovery::source::evidence) mod segment;
 pub(in crate::recovery::source::evidence) use segment::restart_request;
 #[path = "history/stops.rs"]
 mod stops;

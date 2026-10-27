@@ -145,10 +145,10 @@ pub(super) fn stage(request: &StageRequest<'_>) -> Result<()> {
     if request.stage != "seed-runtime"
         || !matches!(
             request.mode,
-            "source-generation-stop" | "source-generation-recover"
+            "source-generation-start" | "source-generation-stop" | "source-generation-recover"
         )
     {
-        return Err("源代次控制只接受正式 seed-runtime stop/recover 阶段".into());
+        return Err("源代次控制只接受正式 seed-runtime start/stop/recover 阶段".into());
     }
     Ok(())
 }

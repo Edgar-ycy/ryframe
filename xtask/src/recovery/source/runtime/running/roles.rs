@@ -14,6 +14,12 @@ use crate::{
 };
 use serde_json::{Value, json};
 
+#[path = "roles/control.rs"]
+mod control;
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/source/runtime/roles.rs"]
+mod tests;
+
 pub(in crate::recovery::source::evidence) fn directory(
     runtime: &Path,
     operations: &Value,
@@ -28,6 +34,10 @@ pub(in crate::recovery::source::evidence) fn directory(
         }
         allowed.extend([
             format!("{role}.log"),
+            format!("{role}-{operation}.log"),
+            format!("{role}-control.guard"),
+            format!("{role}-control.lock"),
+            format!("{role}-control-receipts"),
             format!("{role}.json"),
             format!("{role}-tree.json"),
             format!("{role}-members-{operation}-ready.json"),
@@ -35,6 +45,7 @@ pub(in crate::recovery::source::evidence) fn directory(
             format!("{role}-tree-{operation}-control.json"),
             format!("{role}-tree-{operation}-result.json"),
         ]);
+        control::verify(runtime, role, operation)?;
     }
     for entry in std::fs::read_dir(runtime)? {
         let entry = entry?;
@@ -43,7 +54,18 @@ pub(in crate::recovery::source::evidence) fn directory(
             .into_string()
             .map_err(|_| "源进程树文件名必须为 UTF-8")?;
         let metadata = std::fs::symlink_metadata(entry.path())?;
-        if !allowed.contains(&name) || !metadata.is_file() || digest::linked(&metadata) {
+        let directory = [
+            "api-control.lock",
+            "worker-control.lock",
+            "api-control-receipts",
+            "worker-control-receipts",
+        ]
+        .contains(&name.as_str());
+        if !allowed.contains(&name)
+            || digest::linked(&metadata)
+            || (!directory && common::link_count_for(&entry.path(), &metadata)? != 1)
+            || !(directory && metadata.is_dir() || !directory && metadata.is_file())
+        {
             return Err("源进程树目录包含未知、链接或非普通文件".into());
         }
     }
@@ -195,7 +217,7 @@ pub(super) fn ready(url: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn observe(
+pub(in crate::recovery::source::evidence) fn observe(
     runtime: &Path,
     evidence: &Value,
     intent: &Value,

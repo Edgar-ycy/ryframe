@@ -739,3 +739,97 @@ fn append_unqualified_c69(
         .unwrap();
     }
 }
+
+#[test]
+fn native_generation_status_preserves_missing_and_partial_start_without_repair() {
+    use crate::cli::{SeedSourceOperation, SeedSourceOptions};
+    use crate::recovery::source::evidence::control;
+
+    let fixture = Fixture::new();
+    let sources = native::source::current(&fixture.backend).unwrap();
+    let (number, _) = state::begin(
+        &fixture.run,
+        "seed-runtime",
+        "source-generation-start",
+        &sources,
+    )
+    .unwrap();
+    state::finish(&fixture.run, number, None, Some("StageError")).unwrap();
+    let options = SeedSourceOptions {
+        operation: SeedSourceOperation::GenerationStatus,
+        run_dir: fixture.run.clone(),
+        request: None,
+        write: false,
+    };
+    let output = fixture.run.join(format!("g{number:04}"));
+    for partial in [false, true] {
+        if partial {
+            fs::create_dir(&output).unwrap();
+            write_json(&output.join("request.json"), &json!({"partial":true}));
+        }
+        let before = snapshot(&fixture.run);
+        let observed = control::run(&fixture.backend, &options).unwrap();
+        assert_eq!(observed["status"], "source_generation_observed");
+        assert_eq!(observed["attempt"], number);
+        assert_eq!(observed["start_status"], "failed");
+        assert!(observed["intent"].is_null());
+        for role in ["api", "worker"] {
+            assert_eq!(
+                observed["roles"][role],
+                json!({"state":"unknown","tree":null,"completion":null})
+            );
+        }
+        assert_eq!(observed["remote_writes"], 0);
+        assert_eq!(observed["restore_qualified"], false);
+        assert_eq!(snapshot(&fixture.run), before);
+        assert!(!fixture.run.join("run.lock").exists());
+    }
+    let runtime = output.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    fs::write(runtime.join("binaries.json"), b"{}\n").unwrap();
+    let before = snapshot(&fixture.run);
+    assert_eq!(
+        control::run(&fixture.backend, &options).unwrap()["roles"]["api"]["state"],
+        "unknown"
+    );
+    assert_eq!(snapshot(&fixture.run), before);
+    fs::write(runtime.join("api.json"), b"{}\n").unwrap();
+    let before = snapshot(&fixture.run);
+    assert!(control::run(&fixture.backend, &options).is_err());
+    assert_eq!(snapshot(&fixture.run), before);
+    fs::remove_file(runtime.join("api.json")).unwrap();
+    fs::write(output.join("unbound.json"), b"{}").unwrap();
+    let before = snapshot(&fixture.run);
+    assert!(control::run(&fixture.backend, &options).is_err());
+    assert_eq!(snapshot(&fixture.run), before);
+    assert!(!fixture.run.join("run.lock").exists());
+}
+
+#[test]
+fn native_generation_control_rejects_unauthorized_start_and_mutating_status_without_writes() {
+    use crate::cli::{SeedSourceOperation, SeedSourceOptions};
+    use crate::recovery::source::evidence::control;
+    let fixture = Fixture::new();
+    let request = fixture.local.join("source-request.json");
+    for (operation, write, request) in [
+        (
+            SeedSourceOperation::GenerationStart,
+            false,
+            Some(request.clone()),
+        ),
+        (SeedSourceOperation::GenerationStart, true, None),
+        (SeedSourceOperation::GenerationStatus, true, None),
+        (SeedSourceOperation::GenerationStatus, false, Some(request)),
+    ] {
+        let before = snapshot(&fixture.run);
+        let options = SeedSourceOptions {
+            operation,
+            run_dir: fixture.run.clone(),
+            request,
+            write,
+        };
+        assert!(control::run(&fixture.backend, &options).is_err());
+        assert_eq!(snapshot(&fixture.run), before);
+        assert!(!fixture.run.join("run.lock").exists());
+    }
+}

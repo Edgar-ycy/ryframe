@@ -16,7 +16,8 @@ mod binary;
 mod closed;
 #[path = "prelaunch/data.rs"]
 mod data;
-pub(super) use closed::{closed, starts};
+pub(in crate::recovery::source::evidence) use closed::closed;
+pub(super) use closed::starts;
 
 const START: &str = "source-generation-start";
 const RECOVER: &str = "source-generation-recover";

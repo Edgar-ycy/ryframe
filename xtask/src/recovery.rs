@@ -68,7 +68,10 @@ fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
     let root = root_dir();
     if matches!(
         options.operation,
-        SeedSourceOperation::GenerationStop | SeedSourceOperation::GenerationRecover
+        SeedSourceOperation::GenerationStop
+            | SeedSourceOperation::GenerationRecover
+            | SeedSourceOperation::GenerationStatus
+            | SeedSourceOperation::GenerationStart
     ) {
         let result = source::evidence::control::run(&root, options)?;
         println!("{}", serde_json::to_string(&result)?);

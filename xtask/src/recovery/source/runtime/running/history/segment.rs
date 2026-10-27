@@ -14,7 +14,7 @@ mod lifecycle;
 #[path = "segment/resources.rs"]
 mod resources;
 
-pub(super) fn read(
+pub(in crate::recovery::source::evidence) fn read(
     backend: &Path,
     run: &Path,
     attempts: &[Value],

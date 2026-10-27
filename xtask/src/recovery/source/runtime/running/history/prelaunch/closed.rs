@@ -31,7 +31,7 @@ const FIELDS: &[&str] = &[
     "collection_failure",
 ];
 
-pub(in crate::recovery::source::evidence::running::history) fn closed(
+pub(in crate::recovery::source::evidence) fn closed(
     backend: &Path,
     run: &Path,
     attempts: &[Value],

@@ -7,6 +7,111 @@ use std::{
     time::Instant,
 };
 
+#[test]
+fn bound_start_environment_keeps_file_identity_and_never_uses_host_values() {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary = tempfile::tempdir_in(root).unwrap();
+    let path = temporary.path().join("environment.json");
+    let original =
+        json!({"environment":{"APP_ENV":"test","TEMP":"private-temp","TMP":"private-tmp"}});
+    operation::write_new(&path, &original).unwrap();
+    let mut file = operation::file(&path).unwrap();
+    file["path"] = json!(path);
+    let environment = environment::Environment::capture(&file).unwrap();
+    let binding = environment.binding().clone();
+    let mut command = std::process::Command::new("unused-test-command");
+    command
+        .env("TEMP", "host-sentinel")
+        .env("TMP", "host-sentinel");
+    environment.apply(&mut command).unwrap();
+    let values = command
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.map(|v| v.to_string_lossy().into_owned()),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values["APP_ENV"].as_deref(), Some("test"));
+    assert_eq!(values["TEMP"].as_deref(), Some("private-temp"));
+    assert_eq!(values["TMP"].as_deref(), Some("private-tmp"));
+    assert!(
+        !serde_json::to_string(&binding)
+            .unwrap()
+            .contains("private-temp")
+    );
+    let changed = std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"environment":{"APP_ENV":"test"}})).unwrap(),
+    );
+    if changed.is_ok() {
+        assert!(environment.check().is_err());
+    }
+    drop(environment);
+    // 即使恢复相同字节，替换文件也不能冒充最初的文件身份。
+    let replacement = temporary.path().join("replacement.json");
+    operation::write_new(&replacement, &original).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::rename(&replacement, &path).unwrap();
+    assert_eq!(operation::file(&path).unwrap()["sha256"], file["sha256"]);
+    assert!(environment::Environment::recorded(&binding).is_err());
+    std::fs::write(&path, b"{\"environment\":{\"APP_ENV\":\"test\"}}").unwrap();
+    let mut absent = operation::file(&path).unwrap();
+    absent["path"] = json!(path);
+    let environment = environment::Environment::capture(&absent).unwrap();
+    environment.apply(&mut command).unwrap();
+    let values = command
+        .get_envs()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values[std::ffi::OsStr::new("TEMP")], None);
+    assert_eq!(values[std::ffi::OsStr::new("TMP")], None);
+}
+
+#[test]
+fn start_environment_rejects_invalid_private_inputs_and_wrong_operation() {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary = tempfile::tempdir_in(root).unwrap();
+    let path = temporary.path().join("environment.json");
+    for bytes in [
+        r#"{"environment":{"APP_ENV":"prod"}}"#,
+        r#"{"environment":{"APP_ENV":"test","PASSWORD":"synthetic-secret"}}"#,
+        r#"{"environment":{"APP_ENV":"test","TEMP":""}}"#,
+        r#"{"environment":{"APP_ENV":"test","TMP":4}}"#,
+        r#"{"environment":{"APP_ENV":"test","APP_ENV":"test"}}"#,
+        r#"{"environment":{"APP_ENV":"test"},"extra":true}"#,
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        let mut file = operation::file(&path).unwrap();
+        file["path"] = json!(path);
+        assert!(environment::Environment::capture(&file).is_err());
+    }
+    let binding =
+        json!({"file":{"path":path,"bytes":10,"sha256":"d".repeat(64)},"identity":[u64::MAX,2]});
+    let mut args = fixture();
+    args["request"]["environment_binding"] = binding.clone();
+    assert!(receipts::execute(&args).is_ok());
+    args["request"]["environment_binding"]["identity"] = json!([1]);
+    assert!(receipts::execute(&args).is_err());
+    args["request"]["environment_binding"] = binding;
+    args["request"]["operation"] = json!("status");
+    args["request"]["log"] = Value::Null;
+    assert!(receipts::execute(&args).is_err());
+    assert!(
+        start::reserve(
+            role::Role::Frontend,
+            temporary.path(),
+            temporary.path(),
+            &Value::Null
+        )
+        .is_err()
+    );
+    assert!(!temporary.path().join("worker-control.lock").exists());
+    assert!(!temporary.path().join("api-control.lock").exists());
+}
+
 fn common(kind: &str) -> Value {
     json!({"format_version":1,"kind":kind,"operation_id":"a".repeat(32),
         "runtime_directory":std::env::current_dir().unwrap(),"source_sha256":"b".repeat(64)})

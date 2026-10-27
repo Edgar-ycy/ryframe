@@ -139,7 +139,11 @@ pub(crate) fn lineage_receipt(value: &Value) -> Result<()> {
 }
 
 /// 返回是否需要复核成对构建；任何其他字段变化均在读取产物前拒绝。
-fn archived_request(previous: &Value, request: &Value, segment: &Value) -> Result<bool> {
+pub(in crate::recovery) fn archived_request(
+    previous: &Value,
+    request: &Value,
+    segment: &Value,
+) -> Result<bool> {
     document::object(previous, "冻结生成请求")?;
     document::object(request, "当前生成请求")?;
     let mut expected = previous.clone();
@@ -167,7 +171,11 @@ fn archived_request(previous: &Value, request: &Value, segment: &Value) -> Resul
     Ok(changed)
 }
 
-fn archived_image(before: &Value, after: &Value, segment: &Value) -> Result<()> {
+pub(in crate::recovery) fn archived_image(
+    before: &Value,
+    after: &Value,
+    segment: &Value,
+) -> Result<()> {
     document::object(before, "生成冻结完整像")?;
     document::object(after, "生成当前完整像")?;
     let mut expected = before.clone();

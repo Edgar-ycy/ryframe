@@ -126,8 +126,39 @@ impl Operation {
         runtime: &Value,
         timeout: f64,
     ) -> Result<Self> {
+        Self::claim_inner(role, action, backend, directory, runtime, timeout, None)
+    }
+    pub fn claim_reserved(
+        reservation: &super::start::Reservation,
+        runtime: &Value,
+        timeout: f64,
+    ) -> Result<Self> {
+        reservation.verify()?;
+        Self::claim_inner(
+            reservation.role,
+            "start",
+            &reservation.backend,
+            &reservation.directory,
+            runtime,
+            timeout,
+            Some(reservation),
+        )
+    }
+    fn claim_inner(
+        role: Role,
+        action: &str,
+        backend: &Path,
+        directory: &Path,
+        runtime: &Value,
+        timeout: f64,
+        reservation: Option<&super::start::Reservation>,
+    ) -> Result<Self> {
         let source = json!(source(directory)?);
-        let id = json!(uuid::Uuid::new_v4().simple().to_string());
+        let id = json!(
+            reservation
+                .map(|v| v.id().to_owned())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string())
+        );
         let identity = super::process::current()?;
         let mut owner = common(&role.kind("owner"), &id, directory, &source);
         owner["identity"] = identity.clone();
@@ -136,6 +167,10 @@ impl Operation {
         for (key,value) in json!({"operation":action,"backend_root":backend,"scope_id":runtime["scope_id"],"controller_identity":identity,"owner_sha256":documents::hash(&owner)?,"runtime_receipt_sha256":file(&directory.join("runtime.json"))?["sha256"],(role.artifact()):runtime["artifacts"][role.name()],(role.ready()):runtime[role.ready()],"timeout_seconds":timeout,"log":if action=="start"{json!(format!("{}-{}.log",role.name(),id.as_str().ok_or("操作ID无效")?))}else{Value::Null},"requested_at_ns":now()}).as_object().ok_or("请求无效")? {request[key]=value.clone();}
         if role == Role::Frontend {
             request["request_binding"] = runtime["request_binding"].clone();
+        }
+        if let Some(reservation) = reservation {
+            request["environment_binding"] = reservation.binding().clone();
+            reservation.verify()?;
         }
         let temporary = directory.join(format!(
             ".{}.{}.tmp",
@@ -174,6 +209,9 @@ impl Operation {
             .ok_or_else(|| "操作ID无效".into())
     }
     pub fn validate(&self, mode: &str, value: Value) -> Result<Value> {
+        if let Some(binding) = self.request.get("environment_binding") {
+            super::environment::Environment::recorded(binding)?.check()?;
+        }
         let directory = self.directory();
         if self.role == Role::Frontend {
             crate::recovery::fixture_runtime::verify_frontend_handoff(

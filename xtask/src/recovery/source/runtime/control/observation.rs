@@ -147,12 +147,25 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
         builds::verify(self.frame.backend, request)?;
         let execution = Path::new(document::text(&facts["execution"], "恢复执行根")?);
         let runtime = self.output()?.join("runtime");
-        inputs::exact_directory(
-            self.frame.backend,
-            &runtime,
-            &["binaries.json", "runtime.json"],
-            &[],
-        )?;
+        let internal = self.output()?.join("request.json");
+        if self.frame.mode == "source-generation-start"
+            && internal.try_exists()?
+            && document::read(&internal)? != *request
+        {
+            return Err("START内部请求与原冻结请求不同；保留现场，不重放".into());
+        }
+        let intent = self.output()?.join("intent.json");
+        if self.frame.mode == "source-generation-start" && intent.try_exists()? {
+            let intent = document::read(&intent)?;
+            super::super::running::roles::directory(&runtime, &intent["operations"])?;
+        } else {
+            inputs::exact_directory(
+                self.frame.backend,
+                &runtime,
+                &["binaries.json", "runtime.json"],
+                &[],
+            )?;
+        }
         if fixture_control::verify_full_stack_runtime(execution, &runtime)? != self.contract
             || document::read(&runtime.join("binaries.json"))? != self.prepared.binaries
         {
@@ -183,7 +196,9 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
     }
 
     pub(super) fn capture(&self, phase: &str) -> Result<(Value, Value)> {
-        if !matches!(phase, "before" | "after") {
+        if !matches!(phase, "before" | "after")
+            && !(phase == "running" && self.frame.mode == "source-generation-start")
+        {
             return Err("恢复只读观察阶段无效".into());
         }
         let facts = &self.prepared.facts;

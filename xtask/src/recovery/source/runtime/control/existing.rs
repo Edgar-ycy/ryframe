@@ -43,7 +43,7 @@ pub(super) fn unpublished(frame: &Frame<'_>, start: &Value, descriptor: &Value) 
     let execution = Path::new(document::text(&request["execution_backend"], "源执行根")?);
     let runtime = output.join("runtime");
     let contract = fixture_control::verify_full_stack_runtime(execution, &runtime)?;
-    let intent = intent(frame, &output, &internal)?;
+    let intent = intent(frame.backend, &output, &internal)?;
     roles::directory(&runtime, &intent["operations"])?;
     verify_binaries(frame, &request, &build, &runtime, &contract)?;
     let mut selected = source["request"]["source"].clone();
@@ -79,9 +79,9 @@ pub(super) fn matches_source(request: &Value, source: &Value) -> Result<()> {
     Ok(())
 }
 
-fn intent(frame: &Frame<'_>, output: &Path, request: &Value) -> Result<Value> {
+pub(super) fn intent(backend: &Path, output: &Path, request: &Value) -> Result<Value> {
     let descriptor = common::binding(&output.join("intent.json"))?;
-    let intent = common::read_bound(frame.backend, &descriptor, "原源启动意图")?;
+    let intent = common::read_bound(backend, &descriptor, "原源启动意图")?;
     document::exact(
         &intent,
         &[
@@ -101,7 +101,7 @@ fn intent(frame: &Frame<'_>, output: &Path, request: &Value) -> Result<Value> {
         return Err("源回收意图未绑定原请求和同代 runtime".into());
     }
     roles::directory(&output.join("runtime"), &intent["operations"])?;
-    common::bound_file(frame.backend, &descriptor, "原源启动意图")?;
+    common::bound_file(backend, &descriptor, "原源启动意图")?;
     Ok(intent)
 }
 
@@ -150,6 +150,20 @@ pub(super) fn status(frame: &Frame<'_>, start: &Value) -> Result<Value> {
     roles::directory(&runtime, &intent["operations"])?;
     let source = history::predecessor(frame.backend, frame.run, frame.state())?;
     let scope = &source["request"]["source"]["scope_id"];
+    let observed = observe_roles(frame.backend, &runtime, &intent["operations"], scope)?;
+    frame.checkpoint()?;
+    Ok(
+        json!({"status":"source_generation_observed","attempt":number,"start_status":start["status"],
+        "intent":common::binding(&output.join("intent.json"))?,"roles":observed,"remote_writes":0,"restore_qualified":false}),
+    )
+}
+
+pub(super) fn observe_roles(
+    backend: &Path,
+    runtime: &Path,
+    operations: &Value,
+    scope: &Value,
+) -> Result<Value> {
     let mut observed = serde_json::Map::new();
     for role in ["api", "worker"] {
         let tree_path = runtime.join(format!("{role}-tree.json"));
@@ -161,8 +175,8 @@ pub(super) fn status(frame: &Frame<'_>, start: &Value) -> Result<Value> {
             continue;
         }
         let tree_binding = common::binding(&tree_path)?;
-        let tree = roles::tree(&runtime, role, scope)?;
-        if tree["operation_id"] != intent["operations"][role] {
+        let tree = roles::tree(runtime, role, scope)?;
+        if tree["operation_id"] != operations[role] {
             return Err("源树 operation 不属于同一启动意图".into());
         }
         let alive = ["process", "supervisor", "monitor"]
@@ -170,7 +184,7 @@ pub(super) fn status(frame: &Frame<'_>, start: &Value) -> Result<Value> {
             .into_iter()
             .collect::<Result<Vec<_>>>()?;
         let completion = if alive.iter().all(|value| !*value) {
-            NativeRuntime::new(frame.backend).complete_registered_tree(&tree)?
+            NativeRuntime::new(backend).complete_registered_tree(&tree)?
         } else {
             Value::Null
         };
@@ -181,17 +195,13 @@ pub(super) fn status(frame: &Frame<'_>, start: &Value) -> Result<Value> {
         } else {
             "degraded"
         };
-        common::bound_file(frame.backend, &tree_binding, "源角色树")?;
+        common::bound_file(backend, &tree_binding, "源角色树")?;
         observed.insert(
             role.into(),
             json!({"state":state,"tree":tree_binding,"completion":completion}),
         );
     }
-    frame.checkpoint()?;
-    Ok(
-        json!({"status":"source_generation_observed","attempt":number,"start_status":start["status"],
-        "intent":common::binding(&output.join("intent.json"))?,"roles":observed,"remote_writes":0,"restore_qualified":false}),
-    )
+    Ok(Value::Object(observed))
 }
 
 fn observe(expected: &Value) -> Result<bool> {

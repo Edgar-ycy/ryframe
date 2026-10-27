@@ -74,6 +74,10 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
     if role == Role::Frontend {
         command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     }
+    let environment = super::environment::Environment::operation(&op.request)?;
+    if let Some(environment) = &environment {
+        environment.apply(&mut command)?;
+    }
     let mut child = ChildGroup::new()?.spawn(command)?;
     let supervisor = common::process_identity(child.id())?.ok_or("角色监督进程登记前退出")?;
     let ready = json!({"format_version":1,"operation_id":id,"directory":directory,"role":role.name(),"scope_id":op.request["scope_id"],"supervisor":supervisor,"monitor":monitor});
@@ -203,6 +207,10 @@ fn run_product(backend: &Path, op: &Operation, supervisor: &Value, monitor: &Val
     )?;
     let mut command = std::process::Command::new(executable);
     launch::environment(&mut command);
+    let environment = super::environment::Environment::operation(&op.request)?;
+    if let Some(environment) = &environment {
+        environment.apply(&mut command)?;
+    }
     command
         .arg("--config-dir")
         .arg(runtime[op.role.config()?].as_str().ok_or("缺少产品配置")?)

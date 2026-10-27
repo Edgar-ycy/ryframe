@@ -55,6 +55,11 @@ pub(super) fn command(operation: &str, args: &Value, directory: &Path) -> Result
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     environment(&mut command);
+    if matches!(operation, "monitor" | "supervise" | "detach")
+        && let Some(environment) = super::environment::Environment::arguments(args, directory)?
+    {
+        environment.apply(&mut command)?;
+    }
     Ok(command)
 }
 #[cfg(windows)]
@@ -115,6 +120,11 @@ pub(super) fn detach_platform(args: &Value) -> Result<Value> {
             startup,
         )
     };
+    let directory = Path::new(args["directory"].as_str().ok_or("缺少运行目录")?);
+    let environment = super::environment::Environment::arguments(args, directory)?;
+    if let Some(environment) = &environment {
+        environment.inherited()?;
+    }
     let child = match create(base | co::CREATE::BREAKAWAY_FROM_JOB, &mut startup) {
         Ok(child) => child,
         Err(co::ERROR::ACCESS_DENIED) => create(base, &mut startup)?,
@@ -126,6 +136,10 @@ pub(super) fn detach_platform(args: &Value) -> Result<Value> {
 pub(super) fn detached(operation: &str, args: &Value, directory: &Path) -> Result<u32> {
     use std::os::unix::process::CommandExt;
     let mut command = command(operation, args, directory)?;
+    let environment = super::environment::Environment::arguments(args, directory)?;
+    if let Some(environment) = &environment {
+        environment.apply(&mut command)?;
+    }
     command.process_group(0);
     let mut child = command.spawn()?;
     let pid = child.id();
