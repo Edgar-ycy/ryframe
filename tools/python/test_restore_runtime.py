@@ -54,13 +54,6 @@ class RestoreRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(
             patch.object(
-                restore_build,
-                "capture_inventory",
-                side_effect=lambda *_args: copy.deepcopy(INVENTORY),
-            )
-        )
-        self.enterContext(
-            patch.object(
                 restore_runtime,
                 "capture_inventory",
                 side_effect=lambda root: (source_inventory.capture_inventory(root)
@@ -83,20 +76,6 @@ class RestoreRuntimeTests(unittest.TestCase):
     def write_json(self, path, value):
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
-
-    def cargo_run(self, command, **_kwargs):
-        if command in (["rustc", "-vV"], ["cargo", "-V"]):
-            return subprocess.run(command, **_kwargs)
-        name = command[command.index("--bin") + 1]
-        executable = self.backend / name
-        executable.write_bytes(name.encode())
-        event = {
-            "reason": "compiler-artifact",
-            "manifest_path": str(self.backend / "crates/ryframe/Cargo.toml"),
-            "target": {"name": name, "kind": ["bin"]},
-            "executable": str(executable),
-        }
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(event))
 
     def authority(self, **changes):
         value = {
@@ -121,8 +100,17 @@ class RestoreRuntimeTests(unittest.TestCase):
 
     def prepare(self, authority=None):
         authority = authority or self.authority()
-        with patch.object(restore_build, "source_snapshot", return_value=SOURCE):
-            backend_build = restore_build.build(self.backend, self.cargo_run)
+        # 仅是编排夹具；完整生产来源与Cargo行为由Rust正式入口测试承担。
+        context = restore_build.build_context(self.backend)
+        artifacts = {}
+        for role, name in (("api", "ryframe"), ("worker", "ryframe-worker")):
+            executable = self.backend / name
+            executable.write_bytes(name.encode())
+            artifacts[role] = {"executable": str(executable), "command": context["commands"][role],
+                               **restore_build.file_digest(executable)}
+        backend_build = {"format_version": 2, "kind": "restore-backend-build",
+                         "sources": source_inventory.build_source_domains(INVENTORY, "backend"),
+                         "build": context, "artifacts": artifacts}
         build_path = self.write_json(self.root / "backend-build.json", backend_build)
         frontend_build = frontend_receipt_value(self.frontend)
         frontend_path = self.write_json(
@@ -589,13 +577,9 @@ class RestoreRuntimeTests(unittest.TestCase):
                 "write": False,
                 **values,
             }
-            with self.subTest(operation=operation), patch.object(
-                restore_runtime, "build_registered"
-            ) as build_call, \
-                    patch.object(restore_runtime, "bind") as bind_call, patch.object(restore_runtime, "write_new") as write:
+            with self.subTest(operation=operation), patch.object(restore_runtime, "bind") as bind_call, patch.object(restore_runtime, "write_new") as write:
                 with self.assertRaises(restore_runtime.RuntimeProtocolError):
                     restore_runtime.decode_request(json.dumps(protocol))
-                build_call.assert_not_called()
                 bind_call.assert_not_called()
                 write.assert_not_called()
         with self.assertRaises(restore_runtime.RuntimeProtocolError):
@@ -631,89 +615,13 @@ class RestoreRuntimeTests(unittest.TestCase):
         raw_write.assert_not_called()
         self.assertEqual(json.loads(stdout.getvalue()), {"output": str(output.resolve())})
 
-    def test_build_request_separates_coordinator_from_source_worktree(self):
-        output = self.backend / ".local-tests/build.json"
-        receipt = {"format_version": 2, "kind": "restore-backend-build"}
-        frontend_receipt = restore_runtime.read_json_document(
-            self.write_json(
-                self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT,
-                frontend_receipt_value(self.frontend),
-            )
-        )
-        request = private_request(
-            "build", backend_dir=self.backend, source_backend=str(self.root),
-            expected_head=SOURCE["head"], frontend_dir=str(self.frontend),
-            source_frontend=str(self.frontend), expected_frontend_head=self.frontend_head,
-            output=str(output),
-        )
-        with patch.object(sys, "stdout", io.StringIO()) as stdout, \
-                patch.object(restore_runtime, "repository", return_value=self.root), patch.object(
-            restore_runtime,
-            "build_registered",
-            return_value=(self.root, receipt),
-        ) as build_call, patch.object(
-            restore_runtime,
-            "build_registered_frontend",
-            return_value=(self.frontend, frontend_receipt, "verified"),
-        ) as frontend_build, patch.object(
-            restore_runtime, "validate_new_output", return_value=output
-        ) as validate, patch.object(restore_runtime, "write_new") as write:
-            restore_runtime.main(request)
-        build_call.assert_called_once_with(
-            self.backend.resolve(),
-            self.root,
-            SOURCE["head"],
-            adapter_contract=None,
-            product_backend=None,
-        )
-        frontend_build.assert_called_once_with(
-            self.frontend.resolve(), self.frontend, self.frontend_head
-        )
-        validate.assert_called_once_with(output, self.root)
-        write.assert_called_once_with(output, receipt, self.root)
-        self.assertEqual(json.loads(stdout.getvalue())["frontend_action"], "verified")
-
-    def test_registered_frontend_reuses_only_an_exact_existing_receipt(self):
-        self.prepare()
-        run = unittest.mock.Mock()
-        with patch.object(
-            restore_frontend_build,
-            "repository",
-            side_effect=lambda path, _label: Path(path).resolve(),
-        ):
-            source, receipt, action = restore_frontend_build.build_registered_frontend(
-                self.frontend, self.frontend, self.frontend_head, run
-            )
-        self.assertEqual(source, self.frontend)
-        self.assertEqual(receipt.value["kind"], "restore-frontend-build")
-        self.assertEqual(action, "verified")
-        run.assert_not_called()
-
-    def test_registered_frontend_builds_with_the_target_vite_when_receipt_is_absent(self):
-        _authority, _backend, frontend_path, _bindings = self.prepare()
-        value = json.loads(frontend_path.read_text(encoding="utf-8"))
-        frontend_path.unlink()
-
-        def run(command, **options):
-            self.assertEqual(command[0], "node")
-            self.assertEqual(command[2:4], ["external-build", "--source-root"])
-            self.assertEqual(command[-3:], ["--expected-head", self.frontend_head, "--write"])
-            self.assertEqual(options["cwd"], self.frontend)
-            self.assertTrue(options["check"])
-            self.write_json(frontend_path, value)
-            return subprocess.CompletedProcess(command, 0)
-
-        with patch.object(
-            restore_frontend_build,
-            "repository",
-            side_effect=lambda path, _label: Path(path).resolve(),
-        ):
-            source, receipt, action = restore_frontend_build.build_registered_frontend(
-                self.frontend, self.frontend, self.frontend_head, run
-            )
-        self.assertEqual(source, self.frontend)
-        self.assertEqual(receipt.path, frontend_path)
-        self.assertEqual(action, "built")
+    def test_retired_python_build_cannot_dispatch_a_second_producer(self):
+        with self.assertRaises(restore_runtime.RuntimeProtocolError):
+            private_request("build", backend_dir=self.backend, source_backend=str(self.backend),
+                            source_frontend=str(self.frontend), frontend_dir=str(self.frontend),
+                            expected_head=SOURCE["head"], expected_frontend_head=self.frontend_head,
+                            output=str(self.root / "forbidden.json"))
+        self.assertFalse((self.root / "forbidden.json").exists())
 
     def test_verify_request_reads_stdin_authority_and_outputs_detailed_result(self):
         runtime_path = self.write_json(self.root / "runtime.json", {"fixture": True})

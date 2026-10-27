@@ -23,7 +23,7 @@ fn git(root: &Path, arguments: &[&str]) {
 }
 
 // 使用真实 Git、配置和产物验证组件边界；这不是 Vite 产品构建证明。
-fn fixture() -> tempfile::TempDir {
+pub(in crate::recovery) fn fixture() -> tempfile::TempDir {
     let parent = crate::workspace::root_dir().join(".local-tests/frontend-build-unit");
     fs::create_dir_all(&parent).unwrap();
     let temporary = tempfile::tempdir_in(parent).unwrap();
@@ -57,7 +57,7 @@ fn fixture() -> tempfile::TempDir {
     temporary
 }
 
-fn write_receipt(root: &Path, commit: &str, inventory: &Value) {
+pub(in crate::recovery) fn write_receipt(root: &Path, commit: &str, inventory: &Value) {
     fs::write(
         root.join(".local-tests/build/source.json"),
         serde_json::to_vec(&json!({"format_version":1,"frontend_commit":commit})).unwrap(),

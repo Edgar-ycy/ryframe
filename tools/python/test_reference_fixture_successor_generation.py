@@ -1,15 +1,12 @@
-"""唯一 generation-request 生产者的纯预览、原子发布与失败关闭。"""
+"""历史来源请求的只读重算与谱系边界；不保留旧 Python 发布入口。"""
 from types import SimpleNamespace
-import argparse
-from contextlib import ExitStack, contextmanager, redirect_stderr
+from contextlib import ExitStack, contextmanager
 import copy
-from io import StringIO
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reference_fixture_successor_generation as producer
@@ -47,7 +44,6 @@ class GenerationRequestTests(unittest.TestCase):
         self.assertEqual(value, self.f.request)
         self.assertEqual(published.call_count, 2)
         recovery.assert_not_called()
-        self.assertFalse(registered.call_args.kwargs["reconstruct"])
         self.assertEqual(before, {str(path): path.read_bytes() for path in self.f.directory.rglob("*") if path.is_file()})
 
     def test_pending_c68_uses_narrow_reregistration_and_rechecks_it(self):
@@ -237,84 +233,15 @@ class GenerationRequestTests(unittest.TestCase):
                 "r24-source",
             )
 
-    def test_publish_is_atomic_immutable_and_rejects_output_collision(self):
-        output = self.f.directory / "published-request.json"
-        with self.inputs() as (published, _registered):
-            value = producer.publish(self.f.backend, output, *self.values)
-            self.assertEqual(published.call_count, 6)
-            self.assertEqual(read_json(output), value)
-            descriptor = binding(output)
-            with self.assertRaises(ValueError):
-                producer.publish(self.f.backend, output, *self.values)
-            self.assertEqual(binding(output), descriptor)
-        self.assertFalse(any(path.name.endswith(".pending") for path in self.f.directory.iterdir()))
-
-    def test_publish_never_writes_external_request_inside_source_run(self):
-        run = self.f.directory / "protected-run"
-        for relative in ("results", "g0068", "seed-runtime"):
-            (run / relative).mkdir(parents=True)
-        registration_path = run / "results/0052.json"
-        write_json(registration_path, {"registered": True})
-        request = {
-            **self.f.request,
-            "source_registration": binding(registration_path),
-        }
-        for target in (
-            run / "new.json",
-            run / "results/new.json",
-            run / "g0068/new.json",
-            run / "seed-runtime/new.json",
-        ):
-            with self.subTest(target=target), patch.object(
-                producer, "build", return_value=request
-            ), patch.object(producer, "_publish_json") as write, self.assertRaisesRegex(
-                ValueError, "不得写入来源复制账本目录"
-            ):
-                producer.publish(self.f.backend, target, *self.values)
-            write.assert_not_called()
-            self.assertFalse(target.exists())
-
-    def test_source_rebind_or_environment_drift_prevents_publication(self):
-        output = self.f.directory / "never.json"
+    def test_historical_rebuild_rejects_source_and_physical_configuration_drift(self):
         with self.inputs() as (published, _registered):
             changed = copy.deepcopy(self.f.source)
             changed["storage"]["storage"] = {"different": True}
             published.side_effect = [self.f.source, changed]
             with self.assertRaisesRegex(ValueError, "来源在只读构造期间变化"):
-                producer.publish(self.f.backend, output, *self.values)
-        self.assertFalse(output.exists())
+                producer.build(self.f.backend, *self.values)
         with self.inputs(), patch.object(producer, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": {"different": "physical source"}}})), self.assertRaises(ValueError):
             producer.build(self.f.backend, *self.values)
-
-    def test_path_escape_and_reparse_output_are_rejected_before_source_reads(self):
-        with self.inputs() as (published, _registered):
-            for output in (self.f.backend.parent / "escape.json", self.f.directory / "missing-parent/out.json"):
-                with self.subTest(path=output), self.assertRaises(ValueError):
-                    producer.publish(self.f.backend, output, *self.values)
-            target = self.f.directory / "reparse.json"
-            with patch("devex_clone_model.linked", side_effect=lambda path: path == target), self.assertRaises(ValueError):
-                producer.publish(self.f.backend, target, *self.values)
-            published.assert_not_called()
-
-    def test_parser_requires_exact_publish_pair_and_rejects_unknown_or_abbreviated_flags(self):
-        parser = argparse.ArgumentParser(allow_abbrev=False)
-        producer.arguments(parser)
-        argv = ["--backend-dir", str(self.f.backend), "--successor", str(self.values[0]), "--source-backend", str(self.f.backend),
-                "--expected-head", "a" * 40, "--backend-build", str(self.values[3]), "--maintenance-build", str(self.values[4]),
-                "--source-environment", str(self.values[5]), "--id", "r24-source"]
-        for extra in (["--write"], ["--output", str(self.f.directory / "bad.json")]):
-            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
-                producer.execute(parser.parse_args(argv + extra), parser)
-            self.assertEqual(error.exception.code, 2)
-        for extra in (["--out", "bad"], ["--unknown", "value"]):
-            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
-                parser.parse_args(argv + extra)
-            self.assertEqual(error.exception.code, 2)
-        with self.inputs():
-            preview = producer.execute(parser.parse_args(argv), parser)
-        self.assertEqual(preview["request"], self.f.request)
-        self.assertEqual(preview["status"], "source_generation_request_planned")
-
 
 if __name__ == "__main__":
     unittest.main()

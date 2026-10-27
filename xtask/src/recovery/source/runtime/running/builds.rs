@@ -2,19 +2,10 @@
 use super::super::staging;
 use crate::{
     Result,
-    recovery::{
-        clone::native::{bridge, digest, json as document, maintenance, resources::common, source},
-        fixture_control::git_root,
-    },
+    recovery::clone::native::{bridge, json as document, maintenance, resources::common},
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-
-const ADAPTER: &str = "legacy-stable-readiness-b0-v1";
-const ADAPTER_COMMIT: &str = "c05114bcdf5c369cd74087db6317ce3c8f89bee8";
-const PRODUCT_COMMIT: &str = "815c5eafb09d4b493319d255fb7ab88ddd02c8b6";
-const PRODUCT_TREE: &str = "aeb1824ee52ea12d53d0cf87c327c7be3d1e12b4";
-const PATCH_SHA256: &str = "28ad29f21ca9fd58356d059700bcc871172466e0a62286c5ccdbf68b1ed3fba3";
 
 pub(in crate::recovery::source::evidence) fn verify(
     backend: &Path,
@@ -53,48 +44,14 @@ pub(in crate::recovery::source::evidence) fn verify(
 
 fn registered(backend: &Path, request: &Value) -> Result<(PathBuf, Value)> {
     let execution = Path::new(document::text(&request["execution_backend"], "来源执行根")?);
-    let canonical = git_root(execution, "来源执行根")?;
-    if canonical != execution {
-        return Err("来源执行树必须是已登记的规范 Git 根目录".into());
-    }
-    let inventory = source::capture(execution)?;
-    if inventory.source.snapshot.head
-        != document::text(&request["expected_backend_sha"], "来源完整 SHA")?
-        || !inventory.source.snapshot.clean
-    {
-        return Err("来源构建必须使用声明的精确干净后端源码".into());
-    }
-    match request["adapter_contract"].as_str() {
-        None if request["adapter_contract"].is_null() && request["product_backend"].is_null() => (),
-        Some(ADAPTER) => adapter(backend, request, &inventory)?,
-        _ => return Err("未知、不完整或混用普通产品根的来源适配声明".into()),
-    }
-    Ok((execution.to_owned(), source::inventory_value(&inventory)))
-}
-
-fn adapter(backend: &Path, request: &Value, inventory: &source::Inventory) -> Result<()> {
-    if request["expected_backend_sha"] != ADAPTER_COMMIT {
-        return Err("B0 适配必须绑定原精确提交".into());
-    }
-    let product = Path::new(document::text(&request["product_backend"], "B0 产品根")?);
-    if git_root(backend, "B0 协调根")? != backend || git_root(product, "B0 产品根")? != product
-    {
-        return Err("B0 产品和协调根必须是规范 Git 根".into());
-    }
-    let original = source::capture(product)?;
-    let patch = backend.join("xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch");
-    common::common_file(backend, &patch, "B0 已登记补丁")?;
-    if inventory.source.snapshot.head != ADAPTER_COMMIT
-        || original.source.snapshot.head != PRODUCT_COMMIT
-        || !original.source.snapshot.clean
-        || digest::file(&patch)?.sha256 != PATCH_SHA256
-        || git_tree(backend, PRODUCT_COMMIT)? != PRODUCT_TREE
-        || source::backend_domains(inventory)?["product"]
-            != source::backend_domains(&original)?["product"]
-    {
-        return Err("B0 适配改变了已登记补丁、原产品提交或产品输入".into());
-    }
-    Ok(())
+    let value = crate::recovery::runtime::build::source::registered(
+        backend,
+        execution,
+        document::text(&request["expected_backend_sha"], "来源精确SHA")?,
+        &request["adapter_contract"],
+        &request["product_backend"],
+    )?;
+    Ok((execution.to_owned(), value["inventory"].clone()))
 }
 
 pub(in crate::recovery::source::evidence::running) fn git_tree(

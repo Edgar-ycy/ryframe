@@ -57,6 +57,7 @@ class SourceFileConfigurationTests(unittest.TestCase):
 
 class SourceExportTests(unittest.TestCase):
     def setUp(self):
+        self.controller_environment = dict(os.environ)
         self.fixture = SourceFixture(self)
 
     def export(self):
@@ -66,13 +67,11 @@ class SourceExportTests(unittest.TestCase):
 
     def test_generation_keeps_real_build_context_in_control_and_resources_in_service(self):
         item = self.fixture
-        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": str(item.local / "target")}
+        controller = {**self.controller_environment, "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": str(item.local / "target")}
         service = configured(item.environment, controller)
         self.assertFalse(any(name.startswith("CARGO_") for name in service))
         environments = Environments(service, controller)
         phases = []
-        def version(_root, _run, command):
-            return "rustc fixture\nhost: fixture-target" if command[0] == "rustc" else "cargo fixture"
         def maintenance(*_args):
             self.assertEqual(dict(os.environ), controller)
             phases.append("tools")
@@ -85,7 +84,7 @@ class SourceExportTests(unittest.TestCase):
             self.assertEqual(dict(os.environ), service)
             self.assertFalse(any(name.startswith("CARGO_") for name in kwargs.get("env", {})))
             return item(command, **kwargs)
-        with patch.object(restore_build, "_version", side_effect=version):
+        with patch.dict(os.environ, controller, clear=True):
             item.build["build"] = restore_build.build_context(item.backend, environment=controller)
             item.request["backend_build"] = item.bind(Path(item.request["backend_build"]["path"]), item.build)
             item.save_request()

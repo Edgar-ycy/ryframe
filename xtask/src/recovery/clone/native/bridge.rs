@@ -110,6 +110,18 @@ fn verify_restore_receipt(receipt: &Value) -> Result<()> {
     let inventory = source::validate_inventory(full)?;
     source::validate_backend_domains(sources, &inventory)?;
     validate_build_context(object.get("build").ok_or("构建收据缺少构建上下文")?)?;
+    verify_restore_artifacts(receipt)
+}
+
+pub(in crate::recovery) fn verify_restore_artifacts(receipt: &Value) -> Result<()> {
+    let object = native_json::exact(
+        receipt,
+        &["format_version", "kind", "sources", "build", "artifacts"],
+        "API/Worker构建收据",
+    )?;
+    if object["format_version"].as_u64() != Some(2) || object["kind"] != "restore-backend-build" {
+        return Err("恢复二进制收据格式无效".into());
+    }
     let artifacts = native_json::object(
         object.get("artifacts").ok_or("构建收据缺少产物")?,
         "API/Worker 构建产物",
@@ -163,7 +175,7 @@ fn verify_restore_receipt(receipt: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_build_context(value: &Value) -> Result<()> {
+pub(in crate::recovery) fn validate_build_context(value: &Value) -> Result<()> {
     let object = native_json::exact(
         value,
         &[
@@ -282,7 +294,7 @@ fn product_inputs(kind: &str, inventory: &source::Inventory) -> Result<Value> {
     }
 }
 
-fn build_command(role: &str) -> Result<Vec<String>> {
+pub(in crate::recovery) fn build_command(role: &str) -> Result<Vec<String>> {
     let (feature, name) = match role {
         "api" => ("bin-api", "ryframe"),
         "worker" => ("bin-worker", "ryframe-worker"),

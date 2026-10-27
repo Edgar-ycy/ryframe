@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 
-from restore_build import repository
 from restore_runtime_evidence import (
     HEX_40,
     ArtifactSnapshot,
@@ -16,27 +13,9 @@ from restore_runtime_evidence import (
 )
 from source_inventory import capture_inventory
 from restore_frontend_configuration import verify_frontend_inputs
-from restore_frontend_paths import ordinary
 
 FRONTEND_RECEIPT = ".vite/restore-build.json"
-FRONTEND_BUILD_TOOL_FILES = (
-    "package.json",
-    "pnpm-lock.yaml",
-    "pnpm-workspace.yaml",
-    "vite.config.ts",
-    "scripts/build-source-inventory.mjs",
-    "scripts/build-source.mjs",
-    "scripts/build-context-schema.mjs",
-    "scripts/application-config.mjs",
-    "scripts/application-config-toml.mjs",
-    "scripts/application-config-files.mjs",
-    "scripts/application-config-paths.mjs",
-    "scripts/frontend-tool-config.mjs",
-    "scripts/build-identity.mjs",
-    "scripts/resource-render/json.mjs",
-    "src/shared/config/apiEndpoint.ts",
-    "scripts/restore-build.mjs",
-)
+
 
 
 def frontend_snapshots(root: Path) -> tuple[list[dict], list[ArtifactSnapshot]]:
@@ -87,50 +66,3 @@ def validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, 
     inventory, receipt = validate_frontend_build(root, registered_frontend_inventory(root, expected_head))
     verify_frontend_inputs(root, receipt.value["build"], expected_head=expected_head)
     return inventory, receipt
-
-
-def build_registered_frontend(
-    tools_frontend: Path,
-    source_frontend: Path,
-    expected_head: str,
-    run=subprocess.run,
-) -> tuple[Path, JsonDocument, str]:
-    tools = repository(tools_frontend, "前端构建工具源码")
-    source = repository(source_frontend, "前端构建来源")
-    tools_inventory = capture_inventory(tools)
-    if not tools_inventory["source"]["snapshot"]["clean"]:
-        raise ValueError("前端构建工具必须来自干净工作树")
-    source_inventory = registered_frontend_inventory(source, expected_head)
-    for relative in ("vite.config.ts", "scripts/application-config.mjs",
-                     "scripts/frontend-tool-config.mjs", "scripts/build-identity.mjs"):
-        try:
-            ordinary(str(source) + os.sep + relative)
-        except ValueError:
-            raise ValueError("登记前端缺少当前 TOML/身份文件布局；历史 B0 必须先登记正式适配来源") from None
-    tool_files = [artifact_snapshot(tools / relative) for relative in FRONTEND_BUILD_TOOL_FILES]
-    receipt_path = frontend_build_receipt(source)
-    action = "verified"
-    if not receipt_path.exists():
-        command = [
-            "node",
-            str(tools / "scripts/restore-build.mjs"),
-            "external-build",
-            "--source-root",
-            str(source),
-            "--expected-head",
-            expected_head,
-            "--write",
-        ]
-        run(
-            command,
-            cwd=tools,
-            check=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        action = "built"
-    inventory, receipt = validate_registered_frontend(source, expected_head)
-    if inventory != source_inventory or capture_inventory(tools) != tools_inventory:
-        raise ValueError("前端构建期间登记源码或受控工具发生变化")
-    for snapshot in tool_files:
-        snapshot.assert_unchanged()
-    return source, receipt, action

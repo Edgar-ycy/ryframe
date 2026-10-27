@@ -124,10 +124,12 @@ fn parses_runtime_build_registration_and_start_into_typed_requests() {
         build_output.to_str().unwrap(),
         "--write",
     ]));
-    assert!(matches!(
-        parsed_recovery(build),
-        RecoveryCommand::Runtime(RuntimeCommand::Build(_))
-    ));
+    let RecoveryCommand::Runtime(command @ RuntimeCommand::Build(_)) = parsed_recovery(build)
+    else {
+        panic!("Build没有解析为原生请求")
+    };
+    assert!(runtime::private_invocation_at(&command, &root_dir(), &fixture.directory).is_err());
+    assert!(!build_output.exists());
 
     let mut register = fixture.runtime_prefix("register");
     register.extend(strings(&[

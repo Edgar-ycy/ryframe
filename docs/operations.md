@@ -177,7 +177,7 @@ fresh 参考夹具环境准备会在源 bootstrap 输出目录独占创建私有
 
 B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-capture --help` 查看来源参数，再以 `comparison-capture ... --source-export-result <unique-export-outer-result> --output <new-source-manifest> --write` 生成严格的双版本来源清单。B0 必须分别提供原产品源码、已登记的工具适配源码和前端源码；B1 必须提供最终干净的双端源码。两侧都必须提供对应源码上的 v2 后端与 v3 前端生产构建收据，并共同绑定同一个已发布 `source-export` 的外层文件摘要及内部导出身份。`cargo xtask check recovery source comparison-verify --receipt <source-manifest>` 只读重建并核对全部来源、构建产物、完整前端 `dist` 和导出证据；它不创建恢复 run、锁或业务写入，也不接受旧格式字段。历史 B0 前端尚无当前 TOML 和受管身份布局，必须另行完成正式适配登记；当前明确拒绝旧布局，不代表 B0 恢复已经验证通过。 来源采集与只读复核共用 Rust 核验：固定 B0 产品与适配提交、补丁摘要及重建树必须匹配，读取分支不创建 Git 索引或对象；基线替换引用会被拒绝，父进程 Git 环境不能重定向核验和索引。双方必须绑定同一份已发布导出，并核对完整来源、精确前后端构建及账本历史；未知字段、来源漂移、导出替换或未发布结果均拒绝。来源核验不代表恢复已经完成。
 
-B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须指向登记的适配提交，并同时提供 `--expected-head <adapter-sha> --adapter-contract legacy-stable-readiness-b0-v1 --product-backend <original-b0-absolute-worktree>`。入口会从当前工具内嵌补丁重建适配树，核对原 B0、适配提交、补丁摘要和产品输入域，任一项不匹配都会在调用 Cargo 前失败；不能复制当前脚本到旧工作树或手工补写 v2 收据。
+B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须指向登记的适配提交，并同时提供 `--expected-head <adapter-sha> --adapter-contract legacy-stable-readiness-b0-v1 --product-backend <original-b0-absolute-worktree>`。入口会从当前工具内嵌补丁重建适配树，核对原 B0、适配提交、补丁摘要和产品输入域，任一项不匹配都会在调用 Cargo 前失败；不能复制当前脚本到旧工作树或手工补写 v2 收据。 普通 `runtime build` 由 Rust 执行两角色后端构建，并在指定后端收据旁独占创建 `<output文件名>.artifacts` 目录，收据仅登记其中的 API/Worker 副本。开始前同时拒绝已有收据或副本目录；失败保留部分副本和诊断，不覆盖或自动重放。后续共享 target 构建不会改变这些已登记副本；旧 v2 收据仍按原字段、精确来源、构建上下文和实际字节严格核验，不改写历史。前端仍调用受控前端源码的正式 `external-build`，构建后复核完整生产收据、配置、来源和产物；这不提供恢复或业务验收资格。
 
 恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。
 

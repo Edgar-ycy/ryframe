@@ -201,6 +201,9 @@ fn real_binary_rejects_missing_unknown_and_extra_arguments() {
         vec!["__frontend-origin", SENTINEL],
         vec!["__frontend-origin", "check", SENTINEL],
         vec!["__frontend-origin", "describe", SENTINEL],
+        vec!["__frontend-origin", "prepare"],
+        vec!["__frontend-origin", "prepare", "--plan"],
+        vec!["__frontend-origin", "prepare", "--write", SENTINEL],
         vec!["__frontend-origin", "--help"],
     ] {
         assert_failure(&fixture.invoke(&arguments, &[], 2));

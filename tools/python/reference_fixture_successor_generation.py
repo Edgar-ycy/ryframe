@@ -1,4 +1,4 @@
-"""从同一 C52 successor 与注册构建生成只读源后继请求；仅显式发布写入文件。"""
+"""历史 v1 来源请求的只读重算；当前 v2 委托正式 Rust 构造器。"""
 from __future__ import annotations
 
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
@@ -14,8 +14,6 @@ from devex_clone_seed_generation_runtime import registered_inputs
 from devex_clone_source_proof import bound_file
 from devex_clone_tools import verify_evidence
 from reference_fixture_successor import published_source
-from reference_fixture_successor_arm import _publish_json
-from restore_reference_plan import plan_hash
 
 
 def build(backend: Path, successor: Path, execution: Path, expected_head: str, backend_build: Path,
@@ -60,7 +58,7 @@ def build(backend: Path, successor: Path, execution: Path, expected_head: str, b
                  "product_backend": None if product_backend is None else str(product_backend),
                  "backend_build": binding(build_path), "maintenance_build": binding(maintenance_path),
                  "source_environment": binding(environment_path)}
-    root, receipt = registered_inputs(backend, value, reconstruct=False)
+    root, receipt = registered_inputs(backend, value)
     maintenance = verify_evidence(root, maintenance_path)
     private = read_json(environment_path)
     exact(private, {"environment"})
@@ -103,42 +101,3 @@ def rebuild(backend: Path, request: dict) -> dict:
                  Path(request["maintenance_build"]["path"]), Path(request["source_environment"]["path"]), request["id"],
                  adapter_contract=request["adapter_contract"],
                  product_backend=None if request["product_backend"] is None else Path(request["product_backend"]))
-
-
-def publish(backend: Path, output: Path, *args, **kwargs) -> dict:
-    target = local_path(backend, str(output), new=True)
-    if not target.parent.is_dir():
-        raise ValueError("generation-request 输出必须使用已有父目录中的新路径")
-    first = build(backend, *args, **kwargs)
-    registration = bound_file(backend, first["source_registration"])
-    if (registration.parent.name == "results" and registration.stem.isdigit()
-            and target.is_relative_to(registration.parent.parent)):
-        raise ValueError("generation-request 外部收据不得写入来源复制账本目录")
-    if build(backend, *args, **kwargs) != first:
-        raise ValueError("generation-request 发布前输入发生变化")
-    _publish_json(target, first)
-    if read_json(target) != first or build(backend, *args, **kwargs) != first:
-        raise ValueError("generation-request 发布后发生变化；保留证据禁止重放")
-    return first
-
-
-def arguments(parser) -> None:
-    for field in ("backend-dir", "successor", "source-backend", "backend-build", "maintenance-build", "source-environment"):
-        parser.add_argument("--" + field, type=Path, required=True)
-    parser.add_argument("--expected-head", required=True)
-    parser.add_argument("--id", required=True)
-    parser.add_argument("--adapter-contract")
-    parser.add_argument("--product-backend", type=Path)
-    parser.add_argument("--output", type=Path)
-    parser.add_argument("--write", action="store_true")
-
-
-def execute(args, parser) -> dict:
-    if args.write != (args.output is not None):
-        parser.error("generation-request 只读预览不落盘；发布必须同时指定 --output 与 --write")
-    values = (args.successor, args.source_backend, args.expected_head, args.backend_build,
-              args.maintenance_build, args.source_environment, args.id)
-    keywords = {"adapter_contract": args.adapter_contract, "product_backend": args.product_backend}
-    value = publish(args.backend_dir, args.output, *values, **keywords) if args.write else build(args.backend_dir, *values, **keywords)
-    return {"status": "source_generation_request_published" if args.write else "source_generation_request_planned",
-            "request": value, "request_sha256": plan_hash(value), "remote_writes": 0}

@@ -15,7 +15,7 @@ from unittest.mock import patch
 from frontend_origin_tool import normalize_origin
 from workspace_directory import WorkspaceDirectory
 from frontend_receipt_fixture import APPLICATION, frontend_context, prepare_frontend, save_receipt, write_json
-from restore_frontend_build import build_registered_frontend, validate_frontend_build, validate_registered_frontend
+from restore_frontend_build import validate_frontend_build, validate_registered_frontend
 from restore_frontend_configuration import verify_frontend_inputs
 from restore_frontend_context import IDENTITY, validate_frontend_build_context
 from restore_frontend_paths import ordinary
@@ -228,31 +228,6 @@ class FrontendConfigurationTests(unittest.TestCase):
             write_json(self.root / IDENTITY, {"format_version": version, "frontend_commit": self.head})
             with self.subTest(kind=type(version).__name__):
                 self.safe_failure(lambda: frontend_context(self.root))
-
-    def test_external_build_rejects_wrong_sha_and_legacy_layout_without_invocation(self):
-        forbidden = unittest.mock.Mock(side_effect=AssertionError("禁止执行外部构建"))
-        self.safe_failure(lambda: build_registered_frontend(self.root, self.root, "0" * 40, forbidden), "干净")
-        file = self.root / "scripts/application-config.mjs"
-        file.unlink()
-        subprocess.check_call(["git", "-C", str(self.root), "add", "-u"], stdout=subprocess.DEVNULL)
-        subprocess.check_call(
-            [
-                "git",
-                "-C",
-                str(self.root),
-                "-c",
-                "user.name=RyFrame fixture",
-                "-c",
-                "user.email=fixture@example.invalid",
-                "commit",
-                "--quiet",
-                "-m",
-                "legacy layout",
-            ]
-        )
-        head = subprocess.check_output(["git", "-C", str(self.root), "rev-parse", "HEAD"]).decode().strip()
-        self.safe_failure(lambda: build_registered_frontend(self.root, self.root, head, forbidden), "历史 B0")
-        forbidden.assert_not_called()
 
     def test_generic_development_is_allowed_but_not_registered_formal(self):
         write_json(self.root / IDENTITY, {"format_version": 1, "frontend_commit": "development"})

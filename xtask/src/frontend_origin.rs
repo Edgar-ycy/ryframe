@@ -19,8 +19,7 @@ mod source_guard;
 pub(crate) mod sources;
 
 const INPUT_LIMIT: usize = 64 * 1024 * 1024;
-const INVALID_ARGUMENTS: &str =
-    "参数无效：仅接受 __frontend-origin check、describe 或 verify-sources，请移除额外参数。";
+const INVALID_ARGUMENTS: &str = "参数无效：仅接受 __frontend-origin check、describe、verify-sources 或 prepare --write，请核对操作及明确写入授权。";
 const INVALID_REQUEST: &str = "请求格式无效：请通过标准输入提供唯一的 JSON 对象，仅包含 format_version、value 和 allow_empty，核对字段类型并移除重复或未知字段。";
 const INVALID_VERSION: &str = "请求版本无效：请使用 format_version 为整数 1 的请求。";
 const INPUT_TOO_LARGE: &str = "请求过大：标准输入不得超过 64 MiB，请缩小请求后重试。";
@@ -49,12 +48,21 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         return None;
     }
     let operation = arguments.next();
-    let (response, code) = if arguments.next().is_some() {
+    let option = arguments.next();
+    let operation = operation.as_deref().and_then(std::ffi::OsStr::to_str);
+    let valid = arguments.next().is_none()
+        && if operation == Some("prepare") {
+            option.as_deref() == Some(std::ffi::OsStr::new("--write"))
+        } else {
+            option.is_none()
+        };
+    let (response, code) = if !valid {
         (failure(INVALID_ARGUMENTS), 2)
     } else {
-        match operation.as_deref().and_then(std::ffi::OsStr::to_str) {
+        match operation {
             Some("check") => run_check(),
             Some("verify-sources") => source_guard::run(),
+            Some("prepare") => prepare(),
             Some("describe") => match describe() {
                 Ok(value) => (value, 0),
                 Err(reason) => {
@@ -67,6 +75,24 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         }
     };
     Some(if emit(&response).is_ok() { code } else { 2 })
+}
+
+fn prepare() -> (Value, i32) {
+    let root = crate::workspace::root_dir();
+    let result = crate::check::consumer_context::prepare_python_origin(&root)
+        .and_then(|binding| binding.finish(Ok(())));
+    match result {
+        Ok(()) => (
+            json!({"format_version":1,"kind":"frontend-origin-ready"}),
+            0,
+        ),
+        Err(error) => (
+            json!({"format_version":1,"valid":false,"error":format!(
+                "来源绑定准备失败：{error}；请核对当前工具与完整源码，保留 python-origin-runs 中的失败证据；不覆盖历史或自动重放。"
+            )}),
+            2,
+        ),
+    }
 }
 
 fn run_check() -> (Value, i32) {

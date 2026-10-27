@@ -13,7 +13,7 @@ mod model;
 pub(crate) mod protocol;
 #[cfg(test)]
 #[path = "../../tests/unit/recovery/frontend_build.rs"]
-mod tests;
+pub(in crate::recovery) mod tests;
 
 #[derive(Debug)]
 struct Rejected(&'static str);

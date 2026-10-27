@@ -29,14 +29,6 @@ def runtime_protocol(operation: str) -> dict:
         "write": operation in restore_runtime.WRITING_OPERATIONS,
     }
     fields = {
-        "build": {
-            "source_backend": root,
-            "source_frontend": root,
-            "frontend_dir": root,
-            "expected_head": SHA_A,
-            "expected_frontend_head": SHA_B,
-            "output": str(ROOT / ".local-tests/build.json"),
-        },
         "register": {
             "plan": str(ROOT / ".local-tests/reference.json"),
             "target_plan": str(ROOT / ".local-tests/target.json"),
@@ -161,15 +153,14 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             return module.decode_request(raw)
         return module.decode_request(raw)
 
-    def test_runtime_rejects_invalid_adapter_generation_timeout_and_sha(self):
-        build = runtime_protocol("build")
+    def test_runtime_rejects_invalid_adapter_generation_and_timeout(self):
+        start = runtime_protocol("start")
         for changes in (
-            {"expected_head": "0" * 40},
             {"adapter_contract": "unknown"},
             {"adapter_contract": "legacy-stable-readiness-b0-v1"},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                restore_runtime.decode_request(json.dumps({**build, **changes}))
+                restore_runtime.decode_request(json.dumps({**start, **changes}))
         for operation, name, value in (("stop", "generation", 0), ("start", "timeout", 0)):
             payload = runtime_protocol(operation)
             payload[name] = value

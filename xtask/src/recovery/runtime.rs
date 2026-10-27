@@ -12,6 +12,9 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
 
+#[path = "runtime/build.rs"]
+pub(in crate::recovery) mod build;
+
 #[path = "runtime/generation/mod.rs"]
 pub(crate) mod generation;
 #[path = "runtime/probes.rs"]
@@ -31,6 +34,14 @@ pub(crate) struct PrivateRuntimeInvocation {
 pub(super) fn run(command: &RuntimeCommand, root: &Path, frontend: &Path) -> Result<()> {
     if let RuntimeCommand::Help(operation) = command {
         print_help(*operation);
+        return Ok(());
+    }
+    if let RuntimeCommand::Build(options) = command {
+        validate_command(command, root, frontend)?;
+        println!(
+            "{}",
+            serde_json::to_string(&build::run(root, frontend, options)?)?
+        );
         return Ok(());
     }
     let invocation = private_invocation_at(command, root, frontend)?;
@@ -57,7 +68,9 @@ pub(crate) fn private_invocation_at(
     let operation = command.operation().ok_or("runtime 命令缺少明确操作")?;
     let mut protocol = base_protocol(operation.as_str(), root, command.writes())?;
     match command {
-        RuntimeCommand::Build(options) => build_protocol(&mut protocol, options, frontend)?,
+        RuntimeCommand::Build(_) => {
+            return Err("普通runtime Build已由Rust执行，不再生成Python请求".into());
+        }
         RuntimeCommand::Register(options) => {
             insert_path(&mut protocol, "plan", &options.plan)?;
             insert_path(&mut protocol, "target_plan", &options.target_plan)?;
@@ -88,21 +101,6 @@ fn base_protocol(operation: &str, root: &Path, write: bool) -> Result<Map<String
         unreachable!("固定 JSON 对象")
     };
     Ok(value)
-}
-
-fn build_protocol(
-    protocol: &mut Map<String, Value>,
-    options: &RuntimeBuildOptions,
-    frontend: &Path,
-) -> Result<()> {
-    sources_protocol(protocol, &options.sources)?;
-    protocol.insert("expected_head".into(), json!(options.expected_head));
-    protocol.insert(
-        "expected_frontend_head".into(),
-        json!(options.expected_frontend_head),
-    );
-    insert_path(protocol, "frontend_dir", frontend)?;
-    insert_path(protocol, "output", &options.output)
 }
 
 fn start_protocol(protocol: &mut Map<String, Value>, options: &RuntimeStartOptions) -> Result<()> {

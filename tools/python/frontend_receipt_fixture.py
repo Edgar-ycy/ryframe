@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from restore_frontend_build import FRONTEND_BUILD_TOOL_FILES, FRONTEND_RECEIPT, frontend_files
+from restore_frontend_build import FRONTEND_RECEIPT, frontend_files
 from restore_frontend_configuration import _capture
 from restore_frontend_context import IDENTITY
 from source_inventory import build_source_domains, capture_inventory
@@ -32,11 +32,6 @@ def prepare_frontend(root: Path, *, formal: bool = True) -> str:
         (root / f"config/app.{environment}.toml").write_text("# 所选环境\n", encoding="utf-8")
     (root / "config/tools.json").write_text("{}\n", encoding="utf-8")
     (root / ".gitignore").write_text("/dist/\n/.local-tests/\n/node_modules/\n/.env*\n", encoding="utf-8")
-    # 此处仅为受控命令调用测试提供输入文件集合，不包含或执行 JS 实现。
-    for relative in (*FRONTEND_BUILD_TOOL_FILES, "vite.config.ts"):
-        file = root / relative
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_bytes(b"")
     if not (root / "dist/index.html").exists():
         (root / "dist/index.html").write_bytes(b"<main>fixture</main>")
     (root / "dist/.vite/manifest.json").write_bytes(b"{}")

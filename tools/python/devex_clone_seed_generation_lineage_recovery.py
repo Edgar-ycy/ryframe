@@ -209,7 +209,7 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
     _model("request-source", {"request": request, "source": {
         key: source.get(key) for key in ("review_successor", "review_successor_binding",
                                        "source_rebind", "storage", "source_generation")}}, backend)
-    execution, build = registered_inputs(backend, request, reconstruct=False)
+    execution, build = registered_inputs(backend, request)
     maintenance = verify_evidence(execution, bound_file(execution, request["maintenance_build"]))
     private = read_json(bound_file(backend, request["source_environment"]))
     exact(private, {"environment"})
@@ -241,10 +241,10 @@ def _runtime(backend: Path, directory: Path, output: Path, request: dict, source
 
     runtime = GenerationRuntime(backend, directory, output, request, source, run)
     runtime.operations = intent["operations"]
-    execution, build = registered_inputs(backend, request, reconstruct=True)
+    execution, build = registered_inputs(backend, request)
     if execution != runtime.execution or build != runtime.build:
         raise ValueError("C68 运行配置没有绑定同一执行来源和构建")
-    verify_build(runtime.execution, runtime.build, request["expected_backend_sha"], run)
+    verify_build(runtime.execution, runtime.build, request["expected_backend_sha"])
     with runtime.environment():
         if (runtime.execution.parent / "fixture.json").exists():
             raise ValueError("C68 运行环境混入独立 fixture")

@@ -16,14 +16,12 @@ import subprocess
 from full_stack_process import process_identity
 from process_sockets import verify_listener
 from restore_build import (
-    build_registered,
     repository,
     validate_new_output,
     write_new,
 )
 from restore_frontend_build import (
     FRONTEND_RECEIPT,
-    build_registered_frontend,
     frontend_snapshots,
 )
 from restore_runtime_source import require_bindings, resolve_runtime_sources, runtime_authority
@@ -584,14 +582,13 @@ def verify(
 PROTOCOL_KIND = "ryframe-xtask-restore-runtime"
 PROTOCOL_MAX_BYTES = 16 * 1024
 OPERATIONS = frozenset(
-    {"build", "register", "start", "status", "stop", "recover", "bind", "verify"}
+    {"register", "start", "status", "stop", "recover", "bind", "verify"}
 )
-WRITING_OPERATIONS = frozenset({"build", "register", "start", "stop", "recover", "bind"})
+WRITING_OPERATIONS = frozenset({"register", "start", "stop", "recover", "bind"})
 BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write"}
 SOURCE_FIELDS = {"source_backend", "source_frontend"}
 CONTROL_FIELDS = {"runtime_registration", "target_plan"}
 OPERATION_FIELDS = {
-    "build": SOURCE_FIELDS | {"frontend_dir", "expected_head", "expected_frontend_head", "output"},
     "register": {"plan", "target_plan", "output"},
     "start": CONTROL_FIELDS | SOURCE_FIELDS | {"build_receipt", "bindings", "timeout"},
     "status": CONTROL_FIELDS,
@@ -705,7 +702,7 @@ def decode_request(raw: str) -> RuntimeRequest:
     if not isinstance(operation, str) or operation not in OPERATIONS:
         raise RuntimeProtocolError("恢复运行私有协议操作无效")
     fields = BASE_FIELDS | OPERATION_FIELDS[operation]
-    if operation in {"build", "start", "bind", "verify"}:
+    if operation in {"start", "bind", "verify"}:
         fields = _protocol_sources(protocol, fields)
     if set(protocol) != fields:
         raise RuntimeProtocolError("恢复运行私有协议字段不完整或含未知字段")
@@ -717,7 +714,7 @@ def decode_request(raw: str) -> RuntimeRequest:
         for name, value in protocol.items()
         if name not in {"format_version", "kind", "operation", "write"}
     }
-    if operation in {"build", "start", "bind", "verify"}:
+    if operation in {"start", "bind", "verify"}:
         decoded.setdefault("adapter_contract", None)
         decoded.setdefault("product_backend", None)
     _validate_protocol_values(operation, decoded)
@@ -759,30 +756,6 @@ def execute(request: RuntimeRequest) -> dict:
         return dispatch_lifecycle(
             args, backend, _probe_api, _probe_worker, verify_frontend_artifacts
         )
-    if args.command == "build":
-        expected_source = repository(args.source_backend, "后端构建来源")
-        output = validate_new_output(args.output, expected_source)
-        frontend_source, frontend_receipt, frontend_action = build_registered_frontend(
-            args.frontend_dir.resolve(),
-            args.source_frontend,
-            args.expected_frontend_head,
-        )
-        source, receipt = build_registered(
-            backend,
-            expected_source,
-            args.expected_head,
-            adapter_contract=args.adapter_contract,
-            product_backend=args.product_backend,
-        )
-        if source != expected_source:
-            raise ValueError("后端构建来源在校验与构建之间发生变化")
-        write_new(output, receipt, source)
-        return {
-            "backend_receipt": str(output),
-            "frontend_receipt": str(frontend_receipt.path),
-            "frontend_source": str(frontend_source),
-            "frontend_action": frontend_action,
-        }
     if args.command == "bind":
         bind_and_write(
             backend,
