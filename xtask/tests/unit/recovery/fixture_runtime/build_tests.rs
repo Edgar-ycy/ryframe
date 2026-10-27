@@ -123,7 +123,9 @@ fn native_fixture_build_registers_dirty_source_four_artifacts_and_sidecar_config
             .all(|name| name.as_str().is_some_and(|name| [
                 "PATH",
                 "CARGO_TARGET_DIR",
-                "CARGO_BUILD_JOBS"
+                "CARGO_BUILD_JOBS",
+                "CARGO_HOME",
+                "RUSTUP_HOME"
             ]
             .iter()
             .any(|allowed| name.eq_ignore_ascii_case(allowed))))
@@ -193,10 +195,22 @@ fn native_fixture_build_retains_partial_failure_and_rejects_source_or_configurat
 fn native_fixture_build_environment_preserves_cargo_target_without_application_or_proxy_overrides()
 {
     let private = json!({"APP_ENV":"test","TEMP":"bound-temp","TMP":"bound-tmp"});
+    let cargo_home = if cfg!(windows) {
+        "cargo_home"
+    } else {
+        "CARGO_HOME"
+    };
+    let rustup_home = if cfg!(windows) {
+        "rustup_home"
+    } else {
+        "RUSTUP_HOME"
+    };
     let inherited = [
         ("PATH", "system-path"),
         ("CARGO_TARGET_DIR", "D:/shared-target"),
-        ("CARGO_HOME", "unapproved-cargo-home"),
+        (cargo_home, "relative-cargo-home"),
+        (rustup_home, "D:/synthetic-rustup-home"),
+        ("CARGO_UNKNOWN_SETTING", "must-not-inherit"),
         ("CARGO_BUILD_TARGET", "unapproved-target"),
         ("CARGO_BUILD_JOBS", "1"),
         ("APP_ENV", "prod"),
@@ -211,6 +225,8 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
         ("PATH", "system-path"),
         ("CARGO_TARGET_DIR", "D:/shared-target"),
         ("CARGO_BUILD_JOBS", "1"),
+        ("CARGO_HOME", "relative-cargo-home"),
+        ("RUSTUP_HOME", "D:/synthetic-rustup-home"),
         ("APP_ENV", "test"),
         ("TEMP", "bound-temp"),
         ("TMP", "bound-tmp"),
@@ -219,59 +235,46 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
     .map(|(key, value)| (key.into(), value.into()))
     .collect();
     assert_eq!(actual, expected);
-    let recorded = bridge::build_context::from_inputs(
-        "cargo synthetic",
-        "rustc synthetic\nhost: synthetic-target",
-        &actual,
-    )
-    .unwrap();
-    assert!(
-        recorded["environment"]["variables"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("CARGO_TARGET_DIR"))
-    );
+    let context = |values: &std::collections::BTreeMap<String, String>| {
+        bridge::build_context::from_inputs(
+            "cargo synthetic",
+            "rustc synthetic\nhost: synthetic-target",
+            values,
+        )
+        .unwrap()
+    };
+    let recorded = context(&actual);
     assert_eq!(recorded["jobs"], "1");
-    assert!(
-        recorded["environment"]["variables"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("CARGO_BUILD_JOBS"))
-    );
-    let mut changed = actual.clone();
-    changed.insert("CARGO_BUILD_JOBS".into(), "2".into());
-    let other = bridge::build_context::from_inputs(
-        "cargo synthetic",
-        "rustc synthetic\nhost: synthetic-target",
-        &changed,
-    )
-    .unwrap();
-    assert_eq!(other["jobs"], "2");
-    assert_ne!(
-        recorded["environment"]["sha256"],
-        other["environment"]["sha256"]
-    );
-    let mut changed = actual;
-    changed.insert("CARGO_TARGET_DIR".into(), "D:/other-target".into());
-    let other = bridge::build_context::from_inputs(
-        "cargo synthetic",
-        "rustc synthetic\nhost: synthetic-target",
-        &changed,
-    )
-    .unwrap();
-    assert_ne!(
-        recorded["environment"]["sha256"],
-        other["environment"]["sha256"]
-    );
+    for (key, replacement) in [
+        ("CARGO_TARGET_DIR", "D:/other-target"),
+        ("CARGO_BUILD_JOBS", "2"),
+        ("CARGO_HOME", "other-relative-cargo-home"),
+        ("RUSTUP_HOME", "D:/other-synthetic-rustup-home"),
+    ] {
+        assert!(
+            recorded["environment"]["variables"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(key))
+        );
+        let mut changed = actual.clone();
+        changed.insert(key.into(), replacement.into());
+        let other = context(&changed);
+        assert_eq!(
+            other["jobs"],
+            if key == "CARGO_BUILD_JOBS" { "2" } else { "1" }
+        );
+        assert_ne!(
+            recorded["environment"]["sha256"],
+            other["environment"]["sha256"]
+        );
+    }
     let absent = environment::configured(&private, []).unwrap();
     assert!(!absent.contains_key("CARGO_TARGET_DIR"));
     assert!(!absent.contains_key("CARGO_BUILD_JOBS"));
-    let default = bridge::build_context::from_inputs(
-        "cargo synthetic",
-        "rustc synthetic\nhost: synthetic-target",
-        &absent,
-    )
-    .unwrap();
+    assert!(!absent.contains_key("CARGO_HOME"));
+    assert!(!absent.contains_key("RUSTUP_HOME"));
+    let default = context(&absent);
     assert_eq!(default["jobs"], "cargo-default");
     for invalid in ["", "0", "000", "-1", "+1", "1.5", "one", " 1 "] {
         let inherited = [("CARGO_BUILD_JOBS".into(), invalid.into())];

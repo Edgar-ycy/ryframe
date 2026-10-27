@@ -1,4 +1,4 @@
-//! 构建继承系统运行环境、Cargo 目标目录与正整数并发数、prepared 已冻结的三个值。
+//! 构建继承系统运行环境、Cargo 缓存及工具链根、目标目录与正整数并发数、prepared 已冻结的三个值。
 use super::super::{model::*, plan, runtime};
 use crate::Result;
 use serde_json::Value;
@@ -71,7 +71,10 @@ pub(super) fn configured(
         let upper = key.to_ascii_uppercase();
         if !private.contains_key(&upper)
             && (system_name(&upper)
-                || matches!(upper.as_str(), "CARGO_TARGET_DIR" | "CARGO_BUILD_JOBS"))
+                || matches!(
+                    upper.as_str(),
+                    "CARGO_TARGET_DIR" | "CARGO_BUILD_JOBS" | "CARGO_HOME" | "RUSTUP_HOME"
+                ))
         {
             let value = value.to_str().ok_or("系统环境值不是 Unicode")?;
             if upper == "CARGO_BUILD_JOBS" {
@@ -84,7 +87,9 @@ pub(super) fn configured(
                 )?;
             }
             values.insert(
-                if upper == "CARGO_BUILD_JOBS" {
+                if upper == "CARGO_BUILD_JOBS"
+                    || cfg!(windows) && matches!(upper.as_str(), "CARGO_HOME" | "RUSTUP_HOME")
+                {
                     upper
                 } else {
                     key.to_owned()
