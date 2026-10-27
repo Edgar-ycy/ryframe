@@ -161,8 +161,13 @@ impl maintenance::Runner for FakeRunner {
             .and_then(|index| arguments.get(index + 1))
             .unwrap();
         self.built.borrow_mut().push(name.clone());
-        let executable = root
-            .join("target/ci/backend/debug")
+        let target = arguments
+            .iter()
+            .position(|value| value == "--target-dir")
+            .and_then(|index| arguments.get(index + 1))
+            .unwrap();
+        let executable = Path::new(target)
+            .join("debug")
             .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
         fs::write(&executable, format!("fixture {name}")).unwrap();
@@ -384,9 +389,21 @@ fn bridge_rejects_wrong_source_and_linked_input() {
 #[test]
 fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
     let fixture = Fixture::new();
+    write(
+        &fixture.root.join("config/tools.toml"),
+        "[generator]\ntarget_dir='target/public-cache'\n",
+    );
+    write(
+        &fixture.local.join("tools.toml"),
+        "[generator]\ntarget_dir='target/shared-cache'\n",
+    );
     let runner = FakeRunner::default();
     let output = fixture.local.join("maintenance");
     let receipt = maintenance::build_with(&fixture.root, &output, &runner).unwrap();
+    assert_eq!(
+        receipt["target_directory"],
+        json!(fixture.root.join("target").join("shared-cache"))
+    );
     assert_eq!(runner.calls.get(), 3);
     assert_eq!(
         runner.built.borrow().as_slice(),
@@ -525,6 +542,16 @@ fn maintenance_rejects_nonlocal_and_linked_output_before_running_commands() {
     );
     assert_eq!(runner.calls.get(), 0);
 
+    write(
+        &fixture.local.join("tools.toml"),
+        "[generator]\ntarget_dir=7\n",
+    );
+    let invalid = fixture.local.join("invalid-config");
+    assert!(maintenance::build_with(&fixture.root, &invalid, &runner).is_err());
+    assert!(!invalid.exists());
+    assert_eq!(runner.calls.get(), 0);
+    fs::remove_file(fixture.local.join("tools.toml")).unwrap();
+
     let outside = fixture.root.join("target-outside");
     fs::create_dir_all(&outside).unwrap();
     let target = fixture.root.join("target");
@@ -539,15 +566,7 @@ fn maintenance_rejects_nonlocal_and_linked_output_before_running_commands() {
 }
 
 fn python(root: &Path, script: &str, arguments: &[&Path]) {
-    let result = Command::new(
-        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
-    )
-    .args(["-B", "-c", script])
-    .args(arguments)
-    .current_dir(root)
-    .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
-    .output()
-    .unwrap();
+    let result = python_output(root, script, arguments);
     assert!(
         result.status.success(),
         "python failed:\nstdout:\n{}\nstderr:\n{}",
@@ -557,15 +576,7 @@ fn python(root: &Path, script: &str, arguments: &[&Path]) {
 }
 
 fn python_json(root: &Path, script: &str, arguments: &[&Path]) -> Value {
-    let result = Command::new(
-        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
-    )
-    .args(["-B", "-c", script])
-    .args(arguments)
-    .current_dir(root)
-    .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
-    .output()
-    .unwrap();
+    let result = python_output(root, script, arguments);
     assert!(
         result.status.success(),
         "python failed:\nstdout:\n{}\nstderr:\n{}",
@@ -573,6 +584,24 @@ fn python_json(root: &Path, script: &str, arguments: &[&Path]) -> Value {
         String::from_utf8_lossy(&result.stderr)
     );
     serde_json::from_slice(&result.stdout).unwrap()
+}
+
+fn python_output(root: &Path, script: &str, arguments: &[&Path]) -> std::process::Output {
+    let tool = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+        .unwrap()
+        .expect("维护收据互验必须绑定当前原生工具");
+    let script = format!(
+        "import sys\nfrom rate_limit_tool import install_verified_binding\ninstall_verified_binding(sys.argv.pop(1))\n{script}"
+    );
+    Command::new(
+        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
+    )
+    .args(["-B", "-c", &script, &tool])
+    .args(arguments)
+    .current_dir(root)
+    .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
+    .output()
+    .unwrap()
 }
 
 fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {

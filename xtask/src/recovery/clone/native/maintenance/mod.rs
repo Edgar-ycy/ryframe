@@ -343,7 +343,16 @@ pub(crate) fn toolchain(root: &Path, runner: &dyn Runner) -> Result<Value> {
 }
 
 pub(super) fn target_directory(backend: &Path) -> Result<PathBuf> {
-    let target = backend.join("target").join("ci").join("backend");
+    let settings =
+        ryframe_config::ToolSettings::load(backend).map_err(|error| error.message().to_owned())?;
+    let target = if settings.generator.target_dir.is_some() {
+        settings
+            .generator_target_dir(backend)
+            .map_err(|error| error.message().to_owned())?
+    } else {
+        backend.join("target").join("ci").join("backend")
+    };
+    let target = target.components().collect::<PathBuf>();
     for current in target.ancestors() {
         match fs::symlink_metadata(current) {
             Ok(metadata) if digest::linked(&metadata) => {

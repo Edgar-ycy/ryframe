@@ -25,9 +25,12 @@ pub(crate) fn request(args: &Value) -> Result<Value> {
             )?))
         }
         "domains" | "validate-domains" => domain_request(args, action),
-        "snapshot" | "source-snapshot" | "file-inventory" | "capture" | "worktree-fingerprint" => {
-            observation(args, action)
-        }
+        "snapshot"
+        | "source-snapshot"
+        | "file-inventory"
+        | "capture"
+        | "worktree-fingerprint"
+        | "maintenance-target-directory" => observation(args, action),
         _ => Err("来源清单操作无效".into()),
     }
 }
@@ -99,6 +102,9 @@ fn observation(args: &Value, action: &str) -> Result<Value> {
         return Err("恢复构建必须使用实际 Git 仓库根目录".into());
     }
     match action {
+        "maintenance-target-directory" => {
+            Ok(json!(super::super::maintenance::target_directory(root)?))
+        }
         "worktree-fingerprint" => Ok(json!(super::worktree_fingerprint(
             root,
             native_json::text(&args["commit"], "源码提交")?

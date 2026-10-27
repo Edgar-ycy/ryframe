@@ -15,6 +15,7 @@ from devex_provenance import worktree_fingerprint
 from restore_build import cargo_artifact, file_digest, source_snapshot
 from restore_reference_io import redact_object_diagnostic
 from source_fingerprints import capture_inventory, checked_source, reusable_artifact_source
+from source_inventory import _native as native_source
 
 TOOLS = {"reset": ("bin-reset", "ryframe-reset"), "migrate": ("bin-migrate", "ryframe-migrate"),
          "tenant-data": ("bin-tenant-data", "ryframe-tenant-data")}
@@ -52,10 +53,7 @@ def write_new(path: Path, value: dict) -> None:
 
 
 def target_directory(backend: Path) -> Path:
-    target = backend / "target/ci/backend"
-    if any(linked(path) for path in (target, *target.parents)):
-        raise ValueError("维护工具构建缓存不能经过链接")
-    return target
+    return Path(native_source("maintenance-target-directory", root=str(backend)))
 
 
 def recorded_cargo_path(backend: Path, name: str, content: str) -> Path:
