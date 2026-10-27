@@ -28,6 +28,7 @@ pub(super) struct Resources<'a, T> {
     pub backend: &'a Path,
     pub execution: &'a Path,
     pub request: &'a Value,
+    pub generation: &'a Value,
     pub environment: &'a BTreeMap<String, String>,
     pub output: &'a Path,
     pub transport: &'a T,
@@ -119,12 +120,16 @@ impl<T: Transport> Resources<'_, T> {
         let value = binding::redact(
             &json!({"backend":self.backend,"databases":self.request["target"]["databases"],"text":text}),
         )?;
-        let directory = request::config_directory(self.backend, self.request)?;
-        let configuration = app_configuration::configuration_value(
-            self.execution,
-            Path::new(document::text(&directory["path"], "来源绑定配置目录")?),
-            "test",
-        )?;
+        let configuration = if self.generation["format_version"].as_u64() == Some(2) {
+            super::generation_request::configuration::verify(self.backend, self.generation)?
+        } else {
+            let directory = request::config_directory(self.backend, self.request)?;
+            app_configuration::configuration_value(
+                self.execution,
+                Path::new(document::text(&directory["path"], "历史来源绑定配置目录")?),
+                "test",
+            )?
+        };
         let objects = app_configuration::private_configuration(self.backend, &configuration)?;
         let mut text = document::text(&value, "安全 MySQL 诊断")?.to_owned();
         for field in ["access_key", "secret_key"] {

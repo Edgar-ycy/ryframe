@@ -54,19 +54,19 @@ fn reregister_request(args: &Value) -> Result<Value> {
         "谱系请求重新登记",
     )?;
     let previous = document::object(&args["previous"], "谱系原请求")?;
-    let unchanged = document::exact(
-        &args["unchanged"],
-        &[
-            "id",
-            "review_successor",
-            "execution_backend",
-            "expected_backend_sha",
-            "adapter_contract",
-            "product_backend",
-            "source_environment",
-        ],
-        "谱系冻结字段",
-    )?;
+    let mut frozen = vec![
+        "id",
+        "review_successor",
+        "execution_backend",
+        "expected_backend_sha",
+        "adapter_contract",
+        "product_backend",
+        "source_environment",
+    ];
+    if args["previous"]["format_version"].as_u64() == Some(2) {
+        frozen.extend(["configuration", "execution_source"]);
+    }
+    let unchanged = document::exact(&args["unchanged"], &frozen, "谱系冻结字段")?;
     if unchanged
         .iter()
         .any(|(field, value)| previous.get(field) != Some(value))
@@ -130,10 +130,16 @@ fn request(args: &Value) -> Result<Value> {
     document::exact(args, &["previous", "request", "external"], "谱系请求比较")?;
     let request = document::object(&args["request"], "谱系当前请求")?;
     let previous = document::object(&args["previous"], "谱系内部请求")?;
-    if args["request"]["format_version"].as_u64() != Some(1)
-        || args["request"]["kind"] != "devex-clone-seed-source-generation"
-    {
-        return Err("C68 谱系恢复请求与失败代次不同".into());
+    match (
+        args["request"]["format_version"].as_u64(),
+        args["previous"]["format_version"].as_u64(),
+    ) {
+        (Some(1), Some(1)) if args["request"]["kind"] == "devex-clone-seed-source-generation" => (),
+        (Some(2), Some(2)) => {
+            super::request(&args["request"])?;
+            super::request(&args["previous"])?;
+        }
+        _ => return Err("C68 谱系恢复请求与失败代次不同".into()),
     }
     let external = document::boolean(&args["external"], "外部请求标志")?;
     let changes: Vec<_> = request

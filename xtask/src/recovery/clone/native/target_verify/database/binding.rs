@@ -17,7 +17,7 @@ pub(super) fn capture_source(
     source: &super::SourceBinding<'_>,
 ) -> Result<Value> {
     let execution = context.execution_backend()?;
-    let configuration_value = configuration(context)?;
+    let configuration_value = source_configuration(context, source.configuration)?;
     let selected = source.selected;
     if selected["scope_id"] != context.target()["scope_id"]
         || selected["databases"] != context.target()["databases"]
@@ -37,7 +37,7 @@ pub(super) fn capture_source(
     let observed = json!({"side":"source","tools_plan_sha256":digest::plan_hash(&json!({"source":selected,"tools":source.tools}))?,
         "configuration":configuration_value,"physical":physical,"maintenance":common::binding(&path)?,"source":maintenance["source"]});
     common::bound_file(context.backend, source.maintenance, "来源维护构建")?;
-    if configuration(context)? != observed["configuration"] {
+    if source_configuration(context, source.configuration)? != observed["configuration"] {
         return Err("来源四库配置在读取期间变化".into());
     }
     source.scope.assert_unchanged()?;
@@ -133,5 +133,34 @@ pub(super) fn configuration(context: &StorageInputs<'_>) -> Result<Value> {
     Ok(
         json!({"directory": manifest::path_text(&directory, "config_dir")?, "files": files,
         "environment_sha256": digest::plan_hash(&json!({"APP_ENV": "test"}))?}),
+    )
+}
+
+/// 只有来源父区间传入的冻结绑定走协调根；目标请求继续使用原执行根guard。
+pub(super) fn source_configuration(
+    context: &StorageInputs<'_>,
+    binding: Option<&Value>,
+) -> Result<Value> {
+    let Some(binding) = binding else {
+        return configuration(context);
+    };
+    if binding["app_env"] != "test" {
+        return Err("来源库存配置必须显式选择test".into());
+    }
+    let directory = std::path::Path::new(text(&binding["directory"], "来源库存配置目录")?);
+    let mut snapshots = Vec::new();
+    super::super::super::s3::app_configuration::load(context.backend, binding, &mut snapshots)?;
+    let observed = super::super::super::s3::app_configuration::configuration_value(
+        context.backend,
+        directory,
+        "test",
+    )?;
+    if observed != *binding {
+        return Err("来源库存配置绑定或共同配置缺失状态发生变化".into());
+    }
+    super::super::super::s3::app_configuration::unchanged(&snapshots)?;
+    Ok(
+        json!({"directory":binding["directory"],"files":binding["files"],
+        "environment_sha256":digest::plan_hash(&json!({"APP_ENV":"test"}))?}),
     )
 }

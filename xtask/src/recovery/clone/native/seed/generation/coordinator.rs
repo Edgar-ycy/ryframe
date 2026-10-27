@@ -37,6 +37,11 @@ pub(crate) fn dispatch(value: &Value) -> Result<Value> {
     document::exact(value, &["action", "input"], "生成编排模型")?;
     let args = &value["input"];
     match value["action"].as_str() {
+        Some("request-schema") => {
+            document::exact(args, &["request"], "来源请求schema参数")?;
+            request(&args["request"])?;
+            Ok(json!({"verified":true}))
+        }
         Some("lineage") => lineage::dispatch(args),
         Some("preflight-plan") => preflight_plan(args),
         Some("preflight-finish") => preflight_finish(args),
@@ -241,13 +246,43 @@ fn preflight_finish(args: &Value) -> Result<Value> {
 }
 
 pub(crate) fn request(value: &Value) -> Result<()> {
-    document::exact(value, REQUEST, "source-generation 请求")?;
-    if value["format_version"].as_u64() != Some(1)
-        || value["kind"] != "devex-clone-seed-source-generation"
-    {
+    let version = value["format_version"].as_u64();
+    if version == Some(2) {
+        let mut fields = REQUEST.to_vec();
+        fields.extend(["configuration", "execution_source"]);
+        document::exact(value, &fields, "source-generation v2 请求")?;
+        document::exact(
+            &value["configuration"],
+            &["app_env", "directory", "files", "sha256"],
+            "来源配置绑定",
+        )?;
+        if value["configuration"]["app_env"] != "test" {
+            return Err("来源 v2 配置必须明确选择test".into());
+        }
+        if !value["execution_source"].is_null() {
+            document::exact(
+                &value["execution_source"],
+                &["path", "bytes", "sha256"],
+                "执行源码发布绑定",
+            )?;
+        }
+    } else if version == Some(1) {
+        document::exact(value, REQUEST, "历史 source-generation v1 请求")?;
+    } else {
+        return Err("source-generation 请求版本无效".into());
+    }
+    if value["kind"] != "devex-clone-seed-source-generation" {
         return Err("source-generation 请求类型无效".into());
     }
     input::name(document::text(&value["id"], "生成名称")?)?;
+    Ok(())
+}
+
+pub(crate) fn current_request(value: &Value) -> Result<()> {
+    request(value)?;
+    if value["format_version"].as_u64() != Some(2) {
+        return Err("新source-generation必须使用显式配置与来源绑定的v2请求；原v1历史只读验证及已登记资源安全收尾保持原合同".into());
+    }
     Ok(())
 }
 
@@ -273,7 +308,7 @@ fn inputs(args: &Value) -> Result<Value> {
 
 fn input_stage(args: &Value) -> Result<Value> {
     document::exact(args, &["request", "attempts", "number"], "生成持锁阶段")?;
-    request(&args["request"])?;
+    current_request(&args["request"])?;
     let values = attempts(&args["attempts"])?;
     let number = args["number"]
         .as_u64()

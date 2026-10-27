@@ -90,6 +90,8 @@ impl Fixture {
             text(&self.input),
             "--id".to_owned(),
             "source-r24".to_owned(),
+            "--config-dir".to_owned(),
+            text(&root_dir().join("config")),
         ]
     }
 }
@@ -548,10 +550,32 @@ fn parses_successor_generation_preview_and_write_pairs() {
         FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(ref value))
             if value.output.is_none()
     ));
-    let invocation = private_invocation_at(&planned, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["source_backend"], text(&root_dir()));
-    assert_eq!(protocol["write"], false);
+    assert!(private_invocation_at(&planned, &root_dir()).is_err());
+    let FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(options)) =
+        &planned
+    else {
+        unreachable!()
+    };
+    assert_eq!(options.config_dir, root_dir().join("config"));
+    assert!(options.execution_source.is_none());
+    let mut collision = options.clone();
+    collision.output = Some(fixture.input.clone());
+    let before = fs::read(&fixture.input).unwrap();
+    assert!(
+        crate::recovery::source::evidence::generation_request::run(&root_dir(), &collision)
+            .is_err()
+    );
+    assert_eq!(fs::read(&fixture.input).unwrap(), before);
+    let mut missing_configuration = generation.clone();
+    missing_configuration.truncate(missing_configuration.len() - 2);
+    assert!(
+        parse_control(command(
+            "successor",
+            Some("generation-request"),
+            missing_configuration
+        ))
+        .is_err()
+    );
     let mut adapter = generation.clone();
     adapter.extend(words(&[
         "--adapter-contract",
@@ -560,9 +584,9 @@ fn parses_successor_generation_preview_and_write_pairs() {
     ]));
     adapter.push(text(&root_dir()));
     let adapter = parse_control(command("successor", Some("generation-request"), adapter)).unwrap();
-    let invocation = private_invocation_at(&adapter, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["product_backend"], text(&root_dir()));
+    assert!(
+        matches!(adapter, FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(ref value)) if value.product_backend.as_deref() == Some(root_dir().as_path()))
+    );
     let mut invalid_name = generation.clone();
     *invalid_name
         .iter_mut()
@@ -628,7 +652,10 @@ fn successor_generation_keeps_source_and_evidence_path_boundaries() {
         valid.clone(),
     ))
     .unwrap();
-    assert!(private_invocation_at(&parsed, &root_dir()).is_ok());
+    assert!(matches!(
+        parsed,
+        FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(_))
+    ));
     for invalid in [
         PathBuf::from("relative"),
         fixture.input.clone(),
@@ -640,22 +667,6 @@ fn successor_generation_keeps_source_and_evidence_path_boundaries() {
         assert!(
             parse_control(command("successor", Some("generation-request"), arguments)).is_err()
         );
-        for product in [false, true] {
-            let mut request = parsed.clone();
-            let FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(
-                options,
-            )) = &mut request
-            else {
-                unreachable!();
-            };
-            if product {
-                options.product_backend = Some(invalid.clone());
-                options.adapter_contract = Some("legacy-stable-readiness-b0-v1".to_owned());
-            } else {
-                options.source_backend = invalid.clone();
-            }
-            assert!(private_invocation_at(&request, &root_dir()).is_err());
-        }
     }
     #[cfg(unix)]
     fs::remove_file(&link).unwrap();

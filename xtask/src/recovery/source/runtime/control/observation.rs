@@ -64,6 +64,9 @@ pub(super) fn prepare(
     let mut selected = source["request"]["source"].clone();
     document::object(&selected, "来源恢复物理目标")?;
     selected["runtime_dir"] = json!(output.join("runtime"));
+    if request["format_version"].as_u64() == Some(2) {
+        selected["s3"]["configuration"] = request["configuration"].clone();
+    }
     physical(backend, run, &request, source, &selected, config)?;
     live::quiet(
         backend,
@@ -208,6 +211,7 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
             backend: self.frame.backend,
             execution: Path::new(document::text(&facts["execution"], "恢复执行根")?),
             request: &facts["source"]["seed_target"],
+            generation: &facts["request"],
             environment: &self.environment,
             output: &output,
             transport: self.transport,

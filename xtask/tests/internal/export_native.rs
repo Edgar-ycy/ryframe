@@ -391,6 +391,94 @@ fn object_capture_context(fixture: &Fixture) -> Context {
     }
 }
 
+#[test]
+fn source_cli_reads_bound_sidecar_config_records_actual_argv_and_rejects_drift_before_spawn() {
+    struct Configured {
+        directory: String,
+        arguments: Vec<String>,
+    }
+    impl Transport for Configured {
+        fn run(&self, command: CommandSpec) -> crate::Result<CommandOutput> {
+            assert_eq!(command.args[..2], ["--config-dir", self.directory.as_str()]);
+            assert_eq!(command.args[2..], self.arguments);
+            #[cfg(unix)]
+            use std::os::unix::process::ExitStatusExt;
+            #[cfg(windows)]
+            use std::os::windows::process::ExitStatusExt;
+            Ok(CommandOutput {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: vec![],
+                stderr: vec![],
+            })
+        }
+        fn s3(&self, _: native::s3::Request) -> crate::Result<Value> {
+            panic!("来源CLI配置用例不能访问对象服务")
+        }
+    }
+    let fixture = Fixture::new();
+    let context = object_capture_context(&fixture);
+    let directory = context.source()["s3"]["configuration"]["directory"]
+        .as_str()
+        .unwrap();
+    for (index, arguments) in [
+        vec!["control", "verify"],
+        vec!["tenant-data", "verify", "--target", "shared"],
+        vec!["target-inventory", "--target", "shared"],
+        vec!["backup-inventory"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let transport = Configured {
+            directory: directory.to_owned(),
+            arguments: arguments.clone(),
+        };
+        let label = format!("configuration-{index}");
+        native::export::database::run_logged(
+            &context,
+            &transport,
+            &label,
+            Path::new("bound-tool"),
+            &arguments,
+            None,
+        )
+        .unwrap();
+        let record: Value = serde_json::from_slice(
+            &fs::read(context.output().join(format!("{label}.command.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["command"][0], "--config-dir");
+        assert_eq!(record["command"][1], directory);
+    }
+    fs::write(
+        Path::new(directory).join("app.test.toml"),
+        "scope_id='drifted'\n",
+    )
+    .unwrap();
+    let transport = Configured {
+        directory: directory.to_owned(),
+        arguments: vec![],
+    };
+    assert!(
+        native::export::database::run_logged(
+            &context,
+            &transport,
+            "configuration-drift",
+            Path::new("bound-tool"),
+            &[],
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        !context
+            .output()
+            .join("configuration-drift.command.json")
+            .exists()
+    );
+}
+
 fn assert_python_capture_compatible(fixture: &Fixture, capture_dir: &Path) {
     let script = r#"
 import json

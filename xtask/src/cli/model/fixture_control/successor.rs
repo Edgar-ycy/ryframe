@@ -31,6 +31,8 @@ pub(crate) struct FixtureSuccessorGeneration {
     pub(crate) backend_build: PathBuf,
     pub(crate) maintenance_build: PathBuf,
     pub(crate) source_environment: PathBuf,
+    pub(crate) config_dir: PathBuf,
+    pub(crate) execution_source: Option<PathBuf>,
     pub(crate) id: String,
     pub(crate) adapter_contract: Option<String>,
     pub(crate) product_backend: Option<PathBuf>,

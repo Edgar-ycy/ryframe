@@ -313,6 +313,7 @@ fn nonzero_exit_keeps_raw_stdout_and_both_receipts_without_retry() {
     let fake = Fake::new(7, false);
     let mut evidence = Evidence::default();
     let port = Port {
+        configuration: None,
         context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &|| Ok(()),
@@ -351,6 +352,7 @@ fn transport_failure_keeps_successful_capture_without_fake_capture_error() {
     let fake = Fake::new(0, true);
     let mut evidence = Evidence::default();
     let port = Port {
+        configuration: None,
         context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &|| Ok(()),
@@ -442,6 +444,7 @@ fn drift_between_outer_and_inner_capture_fails_before_response_is_used() {
         Ok(())
     };
     let port = Port {
+        configuration: None,
         context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &checkpoint,

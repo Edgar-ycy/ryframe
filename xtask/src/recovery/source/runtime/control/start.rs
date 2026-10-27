@@ -154,7 +154,7 @@ pub(super) fn preflight(
 ) -> Result<(Value, Value)> {
     let descriptor = common::binding(request)?;
     let value = common::read_bound(backend, &descriptor, "正式 START 请求")?;
-    coordinator::request(&value)?;
+    coordinator::current_request(&value)?;
     let archive = history::prelaunch::closed(backend, run, attempts)?;
     let planned = model(
         "preflight-plan",
@@ -199,10 +199,6 @@ impl Plan {
         if checked["prefix"] != json!(frame.prefix) {
             return Err("START 输入模型没有绑定完整持锁历史前缀".into());
         }
-        let execution = Path::new(document::text(
-            &value["execution_backend"],
-            "START 产品执行根",
-        )?);
         let prepared = observation::prepare(
             frame.backend,
             frame.run,
@@ -210,7 +206,10 @@ impl Plan {
             &descriptor,
             &source,
             &frame.run.join(format!("g{:04}", frame.number)),
-            &execution.join("config"),
+            &crate::recovery::source::evidence::generation_request::configuration::directory(
+                frame.backend,
+                &value,
+            )?,
         )?;
         if !archive.is_null() {
             let previous = common::read_bound(

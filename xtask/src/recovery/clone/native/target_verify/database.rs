@@ -25,6 +25,7 @@ pub(crate) struct SourceBinding<'a> {
     pub(crate) tools: &'a Value,
     pub(crate) maintenance: &'a Value,
     pub(crate) scope: &'a super::super::bridge::scope::Scope,
+    pub(crate) configuration: Option<&'a Value>,
 }
 
 pub(crate) fn capture_with<T: Transport>(
@@ -160,6 +161,7 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
             let name = format!("{phase}-target-{key}.json");
             let path = self.directory.join(&name);
             let port = evidence::Port {
+                configuration: self.source.and_then(|source| source.configuration),
                 context: self.context,
                 transport: self.transport,
                 checkpoint: self.checkpoint,
@@ -192,6 +194,7 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
 
     fn owners(&mut self, database: &Value) -> Result<Vec<Value>> {
         let port = evidence::Port {
+            configuration: self.source.and_then(|source| source.configuration),
             context: self.context,
             transport: self.transport,
             checkpoint: self.checkpoint,
@@ -212,6 +215,7 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
         for (key, _, _) in KEYS {
             let db = &databases[key];
             let port = evidence::Port {
+                configuration: self.source.and_then(|source| source.configuration),
                 context: self.context,
                 transport: self.transport,
                 checkpoint: self.checkpoint,

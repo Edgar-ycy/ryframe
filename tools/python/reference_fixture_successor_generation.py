@@ -92,6 +92,12 @@ def build(backend: Path, successor: Path, execution: Path, expected_head: str, b
 
 
 def rebuild(backend: Path, request: dict) -> dict:
+    if request.get("format_version") == 2:
+        from restore_reference_plan import _native
+        return _native("generation-request-rebuild", {"backend": str(backend), "request": request})
+    if request.get("format_version") != 1:
+        raise ValueError("未知来源请求版本；不重建或填充历史字段")
+    # v1仅保留原历史核验与已登记资源收尾，当前正式构造入口已经转Rust。
     return build(backend, Path(request["review_successor"]["path"]), Path(request["execution_backend"]),
                  request["expected_backend_sha"], Path(request["backend_build"]["path"]),
                  Path(request["maintenance_build"]["path"]), Path(request["source_environment"]["path"]), request["id"],

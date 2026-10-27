@@ -49,6 +49,9 @@ pub(super) fn unpublished(frame: &Frame<'_>, start: &Value, descriptor: &Value) 
     let mut selected = source["request"]["source"].clone();
     document::object(&selected, "来源物理目标")?;
     selected["runtime_dir"] = json!(runtime);
+    if request["format_version"].as_u64() == Some(2) {
+        selected["s3"]["configuration"] = request["configuration"].clone();
+    }
     let private = common::read_bound(
         frame.backend,
         &request["source_environment"],

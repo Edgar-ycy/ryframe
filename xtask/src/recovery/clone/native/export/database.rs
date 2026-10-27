@@ -258,11 +258,16 @@ pub(crate) fn run_logged<T: Transport>(
     stdin: Option<Vec<u8>>,
 ) -> Result<()> {
     let work = context.output();
+    let configuration = &context.source()["s3"]["configuration"];
+    super::super::s3::app_configuration::private_configuration(&context.backend, configuration)?;
+    let directory = json_io::text(&configuration["directory"], "来源CLI绑定配置目录")?;
+    let mut actual_args = vec!["--config-dir".to_owned(), directory.to_owned()];
+    actual_args.extend_from_slice(args);
     let command_file = work.join(format!("{stage}.command.json"));
     json_io::write_new(
         &command_file,
         &json!({
-            "command": args,
+            "command": actual_args,
             "cwd": context.execution_backend,
             "remote_operations": "read_only",
         }),
@@ -270,7 +275,7 @@ pub(crate) fn run_logged<T: Transport>(
     let diagnostic = work.join(format!("{stage}.diagnostic.json"));
     let result = transport.run(CommandSpec {
         program: program.to_path_buf(),
-        args: args.to_vec(),
+        args: actual_args,
         cwd: context.execution_backend.clone(),
         environment: mysql_environment(context),
         stdin,

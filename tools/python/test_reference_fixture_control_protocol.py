@@ -120,19 +120,14 @@ class FixtureControlProtocolTests(unittest.TestCase):
                     argv=[],
                 )
 
-    def test_generation_preview_preserves_explicit_source_roots(self):
+    def test_retired_python_generation_request_cannot_dispatch_a_second_producer(self):
         receipt = str(Path(self.root) / ".local-tests" / "input.json")
-        raw = self.protocol(
-            "successor", "generation-request", False, successor=receipt,
-            source_backend=self.root, expected_head="a" * 40, backend_build=receipt,
-            maintenance_build=receipt, source_environment=receipt, id="source-current",
-            adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.root,
-        )
-        arguments = self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, raw, positional=True)
-        self.assertEqual(arguments[arguments.index("--source-backend") + 1], self.root)
-        self.assertEqual(arguments[arguments.index("--product-backend") + 1], self.root)
-        self.assertNotIn("--write", arguments)
-        self.assertNotIn("--output", arguments)
+        raw = self.protocol("successor", "generation-request", False, successor=receipt,
+                            source_backend=self.root, expected_head="a" * 40,
+                            backend_build=receipt, maintenance_build=receipt,
+                            source_environment=receipt, id="source-current")
+        with self.assertRaises(FixtureControlProtocolError):
+            self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, raw, positional=True)
 
     def test_reconstructs_exact_operations_for_control_domains(self):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
@@ -239,10 +234,8 @@ class FixtureControlProtocolTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(FixtureControlProtocolError):
                 self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, raw, positional=True)
         missing_output = self.protocol(
-            "successor", "generation-request", True,
-            successor=path, source_backend=str(Path(self.root) / ".local-tests"),
-            expected_head="a" * 40, backend_build=path, maintenance_build=path,
-            source_environment=path, id="source-r24",
+            "successor", "arm-request", True, successor=path, source_export_result=path,
+            workspace=self.root, id="source-r24", side="base", copy_directory=self.root,
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "写入授权"):
             self.arguments(

@@ -73,6 +73,8 @@ fn generation(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
             "--backend-build",
             "--maintenance-build",
             "--source-environment",
+            "--config-dir",
+            "--execution-source",
             "--id",
             "--adapter-contract",
             "--product-backend",
@@ -107,6 +109,11 @@ fn generation(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
             backend_build: input(&options, "--backend-build")?,
             maintenance_build: input(&options, "--maintenance-build")?,
             source_environment: input(&options, "--source-environment")?,
+            config_dir: external_directory(options.require("--config-dir")?, "--config-dir")?,
+            execution_source: options
+                .optional("--execution-source")
+                .map(|_| input(&options, "--execution-source"))
+                .transpose()?,
             id: valid_copy_name(options.require("--id")?, "--id")?,
             adapter_contract: adapter_contract.map(ToOwned::to_owned),
             product_backend: product_backend

@@ -1,6 +1,8 @@
 """消费已审计的启动前失败历史；不执行旧代码，不将缺树自动认定为未启动。"""
 from __future__ import annotations
 
+from devex_clone_seed_generation_runtime import configuration_directory
+
 import hashlib
 from pathlib import Path
 import subprocess
@@ -328,9 +330,9 @@ def closed(backend: Path, directory: Path, attempts: list) -> dict | None:
             or bound_file(backend, record["result"]) != directory / "results" / f"{record['number']:04d}.json"):
         raise ValueError("未启动恢复没有绑定原失败及完整历史前缀")
     request = read_json(bound_file(backend, value["request"]))
-    from devex_clone_seed_generation import REQUEST_FIELDS
+    from devex_clone_seed_generation import validate_generation_request
 
-    exact(request, REQUEST_FIELDS)
+    validate_generation_request(request)
     for field in ("source_registration", "source_rebind", "review_successor", "current_storage"):
         if value[field] != request[field]:
             raise ValueError("未启动恢复请求与已发布来源不同")
@@ -384,7 +386,7 @@ def starts(backend: Path, directory: Path, attempts: list) -> list:
 
 
 def prepare(backend: Path, directory: Path, start: dict, request_path: Path, number: int, *, run=subprocess.run):
-    from devex_clone_seed_generation import REQUEST_FIELDS, predecessor
+    from devex_clone_seed_generation import validate_generation_request, predecessor
     from devex_clone_seed_generation_runtime import GenerationRuntime
     from devex_clone_run_state import load_state
     from reference_fixture_successor_generation import rebuild
@@ -392,7 +394,7 @@ def prepare(backend: Path, directory: Path, start: dict, request_path: Path, num
     evidence = proof(backend, directory, start)
     descriptor = binding(local_path(backend, str(request_path)))
     request = read_json(request_path)
-    exact(request, REQUEST_FIELDS)
+    validate_generation_request(request)
     state = load_state(directory)
     prefix = state["attempts"]
     if prefix[-1]["number"] == number and prefix[-1]["status"] == "running":
@@ -443,7 +445,7 @@ def execute(backend: Path, directory: Path, request_path: Path, number: int, pre
     binaries.update({"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")})
     write_json(runtime.runtime / "binaries.json", binaries)
     with runtime.environment() as environment:
-        register_runtime(runtime.execution, runtime.runtime, source_config_dir=runtime.execution / "config")
+        register_runtime(runtime.execution, runtime.runtime, source_config_dir=configuration_directory(runtime.backend, runtime.request))
         images = {}
         for field in ("before", "after"):
             checkpoint()

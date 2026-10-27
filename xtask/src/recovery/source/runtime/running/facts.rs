@@ -63,7 +63,7 @@ pub(in crate::recovery::source::evidence) fn load(
         "request_copy":document::read(&output.join("request.json"))?,"attempts":attempts,"number":number,"live":live}),
     )?;
     fixed_paths(backend, &output, &value)?;
-    let (selected, before, running) = complete_images(backend, &output, &source, &value)?;
+    let (selected, before, running) = complete_images(backend, &output, &source, &value, &request)?;
     let lineage = dataset(backend, run, &source, &value, &before)?;
     let runtime = super::runtime(
         backend,
@@ -156,10 +156,14 @@ fn complete_images(
     output: &Path,
     source: &Value,
     value: &Value,
+    request: &Value,
 ) -> Result<(Value, Value, Value)> {
     let mut selected = source["request"]["source"].clone();
     document::object(&selected, "来源完整物理范围")?;
     selected["runtime_dir"] = json!(output.join("runtime"));
+    if request["format_version"].as_u64() == Some(2) {
+        selected["s3"]["configuration"] = request["configuration"].clone();
+    }
     let before = images::verify(
         backend,
         &value["before"],

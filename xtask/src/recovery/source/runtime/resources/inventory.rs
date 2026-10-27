@@ -29,7 +29,10 @@ impl<T: Transport> Resources<'_, T> {
         // 原初始化请求保持不可变；明确执行根和当前维护构建来自父层已验证 generation。
         let mut port = self.request.clone();
         port["execution_backend"] = json!({"path":self.execution});
-        port["config_dir"] = json!(self.execution.join("config"));
+        port["config_dir"] = json!(super::super::generation_request::configuration::directory(
+            self.backend,
+            self.generation
+        )?);
         port["maintenance_build"] = maintenance.clone();
         let inputs = StorageInputs {
             backend: self.backend,
@@ -42,6 +45,8 @@ impl<T: Transport> Resources<'_, T> {
             tools,
             maintenance,
             scope,
+            configuration: (self.generation["format_version"].as_u64() == Some(2))
+                .then_some(&self.generation["configuration"]),
         };
         let checkpoint = || (self.checkpoint)();
         let captured =

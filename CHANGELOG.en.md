@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Construct formal generation-request v2 in Rust with explicit coordinator-owned configuration and generated execution-source publication bindings. Carry configuration through startup, producers, four-database capture and successor source projection, including frozen absence of optional common configuration. New START rejects v1; original v1 history verification and safe cleanup of registered resources retain their contracts without rewriting receipts.
+
 - Unify comparison-source capture, verification and build/backup/target consumers in Rust, removing the dedicated Python comparison algorithm and old private branch. Preserve fixed B0 objects and patch, complete sources and the shared published export, avoid Git reconstruction during readonly verification, and reject baseline replacement refs and Git environment redirection.
 
 - Freeze independent executable copies immediately during native four-role builds, verify source and copy digests, and preserve executable permissions; historical receipts no longer depend on mutable shared Cargo paths, and partial failures retain their scene without replay.

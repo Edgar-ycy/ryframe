@@ -41,11 +41,8 @@ pub(super) fn prepare(inputs: &Inputs<'_>, operation: &str) -> Result<Value> {
         common::process_identity(std::process::id())?.ok_or("来源控制器缺少内核创建身份")?;
     let tool = common::binding(inputs.tool)?;
     let configuration_path = inputs.directory.join("source-producer-configuration.json");
-    let configuration = crate::recovery::clone::native::s3::app_configuration::configuration_value(
-        inputs.execution,
-        &inputs.execution.join("config"),
-        "test",
-    )?;
+    let (_, configuration) =
+        super::super::generation_request::configuration::for_start(inputs.backend, inputs.start)?;
     document::write_new(&configuration_path, &configuration)?;
     let descriptor = staging::create(
         &json!({"coordinator":inputs.backend,"execution":inputs.execution,

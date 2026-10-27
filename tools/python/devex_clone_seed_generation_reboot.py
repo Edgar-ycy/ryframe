@@ -53,7 +53,7 @@ def start_record(backend: Path, directory: Path) -> dict:
 
 def generation(backend: Path, directory: Path, start: dict) -> dict:
     """读取 C70 外层收据、请求副本、启动意图与运行配置。"""
-    from devex_clone_seed_generation import REQUEST_FIELDS, START_FIELDS
+    from devex_clone_seed_generation import validate_generation_request, START_FIELDS
 
     start_path = bound_file(backend, start["result"])
     if start_path != directory / "results" / f"{start['number']:04d}.json":
@@ -63,7 +63,7 @@ def generation(backend: Path, directory: Path, start: dict) -> dict:
     if receipt["status"] != "seed_source_generation_running" or receipt["restore_qualified"] is not False:
         raise ValueError("源代次收据状态不是运行中的冻结来源")
     request = read_json(bound_file(backend, receipt["request"]))
-    exact(request, REQUEST_FIELDS)
+    validate_generation_request(request)
     output = directory / receipt["generation_id"]
     if output.name != f"g{start['number']:04d}" or read_json(output / "request.json") != request:
         raise ValueError("源代次目录、请求副本与账本不一致")

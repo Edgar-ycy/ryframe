@@ -71,6 +71,9 @@ pub(super) fn source_request(args: &Value) -> Result<Value> {
     }
     document::object(&value["source"], "来源物理目标")?;
     value["source"]["runtime_dir"] = args["runtime_dir"].clone();
+    if args["request"]["format_version"].as_u64() == Some(2) {
+        value["source"]["s3"]["configuration"] = args["request"]["configuration"].clone();
+    }
     Ok(value)
 }
 

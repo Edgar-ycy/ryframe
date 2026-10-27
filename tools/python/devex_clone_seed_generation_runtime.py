@@ -103,7 +103,7 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
                             'evidence_root': str(backend),
                             'source': selected,
                             'app_env': os.environ.get("APP_ENV"),
-                            'config_dir': str(execution / "config"),
+                            'config_dir': str(configuration_directory(backend, request)),
                         },
                     }, subprocess.run, may_write=False,
                 ))[0]["value"] != physical):
@@ -126,6 +126,12 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
             if not _ready(urls[role]):
                 raise ValueError("运行中源未保持双角色 ready")
     return contract
+
+
+def configuration_directory(backend: Path, request: dict) -> Path:
+    from restore_reference_plan import _native
+    value = _native("generation-request-configuration", {"backend": str(backend), "request": request})
+    return Path(value["directory"])
 
 
 def verify_runtime_evidence(backend: Path, output: Path, request: dict, effective: dict, *, live: bool) -> dict:
@@ -202,7 +208,7 @@ class GenerationRuntime:
                         'evidence_root': str(self.backend),
                         'source': self.selected,
                         'app_env': os.environ.get("APP_ENV"),
-                        'config_dir': str(self.execution / "config"),
+                        'config_dir': str(configuration_directory(self.backend, self.request)),
                     },
                 }, subprocess.run, may_write=False,
             ))[0]["value"] != self.source["generation"]["physical_binding"]:
@@ -234,12 +240,12 @@ class GenerationRuntime:
                                 'evidence_root': str(self.backend),
                                 'source': self.selected,
                                 'app_env': os.environ.get("APP_ENV"),
-                                'config_dir': str(self.execution / "config"),
+                                'config_dir': str(configuration_directory(self.backend, self.request)),
                             },
                         }, subprocess.run, may_write=False,
                     ))[0]["value"] != self.source["generation"]["physical_binding"]):
                 raise ValueError("源后继运行期间存储代次或物理配置发生变化")
-            verify_api_address(self.execution, self.selected["api_url"], config_dir=self.execution / "config")
+            verify_api_address(self.execution, self.selected["api_url"], config_dir=configuration_directory(self.backend, self.request))
             if self.contract is not None:
                 generation_directory(self.output)
                 if verify_runtime(self.execution, self.runtime) != self.contract:
@@ -256,7 +262,7 @@ class GenerationRuntime:
                     "ryframe-worker": self.build["artifacts"]["worker"]["executable"],
                     **{"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")}}
         write_json(self.runtime / "binaries.json", binaries)
-        self.contract = register_runtime(self.execution, self.runtime, source_config_dir=self.execution / "config")
+        self.contract = register_runtime(self.execution, self.runtime, source_config_dir=configuration_directory(self.backend, self.request))
         self.urls = {"api": self.selected["api_url"].rstrip("/") + "/readyz", "worker": self.contract["worker_ready_url"]}
         for url in self.urls.values():
             require_closed_port(url)

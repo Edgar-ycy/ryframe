@@ -20,6 +20,8 @@ pub(in crate::recovery::source::evidence) fn verify(
     backend: &Path,
     request: &Value,
 ) -> Result<Value> {
+    super::super::generation_request::configuration::verify(backend, request)?;
+    super::super::generation_request::configuration::execution_source(backend, request)?;
     let (execution, inventory) = registered(backend, request)?;
     let build_path = common::bound_file(backend, &request["backend_build"], "来源产品构建")?;
     let build = document::read(&build_path)?;
@@ -44,6 +46,8 @@ pub(in crate::recovery::source::evidence) fn verify(
     common::bound_file(backend, &request["backend_build"], "来源产品构建")?;
     common::bound_file(&execution, &request["maintenance_build"], "来源维护构建")?;
     common::bound_file(backend, &request["source_environment"], "来源私有环境")?;
+    super::super::generation_request::configuration::verify(backend, request)?;
+    super::super::generation_request::configuration::execution_source(backend, request)?;
     Ok(build)
 }
 

@@ -8,8 +8,7 @@ use crate::{
     Result,
     recovery::{
         clone::native::{
-            digest, export::transport::Transport, json as document, lifecycle::state,
-            resources::common,
+            digest, export::transport::Transport, lifecycle::state, resources::common,
         },
         source::evidence::running::history::{self, prelaunch},
     },
@@ -53,10 +52,6 @@ pub(super) fn prepare(
     let descriptor = common::binding(request)?;
     let value = common::read_bound(backend, &descriptor, "未启动恢复正式请求")?;
     let source = history::predecessor(backend, run, saved)?;
-    let execution = Path::new(document::text(
-        &value["execution_backend"],
-        "未启动恢复执行根",
-    )?);
     let output = run.join(format!("seed-runtime/attempt-{number:04}"));
     let prepared = observation::prepare(
         backend,
@@ -65,7 +60,9 @@ pub(super) fn prepare(
         &descriptor,
         &source,
         &output,
-        &execution.join("config"),
+        &crate::recovery::source::evidence::generation_request::configuration::directory(
+            backend, &value,
+        )?,
     )?;
     if prelaunch::proof(backend, run, &start)? != proof || common::binding(request)? != descriptor {
         return Err("未启动恢复准备期间原失败或当前请求变化".into());

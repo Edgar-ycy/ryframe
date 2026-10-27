@@ -159,6 +159,7 @@ impl<'a, 'b, T: Transport + Sync> Window<'a, 'b, T> {
             backend: self.frame.backend,
             execution: Path::new(document::text(&self.facts["execution"], "源执行后端")?),
             request: &self.facts["source"]["seed_target"],
+            generation: &self.facts["request"],
             environment: &self.environment,
             output,
             transport: self.transport,

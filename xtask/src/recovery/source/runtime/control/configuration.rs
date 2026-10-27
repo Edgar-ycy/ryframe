@@ -4,10 +4,7 @@ use crate::{
     Result,
     ci::databases::files,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
-    recovery::{
-        clone::native::{json as document, resources::common},
-        fixture_control,
-    },
+    recovery::{clone::native::json as document, fixture_control},
 };
 use serde_json::{Value, json};
 use std::{
@@ -33,11 +30,16 @@ pub(super) fn register(
     fs::create_dir(&runtime)
         .map_err(|error| format!("无法创建本次恢复 runtime：{error}；保留现场，不覆盖或重放"))?;
     document::write_new(&runtime.join("binaries.json"), binaries)?;
+    let execution = Path::new(document::text(&request["execution_backend"], "恢复执行根")?);
+    let guard = if request["format_version"].as_u64() == Some(2) {
+        frame.backend
+    } else {
+        execution
+    };
     let (api, worker) = match selection {
-        Selection::Copy(source) => copy(&output.join("runtime-configuration"), source)?,
+        Selection::Copy(source) => copy(guard, &output.join("runtime-configuration"), source)?,
         Selection::Bound { api, worker } => (api.to_owned(), worker.to_owned()),
     };
-    let execution = Path::new(document::text(&request["execution_backend"], "恢复执行根")?);
     let contract =
         fixture_control::full_stack_runtime_contract(execution, &runtime, &api, &worker)?;
     document::write_new(&runtime.join("runtime.json"), &contract)?;
@@ -48,7 +50,7 @@ pub(super) fn register(
     Ok(contract)
 }
 
-fn copy(output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)> {
+fn copy(guard: &Path, output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)> {
     validate_absolute_path(source, LocalTestPathKind::ExistingDirectory)?;
     let backend = source.parent().ok_or("源配置缺少执行根")?;
     let table = crate::rate_limit::load_app_table(backend, Some(source), "test")
@@ -59,10 +61,9 @@ fn copy(output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)> {
         .filter(|value| (0..=1023).contains(value) && *value != 2)
         .ok_or("源 API 实例编号无效或与 Worker 编号2冲突")?;
     let names = ["app.toml", "app.test.toml"];
-    let before = names
-        .iter()
-        .map(|name| common::binding(&source.join(name)))
-        .collect::<Result<Vec<_>>>()?;
+    let before = crate::recovery::source::evidence::generation_request::configuration::capture(
+        guard, source,
+    )?;
     files::private_directory(output)
         .map_err(|_| "无法创建私有恢复配置目录；检查已有现场、路径和权限，禁止覆盖")?;
     for (name, id) in [("config", u64::try_from(api_id)?), ("worker-config", 2)] {
@@ -70,6 +71,9 @@ fn copy(output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)> {
         files::private_directory(&destination)
             .map_err(|_| "无法创建私有角色配置目录，保留已创建现场，禁止覆盖")?;
         for filename in names {
+            if before["files"].get(filename).is_none() {
+                continue;
+            }
             let mut bytes = fs::read(source.join(filename))?;
             if filename == "app.test.toml" {
                 let text = std::str::from_utf8(&bytes)
@@ -90,10 +94,12 @@ fn copy(output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)> {
             write(&destination.join(filename), &bytes)?;
         }
     }
-    for (name, expected) in names.iter().zip(before) {
-        if common::binding(&source.join(name))? != expected {
-            return Err("源配置在快照期间漂移；保留私有快照，禁止继续或重放".into());
-        }
+    if crate::recovery::source::evidence::generation_request::configuration::capture(guard, source)?
+        != before
+    {
+        return Err(
+            "源配置在快照期间漂移，包括原缺省app.toml的出现；保留私有快照，禁止继续或重放".into(),
+        );
     }
     let canonical =
         crate::recovery::clone::native::target_verify::input::request_configuration::canonical_path;

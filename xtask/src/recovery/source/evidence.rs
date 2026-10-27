@@ -18,6 +18,8 @@ pub(crate) mod control;
 mod environment;
 #[path = "runtime/execution.rs"]
 pub(super) mod execution;
+#[path = "evidence/generation_request.rs"]
+pub(crate) mod generation_request;
 #[path = "runtime/images.rs"]
 mod images;
 #[path = "runtime/inventory.rs"]
@@ -121,6 +123,8 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("generation-request-rebuild") => generation_request::request(args),
+        Some("generation-request-configuration") => generation_configuration(args),
         Some(
             operation @ ("comparison-verify"
             | "comparison-build-source"
@@ -181,6 +185,13 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         }
         _ => Err("来源证据操作无效".into()),
     }
+}
+
+fn generation_configuration(args: &Value) -> Result<Value> {
+    documents::exact(args, &["backend", "request"], "来源配置读取参数")?;
+    let backend = binding::path(&args["backend"])?;
+    generation_request::configuration::execution_source(&backend, &args["request"])?;
+    generation_request::configuration::verify(&backend, &args["request"])
 }
 
 fn recorded_process_stopped(args: &Value) -> Result<Value> {

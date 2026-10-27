@@ -73,6 +73,7 @@ pub(super) struct Evidence {
 }
 
 pub(super) struct Port<'a, T, F> {
+    pub(super) configuration: Option<&'a Value>,
     pub(super) context: &'a StorageInputs<'a>,
     pub(super) transport: &'a T,
     pub(super) checkpoint: &'a F,
@@ -293,7 +294,7 @@ impl Evidence {
         environment.insert("MYSQL_TEST_LOGIN_FILE".into(), login.display().to_string());
         let mut command = vec![program.display().to_string()];
         command.extend(args.clone());
-        let secrets = secrets(port.context)?;
+        let secrets = secrets(port.context, port.configuration)?;
         let target = match &stdout {
             Some(output) => output.target()?,
             None => StdoutTarget::Capture,
@@ -458,7 +459,7 @@ fn response(output: &CommandOutput) -> Result<String> {
         .to_owned())
 }
 
-fn secrets(context: &StorageInputs<'_>) -> Result<Vec<String>> {
+fn secrets(context: &StorageInputs<'_>, bound: Option<&Value>) -> Result<Vec<String>> {
     let mut result = context
         .environment
         .values()
@@ -482,13 +483,13 @@ fn secrets(context: &StorageInputs<'_>) -> Result<Vec<String>> {
             result.push(value.into());
         }
     }
-    let configuration = super::binding::configuration(context)?;
+    let configuration = super::binding::source_configuration(context, bound)?;
     let directory = Path::new(text(&configuration["directory"], "库存配置目录")?);
     let table =
         crate::rate_limit::load_app_table(&context.execution_backend()?, Some(directory), "test")
             .map_err(|_| "库存凭据配置无法安全读取")?;
     file_secrets(&serde_json::to_value(table)?, false, &mut result);
-    if super::binding::configuration(context)? != configuration {
+    if super::binding::source_configuration(context, bound)? != configuration {
         return Err("采集脱敏字段期间配置已变化".into());
     }
     result.sort_by_key(|value| std::cmp::Reverse(value.len()));

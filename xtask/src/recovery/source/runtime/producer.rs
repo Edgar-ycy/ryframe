@@ -66,11 +66,8 @@ impl Inputs<'_> {
         if configuration != self.directory.join("source-producer-configuration.json") {
             return Err("来源原生配置绑定不属于同一 verification 目录".into());
         }
-        let expected = crate::recovery::clone::native::s3::app_configuration::configuration_value(
-            self.execution,
-            &self.execution.join("config"),
-            "test",
-        )?;
+        let (_, expected) =
+            super::generation_request::configuration::for_start(self.backend, self.start)?;
         let command = self.policy("producer-command", json!({"staging":staged["root"],"backend":self.backend,
             "execution":self.execution,"directory":self.directory,"operation":intent["operation_id"],
             "tool":self.tool,"start":self.start,"lineage":self.lineage,"configuration":configuration}))?;

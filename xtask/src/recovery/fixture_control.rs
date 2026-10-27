@@ -64,6 +64,13 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         return Ok(());
     }
     match command {
+        FixtureControlCommand::Successor(
+            crate::cli::FixtureSuccessorCommand::GenerationRequest(options),
+        ) => {
+            return print_json(&crate::recovery::source::evidence::generation_request::run(
+                root, options,
+            )?);
+        }
         FixtureControlCommand::SourcePair(command) => return source_pair::run(command, root),
         FixtureControlCommand::Review(command) => return review::run(command, root),
         FixtureControlCommand::Artifact(command) => return artifact::run(command, root),

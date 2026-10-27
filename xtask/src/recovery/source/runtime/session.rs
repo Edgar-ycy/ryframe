@@ -142,6 +142,7 @@ impl<'a, T: Transport> Session<'a, T> {
             backend: self.backend,
             execution: self.execution()?,
             request: &self.facts["source"]["seed_target"],
+            generation: &self.facts["request"],
             environment: &self.environment,
             output,
             transport: self.transport,

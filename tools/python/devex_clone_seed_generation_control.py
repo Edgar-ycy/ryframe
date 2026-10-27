@@ -7,7 +7,7 @@ import subprocess
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, local_path, name
 from devex_clone_run_state import binding, load_state
-from devex_clone_seed_generation import START, STOP, RECOVER, REQUEST_FIELDS, predecessor, source_request
+from devex_clone_seed_generation import START, STOP, RECOVER, validate_generation_request, predecessor, source_request
 from devex_clone_seed_generation_images import capture_image, verify_image
 from devex_clone_seed_generation_runtime import GenerationRuntime, generation_directory, ROLES, EXTRA_FILES
 from devex_clone_source_proof import bound_file
@@ -177,7 +177,7 @@ def status(backend: Path, directory: Path) -> dict:
     intent = read_json(output / "intent.json")
     exact(intent, {"format_version", "kind", "request", "runtime_directory", "operations"})
     request = read_json(bound_file(backend, intent["request"]))
-    exact(request, REQUEST_FIELDS)
+    validate_generation_request(request)
     if type(request["format_version"]) is not int or request["format_version"] != 1 or request["kind"] != "devex-clone-seed-source-generation":
         raise ValueError("源代次状态必须读取完整正式请求")
     name(request["id"])
@@ -238,7 +238,7 @@ def execute_recover(backend: Path, directory: Path, request_path: Path, number: 
     verifier = _verifier_stopped(backend, directory, prefix)
     request_descriptor = binding(local_path(backend, str(request_path)))
     request = read_json(request_path)
-    exact(request, REQUEST_FIELDS)
+    validate_generation_request(request)
     output = directory / f"g{observed['attempt']:04d}"
     if read_json(output / "request.json") != request:
         raise ValueError("回收必须显式绑定原 source-generation 请求")
