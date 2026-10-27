@@ -164,6 +164,19 @@ fn review_renewal_derives_all_sides_and_is_create_only() {
             .join("recovery-r11"),
         fixture.controlled("renewed-review.json"),
     );
+    #[cfg(windows)]
+    let options = {
+        let mut selected = options;
+        for path in [
+            &mut selected.template,
+            &mut selected.fixture,
+            &mut selected.future_root,
+            &mut selected.output,
+        ] {
+            *path = PathBuf::from(path.to_str().unwrap().replace('\\', "/"));
+        }
+        selected
+    };
     let summary = renew_review(&fixture.backend, &options).unwrap();
     assert_eq!(summary["status"], "renewed");
     let renewed: Value = serde_json::from_slice(&fs::read(&options.output).unwrap()).unwrap();
@@ -201,6 +214,13 @@ fn review_renewal_derives_all_sides_and_is_create_only() {
             .all(|item| Path::new(item["connection_file"].as_str().unwrap())
                 .ends_with(Path::new("secrets").join("mysql-client.cnf")))
     );
+    for side in ["seed", "base", "candidate"] {
+        for item in renewed["scopes"][side]["databases"].as_array().unwrap() {
+            let declared = item["connection_file"].as_str().unwrap();
+            let native = Path::new(declared).components().collect::<PathBuf>();
+            assert_eq!(declared, native.to_str().unwrap());
+        }
+    }
 
     let error = renew_review(&fixture.backend, &options).unwrap_err();
     assert!(error.to_string().contains("已存在"));
@@ -538,20 +558,28 @@ fn assert_python_review_matches(backend: &Path, options: &FixtureReviewOptions, 
 import json, sys
 from pathlib import Path
 sys.path.insert(0, 'tools/python')
+from rate_limit_tool import install_verified_binding
+install_verified_binding(sys.argv.pop(1))
 from reference_fixture_review import renew
 q = json.load(sys.stdin)
 value = renew(Path(q['backend']), Path(q['template']), Path(q['fixture']),
               Path(q['future_root']), q['id'], *q['ports'])
 print(json.dumps(value, ensure_ascii=False))
 "#;
-    let mut child = Command::new("python")
-        .args(["-B", "-c", script])
-        .current_dir(root_dir())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let tool = super::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+        .unwrap()
+        .expect("审阅互验必须绑定当前原生工具");
+    let mut child = Command::new(
+        super::check::consumer_context::python::selected_program(&root_dir()).unwrap(),
+    )
+    .args(["-B", "-c", script])
+    .arg(tool)
+    .current_dir(root_dir())
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
     let request = json!({
         "backend": backend,
         "template": options.template,

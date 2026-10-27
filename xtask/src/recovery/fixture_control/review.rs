@@ -46,8 +46,12 @@ pub(crate) fn renew(backend: &Path, options: &FixtureReviewOptions) -> Result<Va
             .map_err(|error| format!("无法解析当前后端 {}：{error}", backend.display()))?,
     );
     validate_inputs(options, &backend)?;
-    let template_file = options.template.clone();
-    let fixture_file = options.fixture.clone();
+    let template_file = portable_path(&options.template)
+        .components()
+        .collect::<PathBuf>();
+    let fixture_file = portable_path(&options.fixture)
+        .components()
+        .collect::<PathBuf>();
     let template = read_controlled_json(&template_file, "审阅模板")?;
     let template_binding = file_binding(&template_file, "审阅模板")?;
     validate_review(&template)?;
@@ -558,5 +562,6 @@ fn snapshot_value(root: &Path) -> Result<Value> {
 }
 
 fn path_text_lexical(path: &Path) -> Result<String> {
-    Ok(super::path_text(path, "路径")?.to_owned())
+    let normalized = portable_path(path).components().collect::<PathBuf>();
+    Ok(super::path_text(&normalized, "路径")?.to_owned())
 }
