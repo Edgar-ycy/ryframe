@@ -136,6 +136,20 @@ fn native_fixture_build_registers_dirty_source_four_artifacts_and_sidecar_config
         &backend,
     )
     .unwrap();
+    assert_artifacts_survive_cache_reuse_and_reject_tampering(&prepared, &receipt, &backend);
+    assert!(
+        build(&inputs, &prepared.output, &mut |_, _| panic!(
+            "已有输出不得重放"
+        ))
+        .is_err()
+    );
+}
+
+fn assert_artifacts_survive_cache_reuse_and_reject_tampering(
+    prepared: &Prepared,
+    receipt: &Value,
+    backend: &Value,
+) {
     let binaries = document(&prepared.output.join("binaries.json")).unwrap().0;
     for name in [
         "ryframe",
@@ -143,12 +157,49 @@ fn native_fixture_build_registers_dirty_source_four_artifacts_and_sidecar_config
         "ryframe-reset",
         "ryframe-migrate",
     ] {
-        assert!(Path::new(binaries[name].as_str().unwrap()).is_file());
+        let frozen = Path::new(binaries[name].as_str().unwrap());
+        assert_eq!(
+            frozen.parent(),
+            Some(prepared.output.join("artifacts").as_path())
+        );
+        fs::write(
+            prepared.fixture.context.output.join(format!("{name}.exe")),
+            "later Cargo build",
+        )
+        .unwrap();
     }
+    assert_eq!(
+        fixture_control::verify_full_stack_runtime(
+            &prepared.fixture.context.root,
+            &prepared.output
+        )
+        .unwrap(),
+        *receipt
+    );
+    bridge::verify_build(
+        &prepared.fixture.context.root,
+        &prepared.output.join("backend-build.json"),
+        backend,
+    )
+    .unwrap();
+    fs::write(
+        Path::new(binaries["ryframe"].as_str().unwrap()),
+        "tampered frozen API",
+    )
+    .unwrap();
     assert!(
-        build(&inputs, &prepared.output, &mut |_, _| panic!(
-            "已有输出不得重放"
-        ))
+        fixture_control::verify_full_stack_runtime(
+            &prepared.fixture.context.root,
+            &prepared.output
+        )
+        .is_err()
+    );
+    assert!(
+        bridge::verify_build(
+            &prepared.fixture.context.root,
+            &prepared.output.join("backend-build.json"),
+            backend
+        )
         .is_err()
     );
 }

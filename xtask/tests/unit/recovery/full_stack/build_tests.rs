@@ -130,6 +130,11 @@ impl Port for Cargo<'_> {
         let name = &args[args.iter().position(|s| s == "--bin").unwrap() + 1];
         let executable = self.context.output.join(format!("{name}.exe"));
         fs::write(&executable, name)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o750))?;
+        }
         if self.drift {
             fs::write(self.context.root.join("README.md"), "changed")?;
         }
@@ -163,7 +168,7 @@ fn cargo(context: &Context) -> Cargo<'_> {
 }
 
 #[test]
-fn all_four_roles_use_current_cargo_paths_and_publish_exact_byte_bindings() {
+fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindings() {
     let fixture = Fixture::new();
     let context = &fixture.context;
     let mut port = cargo(context);
@@ -184,11 +189,32 @@ fn all_four_roles_use_current_cargo_paths_and_publish_exact_byte_bindings() {
         "ryframe-migrate",
         "ryframe-worker",
     ] {
+        let frozen = Path::new(binaries[role].as_str().unwrap());
+        assert_eq!(
+            frozen.parent(),
+            Some(context.output.join("artifacts").as_path())
+        );
+        assert_eq!(fs::read(frozen).unwrap(), role.as_bytes());
+        let cargo = context.output.join(format!("{role}.exe"));
+        assert_ne!(frozen, cargo);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(frozen).unwrap().permissions().mode() & 0o777,
+                0o750
+            );
+        }
+        fs::write(cargo, "next workspace build").unwrap();
         assert_eq!(
             evidence["artifacts"][role],
             file_binding(Path::new(binaries[role].as_str().unwrap()), "产物").unwrap()
         );
     }
+    assert_eq!(
+        provenance::build(&context.root, &context.output, &binaries, &Value::Null).unwrap(),
+        evidence
+    );
     assert!(
         run(&context.root, &context.output, &mut |program, args| port
             .command(program, args, None))
@@ -217,6 +243,23 @@ fn failed_build_or_changed_source_never_publishes_partial_success_or_replays() {
         for name in ["binaries.json", "build-evidence.json"] {
             assert!(!fixture.context.output.join(name).exists());
         }
+        assert!(
+            fixture
+                .context
+                .output
+                .join("artifacts/ryframe-reset.exe")
+                .is_file()
+        );
+        let before = port.calls.len();
+        assert!(
+            run(
+                &fixture.context.root,
+                &fixture.context.output,
+                &mut |program, args| port.command(program, args, None)
+            )
+            .is_err()
+        );
+        assert_eq!(port.calls.len(), before);
     }
 }
 
