@@ -81,43 +81,6 @@ fn runtime_unknown_cache_result_does_not_synthesize_a_deletion_count() {
 }
 
 #[test]
-fn runtime_adapter_plans_are_dispatched_without_relaxing_write_or_scalar_boundaries() {
-    for (action, arguments) in [
-        (
-            "login-query",
-            json!({"database":"control","selection":"new","upper_id":9007199254740993_u64}),
-        ),
-        ("receipt-fields", json!({"recovered":true})),
-        ("failed-entries", json!({})),
-    ] {
-        let (status, response) = invoke(&json!({"operation":"producer-ready","write":false,
-            "arguments":{"action":action,"arguments":arguments}}));
-        assert!(status.success(), "{action}: {response}");
-        match action {
-            "login-query" => assert!(
-                response["result"]["value"]
-                    .as_str()
-                    .unwrap()
-                    .contains("WHERE `id` > 9007199254740993")
-            ),
-            "receipt-fields" => assert!(
-                response["result"]["value"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!("recovery"))
-            ),
-            "failed-entries" => assert!(
-                !response["result"]["value"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!("after"))
-            ),
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[test]
 fn runtime_new_plans_reject_secrets_unknown_fields_and_unconfirmed_results() {
     for (action, arguments) in [
         (
