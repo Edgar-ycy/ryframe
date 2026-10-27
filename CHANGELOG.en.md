@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the formal CI integration entry omitting the real replica monitor case: explicitly combine `bin-api,bin-migrate` only for the `business_initialization_mysql` test target, retaining `--no-default-features` and product migrate dependency isolation. The existing command contract checks the actual execution arguments.
+
 - Register the shared file-configuration tests only in the S3 HTTPS test entry, available with default features. Redis, OTLP and account recovery continue to use the same complete configuration support, retaining all configuration safety assertions and Unix/Windows link failure requirements. Remove the tautological Redis status-enum comparison while preserving the implementation and meaningful tests for unconfigured and unreachable states.
 
 - Fix complete initialization SQL assigning new permission and menu IDs by catalog position instead of matching migration initialization. Export and live initialization share the rule that allocates the next ID only for missing entries, preserving existing IDs, names, ordering, and relationships.

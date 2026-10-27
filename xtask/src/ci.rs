@@ -289,30 +289,32 @@ fn verify_formal_contract_source(
     Ok(())
 }
 
+pub(crate) const INTEGRATION_TESTS: &[(&str, &str, Option<&str>)] = &[
+    (
+        "ryframe-db",
+        "mysql_real_protocol",
+        Some("repositories,migration"),
+    ),
+    ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
+    (
+        "ryframe-generator",
+        "mysql_schema_import",
+        Some("schema-import"),
+    ),
+    (
+        "ryframe",
+        "business_initialization_mysql",
+        Some("bin-api,bin-migrate"),
+    ),
+];
+
 fn integration() -> Result<()> {
     let root = root_dir();
     let configuration = integration_configuration::IntegrationConfiguration::load(&root)?;
     integration_inputs::require_service_inputs(&root)?;
     let targets = ci_target_policy()?;
     let jobs = configuration.test_jobs;
-    for (package, target, features) in [
-        (
-            "ryframe-db",
-            "mysql_real_protocol",
-            Some("repositories,migration"),
-        ),
-        ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
-        (
-            "ryframe-generator",
-            "mysql_schema_import",
-            Some("schema-import"),
-        ),
-        (
-            "ryframe",
-            "business_initialization_mysql",
-            Some("bin-migrate"),
-        ),
-    ] {
+    for &(package, target, features) in INTEGRATION_TESTS {
         run_owned(
             &root,
             "cargo",

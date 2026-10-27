@@ -345,40 +345,28 @@ fn preflight_uses_only_a_valid_nonzero_base_sha() {
 
 #[test]
 fn integration_commands_share_the_ci_target_and_jobs() {
-    assert_eq!(
-        integration_test_args_for_target(
+    let planned: Vec<_> = crate::ci::INTEGRATION_TESTS
+        .iter()
+        .map(|&(package, target, features)| {
+            integration_test_args_for_target(package, target, features, "target/ci/backend", 4)
+        })
+        .collect();
+    let expected: Vec<_> = [
+        (
             "ryframe-db",
             "mysql_real_protocol",
-            Some("repositories,migration"),
-            "target/ci/backend",
-            4,
-        ),
-        [
-            "test",
-            "--locked",
-            "--no-default-features",
-            "--target-dir",
-            "target/ci/backend",
-            "-p",
-            "ryframe-db",
-            "--features",
             "repositories,migration",
-            "--test",
-            "mysql_real_protocol",
-            "--jobs",
-            "4",
-            "--",
-            "--nocapture",
-        ]
-    );
-    assert_eq!(
-        integration_test_args_for_target(
-            "ryframe-adapters",
-            "redis_real_protocol",
-            Some("redis-api"),
-            "target/ci/backend",
-            4,
         ),
+        ("ryframe-adapters", "redis_real_protocol", "redis-api"),
+        ("ryframe-generator", "mysql_schema_import", "schema-import"),
+        (
+            "ryframe",
+            "business_initialization_mysql",
+            "bin-api,bin-migrate",
+        ),
+    ]
+    .into_iter()
+    .map(|(package, target, features)| {
         [
             "test",
             "--locked",
@@ -386,17 +374,21 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "--target-dir",
             "target/ci/backend",
             "-p",
-            "ryframe-adapters",
+            package,
             "--features",
-            "redis-api",
+            features,
             "--test",
-            "redis_real_protocol",
+            target,
             "--jobs",
             "4",
             "--",
             "--nocapture",
         ]
-    );
+        .map(str::to_owned)
+        .to_vec()
+    })
+    .collect();
+    assert_eq!(planned, expected);
     assert_eq!(
         crate::ci::tls::test_command(&crate::ci::tls::TESTS[0], Path::new("target/ci/backend"), 4),
         [
