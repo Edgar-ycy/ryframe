@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Register the shared file-configuration tests only in the S3 HTTPS test entry, available with default features. Redis, OTLP and account recovery continue to use the same complete configuration support, retaining all configuration safety assertions and Unix/Windows link failure requirements. Remove the tautological Redis status-enum comparison while preserving the implementation and meaningful tests for unconfigured and unreachable states.
+
 - Fix complete initialization SQL assigning new permission and menu IDs by catalog position instead of matching migration initialization. Export and live initialization share the rule that allocates the next ID only for missing entries, preserving existing IDs, names, ordering, and relationships.
 
 - Fix maintenance build evidence verification depending on surviving Cargo cache files. Normalize the fixed target and original artifact paths through existing ancestors without links, preserving original event, log and frozen-copy checks after cache deletion or rebuilding. Absolute paths, workspace ownership, unique events and role constraints remain enforced; actual builds still require existing artifacts and publish no success receipt on failure.

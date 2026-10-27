@@ -11,13 +11,13 @@ use std::{
 #[path = "../../../../xtask/src/ci/integration_configuration/capture.rs"]
 mod capture;
 #[path = "../../../../xtask/src/ci/integration_configuration/files.rs"]
-mod files;
+pub(super) mod files;
 #[path = "../../../../xtask/src/ci/integration_configuration/owned.rs"]
 mod owned;
 
-use capture::Captured;
+pub(super) use capture::Captured;
 use files::diagnostic;
-use owned::OwnedConfiguration;
+pub(super) use owned::OwnedConfiguration;
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -47,8 +47,8 @@ pub fn enabled(role: &str) -> bool {
 pub struct Configuration {
     pub app: AppConfig,
     captured: Captured,
-    owned: Option<OwnedConfiguration>,
-    container: Option<tempfile::TempDir>,
+    pub(super) owned: Option<OwnedConfiguration>,
+    pub(super) container: Option<tempfile::TempDir>,
 }
 
 impl Configuration {
@@ -62,7 +62,7 @@ impl Configuration {
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn from_directory(
+    pub(super) fn from_directory(
         root: &Path,
         source: &Path,
         case: &str,
@@ -252,7 +252,3 @@ impl<T> Drop for ScopedClient<T> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "configuration_tests.rs"]
-mod tests;

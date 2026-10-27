@@ -1,4 +1,5 @@
-use super::*;
+use super::configuration::{Captured, Configuration, OwnedConfiguration, files};
+use std::{fs, path::Path};
 
 #[path = "../../../../xtask/src/ci/integration_configuration/test_fixture.rs"]
 mod fixture;
