@@ -434,7 +434,31 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
     );
 
     let build = output.join("build.json");
-    let frozen = snapshot(&output);
+    assert_maintenance_cache_independence(&fixture, &output, &receipt, &runner);
+    assert_eq!(
+        maintenance::verify_summary(&build),
+        json!({
+            "status": "maintenance_build_verified",
+            "receipt": build,
+            "resources_modified": false,
+            "restore_qualified": false,
+        })
+    );
+
+    let calls = runner.calls.get();
+    let error = maintenance::build_with(&fixture.root, &output, &runner).unwrap_err();
+    assert!(error.to_string().contains("已存在"), "{error}");
+    assert_eq!(runner.calls.get(), calls);
+}
+
+fn assert_maintenance_cache_independence(
+    fixture: &Fixture,
+    output: &Path,
+    receipt: &Value,
+    runner: &FakeRunner,
+) {
+    let build = output.join("build.json");
+    let frozen = snapshot(output);
     let cache = receipt["artifacts"]
         .as_object()
         .unwrap()
@@ -461,12 +485,12 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
             .collect::<Vec<_>>();
         let target_exists = target.exists();
         assert_eq!(
-            maintenance::verify_evidence(&fixture.root, &build, Some(&receipt)).unwrap(),
-            receipt
+            maintenance::verify_evidence(&fixture.root, &build, Some(receipt)).unwrap(),
+            *receipt
         );
         assert_eq!(
-            maintenance::verify_with(&fixture.root, &build, &runner).unwrap(),
-            receipt
+            maintenance::verify_with(&fixture.root, &build, runner).unwrap(),
+            *receipt
         );
         let python_receipt = python_json(
             &fixture.root,
@@ -485,8 +509,8 @@ print(json.dumps(verify_evidence(root, build), ensure_ascii=False))
 "#,
             &[&fixture.root, &build],
         );
-        assert_eq!(python_receipt, receipt);
-        assert_eq!(snapshot(&output), frozen);
+        assert_eq!(python_receipt, *receipt);
+        assert_eq!(snapshot(output), frozen);
         assert_eq!(
             cache
                 .iter()
@@ -497,20 +521,6 @@ print(json.dumps(verify_evidence(root, build), ensure_ascii=False))
         assert_eq!(target.exists(), target_exists);
         assert_eq!(runner.calls.get(), 3);
     }
-    assert_eq!(
-        maintenance::verify_summary(&build),
-        json!({
-            "status": "maintenance_build_verified",
-            "receipt": build,
-            "resources_modified": false,
-            "restore_qualified": false,
-        })
-    );
-
-    let calls = runner.calls.get();
-    let error = maintenance::build_with(&fixture.root, &output, &runner).unwrap_err();
-    assert!(error.to_string().contains("已存在"), "{error}");
-    assert_eq!(runner.calls.get(), calls);
 }
 
 #[test]
