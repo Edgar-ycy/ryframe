@@ -120,11 +120,13 @@ fn native_fixture_build_registers_dirty_source_four_artifacts_and_sidecar_config
             .as_array()
             .unwrap()
             .iter()
-            .all(|name| name
-                .as_str()
-                .is_some_and(|name| ["PATH", "CARGO_TARGET_DIR"]
-                    .iter()
-                    .any(|allowed| name.eq_ignore_ascii_case(allowed))))
+            .all(|name| name.as_str().is_some_and(|name| [
+                "PATH",
+                "CARGO_TARGET_DIR",
+                "CARGO_BUILD_JOBS"
+            ]
+            .iter()
+            .any(|allowed| name.eq_ignore_ascii_case(allowed))))
     );
     bridge::verify_build(
         &inputs.root,
@@ -195,7 +197,8 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
         ("PATH", "system-path"),
         ("CARGO_TARGET_DIR", "D:/shared-target"),
         ("CARGO_HOME", "unapproved-cargo-home"),
-        ("CARGO_BUILD_JOBS", "99"),
+        ("CARGO_BUILD_TARGET", "unapproved-target"),
+        ("CARGO_BUILD_JOBS", "1"),
         ("APP_ENV", "prod"),
         ("APP_SECRET", "SyntheticSecret"),
         ("HTTP_PROXY", "http://synthetic.invalid"),
@@ -207,6 +210,7 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
     let expected: std::collections::BTreeMap<String, String> = [
         ("PATH", "system-path"),
         ("CARGO_TARGET_DIR", "D:/shared-target"),
+        ("CARGO_BUILD_JOBS", "1"),
         ("APP_ENV", "test"),
         ("TEMP", "bound-temp"),
         ("TMP", "bound-tmp"),
@@ -227,6 +231,26 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
             .unwrap()
             .contains(&json!("CARGO_TARGET_DIR"))
     );
+    assert_eq!(recorded["jobs"], "1");
+    assert!(
+        recorded["environment"]["variables"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("CARGO_BUILD_JOBS"))
+    );
+    let mut changed = actual.clone();
+    changed.insert("CARGO_BUILD_JOBS".into(), "2".into());
+    let other = bridge::build_context::from_inputs(
+        "cargo synthetic",
+        "rustc synthetic\nhost: synthetic-target",
+        &changed,
+    )
+    .unwrap();
+    assert_eq!(other["jobs"], "2");
+    assert_ne!(
+        recorded["environment"]["sha256"],
+        other["environment"]["sha256"]
+    );
     let mut changed = actual;
     changed.insert("CARGO_TARGET_DIR".into(), "D:/other-target".into());
     let other = bridge::build_context::from_inputs(
@@ -241,4 +265,16 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
     );
     let absent = environment::configured(&private, []).unwrap();
     assert!(!absent.contains_key("CARGO_TARGET_DIR"));
+    assert!(!absent.contains_key("CARGO_BUILD_JOBS"));
+    let default = bridge::build_context::from_inputs(
+        "cargo synthetic",
+        "rustc synthetic\nhost: synthetic-target",
+        &absent,
+    )
+    .unwrap();
+    assert_eq!(default["jobs"], "cargo-default");
+    for invalid in ["", "0", "000", "-1", "+1", "1.5", "one", " 1 "] {
+        let inherited = [("CARGO_BUILD_JOBS".into(), invalid.into())];
+        assert!(environment::configured(&private, inherited).is_err());
+    }
 }

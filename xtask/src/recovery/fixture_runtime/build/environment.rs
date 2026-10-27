@@ -1,4 +1,4 @@
-//! 构建继承系统运行环境、Cargo 目标目录和 prepared 已冻结的三个值。
+//! 构建继承系统运行环境、Cargo 目标目录与正整数并发数、prepared 已冻结的三个值。
 use super::super::{model::*, plan, runtime};
 use crate::Result;
 use serde_json::Value;
@@ -69,10 +69,27 @@ pub(super) fn configured(
     for (key, value) in inherited {
         let key = key.to_str().ok_or("系统环境名称不是 Unicode")?;
         let upper = key.to_ascii_uppercase();
-        if !private.contains_key(&upper) && (system_name(&upper) || upper == "CARGO_TARGET_DIR") {
+        if !private.contains_key(&upper)
+            && (system_name(&upper)
+                || matches!(upper.as_str(), "CARGO_TARGET_DIR" | "CARGO_BUILD_JOBS"))
+        {
+            let value = value.to_str().ok_or("系统环境值不是 Unicode")?;
+            if upper == "CARGO_BUILD_JOBS" {
+                // Inputs 在创建输出目录前装配；非法并发数不能进入 Cargo 或留下构建输出。
+                check(
+                    !value.is_empty()
+                        && value.bytes().all(|byte| byte.is_ascii_digit())
+                        && value.bytes().any(|byte| byte != b'0'),
+                    "CARGO_BUILD_JOBS 必须是正整数；删除该工具环境值以使用 Cargo 默认并发",
+                )?;
+            }
             values.insert(
-                key.to_owned(),
-                value.to_str().ok_or("系统环境值不是 Unicode")?.to_owned(),
+                if upper == "CARGO_BUILD_JOBS" {
+                    upper
+                } else {
+                    key.to_owned()
+                },
+                value.to_owned(),
             );
         }
     }
