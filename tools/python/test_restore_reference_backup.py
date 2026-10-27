@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_reference as reference
 import restore_reference_backup as backup
+from restore_reference_plan import _native as reference_native
 from restore_reference_fixture import environment, inventory
 
 
@@ -51,8 +52,13 @@ class BackupBindingTests(unittest.TestCase):
         reference.write_json(path, value, new=False)
         return path
 
+    def native_source(self, operation, arguments):
+        if operation == "comparison-source-export":
+            return self.identity
+        return reference_native(operation, arguments)
+
     def verify(self):
-        with patch.object(backup, "_source_export", return_value=self.identity), \
+        with patch.object(backup, "_native", side_effect=self.native_source), \
                 patch.object(backup, "published_source", return_value=self.source), \
                 patch.object(backup, "verify_source_export", return_value=self.exported):
             return backup.backup_source(self.backend, self.plan, self.inventory,
@@ -67,7 +73,7 @@ class BackupBindingTests(unittest.TestCase):
         def mutate(*_args):
             self.write("source-export-result.json", {"changed": True})
             return self.exported
-        with patch.object(backup, "_source_export", return_value=self.identity), \
+        with patch.object(backup, "_native", side_effect=self.native_source), \
                 patch.object(backup, "published_source", return_value=self.source), \
                 patch.object(backup, "verify_source_export", side_effect=mutate), self.assertRaises(ValueError):
             backup.backup_source(self.backend, self.plan, self.inventory, self.generation_path, self.export_path)
@@ -107,7 +113,12 @@ class BackupBindingTests(unittest.TestCase):
 
     def test_unpublished_export_is_rejected_before_external_backup_or_output(self):
         tools = Mock()
-        with patch.object(backup, "_source_export", side_effect=ValueError("未发布")), \
+
+        def reject_unpublished(operation, _arguments):
+            self.assertEqual(operation, "comparison-source-export")
+            raise ValueError("未发布")
+
+        with patch.object(backup, "_native", side_effect=reject_unpublished), \
                 self.assertRaisesRegex(ValueError, "未发布"):
             reference.backup(self.plan, tools, self.work, self.inventory, self.backend,
                              self.generation_path, self.export_path)

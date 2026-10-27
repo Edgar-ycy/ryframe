@@ -87,40 +87,24 @@ class RestoreBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "精确干净"):
                 build.registered_source(self.root, self.root, SOURCE["head"])
 
-    def test_registered_b0_adapter_is_bound_to_embedded_patch_and_unchanged_product_domains(self):
-        import restore_comparison_source as comparison
-
-        adapter = SOURCE | {"head": comparison.B0_ADAPTER_COMMIT}
-        product = SOURCE | {"head": comparison.B0_BACKEND_COMMIT}
-        self.source.side_effect = [adapter, product]
-        with patch.object(build, "repository", side_effect=lambda path, _label: path), patch.object(
-            comparison,
-            "b0_adapter_evidence",
-            return_value={"contract": "legacy-stable-readiness-b0-v1"},
-        ) as evidence:
-            source, inventory, bound_product = build.registered_source(
-                self.root,
-                self.root,
-                comparison.B0_ADAPTER_COMMIT,
-                adapter_contract="legacy-stable-readiness-b0-v1",
-                product_backend=self.local,
-            )
-        self.assertEqual(source, self.root)
-        self.assertEqual(inventory["source"]["snapshot"], adapter)
-        self.assertEqual(bound_product[1]["source"]["snapshot"], product)
-        evidence.assert_called_once_with(self.root, reconstruct=True)
-
-    def test_registered_b0_preview_uses_readonly_evidence_without_rebuilding_git_tree(self):
-        import restore_comparison_source as comparison
-
-        adapter = SOURCE | {"head": comparison.B0_ADAPTER_COMMIT}
-        product = SOURCE | {"head": comparison.B0_BACKEND_COMMIT}
-        self.source.side_effect = [adapter, product]
+    def test_b0_preview_cannot_authorize_git_reconstruction_and_preserves_inventory_guard(self):
+        inventory = build.capture_inventory(self.root)
+        bound = {"product": str(self.local), "inventory": inventory, "execution_inventory": inventory}
         with patch.object(build, "repository", side_effect=lambda path, _label: path), \
-                patch.object(comparison, "b0_adapter_evidence", return_value={"contract": "legacy-stable-readiness-b0-v1"}) as evidence:
-            build.registered_source(self.root, self.root, comparison.B0_ADAPTER_COMMIT,
-                                    adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.local, reconstruct=False)
-        evidence.assert_called_once_with(self.root, reconstruct=False)
+                patch("restore_reference_plan._native", return_value=bound) as native:
+            for reconstruct in (False, True):
+                source, observed, product = build.registered_source(
+                    self.root, self.root, SOURCE["head"],
+                    adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.local,
+                    reconstruct=reconstruct)
+                self.assertEqual((source, observed, product), (self.root, inventory, (self.local, inventory)))
+                self.assertEqual(native.call_args.args[0], "comparison-build-source")
+                self.assertIs(native.call_args.kwargs["write"], reconstruct)
+                self.assertIs(native.call_args.args[1]["reconstruct"], reconstruct)
+            bound["execution_inventory"] = {"changed": True}
+            with self.assertRaisesRegex(ValueError, "执行源码发生变化"):
+                build.registered_source(self.root, self.root, SOURCE["head"],
+                    adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.local, reconstruct=False)
 
     def test_wrong_workspace_or_duplicate_cargo_events_cannot_register_artifact(self):
         output = self.cargo_run(["--bin", "ryframe"], cwd=self.root, check=True).stdout

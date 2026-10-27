@@ -10,6 +10,8 @@ use crate::Result;
 pub(crate) mod binding;
 #[path = "runtime/cache.rs"]
 mod cache;
+#[path = "evidence/comparison/mod.rs"]
+pub(crate) mod comparison;
 #[path = "runtime/control.rs"]
 pub(crate) mod control;
 #[path = "runtime/environment.rs"]
@@ -88,7 +90,15 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 
 fn execute(bytes: &[u8]) -> Result<Value> {
     let request = parse_request(bytes)?;
-    let writes = if request["operation"] == "runtime-generation" {
+    let writes = if request["operation"]
+        .as_str()
+        .is_some_and(|v| v.starts_with("comparison-"))
+    {
+        comparison::writes(
+            request["operation"].as_str().ok_or("比较操作无效")?,
+            &request["arguments"],
+        )?
+    } else if request["operation"] == "runtime-generation" {
         crate::recovery::runtime::generation::writes(&request["arguments"])
     } else {
         matches!(
@@ -111,6 +121,11 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some(
+            operation @ ("comparison-verify"
+            | "comparison-build-source"
+            | "comparison-source-export"),
+        ) => comparison::request(operation, args),
         Some("recorded-process-stopped") => recorded_process_stopped(args),
         Some("historical-storage-restart-failure") => running::history::restart_request(args),
         Some("source-runtime-stopped") => stopped::request(args),

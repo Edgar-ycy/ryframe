@@ -61,7 +61,7 @@ def setup(test):
                   "arm_input": test.work / "arm-input.json", "fresh_target_verify": test.work / "observe/verify.json",
                   "product_plan": test.work / "product.json"}
     patches = [patch.object(target, "backup_source", side_effect=lambda *_: copy.deepcopy(test.source_inputs)),
-               patch.object(target, "verify_comparison_sources", side_effect=lambda _root, value, **_kwargs: value),
+               patch.object(target, "_native", side_effect=lambda _operation, args, **_kwargs: args["value"]),
                patch.object(target, "verify_published_arm_input", side_effect=lambda *_: copy.deepcopy(test.arm)),
                patch.object(target, "request_binding", side_effect=lambda *_: ({}, copy.deepcopy(test.selected))),
                patch.object(target, "execution_backend", side_effect=lambda *_: (test.backend, copy.deepcopy(test.maintenance_binding)))]

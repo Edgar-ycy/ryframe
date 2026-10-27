@@ -254,7 +254,7 @@ fn runtime_private_protocol_is_exact_and_contains_no_forwarded_argv() {
 }
 
 #[test]
-fn parses_source_operations_and_emits_the_fixed_private_protocol() {
+fn parses_source_operations_and_validates_native_paths() {
     let fixture = Fixture::new();
     let mut verify = strings(&["check", "recovery", "source", "verify"]);
     let source_output = fixture
@@ -271,16 +271,7 @@ fn parses_source_operations_and_emits_the_fixed_private_protocol() {
     else {
         panic!("source verify 没有解析为结构化请求")
     };
-    let invocation = source::private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "tools/python/restore_source.py");
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["kind"], "ryframe-xtask-restore-source");
-    assert_eq!(
-        protocol["native_tool"],
-        crate::check::python_suite::native_tool_binding().unwrap()
-    );
-    assert_eq!(protocol["operation"], "verify");
-    assert_eq!(protocol["write"], true);
+    source::validate_command(&command, &root_dir()).unwrap();
 
     fs::create_dir_all(source_output.parent().unwrap()).unwrap();
     let mut recover = strings(&["check", "recovery", "source", "verify-recover"]);
@@ -296,10 +287,7 @@ fn parses_source_operations_and_emits_the_fixed_private_protocol() {
     else {
         panic!("source verify-recover 没有解析为结构化请求")
     };
-    let invocation = source::private_invocation_at(&command, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["operation"], "verify-recover");
-    assert_eq!(protocol["write"], true);
+    source::validate_command(&command, &root_dir()).unwrap();
 
     let comparison = comparison_arguments(&fixture);
     assert!(matches!(

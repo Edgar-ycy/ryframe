@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Unify comparison-source capture, verification and build/backup/target consumers in Rust, removing the dedicated Python comparison algorithm and old private branch. Preserve fixed B0 objects and patch, complete sources and the shared published export, avoid Git reconstruction during readonly verification, and reject baseline replacement refs and Git environment redirection.
+
 - Freeze independent executable copies immediately during native four-role builds, verify source and copy digests, and preserve executable permissions; historical receipts no longer depend on mutable shared Cargo paths, and partial failures retain their scene without replay.
 
 - Add independent execution-source publication for business fixtures, binding the original generated differences and candidate contract file into clean backend/frontend repositories while preserving original evidence and refusing overwrite after failure.

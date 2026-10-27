@@ -1,25 +1,12 @@
 use std::path::Path;
 
-use serde_json::{Map, Value, json};
-
 use crate::{
     Result,
     cli::{SOURCE_USAGE, SourceCommand, SourceComparisonCaptureOptions, is_source_runtime_output},
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
-    process::{protocol_stdin, run_with_stdin},
 };
-
-const SCRIPT: &str = "tools/python/restore_source.py";
-const MAX_PROTOCOL_BYTES: usize = 16 * 1024;
-
 #[path = "source/evidence.rs"]
 pub(crate) mod evidence;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PrivateSourceInvocation {
-    pub(crate) script: &'static str,
-    pub(crate) protocol: String,
-}
 
 pub(super) fn run(command: &SourceCommand, root: &Path) -> Result<()> {
     if let SourceCommand::Help(operation) = command {
@@ -30,106 +17,26 @@ pub(super) fn run(command: &SourceCommand, root: &Path) -> Result<()> {
         }
         return Ok(());
     }
-    let native = match command {
-        SourceCommand::Verify(options) => Some((options, false)),
-        SourceCommand::VerifyRecover(options) => Some((options, true)),
-        _ => None,
-    };
-    if let Some((options, recover)) = native {
-        validate_command(command, root)?;
-        let value =
-            evidence::execution::run(root, &options.source_generation, &options.output, recover)?;
-        println!("{}", serde_json::to_string(&value)?);
-        return Ok(());
-    }
-    let invocation = private_invocation_at(command, root)?;
-    run_with_stdin(
-        root,
-        "python",
-        &["-E", "-B", invocation.script, "--private-stdin"],
-        protocol_stdin(Some(invocation.protocol.as_bytes()))?,
-    )
-}
-
-pub(crate) fn private_invocation_at(
-    command: &SourceCommand,
-    root: &Path,
-) -> Result<PrivateSourceInvocation> {
-    if matches!(command, SourceCommand::Help(_)) {
-        return Err("source 帮助不启动私有阶段程序".into());
-    }
     validate_command(command, root)?;
-    let operation = command.operation().ok_or("source 命令缺少明确操作")?;
-    let mut protocol = base_protocol(operation.as_str(), root, command.writes())?;
-    match command {
+    let value = match command {
         SourceCommand::Verify(options) => {
-            insert_path(
-                &mut protocol,
-                "source_generation",
-                &options.source_generation,
-            )?;
-            insert_path(&mut protocol, "output", &options.output)?;
+            evidence::execution::run(root, &options.source_generation, &options.output, false)?
         }
         SourceCommand::VerifyRecover(options) => {
-            insert_path(
-                &mut protocol,
-                "source_generation",
-                &options.source_generation,
-            )?;
-            insert_path(&mut protocol, "output", &options.output)?;
+            evidence::execution::run(root, &options.source_generation, &options.output, true)?
         }
-        SourceCommand::ComparisonCapture(options) => capture_protocol(&mut protocol, options)?,
+        SourceCommand::ComparisonCapture(options) => {
+            evidence::comparison::run_capture(root, options)?
+        }
         SourceCommand::ComparisonVerify { receipt } => {
-            insert_path(&mut protocol, "receipt", receipt)?;
+            evidence::comparison::run_verify(root, receipt)?
         }
-        SourceCommand::Help(_) => unreachable!("帮助已在前面拒绝"),
-    }
-    Ok(PrivateSourceInvocation {
-        script: SCRIPT,
-        protocol: serialize(protocol)?,
-    })
-}
-
-fn base_protocol(operation: &str, root: &Path, write: bool) -> Result<Map<String, Value>> {
-    let Value::Object(value) = json!({
-        "backend_dir": path_text(root, "后端目录")?,
-        "format_version": 1,
-        "kind": "ryframe-xtask-restore-source",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
-        "operation": operation,
-        "write": write,
-    }) else {
-        unreachable!("固定 JSON 对象")
+        SourceCommand::Help(_) => unreachable!("帮助已处理"),
     };
-    Ok(value)
-}
-
-fn capture_protocol(
-    protocol: &mut Map<String, Value>,
-    options: &SourceComparisonCaptureOptions,
-) -> Result<()> {
-    for (name, path) in [
-        ("b0_backend", options.b0_backend.as_path()),
-        ("b0_adapter_backend", options.b0_adapter_backend.as_path()),
-        ("b0_frontend", options.b0_frontend.as_path()),
-        ("b0_backend_build", options.b0_backend_build.as_path()),
-        ("b0_frontend_build", options.b0_frontend_build.as_path()),
-        ("b1_backend", options.b1_backend.as_path()),
-        ("b1_frontend", options.b1_frontend.as_path()),
-        ("b1_backend_build", options.b1_backend_build.as_path()),
-        ("b1_frontend_build", options.b1_frontend_build.as_path()),
-        (
-            "source_export_result",
-            options.source_export_result.as_path(),
-        ),
-        ("output", options.output.as_path()),
-    ] {
-        insert_path(protocol, name, path)?;
-    }
+    println!("{}", serde_json::to_string(&value)?);
     Ok(())
 }
-
-fn validate_command(command: &SourceCommand, root: &Path) -> Result<()> {
+pub(crate) fn validate_command(command: &SourceCommand, root: &Path) -> Result<()> {
     match command {
         SourceCommand::Verify(options) => {
             local(
@@ -233,23 +140,4 @@ fn external(path: &Path, kind: LocalTestPathKind) -> Result<()> {
     validate_absolute_path(path, kind)
         .map(|_| ())
         .map_err(Into::into)
-}
-
-fn insert_path(protocol: &mut Map<String, Value>, name: &str, path: &Path) -> Result<()> {
-    protocol.insert(name.to_owned(), json!(path_text(path, name)?));
-    Ok(())
-}
-
-fn path_text<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
-    path.to_str()
-        .ok_or_else(|| format!("{label} 必须能表示为 UTF-8").into())
-}
-
-fn serialize(protocol: Map<String, Value>) -> Result<String> {
-    let value = serde_json::to_string(&Value::Object(protocol))?;
-    if value.len() > MAX_PROTOCOL_BYTES || value.contains(['\n', '\r', '\0']) {
-        Err("source 私有协议过长或包含换行符、NUL".into())
-    } else {
-        Ok(value)
-    }
 }

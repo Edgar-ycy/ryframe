@@ -108,3 +108,21 @@ fn inferred_and_explicit_full_inventory_accept_real_clean_source_and_reject_mism
     write_receipt(root, &wrong_head, &inventory);
     assert!(validate(root, None, None).is_err());
 }
+
+#[test]
+fn held_proof_rejects_private_tool_and_dist_drift_after_successful_validation() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let tools = root.join(".local-tests/frontend-tools.json");
+    fs::write(&tools, "{}").unwrap();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    write_receipt(root, head, &inventory);
+    let proof = validate(root, Some(&inventory), Some(head)).unwrap();
+    fs::write(&tools, "{}\n").unwrap();
+    assert!(proof.verify().is_err());
+    fs::write(&tools, "{}").unwrap();
+    let proof = validate(root, Some(&inventory), Some(head)).unwrap();
+    fs::write(root.join("dist/index.html"), "changed asset").unwrap();
+    assert!(proof.verify().is_err());
+}

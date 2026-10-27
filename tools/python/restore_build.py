@@ -84,27 +84,16 @@ def registered_source(
     if adapter_contract != "legacy-stable-readiness-b0-v1" or product_backend is None:
         raise ValueError("未知或不完整的 B0 构建适配声明")
 
-    # 延迟导入避免 comparison 模块与本模块的构建收据核验形成导入环。
-    from restore_comparison_source import (
-        B0_ADAPTER_COMMIT,
-        B0_BACKEND_COMMIT,
-        b0_adapter_evidence,
-    )
+    from restore_reference_plan import _native
 
-    coordinator = repository(coordinator, "构建协调后端")
-    product = repository(product_backend, "B0 后端产品来源")
-    product_inventory = capture_inventory(product)
-    product_snapshot = product_inventory["source"]["snapshot"]
-    if (expected_head != B0_ADAPTER_COMMIT or snapshot["head"] != B0_ADAPTER_COMMIT
-            or product_snapshot["head"] != B0_BACKEND_COMMIT or not product_snapshot["clean"]):
-        raise ValueError("B0 构建来源与登记的产品或适配提交不匹配")
-    evidence = b0_adapter_evidence(coordinator, reconstruct=reconstruct)
-    if evidence["contract"] != adapter_contract:
-        raise ValueError("B0 内嵌适配证据与构建声明不匹配")
-    product_domains = build_source_domains(product_inventory, "backend")["product"]
-    if build_source_domains(inventory, "backend")["product"] != product_domains:
-        raise ValueError("B0 工具适配改变了 API 或 Worker 产品输入")
-    return source, inventory, (product, product_inventory)
+    bound = _native("comparison-build-source", {
+        "backend": str(coordinator), "source_backend": str(source),
+        "expected_head": expected_head, "adapter_contract": adapter_contract,
+        "product_backend": str(product_backend), "reconstruct": reconstruct,
+    }, write=reconstruct)
+    if bound["execution_inventory"] != inventory:
+        raise ValueError("核验 B0 构建来源期间执行源码发生变化")
+    return source, inventory, (Path(bound["product"]), bound["inventory"])
 
 
 def build_environment(environment: dict[str, str] | None = None) -> dict:

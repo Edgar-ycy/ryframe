@@ -1,4 +1,4 @@
-"""验证同代来源与严格比较来源；正式来源运行由唯一 generation 入口控制。"""
+"""验证同代来源；正式来源运行由唯一 generation 入口控制。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,72 +7,17 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from restore_build import validate_new_output, write_new
-from restore_comparison_source import capture_comparison_sources, verify_comparison_sources
-from restore_runtime_evidence import read_json_document
 from restore_source_runtime import execute_source_verification, execute_source_verification_recovery
-
-
-def _comparison_result_binding(path: Path) -> tuple[dict, object]:
-    document = read_json_document(path)
-    return {
-        "path": str(document.path),
-        "bytes": len(document.raw),
-        "sha256": document.sha256,
-    }, document
-
-
-def _capture_comparison(args, backend: Path) -> dict:
-    output = validate_new_output(args.output, backend)
-    export, document = _comparison_result_binding(args.source_export_result)
-    result = capture_comparison_sources(
-        backend,
-        b0_backend=args.b0_backend,
-        b0_adapter_backend=args.b0_adapter_backend,
-        b0_frontend=args.b0_frontend,
-        b0_backend_build=args.b0_backend_build,
-        b0_frontend_build=args.b0_frontend_build,
-        b1_backend=args.b1_backend,
-        b1_frontend=args.b1_frontend,
-        b1_backend_build=args.b1_backend_build,
-        b1_frontend_build=args.b1_frontend_build,
-        source_export_result=export,
-    )
-    document.assert_unchanged()
-    write_new(output, result, backend)
-    return {
-        "output": str(output),
-        "status": "comparison_sources_captured",
-        "restore_success": False,
-    }
-
-
-def _verify_comparison(args, backend: Path) -> dict:
-    document = read_json_document(args.receipt)
-    result = verify_comparison_sources(backend, document.value)
-    document.assert_unchanged()
-    return {
-        "receipt": str(document.path),
-        "status": "comparison_sources_verified",
-        "source_export_identity_sha256": result["source_export"]["identity_sha256"],
-        "restore_success": False,
-    }
 
 
 PROTOCOL_KIND = "ryframe-xtask-restore-source"
 PROTOCOL_MAX_BYTES = 16 * 1024
-OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture", "comparison-verify"})
-WRITING_OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture"})
+OPERATIONS = frozenset({"verify", "verify-recover"})
+WRITING_OPERATIONS = frozenset({"verify", "verify-recover"})
 BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write", "native_tool"}
 OPERATION_FIELDS = {
     "verify": {"source_generation", "output"},
     "verify-recover": {"source_generation", "output"},
-    "comparison-capture": {
-        "b0_backend", "b0_adapter_backend", "b0_frontend", "b0_backend_build",
-        "b0_frontend_build", "b1_backend", "b1_frontend", "b1_backend_build",
-        "b1_frontend_build", "source_export_result", "output",
-    },
-    "comparison-verify": {"receipt"},
 }
 
 
@@ -185,10 +130,6 @@ def execute(request: SourceRequest) -> dict:
         raise SourceProtocolError("恢复来源原生工具绑定无效") from failure
     args = request.namespace()
     backend = args.backend_dir.resolve()
-    if args.command == "comparison-capture":
-        return _capture_comparison(args, backend)
-    if args.command == "comparison-verify":
-        return _verify_comparison(args, backend)
     if args.command == "verify-recover":
         return execute_source_verification_recovery(
             backend, args.source_generation, args.output

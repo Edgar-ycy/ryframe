@@ -60,26 +60,3 @@ pub(crate) enum SourceCommand {
     ComparisonCapture(Box<SourceComparisonCaptureOptions>),
     ComparisonVerify { receipt: PathBuf },
 }
-
-impl SourceCommand {
-    pub(crate) const fn operation(&self) -> Option<SourceOperation> {
-        match self {
-            Self::Help(operation) => *operation,
-            Self::Verify(_) => Some(SourceOperation::Verify),
-            Self::VerifyRecover(_) => Some(SourceOperation::VerifyRecover),
-            Self::ComparisonCapture(_) => Some(SourceOperation::ComparisonCapture),
-            Self::ComparisonVerify { .. } => Some(SourceOperation::ComparisonVerify),
-        }
-    }
-
-    pub(crate) const fn writes(&self) -> bool {
-        matches!(
-            Self::operation(self),
-            Some(
-                SourceOperation::Verify
-                    | SourceOperation::VerifyRecover
-                    | SourceOperation::ComparisonCapture
-            )
-        )
-    }
-}

@@ -103,20 +103,6 @@ def source_protocol(operation: str) -> dict:
             "source_generation": str(ROOT / ".local-tests/start.json"),
             "output": str(ROOT / ".local-tests/source-runtime.json"),
         },
-        "comparison-capture": {
-            "b0_backend": root,
-            "b0_adapter_backend": root,
-            "b0_frontend": root,
-            "b0_backend_build": str(ROOT / ".local-tests/b0-build.json"),
-            "b0_frontend_build": str(ROOT / "dist/.vite/restore-build.json"),
-            "b1_backend": root,
-            "b1_frontend": root,
-            "b1_backend_build": str(ROOT / ".local-tests/b1-build.json"),
-            "b1_frontend_build": str(ROOT / "dist/.vite/restore-build.json"),
-            "source_export_result": str(ROOT / ".local-tests/source-export.json"),
-            "output": str(ROOT / ".local-tests/comparison.json"),
-        },
-        "comparison-verify": {"receipt": str(ROOT / ".local-tests/comparison.json")},
     }
     return {**common, **fields[operation]}
 
@@ -154,14 +140,14 @@ class RestorePrivateProtocolTests(unittest.TestCase):
     def test_protocols_reject_duplicates_unknown_fields_and_wrong_write(self):
         for module, payload in (
             (restore_runtime, runtime_protocol("status")),
-            (restore_source, source_protocol("comparison-verify")),
+            (restore_source, source_protocol("verify")),
         ):
             with self.subTest(module=module.__name__, case="unknown"):
                 invalid = {**payload, "unknown": "value"}
                 with self.assertRaises(ValueError):
                     self.decode(module, json.dumps(invalid))
             with self.subTest(module=module.__name__, case="write"):
-                invalid = {**payload, "write": True}
+                invalid = {**payload, "write": not payload["write"]}
                 with self.assertRaises(ValueError):
                     self.decode(module, json.dumps(invalid))
             with self.subTest(module=module.__name__, case="duplicate"):
@@ -198,7 +184,7 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 restore_source.decode_request(json.dumps({**payload, **changes}))
 
     def test_source_stdin_ignores_retired_environment_before_dispatch(self):
-        payload = source_protocol("comparison-verify")
+        payload = source_protocol("verify")
         retired = {
             "RYFRAME_RESTORE_SOURCE_PROTOCOL": "invalid inherited source",
             "RYFRAME_RESTORE_SOURCE_UNKNOWN": "invalid inherited field",
@@ -212,15 +198,15 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 patch("builtins.print"):
             restore_source.main()
             execute.assert_called_once()
-            self.assertEqual(execute.call_args.args[0].operation, "comparison-verify")
+            self.assertEqual(execute.call_args.args[0].operation, "verify")
             self.assertEqual({key: os.environ[key] for key in retired}, retired)
 
     def test_source_transport_limits_bytes_and_requires_exact_marker(self):
-        raw = json.dumps(source_protocol("comparison-verify")).encode("utf-8")
+        raw = json.dumps(source_protocol("verify")).encode("utf-8")
         exact = io.BytesIO(raw + b" " * (restore_source.PROTOCOL_MAX_BYTES - len(raw)))
         self.assertEqual(restore_source.private_protocol_request(
             ["--private-stdin"], exact
-        ).operation, "comparison-verify")
+        ).operation, "verify")
         oversized = io.BytesIO(b"x" * (restore_source.PROTOCOL_MAX_BYTES * 2))
         with self.assertRaises(restore_source.SourceProtocolError):
             restore_source.private_protocol_request(["--private-stdin"], oversized)
@@ -233,18 +219,18 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             self.assertEqual(stream.tell(), 0)
 
     def test_source_rejects_invalid_requests_before_dispatch_without_file_changes(self):
-        valid = source_protocol("comparison-verify")
+        valid = source_protocol("verify")
         invalid = [b"", b"\xff", b"\xef\xbb\xbf{}", b"[]", b"null", b"{", b"{}",
                    json.dumps(valid).encode() + b"\n",
                    (json.dumps(valid)[:-1] + ',"operation":"verify"}').encode()]
         for changes in ({"format_version": True}, {"format_version": 2}, {"kind": "other"},
-                        {"operation": "unknown"}, {"write": 1}, {"write": True},
-                        {"receipt": "relative"}, {"receipt": ""}, {"receipt": str(ROOT) + "\0"},
-                        {"receipt": str(ROOT) + "\n"}, {"receipt": str(ROOT) + "\r"},
-                        {"receipt": float("nan")}, {"receipt": float("inf")},
-                        {"receipt": -float("inf")}, {"unknown": "value"}):
+                        {"operation": "unknown"}, {"write": 1}, {"write": False},
+                        {"source_generation": "relative"}, {"source_generation": ""}, {"source_generation": str(ROOT) + "\0"},
+                        {"source_generation": str(ROOT) + "\n"}, {"source_generation": str(ROOT) + "\r"},
+                        {"source_generation": float("nan")}, {"source_generation": float("inf")},
+                        {"source_generation": -float("inf")}, {"unknown": "value"}):
             invalid.append(json.dumps({**valid, **changes}).encode("utf-8"))
-        invalid.append(json.dumps({**valid, "receipt": str(ROOT / ("界" * 6000))},
+        invalid.append(json.dumps({**valid, "source_generation": str(ROOT / ("界" * 6000))},
                                   ensure_ascii=False).encode("utf-8"))
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
             sentinel = Path(directory) / "unchanged.json"
@@ -274,7 +260,7 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 execute.assert_not_called()
 
     def test_source_script_rejects_bad_transport_even_with_valid_retired_environment(self):
-        raw = json.dumps(source_protocol("comparison-verify")).encode("utf-8")
+        raw = json.dumps(source_protocol("verify")).encode("utf-8")
         environment = private_environment()
         environment.update({
             "RYFRAME_RESTORE_SOURCE_PROTOCOL": raw.decode("utf-8"),
@@ -340,8 +326,8 @@ class RestorePrivateProtocolTests(unittest.TestCase):
         runtime["runtime_registration"] = str(
             ROOT / ".local-tests" / f"missing-runtime-{os.getpid()}.json"
         )
-        source = source_protocol("comparison-verify")
-        source["receipt"] = str(
+        source = source_protocol("verify")
+        source["source_generation"] = str(
             ROOT / ".local-tests" / f"missing-source-{os.getpid()}.json"
         )
         cases = (
@@ -402,8 +388,8 @@ runpy.run_path(sys.argv[0],run_name='__main__')
             evidence = root / "input.json"
             evidence.write_text("{}", encoding="utf-8")
             bad = {**registered, "sha256": "0" * 64}
-            source = source_protocol("comparison-verify")
-            source["receipt"] = str(evidence)
+            source = source_protocol("verify")
+            source["source_generation"] = str(evidence)
             runtime = {"format_version":1,"operation":"verify","backend_dir":str(ROOT),
                        "environment":str(evidence),"output":str(root),"write":False}
             monitoring = {"format_version":1,"kind":"monitoring-preflight","backend":str(ROOT),
