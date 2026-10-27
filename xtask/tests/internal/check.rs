@@ -23,7 +23,7 @@ use super::check::{
     parse_change_surface_policy, policy_tasks, resolve_frontend_dir, resolve_target_dir,
     resource_test_executable_from_messages, resource_workspace_control, reverse_dependency_closure,
     select_check_mode, validate_feature_combination, verify_job_budget_from,
-    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
+    verify_target_policy_from, worker_lib_test_args, workspace_clippy_args, workspace_test_args,
 };
 use super::cli::CheckScope;
 
@@ -70,6 +70,23 @@ fn feature_combination_rejects_duplicates_and_unknowns() {
 
 #[test]
 fn feature_matrix_compiles_and_tests_required_feature_targets() {
+    assert_eq!(
+        worker_lib_test_args("target/worker", 3),
+        [
+            "test",
+            "--locked",
+            "--target-dir",
+            "target/worker",
+            "-p",
+            "ryframe",
+            "--no-default-features",
+            "--features",
+            "bin-worker",
+            "--lib",
+            "--jobs",
+            "3",
+        ]
+    );
     let features = vec!["bin-reset".to_owned(), "bin-migrate".to_owned()];
     let check = feature_operation_args("check", "ryframe", &features, "target", 8);
     let clippy = feature_operation_args("clippy", "ryframe", &features, "target", 8);

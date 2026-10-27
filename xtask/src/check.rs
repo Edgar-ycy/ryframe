@@ -61,7 +61,7 @@ pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]
 pub(crate) use cargo_command::{
     WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
-    default_test_jobs_from, workspace_clippy_args, workspace_test_args,
+    default_test_jobs_from, worker_lib_test_args, workspace_clippy_args, workspace_test_args,
 };
 #[allow(unused_imports)]
 pub(crate) use change_surface::{

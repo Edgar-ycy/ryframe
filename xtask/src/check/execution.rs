@@ -1,5 +1,8 @@
 use super::{
-    cargo_command::{backend_package_operation_args, cargo_operation_jobs, default_test_jobs_from},
+    cargo_command::{
+        backend_package_operation_args, cargo_operation_jobs, default_test_jobs_from,
+        worker_lib_test_args,
+    },
     context::VerifyExecutionContext,
     feature::{load_feature_registry, run_feature_operations, run_feature_tests},
     metrics,
@@ -269,6 +272,7 @@ fn backend_packages(context: &VerifyExecutionContext, packages: &BTreeSet<String
     let root = &context.root;
     let registry = load_feature_registry(root)?;
     let compile_jobs = context.jobs.total;
+    let test_jobs = default_test_jobs_from(cfg!(windows), compile_jobs);
     for &operation in SMART_BACKEND_OPERATIONS {
         let jobs = cargo_operation_jobs(operation, cfg!(windows), compile_jobs);
         let args = backend_package_operation_args(
@@ -292,11 +296,13 @@ fn backend_packages(context: &VerifyExecutionContext, packages: &BTreeSet<String
             context.targets.backend.as_str(),
             compile_jobs,
         )?;
-        run_feature_tests(
+        run_feature_tests(root, entry, context.targets.backend.as_str(), test_jobs)?;
+    }
+    if packages.contains("ryframe") {
+        run_owned(
             root,
-            entry,
-            context.targets.backend.as_str(),
-            default_test_jobs_from(cfg!(windows), compile_jobs),
+            "cargo",
+            &worker_lib_test_args(context.targets.backend.as_str(), test_jobs),
         )?;
     }
     Ok(())
