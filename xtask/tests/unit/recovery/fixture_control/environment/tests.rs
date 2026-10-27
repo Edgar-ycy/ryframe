@@ -114,6 +114,23 @@ fn successor_allows_only_reviewed_tool_refresh_and_rejects_historical_or_resourc
     pending["ready_for_execution"] = json!(false);
     let current = ready(pending.clone());
     assert_eq!(request("preflight-binding", current.clone()).0, 0);
+    #[cfg(windows)]
+    {
+        let mut native = current.clone();
+        native["services"]["rustfs"]["process_receipt"] = json!(
+            std::path::Path::new(
+                native["services"]["rustfs"]["process_receipt"]
+                    .as_str()
+                    .unwrap()
+            )
+            .components()
+            .collect::<std::path::PathBuf>()
+        );
+        assert_eq!(request("preflight-binding", native).0, 0);
+    }
+    let mut foreign = current.clone();
+    foreign["services"]["rustfs"]["process_receipt"] = json!(root.join("foreign/process.json"));
+    assert_ne!(request("preflight-binding", foreign).0, 0);
     assert_eq!(
         request(
             "preflight-successor",

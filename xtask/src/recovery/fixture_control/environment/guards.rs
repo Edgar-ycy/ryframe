@@ -98,14 +98,14 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
         .as_str()
         .ok_or(message)?;
     let run = service_run(review)?;
+    let process = review["services"]["rustfs"]["process_receipt"]
+        .as_str()
+        .map(Path::new)
+        .ok_or(message)?;
     check(
         review["services"]["rustfs"]["scope_id"] == format!("services-{seed_scope}")
-            && review["services"]["rustfs"]["process_receipt"]
-                == run
-                    .join("rustfs")
-                    .join("process.json")
-                    .to_string_lossy()
-                    .as_ref(),
+            && process.is_absolute()
+            && process == run.join("rustfs").join("process.json"),
         message,
     )?;
     Ok(expected)
