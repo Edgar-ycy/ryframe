@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add independent execution-source publication for business fixtures, binding the original generated differences and candidate contract file into clean backend/frontend repositories while preserving original evidence and refusing overwrite after failure.
+
 - Normalize native paths in newly derived fixture reviews, retaining the original template, worktree, database credential and runtime targets while preventing valid Windows path spellings from failing later preparation.
 - Fix fixture tool preflight rejecting equivalent Windows spellings of the same service receipt path. Tool digests, scope and predecessor constraints remain enforced, and different paths are still rejected.
 - Resolve `generator.target_dir` from the execution backend in Rust for all three maintenance build roles and receipt readers, sharing an explicitly configured cache. Preserve the existing default when unset; reject invalid configuration and links before building, without environment overrides.

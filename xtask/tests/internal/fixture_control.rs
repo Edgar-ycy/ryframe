@@ -712,17 +712,34 @@ fn parses_successor_arm_request() {
 fn source_pair_publish_is_typed_and_native() {
     let fixture = Fixture::new();
     let output = fixture.path("source-pair.json");
-    let command = parse_control(command(
+    let parsed = parse_control(command(
         "source-pair",
         None,
         vec!["--output".to_owned(), text(&output), "--write".to_owned()],
     ))
     .unwrap();
     assert!(matches!(
-        command,
+        parsed,
         FixtureControlCommand::SourcePair(FixtureSourcePairCommand::Publish(_))
     ));
-    assert!(private_invocation_at(&command, &root_dir()).is_err());
+    assert!(private_invocation_at(&parsed, &root_dir()).is_err());
+    let mut args = command(
+        "source-pair",
+        Some("publish-execution"),
+        vec![
+            "--output-dir".to_owned(),
+            text(&fixture.path("execution-output")),
+            "--write".to_owned(),
+        ],
+    );
+    let parsed = parse_control(args.clone()).unwrap();
+    assert!(matches!(
+        parsed,
+        FixtureControlCommand::SourcePair(FixtureSourcePairCommand::PublishExecution { .. })
+    ));
+    assert!(private_invocation_at(&parsed, &root_dir()).is_err());
+    args.pop();
+    assert!(parse_control(args).is_err());
 }
 
 #[test]

@@ -19,6 +19,8 @@ mod source;
 #[path = "contract/transaction.rs"]
 mod transaction;
 
+pub(crate) use candidate::canonical_contract;
+
 #[allow(unused_imports)]
 pub(crate) use candidate::generate_api;
 

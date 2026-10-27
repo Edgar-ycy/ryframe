@@ -112,7 +112,7 @@ pub(crate) fn validate_candidate_contract(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
     validate_candidate_contract(bytes)?;
     let document: serde_json::Value = serde_json::from_slice(bytes)?;
     let mut canonical = serde_json::to_string_pretty(&document)?.into_bytes();
