@@ -1,4 +1,5 @@
 use super::*;
+use crate::migration::access_catalog::{NEXT_MENU_ID_SQL, NEXT_PERMISSION_ID_SQL};
 
 /// 生成空控制库的完整初始化脚本。调用方必须使用遇错即停的导入模式。
 pub fn mysql_initialization_sql(hashes: &crate::migration::BootstrapHashes) -> String {
@@ -96,31 +97,28 @@ fn append_snapshot_statement(snapshot: &mut String, statement: &str) {
 fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
     let permissions = access_permission_codes()?;
     let permission_names = access_permission_names()?;
-    let permission_rows = permissions
-        .iter()
-        .enumerate()
-        .map(|(index, code)| {
-            let name = permission_names
-                .get(code)
-                .map(String::as_str)
-                .unwrap_or(code.as_str());
-            format!(
-                "({}, 'system', {}, '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
-                10_000 + index,
-                seed_text(name),
-                code,
-                index
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let mut statements = vec![format!(
-        "INSERT INTO `sys_permission` \
-         (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) VALUES\n{permission_rows}\n\
-         ON DUPLICATE KEY UPDATE `name` = IF(`name` = `code`, VALUES(`name`), `name`)"
-    )];
+    let mut statements = Vec::new();
+    for (index, code) in permissions.iter().enumerate() {
+        let name = permission_names
+            .get(code)
+            .map(String::as_str)
+            .unwrap_or(code.as_str());
+        let name = seed_text(name);
+        let code = seed_text(code);
+        statements.push(format!(
+            "INSERT INTO `sys_permission` \
+             (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) \
+             SELECT `next_permission`.`next_id`, 'system', {name}, {code}, NULL, 'api', NULL, {index}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+             FROM ({NEXT_PERMISSION_ID_SQL}) AS `next_permission` \
+             WHERE NOT EXISTS (SELECT 1 FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = {code})"
+        ));
+        statements.push(format!(
+            "UPDATE `sys_permission` SET `name` = IF(`name` = `code`, {name}, `name`) \
+             WHERE `tenant_id` = 'system' AND `code` = {code}"
+        ));
+    }
 
-    for (index, menu) in access_menus()?.iter().enumerate() {
+    for menu in &access_menus()? {
         let permission_id = menu.permission.as_deref().map_or_else(
             || "NULL".to_owned(),
             |code| {
@@ -144,9 +142,9 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
         statements.push(format!(
             "INSERT INTO `sys_menu` \
              (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
-             SELECT {}, 'system', {}, {}, '{}', {}, '{}', {}, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+             SELECT `next_menu`.`next_id`, 'system', {}, {}, '{}', {}, '{}', {}, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+             FROM ({NEXT_MENU_ID_SQL}) AS `next_menu` \
              WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{}')",
-            20_000 + index,
             menu_name,
             parent_id,
             menu.menu_type,
