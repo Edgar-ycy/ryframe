@@ -6,6 +6,8 @@
 
 - Fix complete initialization SQL assigning new permission and menu IDs by catalog position instead of matching migration initialization. Export and live initialization share the rule that allocates the next ID only for missing entries, preserving existing IDs, names, ordering, and relationships.
 
+- Fix maintenance build evidence verification depending on surviving Cargo cache files. Normalize the fixed target and original artifact paths through existing ancestors without links, preserving original event, log and frozen-copy checks after cache deletion or rebuilding. Absolute paths, workspace ownership, unique events and role constraints remain enforced; actual builds still require existing artifacts and publish no success receipt on failure.
+
 - Explicitly check the fixed 80% backend Rust byte floor in CI planning, including non-Rust-only changes; keep frontend excluded and vendor separate without changing classification or local report defaults.
 
 - Build and verify ordinary recovery runtime API/Worker artifacts in Rust, registering only adjacent create-only owned copies. Frontend production receipts still use the formal external-build entry or strict reuse. Shared readers use the same native source, build-context and byte validation while retaining original v2 receipts and the fixed B0 adapter contract. Reuse the existing native origin-binding preparation for explicit targeted validation; reject missing or ambiguous write authorization. Remove the retired Python generation-request writer and argument entry, retaining historical readonly reconstruction and its independent drift protection.

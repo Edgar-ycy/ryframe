@@ -434,9 +434,74 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
     );
 
     let build = output.join("build.json");
-    let before = snapshot(&output);
-    let verified = maintenance::verify_with(&fixture.root, &build, &runner).unwrap();
-    assert_eq!(verified, receipt);
+    let frozen = snapshot(&output);
+    let cache = receipt["artifacts"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|item| PathBuf::from(item["cargo_executable"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    let target = Path::new(receipt["target_directory"].as_str().unwrap());
+    for phase in 0..3 {
+        if phase == 1 {
+            for path in &cache {
+                fs::remove_file(path).unwrap();
+            }
+            fs::remove_dir(cache[0].parent().unwrap()).unwrap();
+            fs::remove_dir(target).unwrap();
+        } else if phase == 2 {
+            fs::create_dir_all(cache[0].parent().unwrap()).unwrap();
+            for path in &cache {
+                fs::write(path, b"later unrelated cached build").unwrap();
+            }
+        }
+        let before = cache
+            .iter()
+            .map(|path| fs::read(path).ok())
+            .collect::<Vec<_>>();
+        let target_exists = target.exists();
+        assert_eq!(
+            maintenance::verify_evidence(&fixture.root, &build, Some(&receipt)).unwrap(),
+            receipt
+        );
+        assert_eq!(
+            maintenance::verify_with(&fixture.root, &build, &runner).unwrap(),
+            receipt
+        );
+        let python_receipt = python_json(
+            &fixture.root,
+            r#"
+import json
+import subprocess
+import sys
+from pathlib import Path
+from devex_clone_tools import TOOLS, target_directory, verify, verify_evidence
+root, build = Path(sys.argv[1]), Path(sys.argv[2])
+observed = json.loads(build.read_text(encoding="utf-8"))
+target = target_directory(root)
+assert observed["backend_root"] == str(root), (observed["backend_root"], str(root))
+assert observed["target_directory"] == str(target), (observed["target_directory"], str(target))
+assert set(observed["artifacts"]) == set(TOOLS), (set(observed["artifacts"]), set(TOOLS))
+def version(args, **kwargs):
+    assert args in (["rustc", "-Vv"], ["cargo", "-V"]), args
+    return subprocess.CompletedProcess(args, 0, stdout=observed["toolchain"][args[0]].encode(), stderr=b"")
+assert verify_evidence(root, build) == observed
+print(json.dumps(verify(root, build, version), ensure_ascii=False))
+"#,
+            &[&fixture.root, &build],
+        );
+        assert_eq!(python_receipt, receipt);
+        assert_eq!(snapshot(&output), frozen);
+        assert_eq!(
+            cache
+                .iter()
+                .map(|path| fs::read(path).ok())
+                .collect::<Vec<_>>(),
+            before
+        );
+        assert_eq!(target.exists(), target_exists);
+        assert_eq!(runner.calls.get(), 3);
+    }
     assert_eq!(
         maintenance::verify_summary(&build),
         json!({
@@ -446,27 +511,6 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
             "restore_qualified": false,
         })
     );
-    assert_eq!(snapshot(&output), before);
-    assert_eq!(runner.calls.get(), 3);
-
-    let python_receipt = python_json(
-        &fixture.root,
-        r#"
-import json
-import sys
-from pathlib import Path
-from devex_clone_tools import TOOLS, target_directory, verify_evidence
-root, build = Path(sys.argv[1]), Path(sys.argv[2])
-observed = json.loads(build.read_text(encoding="utf-8"))
-target = target_directory(root)
-assert observed["backend_root"] == str(root), (observed["backend_root"], str(root))
-assert observed["target_directory"] == str(target), (observed["target_directory"], str(target))
-assert set(observed["artifacts"]) == set(TOOLS), (set(observed["artifacts"]), set(TOOLS))
-print(json.dumps(verify_evidence(root, build), ensure_ascii=False))
-"#,
-        &[&fixture.root, &build],
-    );
-    assert_eq!(python_receipt, receipt);
 
     let calls = runner.calls.get();
     let error = maintenance::build_with(&fixture.root, &output, &runner).unwrap_err();
@@ -488,6 +532,59 @@ fn maintenance_detects_input_and_receipt_tampering() {
     write_json(&build, &value);
     assert!(maintenance::verify_with(&fixture.root, &build, &runner).is_err());
     fs::write(&build, receipt).unwrap();
+
+    let original = read_json(&build);
+    let events = output.join("reset.cargo.jsonl");
+    let original_events = fs::read(&events).unwrap();
+    for invalid in ["relative", "outside", "parent", "foreign", "duplicate"] {
+        let mut event: Value = serde_json::from_slice(&original_events).unwrap();
+        let mut changed = original.clone();
+        match invalid {
+            "relative" => event["executable"] = json!("relative.exe"),
+            "outside" => event["executable"] = json!(fixture.local.join("missing.exe")),
+            "parent" => {
+                event["executable"] = json!(output.join("..").join("missing.exe"));
+            }
+            "foreign" => event["manifest_path"] = json!(fixture.root.join("Cargo.toml")),
+            _ => {}
+        }
+        let line = format!("{event}\n");
+        fs::write(
+            &events,
+            line.repeat(if invalid == "duplicate" { 2 } else { 1 }),
+        )
+        .unwrap();
+        let file = digest::file(&events).unwrap();
+        changed["artifacts"]["reset"]["cargo_output"]["bytes"] = json!(file.bytes);
+        changed["artifacts"]["reset"]["cargo_output"]["sha256"] = json!(file.sha256);
+        changed["artifacts"]["reset"]["cargo_executable"] = event["executable"].clone();
+        write_json(&build, &changed);
+        assert!(
+            maintenance::verify_evidence(&fixture.root, &build, Some(&changed)).is_err(),
+            "{invalid}"
+        );
+    }
+    fs::write(&events, original_events).unwrap();
+    write_json(&build, &original);
+    let cache = Path::new(
+        original["artifacts"]["reset"]["cargo_executable"]
+            .as_str()
+            .unwrap(),
+    );
+    let cached_bytes = fs::read(cache).unwrap();
+    fs::remove_file(cache).unwrap();
+    make_file_link(
+        Path::new(
+            original["artifacts"]["reset"]["executable"]
+                .as_str()
+                .unwrap(),
+        ),
+        cache,
+    )
+    .expect("维护缓存链接拒绝场景需要本地符号链接权限，不能静默跳过");
+    assert!(maintenance::verify_evidence(&fixture.root, &build, Some(&original)).is_err());
+    fs::remove_file(cache).unwrap();
+    fs::write(cache, cached_bytes).unwrap();
 
     let binary = PathBuf::from(
         read_json(&build)["artifacts"]["tenant-data"]["executable"]

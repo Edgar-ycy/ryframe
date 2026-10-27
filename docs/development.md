@@ -103,6 +103,8 @@ cargo worker -- --config-dir .local-tests/worker-config
 
 ## 集成验证
 
+维护程序 `reset`、`migrate` 和 `tenant-data` 的构建收据绑定冻结副本与原始 Cargo 事件、日志。收据核验不要求原缓存文件或固定 target 目录仍存在，清理或重建缓存不改变既有副本的有效性；核验仍拒绝链接、目录跳转、外来工作区或重复事件，并验证实际冻结字节。实际 Build 必须取得现有产物，读取或冻结失败不发布成功收据。
+
 租户业务读写保持数据范围投影版本的严格校验；投影缺失、未就绪或落后时使用 `TenantDataTargetUnavailable(message, 5)`，通过现有 HTTP 错误映射返回 503 和 `Retry-After: 5`，不要求客户端刷新产品会话。生成仓储与租户数据端口使用相同分类；修改生成器后，已有业务项目须通过正式生成入口更新受管仓储文件，不能手工修改生成产物。
 
 租户数据范围投影的真实 MySQL 用例 `data_scope_projection_mysql` 复用 `.local-tests/mysql/config` 与同一归属夹具，核验共享控制库及独立 dedicated schema；目标只初始化租户结构，版本发布从控制库读取最小身份与部门事实。场景核验投影落后拒绝、注入写入失败后的完整前后像及恢复发布；不创建额外数据库用户，不代表不同实例或业务 CRUD 已验收。

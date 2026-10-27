@@ -7,7 +7,8 @@ use std::{
 use serde_json::Value;
 
 use super::{
-    TOOLS, command, digest, native_json, path_text, recorded_cargo_path, source, target_directory,
+    TOOLS, command, digest, native_json, normalize_cache_path, path_text, recorded_cargo_path,
+    source, target_directory,
 };
 use crate::{
     Result,
@@ -149,9 +150,11 @@ fn verify_artifact(
         .expect("收据具有父目录")
         .join(format!("{role}.cargo.jsonl"));
     let recorded = recorded_cargo_path(backend, name, &fs::read_to_string(output)?)?;
-    let declared = path_value(item.get("cargo_executable").unwrap(), "Cargo 原始产物")?;
-    if recorded != declared || !fs::canonicalize(&recorded)?.starts_with(fs::canonicalize(target)?)
-    {
+    let declared = normalize_cache_path(&path_value(
+        item.get("cargo_executable").unwrap(),
+        "Cargo 原始产物",
+    )?)?;
+    if recorded != declared || !recorded.starts_with(normalize_cache_path(target)?) {
         return Err("维护工具 Cargo 事件与实际构建路径不一致".into());
     }
     Ok(())

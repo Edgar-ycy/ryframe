@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     fs::{self, OpenOptions},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
@@ -265,7 +265,7 @@ pub(super) fn command(role: &str, target: &Path) -> Result<Vec<String>> {
 }
 
 fn recorded_cargo_path(backend: &Path, name: &str, content: &str) -> Result<PathBuf> {
-    let manifest = backend.join("crates/ryframe/Cargo.toml");
+    let manifest = fs::canonicalize(backend.join("crates/ryframe/Cargo.toml"))?;
     let mut found = Vec::new();
     for line in content.lines() {
         let event = native_json::parse_fragment(line, "Cargo 构建事件")?;
@@ -283,21 +283,57 @@ fn recorded_cargo_path(backend: &Path, name: &str, content: &str) -> Result<Path
                 .and_then(|value| value.get("kind"))
                 .and_then(Value::as_array)
                 .is_some_and(|value| value == &[json!("bin")])
-            && manifest_path.and_then(|path| fs::canonicalize(path).ok())
-                == fs::canonicalize(&manifest).ok()
+            && manifest_path
+                .and_then(|path| fs::canonicalize(path).ok())
+                .as_deref()
+                == Some(manifest.as_path())
             && event.get("executable").and_then(Value::as_str).is_some()
         {
             let path = PathBuf::from(event["executable"].as_str().unwrap());
             if !path.is_absolute() {
                 return Err("Cargo 产物事件必须使用实际绝对路径".into());
             }
-            found.push(portable_path(&fs::canonicalize(path)?));
+            found.push(normalize_cache_path(&path)?);
         }
     }
     if found.len() != 1 {
         return Err("维护工具必须恰好绑定一个当前 Workspace 的 Cargo 产物事件".into());
     }
     Ok(found.remove(0))
+}
+
+// 缓存可以清理；只解析已核对的现有祖先，不把链接或观察失败当作缺失。
+pub(super) fn normalize_cache_path(path: &Path) -> Result<PathBuf> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err("维护缓存路径必须是绝对路径且不得包含目录跳转".into());
+    }
+    let mut existing = None;
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                if digest::linked(&metadata) {
+                    return Err("维护缓存路径不能经过链接或重解析点".into());
+                }
+                if ancestor != path && !metadata.is_dir() {
+                    return Err("维护缓存路径的现有祖先必须是目录".into());
+                }
+                existing.get_or_insert(ancestor);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let existing = existing.ok_or("维护缓存路径没有可核验的现有祖先")?;
+    let mut normalized = portable_path(&fs::canonicalize(existing)?);
+    let missing = path.strip_prefix(existing)?;
+    if !missing.as_os_str().is_empty() {
+        normalized.push(missing);
+    }
+    Ok(normalized)
 }
 
 fn cargo_artifact(root: &Path, target: &Path, name: &str, output: &Path) -> Result<PathBuf> {
