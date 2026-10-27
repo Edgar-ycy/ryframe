@@ -109,7 +109,7 @@ pub struct DatabaseReplicaConfig {
 
 /// 一个命名业务数据源。
 ///
-/// 业务数据源可以使用与主库不同的结构和驱动，不参与主库查询的读写路由。
+/// 业务数据源使用独立的 MySQL 连接配置，可以与主库结构不同，不参与主库查询的读写路由。
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseSourceConfig {
     /// 用于依赖注入、日志和健康检查的唯一名称。
