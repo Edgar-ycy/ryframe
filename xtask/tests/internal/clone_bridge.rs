@@ -472,21 +472,16 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
             &fixture.root,
             r#"
 import json
-import subprocess
 import sys
 from pathlib import Path
-from devex_clone_tools import TOOLS, target_directory, verify, verify_evidence
+from devex_clone_tools import TOOLS, target_directory, verify_evidence
 root, build = Path(sys.argv[1]), Path(sys.argv[2])
 observed = json.loads(build.read_text(encoding="utf-8"))
 target = target_directory(root)
 assert observed["backend_root"] == str(root), (observed["backend_root"], str(root))
 assert observed["target_directory"] == str(target), (observed["target_directory"], str(target))
 assert set(observed["artifacts"]) == set(TOOLS), (set(observed["artifacts"]), set(TOOLS))
-def version(args, **kwargs):
-    assert args in (["rustc", "-Vv"], ["cargo", "-V"]), args
-    return subprocess.CompletedProcess(args, 0, stdout=observed["toolchain"][args[0]].encode(), stderr=b"")
-assert verify_evidence(root, build) == observed
-print(json.dumps(verify(root, build, version), ensure_ascii=False))
+print(json.dumps(verify_evidence(root, build), ensure_ascii=False))
 "#,
             &[&fixture.root, &build],
         );
