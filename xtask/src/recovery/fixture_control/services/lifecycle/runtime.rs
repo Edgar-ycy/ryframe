@@ -134,6 +134,21 @@ fn wait_primitive(
 }
 impl Runtime for PythonRuntime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if matches!(operation, "tree-stop" | "recover-controller") {
+            super::primitive::validate(&self.backend, operation, &arguments)?;
+            return match operation {
+                "tree-stop" => super::tree_control::stop(
+                    &self.backend,
+                    &arguments["tree"],
+                    arguments["crash"].as_bool().ok_or("crash 必须为布尔值")?,
+                ),
+                _ => super::controller_recovery::run(
+                    &self.backend,
+                    Path::new(model::text(&arguments, "run")?),
+                    &arguments["owner"],
+                ),
+            };
+        }
         if super::readonly::handles(operation) {
             return super::readonly::NativeRuntime::new(&self.backend).call(operation, arguments);
         }

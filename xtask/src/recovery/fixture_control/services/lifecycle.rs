@@ -20,6 +20,8 @@ use std::{
 mod close;
 #[path = "lifecycle/context.rs"]
 mod context;
+#[path = "lifecycle/controller_recovery.rs"]
+mod controller_recovery;
 #[path = "lifecycle/ledger.rs"]
 mod ledger;
 #[path = "lifecycle/model.rs"]
@@ -55,6 +57,8 @@ mod status;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/fixture_control/services/lifecycle/tests.rs"]
 mod tests;
+#[path = "lifecycle/tree_control.rs"]
+mod tree_control;
 
 use model::{Context, binding, check, read, text};
 
