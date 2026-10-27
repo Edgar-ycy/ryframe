@@ -68,6 +68,10 @@ impl CommandOutput {
 pub(crate) trait Transport {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput>;
     fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value>;
+    /// 来源缓存写端口必须由受管实现显式接通；普通测试 transport 不得误连真实 Redis。
+    fn source_cache_cleanup(&self, _arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        Err("当前资源端口未授权来源缓存清理；请使用正式受管实现，禁止隐式连接或重试".into())
+    }
     /// 本地证据只允许独占新建、完整写入并同步；不覆盖已有现场。
     fn publish_evidence(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
@@ -79,6 +83,9 @@ pub(crate) trait Transport {
 pub(crate) struct SystemTransport;
 
 impl Transport for SystemTransport {
+    fn source_cache_cleanup(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        crate::recovery::source::evidence::cleanup_source_cache(arguments)
+    }
     fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value> {
         super::super::s3::execute(request)
     }

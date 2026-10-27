@@ -13,6 +13,20 @@ use std::{collections::BTreeMap, path::PathBuf};
 type Send<'a> = dyn FnMut(&[&str]) -> Result<Value> + 'a;
 
 pub(crate) fn cleanup(args: &Value) -> Result<Value> {
+    cleanup_with(
+        args,
+        |inputs, redis, comparison| match Client::authenticated(inputs, redis) {
+            Ok(mut client) => execute(comparison, &mut |parts| client.transaction_command(parts)),
+            Err(_) => outcome("pre_exec_io_failed"),
+        },
+    )
+}
+
+// 只替换连接执行端口；比较、独占 attempt 及执行结果持久化仍走同一正式生命周期。
+pub(super) fn cleanup_with(
+    args: &Value,
+    run: impl FnOnce(&StorageInputs<'_>, &Value, &cache_io::Comparison) -> Value,
+) -> Result<Value> {
     documents::exact(
         args,
         &[
@@ -54,10 +68,7 @@ pub(crate) fn cleanup(args: &Value) -> Result<Value> {
         environment: &environment,
         observation_dir: &backend,
     };
-    let result = match Client::authenticated(&inputs, &args["request"]["storage"]["redis"]) {
-        Ok(mut client) => execute(&comparison, &mut |parts| client.transaction_command(parts)),
-        Err(_) => outcome("pre_exec_io_failed"),
-    };
+    let result = run(&inputs, &args["request"]["storage"]["redis"], &comparison);
     if frame.finish(&attempt, &result).is_err() {
         return Ok(outcome("unknown_exec_result"));
     }

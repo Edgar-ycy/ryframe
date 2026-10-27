@@ -2,6 +2,61 @@ use super::{cache_io, cache_transaction, operations_tests::cache_fixture};
 use crate::Result;
 use serde_json::{Value, json};
 
+struct OrdinaryTransport(std::cell::RefCell<Vec<&'static str>>);
+
+impl crate::recovery::clone::native::export::transport::Transport for OrdinaryTransport {
+    fn run(
+        &self,
+        _: crate::recovery::clone::native::export::transport::CommandSpec,
+    ) -> Result<crate::recovery::clone::native::export::transport::CommandOutput> {
+        self.0.borrow_mut().push("command");
+        Err("普通测试端口不得执行命令".into())
+    }
+
+    fn s3(&self, _: crate::recovery::clone::native::s3::Request) -> Result<Value> {
+        self.0.borrow_mut().push("s3");
+        Err("普通测试端口不得访问 S3".into())
+    }
+
+    fn publish_evidence(&self, _: &std::path::Path, _: &[u8]) -> std::io::Result<()> {
+        self.0.borrow_mut().push("evidence");
+        Err(std::io::Error::other("普通测试端口不得发布证据"))
+    }
+}
+
+#[test]
+fn ordinary_transport_cleanup_rejects_without_resource_calls_or_attempt_publication() {
+    use crate::recovery::source::evidence::resources::Resources;
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("source-cleanup-default-port-")
+        .tempdir_in(local)
+        .unwrap();
+    let output = directory.path().join("source-runtime.json");
+    let transport = OrdinaryTransport(std::cell::RefCell::new(Vec::new()));
+    let environment = std::collections::BTreeMap::from([("APP_ENV".into(), "test".into())]);
+    let request = json!({"target":{"scope_id":"source-unit"}});
+    let (observation, data) = cache_fixture();
+    let resources = Resources {
+        backend: &backend,
+        execution: &backend,
+        request: &request,
+        environment: &environment,
+        output: &output,
+        transport: &transport,
+        checkpoint: &|| Ok(()),
+    };
+    // 仅验证写端口拒绝，不调用父链只读 Redis 观察，也不伪造有效 START。
+    let error = resources
+        .cleanup(&observation, &data["comparisons"])
+        .unwrap_err();
+    assert!(error.to_string().contains("当前资源端口未授权来源缓存清理"));
+    assert!(transport.0.borrow().is_empty());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
 fn plan() -> cache_io::Comparison {
     let (observation, data) = cache_fixture();
     cache_io::comparison(&json!({"observation":observation,"comparisons":data["comparisons"]}))

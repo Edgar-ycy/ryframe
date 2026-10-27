@@ -2,7 +2,10 @@
 use super::session::Session;
 use crate::{
     Result,
-    recovery::clone::native::{export::transport::SystemTransport, json as document},
+    recovery::clone::native::{
+        export::transport::{SystemTransport, Transport},
+        json as document,
+    },
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -20,8 +23,18 @@ pub(in crate::recovery::source) fn run(
     output: &Path,
     recover: bool,
 ) -> Result<Value> {
-    let transport = SystemTransport;
-    let session = Session::open(backend, start, output, recover, &transport)?;
+    run_with(backend, start, output, recover, &SystemTransport)
+}
+
+// 正式入口与验收仅选择资源端口；来源、锁、阶段与发布仍由同一 Session 执行。
+pub(super) fn run_with<T: Transport + Sync>(
+    backend: &Path,
+    start: &Path,
+    output: &Path,
+    recover: bool,
+    transport: &T,
+) -> Result<Value> {
+    let session = Session::open(backend, start, output, recover, transport)?;
     let result = if recover {
         recover::run(&session)
     } else {

@@ -53,7 +53,7 @@ impl<T: Transport> Resources<'_, T> {
             .parent()
             .ok_or("缓存清理缺少 verification 目录")?;
         (self.checkpoint)()?;
-        let outcome = ready::policy::cache_transaction::cleanup(&json!({"backend":self.backend,
+        let outcome = self.transport.source_cache_cleanup(&json!({"backend":self.backend,
             "directory":directory,"output":directory.join("cache-cleanup.json"),"request":self.request,
             "environment":{"APP_ENV":"test"},"observation":observation,"comparisons":comparisons}))?;
         (self.checkpoint)()?;
@@ -83,7 +83,12 @@ impl<T: Transport> Resources<'_, T> {
             "output":directory.join("cache-cleanup.json"),"observation":observation,"after":after,
             "cleaned_at":chrono::Utc::now().to_rfc3339()}),
         )?;
-        document::write_new(&directory.join("cache-cleanup.json"), &value)?;
+        let path = directory.join("cache-cleanup.json");
+        let mut bytes = serde_json::to_vec_pretty(&value)?;
+        bytes.push(b'\n');
+        self.transport.publish_evidence(&path, &bytes).map_err(|error| {
+            format!("来源缓存已核对执行结果，但清理收据 {} 发布失败：{error}；保留原 attempt/execution，禁止再次 EXEC", path.display())
+        })?;
         Ok(value)
     }
 

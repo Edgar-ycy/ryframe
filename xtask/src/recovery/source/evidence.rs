@@ -46,6 +46,8 @@ mod stopped;
 #[path = "../../../tests/unit/recovery/source/evidence/tests.rs"]
 mod tests;
 
+pub(crate) use ready::policy::cache_transaction::cleanup as cleanup_source_cache;
+
 pub(crate) const MARKER: &str = "__source-evidence";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 
