@@ -69,11 +69,6 @@ async fn failed_opening_shares_safe_cause_and_releases_reserved_budget() {
         ),
         (0, 0, 0)
     );
-    let unknown = TenantDataError::TargetUnavailable {
-        target_key: "private-target".into(),
-        source: None,
-    };
-    assert!(unknown.source().is_none());
 }
 
 fn accept_one(

@@ -10,7 +10,6 @@ fn schedule_targets_are_registered_by_domain_groups() {
         .with_targets(message_schedule_targets(false))
         .unwrap();
     let descriptors = registry.descriptors_for_tenant("system");
-    assert_eq!(descriptors.len(), 3);
     assert_eq!(
         descriptors
             .iter()

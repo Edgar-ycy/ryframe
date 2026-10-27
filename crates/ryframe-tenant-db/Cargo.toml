@@ -62,10 +62,6 @@ path = "tests/tenant_mapping_contracts.rs"
 required-features = ["repositories", "migration"]
 
 [[test]]
-name = "resource_tenant_contracts"
-path = "tests/resource_tenant_contracts.rs"
-
-[[test]]
 name = "business_catalog_contract"
 path = "tests/business_catalog_contract.rs"
 required-features = ["connection"]

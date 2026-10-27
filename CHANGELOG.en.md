@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove reviewed redundant tests and fixture-only assertions while retaining configuration redaction, read-only before/after images, real connection causes and budget release, independent catalog fingerprints, capability validation, and exact schedule target lists. Remove the tenant migration source-count test and its obsolete Cargo and targeted resource-test entries. Check name uniqueness in the existing actual Migrator name and separate-ledger case without requiring global alphabetical order; retain the tenant database Clippy compilation surface and effective migration tests in the full Rust gate, and remove unused test imports.
+
 - Fix native controller recovery rewriting legacy ledger key order and preventing formal history reload. Reuse the lifecycle writer that preserves ordering while retaining original intents, semantic after-image digests, and lock-identity checks. The existing recovery case now connects a reachable restart interruption, actual native recovery, and history consumption, retaining Unicode and legacy-writer format coverage while removing the duplicate simulated writer and direct success case.
 
 - Fix the formal CI integration entry omitting the real replica monitor case: explicitly combine `bin-api,bin-migrate` only for the `business_initialization_mysql` test target, retaining `--no-default-features` and product migrate dependency isolation. The existing command contract checks the actual execution arguments.
