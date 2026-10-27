@@ -6,6 +6,8 @@
 
 - Fix the formal CI integration entry omitting the real replica monitor case: explicitly combine `bin-api,bin-migrate` only for the `business_initialization_mysql` test target, retaining `--no-default-features` and product migrate dependency isolation. The existing command contract checks the actual execution arguments.
 
+- Preserve fixture-tree shutdown races: retry Windows creation-time and image queries only for errors 5/31 on the same handle within one shared five-second deadline, and continue waiting for complete member proof when normal exit races with termination. Keep the false termination result when the Unix process group is already absent on the first signal attempt; unknown identities and permission failures still reject control.
+
 - Execute fixture-service controller recovery and complete RustFS tree shutdown directly in Rust, preserving state preimages, original owners, lock identities, and complete member shutdown proof. Redis startup/shutdown and RustFS startup retain their restricted entry points; unknown identities or incomplete shutdown still reject success.
 
 - Register the shared file-configuration tests only in the S3 HTTPS test entry, available with default features. Redis, OTLP and account recovery continue to use the same complete configuration support, retaining all configuration safety assertions and Unix/Windows link failure requirements. Remove the tautological Redis status-enum comparison while preserving the implementation and meaningful tests for unconfigured and unreachable states.

@@ -14,6 +14,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(any(windows, test))]
+#[path = "tree_control/windows.rs"]
+mod windows;
+
 pub(super) fn stop(backend: &Path, tree: &Value, crash: bool) -> Result<Value> {
     let root = Path::new(text(tree, "runtime_directory")?);
     let original = common::binding(&root.join("rustfs-tree.json"))?;
@@ -25,6 +29,7 @@ pub(super) fn stop(backend: &Path, tree: &Value, crash: bool) -> Result<Value> {
     check(registered == *tree, "停止输入不是原登记的完整监督树")?;
     let supervisor = alive(&tree["supervisor"])?;
     let process = alive(&tree["process"])?;
+    let mut terminated = supervisor || process;
     if supervisor || process {
         check(
             common::binding(&root.join("rustfs-tree.json"))? == original,
@@ -38,7 +43,7 @@ pub(super) fn stop(backend: &Path, tree: &Value, crash: bool) -> Result<Value> {
                 "operation_id":operation,"mode":if crash {"crash"} else {"normal"},"requested_at_ns":requested}),
         )?;
         if crash || !supervisor || !wait(tree, Duration::from_secs(3))? {
-            force(tree, crash)?;
+            terminated = force(tree, crash, supervisor)?;
         }
     }
     NativeRuntime::new(backend).complete_registered_tree(tree)?;
@@ -46,13 +51,17 @@ pub(super) fn stop(backend: &Path, tree: &Value, crash: bool) -> Result<Value> {
         common::binding(&root.join("rustfs-tree.json"))? == original,
         "停止后登记树变化",
     )?;
-    Ok(json!(supervisor || process))
+    Ok(json!(terminated))
 }
 
 fn alive(expected: &Value) -> Result<bool> {
     common::validate_process_identity(expected)?;
     let pid = u32::try_from(expected["pid"].as_u64().ok_or("进程 PID 无效")?)?;
-    match common::process_identity(pid)? {
+    #[cfg(windows)]
+    let observed = windows::observe(pid)?;
+    #[cfg(not(windows))]
+    let observed = common::process_identity(pid)?;
+    match observed {
         None => Ok(false),
         Some(actual) if actual == *expected => Ok(true),
         Some(_) => Err("登记 PID 已复用；不发送信号或推断整树关闭".into()),
@@ -76,39 +85,37 @@ fn wait(tree: &Value, timeout: Duration) -> Result<bool> {
 }
 
 #[cfg(windows)]
-fn force(tree: &Value, _crash: bool) -> Result<()> {
-    use crate::recovery::clone::native::lifecycle::identity;
-    use winsafe::{HPROCESS, co, prelude::kernel_Hprocess};
+fn force(tree: &Value, _crash: bool, initially_alive: bool) -> Result<bool> {
+    use winsafe::{co, prelude::kernel_Hprocess};
     check(
-        alive(&tree["supervisor"])?,
+        initially_alive,
         "Job 监督进程已退出但产品仍在，拒绝单进程回收",
     )?;
     let expected = &tree["supervisor"];
     let pid = u32::try_from(expected["pid"].as_u64().ok_or("监督进程 PID 无效")?)?;
-    let handle = HPROCESS::OpenProcess(
-        co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::TERMINATE | co::PROCESS::SYNCHRONIZE,
-        false,
-        pid,
-    )?;
-    if handle.WaitForSingleObject(Some(0))? != co::WAIT::OBJECT_0 {
-        check(
-            identity::windows_snapshot(&handle, pid)? == *expected,
-            "停止句柄的创建身份或映像不同",
-        )?;
-        handle.TerminateProcess(137)?;
-        check(
-            handle.WaitForSingleObject(Some(5000))? == co::WAIT::OBJECT_0,
-            "监督进程停止未确认；保留现场",
+    // 原监督器在正常等待后退出是合法竞争；不能重新观察 PID 后按未知拒绝。
+    if let Some(handle) = windows::open(pid, true)? {
+        windows::control_with(
+            expected,
+            || windows::snapshot(&handle, pid),
+            || {
+                handle.TerminateProcess(137)?;
+                check(
+                    handle.WaitForSingleObject(Some(5000))? == co::WAIT::OBJECT_0,
+                    "监督进程停止未确认；保留现场",
+                )
+            },
         )?;
     }
     check(
         wait(tree, Duration::from_secs(5))?,
         "Windows Job 树未在期限内退出；保留现场",
-    )
+    )?;
+    Ok(true)
 }
 
 #[cfg(unix)]
-fn force(tree: &Value, crash: bool) -> Result<()> {
+fn force(tree: &Value, crash: bool, _initially_alive: bool) -> Result<bool> {
     use nix::{
         errno::Errno,
         sys::signal::{Signal, killpg},
@@ -135,26 +142,44 @@ fn force(tree: &Value, crash: bool) -> Result<()> {
             )?;
         }
     }
-    for signal in [
-        if crash {
-            Signal::SIGKILL
-        } else {
-            Signal::SIGTERM
+    let group = Pid::from_raw(i32::try_from(group)?);
+    stop_group(
+        crash,
+        |kill| match killpg(
+            group,
+            if kill {
+                Signal::SIGKILL
+            } else {
+                Signal::SIGTERM
+            },
+        ) {
+            Ok(()) => Ok(true),
+            Err(Errno::ESRCH) => Ok(false),
+            Err(error) => Err(error.into()),
         },
-        Signal::SIGKILL,
-    ] {
-        match killpg(Pid::from_raw(i32::try_from(group)?), signal) {
-            Ok(()) | Err(Errno::ESRCH) => (),
-            Err(error) => return Err(error.into()),
-        }
-        if wait(tree, Duration::from_secs(5))? {
-            return Ok(());
-        }
+        || wait(tree, Duration::from_secs(5)),
+    )
+}
+
+#[cfg(any(unix, test))]
+fn stop_group(
+    crash: bool,
+    mut send: impl FnMut(bool) -> Result<bool>,
+    mut stopped: impl FnMut() -> Result<bool>,
+) -> Result<bool> {
+    // 首次 ESRCH 在完整 closure 后返回 false；升级 SIGKILL 时的错误不被吞掉。
+    if !send(crash)? {
+        return Ok(false);
     }
-    Err("原进程组未在期限内退出；保留现场".into())
+    if stopped()? {
+        return Ok(true);
+    }
+    check(send(true)?, "升级终止时原进程组消失；保留原失败语义")?;
+    check(stopped()?, "原进程组未在期限内退出；保留现场")?;
+    Ok(true)
 }
 
 #[cfg(not(any(windows, unix)))]
-fn force(_tree: &Value, _crash: bool) -> Result<()> {
+fn force(_tree: &Value, _crash: bool, _initially_alive: bool) -> Result<bool> {
     Err("当前平台不能保持监督树停止语义，禁止裸 PID 控制".into())
 }
