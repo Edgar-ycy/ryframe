@@ -1,5 +1,5 @@
 //! 按 Cargo 实际产物构建四个角色，不猜测 target 目录。
-use super::{Port, context::Context, provenance};
+use super::provenance;
 use crate::{Result, recovery::clone::native::json as documents};
 use serde_json::{Value, json};
 use std::{
@@ -7,13 +7,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn run(context: &Context, port: &mut impl Port) -> Result<Value> {
+pub(in crate::recovery) fn run(
+    root: &Path,
+    directory: &Path,
+    command: &mut impl FnMut(&str, &[String]) -> Result<String>,
+) -> Result<Value> {
     for name in ["binaries.json", "build-evidence.json"] {
-        if context.output.join(name).exists() {
+        if directory.join(name).exists() {
             return Err("已有全栈构建收据；保留现场，禁止覆盖或自动重放".into());
         }
     }
-    let source = provenance::current(&context.root, &context.output)?;
+    let source = provenance::current(root, directory)?;
     let mut binaries = serde_json::Map::new();
     for (feature, name) in [
         ("bin-reset", "ryframe-reset"),
@@ -36,13 +40,13 @@ pub(super) fn run(context: &Context, port: &mut impl Port) -> Result<Value> {
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-        let output = port.command("cargo", &args, None)?;
-        binaries.insert(name.into(), json!(artifact(&context.root, name, &output)?));
+        let output = command("cargo", &args)?;
+        binaries.insert(name.into(), json!(artifact(root, name, &output)?));
     }
     let binaries = Value::Object(binaries);
-    let evidence = provenance::build(&context.root, &context.output, &binaries, &source)?;
-    documents::write_new(&context.output.join("binaries.json"), &binaries)?;
-    documents::write_new(&context.output.join("build-evidence.json"), &evidence)?;
+    let evidence = provenance::build(root, directory, &binaries, &source)?;
+    documents::write_new(&directory.join("binaries.json"), &binaries)?;
+    documents::write_new(&directory.join("build-evidence.json"), &evidence)?;
     Ok(binaries)
 }
 
@@ -82,4 +86,4 @@ fn artifact(root: &Path, name: &str, output: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 #[path = "../../../tests/unit/recovery/full_stack/build_tests.rs"]
-mod tests;
+pub(in crate::recovery) mod tests;

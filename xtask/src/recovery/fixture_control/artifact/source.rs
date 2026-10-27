@@ -121,7 +121,14 @@ fn verify_artifacts(directory: &Path, build: &Value) -> Result<()> {
 }
 
 fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> {
-    let path = directory.join("source-pair.json");
+    let original = directory.join("source-pair.json");
+    crate::local_test_path::validate_absolute_path(
+        &original,
+        crate::local_test_path::LocalTestPathKind::ExistingFile,
+    )?;
+    // 与来源生产者保持同一规范路径文本；先核验原路径，避免解析时隐藏链接。
+    let path =
+        super::super::portable_path(&std::fs::canonicalize(directory)?).join("source-pair.json");
     let pair = read_json(&path, "全栈源码组合", 16 * 1024)?;
     let reference = pair["kind"] == "reference-fixture-source-pair";
     if reference {
@@ -158,7 +165,11 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
     let mut bound = pair.clone();
     bound["receipt"] = evidence_binding(&path)?;
     if evidence["format_version"] != 1 || evidence["source_pair"] != bound {
-        return Err("构建来源与源码组合不匹配".into());
+        return Err(format!(
+            "构建来源与源码组合不匹配，不一致字段：{}；核对原 source-pair 与构建收据，保留现场，禁止覆盖或重建来源",
+            source_mismatch_fields(evidence, &bound)
+        )
+        .into());
     }
     match evidence["fixture"].as_str() {
         Some("core") => {
@@ -225,6 +236,30 @@ fn verify_source_identity(pair: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn source_mismatch_fields(evidence: &Value, bound: &Value) -> String {
+    let mut fields = match (evidence["source_pair"].as_object(), bound.as_object()) {
+        (Some(actual), Some(expected)) => actual
+            .keys()
+            .chain(expected.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .filter(|key| actual.get(*key) != expected.get(*key))
+            .map(|key| {
+                if expected.contains_key(key) {
+                    key.as_str()
+                } else {
+                    "未声明字段"
+                }
+            })
+            .collect::<Vec<_>>(),
+        _ => vec!["source_pair"],
+    };
+    if evidence["format_version"] != 1 {
+        fields.push("format_version");
+    }
+    fields.join("、")
 }
 
 fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {

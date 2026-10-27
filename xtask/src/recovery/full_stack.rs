@@ -1,6 +1,6 @@
 //! 原生全栈阶段协调；既有进程树和来源权威只作为底层核验端口复用。
 #[path = "full_stack/build.rs"]
-mod build;
+pub(in crate::recovery) mod build;
 #[path = "full_stack/context.rs"]
 pub(super) mod context;
 #[path = "full_stack/execution.rs"]

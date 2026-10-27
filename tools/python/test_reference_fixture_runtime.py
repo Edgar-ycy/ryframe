@@ -5,7 +5,6 @@ from rate_limit_tool import tool_binding
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -46,12 +45,6 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
                                                             **runtime.file_digest(secrets / name)}
                                                      for name in environment.SECRET_FILES}})
         write_json(self.environment / "environment.json", {"environment": private})
-        self.binaries = {}
-        for name in ("ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"):
-            path = self.root / (name + ".exe")
-            path.write_bytes(name.encode())
-            self.binaries[name] = str(path)
-
     def _pair(self, _execution, output):
         value = {"format_version": 1, "kind": "reference-fixture-source-pair",
                  "fixture_receipt": {"path": str(self.root / "fixture.json"), "bytes": 1, "sha256": "a" * 64},
@@ -59,49 +52,6 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
                              for name in ("backend", "frontend")}}
         write_json(output, value)
         return value
-
-    def test_build_binds_business_source_before_writing_runtime_receipts(self):
-        captured = {}
-        output = self.reference / "runtime-r1"
-
-        def build_binaries(_run, execution, directory):
-            captured["environment"] = dict(os.environ)
-            self.assertEqual(execution, self.execution)
-            self.assertEqual(directory, output)
-            return self.binaries
-
-        def register_runtime(_execution, directory, *, source_config_dir):
-            value = {"scope_id": "fixture-source"}
-            write_json(directory / "runtime.json", value)
-            return value
-
-        source = {"head": "b" * 40, "patch_sha256": "d" * 64, "files": [], "clean": False}
-        inventory = {"source": {"snapshot": source, "worktree_fingerprint": "sha256:" + "e" * 64},
-                     "files": [], "guard": {"head": source["head"], "index_sha256": "f" * 64,
-                                             "modes_sha256": "1" * 64}}
-        context = {"commands": {role: runtime.build_command(role) for role in ("api", "worker")},
-                   "profile": "dev", "target": "x86_64-pc-windows-msvc", "jobs": "cargo-default",
-                   "toolchain": {"cargo": "cargo fixture", "rustc": "rustc fixture"},
-                   "environment": {"variables": [], "sha256": runtime.build_source_domains(
-                       inventory, "backend")["tools"]["sha256"]}}
-        with patch.object(runtime, "write_pair", side_effect=self._pair), \
-                patch.object(runtime, "source_snapshot", return_value=source) as source_probe, \
-                patch.object(runtime, "capture_inventory", return_value=inventory) as inventory_probe, \
-                patch.object(runtime, "build_context", return_value=context) as context_probe, \
-                patch.object(runtime, "build_binaries", side_effect=build_binaries), \
-                patch.object(runtime, "register_runtime", side_effect=register_runtime):
-            result = runtime.build(self.backend, self.bootstrap, output)
-
-        self.assertEqual(result["status"], "reference_fixture_runtime_built")
-        self.assertEqual(captured["environment"]["APP_ENV"], "test")
-        self.assertFalse(any(key.startswith("RYFRAME_") or key.startswith("APP_") and key != "APP_ENV" for key in captured["environment"]))
-        self.assertEqual(source_probe.call_count, 1)
-        self.assertEqual(inventory_probe.call_args_list[0].args, (self.execution, source))
-        self.assertGreaterEqual(inventory_probe.call_count, 2)
-        self.assertGreaterEqual(context_probe.call_count, 2)
-        build = json.loads((output / "backend-build.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(build["artifacts"]), {"api", "worker"})
-        self.assertTrue((output / "source-pair.json").is_file())
 
     def test_output_rejects_paths_outside_the_business_reference_root(self):
         with self.assertRaisesRegex(ValueError, "参考夹具根"):

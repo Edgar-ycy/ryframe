@@ -111,7 +111,7 @@ pub(crate) fn current(root: &Path) -> Result<Value> {
     from_inputs(&cargo, &rustc, &environment)
 }
 
-pub(super) fn from_inputs(
+pub(in crate::recovery) fn from_inputs(
     cargo: &str,
     rustc: &str,
     environment: &BTreeMap<String, String>,

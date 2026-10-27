@@ -1,13 +1,14 @@
 use super::*;
 use crate::recovery::fixture_control::{file_binding, portable_path};
+use crate::recovery::full_stack::{Port, context::Context};
 use std::{process::Command, time::Duration};
 
-struct Fixture {
+pub(in crate::recovery) struct Fixture {
     _directory: tempfile::TempDir,
-    context: Context,
+    pub(in crate::recovery) context: Context,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(in crate::recovery) fn new() -> Self {
         let local = crate::workspace::root_dir().join(".local-tests");
         fs::create_dir_all(&local).unwrap();
         let directory = tempfile::tempdir_in(local).unwrap();
@@ -15,6 +16,7 @@ impl Fixture {
         let root = parent.join("backend");
         fs::create_dir_all(root.join("crates/ryframe")).unwrap();
         fs::write(root.join("crates/ryframe/Cargo.toml"), "fixture").unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
         fs::write(root.join("README.md"), "fixture\n").unwrap();
         fs::create_dir(root.join("tools")).unwrap();
         for side in [&root, &parent.join("frontend")] {
@@ -70,7 +72,7 @@ impl Fixture {
         documents::write_replace(&self.context.output.join("source-pair.json"), value).unwrap();
     }
 
-    fn business(&self) -> Value {
+    pub(in crate::recovery) fn business(&self) -> Value {
         let pair = self.pair();
         self.write_pair(&pair);
         let model = self
@@ -165,7 +167,10 @@ fn all_four_roles_use_current_cargo_paths_and_publish_exact_byte_bindings() {
     let fixture = Fixture::new();
     let context = &fixture.context;
     let mut port = cargo(context);
-    let binaries = run(context, &mut port).unwrap();
+    let binaries = run(&context.root, &context.output, &mut |program, args| {
+        port.command(program, args, None)
+    })
+    .unwrap();
     let evidence = documents::read(&context.output.join("build-evidence.json")).unwrap();
     assert_eq!(port.calls.len(), 4);
     assert_eq!(
@@ -184,7 +189,11 @@ fn all_four_roles_use_current_cargo_paths_and_publish_exact_byte_bindings() {
             file_binding(Path::new(binaries[role].as_str().unwrap()), "产物").unwrap()
         );
     }
-    assert!(run(context, &mut port).is_err());
+    assert!(
+        run(&context.root, &context.output, &mut |program, args| port
+            .command(program, args, None))
+        .is_err()
+    );
     assert_eq!(port.calls.len(), 4);
 }
 
@@ -196,7 +205,14 @@ fn failed_build_or_changed_source_never_publishes_partial_success_or_replays() {
         let mut port = cargo(&fixture.context);
         port.drift = drift;
         port.failure = (!drift).then_some(2);
-        assert!(run(&fixture.context, &mut port).is_err());
+        assert!(
+            run(
+                &fixture.context.root,
+                &fixture.context.output,
+                &mut |program, args| port.command(program, args, None)
+            )
+            .is_err()
+        );
         assert_eq!(port.calls.len(), if drift { 4 } else { 2 });
         for name in ["binaries.json", "build-evidence.json"] {
             assert!(!fixture.context.output.join(name).exists());

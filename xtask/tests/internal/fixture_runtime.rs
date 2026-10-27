@@ -99,6 +99,7 @@ fn parses_all_runtime_operations_into_three_typed_shapes() {
     )
     .unwrap();
     assert!(matches!(build, FixtureRuntimeCommand::Build(_)));
+    assert!(private_invocation_at(&build, &root_dir()).is_err());
 
     for operation in ["verify", "status"] {
         assert!(matches!(

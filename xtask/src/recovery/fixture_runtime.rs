@@ -15,6 +15,8 @@ const SCRIPT: &str = "tools/python/reference_fixture_runtime.py";
 mod binding;
 #[path = "fixture_runtime/browser.rs"]
 mod browser;
+#[path = "fixture_runtime/build.rs"]
+mod build;
 #[path = "fixture_runtime/dependency.rs"]
 mod dependency;
 #[path = "fixture_runtime/execution.rs"]
@@ -74,6 +76,18 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         println!("{FIXTURE_RUNTIME_USAGE}");
         return Ok(());
     }
+    if let FixtureRuntimeCommand::Build(runtime) = command {
+        validate_runtime(command, root)?;
+        println!(
+            "{}",
+            build::run(root, &runtime.environment, &runtime.output)?
+        );
+        return Ok(());
+    }
+    run_runtime(command, root)
+}
+
+fn run_runtime(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
     let _native_tool = crate::check::python_suite::native_tool_binding()?;
     let credentials = if matches!(command, FixtureRuntimeCommand::Browser(_)) {
         Some(browser::CredentialBroker::start(
@@ -156,6 +170,9 @@ fn private_invocation_with_endpoint(
     root: &Path,
     credential_endpoint: Option<&str>,
 ) -> Result<PrivateFixtureRuntimeInvocation> {
+    if matches!(command, FixtureRuntimeCommand::Build(_)) {
+        return Err("fixture runtime build 已由原生构建入口独占，禁止生成 Python 请求".into());
+    }
     let runtime = command
         .runtime()
         .ok_or("fixture runtime 帮助不启动私有阶段程序")?;

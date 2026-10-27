@@ -160,6 +160,10 @@ impl<'a> Native<'a> {
         for (key, value) in std::env::vars_os() {
             let name = key.to_string_lossy();
             if crate::devex::runtime_native::entry::allowed_environment(&name)
+                || matches!(
+                    name.to_ascii_uppercase().as_str(),
+                    "COREPACK_HOME" | "PNPM_CONFIG_STORE_DIR"
+                )
                 || name.starts_with("DOCKER_")
                 || matches!(
                     name.as_ref(),
@@ -175,7 +179,11 @@ impl<'a> Native<'a> {
 impl Port for Native<'_> {
     fn leaf(&mut self, operation: &str) -> Result<Value> {
         if operation == "build" {
-            return super::build::run(self.context, self);
+            let root = self.context.root.clone();
+            let output = self.context.output.clone();
+            return super::build::run(&root, &output, &mut |program, args| {
+                self.command(program, args, None)
+            });
         }
         if operation == "api-alive" {
             let identity = self.api.as_ref().ok_or("API 启动未确认创建身份")?;
@@ -385,7 +393,7 @@ impl Port for Native<'_> {
     }
 }
 
-fn capture(
+pub(in crate::recovery) fn capture(
     mut command: Command,
     cwd: &Path,
     input: &[u8],

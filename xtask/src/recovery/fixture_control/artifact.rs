@@ -15,7 +15,7 @@ mod object_tests;
 #[path = "artifact/objects.rs"]
 mod objects;
 #[path = "artifact/runtime.rs"]
-pub(super) mod runtime;
+pub(in crate::recovery) mod runtime;
 #[path = "artifact/source.rs"]
 mod source;
 #[cfg(test)]

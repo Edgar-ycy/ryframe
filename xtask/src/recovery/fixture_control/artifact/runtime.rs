@@ -14,6 +14,17 @@ pub(crate) struct Binding {
 
 /// 正式登记只组合现有配置摘要和校验；不从环境选择目录，也不创建配置或运行收据。
 pub(crate) fn contract(root: &Path, directory: &Path, api: &Path, worker: &Path) -> Result<Value> {
+    let receipt = contract_inputs(root, directory, api, worker)?;
+    super::source::verify(root, directory)?;
+    if configuration_digest(api)? != receipt["api_configuration_sha256"]
+        || configuration_digest(worker)? != receipt["worker_configuration_sha256"]
+    {
+        return Err("运行登记期间显式绑定配置发生变化，保留现场，禁止重放".into());
+    }
+    Ok(receipt)
+}
+
+fn contract_inputs(root: &Path, directory: &Path, api: &Path, worker: &Path) -> Result<Value> {
     if api.file_name().and_then(|v| v.to_str()) != Some("config")
         || worker.file_name().and_then(|v| v.to_str()) != Some("worker-config")
         || api.parent() != worker.parent()
@@ -63,13 +74,46 @@ pub(crate) fn contract(root: &Path, directory: &Path, api: &Path, worker: &Path)
         "worker_ready_url":format!("http://127.0.0.1:{port}/readyz"),"artifacts":artifacts});
     validate_tables(&receipt, tables)?;
     verify_binaries(directory, &receipt)?;
-    super::source::verify(root, directory)?;
     if configuration_digest(api)? != receipt["api_configuration_sha256"]
         || configuration_digest(worker)? != receipt["worker_configuration_sha256"]
     {
         return Err("运行登记期间显式绑定配置发生变化，保留现场，禁止重放".into());
     }
     Ok(receipt)
+}
+
+/// 首次发布仍须经过与读侧相同的完整来源和产物核验，不接受已有收据。
+pub(in crate::recovery) fn register(
+    root: &Path,
+    directory: &Path,
+    api: &Path,
+    worker: &Path,
+) -> Result<Value> {
+    use crate::recovery::{clone::native::json::write_new, full_stack::provenance};
+    let source = provenance::current(root, directory)?;
+    let build = read_json(
+        &directory.join("build-evidence.json"),
+        "全栈构建证据",
+        4 * 1024 * 1024,
+    )?;
+    if source.is_null() || source != build["source"] {
+        return Err("运行登记来源与当前完整构建证据不匹配".into());
+    }
+    let receipt = contract_inputs(root, directory, api, worker)?;
+    write_new(&directory.join("runtime.json"), &receipt)?;
+    write_new(
+        &directory.join("runtime-evidence.json"),
+        &json!({
+            "format_version":1,"kind":"full-stack-runtime","source":source,
+            "build_evidence":file_binding(&directory.join("build-evidence.json"), "构建证据")?,
+            "runtime":file_binding(&directory.join("runtime.json"), "运行收据")?
+        }),
+    )?;
+    let actual = verify(root, directory)?.receipt;
+    if actual != receipt {
+        return Err("运行收据发布期间发生漂移，保留现场".into());
+    }
+    Ok(actual)
 }
 
 pub(crate) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
