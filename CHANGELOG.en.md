@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Explicitly check the fixed 80% backend Rust byte floor in CI planning, including non-Rust-only changes; keep frontend excluded and vendor separate without changing classification or local report defaults.
+
 - Build and verify ordinary recovery runtime API/Worker artifacts in Rust, registering only adjacent create-only owned copies. Frontend production receipts still use the formal external-build entry or strict reuse. Shared readers use the same native source, build-context and byte validation while retaining original v2 receipts and the fixed B0 adapter contract. Reuse the existing native origin-binding preparation for explicit targeted validation; reject missing or ambiguous write authorization. Remove the retired Python generation-request writer and argument entry, retaining historical readonly reconstruction and its independent drift protection.
 
 - Construct formal generation-request v2 in Rust with explicit coordinator-owned configuration and generated execution-source publication bindings. Carry configuration through startup, producers, four-database capture and successor source projection, including frozen absence of optional common configuration. New START rejects v1; original v1 history verification and safe cleanup of registered resources retain their contracts without rewriting receipts.

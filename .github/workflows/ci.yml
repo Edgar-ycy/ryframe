@@ -57,6 +57,9 @@ jobs:
           cargo xtask check ci plan
           --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
 
+      - name: 检查后端 Rust 字节比例下限
+        run: cargo xtask check language --min-rust-percent 80
+
       - name: 固定 CI Python 3.12
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
