@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix native controller recovery rewriting legacy ledger key order and preventing formal history reload. Reuse the lifecycle writer that preserves ordering while retaining original intents, semantic after-image digests, and lock-identity checks. The existing recovery case now connects a reachable restart interruption, actual native recovery, and history consumption, retaining Unicode and legacy-writer format coverage while removing the duplicate simulated writer and direct success case.
+
 - Fix the formal CI integration entry omitting the real replica monitor case: explicitly combine `bin-api,bin-migrate` only for the `business_initialization_mysql` test target, retaining `--no-default-features` and product migrate dependency isolation. The existing command contract checks the actual execution arguments.
 
 - Preserve fixture-tree shutdown races: retry Windows creation-time and image queries only for errors 5/31 on the same handle within one shared five-second deadline, and continue waiting for complete member proof when normal exit races with termination. Keep the false termination result when the Unix process group is already absent on the first signal attempt; unknown identities and permission failures still reject control.

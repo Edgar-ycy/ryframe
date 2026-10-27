@@ -197,7 +197,7 @@ fn encode(value: &Ordered, depth: usize, sort: bool, ascii: bool) -> String {
 }
 
 #[cfg(test)]
-pub(super) fn serializations(value: &str) -> Vec<Vec<u8>> {
+pub(in crate::recovery::fixture_control::services) fn serializations(value: &str) -> Vec<Vec<u8>> {
     let node: Ordered = serde_json::from_str(value).unwrap();
     [
         (true, false, false),

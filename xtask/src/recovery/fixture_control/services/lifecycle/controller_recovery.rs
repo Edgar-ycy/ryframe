@@ -15,6 +15,7 @@ pub(super) fn run(backend: &Path, run: &Path, descriptor: &Value) -> Result<Valu
     let path = common::bound_file(backend, descriptor, "待恢复控制器")?;
     let before = binding(&run.join("state.json"))?;
     let mut saved = state::load(run, true)?;
+    let previous = saved.clone();
     let (owner, number) = owner(run, &path, descriptor, &saved)?;
     identity::validate(&owner, run)?;
     check(
@@ -46,7 +47,7 @@ pub(super) fn run(backend: &Path, run: &Path, descriptor: &Value) -> Result<Valu
         binding(&run.join("state.json"))? == before,
         "恢复前阶段状态变化",
     )?;
-    document::write_replace(&run.join("state.json"), &saved)?;
+    super::ledger::write(run, &previous, &saved)?;
     unchanged(run, &path, descriptor, &original_lock)?;
     lock::recover_dead(run, &owner)?;
     document::write_new(&run.join(format!("recovered-{id}.json")), &result)?;

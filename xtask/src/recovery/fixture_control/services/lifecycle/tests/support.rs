@@ -263,26 +263,11 @@ fn start_cache(args: &Value) -> Result<Value> {
     Ok(value)
 }
 fn recover_controller(runtime: &mut FakeRuntime, args: &Value) -> Result<Value> {
-    let run = &runtime.fixture.run;
-    let mut value = runtime.fixture.state();
-    for item in value["attempts"].as_array_mut().unwrap() {
-        if item["status"] == "running" {
-            item["status"] = json!("failed");
-            item["error_type"] = json!("ControllerInterrupted");
-            item["finished_at"] = json!("finished");
-        }
-    }
-    let proof = json!({"status":"controller_recovered","owner":args["owner"],"remote_writes":0});
-    json_io::write_new(
-        &run.join("recovery-test.intent.json"),
-        &json!({"before":binding(&run.join("state.json"))?}),
+    let proof = controller_recovery::run(
+        &runtime.fixture.backend,
+        Path::new(text(args, "run")?),
+        &args["owner"],
     )?;
-    json_io::write_replace(&run.join("state.json"), &value)?;
-    if run.join("run.lock").exists() {
-        fs::remove_file(run.join("run.lock/owner.json"))?;
-        fs::remove_dir(run.join("run.lock"))?;
-    }
-    json_io::write_new(&run.join("recovered-test.json"), &proof)?;
     runtime.controller = Value::Null;
     Ok(proof)
 }

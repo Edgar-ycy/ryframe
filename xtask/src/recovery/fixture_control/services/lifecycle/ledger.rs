@@ -58,7 +58,7 @@ pub(super) fn finish(
     write(run, &previous, &value)
 }
 
-fn write(run: &Path, previous: &Value, next: &Value) -> Result<()> {
+pub(super) fn write(run: &Path, previous: &Value, next: &Value) -> Result<()> {
     let path = run.join("state.json");
     let before = binding(&path)?;
     let mut raw = Vec::new();
