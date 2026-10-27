@@ -1,5 +1,5 @@
 //! 控制锁和原子收据；任何失败均保留未确认的操作，不自动重放。
-use super::{documents, receipts};
+use super::{documents, receipts, role::Role};
 use crate::{
     Result,
     recovery::clone::native::{digest, json, resources::common},
@@ -20,13 +20,11 @@ fn publish(directory: &Path, path: &Path, value: &Value, replace: bool) -> Resul
     staged.write_all(b"\n")?;
     staged.as_file().sync_all()?;
     if replace {
-        staged
-            .persist(path)
-            .map_err(|_| "Worker 收据无法原子替换")?;
+        staged.persist(path).map_err(|_| "角色 收据无法原子替换")?;
     } else {
         staged
             .persist_noclobber(path)
-            .map_err(|_| "Worker 收据已存在或无法原子发布")?;
+            .map_err(|_| "角色 收据已存在或无法原子发布")?;
     }
     Ok(())
 }
@@ -37,13 +35,11 @@ pub(super) fn read(path: &Path) -> Result<Value> {
         || metadata.len() > 4 * 1024 * 1024
         || common::link_count_for(path, &metadata)? != 1
     {
-        return Err("Worker 收据大小无效或经过硬链接".into());
+        return Err("角色 收据大小无效或经过硬链接".into());
     }
     json::read(path)
 }
 
-pub(super) const LOCK: &str = "worker-control.lock";
-pub(super) const ARCHIVE: &str = "worker-control-receipts";
 const FILES: &[&str] = &[
     "owner.json",
     "request.json",
@@ -83,17 +79,18 @@ pub(super) fn common(kind: &str, id: &Value, directory: &Path, source: &Value) -
 }
 
 pub(super) struct Operation {
+    pub role: Role,
     pub path: PathBuf,
     pub owner: Value,
     pub request: Value,
     inode: (u64, u64),
 }
 impl Operation {
-    pub fn read(directory: &Path, source: &str) -> Result<Self> {
-        let path = directory.join(LOCK);
+    pub fn read(role: Role, directory: &Path, source: &str) -> Result<Self> {
+        let path = directory.join(role.lock());
         let metadata = fs::symlink_metadata(&path)?;
         if !metadata.is_dir() || digest::linked(&metadata) {
-            return Err("Worker 控制锁不是可信目录".into());
+            return Err("角色 控制锁不是可信目录".into());
         }
         let names = fs::read_dir(&path)?
             .map(|v| Ok(v?.file_name().to_string_lossy().into_owned()))
@@ -103,21 +100,26 @@ impl Operation {
             .all(|v| names.iter().any(|n| n == v))
             || names.iter().any(|n| !FILES.contains(&n.as_str()))
         {
-            return Err("Worker 控制锁缺少收据或包含未知文件".into());
+            return Err("角色 控制锁缺少收据或包含未知文件".into());
         }
         let operation = Self {
+            role,
             owner: read(&path.join("owner.json"))?,
             request: read(&path.join("request.json"))?,
             inode: common::device_inode_for(&path, &metadata)?,
             path,
         };
+        if Role::owner(&operation.owner)? != role {
+            return Err("控制锁目录与 owner 角色不一致".into());
+        }
         if operation.owner["source_sha256"] != source {
-            return Err("Worker 运行来源发生变化，保留锁".into());
+            return Err("角色 运行来源发生变化，保留锁".into());
         }
         operation.validate("operation", Value::Null)?;
         Ok(operation)
     }
     pub fn claim(
+        role: Role,
         action: &str,
         backend: &Path,
         directory: &Path,
@@ -127,23 +129,31 @@ impl Operation {
         let source = json!(source(directory)?);
         let id = json!(uuid::Uuid::new_v4().simple().to_string());
         let identity = super::process::current()?;
-        let mut owner = common("full-stack-worker-control-owner", &id, directory, &source);
+        let mut owner = common(&role.kind("owner"), &id, directory, &source);
         owner["identity"] = identity.clone();
         owner["created_at_ns"] = json!(now());
-        let mut request = common("full-stack-worker-control-request", &id, directory, &source);
-        for (key,value) in json!({"operation":action,"backend_root":backend,"scope_id":runtime["scope_id"],"controller_identity":identity,"owner_sha256":documents::hash(&owner)?,"runtime_receipt_sha256":file(&directory.join("runtime.json"))?["sha256"],"worker_artifact":runtime["artifacts"]["worker"],"worker_ready_url":runtime["worker_ready_url"],"timeout_seconds":timeout,"log":if action=="start"{json!(format!("worker-{}.log",id.as_str().ok_or("操作ID无效")?))}else{Value::Null},"requested_at_ns":now()}).as_object().ok_or("请求无效")? {request[key]=value.clone();}
-        let temporary = directory.join(format!(".{LOCK}.{}.tmp", id.as_str().ok_or("操作ID无效")?));
+        let mut request = common(&role.kind("request"), &id, directory, &source);
+        for (key,value) in json!({"operation":action,"backend_root":backend,"scope_id":runtime["scope_id"],"controller_identity":identity,"owner_sha256":documents::hash(&owner)?,"runtime_receipt_sha256":file(&directory.join("runtime.json"))?["sha256"],(role.artifact()):runtime["artifacts"][role.name()],(role.ready()):runtime[role.ready()],"timeout_seconds":timeout,"log":if action=="start"{json!(format!("{}-{}.log",role.name(),id.as_str().ok_or("操作ID无效")?))}else{Value::Null},"requested_at_ns":now()}).as_object().ok_or("请求无效")? {request[key]=value.clone();}
+        if role == Role::Frontend {
+            request["request_binding"] = runtime["request_binding"].clone();
+        }
+        let temporary = directory.join(format!(
+            ".{}.{}.tmp",
+            role.lock(),
+            id.as_str().ok_or("操作ID无效")?
+        ));
         fs::create_dir(&temporary)?;
         json::write_new(&temporary.join("owner.json"), &owner)?;
         json::write_new(&temporary.join("request.json"), &request)?;
-        if directory.join(LOCK).exists() {
-            return Err("Worker 控制正在执行，保留候选操作".into());
+        if directory.join(role.lock()).exists() {
+            return Err("角色 控制正在执行，保留候选操作".into());
         }
-        fs::rename(&temporary, directory.join(LOCK))?;
-        Self::read(directory, source.as_str().ok_or("来源无效")?)
+        fs::rename(&temporary, directory.join(role.lock()))?;
+        Self::read(role, directory, source.as_str().ok_or("来源无效")?)
     }
     pub fn check(&self) -> Result<()> {
         let current = Self::read(
+            self.role,
             self.directory(),
             self.owner["source_sha256"].as_str().ok_or("来源无效")?,
         )?;
@@ -151,7 +161,7 @@ impl Operation {
             || current.owner != self.owner
             || current.request != self.request
         {
-            return Err("Worker 控制锁在发布前发生变化".into());
+            return Err("角色 控制锁在发布前发生变化".into());
         }
         Ok(())
     }
@@ -165,6 +175,12 @@ impl Operation {
     }
     pub fn validate(&self, mode: &str, value: Value) -> Result<Value> {
         let directory = self.directory();
+        if self.role == Role::Frontend {
+            crate::recovery::fixture_runtime::verify_frontend_handoff(
+                directory,
+                &self.request["request_binding"],
+            )?;
+        }
         let optional = |name: &str| -> Result<Value> {
             let path = self.path.join(name);
             if path.exists() {
@@ -173,8 +189,21 @@ impl Operation {
                 Ok(Value::Null)
             }
         };
+        let runtime = if mode == "request" && self.role != Role::Worker {
+            super::runtime::load(
+                self.role,
+                Path::new(
+                    self.request["backend_root"]
+                        .as_str()
+                        .ok_or("缺少后端目录")?,
+                ),
+                directory,
+            )?
+        } else {
+            read(&directory.join("runtime.json"))?
+        };
         receipts::execute(
-            &json!({"mode":mode,"directory":directory,"source":self.owner["source_sha256"],"owner":self.owner,"request":self.request,"value":value,"candidate":optional("candidate.json")?,"supervisor":optional("supervisor.json")?,"runtime_sha256":file(&directory.join("runtime.json"))?["sha256"],"backend":self.request["backend_root"],"runtime":read(&directory.join("runtime.json"))?}),
+            &json!({"mode":mode,"directory":directory,"source":self.owner["source_sha256"],"owner":self.owner,"request":self.request,"value":value,"candidate":optional("candidate.json")?,"supervisor":optional("supervisor.json")?,"runtime_sha256":file(&directory.join("runtime.json"))?["sha256"],"backend":self.request["backend_root"],"runtime":runtime}),
         )
     }
     pub fn child(&self, name: &str) -> Result<Value> {
@@ -200,12 +229,12 @@ impl Operation {
     }
     pub fn publish(&self, name: &str, value: &Value, replace: bool) -> Result<()> {
         if !FILES[2..].contains(&name) {
-            return Err("未知Worker收据名称".into());
+            return Err("未知角色收据名称".into());
         }
         self.check()?;
         let target = self.path.join(name);
         if !replace && target.exists() {
-            return Err("Worker控制收据已经存在".into());
+            return Err("角色控制收据已经存在".into());
         }
         // 暂存不进入闭合控制目录，避免读者把发布中的临时文件误认为未知收据。
         publish(self.directory(), &target, value, replace)
@@ -217,8 +246,8 @@ impl Operation {
         error: Option<&str>,
         reconciled: bool,
     ) -> Result<Value> {
-        let mut value = self.bound("full-stack-worker-control-result")?;
-        for (key,item) in json!({"operation":self.request["operation"],"scope_id":self.request["scope_id"],"controller_identity":self.owner["identity"],"outcome":if error.is_some(){"failed"}else{"succeeded"},"state":state,"identity":identity,"log":self.request["log"],"reconciled":reconciled,"error_type":error.map(|_|"WorkerControlFailed"),"error":error,"completed_at_ns":now()}).as_object().ok_or("结果无效")?{value[key]=item.clone();}
+        let mut value = self.bound(&self.role.kind("result"))?;
+        for (key,item) in json!({"operation":self.request["operation"],"scope_id":self.request["scope_id"],"controller_identity":self.owner["identity"],"outcome":if error.is_some(){"failed"}else{"succeeded"},"state":state,"identity":identity,"log":self.request["log"],"reconciled":reconciled,"error_type":error.map(|_|self.role.failure()),"error":error,"completed_at_ns":now()}).as_object().ok_or("结果无效")?{value[key]=item.clone();}
         Ok(value)
     }
     pub fn archive(&self) -> Result<Value> {
@@ -230,19 +259,28 @@ impl Operation {
             ("progress.json", "progress"),
         ] {
             if self.path.join(name).exists() {
-                if self.request["operation"] != "start" {
+                if !matches!(self.request["operation"].as_str(), Some("start" | "run")) {
                     return Err("非start操作包含监督收据".into());
                 }
                 self.validate(mode, read(&self.path.join(name))?)?;
             }
         }
-        if result["outcome"] == "succeeded" && self.request["operation"] == "start" {
+        if result["outcome"] == "succeeded"
+            && matches!(self.request["operation"].as_str(), Some("start" | "run"))
+        {
             let progress = self.validate("progress", read(&self.path.join("progress.json"))?)?;
-            if progress["phase"] != "ready" || progress["identity"] != result["identity"] {
+            let expected = if self.role == Role::Frontend {
+                "completed"
+            } else {
+                "ready"
+            };
+            if progress["phase"] != expected
+                || (self.role != Role::Frontend && progress["identity"] != result["identity"])
+            {
                 return Err("成功启动缺少同一进程的就绪进度".into());
             }
         }
-        let archive = self.directory().join(ARCHIVE);
+        let archive = self.directory().join(self.role.archive());
         if !archive.exists() {
             fs::create_dir(&archive)?;
         }

@@ -19,6 +19,18 @@ mod browser;
 mod dependency;
 #[path = "fixture_runtime/execution.rs"]
 mod execution;
+#[path = "fixture_runtime/frontend.rs"]
+mod frontend;
+
+pub(in crate::recovery) fn frontend_runtime_contract(
+    backend: &Path,
+    output: &Path,
+) -> Result<Value> {
+    frontend::contract(backend, output)
+}
+pub(in crate::recovery) fn verify_frontend_handoff(directory: &Path, guard: &Value) -> Result<()> {
+    frontend::handoff(directory, guard)
+}
 #[path = "fixture_runtime/manifest.rs"]
 mod manifest;
 #[path = "fixture_runtime/model.rs"]
@@ -40,6 +52,8 @@ mod receipts;
 mod responses;
 #[path = "fixture_runtime/review.rs"]
 mod review;
+#[path = "fixture_runtime/runtime.rs"]
+mod runtime;
 #[cfg(test)]
 #[path = "../../tests/unit/recovery/fixture_runtime/scenario_tests.rs"]
 mod scenario_tests;
@@ -78,6 +92,19 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
         Some(endpoint) => private_invocation_with_endpoint(command, root, Some(endpoint))?,
         None => private_invocation_at(command, root)?,
     };
+    if ["verify", "start", "stop", "status"].contains(&command.operation()) {
+        let request: Value = serde_json::from_str(&invocation.protocol)?;
+        let mut args =
+            json!({"backend":root,"environment":request["environment"],"output":request["output"]});
+        let value = if command.operation() == "verify" {
+            runtime::verify(&args)?
+        } else {
+            args["action"] = json!(command.operation());
+            runtime::control(&args, false, false)?
+        };
+        println!("{value}");
+        return Ok(());
+    }
     if ["bind", "browser", "browser-verify", "browser-close"].contains(&command.operation()) {
         let mut request: Value = serde_json::from_str(&invocation.protocol)?;
         // 工具绑定只属于 Python 传输协议；原生浏览器协议保持原有字段。

@@ -10,7 +10,7 @@ mod lifecycle;
 #[path = "full_stack/prepare.rs"]
 mod prepare;
 #[path = "full_stack/provenance.rs"]
-mod provenance;
+pub(in crate::recovery) mod provenance;
 #[cfg(test)]
 #[path = "../../tests/unit/recovery/full_stack/tests.rs"]
 mod tests;

@@ -17,7 +17,7 @@ use std::{
 const MODEL: &str = "tools/python/fixtures/order-business/src/resources/mod.rs";
 const SIDES: &[&str] = &["backend", "frontend"];
 
-pub(super) fn current(root: &Path, directory: &Path) -> Result<Value> {
+pub(in crate::recovery) fn current(root: &Path, directory: &Path) -> Result<Value> {
     if !directory.join("source-pair.json").is_file() {
         return Ok(Value::Null);
     }

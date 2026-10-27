@@ -1,8 +1,10 @@
 //! 唯一 Worker 控制状态机：持锁复核来源，未知结果只登记和显式核对。
 use super::{
     launch,
-    operation::{self, LOCK, Operation},
-    process, tree,
+    operation::{self, Operation},
+    process,
+    role::Role,
+    tree,
 };
 use crate::{Result, recovery::clone::native::json};
 use serde_json::{Value, json};
@@ -14,10 +16,10 @@ use std::{
 };
 
 #[derive(Debug)]
-struct Pending;
+struct Pending(Role);
 impl std::fmt::Display for Pending {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Worker后台启动仍在执行；稍后显式核对")
+        write!(f, "{}后台启动仍在执行；稍后显式核对", self.0.label())
     }
 }
 impl std::error::Error for Pending {}
@@ -26,10 +28,14 @@ impl std::error::Error for Pending {}
 #[path = "../../../../tests/unit/recovery/full_stack/worker/reconciliation_tests.rs"]
 mod reconciliation_tests;
 
-pub(super) fn guard(directory: &Path, timeout: Duration) -> Result<super::guard::Guard> {
+pub(super) fn guard(
+    role: Role,
+    directory: &Path,
+    timeout: Duration,
+) -> Result<super::guard::Guard> {
     let deadline = Instant::now() + timeout;
     loop {
-        match super::guard::Guard::acquire(directory) {
+        match super::guard::Guard::acquire(role, directory) {
             Ok(guard) => return Ok(guard),
             Err(error)
                 if error.to_string() == "控制或锁恢复正在执行，拒绝并发操作"
@@ -44,51 +50,61 @@ pub(super) fn guard(directory: &Path, timeout: Duration) -> Result<super::guard:
 pub(super) fn ready(url: &str) -> Result<bool> {
     super::probes::execute(&json!({"action":"ready","url":url,"timeout":0})).map(|v| v == true)
 }
-fn free(runtime: &Value, timeout: f64) -> Result<()> {
+fn free(role: Role, runtime: &Value, timeout: f64) -> Result<()> {
     super::probes::execute(
-        &json!({"action":"wait-free","url":runtime["worker_ready_url"],"timeout":timeout}),
+        &json!({"action":"wait-free","url":runtime[role.ready()],"timeout":timeout}),
     )
     .map(|_| ())
 }
 
-pub(super) fn execute(args: &Value) -> Result<Value> {
+pub(super) fn execute(role: Role, args: &Value) -> Result<Value> {
     json::exact(
         args,
         &["action", "backend", "directory", "timeout"],
-        "Worker控制参数",
+        &format!("{}控制参数", role.label()),
     )?;
     let action = args["action"]
         .as_str()
         .filter(|s| matches!(*s, "start" | "stop" | "crash" | "status" | "reconcile"))
-        .ok_or("未知Worker控制操作")?;
+        .ok_or_else(|| super::Rejection(format!("{}控制操作无效", role.label())))?;
     let timeout = args["timeout"]
         .as_f64()
         .filter(|v| v.is_finite() && *v > 0.0 && *v <= 180.0)
-        .ok_or("Worker就绪超时必须在0到180秒之间")?;
+        .ok_or_else(|| super::Rejection(format!("{}就绪超时必须在0到180秒之间", role.label())))?;
     let backend = operation::canonical(Path::new(args["backend"].as_str().ok_or("缺少后端目录")?))?;
     let directory =
         operation::canonical(Path::new(args["directory"].as_str().ok_or("缺少运行目录")?))?;
-    control(action, &backend, &directory, timeout)
+    control(role, action, &backend, &directory, timeout)
 }
 pub(crate) fn control(
+    role: Role,
     action: &str,
     backend: &Path,
     directory: &Path,
     timeout: f64,
 ) -> Result<Value> {
+    if role == Role::Frontend {
+        return Err("前端有限命令不能使用长期服务控制入口".into());
+    }
     if std::env::var("APP_ENV").as_deref() != Ok("test") {
-        return Err("Worker控制要求APP_ENV=test并选择隔离文件配置".into());
+        return Err(super::Rejection(format!(
+            "{}控制要求APP_ENV=test并选择隔离文件配置",
+            role.label()
+        ))
+        .into());
     }
     if !matches!(action, "start" | "stop" | "crash" | "status" | "reconcile")
         || !timeout.is_finite()
         || !(0.0..=180.0).contains(&timeout)
         || timeout == 0.0
     {
-        return Err("Worker操作或超时无效".into());
+        return Err(super::Rejection(format!("{}操作或超时无效", role.label())).into());
     }
+    let backend = operation::canonical(backend)?;
+    let directory = operation::canonical(directory)?;
     let deadline = Instant::now() + Duration::from_secs_f64(timeout + 10.0);
     loop {
-        match once(action, backend, directory, timeout) {
+        match once(role, action, &backend, &directory, timeout) {
             Err(error) if error.is::<Pending>() && Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(50))
             }
@@ -96,99 +112,200 @@ pub(crate) fn control(
         }
     }
 }
-fn once(action: &str, backend: &Path, directory: &Path, timeout: f64) -> Result<Value> {
-    let guard = guard(directory, Duration::ZERO)?;
-    let runtime = crate::recovery::fixture_control::verify_full_stack_runtime(backend, directory)?;
+
+pub(crate) fn observe(role: Role, backend: &Path, directory: &Path) -> Result<Value> {
+    if role == Role::Frontend {
+        return Err("前端有限命令使用完成证明观察".into());
+    }
+    let runtime = super::runtime::load(role, backend, directory).map_err(|_| {
+        super::Rejection(format!(
+            "{}运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程",
+            role.label()
+        ))
+    })?;
     let source = operation::source(directory)?;
-    if directory.join(LOCK).exists() {
-        if action == "start" {
-            return Err("已有Worker控制操作，必须先使用status或reconcile核对".into());
+    let tree = tree::read(
+        directory,
+        &runtime,
+        role,
+        directory.join(format!("{}.json", role.name())).exists(),
+    )?;
+    let identity = process::registered(role, directory, &runtime)?;
+    if let Some(identity) = &identity {
+        verify_running(role, directory, &runtime, identity)?;
+    } else {
+        if let Some(tree) = &tree {
+            tree::closure(tree, Duration::from_secs(5), false)?;
         }
-        let empty = fs::read_dir(directory.join(LOCK))?.next().is_none();
+        free(role, &runtime, 0.0)?;
+    }
+    if super::runtime::load(role, backend, directory)? != runtime
+        || operation::source(directory)? != source
+    {
+        return Err("角色运行输入在只读观察期间漂移".into());
+    }
+    Ok(json!({"state":if identity.is_some(){"running"}else{"stopped"},"identity":identity}))
+}
+fn inputs(role: Role, action: &str, backend: &Path, directory: &Path) -> Result<(Value, String)> {
+    let runtime = super::runtime::load(role, backend, directory).map_err(|_| {
+        super::Rejection(format!(
+            "{}运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程",
+            role.label()
+        ))
+    })?;
+    let source = operation::source(directory)?;
+    if role != Role::Worker
+        && directory.join(format!("{}.json", role.name())).exists()
+        && !directory
+            .join(format!("{}-tree.json", role.name()))
+            .exists()
+    {
+        return Err(super::Rejection(format!(
+            "{}旧进程没有完整监督树；拒绝接管或补签，由原现场控制器收尾",
+            role.label()
+        ))
+        .into());
+    }
+    if directory.join(role.lock()).exists() {
+        if action == "start" {
+            return Err(super::Rejection(format!(
+                "已有{}控制操作，必须先使用status或reconcile核对",
+                role.label()
+            ))
+            .into());
+        }
+        let empty = fs::read_dir(directory.join(role.lock()))?.next().is_none();
         if empty {
             if action != "reconcile" {
                 return Err("发现旧空锁；必须显式reconcile核对".into());
             }
-            legacy(directory, &runtime, &source)?;
+            legacy(role, directory, &runtime, &source)?;
         } else {
-            reconcile(backend, directory, &runtime, &source)?;
+            reconcile(role, backend, directory, &runtime, &source)?;
         }
     }
     if action == "start" {
-        if process::worker(directory, &runtime)?.is_some() {
-            return Err("已登记Worker仍在运行，拒绝重复启动".into());
+        if process::registered(role, directory, &runtime)?.is_some() {
+            return Err(
+                super::Rejection(format!("已登记{}仍在运行，拒绝重复启动", role.label())).into(),
+            );
         }
-        if let Some(tree) = tree::read(directory, &runtime, false)? {
+        if let Some(tree) = tree::read(directory, &runtime, role, false)? {
             if process::alive(&tree["supervisor"])? {
-                return Err("上一代Worker监督器仍在运行".into());
+                return Err(
+                    super::Rejection(format!("上一代{}监督器仍在运行", role.label())).into(),
+                );
             }
             tree::closure(&tree, Duration::from_secs(5), true)?;
         }
-        free(&runtime, 0.0)?;
+        free(role, &runtime, 0.0)?;
     }
-    let op = Operation::claim(action, backend, directory, &runtime, timeout)?;
+    Ok((runtime, source))
+}
+fn once(role: Role, action: &str, backend: &Path, directory: &Path, timeout: f64) -> Result<Value> {
+    let guard = guard(role, directory, Duration::ZERO)?;
+    let (runtime, source) = inputs(role, action, backend, directory)?;
+    let op =
+        Operation::claim(role, action, backend, directory, &runtime, timeout).map_err(|_| {
+            super::Rejection(format!(
+                "{} {action} 的 owner/request 发布未确认；保留控制目录，不重放",
+                role.label()
+            ))
+        })?;
     guard.check()?;
     if action != "start" {
         let result = match simple(&op, &runtime, action) {
             Ok(result) => result,
             Err(_) => {
-                let result=op.result("unknown",Value::Null,Some("Worker状态或回收未确认；保留控制收据，核对创建身份、监听端口与完整成员证明"),false)?;
+                let result = op.result(
+                    "unknown",
+                    Value::Null,
+                    Some(&format!(
+                        "{}状态或回收未确认；保留控制收据，核对创建身份、监听端口与完整成员证明",
+                        role.label()
+                    )),
+                    false,
+                )?;
                 op.publish("result.json", &result, false)?;
-                return Err("Worker状态或回收未确认；保留控制锁，不自动重放".into());
+                return Err(super::Rejection(format!(
+                    "{}状态或回收未确认；保留控制锁，不自动重放",
+                    role.label()
+                ))
+                .into());
             }
         };
         op.publish("result.json", &result, false)?;
         guard.check()?;
         return op.archive();
     }
-    let args = launch::request(backend, directory, op.id()?);
-    let monitor = launch::detached("monitor", &args, directory);
+    start(backend, &runtime, &source, &op, guard, timeout)
+}
+fn start(
+    backend: &Path,
+    runtime: &Value,
+    source: &str,
+    op: &Operation,
+    guard: super::guard::Guard,
+    timeout: f64,
+) -> Result<Value> {
+    let args = launch::request(op.role, backend, op.directory(), op.id()?);
+    let monitor = launch::detached("monitor", &args, op.directory());
     if monitor.is_err() {
         let result = op.result(
             "unknown",
             Value::Null,
-            Some("Worker成员监督器启动未确认；核对收据，不自动重放"),
+            Some(&format!(
+                "{}成员监督器启动未确认；核对收据，不自动重放",
+                op.role.label()
+            )),
             false,
         )?;
         op.publish("result.json", &result, false)?;
-        return Err("Worker成员监督器启动未确认".into());
+        return Err(super::Rejection(format!("{}成员监督器启动未确认", op.role.label())).into());
     }
     // 句柄关闭不终止已授权的服务；monitor 持有真正的整树所有权。
     let monitor = monitor?;
     let monitor_identity =
         crate::recovery::clone::native::resources::common::process_identity(monitor)?
             .ok_or("成员监督器登记前退出")?;
-    let authorize = authorize(&op, &monitor_identity);
+    let authorize = authorize(op, &monitor_identity);
     if authorize.is_err() {
         drop(guard);
-        return Err("Worker启动授权未确认；保留候选、成员关闭证明和控制锁".into());
+        return Err(super::Rejection(format!(
+            "{}启动授权未确认；保留候选、成员关闭证明和控制锁",
+            op.role.label()
+        ))
+        .into());
     }
     guard.check()?;
     drop(guard);
-    finish(backend, directory, &runtime, &source, &op, timeout)
+    finish(backend, op.directory(), runtime, source, op, timeout)
 }
-fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
+pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
+    let role = op.role;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if op.path.join("candidate.json").exists() {
             let candidate = op.child("candidate.json")?;
-            let ready = operation::read(&tree::path(op.directory(), op.id()?, "ready"))?;
+            let ready = operation::read(&tree::path(op.directory(), role, op.id()?, "ready"))?;
             if ready["monitor"] != *monitor
                 || ready["supervisor"] != candidate["identity"]
                 || ready["operation_id"] != op.owner["operation_id"]
                 || !process::alive(&candidate["identity"])?
                 || !process::alive(monitor)?
             {
-                return Err("Worker候选与实际监督进程不匹配".into());
+                return Err(
+                    super::Rejection(format!("{}候选与实际监督进程不匹配", role.label())).into(),
+                );
             }
-            let mut supervisor = op.bound("full-stack-worker-control-supervisor")?;
+            let mut supervisor = op.bound(&op.role.kind("supervisor"))?;
             supervisor["identity"] = candidate["identity"].clone();
             supervisor["candidate_sha256"] = json!(super::documents::hash(&candidate)?);
             supervisor["authorized_at_ns"] = json!(operation::now());
             return op.publish("supervisor.json", &supervisor, false);
         }
         if !process::alive(monitor)? || Instant::now() >= deadline {
-            return Err("Worker监督候选登记超时或退出".into());
+            return Err(super::Rejection(format!("{}监督候选登记超时或退出", role.label())).into());
         }
         thread::sleep(Duration::from_millis(20));
     }
@@ -201,17 +318,22 @@ fn finish(
     op: &Operation,
     timeout: f64,
 ) -> Result<Value> {
+    let role = op.role;
     let deadline = Instant::now() + Duration::from_secs_f64(timeout + 10.0);
     loop {
         if op.path.join("result.json").exists() {
-            let guard = guard(directory, Duration::from_secs(10))?;
-            crate::recovery::fixture_control::verify_full_stack_runtime(backend, directory)?;
+            let guard = guard(role, directory, Duration::from_secs(10))?;
+            super::runtime::load(role, backend, directory)?;
             if operation::source(directory)? != source {
-                return Err("Worker等待期间来源发生变化".into());
+                return Err(
+                    super::Rejection(format!("{}等待期间来源发生变化", role.label())).into(),
+                );
             }
-            let current = Operation::read(directory, source)?;
+            let current = Operation::read(role, directory, source)?;
             if current.id()? != op.id()? {
-                return Err("Worker等待期间操作发生变化".into());
+                return Err(
+                    super::Rejection(format!("{}等待期间操作发生变化", role.label())).into(),
+                );
             }
             let value = match archive_completed(&current) {
                 Err(error) if error.is::<Pending>() => {
@@ -223,42 +345,53 @@ fn finish(
             };
             guard.check()?;
             if value["outcome"] != "succeeded" {
-                return Err("Worker启动失败；已保留原始失败收据和完整成员关闭证明".into());
+                return Err(super::Rejection(format!(
+                    "{}启动失败；已保留原始失败收据和完整成员关闭证明",
+                    role.label()
+                ))
+                .into());
             }
-            tree::running(directory, runtime, &value["identity"])?;
+            tree::running(directory, runtime, role, &value["identity"])?;
             process::listener(
                 &value["identity"],
-                runtime["worker_ready_url"].as_str().ok_or("端点无效")?,
+                runtime[role.ready()].as_str().ok_or("端点无效")?,
             )?;
             return Ok(value);
         }
         if Instant::now() >= deadline {
-            return Err("Worker后台启动结果未知；使用status或reconcile核对，不自动重放".into());
+            return Err(super::Rejection(format!(
+                "{}后台启动结果未知；使用status或reconcile核对，不自动重放",
+                role.label()
+            ))
+            .into());
         }
         thread::sleep(Duration::from_millis(50));
     }
 }
 fn simple(op: &Operation, runtime: &Value, action: &str) -> Result<Value> {
+    let role = op.role;
     let directory = op.directory();
-    let mut identity = process::worker(directory, runtime)?;
+    let mut identity = process::registered(role, directory, runtime)?;
     let mut reconciled = false;
     if matches!(action, "stop" | "crash") {
-        if let Some(tree) = tree::read(directory, runtime, identity.is_some())? {
+        if let Some(tree) = tree::read(directory, runtime, role, identity.is_some())? {
             tree::stop(&tree, action == "crash")?;
         }
-        free(runtime, 5.0)?;
+        free(role, runtime, 5.0)?;
         identity = None;
     } else if let Some(identity) = &identity {
-        verify_running(directory, runtime, identity)?;
+        verify_running(role, directory, runtime, identity)?;
     } else {
-        if let Some(tree) = tree::read(directory, runtime, false)? {
+        if let Some(tree) = tree::read(directory, runtime, role, false)? {
             if process::alive(&tree["supervisor"])? {
-                return Err("Worker退出但监督器仍在运行".into());
+                return Err(
+                    super::Rejection(format!("{}退出但监督器仍在运行", role.label())).into(),
+                );
             }
             reconciled = tree::closure(&tree, Duration::from_secs(10), true)?["status"]
                 == "external-termination";
         }
-        free(runtime, 0.0)?;
+        free(role, runtime, 0.0)?;
     }
     op.result(
         if identity.is_some() {
@@ -271,13 +404,13 @@ fn simple(op: &Operation, runtime: &Value, action: &str) -> Result<Value> {
         reconciled,
     )
 }
-fn verify_running(directory: &Path, runtime: &Value, identity: &Value) -> Result<()> {
-    let url = runtime["worker_ready_url"].as_str().ok_or("端点无效")?;
+fn verify_running(role: Role, directory: &Path, runtime: &Value, identity: &Value) -> Result<()> {
+    let url = runtime[role.ready()].as_str().ok_or("端点无效")?;
     if !ready(url)? {
-        return Err("已登记Worker未通过就绪探针".into());
+        return Err(super::Rejection(format!("已登记{}未通过就绪探针", role.label())).into());
     }
     process::listener(identity, url)?;
-    tree::running(directory, runtime, identity)?;
+    tree::running(directory, runtime, role, identity)?;
     Ok(())
 }
 fn archive_completed(op: &Operation) -> Result<Value> {
@@ -287,7 +420,7 @@ fn archive_completed(op: &Operation) -> Result<Value> {
             if op.path.join(name).exists() {
                 let child = op.child(name)?;
                 if process::alive(&child["identity"])? {
-                    return Err(Pending.into());
+                    return Err(Pending(op.role).into());
                 }
                 if name == "supervisor.json" {
                     tree::startup_cleanup(op, &child["identity"])?;
@@ -298,37 +431,45 @@ fn archive_completed(op: &Operation) -> Result<Value> {
     }
     op.archive()
 }
-fn reconcile(backend: &Path, directory: &Path, runtime: &Value, source: &str) -> Result<Value> {
-    let op = Operation::read(directory, source)?;
+fn reconcile(
+    role: Role,
+    backend: &Path,
+    directory: &Path,
+    runtime: &Value,
+    source: &str,
+) -> Result<Value> {
+    let op = Operation::read(role, directory, source)?;
     op.validate("request", Value::Null)?;
     if op.request["backend_root"] != json!(backend) {
-        return Err("Worker操作后端漂移".into());
+        return Err(super::Rejection(format!("{}操作后端漂移", role.label())).into());
     }
     if process::alive(&op.owner["identity"])? {
-        return Err("Worker控制器仍在运行，拒绝并发操作".into());
+        return Err(
+            super::Rejection(format!("{}控制器仍在运行，拒绝并发操作", role.label())).into(),
+        );
     }
     if op.path.join("result.json").exists() {
         return archive_completed(&op);
     }
     for name in ["supervisor.json", "candidate.json"] {
         if op.path.join(name).exists() && process::alive(&op.child(name)?["identity"])? {
-            return Err(Pending.into());
+            return Err(Pending(op.role).into());
         }
     }
     let action = op.request["operation"].as_str().ok_or("操作无效")?;
     let result = if action == "start" {
-        if let Some(identity) = process::worker(directory, runtime)? {
-            if verify_running(directory, runtime, &identity).is_ok() {
+        if let Some(identity) = process::registered(role, directory, runtime)? {
+            if verify_running(role, directory, runtime, &identity).is_ok() {
                 op.result("running", identity, None, true)?
             } else {
-                if let Some(tree) = tree::read(directory, runtime, true)? {
+                if let Some(tree) = tree::read(directory, runtime, role, true)? {
                     tree::stop(&tree, true)?;
                 }
-                free(runtime, 5.0)?;
+                free(role, runtime, 5.0)?;
                 op.result(
                     "stopped",
                     Value::Null,
-                    Some("中断的Worker控制未产生成功收据"),
+                    Some(&format!("中断的{}控制未产生成功收据", role.label())),
                     true,
                 )?
             }
@@ -336,11 +477,11 @@ fn reconcile(backend: &Path, directory: &Path, runtime: &Value, source: &str) ->
             if op.path.join("supervisor.json").exists() {
                 tree::startup_cleanup(&op, &op.child("supervisor.json")?["identity"])?;
             }
-            free(runtime, 0.0)?;
+            free(role, runtime, 0.0)?;
             op.result(
                 "stopped",
                 Value::Null,
-                Some("中断的Worker控制未产生成功收据"),
+                Some(&format!("中断的{}控制未产生成功收据", role.label())),
                 true,
             )?
         }
@@ -352,22 +493,25 @@ fn reconcile(backend: &Path, directory: &Path, runtime: &Value, source: &str) ->
     op.publish("result.json", &result, false)?;
     op.archive()
 }
-fn legacy(directory: &Path, runtime: &Value, source: &str) -> Result<()> {
-    let path = directory.join(LOCK);
+fn legacy(role: Role, directory: &Path, runtime: &Value, source: &str) -> Result<()> {
+    if role != Role::Worker {
+        return Err("该角色存在未知旧控制锁；保留现场，不接管旧启动".into());
+    }
+    let path = directory.join(role.lock());
     let metadata = fs::symlink_metadata(&path)?;
     if !metadata.is_dir()
         || crate::recovery::clone::native::digest::linked(&metadata)
         || fs::read_dir(&path)?.next().is_some()
     {
-        return Err("旧Worker锁不是空真实目录".into());
+        return Err(super::Rejection(format!("旧{}锁不是空真实目录", role.label())).into());
     }
     let inode =
         crate::recovery::clone::native::resources::common::device_inode_for(&path, &metadata)?;
-    let identity = process::worker(directory, runtime)?;
+    let identity = process::registered(role, directory, runtime)?;
     if let Some(identity) = &identity {
-        verify_running(directory, runtime, identity)?;
+        verify_running(role, directory, runtime, identity)?;
     } else {
-        free(runtime, 0.0)?;
+        free(role, runtime, 0.0)?;
     }
     let id = json!(uuid::Uuid::new_v4().simple().to_string());
     let mut value = operation::common(
@@ -384,7 +528,7 @@ fn legacy(directory: &Path, runtime: &Value, source: &str) -> Result<()> {
     });
     value["worker_identity"] = identity.unwrap_or(Value::Null);
     value["completed_at_ns"] = json!(operation::now());
-    let archive = directory.join(operation::ARCHIVE);
+    let archive = directory.join(role.archive());
     if !archive.exists() {
         fs::create_dir(&archive)?;
     }
@@ -395,7 +539,7 @@ fn legacy(directory: &Path, runtime: &Value, source: &str) -> Result<()> {
     )? != inode
         || fs::read_dir(&path)?.next().is_some()
     {
-        return Err("旧Worker锁在核对期间发生变化".into());
+        return Err(super::Rejection(format!("旧{}锁在核对期间发生变化", role.label())).into());
     }
     operation::write_new(
         &archive.join(format!("legacy-{}.json", id.as_str().ok_or("ID无效")?)),

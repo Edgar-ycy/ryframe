@@ -12,6 +12,48 @@ fn common(kind: &str) -> Value {
         "runtime_directory":std::env::current_dir().unwrap(),"source_sha256":"b".repeat(64)})
 }
 
+#[test]
+fn process_tree_cannot_cross_role_scope_or_product_identity() {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary = tempfile::tempdir_in(root).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let runtime = json!({"scope_id":"role-isolation"});
+    let identity =
+        json!({"pid":42,"started":"12345","executable":std::env::current_exe().unwrap()});
+    let mut monitor = identity.clone();
+    monitor["pid"] = json!(43);
+    for name in ["api", "worker", "frontend"] {
+        let role = role::Role::parse(&json!(name)).unwrap();
+        let tree_path = directory.join(format!("{name}-tree.json"));
+        let product_path = directory.join(format!("{name}.json"));
+        let original = json!({"format_version":2,"kind":"full-stack-process-tree",
+            "runtime_directory":directory,"role":name,"scope_id":"role-isolation",
+            "operation_id":"a".repeat(32),"supervisor":identity,"process":identity,
+            "monitor":monitor,"group_id":42});
+        operation::write_new(&tree_path, &original).unwrap();
+        operation::write_new(&product_path, &json!({"identity":identity})).unwrap();
+        assert_eq!(
+            tree::read(&directory, &runtime, role, true).unwrap(),
+            Some(original.clone())
+        );
+        for (field, invalid) in [
+            ("role", json!("other")),
+            ("scope_id", json!("other")),
+            ("process", monitor.clone()),
+        ] {
+            let mut changed = original.clone();
+            changed[field] = invalid;
+            crate::recovery::clone::native::json::write_replace(&tree_path, &changed).unwrap();
+            assert!(tree::read(&directory, &runtime, role, true).is_err());
+        }
+        crate::recovery::clone::native::json::write_replace(&tree_path, &original).unwrap();
+    }
+    for invalid in [Value::Null, json!("../api"), json!("Api"), json!("runtime")] {
+        assert!(role::Role::parse(&invalid).is_err());
+    }
+}
+
 fn fixture() -> Value {
     let identity =
         json!({"pid":42,"started":"12345","executable":std::env::current_exe().unwrap()});
@@ -68,6 +110,60 @@ fn successful(args: &Value) -> Value {
         value[key] = value2.clone();
     }
     value
+}
+
+#[test]
+fn role_contracts_reject_cross_role_artifacts_and_running_finite_results() {
+    for role in [role::Role::Api, role::Role::Frontend] {
+        let mut args = fixture();
+        args["owner"]["kind"] = json!(role.kind("owner"));
+        args["request"]["kind"] = json!(role.kind("request"));
+        args["request"]["owner_sha256"] = json!(documents::hash(&args["owner"]).unwrap());
+        let artifact = args["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_artifact")
+            .unwrap();
+        let ready = args["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_ready_url")
+            .unwrap();
+        args["request"][role.artifact()] = artifact.clone();
+        args["request"][role.ready()] = ready.clone();
+        args["runtime"]["artifacts"] = json!({(role.name()):artifact});
+        args["runtime"]
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_ready_url");
+        args["runtime"][role.ready()] = ready;
+        args["request"]["log"] = json!(format!("{}-{}.log", role.name(), "a".repeat(32)));
+        if role == role::Role::Frontend {
+            args["request"]["operation"] = json!("run");
+            args["request"]["log"] = Value::Null;
+            args["request"][role.ready()] = json!("exit-and-members");
+            args["runtime"][role.ready()] = json!("exit-and-members");
+            args["request"]["request_binding"] = json!({"descriptor":{},"state":{}});
+            args["request"]["timeout_seconds"] = json!(1800);
+        }
+        args["mode"] = json!("request");
+        receipts::execute(&args).unwrap();
+        let mut changed = args.clone();
+        changed["runtime"]["artifacts"][role.name()]["path"] = json!("different.exe");
+        assert!(receipts::execute(&changed).is_err());
+        changed = args.clone();
+        changed["owner"]["kind"] = json!("full-stack-worker-control-owner");
+        assert!(receipts::execute(&changed).is_err());
+        if role == role::Role::Frontend {
+            args["mode"] = json!("result");
+            args["value"] = successful(&args);
+            args["value"]["kind"] = json!(role.kind("result"));
+            assert!(receipts::execute(&args).is_err());
+            args["value"]["state"] = json!("stopped");
+            args["value"]["identity"] = Value::Null;
+            receipts::execute(&args).unwrap();
+        }
+    }
 }
 
 #[test]

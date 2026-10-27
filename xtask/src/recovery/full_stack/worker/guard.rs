@@ -16,10 +16,10 @@ pub(super) struct Guard {
     directory: (u64, u64),
 }
 impl Guard {
-    pub fn acquire(directory: &Path) -> Result<Self> {
+    pub fn acquire(role: super::role::Role, directory: &Path) -> Result<Self> {
         super::operation::canonical(directory)?;
         let identity = common::device_inode_for(directory, &fs::symlink_metadata(directory)?)?;
-        let path = directory.join("worker-control.guard");
+        let path = directory.join(format!("{}-control.guard", role.name()));
         let mut file = match OpenOptions::new()
             .read(true)
             .write(true)
@@ -101,16 +101,19 @@ mod tests {
     #[test]
     fn kernel_guard_excludes_second_controller_and_survives_normal_release() {
         let directory = directory();
-        let first = Guard::acquire(directory.path()).unwrap();
-        assert!(Guard::acquire(directory.path()).is_err());
+        let first = Guard::acquire(super::super::role::Role::Worker, directory.path()).unwrap();
+        assert!(Guard::acquire(super::super::role::Role::Worker, directory.path()).is_err());
         first.check().unwrap();
         drop(first);
-        Guard::acquire(directory.path()).unwrap().check().unwrap();
+        Guard::acquire(super::super::role::Role::Worker, directory.path())
+            .unwrap()
+            .check()
+            .unwrap();
     }
     #[test]
     fn replaced_guard_is_detected_even_when_marker_and_timestamp_shape_match() {
         let directory = directory();
-        let first = Guard::acquire(directory.path()).unwrap();
+        let first = Guard::acquire(super::super::role::Role::Worker, directory.path()).unwrap();
         let path = directory.path().join("worker-control.guard");
         fs::rename(&path, directory.path().join("old.guard")).unwrap();
         fs::write(&path, [0]).unwrap();
@@ -121,12 +124,12 @@ mod tests {
         for bytes in [vec![], vec![0, 0], vec![1]] {
             let directory = directory();
             fs::write(directory.path().join("worker-control.guard"), bytes).unwrap();
-            assert!(Guard::acquire(directory.path()).is_err());
+            assert!(Guard::acquire(super::super::role::Role::Worker, directory.path()).is_err());
         }
         let directory = directory();
         let source = directory.path().join("source");
         fs::write(&source, [0]).unwrap();
         fs::hard_link(source, directory.path().join("worker-control.guard")).unwrap();
-        assert!(Guard::acquire(directory.path()).is_err());
+        assert!(Guard::acquire(super::super::role::Role::Worker, directory.path()).is_err());
     }
 }

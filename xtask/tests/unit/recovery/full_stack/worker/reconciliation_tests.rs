@@ -13,7 +13,15 @@ impl Fixture {
         let directory = operation::canonical(temporary.path()).unwrap();
         let runtime = json!({"scope_id":"worker-reconcile","worker_ready_url":"http://127.0.0.1:19210/readyz","artifacts":{"worker":{"path":std::env::current_exe().unwrap(),"sha256":"d".repeat(64)}}});
         operation::write_new(&directory.join("runtime.json"), &runtime).unwrap();
-        let op = Operation::claim(action, &directory, &directory, &runtime, 1.0).unwrap();
+        let op = Operation::claim(
+            super::super::role::Role::Worker,
+            action,
+            &directory,
+            &directory,
+            &runtime,
+            1.0,
+        )
+        .unwrap();
         Self {
             _temporary: temporary,
             op,
@@ -67,7 +75,12 @@ impl Fixture {
         let monitor = missing(2147481002);
         let ready = json!({"format_version":1,"operation_id":self.op.owner["operation_id"],"directory":self.op.directory(),"role":"worker","scope_id":self.op.request["scope_id"],"supervisor":supervisor,"monitor":monitor});
         operation::write_new(
-            &tree::path(self.op.directory(), self.op.id().unwrap(), "ready"),
+            &tree::path(
+                self.op.directory(),
+                super::super::role::Role::Worker,
+                self.op.id().unwrap(),
+                "ready",
+            ),
             &ready,
         )
         .unwrap();
@@ -76,7 +89,12 @@ impl Fixture {
         proof["members"] = json!([supervisor]);
         proof["error_type"] = Value::Null;
         operation::write_new(
-            &tree::path(self.op.directory(), self.op.id().unwrap(), "stopped"),
+            &tree::path(
+                self.op.directory(),
+                super::super::role::Role::Worker,
+                self.op.id().unwrap(),
+                "stopped",
+            ),
             &proof,
         )
         .unwrap();
@@ -116,7 +134,12 @@ fn cleanup_failure_retains_operation_and_original_error() {
     fixture.children(supervisor.clone(), true);
     fixture.result(false);
     fixture.proof(&supervisor);
-    let path = tree::path(fixture.op.directory(), fixture.op.id().unwrap(), "stopped");
+    let path = tree::path(
+        fixture.op.directory(),
+        super::super::role::Role::Worker,
+        fixture.op.id().unwrap(),
+        "stopped",
+    );
     let mut proof = operation::read(&path).unwrap();
     proof["status"] = json!("failed");
     json::write_replace(&path, &proof).unwrap();

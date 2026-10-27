@@ -37,13 +37,20 @@ pub(super) fn environment(command: &mut Command) {
     command.env("APP_ENV", "test");
 }
 pub(super) fn command(operation: &str, args: &Value, directory: &Path) -> Result<Command> {
-    let request = json!({"format_version":1,"kind":"ryframe-full-stack-worker","operation":operation,"arguments":args});
+    let worker = operation != "run-frontend"
+        && operation != "role-control"
+        && args.get("role").is_none_or(|role| role == "worker");
+    let request = json!({"format_version":1,"kind":if worker {"ryframe-full-stack-worker"} else {"ryframe-full-stack-process"},"operation":operation,"arguments":args});
     let mut input = tempfile::tempfile_in(directory)?;
     input.write_all(&serde_json::to_vec(&request)?)?;
     input.seek(SeekFrom::Start(0))?;
     let mut command = Command::new(std::env::current_exe()?);
     command
-        .arg("__full-stack-worker")
+        .arg(if worker {
+            "__full-stack-worker"
+        } else {
+            "__full-stack-process"
+        })
         .stdin(input)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -69,20 +76,26 @@ pub(super) fn detach_platform(args: &Value) -> Result<Value> {
     use winsafe::{HPROCESS, STARTUPINFO, co, prelude::kernel_Hprocess};
     crate::recovery::clone::native::json::exact(
         args,
-        &["backend", "directory", "operation_id"],
+        &["backend", "directory", "operation_id", "role"],
         "Worker跳板参数",
     )?;
     if !super::documents::hex(&args["operation_id"], 32) {
         return Err("Worker跳板操作ID无效".into());
     }
+    let role = super::role::Role::parse(&args["role"])?;
     let executable = std::env::current_exe()?;
     let executable = executable.to_str().ok_or("Worker工具路径不是UTF-8")?;
     let input = serde_json::to_string(
-        &json!({"format_version":1,"kind":"ryframe-full-stack-worker","operation":"monitor","arguments":args}),
+        &json!({"format_version":1,"kind":if role == super::role::Role::Worker {"ryframe-full-stack-worker"} else {"ryframe-full-stack-process"},"operation":"monitor","arguments":args}),
     )?;
     let line = format!(
-        "{} __full-stack-worker-detached {}",
+        "{} {} {}",
         quote(executable),
+        if role == super::role::Role::Worker {
+            "__full-stack-worker-detached"
+        } else {
+            "__full-stack-process-detached"
+        },
         quote(&input)
     );
     let mut startup = STARTUPINFO::default();
@@ -143,6 +156,11 @@ fn quote(value: &str) -> String {
     text
 }
 
-pub(super) fn request(backend: &Path, directory: &Path, id: &str) -> Value {
-    json!({"backend":backend,"directory":directory,"operation_id":id})
+pub(super) fn request(
+    role: super::role::Role,
+    backend: &Path,
+    directory: &Path,
+    id: &str,
+) -> Value {
+    json!({"backend":backend,"directory":directory,"operation_id":id,"role":role.name()})
 }

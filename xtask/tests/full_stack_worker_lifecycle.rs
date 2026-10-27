@@ -1,4 +1,4 @@
-//! 等价迁移 Worker 的真实进程、取消与完整成员回收场景；不接触共享服务。
+//! API/Worker 的真实进程、取消与完整成员回收场景；不接触共享服务。
 #[path = "support/process_liveness.rs"]
 mod process_liveness;
 #[path = "full_stack_worker/support.rs"]
@@ -6,6 +6,95 @@ mod support;
 use serde_json::{Value, json};
 use std::{fs, net::TcpListener};
 use support::*;
+
+#[test]
+fn api_survives_controller_exit_and_stops_its_complete_role_tree() {
+    let fixture = Fixture::with_role("tree", Role::Api);
+    let runtime = read(fixture.run.join("runtime.json"));
+    let started = fixture.ok("start");
+    let id = started["operation_id"].as_str().unwrap();
+    let archive = fixture.archive(&started["operation_id"]);
+    let owner = read(archive.join("owner.json"));
+    let request = read(archive.join("request.json"));
+    assert_eq!(owner["kind"], "full-stack-api-control-owner");
+    assert_eq!(request["kind"], "full-stack-api-control-request");
+    assert_eq!(started["kind"], "full-stack-api-control-result");
+    for receipt in [&owner, &request] {
+        assert_eq!(receipt["operation_id"], started["operation_id"]);
+        assert_eq!(receipt["source_sha256"], started["source_sha256"]);
+    }
+    assert_eq!(owner["identity"], started["controller_identity"]);
+    fixture.gone(owner["identity"]["pid"].as_u64().unwrap() as u32);
+    assert_eq!(request["api_artifact"], runtime["artifacts"]["api"]);
+    assert_eq!(
+        request["api_ready_url"],
+        format!("http://127.0.0.1:{}/readyz", fixture.api_port)
+    );
+    assert!(request.get("worker_artifact").is_none());
+    assert!(request.get("worker_ready_url").is_none());
+    assert_eq!(request["log"], format!("api-{id}.log"));
+    assert!(fixture.run.join(request["log"].as_str().unwrap()).is_file());
+    assert!(!fixture.run.join("api-control.lock").exists());
+    assert_eq!(
+        started["identity"]["executable"],
+        runtime["artifacts"]["api"]["path"]
+    );
+    assert_ne!(
+        started["identity"]["executable"],
+        runtime["artifacts"]["worker"]["path"]
+    );
+    let tree = fixture.tree();
+    assert_eq!(tree["role"], "api");
+    assert_eq!(tree["operation_id"], started["operation_id"]);
+    assert_eq!(tree["process"], started["identity"]);
+    assert_eq!(tree["group_id"], tree["supervisor"]["pid"]);
+    for field in ["process", "supervisor", "monitor"] {
+        assert!(process_liveness::process_is_running(
+            tree[field]["pid"].as_u64().unwrap() as u32
+        ));
+    }
+    let status = fixture.ok("status");
+    assert_eq!(status["state"], "running");
+    assert_eq!(status["identity"], started["identity"]);
+    assert_eq!(fixture.tree(), tree);
+    assert!(TcpListener::bind(("127.0.0.1", fixture.port)).is_ok());
+    let descendant: u32 = fs::read_to_string(fixture.run.join("descendant.pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let stopped = fixture.ok("stop");
+    assert_eq!(stopped["state"], "stopped");
+    assert!(stopped["identity"].is_null());
+    assert_eq!(fixture.ok("status")["state"], "stopped");
+    let proof = read(fixture.run.join(format!("api-members-{id}-stopped.json")));
+    assert_eq!(proof["role"], "api");
+    assert_eq!(proof["scope_id"], runtime["scope_id"]);
+    assert_eq!(proof["supervisor"], tree["supervisor"]);
+    assert_eq!(proof["monitor"], tree["monitor"]);
+    assert_eq!(proof["status"], "stopped");
+    assert!(proof["error_type"].is_null());
+    let members = proof["members"].as_array().unwrap();
+    assert!(members.contains(&tree["supervisor"]));
+    assert!(members.contains(&tree["process"]));
+    assert!(
+        members
+            .iter()
+            .any(|identity| identity["pid"].as_u64() == Some(u64::from(descendant)))
+    );
+    for field in ["process", "supervisor", "monitor"] {
+        fixture.gone(tree[field]["pid"].as_u64().unwrap() as u32);
+    }
+    fixture.gone(descendant);
+    assert!(TcpListener::bind(("127.0.0.1", fixture.api_port)).is_ok());
+    for name in [
+        "worker-started",
+        "worker.json",
+        "worker-tree.json",
+        "worker-control-receipts",
+    ] {
+        assert!(!fixture.run.join(name).exists());
+    }
+}
 
 #[test]
 fn start_persists_atomic_receipts_survives_controller_and_is_idempotently_stopped() {
@@ -133,7 +222,7 @@ fn stop_and_crash_reclaim_complete_descendant_tree_and_record_requested_mode() {
 fn parent_control_death_during_readiness_does_not_orphan_or_replay_worker() {
     let fixture = Fixture::new("delay");
     let mut controller = fixture.command("start", 5.0);
-    wait(|| fixture.run.join("worker-started").exists());
+    fixture.wait_started(&mut controller);
     controller.kill().unwrap();
     controller.wait().unwrap();
     let lock = fixture.run.join("worker-control.lock");

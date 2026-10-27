@@ -71,12 +71,23 @@ pub(super) fn clean_environment(command: &mut Command) {
 }
 impl Dependencies for Python {
     fn call(&mut self, operation: &str, args: Value) -> Result<Value> {
-        if operation == "worker" {
-            check(
-                args["action"] == "start",
-                "浏览器仅通过现有Worker协议恢复已登记运行时",
+        if operation == "verify" {
+            return super::runtime::verify(&args);
+        }
+        if matches!(operation, "control" | "observe" | "worker") {
+            return super::runtime::control(&args, operation == "observe", operation == "worker");
+        }
+        if matches!(operation, "completion" | "terminate") {
+            crate::recovery::clone::native::json::exact(
+                &args,
+                &["directory", "scope_id"],
+                "前端进程完成参数",
             )?;
-            return super::worker_handoff::start(self, &args);
+            return crate::recovery::full_stack::worker::frontend_evidence(
+                &path(&args["directory"])?,
+                text(&args["scope_id"])?,
+                operation == "terminate",
+            );
         }
         let mut input = tempfile::tempfile_in(self.root.join(".local-tests"))?;
         let mut native_tool = bound(&std::env::current_exe()?)?;

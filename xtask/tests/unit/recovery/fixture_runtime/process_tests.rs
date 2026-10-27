@@ -1,92 +1,79 @@
-use super::{
-    dependency::{Dependencies, FrontendCommand, Python},
-    model::*,
+use super::process;
+use std::{
+    fs,
+    io::{Cursor, Read},
+    sync::mpsc,
+    thread,
 };
-use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
 
 #[test]
-fn supervised_commands_bind_completion_preserve_failure_and_reclaim_timeout_tree() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let mut api = Python::new(root).unwrap();
-    let output = Command::new(&api.executable)
-        .args(["-c", "import sys;print(sys.executable)"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let executable = String::from_utf8(output.stdout).unwrap().trim().to_owned();
-    let temp = super::tests::temporary();
-    let frontend = temp.path().join("frontend");
-    fs::create_dir(&frontend).unwrap();
-    let script = frontend.join("pnpm");
-    fs::write(&script,b"import sys,subprocess,time\nfrom pathlib import Path\nprint('Private'+'Secret',flush=True)\ntime.sleep(0.3)\nif 'corrupt' in sys.argv: (Path(sys.argv[-1])/'frontend.json').unlink()\nif 'timeout' in sys.argv:\n p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\n print(p.pid,flush=True)\n time.sleep(60)\nif 'fail' in sys.argv: sys.exit(17)\n").unwrap();
-    let binding = json!({"scope_id":"fixture-browser-process","frontend":{"path":frontend},"tools":{"corepack":{"path":executable},"node":{"path":executable},"corepack_entry":{"path":script}}});
-    for (mode, timeout) in [
-        ("success", 20),
-        ("fail", 20),
-        ("timeout", 3),
-        ("corrupt", 20),
-    ] {
-        let directory = temp.path().join(mode);
-        let log = temp.path().join(format!("{mode}.log"));
-        let result = api.frontend(FrontendCommand {
-            binding: &binding,
-            arguments: &json!([mode, directory]),
-            environment: &environment(),
-            log: &log,
-            directory: &directory,
-            timeout,
-            secrets: &["PrivateSecret".into()],
+fn frontend_logs_redact_bound_secrets_and_keep_bounded_failure_evidence() {
+    let directory = super::tests::temporary();
+    for overflow in [false, true] {
+        let (tx, rx) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            let prefix = Cursor::new(b"reason SyntheticPassword".to_vec());
+            let suffix = Cursor::new(if overflow { vec![b'x'; 64] } else { vec![] });
+            tx.send(process::capture(prefix.chain(suffix), 30)).unwrap();
         });
-        let bytes = fs::read(&log).unwrap();
-        assert!(!String::from_utf8_lossy(&bytes).contains("PrivateSecret"));
-        assert!(String::from_utf8_lossy(&bytes).contains("[REDACTED]"));
-        if mode == "success" {
-            let result = result.unwrap();
-            descriptor(
-                &result["completion"],
-                &path(&result["completion"]["path"]).unwrap(),
-            )
-            .unwrap();
-        } else {
-            let error = result.unwrap_err();
-            if mode == "fail" {
-                assert_eq!(crate::process::failure_exit_code(error.as_ref()), Some(17));
-            }
-            if mode == "corrupt" {
-                assert_ne!(crate::process::failure_exit_code(error.as_ref()), Some(0));
-            }
-            let (tree, _) = document(&directory.join("frontend-tree.json")).unwrap();
-            let proof = directory.join(format!(
-                "frontend-members-{}-stopped.json",
-                tree["operation_id"].as_str().unwrap()
-            ));
-            assert_eq!(document(&proof).unwrap().0["status"], "stopped");
-        }
+        let log = directory.path().join(format!("{overflow}.log"));
+        let result = process::finish_log(rx, reader, &log, &["SyntheticPassword".into()]);
+        assert_eq!(result.is_err(), overflow);
+        let saved = fs::read_to_string(log).unwrap();
+        assert!(saved.starts_with("reason [REDACTED]"));
+        assert!(!saved.contains("SyntheticPassword"));
     }
+    let (captured, overflow) = process::capture(Cursor::new(b"complete"), 8).unwrap();
+    assert_eq!(captured, b"complete");
+    assert!(!overflow);
 }
-fn environment() -> Value {
-    let mut values = serde_json::Map::new();
-    for (key, value) in std::env::vars() {
-        if [
-            "PATH",
-            "PATHEXT",
-            "SYSTEMROOT",
-            "WINDIR",
-            "COMSPEC",
-            "HOME",
-            "USERPROFILE",
-            "HOMEDRIVE",
-            "HOMEPATH",
-            "TEMP",
-            "TMP",
-            "APPDATA",
-            "LOCALAPPDATA",
-        ]
-        .contains(&key.to_uppercase().as_str())
-        {
-            values.insert(key, json!(value));
+
+#[test]
+fn frontend_handoff_rejects_rewrite_or_replacement_before_supervisor_claim() {
+    use super::dependency::FrontendCommand;
+    use serde_json::json;
+    let temporary = super::tests::temporary();
+    let backend = crate::workspace::root_dir();
+    for replace in [false, true] {
+        let directory = temporary.path().join(format!("command-{replace}"));
+        let log = temporary.path().join(format!("command-{replace}.log"));
+        let (guard, _held) = super::frontend::publish(
+            &backend,
+            &FrontendCommand {
+                binding: &json!({}),
+                arguments: &json!([]),
+                environment: &json!({}),
+                log: &log,
+                directory: &directory,
+                timeout: 10,
+                secrets: &[],
+            },
+        )
+        .unwrap();
+        super::frontend::handoff(&directory, &guard).unwrap();
+        let path = directory.join("runtime.json");
+        let bytes = fs::read(&path).unwrap();
+        if replace {
+            fs::rename(&path, directory.join("original.json")).unwrap();
+            fs::write(&path, &bytes).unwrap();
+        } else {
+            let mut changed = bytes;
+            changed.push(b' ');
+            fs::write(&path, changed).unwrap();
+        }
+        let request = json!({"format_version":1,"kind":"ryframe-full-stack-process",
+            "operation":"run-frontend","arguments":{"backend":backend,"directory":directory,"request_binding":guard}});
+        assert!(
+            crate::recovery::full_stack::worker::execute(&serde_json::to_vec(&request).unwrap())
+                .is_err()
+        );
+        for name in [
+            "frontend-control.guard",
+            "frontend-control.lock",
+            "frontend-tree.json",
+            "frontend.json",
+        ] {
+            assert!(!directory.join(name).exists());
         }
     }
-    Value::Object(values)
 }

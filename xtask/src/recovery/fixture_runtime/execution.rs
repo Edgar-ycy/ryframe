@@ -161,7 +161,6 @@ fn environment(context: &Context) -> Result<Value> {
         "COREPACK_HOME".into(),
         context.binding["tools"]["corepack_home"].clone(),
     );
-    values.insert("PYTHONUTF8".into(), json!("1"));
     for key in ["TEMP", "TMP"] {
         if context.private[key].is_string() {
             values.insert(key.into(), context.private[key].clone());

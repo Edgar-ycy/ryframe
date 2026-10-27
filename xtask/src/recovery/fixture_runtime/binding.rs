@@ -163,29 +163,7 @@ impl Base {
             )?;
         }
         output_set(runtime, run_id, &outputs, fresh)?;
-        let browser = json!([
-            "check",
-            "--stage",
-            "browser",
-            "--real",
-            "--fixture",
-            "business",
-            "--server",
-            server
-        ]);
-        let verify = json!([
-            "exec",
-            "node",
-            "scripts/restore-build.mjs",
-            "verify",
-            "--source-root",
-            frontend
-        ]);
-        let commands = if server == "dev" {
-            json!([browser])
-        } else {
-            json!([["build", "--real"], verify, browser, verify])
-        };
+        let commands = commands(frontend, server)?;
         let response_audit = if server == "preview" {
             json!({"path":outputs["response_audit"],"initial_state":"absent","first_writer":"frontend-preview-static-proxy"})
         } else {
@@ -254,4 +232,31 @@ impl Base {
             private: boot["private"].clone(),
         })
     }
+}
+
+pub(super) fn commands(frontend: &std::path::Path, server: &str) -> Result<Value> {
+    check(matches!(server, "dev" | "preview"), "浏览器模式无效")?;
+    let browser = json!([
+        "check",
+        "--stage",
+        "browser",
+        "--real",
+        "--fixture",
+        "business",
+        "--server",
+        server
+    ]);
+    let verify = json!([
+        "exec",
+        "node",
+        "scripts/restore-build.mjs",
+        "verify",
+        "--source-root",
+        frontend
+    ]);
+    Ok(if server == "dev" {
+        json!([browser])
+    } else {
+        json!([["build", "--real"], verify, browser, verify])
+    })
 }
