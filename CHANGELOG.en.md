@@ -3,6 +3,7 @@
 [简体中文](CHANGELOG.md)
 
 ## [Unreleased]
+- Fix historical storage-failure verification using the completed-stage digest instead of its registered running record. Reuse running-record reconstruction and controller binding checks, reject source, owner, and manifest tampering, and preserve original failure files and exact-cleanup constraints.
 - Reuse the typed Rust supervision engine for fixture API/Worker control and finite frontend commands, preserving role-specific owner/request records, artifact and configuration checks, complete-member closure proofs, and no replay of unknown outcomes. Refuse to adopt old API processes without supervision trees; retain formal build and preparation adapters that still have callers.
 - Move extended-CI file-configuration semantics and diagnostic-artifact sensitive-file exclusions into the sole Rust internal entry, using a locked glob matcher against a temporary file tree to verify exclusions while retaining public logs. Remove duplicate wiring, Shell-spelling, and retired environment-variable text assertions from the old Python database-workflow tests without changing the workflows.
 - Connect the Rust parent execution paths for source verification, verification recovery, generation stop and stop recovery, sharing lock ownership and complete source/process-tree checks. Preserve unknown-write, no-replay and failure-evidence rules. Remaining Python generation start, status, restart and comparison paths still await migration; full positive recovery acceptance is not yet complete.

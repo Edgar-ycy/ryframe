@@ -163,7 +163,7 @@ fn incident(
     calls: &[(&str, &str)],
 ) -> Result<(Value, Value)> {
     let number = super::number(row)?;
-    let controller = registered::controller_binding(run, row)?;
+    let (controller, _) = super::super::lineage::failure::controller(run, row)?;
     let binding = common::binding(&run.join(format!("failure-{number:04}.json")))?;
     let value = common::read_bound(backend, &binding, "分段原失败")?;
     let fields = [
@@ -238,3 +238,7 @@ fn exact_cleanup(output: &Path, observed: &Value) -> Result<Value> {
     }
     Ok(identity)
 }
+
+#[cfg(test)]
+#[path = "../../../../../../../tests/unit/recovery/source/runtime/history/segment_failures.rs"]
+mod tests;

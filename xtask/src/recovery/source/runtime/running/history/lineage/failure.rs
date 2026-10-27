@@ -149,7 +149,10 @@ fn source(
     Ok(source)
 }
 
-pub(super) fn controller(run: &Path, attempt: &Value) -> Result<(Value, Value)> {
+pub(in crate::recovery::source::evidence::running::history) fn controller(
+    run: &Path,
+    attempt: &Value,
+) -> Result<(Value, Value)> {
     let mut running = attempt.clone();
     running["status"] = json!("running");
     running["finished_at"] = Value::Null;
