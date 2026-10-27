@@ -14,7 +14,6 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import execution_backend, generation, request_binding
 from devex_clone_target_resources import Resources
 from devex_clone_target_state import failure, generation_lock
-from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_evidence import evidence
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
@@ -67,7 +66,7 @@ def unresolved_failure(backend: Path, output: Path) -> bool:
         return True
 
 
-def context(backend: Path, request: dict, output: Path, run, *, storage_run: Path | None = None,
+def context(backend: Path, request: dict, output: Path, run, *, request_descriptor: dict, storage_run: Path | None = None,
             owned_lock_identity: int | None = None,
             lock_output: Path | None = None) -> tuple[dict, Resources]:
     if owned_lock_identity is not None:
@@ -79,7 +78,7 @@ def context(backend: Path, request: dict, output: Path, run, *, storage_run: Pat
     execution_root, _ = execution_backend(backend, request)
     resources = Resources(backend, request, output, selected, review, run, storage_run=storage_run,
                           execution_backend=execution_root, owned_lock_identity=owned_lock_identity,
-                          lock_output=lock_output)
+                          lock_output=lock_output, request_descriptor=request_descriptor)
     original["storage"] = resources.storage_identity()
     return original, resources
 
@@ -121,7 +120,7 @@ def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run,
         request = read_bound_json(local_path(backend, expected["path"]), expected)
         original, resources = context(
             backend, request, output, run, storage_run=storage_run,
-            owned_lock_identity=lock_identity
+            owned_lock_identity=lock_identity, request_descriptor=expected
         )
         if original != prepared["generation"]:
             raise ValueError("收尾前来源、工具或服务代次发生变化")
@@ -192,9 +191,10 @@ def verify_target(backend: Path, output: Path, observation_dir: Path, run=subpro
                                      resumed=(output / "failure.json").is_file())
             original, resources = context(
                 backend, request, observation_dir, run, storage_run=storage_run,
-                owned_lock_identity=lock_identity, lock_output=output
+                owned_lock_identity=lock_identity, lock_output=output, request_descriptor=expected_request
             )
-            verify_storage_generation(original_result["generation"], original, resources.storage_runtime_binding, resources.cache_runtime_binding)
+            evidence("storage-generation", backend, observation_dir, expected=original_result["generation"],
+                     actual=original, runtime=resources.storage_runtime_binding, cache_runtime=resources.cache_runtime_binding)
             reset = read_json(output / "reset-plan.json")
             if evidence("reset-completed", backend, output, manifest=reset["manifest"], sha=reset["plan_hash"]) != original_result["reset"]:
                 raise ValueError("原 reset 完成证据已变化")

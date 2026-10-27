@@ -217,7 +217,7 @@ class CacheProcessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 process.redis_facts(invalid, {"APP_REDIS_PASSWORD": "ambient-secret"})
             with self.assertRaises(ValueError):
-                process.start(invalid, {"APP_ENV": "test"}, self.output, lambda: None)
+                process.start(self.backend, invalid, {"APP_ENV": "test"}, self.output, lambda: None)
         connect.assert_not_called()
         popen.assert_not_called()
 
@@ -291,7 +291,7 @@ class CacheProcessTests(unittest.TestCase):
         with patch.object(process, "windows_identity", return_value=True), \
                 patch.object(process, "linux_call", return_value=alive), \
                 patch.object(process, "redis_facts", return_value=self.facts()):
-            observed = process.observe(self.request, {"APP_ENV": "test"}, runtime, self.output)
+            observed = process.observe(self.backend, self.request, {"APP_ENV": "test"}, runtime, self.output)
         self.assertNotIn(self.request["password"], json.dumps(observed))
         # launch-request 是包含直接凭据的私有控制输入；公开收据仅保存其绑定摘要。
         for path in self.output.glob("*.json"):
@@ -306,8 +306,8 @@ class CacheProcessTests(unittest.TestCase):
         with patch.object(process.subprocess, "run", side_effect=AssertionError("历史检查不能调用工具")):
             self.assertEqual(process.inspect_start(self.request, self.output), runtime)
             for operation in (lambda: process.linux_call(self.request, runtime, "observe"),
-                              lambda: process.stop(self.request, {}, runtime, self.output),
-                              lambda: process.observe(self.request, {}, runtime)):
+                              lambda: process.stop(self.backend, self.request, {}, runtime, self.output),
+                              lambda: process.observe(self.backend, self.request, {}, runtime)):
                 with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "WSL"):
                     operation()
         self.assertEqual(before, {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()})
@@ -378,7 +378,7 @@ class CacheProcessTests(unittest.TestCase):
                 patch.object(process, "linux_call", side_effect=linux_call), \
                 patch("full_stack_process.process_identity", return_value=None), \
                 patch("devex_clone_source_proof.require_closed_port"):
-            result = process.stop(self.request, {}, runtime, self.output)
+            result = process.stop(self.backend, self.request, {}, runtime, self.output)
         self.assertEqual(actions, ["stop", "check"])
         self.assertEqual(result["status"], "redis_process_stopped")
         self.assertTrue(result["observed_after_failed_stop"])
@@ -398,13 +398,13 @@ class CacheProcessTests(unittest.TestCase):
         with patch.object(process, "windows_identity", return_value=False), \
                 patch.object(process, "linux_call", side_effect=linux_call), \
                 self.assertRaisesRegex(RuntimeError, "精确身份操作失败"):
-            process.stop(self.request, {}, runtime, self.output)
+            process.stop(self.backend, self.request, {}, runtime, self.output)
         self.assertFalse((self.output / "stopped.json").exists())
 
     def test_launch_constructor_exception_remains_unknown(self):
         with patch("devex_clone_source_proof.require_closed_port"), patch.object(process, "launch_process", side_effect=OSError("injected")):
             with self.assertRaises(OSError):
-                process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
+                process.start(self.backend, self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         with self.assertRaises(ValueError):
             process.inspect_start(self.request, self.output)
         self.assertFalse((self.output / "partial.json").exists())
@@ -416,7 +416,7 @@ class CacheProcessTests(unittest.TestCase):
                 patch("devex_clone_source_proof.require_closed_port"), \
                 patch.object(process, "launch_process", side_effect=OSError("constructor unknown")) as popen:
             with self.assertRaises(OSError):
-                process.start(self.request, private, self.output, lambda: None)
+                process.start(self.backend, self.request, private, self.output, lambda: None)
         child_environment = popen.call_args.kwargs["env"]
         self.assertEqual({key: value for key, value in child_environment.items() if key.upper().startswith("APP_")},
                          {"APP_ENV": "test"})
@@ -438,13 +438,13 @@ class CacheProcessTests(unittest.TestCase):
                             {"APP_ENV": "prod"}, {"APP_ENV": "test", "TEMP": 123},
                             {"APP_ENV": "test", "TEMP": "one", "temp": "two"}):
             with self.subTest(keys=list(environment)), patch.object(process, "launch_process") as popen, self.assertRaises(ValueError):
-                process.start(self.request, environment, self.output, lambda: None)
+                process.start(self.backend, self.request, environment, self.output, lambda: None)
             popen.assert_not_called()
             self.assertEqual(list(self.output.iterdir()), [])
 
     def test_guard_before_popen_has_no_intent(self):
         with patch.object(process, "launch_process") as popen, self.assertRaises(RuntimeError):
-            process.start(self.request, {"APP_ENV": "test"}, self.output,
+            process.start(self.backend, self.request, {"APP_ENV": "test"}, self.output,
                           lambda: (_ for _ in ()).throw(RuntimeError("guard")))
         popen.assert_not_called()
         self.assertIsNone(process.inspect_start(self.request, self.output))
@@ -463,7 +463,7 @@ class CacheProcessTests(unittest.TestCase):
         child.wait.return_value = 1
         with patch("devex_clone_source_proof.require_closed_port"), patch.object(process, "launch_process", return_value=child), \
                 patch("full_stack_process.process_identity", return_value=None), self.assertRaises(ValueError):
-            process.start(self.request, {"APP_ENV": "test"}, self.output, lambda: None)
+            process.start(self.backend, self.request, {"APP_ENV": "test"}, self.output, lambda: None)
         result = process.inspect_start(self.request, self.output)
         self.assertEqual(result["state"], "not_started")
         self.assertFalse(process.read(self.output / "partial.json")["authorization_sent"])

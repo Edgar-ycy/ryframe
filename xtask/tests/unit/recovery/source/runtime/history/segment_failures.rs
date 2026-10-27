@@ -9,7 +9,14 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let backend = crate::workspace::root_dir();
+        Self::registered(
+            crate::workspace::root_dir(),
+            json!({"snapshot":{"head":"a".repeat(40)},"contract":"original-producer"}),
+            "CalledProcessError",
+        )
+    }
+
+    fn registered(backend: std::path::PathBuf, sources: Value, error: &str) -> Self {
         let local = backend.join(".local-tests");
         std::fs::create_dir_all(&local).unwrap();
         let directory = tempfile::Builder::new()
@@ -19,13 +26,7 @@ impl Fixture {
         let run = directory.path();
         document::write_new(&run.join("manifest.json"), &json!({"fixture":true})).unwrap();
         state::initialize(run).unwrap();
-        let (number, running) = state::begin(
-            run,
-            "storage-target",
-            "restart",
-            &json!({"snapshot":{"head":"a".repeat(40)},"contract":"original-producer"}),
-        )
-        .unwrap();
+        let (number, running) = state::begin(run, "storage-target", "restart", &sources).unwrap();
         let owner = json!({"format_version":1,"directory":run,
             "manifest_sha256":common::binding(&run.join("manifest.json")).unwrap()["sha256"],
             "identity":{"pid":424242,"started":"123456789",
@@ -33,13 +34,13 @@ impl Fixture {
         std::fs::create_dir(run.join("run.lock")).unwrap();
         document::write_new(&run.join("run.lock/owner.json"), &owner).unwrap();
         state::bind_controller(run, number, &owner, &running).unwrap();
-        state::finish(run, number, None, Some("CalledProcessError")).unwrap();
+        state::finish(run, number, None, Some(error)).unwrap();
         let row = state::load(run, true).unwrap()["attempts"][0].clone();
         let controller = common::binding(&state::controller_path(run, number)).unwrap();
         document::write_new(
             &run.join("failure-0001.json"),
             &json!({"format_version":2,"kind":"devex-stage-failure","attempt":number,
-                "stage":"storage-target","mode":"restart","error_type":"CalledProcessError",
+                "stage":"storage-target","mode":"restart","error_type":error,
                 "controller":controller,"operation_id":"clone.storage-target.restart"}),
         )
         .unwrap();
@@ -111,3 +112,6 @@ fn historical_failure_rejects_source_owner_and_manifest_tampering() {
         assert!(fixture.incident().is_err(), "未拒绝历史篡改：{mutation}");
     }
 }
+
+#[path = "restart_contract.rs"]
+mod contract_tests;

@@ -15,6 +15,7 @@ use crate::Result;
 pub(crate) mod generation;
 pub(crate) mod kernel;
 mod observer;
+pub(crate) mod protocol;
 pub(crate) mod redis_layout;
 pub(crate) mod rustfs;
 

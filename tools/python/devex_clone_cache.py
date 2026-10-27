@@ -41,11 +41,11 @@ def _port(backend, directory, operation, arguments):
     if operation == "inspect":
         return inspect_start(arguments["request"], Path(arguments["output"]))
     if operation == "stop":
-        return stop(arguments["request"], arguments["private"], arguments["runtime"], Path(arguments["output"]))
+        return stop(backend, arguments["request"], arguments["private"], arguments["runtime"], Path(arguments["output"]))
     if operation == "observe":
-        return observe(arguments["request"], arguments["private"], arguments["runtime"])
+        return observe(backend, arguments["request"], arguments["private"], arguments["runtime"])
     if operation == "start":
-        return start(arguments["request"], arguments["private"], Path(arguments["output"]),
+        return start(backend, arguments["request"], arguments["private"], Path(arguments["output"]),
                      lambda: checkpoint(arguments["guard"]))
     if operation == "redis":
         call = transport(backend, arguments["request"], environment(backend, arguments["request"]),

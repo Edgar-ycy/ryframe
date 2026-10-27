@@ -14,6 +14,9 @@ use crate::{
 use serde_json::{Value, json};
 use std::path::Path;
 
+#[path = "restart_contract.rs"]
+mod restart_contract;
+
 pub(super) fn stop(
     backend: &Path,
     run: &Path,
@@ -67,26 +70,7 @@ pub(super) fn restart(
     expected: &Value,
     idle: bool,
 ) -> Result<Vec<Value>> {
-    if row["status"] != "failed"
-        || !row["result"].is_null()
-        || row["error_type"] != "CalledProcessError"
-    {
-        return Err("分段续作只接受已精确回收的存储身份查询失败".into());
-    }
-    let (failure, controller) = incident(
-        backend,
-        run,
-        row,
-        "restart",
-        "clone.storage-target.restart",
-        &[
-            ("devex_clone_run", "execute"),
-            ("devex_clone_storage", "execute_storage"),
-            ("devex_clone_storage_process", "start"),
-            ("devex_clone_storage_process", "actual_arguments"),
-            ("devex_clone_target_storage", "actual_windows_argv"),
-        ],
-    )?;
+    let (failure, controller) = restart_incident(backend, run, row)?;
     let owner = common::read_bound(backend, &controller, "失败存储重启控制器")?["owner"].clone();
     let (request, descriptor) = registered::registration(backend, run, CloneSide::Target)?;
     if descriptor != *expected {
@@ -134,6 +118,60 @@ pub(super) fn restart(
         common::bound_file(backend, binding, "失败存储重启原证据")?;
     }
     Ok(vec![failure, controller])
+}
+
+pub(in crate::recovery::source::evidence) fn restart_request(args: &Value) -> Result<Value> {
+    document::exact(args, &["directory", "attempt"], "历史存储重启失败核验参数")?;
+    let backend = crate::workspace::root_dir();
+    let run = Path::new(document::text(&args["directory"], "历史运行目录")?);
+    common::local_directory(&backend, run, "历史存储重启运行")?;
+    let state_path = run.join("state.json");
+    let state_binding = common::binding(&state_path)?;
+    let manifest = common::binding(&run.join("manifest.json"))?;
+    let state = crate::recovery::clone::native::lifecycle::state::load(run, true)?;
+    let number = super::number(&args["attempt"])?;
+    let row = document::array(&state["attempts"], "历史阶段")?
+        .iter()
+        .find(|row| row["number"].as_u64() == Some(number))
+        .ok_or("历史存储重启阶段不存在；核对原始运行和阶段编号")?;
+    if *row != args["attempt"] {
+        return Err("历史存储重启参数与实际完整阶段不同；重新读取原始 state 后核验".into());
+    }
+    let (failure, controller) = restart_incident(&backend, run, row)?;
+    for binding in [&state_binding, &manifest, &failure, &controller] {
+        common::bound_file(&backend, binding, "历史存储失败核验前后绑定")?;
+    }
+    Ok(json!({"failure":failure,"controller":controller}))
+}
+
+fn restart_incident(backend: &Path, run: &Path, row: &Value) -> Result<(Value, Value)> {
+    if row["stage"] != "storage-target"
+        || row["mode"] != "restart"
+        || row["status"] != "failed"
+        || !row["result"].is_null()
+    {
+        return Err("历史记录不是已失败且未发布结果的存储重启；核对完整原始阶段".into());
+    }
+    let initial = super::super::lineage::failure::controller(run, row)?;
+    let contract = restart_contract::restart_contract(backend, row)?;
+    if row["error_type"] != contract.error_type {
+        return Err("历史存储失败类型与已绑定 producer 合同不同；禁止混用新旧证据".into());
+    }
+    let observed = incident(
+        backend,
+        run,
+        row,
+        "restart",
+        "clone.storage-target.restart",
+        &contract.calls,
+    )?;
+    if observed.1 != initial.0 || super::super::lineage::failure::controller(run, row)? != initial {
+        return Err("历史存储控制器在合同核验期间变化；保留现场重新核对".into());
+    }
+    for binding in [&observed.0, &observed.1] {
+        common::bound_file(backend, binding, "历史存储失败原始绑定")?;
+    }
+    Ok(observed)
 }
 
 fn files(backend: &Path, output: &Path) -> Result<Value> {

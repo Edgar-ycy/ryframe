@@ -10,7 +10,7 @@ from devex_clone_target_evidence import evidence
 
 def _trusted_started(backend: Path, expected: dict, descriptor: dict) -> None:
     started = read_bound_json(bound_file(backend, descriptor), descriptor)
-    validate_started_generation(backend, expected, started)
+    validate_started_generation(backend, Path(descriptor["path"]).parent, expected, started)
 
 
 def _trusted_predecessor(backend: Path, expected: dict, descriptor: dict) -> None:

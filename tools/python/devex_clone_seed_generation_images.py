@@ -30,8 +30,10 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     review = read_json(bound_file(backend, {key: value for key, value in target["review"].items() if key != "canonical_sha256"}))
     seed = review["scopes"]["seed"]
     redis_configuration(execution, target, seed, environment=environment)
+    initialized = bound_file(backend, source["manifest"]["initialized"])
+    descriptor = read_json(initialized.parent / "prepare.json")["request"]
     resources = Resources(backend, target, output, seed, review, run, execution_backend=execution,
-                          storage_run=source["directory"])
+                          storage_run=source["directory"], request_descriptor=descriptor)
     storage = resources.storage_identity()
     redis = resources.redis_state(initialized=True, sentinel=True)
     tools = ExternalTools({"source": selected, "tools": predecessor["tools"]}, output, run)

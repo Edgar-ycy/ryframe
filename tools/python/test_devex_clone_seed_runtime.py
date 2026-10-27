@@ -42,7 +42,7 @@ class RuntimeTests(unittest.TestCase):
             selected={"api_url": "http://127.0.0.1:18210",
                       "worker_ready_url": "http://127.0.0.1:18211/readyz",
                       "runtime_dir": str(self.directory / "candidate")},
-            runtime=self.directory / "runtime", target={"target": True}, output=self.directory,
+            runtime=self.directory / "runtime", target={"target": True}, target_descriptor={"bound": "request"}, output=self.directory,
             review={"review": True}, run=MagicMock(), environments=environments,
             api_guard=MagicMock(), resolved_storage_run=lambda: self.directory)
         confirmation_check = patch.object(runtime, "verify_confirmations")
@@ -72,7 +72,7 @@ class RuntimeTests(unittest.TestCase):
         environments.use.return_value.__enter__.return_value = {}
         fixture_run = self.directory / "fixture-service-run"
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory,
-            target={"target": True}, target_config={"scope_id": self.scope},
+            target={"target": True}, target_descriptor={"bound": "request"}, target_config={"scope_id": self.scope},
             initial={"generation": {"physical": {"scope": "target"}}},
             selected={"api_url": "http://127.0.0.1:18210",
                       "worker_ready_url": "http://127.0.0.1:18211/readyz",

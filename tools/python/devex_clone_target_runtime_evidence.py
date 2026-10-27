@@ -4,7 +4,7 @@ from pathlib import Path
 from devex_clone import read_json
 from devex_clone_model import exact
 from devex_clone_source_proof import bound_file
-from devex_clone_target_storage import verify_storage_generation
+from devex_clone_target_evidence import evidence
 from restore_reference_plan import plan_hash
 
 
@@ -94,12 +94,13 @@ def _trusted_runtime_evidence(backend: Path, expected: dict, storage: dict | Non
     return _registered_runtime_evidence(backend, expected, storage, cache)
 
 
-def validate_started_generation(backend: Path, expected: dict, started: dict) -> None:
+def validate_started_generation(backend: Path, output: Path, expected: dict, started: dict) -> None:
     runtime, cache = started["storage_runtime"], started["cache_runtime"]
     if (runtime, cache) != _trusted_runtime_evidence(backend, expected["storage"], runtime, cache):
         raise ValueError("迁移续作 started 的存储代次不同于可信发布证据")
     actual = {**expected, "storage": started["storage"]}
-    verify_storage_generation(expected, actual, runtime, cache)
+    evidence("storage-generation", backend, output, expected=expected, actual=actual,
+             runtime=runtime, cache_runtime=cache)
     if actual == expected and (runtime is not None or cache is not None):
         raise ValueError("存储恢复证据没有产生新的实际进程代次")
     if started["current_generation_sha256"] != plan_hash(actual):

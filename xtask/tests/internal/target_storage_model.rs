@@ -191,6 +191,75 @@ fn storage_transition_only_accepts_registered_complete_replacements() {
     assert!(generation::validate_transition(&expected, &actual, None, None).is_err());
     let changed = json!({"rustfs":{"identity":2},"redis":{"run_id":"unregistered"}});
     assert!(generation::validate_transition(&expected, &changed, Some(&runtime), None).is_err());
+    let before = json!({"configuration":"fixed", "source":{"head":"fixed"},"storage":expected});
+    let cache = json!({"redis":{"run_id":"new"}});
+    let mut after = before.clone();
+    after["storage"] = json!({"rustfs":{"identity":2},"redis":{"run_id":"new"}});
+    generation::validate_complete(&before, &before, None, None).unwrap();
+    let mut cache_only = before.clone();
+    cache_only["storage"]["redis"] = cache["redis"].clone();
+    generation::validate_complete(&before, &cache_only, None, Some(&cache)).unwrap();
+    generation::validate_complete(&before, &after, Some(&runtime), Some(&cache)).unwrap();
+    assert!(generation::validate_complete(&before, &after, None, Some(&cache)).is_err());
+    assert!(generation::validate_complete(&before, &after, Some(&runtime), None).is_err());
+    for field in ["configuration", "source", "unexpected"] {
+        let mut changed = after.clone();
+        changed[field] = json!("changed");
+        assert!(
+            generation::validate_complete(&before, &changed, Some(&runtime), Some(&cache)).is_err()
+        );
+    }
+    assert_eq!(before["storage"], expected);
+}
+
+#[test]
+fn argument_evidence_checks_receipt_identity_and_is_read_only() {
+    use crate::recovery::{
+        clone::native::target_verify::{evidence_protocol, storage::protocol},
+        fixture_control::services::lifecycle::readonly::process,
+    };
+    let fixture = Fixture::new();
+    let receipt = &fixture.storage["process_receipt"];
+    let root = Path::new(receipt["path"].as_str().unwrap())
+        .parent()
+        .unwrap();
+    let snapshot = || {
+        fs::read_dir(root)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let hash = path.is_file().then(|| digest::file(&path).unwrap().sha256);
+                (path, hash)
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before = snapshot();
+    let expected = process::arguments(&fixture.identity).unwrap();
+    let payload = json!({"format_version":1,"operation":"process-argv","backend":fixture.context.backend,
+        "target":root,"receipt":receipt,"identity":fixture.identity});
+    let result = evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).unwrap();
+    assert_eq!(
+        result,
+        json!({"actual_arguments_sha256":digest::plan_hash(&json!(expected)).unwrap(),"remote_writes":0})
+    );
+    assert_eq!(before, snapshot());
+    assert!(
+        protocol::arguments(
+            &fixture.context.backend,
+            &fixture.context.observation_dir,
+            receipt,
+            &fixture.identity
+        )
+        .is_err()
+    );
+    let mut wrong = fixture.identity.clone();
+    wrong["started"] = json!("different-generation");
+    assert!(protocol::arguments(&fixture.context.backend, root, receipt, &wrong).is_err());
+    let mut extra = payload.clone();
+    extra["command"] = json!(["not-authorized"]);
+    assert!(evidence_protocol::execute(&serde_json::to_vec(&extra).unwrap()).is_err());
+    fs::write(root.join("process.json"), b"{}").unwrap();
+    assert!(evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).is_err());
 }
 
 #[test]

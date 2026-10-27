@@ -15,7 +15,6 @@ import subprocess
 from subprocess import Popen as launch_process
 import sys
 import time
-from types import SimpleNamespace
 import uuid
 
 
@@ -303,21 +302,23 @@ def linux_call(request, runtime, action):
     return invoke("call", request=request, runtime=runtime, action=action)
 
 
-def windows_identity(request, runtime, *, required):
+def windows_identity(backend, request, runtime, *, required):
     from full_stack_process import process_identity
-    from devex_clone_target_storage import actual_windows_argv
+    from devex_clone_target_evidence import evidence
     expected = runtime["launcher"]
     actual = process_identity(expected["pid"])
     if actual is None and not required:
         return False
-    if actual != expected or actual_windows_argv(SimpleNamespace(runner=subprocess.run), expected) != command(request, Path(runtime["output"]), "serve"):
+    directory = Path(runtime["output"])
+    if actual != expected or evidence("process-argv", backend, directory, receipt=bound(directory / "launcher.json"),
+                                      identity=expected)["actual_arguments_sha256"] != canonical(command(request, directory, "serve")):
         raise ValueError("WSL launcher 创建身份或实际参数不符")
     return True
 
 
-def observe(request, environment, runtime, output=None):
+def observe(backend, request, environment, runtime, output=None):
     validate(request)
-    windows_identity(request, runtime, required=True)
+    windows_identity(backend, request, runtime, required=True)
     before = linux_call(request, runtime, "observe")
     if not before["alive"] or before["boot_id"] != runtime["boot_id"]:
         raise ValueError("Redis 原 Linux 运行代次已退出")
@@ -333,7 +334,7 @@ def observe(request, environment, runtime, output=None):
     return result
 
 
-def stop(request, environment, runtime, output):
+def stop(backend, request, environment, runtime, output):
     from devex_clone_source_proof import require_closed_port
     from full_stack_process import process_identity
     validate(request)
@@ -341,7 +342,7 @@ def stop(request, environment, runtime, output):
         result = {**status(request, runtime), "status": "redis_process_stopped", "runtime": runtime, "resources_deleted": False}
         write(Path(output) / "stopped.json", result)
         return result
-    windows_identity(request, runtime, required=False)
+    windows_identity(backend, request, runtime, required=False)
     observed_after_failed_stop = False
     try:
         result = linux_call(request, runtime, "stop")
@@ -371,10 +372,10 @@ def stop(request, environment, runtime, output):
     return result
 
 
-def start(request, environment, output, guard):
+def start(backend, request, environment, output, guard):
     from devex_clone_source_proof import require_closed_port
     from full_stack_process import process_identity
-    from devex_clone_target_storage import actual_windows_argv
+    from devex_clone_target_evidence import evidence
     output = Path(output)
     from devex_clone_cache_native import invoke
     private = invoke("environment-select", private={"environment": environment})
@@ -400,7 +401,8 @@ def start(request, environment, output, guard):
             raise ValueError("WSL launcher 未通过实际产物身份核验")
         trusted = actual
         write(output / "launcher.json", {"identity": trusted, "intent": bound(output / "intent.json")})
-        if actual_windows_argv(SimpleNamespace(runner=subprocess.run), trusted) != args:
+        if evidence("process-argv", backend, output, receipt=bound(output / "launcher.json"),
+                    identity=trusted)["actual_arguments_sha256"] != canonical(args):
             raise ValueError("WSL launcher 实际参数不符")
         authorization_sent = True
         child.stdin.write((json.dumps({"request_sha256": canonical(request), "output": str(output)}) + "\n").encode())
@@ -413,7 +415,7 @@ def start(request, environment, output, guard):
         runtime = inspect_start(request, output)
         while True:
             try:
-                runtime = observe(request, environment, runtime)
+                runtime = observe(backend, request, environment, runtime)
                 break
             except ConnectionRefusedError:
                 if child.poll() is not None or time.monotonic() >= deadline:
@@ -438,7 +440,7 @@ def start(request, environment, output, guard):
             if runtime is not None:
                 cleanup = output / "failure-stop"
                 cleanup.mkdir()
-                stop(request, environment, runtime, cleanup)
+                stop(backend, request, environment, runtime, cleanup)
             elif child is not None:
                 # 不单独杀 WSL 包装进程；监督器收到 EOF 或确认超时后会回收自身子进程。
                 child.wait(timeout=request["timeout_seconds"] + 20)

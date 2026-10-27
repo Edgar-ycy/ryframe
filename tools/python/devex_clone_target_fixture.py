@@ -12,7 +12,6 @@ from unittest.mock import patch
 import devex_clone_target_binding as binding
 from artifact_digests import filesystem_path
 import devex_clone_target_resources as resources
-import devex_clone_target_storage as storage
 from devex_clone_run_state import binding as receipt_binding
 from full_stack_runtime import configuration_digest
 from restore_build import file_digest
@@ -128,17 +127,21 @@ class Fixture:
         config = redis_dir / "redis.conf"; config.write_text("bind 127.0.0.1\n", encoding="utf-8")
         self.request["storage"]["redis"]["configuration"] = {"path": str(config), **file_digest(config)}
         self.request["review"] = {**self.bound(self.local / "review.json", self.review), "canonical_sha256": plan_hash(self.review)}
-        windows_path = storage.wsl_path
-        self.linux_path = lambda path: windows_path(path) if path.drive else path.as_posix()
+        self.linux_path = lambda path: ("/mnt/" + path.drive[0].lower() + str(path)[2:].replace("\\", "/")) if path.drive else path.as_posix()
         self.redis_config = {"bind": "127.0.0.1", "port": "16390", "dir": self.linux_path(redis_dir), "databases": "1",
                              "protected-mode": "yes", "save": "", "appendonly": "no"}
         self.environment = {"APP_ENV": "test"}
+        native_evidence = resources.evidence
+        # 此夹具只提供离线编排输入；真实布局、参数和身份竞态由 Rust storage 行为测试核验。
+        def resource_evidence(operation, backend, target, **fields):
+            if operation == "storage-layout":
+                return {"status": "storage_layout_verified", "remote_writes": 0}
+            return native_evidence(operation, backend, target, **fields)
         self.patches = [patch.dict(os.environ, self.environment, clear=True),
                         patch.object(binding, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance)),
-                        patch.object(binding, "require_closed_port"), patch.object(resources, "process_identity", side_effect=lambda _: self.identity),
-                        patch.object(resources, "verify_listener"), patch.object(resources.Resources, "_redis", side_effect=self.redis),
-                        patch.object(storage, "actual_windows_argv", side_effect=lambda *_: self.actual_argv),
-                        patch.object(storage, "verify_listener"), patch.object(storage, "wsl_path", side_effect=self.linux_path)]
+                        patch.object(binding, "require_closed_port"),
+                        patch.object(resources, "evidence", side_effect=resource_evidence),
+                        patch.object(resources.Resources, "_redis", side_effect=self.redis)]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches: test.addCleanup(p.stop)
         self.request["config_dir"] = str(self.configuration)

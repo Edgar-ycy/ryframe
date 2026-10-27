@@ -50,6 +50,7 @@ def schema_snapshot(tools: ExternalTools, models: tuple, phase: str) -> list[dic
 
 
 def run_cli(tools: ExternalTools, stage: str, command: list[str], backend: Path) -> None:
+    command = [command[0], "--config-dir", str(backend / "config"), *command[1:]]
     path = tools.work / f"{stage}.command.json"
     write_json(path, {"command": command, "cwd": str(backend), "remote_operations": "read_only"})
     stdout, stderr, returncode, error_type = b"", b"", None, None

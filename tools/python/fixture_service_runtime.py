@@ -49,12 +49,12 @@ def dispatch(backend, operation, args):
     if operation == "recover-controller":
         return recover_run_lock(backend, Path(args["run"]), args["owner"], verify_results=True)
     if operation == "cache-stop":
-        return stop(args["request"], configured(args["private"]), args["runtime"], Path(args["output"]))
+        return stop(backend, args["request"], configured(args["private"]), args["runtime"], Path(args["output"]))
     value = _context(args["context"], backend)
     def checked():
         guard(value, args["running"])
     if operation == "cache-start":
-        return start(args["request"], args["private"], Path(args["output"]), checked)
+        return start(backend, args["request"], args["private"], Path(args["output"]), checked)
     from devex_clone_storage_process import start as storage_start
     return storage_start(backend, args["request"], configured(args["private"]), Path(args["output"]),
                          args["manifest"], args["controller"], args["number"], checked, supervised=True)

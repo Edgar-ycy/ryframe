@@ -37,6 +37,9 @@ class GenerationImageTests(unittest.TestCase):
         self.source = {"request": {"source": self.f.selected, "tools": self.tools, "max_object_bytes": 1024},
                        "seed_target": {"review": review}, "directory": self.f.local,
                        "review_successor": {"source_result": source_registration}}
+        target = self.file("target.json", self.source["seed_target"])
+        self.file("prepare.json", {"request": target})
+        self.source["manifest"] = {"initialized": self.file("initialized.json", {"fixture": "initialized"})}
         build = self.file("source-build.json", {"sources": {"full": {"source": self.f.maintenance["source"]}}})
         self.request = {"backend_build": build, "maintenance_build": binding(self.f.maintenance_file)}
         self.resources = Mock()

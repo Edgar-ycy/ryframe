@@ -14,7 +14,6 @@ from devex_clone_capture import write_json
 from devex_clone_run_state import binding as receipt_binding
 from devex_clone_target_resources import Resources
 from devex_clone_target_state import generation_lock
-from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_fixture import Fixture
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -137,31 +136,6 @@ class StorageTransitionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fixture_redis_tool_wsl(backend, cache)
 
-    def test_only_registered_rustfs_identity_may_change(self):
-        before = {"configuration": "fixed", "storage": {"rustfs": {"identity": "old"}, "redis": "fixed"}}
-        runtime = {"storage": {"identity": "new"}}
-        after = {**before, "storage": {**before["storage"], "rustfs": runtime["storage"]}}
-        verify_storage_generation(before, before, None, None)
-        verify_storage_generation(before, after, runtime, None)
-        self.assertEqual(before["storage"]["rustfs"], {"identity": "old"})
-        for observed, transition in ((after, None), ({**after, "configuration": "changed"}, runtime),
-                                  ({**after, "storage": {**after["storage"], "redis": "changed"}}, runtime)):
-            with self.subTest(observed=observed, transition=transition), self.assertRaises(ValueError):
-                verify_storage_generation(before, observed, transition, None)
-
-    def test_independent_cache_transition_does_not_authorize_other_changes(self):
-        before = {"configuration": "fixed", "storage": {"rustfs": "old-files", "redis": "old-cache"}}
-        cache = {"redis": "new-cache"}
-        after = {**before, "storage": {**before["storage"], "redis": cache["redis"]}}
-        verify_storage_generation(before, after, None, cache)
-        both = {**after, "storage": {**after["storage"], "rustfs": "new-files"}}
-        verify_storage_generation(before, both, {"storage": "new-files"}, cache)
-        for observed, files, memory in ((after, None, None), (both, None, cache),
-                (both, {"storage": "new-files"}, None), ({**after, "configuration": "changed"}, None, cache)):
-            with self.subTest(observed=observed, files=files, memory=memory), self.assertRaises(ValueError):
-                verify_storage_generation(before, observed, files, memory)
-        self.assertEqual(before["storage"], {"rustfs": "old-files", "redis": "old-cache"})
-
     def test_started_generation_rejects_jointly_forged_fixture_runtime(self):
         expected = {"configuration": "fixed", "storage": {"rustfs": "old-files",
                                                               "redis": "old-cache"}}
@@ -178,7 +152,7 @@ class StorageTransitionTests(unittest.TestCase):
         with patch.object(runtime_evidence, "_fixture_runtime_evidence",
                           return_value=(trusted_storage, trusted_cache)), self.assertRaisesRegex(
                 ValueError, "不同于可信发布证据"):
-            runtime_evidence.validate_started_generation(Path.cwd(), expected, started)
+            runtime_evidence.validate_started_generation(Path.cwd(), Path.cwd(), expected, started)
 
 
 class TargetTests(unittest.TestCase):

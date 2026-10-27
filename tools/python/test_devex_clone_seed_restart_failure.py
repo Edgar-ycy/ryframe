@@ -45,9 +45,11 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
         self.request_binding = binding(self.root / "request.json")
         write_json(self.root / "registration.json", {
             "request": self.request_binding, "manifest": self.request["manifest"], "side": "target"})
-        self.source = {"snapshot": {"head": "a" * 40, "clean": True, "files": [],
+        self.source = {"snapshot": {"head": "d77b605d871a92e79d0c81b3874c7ff576899656", "clean": True, "files": [],
                                     "patch_sha256": hashlib.sha256(b"").hexdigest()},
-                       "fingerprints": {"product": {"sha256": "b" * 64}}}
+                       "worktree_fingerprint": "sha256:" + "c" * 64,
+                       "fingerprints": {name: {"sha256": "b" * 64, "files": 0}
+                                        for name in ("product", "test_tools", "support")}}
         self.attempt = {"number": 8, "stage": "storage-target", "mode": "restart",
                         "status": "failed", "result": None, "error_type": "CalledProcessError",
                         "sources": self.source, "started_at": "before", "finished_at": "after"}
@@ -63,6 +65,11 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
                                           "attempt_sha256": plan_hash(initial)})
         self.controller = binding(self.controller_path)
         self.process = {"pid": 24580, "started": "134339570871974524", "executable": executable}
+        # 该用例消费真实旧 Git 来源及原生核验，不从当前 selector 常量生成调用栈。
+        write_json(self.directory / "state.json", {
+            "format_version": 1, "manifest": self.request["manifest"],
+            "attempts": [{**copy.deepcopy(self.attempt), "number": number}
+                         for number in range(1, 9)]})
         arguments = storage_arguments(self.request)
         write_json(self.output / "intent.json", {
             "format_version": 1, "kind": "devex-clone-storage-intent", "request": self.request_binding,
@@ -85,7 +92,12 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
             "format_version": 1, "kind": "devex-stage-failure", "attempt": 8,
             "stage": "storage-target", "mode": "restart", "error_type": "CalledProcessError",
             "frames": [{"file": file, "function": function, "line": index + 10}
-                       for index, (file, function) in enumerate(segment._FAILED_RESTART_CALLS)],
+                       for index, (file, function) in enumerate((
+                           ("tools/python/devex_clone_run.py", "execute"),
+                           ("tools/python/devex_clone_storage.py", "execute_storage"),
+                           ("tools/python/devex_clone_storage_process.py", "start"),
+                           ("tools/python/devex_clone_storage_process.py", "actual_arguments"),
+                           ("tools/python/devex_clone_target_storage.py", "actual_windows_argv")))],
             "controller": self.controller})
 
     def verify(self, *, idle=True):

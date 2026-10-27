@@ -73,3 +73,25 @@ pub(crate) fn validate_transition(
     }
     Ok(())
 }
+
+/// 外层配置和来源必须逐字段保持原像；只有完整 storage 可按已登记代次替换。
+pub(crate) fn validate_complete(
+    expected: &Value,
+    actual: &Value,
+    runtime: Option<&Value>,
+    cache: Option<&Value>,
+) -> Result<()> {
+    let mut outer = super::json_io::object(expected, "原目标完整代次")?.clone();
+    let observed = super::json_io::object(actual, "当前目标完整代次")?;
+    if !outer.contains_key("storage") || !observed.contains_key("storage") {
+        return Err("目标完整代次缺少 storage".into());
+    }
+    super::json_io::exact(&expected["storage"], &["rustfs", "redis"], "原存储代次")?;
+    super::json_io::exact(&actual["storage"], &["rustfs", "redis"], "当前存储代次")?;
+    validate_transition(&expected["storage"], &actual["storage"], runtime, cache)?;
+    outer.insert("storage".into(), actual["storage"].clone());
+    if &outer != observed {
+        return Err("已登记存储恢复之外的目标源码、配置或资源代次发生变化".into());
+    }
+    Ok(())
+}

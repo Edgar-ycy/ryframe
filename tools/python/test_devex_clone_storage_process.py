@@ -104,7 +104,7 @@ class NativeProcessTests(unittest.TestCase):
             recovery = self.root / "recovery"
             recovery.mkdir()
             # 参数仍由本机真实 CIM 核验；全局端口由外层完成所有代次回收后统一检查。
-            result = process.stop_record(self.request, observed, recovery)
+            result = process.stop_record(self.backend, self.request, observed, recovery)
         self.assertTrue(result["terminated"])
         self.assertIsNone(process_identity(expected["pid"]))
 

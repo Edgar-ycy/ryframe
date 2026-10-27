@@ -68,7 +68,7 @@ def resources_guard(context):
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
         resources = Resources(context.backend, context.target, context.output, context.selected, context.review, context.run,
-                              storage_run=context.resolved_storage_run())
+                              storage_run=context.resolved_storage_run(), request_descriptor=context.target_descriptor)
         resources.storage_identity()
         resources.tools.verify_databases("target")
         resources.tools.verify_objects("target")

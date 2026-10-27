@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 #[path = "segment/failures.rs"]
 mod failures;
+pub(in crate::recovery::source::evidence) use failures::restart_request;
 #[path = "segment/lifecycle.rs"]
 mod lifecycle;
 #[path = "segment/resources.rs"]

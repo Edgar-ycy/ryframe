@@ -53,6 +53,25 @@ class NativeEvidenceTransportTests(unittest.TestCase):
         self.assertNotIn("fake-secret", str(captured.exception))
         self.run.assert_called_once()
 
+    def test_storage_observation_rejects_raw_arguments_and_unconfirmed_results(self):
+        cases = {
+            "process-argv": {"actual_arguments_sha256": "a" * 64, "remote_writes": 0},
+            "storage-layout": {"status": "storage_layout_verified", "remote_writes": 0},
+            "storage-generation": {"status": "storage_generation_verified", "remote_writes": 0},
+        }
+        for operation, valid in cases.items():
+            self.response({"ok": True, "result": valid})
+            self.assertEqual(client.evidence(operation, self.backend, self.target), valid)
+            for invalid in ({}, {**valid, "remote_writes": False},
+                            {**valid, "arguments": ["private-marker"]}):
+                with self.subTest(operation=operation):
+                    self.run.reset_mock()
+                    self.response({"ok": True, "result": invalid})
+                    with self.assertRaises(ValueError) as failure:
+                        client.evidence(operation, self.backend, self.target)
+                    self.assertNotIn("private-marker", str(failure.exception))
+                    self.run.assert_called_once()
+
     def test_duplicate_json_response_is_rejected(self):
         self.run.return_value = subprocess.CompletedProcess([], 0, b'{"ok":true,"result":{},"result":{}}', b"")
         with self.assertRaises(ValueError):

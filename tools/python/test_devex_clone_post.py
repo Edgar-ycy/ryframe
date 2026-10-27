@@ -261,6 +261,7 @@ class PostTests(unittest.TestCase):
 
     def test_arm_target_guard_uses_external_storage_run(self):
         context = Context.__new__(Context)
+        context.target_descriptor = {"bound": "request"}
         context.backend, context.value, context.directory_root = self.backend, self.value, self.directory
         context.output, context.runtime, context.run = self.directory, self.directory / 'runtime', None
         (self.backend / 'config').mkdir(exist_ok=True)
@@ -282,6 +283,7 @@ class PostTests(unittest.TestCase):
 
     def test_source_to_seed_target_guard_uses_fixture_storage_run(self):
         context = Context.__new__(Context)
+        context.target_descriptor = {"bound": "request"}
         context.backend, context.value, context.directory_root = self.backend, self.value, self.directory
         context.output, context.runtime, context.run = self.directory, self.directory / 'runtime', None
         (self.backend / 'config').mkdir(exist_ok=True)

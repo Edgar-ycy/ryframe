@@ -110,6 +110,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     let args = &request["arguments"];
     match request["operation"].as_str() {
         Some("recorded-process-stopped") => recorded_process_stopped(args),
+        Some("historical-storage-restart-failure") => running::history::restart_request(args),
         Some("source-runtime-stopped") => stopped::request(args),
         Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),

@@ -5,20 +5,16 @@ import copy
 import json
 import os
 from pathlib import Path
-import re
 import socket
 import subprocess
 import uuid
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_model import digest, exact
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import external_file, application_config_directory
-from devex_clone_target_storage import redis_layout, rustfs_layout
-from full_stack_process import process_identity
+from devex_clone_target_binding import application_config_directory
+from devex_clone_target_evidence import evidence
 from native_s3_client import (NativeS3InvocationError, inspect as native_s3_inspect,
                               read as native_s3_read)
-from process_sockets import verify_listener
 from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
@@ -35,8 +31,10 @@ def fixture_redis_tool_wsl(backend: Path, cache_binding: dict) -> dict:
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
                  *, execution_backend: Path | None = None, storage_run: Path | None = None,
-                 owned_lock_identity: int | None = None, lock_output: Path | None = None):
+                 owned_lock_identity: int | None = None, lock_output: Path | None = None,
+                 request_descriptor: dict | None = None):
         self.backend, self.request, self.output = backend, request, output
+        self.request_descriptor = request_descriptor
         self.execution_backend = execution_backend or backend
         self.selected, self.review, self.runner = selected, review, run
         self.storage_run, self.storage_runtime_binding = storage_run, None
@@ -351,17 +349,6 @@ class Resources:
                             or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
                         raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
                 rustfs = self.storage_runtime_binding["storage"]
-        exact(rustfs, {"identity", "sha256", "process_receipt", "launch_receipt"})
-        exact(rustfs["identity"], {"pid", "started", "executable"})
-        self.checkpoint()
-        if (rustfs["identity"]["executable"] != self.review["tools"]["rustfs"]["path"]
-                or rustfs["sha256"] != self.review["tools"]["rustfs"]["sha256"]
-                or file_digest(Path(rustfs["identity"]["executable"]))["sha256"] != digest(rustfs["sha256"])
-                or process_identity(rustfs["identity"]["pid"]) != rustfs["identity"]):
-            raise ValueError("RustFS 实际二进制或内核进程代次变化")
-        self.checkpoint()
-        verify_listener(rustfs["identity"]["pid"], self.request["target"]["s3"]["endpoint"])
-        rustfs_layout(self, rustfs, runtime=self.storage_runtime_binding)
         redis = self.request["storage"]["redis"]
         if self.storage_run is not None and not fixture and self.cache_runtime_binding is None:
             from devex_clone_cache import registered_cache_binding, registration
@@ -405,35 +392,13 @@ class Resources:
             if resumed != allowed:
                 raise ValueError("缓存恢复不能改变原 WSL、配置、产物、端口或发行版")
             redis = resumed
-        exact(redis, {"port", "wsl", "distribution", "pid", "started", "executable", "sha256", "run_id", "configuration"})
-        external_file(redis["wsl"])
-        expected = self.review["tools"]["redis_server"]
-        if (redis["distribution"] != expected["distribution"] or redis["executable"] != expected["resolved_path"]
-                or redis["sha256"] != expected["sha256"] or type(redis["pid"]) is not int or redis["pid"] <= 1
-                or not isinstance(redis["started"], str) or not redis["started"].isdigit()
-                or not re.fullmatch(r"[a-f0-9]{40}", redis["run_id"])
-                or self.selected["redis"]["url"] != f"redis://127.0.0.1:{redis['port']}/0"):
-            raise ValueError("Redis 必须是当前明确 WSL 进程与固定工具")
-        prefix = [redis["wsl"]["path"], "--distribution", redis["distribution"], "--exec"]
-        def observe(args):
-            return self.command("redis-kernel", [*prefix, *args]).stdout.decode("utf-8").strip()
-        stat = observe(["/usr/bin/cat", f"/proc/{redis['pid']}/stat"]).rpartition(")")[2].split()
-        actual_exe = observe(["/usr/bin/readlink", "-f", f"/proc/{redis['pid']}/exe"])
-        executable_hash = observe(["/usr/bin/sha256sum", redis["executable"]]).split()[0]
-        info = self._redis(["INFO", "server"])
-        values = {}
-        for line in info.splitlines():
-            if ":" in line and not line.startswith("#"):
-                key, value = line.split(":", 1)
-                if key in values:
-                    raise ValueError("Redis INFO 身份字段重复")
-                values[key] = value
-        if (len(stat) < 20 or stat[19] != redis["started"] or actual_exe != redis["executable"]
-                or executable_hash != redis["sha256"] or values.get("run_id") != redis["run_id"]
-                or values.get("process_id") != str(redis["pid"])):
-            raise ValueError("Redis 端点或内核进程已重启/变化")
-        redis_layout(self, redis, values, observe)
+        if self.request_descriptor is None:
+            raise ValueError("存储布局观察缺少原请求文件绑定")
+        request_path = bound_file(self.backend, self.request_descriptor)
+        if read_json(request_path) != self.request:
+            raise ValueError("存储布局请求与当前绑定文件不同")
+        evidence("storage-layout", self.backend, self.output, request=self.request_descriptor,
+                 storage={"rustfs": rustfs, "redis": redis}, runtime=self.storage_runtime_binding,
+                 cache_runtime=self.cache_runtime_binding)
         self.checkpoint()
-        if process_identity(rustfs["identity"]["pid"]) != rustfs["identity"]:
-            raise ValueError("存储观察结束时 RustFS 进程身份变化")
         return {"rustfs": rustfs, "redis": redis}

@@ -327,6 +327,9 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
         return super::cli::execute(backend, target, operation, &value["arguments"]);
     }
     let extra = match operation {
+        "process-argv" => &["receipt", "identity"][..],
+        "storage-generation" => &["expected", "actual", "runtime", "cache_runtime"][..],
+        "storage-layout" => &["request", "storage", "runtime", "cache_runtime"][..],
         "reset-completed" => &["manifest", "sha"][..],
         "reset-plan" => &["path", "executable", "plan"][..],
         "history" => &[][..],
@@ -364,6 +367,9 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Result<Value> {
     match operation {
+        "process-argv" | "storage-generation" | "storage-layout" => {
+            super::storage::protocol::execute(backend, target, operation, value)
+        }
         "inventory-history" => inventory_history::verify(backend, target, value),
         "migration-resume-state" => super::resume_state::state(
             backend,

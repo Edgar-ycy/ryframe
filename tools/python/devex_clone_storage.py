@@ -172,7 +172,7 @@ def current_storage_binding(backend: Path, directory: Path, side: str) -> dict |
     result = registered_storage_binding(backend, directory, side)
     if result is not None:
         request = read_json(bound_file(backend, result["request"]))
-        if not running(result["storage"]["identity"], arguments(request), (result["api_url"], result["console_url"])):
+        if not running(backend, result["storage"]["process_receipt"], result["storage"]["identity"], arguments(request), (result["api_url"], result["console_url"])):
             raise ValueError("已登记存储进程已退出，必须显式同目录重启")
     return result
 
@@ -201,7 +201,7 @@ def observe_or_stop(backend: Path, directory: Path, request: dict, descriptor: d
     if mode in {"stop", "recover"}:
         for _, observed in previous:
             if observed["state"] == "recorded":
-                running(observed["identity"], arguments(request), (request["api_url"], request["console_url"]), listeners=False)
+                running(backend, observed["process_receipt"], observed["identity"], arguments(request), (request["api_url"], request["console_url"]), listeners=False)
     results = []
     for attempt, observed in previous:
         if observed["state"] == "not_started":
@@ -210,9 +210,9 @@ def observe_or_stop(backend: Path, directory: Path, request: dict, descriptor: d
         if mode in {"stop", "recover"}:
             item_output = output / f"p{attempt['number']:04d}"
             item_output.mkdir()
-            result = stop_record(request, observed, item_output)
+            result = stop_record(backend, request, observed, item_output)
         else:
-            alive = running(observed["identity"], arguments(request), (request["api_url"], request["console_url"]))
+            alive = running(backend, observed["process_receipt"], observed["identity"], arguments(request), (request["api_url"], request["console_url"]))
             result = {"state": "running" if alive else "stopped", "identity": observed["identity"],
                       "process_receipt": observed["process_receipt"]}
         results.append({"attempt": attempt["number"], **result})

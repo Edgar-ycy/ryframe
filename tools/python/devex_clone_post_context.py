@@ -27,7 +27,7 @@ from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file, verify_generation, require_closed_port, verify_api_address
 from devex_clone_target_binding import request_binding, external_file, application_config_directory
 from devex_clone_target_resources import Resources
-from devex_clone_target_storage import actual_windows_argv
+from devex_clone_target_evidence import evidence
 from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
 from full_stack_process import process_identity, read_process
@@ -78,6 +78,7 @@ class Context:
             self.ledger_frames = plan_hash(self.ledger.frames)
             self.initial, self.target = initialization_history(backend, bound_file(backend, value["initialized"]),
                                                                owned_lock_identity)
+            self.target_descriptor = read_json(bound_file(backend, value["initialized"]).parent / "prepare.json")["request"]
             self.review, self.selected = request_binding(backend, self.target)
             self.private = {"source": read_json(bound_file(backend, value["source_environment"]))["environment"],
                             "target_initial": read_json(bound_file(backend, value["target_environment"]))["environment"],
@@ -178,7 +179,7 @@ class Context:
             absent(Path(self.selected["runtime_dir"]))
             storage_run = self.resolved_storage_run()
             resources = Resources(self.backend, self.target, self.output, self.selected, self.review, self.run,
-                                  storage_run=storage_run)
+                                  storage_run=storage_run, request_descriptor=self.target_descriptor)
             resources.storage_identity()
             resources.tools.verify_databases("target")
             resources.tools.verify_objects("target")
@@ -197,7 +198,8 @@ class Context:
         identity = read_process(self.runtime, "api", self.target_config["scope_id"])
         if (process_identity(identity["pid"]) != identity
                 or identity["executable"] != self.build["artifacts"]["api"]["executable"]
-                or actual_windows_argv(resources, identity) != [identity["executable"]]):
+                or evidence("process-argv", self.backend, self.runtime,
+                            receipt=binding(self.runtime / "api.json"), identity=identity)["actual_arguments_sha256"] != plan_hash([identity["executable"]])):
             raise ValueError("API 内核身份、产物或实际命令发生变化")
         for role in ("api", "worker"):
             artifact = self.build["artifacts"][role]
