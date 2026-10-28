@@ -85,6 +85,7 @@ mod registration;
 mod request_shape;
 mod schema;
 #[cfg(test)]
+#[path = "../../../../tests/unit/recovery/runtime/dataset_authority.rs"]
 mod tests;
 
 fn check(condition: bool, message: &str) -> Result<()> {
