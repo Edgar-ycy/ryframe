@@ -139,7 +139,19 @@ fn validate_inputs(run: &Path, proof: &Value, initial: &[Value]) -> Result<()> {
         }
     }
     if !proof["redis"].is_null() {
-        expected["redis_runtime"] = binding(&run.join("redis/runtime.json"))?;
+        if let Some(validated) = failed_cache(run, proof)? {
+            expected
+                .as_object_mut()
+                .ok_or("部分关闭输入集合无效")?
+                .extend(
+                    validated["bindings"]
+                        .as_object()
+                        .ok_or("失败清理绑定集合无效")?
+                        .clone(),
+                );
+        } else {
+            expected["redis_runtime"] = binding(&run.join("redis/runtime.json"))?;
+        }
     }
     check(
         proof["bindings"] == expected,
@@ -149,6 +161,23 @@ fn validate_inputs(run: &Path, proof: &Value, initial: &[Value]) -> Result<()> {
         bound(run, descriptor)?;
     }
     Ok(())
+}
+
+fn failed_cache(run: &Path, proof: &Value) -> Result<Option<Value>> {
+    if proof["initial"][1]["status"] != "failed" || proof["redis"].is_null() {
+        return Ok(None);
+    }
+    check(
+        proof["initial"][1]["result"].is_null(),
+        "失败首代不能含发布结果",
+    )?;
+    let request = bound(run, &proof["bindings"]["redis_request"])?;
+    Ok(Some(
+        crate::recovery::clone::native::cache::failed_cleanup::validate(
+            &request,
+            &run.join("redis"),
+        )?,
+    ))
 }
 
 fn validate_roles(run: &Path, number: usize, proof: &Value) -> Result<()> {
@@ -188,13 +217,22 @@ fn validate_roles(run: &Path, number: usize, proof: &Value) -> Result<()> {
         } else {
             let expected = run.join(format!("lifecycle-{number:04}/stopped.json"));
             let stopped = bound(run, &proof["redis"])?;
+            let original = if let Some(validated) = failed_cache(run, proof)? {
+                check(
+                    stopped["already_stopped"] == true,
+                    "失败清理必须注明原代次已经停止",
+                )?;
+                validated["runtime"].clone()
+            } else {
+                bound(run, &proof["bindings"]["redis_runtime"])?
+            };
             check(
                 path_is(&proof["redis"]["path"], &expected)
                     && proof["services"][role] == "stopped"
                     && stopped["status"] == "redis_process_stopped"
                     && stopped["alive"] == false
                     && stopped["resources_deleted"] == false
-                    && stopped["runtime"] == bound(run, &proof["bindings"]["redis_runtime"])?,
+                    && stopped["runtime"] == original,
                 "Redis 部分关闭未证明原登记身份退出",
             )?;
         }

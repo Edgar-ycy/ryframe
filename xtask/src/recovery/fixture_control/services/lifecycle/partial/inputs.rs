@@ -54,6 +54,27 @@ pub(super) fn load(runtime: &mut dyn Runtime, context: &Context) -> Result<Value
             result["not_started"][*role] = absent(context, role, Some(descriptor))?;
         } else if *role == "rustfs" {
             storage(runtime, context, attempt, &mut result)?;
+        } else if attempt["status"] == "failed" {
+            let validated = crate::recovery::clone::native::cache::failed_cleanup::validate(
+                &result["requests"]["redis"],
+                &context.run.join("redis"),
+            )
+            .map_err(|_| {
+                model::error(
+                    "Redis 原请求、创建、失败、停止或退出收据不完整或不一致；保留现场，禁止重放",
+                )
+            })?;
+            result["runtime"] = validated["runtime"].clone();
+            result["failed_cleanup"] = json!(true);
+            result["bindings"]
+                .as_object_mut()
+                .ok_or("部分关闭绑定集合无效")?
+                .extend(
+                    validated["bindings"]
+                        .as_object()
+                        .ok_or("失败清理绑定集合无效")?
+                        .clone(),
+                );
         } else {
             check(
                 attempt["status"] == "passed",

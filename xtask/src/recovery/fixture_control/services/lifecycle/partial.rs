@@ -58,8 +58,7 @@ fn stop(
     new_output(context, output)?;
     stable(runtime, context, services, Some(current))?;
     if !services["runtime"].is_null() {
-        let cache = runtime.call("cache-stop", json!({"request":services["requests"]["redis"],
-                    "private":context.value["private"],"runtime":services["runtime"],"output":output}))?;
+        let cache = close_cache(runtime, context, services, output)?;
         check(
             cache["status"] == "redis_process_stopped",
             "部分关闭未确认 Redis 退出",
@@ -95,6 +94,38 @@ fn stop(
     Ok(result)
 }
 
+fn close_cache(
+    runtime: &mut dyn Runtime,
+    context: &Context,
+    services: &Value,
+    output: &Path,
+) -> Result<Value> {
+    if services["failed_cleanup"] == true {
+        cache_state(runtime, services, "stopped")?;
+        let receipt = json!({"status":"redis_process_stopped","already_stopped":true,
+            "alive":false,"resources_deleted":false,"runtime":services["runtime"]});
+        json_io::write_new(&output.join("stopped.json"), &receipt)?;
+        return Ok(receipt);
+    }
+    runtime.call(
+        "cache-stop",
+        json!({"request":services["requests"]["redis"],
+        "private":context.value["private"],"runtime":services["runtime"],"output":output}),
+    )
+}
+
+fn cache_state(runtime: &mut dyn Runtime, services: &Value, expected: &str) -> Result<()> {
+    let observed = runtime.call(
+        "cache-status",
+        json!({"request":services["requests"]["redis"],
+        "runtime":services["runtime"],"effective":null}),
+    )?;
+    check(
+        observed["state"] == expected,
+        "部分关闭 Redis 状态与原代次要求不同",
+    )
+}
+
 fn stable(
     runtime: &mut dyn Runtime,
     context: &Context,
@@ -111,14 +142,14 @@ fn stable(
 
 fn running(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
     if !services["runtime"].is_null() {
-        let observed = runtime.call(
-            "cache-status",
-            json!({"request":services["requests"]["redis"],
-            "runtime":services["runtime"],"effective":null}),
-        )?;
-        check(
-            observed["state"] == "running",
-            "部分关闭前 Redis 不再是登记运行身份",
+        cache_state(
+            runtime,
+            services,
+            if services["failed_cleanup"] == true {
+                "stopped"
+            } else {
+                "running"
+            },
         )?;
     }
     if !services["tree"].is_null() {
@@ -192,4 +223,74 @@ pub(super) fn verify_closed(runtime: &mut dyn Runtime, context: &Context) -> Res
 pub(super) fn can_close(runtime: &mut dyn Runtime, context: &Context) -> Result<()> {
     let services = inputs::load(runtime, context)?;
     running(runtime, &services)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CacheRuntime {
+        state: &'static str,
+        calls: Vec<String>,
+    }
+    impl Runtime for CacheRuntime {
+        fn now(&self) -> Duration {
+            Duration::ZERO
+        }
+        fn pause(&mut self, _: Duration) {
+            panic!("只读核验不等待控制")
+        }
+        fn call(&mut self, operation: &str, _: Value) -> Result<Value> {
+            self.calls.push(operation.into());
+            check(operation == "cache-status", "不得重发停止或启动控制")?;
+            Ok(json!({"state":self.state}))
+        }
+    }
+
+    #[test]
+    fn failed_cleanup_requires_stopped_and_writes_only_new_stage_receipt_without_control() {
+        let backend = crate::workspace::root_dir();
+        let base = backend.join(".local-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let temporary = tempfile::tempdir_in(base).unwrap();
+        let context = Context {
+            backend,
+            run: temporary.path().to_path_buf(),
+            value: json!({}),
+        };
+        for state in ["stopped", "running", "unknown"] {
+            let output = temporary.path().join(state);
+            std::fs::create_dir(&output).unwrap();
+            let mut runtime = CacheRuntime {
+                state,
+                calls: Vec::new(),
+            };
+            let services = json!({"failed_cleanup":true,"requests":{"redis":{}},
+                "runtime":{"original":true},"tree":null});
+            assert_eq!(running(&mut runtime, &services).is_ok(), state == "stopped");
+            let result = close_cache(&mut runtime, &context, &services, &output);
+            assert_eq!(result.is_ok(), state == "stopped");
+            assert_eq!(runtime.calls, ["cache-status", "cache-status"]);
+            if state == "stopped" {
+                let receipt = read(&output.join("stopped.json")).unwrap();
+                assert_eq!(receipt["runtime"], services["runtime"]);
+                assert_eq!(receipt["already_stopped"], true);
+                assert_eq!(receipt["alive"], false);
+                assert_eq!(receipt["resources_deleted"], false);
+            } else {
+                assert!(!output.join("stopped.json").exists());
+            }
+            assert!(!output.join("runtime.json").exists());
+            assert!(!output.join("partial.json").exists());
+        }
+        let services = json!({"requests":{"redis":{}},"runtime":{},"tree":null});
+        for state in ["running", "stopped", "unknown"] {
+            let mut runtime = CacheRuntime {
+                state,
+                calls: Vec::new(),
+            };
+            assert_eq!(running(&mut runtime, &services).is_ok(), state == "running");
+            assert_eq!(runtime.calls, ["cache-status"]);
+        }
+    }
 }

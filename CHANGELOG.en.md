@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Complete strict partial closure when initial Redis creation succeeds but readiness fails and cleanup has completed. Verify complete original evidence and read-only exit proof without resending stop or fabricating runtime records; unknown, missing, or drifting evidence remains rejected and the original failed scene is preserved.
+
 - Correct native Redis startup timeout diagnostics to distinguish process-creation receipts from final acceptance. Consolidate adjacent duplicate validation of identical inputs without external operations between them, retaining full provenance, identity, authorization and checks across operations without extending startup deadlines.
 
 - Fix native fixture preflight and successor verification rejecting a bare `wsl` command where an absolute path is required. Share controlled PATH resolution that selects only a regular, unlinked launcher from absolute directories; missing or unsafe entries produce fixed redacted diagnostics without weakening tool digests or call deadlines.

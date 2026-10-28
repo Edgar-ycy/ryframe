@@ -130,26 +130,10 @@ impl Diagnostic {
                 "linux_identity",
                 "核对退出与端口证明；保留现场，禁止重放",
             ),
-            ExecWaitTimeout => (
-                "exec-wait",
-                "timeout_seconds",
-                "核对监督器日志、最终Redis映像与失败回收证明",
-            ),
-            ProcessReceiptTimeout => (
-                "process-receipt",
-                "linux-process.json",
-                "核对启动、创建身份与失败清理证明；保留现场，禁止重放",
-            ),
-            AcceptanceTimeout => (
-                "acceptance",
-                "accepted.json",
-                "核对 acknowledged.json、accepted.json 与原启动截止时间；保留现场，禁止重放",
-            ),
-            AcknowledgementTimeout => (
-                "acknowledgement",
-                "acknowledged",
-                "核对认证、INFO、CONFIG及本次确认收据",
-            ),
+            ExecWaitTimeout
+            | ProcessReceiptTimeout
+            | AcceptanceTimeout
+            | AcknowledgementTimeout => timeout_fields(self.category),
             SupervisorInterrupted => (
                 "supervision",
                 "linux-intent.supervisor",
@@ -189,6 +173,33 @@ impl Diagnostic {
         Ok(diagnostic)
     }
 }
+fn timeout_fields(category: Category) -> (&'static str, &'static str, &'static str) {
+    use Category::*;
+    match category {
+        ExecWaitTimeout => (
+            "exec-wait",
+            "timeout_seconds",
+            "核对监督器日志、最终Redis映像与失败回收证明",
+        ),
+        ProcessReceiptTimeout => (
+            "process-receipt",
+            "linux-process.json",
+            "核对启动、创建身份与失败清理证明；保留现场，禁止重放",
+        ),
+        AcceptanceTimeout => (
+            "acceptance",
+            "accepted.json",
+            "核对 acknowledged.json、accepted.json 与原启动截止时间；保留现场，禁止重放",
+        ),
+        AcknowledgementTimeout => (
+            "acknowledgement",
+            "acknowledged",
+            "核对认证、INFO、CONFIG及本次确认收据",
+        ),
+        _ => unreachable!("超时字段映射仅接收四类超时诊断"),
+    }
+}
+
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (phase, field, advice) = self.fields();

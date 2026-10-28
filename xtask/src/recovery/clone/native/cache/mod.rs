@@ -4,6 +4,7 @@ mod diagnostic;
 pub(crate) use diagnostic::{primitive_detail, primitive_error, primitive_message};
 mod evidence;
 mod facts;
+pub(crate) mod failed_cleanup;
 mod history;
 mod linux_observer;
 pub(crate) use linux_observer::Failure as ObserverFailure;
