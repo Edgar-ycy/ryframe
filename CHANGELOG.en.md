@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add a native read-only authority entry for recovery datasets, validating target plans, runtime generations, dataset lineage, independent source and explicit configuration bindings, then rechecking all consumed inputs before returning. Formal frontend consumer migration and complete recovery-chain acceptance remain separate pending work.
+
 - Remove the unused Python Linux Redis startup, supervision, frozen-helper implementation and disabled entry points, together with tests exclusive to that retired implementation. Current start, observe and stop calls continue through the bound Rust tool; retain active Python adapters, readonly historical evidence checks, atomic publication and error/no-replay protections. Historical frozen files and Git records remain unchanged.
 
 - Complete strict partial closure when initial Redis creation succeeds but readiness fails and cleanup has completed. Verify complete original evidence and read-only exit proof without resending stop or fabricating runtime records; unknown, missing, or drifting evidence remains rejected and the original failed scene is preserved.
