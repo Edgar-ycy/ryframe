@@ -71,7 +71,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
         wrong_write["request"]["write"] = 0
         wrong_version = json.loads(self.encoded())
         wrong_version["format_version"] = True
-        missing_request = json.loads(self.encoded("source-rebind"))
+        missing_request = json.loads(self.encoded("source-generation-start"))
         missing_request["request"]["request"] = None
         extra_request = json.loads(self.encoded("source-export"))
         extra_request["request"]["request"] = str(self.request)
@@ -87,6 +87,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
             "{}", json.dumps(unknown), json.dumps(wrong_write), json.dumps(wrong_version),
             json.dumps(missing_request), json.dumps(extra_request), json.dumps(relative),
             json.dumps(newline), duplicate, "not-json", self.encoded("source-register"),
+            self.encoded("source-rebind"),
         ):
             with self.subTest(source=source), patch.object(cli, "execute") as execute:
                 with self.assertRaises(cli.SeedSourceProtocolError):

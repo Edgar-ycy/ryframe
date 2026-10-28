@@ -23,6 +23,7 @@ pub(in crate::recovery::source::evidence) mod prelaunch;
 pub(in crate::recovery::source::evidence) mod reboot;
 #[path = "history/resolution.rs"]
 mod resolution;
+pub(in crate::recovery::source::evidence) use resolution::source_rebind;
 #[path = "history/segment.rs"]
 pub(in crate::recovery::source::evidence) mod segment;
 pub(in crate::recovery::source::evidence) use segment::restart_request;

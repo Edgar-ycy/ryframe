@@ -339,6 +339,9 @@ pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<St
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some((category, _)) = super::super::seed::rebind::diagnostic(error) {
+        return category;
+    }
     if safe_diagnostic(error).is_some() {
         return "HistoricalProducerCimUnavailable".into();
     }
@@ -361,6 +364,9 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
 }
 
 fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some((_, diagnostic)) = super::super::seed::rebind::diagnostic(error) {
+        return Some(diagnostic);
+    }
     if let Some(error) =
         error.downcast_ref::<super::super::seed::source_registration::quiet::CimUnavailable>()
     {

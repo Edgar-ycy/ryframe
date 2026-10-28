@@ -17,7 +17,7 @@ FRESH_TARGET_OPERATIONS = {
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
-    "source-rebind", "source-generation-start",
+    "source-generation-start",
     "source-generation-stop", "source-generation-status",
     "source-generation-reboot-status",
     "source-generation-reboot-close",
@@ -30,7 +30,7 @@ SEED_RUNTIME_OPERATIONS = SEED_SOURCE_OPERATIONS | {
     "stop", "status", "recover", "recover-session",
 }
 SEED_SOURCE_REQUEST_OPERATIONS = {
-    "source-rebind", "source-generation-start", "source-generation-stop",
+    "source-generation-start", "source-generation-stop",
     "source-generation-recover", "source-generation-reboot-close",
 }
 
@@ -275,7 +275,7 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "stage" and args.stage != "copy":
         raise ValueError("Python 阶段入口仅接受 copy")
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
-        raise ValueError("Python seed-runtime 不接受此操作；来源登记必须使用原生 Rust 入口")
+        raise ValueError("Python seed-runtime 不接受此操作；来源登记与重绑定必须使用原生 Rust 入口")
     if args.command == "fresh-target":
         from devex_clone_target_cli import reconcile_preflight, verify
 
@@ -329,7 +329,7 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "cache-target", args.operation, cache_request=args.request)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "seed-runtime":
-        request_operations = {"register", "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
+        request_operations = {"register", "arm-input", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
         if (args.operation in request_operations) != (args.request is not None):
             raise ValueError("当前 seed 操作的 --request 缺失或不适用")
         if (args.operation == "recover-session") != (args.producer_binding is not None):

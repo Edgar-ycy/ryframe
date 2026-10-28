@@ -209,11 +209,13 @@ fn rejects_paths_outside_local_tests_parent_jumps_missing_inputs_and_links() {
 }
 
 #[test]
-fn source_register_cannot_fall_back_to_python_protocol() {
+fn source_registration_and_rebind_cannot_fall_back_to_python_protocol() {
     let fixture = Fixture::new();
-    let options = parse_source(&fixture, "source-register", false, true).unwrap();
-    let error = seed_source_protocol_at(&options, &root_dir()).unwrap_err();
-    assert!(error.to_string().contains("仅通过原生 Rust"));
+    for (operation, request) in [("source-register", false), ("source-rebind", true)] {
+        let options = parse_source(&fixture, operation, request, true).unwrap();
+        let error = seed_source_protocol_at(&options, &root_dir()).unwrap_err();
+        assert!(error.to_string().contains("仅通过原生 Rust"));
+    }
 }
 
 #[test]

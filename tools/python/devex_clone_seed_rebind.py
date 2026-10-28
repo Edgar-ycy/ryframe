@@ -6,7 +6,6 @@ from pathlib import Path
 
 from devex_clone_seed_guards import guard
 from devex_clone_capture import read_json
-from devex_clone_model import local_path
 from devex_clone_run_state import binding, load_state
 from devex_clone_seed_segment import segmented_resume
 from devex_clone_source_proof import bound_file
@@ -146,44 +145,6 @@ def resolve_storage(backend: Path, descriptor: dict, source: dict, state: dict, 
     result["storage"]["storage"] = copy.deepcopy(effective)
     result["source_rebind"] = receipt
     return result
-
-
-def register_rebind(backend: Path, directory: Path, request_file: Path, number: int) -> dict:
-    from devex_clone_seed_source import _registered_source
-    from reference_fixture_successor import _source_with_loader
-
-    request_file = local_path(backend, str(request_file))
-    request = binding(request_file)
-
-    def inspect() -> tuple[dict, dict, list]:
-        source = _source_with_loader(backend, request, live_storage=False, loader=_registered_source)
-        if source["directory"] != directory:
-            raise ValueError("source-rebind 请求的 C52 不属于当前 run")
-        state = load_state(directory)
-        _model(backend, "register-stage", {"attempts": state["attempts"], "number": number,
-            "source_directory": str(source["directory"]), "run_directory": str(directory)})
-        later = history(directory, state, source["review_successor"]["source_result"], current=number, backend=backend)
-        planned = _model(backend, "register-plan", {"later": later, "number": number})
-        if planned["cache"] is not None:
-            from devex_clone_cache import seed_history_proof
-
-            if seed_history_proof(backend, directory, planned["cache"], source["review_successor"]["source_result"]) != request:
-                raise ValueError("source-rebind 必须消费同一缓存工具 successor")
-        quiet_producers(backend, source)
-        current = current_storage_binding(backend, directory, "target")
-        transition(backend, source["storage"]["storage"], current)
-        if binding(request_file) != request:
-            raise ValueError("source-rebind 的 successor 关系发生变化")
-        return source, current, state["attempts"][:-1]
-
-    before = inspect()
-    after = inspect()
-    def observation(value):
-        source, current, prefix = value
-        return {"source": {**source, "directory": str(source["directory"])},
-                "current": current, "prefix": prefix}
-    return _model(backend, "register-receipt", {
-        "before": observation(before), "after": observation(after), "request": request})
 
 
 def published_restart_guard(backend: Path, directory: Path, number: int | None) -> None:

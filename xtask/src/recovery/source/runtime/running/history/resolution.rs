@@ -6,6 +6,7 @@ use crate::{
         cache, json as document,
         lifecycle::{identity, lock, state},
         resources::common,
+        seed::rebind::{Controller, Phase, classify},
     },
 };
 use serde_json::{Value, json};
@@ -19,13 +20,43 @@ pub(super) fn inspect(
 ) -> Result<Value> {
     let attempts = state::attempts(saved)?;
     let current = model("active-read", json!({"attempts":attempts}))?["current"].clone();
+    inspect_current(backend, run, saved, descriptor, &current)
+}
+
+// 明确 attempt 只能由已核对原 RunLock 与当前账本的正式控制器提供。
+pub(in crate::recovery::source::evidence) fn source_rebind(
+    controller: &Controller<'_>,
+    descriptor: &Value,
+) -> Result<Value> {
+    controller.checked(|| {
+        classify(
+            Phase::History,
+            inspect_current(
+                controller.backend(),
+                controller.run(),
+                controller.saved(),
+                descriptor,
+                &json!(controller.number()),
+            ),
+        )
+    })
+}
+
+fn inspect_current(
+    backend: &Path,
+    run: &Path,
+    saved: &Value,
+    descriptor: &Value,
+    current: &Value,
+) -> Result<Value> {
+    let attempts = state::attempts(saved)?;
     let archive = prelaunch::closed(backend, run, attempts)?;
     let segment = if archive.is_null() {
         Value::Null
     } else {
-        super::segment::read(backend, run, attempts, &archive, descriptor, &current)?
+        super::segment::read(backend, run, attempts, &archive, descriptor, current)?
     };
-    let prefix = if attempts.last().is_some_and(|row| row["number"] == current) {
+    let prefix = if attempts.last().is_some_and(|row| row["number"] == *current) {
         &attempts[..attempts.len() - 1]
     } else {
         attempts
@@ -68,29 +99,40 @@ pub(super) fn inspect(
         "backend_available":true,"cache_recovery":false,"generation_output_exists":exists}),
     )?;
     let mut proofs = Vec::new();
+    let context = History {
+        backend,
+        run,
+        saved,
+        descriptor,
+        current,
+    };
     for action in document::array(&planned["actions"], "完整历史证明任务")? {
-        consume(
-            backend,
-            run,
-            saved,
-            descriptor,
-            &archive,
-            action,
-            &mut proofs,
-        )?;
+        consume(&context, &archive, action, &mut proofs)?;
     }
     Ok(json!({"later":planned["later"],"archive":archive,"segment":segment}))
 }
 
+struct History<'a> {
+    backend: &'a Path,
+    run: &'a Path,
+    saved: &'a Value,
+    descriptor: &'a Value,
+    current: &'a Value,
+}
+
 fn consume(
-    backend: &Path,
-    run: &Path,
-    saved: &Value,
-    descriptor: &Value,
+    context: &History<'_>,
     archive: &Value,
     action: &Value,
     proofs: &mut Vec<Value>,
 ) -> Result<()> {
+    let History {
+        backend,
+        run,
+        saved,
+        descriptor,
+        current,
+    } = *context;
     let frozen = &archive["receipt"]["review_successor"];
     match document::text(&action["kind"], "历史证明类型")? {
         "cache" => {
@@ -125,14 +167,12 @@ fn consume(
             prelaunch::proof(backend, run, &action["record"])?;
         }
         "export-reconcile" => {
-            let current =
-                model("active-read", json!({"attempts":saved["attempts"]}))?["current"].clone();
             if !super::export::reconciles(
                 backend,
                 run,
                 saved,
                 &action["origin"],
-                &current,
+                current,
                 descriptor,
             )? {
                 return Err("seed 发布后存在失败或未收尾阶段".into());
@@ -166,4 +206,23 @@ pub(super) fn owner(run: &Path) -> Result<()> {
         return Err("历史证明期间控制锁身份变化；保留现场，禁止重放".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_history_still_rejects_running_rebind_before_observing_files() {
+        let saved = json!({"attempts":[{"number":1,"stage":"seed-runtime",
+            "mode":"source-rebind","status":"running"}]});
+        let error = inspect(
+            Path::new("absent"),
+            Path::new("absent"),
+            &saved,
+            &Value::Null,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("未收尾写入或控制动作"));
+    }
 }

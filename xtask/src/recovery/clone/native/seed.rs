@@ -24,6 +24,8 @@ pub(crate) mod history;
 pub(crate) mod identity;
 #[path = "seed/protocol.rs"]
 pub(crate) mod protocol;
+#[path = "seed/rebind.rs"]
+pub(crate) mod rebind;
 #[path = "seed/runtime_model.rs"]
 pub(crate) mod runtime_model;
 #[path = "seed/source_registration.rs"]

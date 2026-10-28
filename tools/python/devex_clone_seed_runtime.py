@@ -375,12 +375,6 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
         from devex_clone_seed_export import execute_export
 
         return execute_export(backend, directory, number, reconcile=mode == "source-export-reconcile")
-    if mode == "source-rebind":
-        if request_file is None:
-            raise ValueError("source-rebind 需要明确 successor --request")
-        from devex_clone_seed_rebind import register_rebind
-
-        return register_rebind(backend, directory, request_file, number)
     if mode == "arm-input":
         if request_file is None:
             raise ValueError("arm-input 需要明确 --request")

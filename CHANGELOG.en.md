@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Move formal source-rebind orchestration to native Rust, reusing the original run lock and complete history proofs while retaining producer quiescence, matching cache and storage successors, two complete observations, and non-overwriting receipts. Remove the old Python execution dispatch. Safe phase classifications flow through the existing ledger and CLI, preserving redacted CIM error codes and repair guidance.
+
 - Review reset coverage and remove a duplicate old-ledger-version scenario, a self-comparison hash assertion, and a credential comparison already covered by configuration aliases. Retain effective recovery, idempotent reuse, identity drift, password policy, and diagnostic coverage.
 
 - Report the configuration field, path, underlying cause, and repair advice when local object-storage reset preflight fails, requiring inspection of existing ledgers and resources before retrying. Preserve remote-error redaction and no automatic replay. Correct migration import boundaries for worker-only builds.

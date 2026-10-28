@@ -52,6 +52,13 @@ mod tests;
 
 pub(crate) use ready::policy::cache_transaction::cleanup as cleanup_source_cache;
 
+pub(crate) fn source_rebind_history(
+    controller: &crate::recovery::clone::native::seed::rebind::Controller<'_>,
+    descriptor: &Value,
+) -> Result<Value> {
+    running::history::source_rebind(controller, descriptor)
+}
+
 pub(crate) const MARKER: &str = "__source-evidence";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 

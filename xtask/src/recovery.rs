@@ -77,6 +77,11 @@ fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
         println!("{}", serde_json::to_string(&result)?);
         return Ok(());
     }
+    if options.operation == SeedSourceOperation::Rebind {
+        let result = clone::native::seed::rebind::run(&root, options)?;
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(());
+    }
     if options.operation == SeedSourceOperation::Register {
         if !options.write || options.request.is_some() {
             return Err("来源登记要求 --write，且不接受外部请求文件".into());
@@ -133,8 +138,11 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
 }
 
 pub(crate) fn seed_source_protocol_at(options: &SeedSourceOptions, root: &Path) -> Result<String> {
-    if options.operation == SeedSourceOperation::Register {
-        return Err("来源登记仅通过原生 Rust 阶段入口执行，不生成 Python 私有协议".into());
+    if matches!(
+        options.operation,
+        SeedSourceOperation::Register | SeedSourceOperation::Rebind
+    ) {
+        return Err("来源登记与重绑定仅通过原生 Rust 阶段入口执行，不生成 Python 私有协议".into());
     }
     validate_local_test_path(&options.run_dir, root, LocalTestPathKind::ExistingDirectory)?;
     if let Some(request) = &options.request {
