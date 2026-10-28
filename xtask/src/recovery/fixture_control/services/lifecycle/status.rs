@@ -83,11 +83,12 @@ fn initial(
     rejection: &mut Option<Value>,
 ) -> Result<&'static str> {
     let next = initial_operation(context)?;
-    if next != "reconcile-evidence" {
+    if !matches!(next, "reconcile-evidence" | "buckets") {
         return Ok(next);
     }
     match partial::can_close(runtime, context) {
-        Ok(()) => Ok("close"),
+        Ok("running") if next == "buckets" => Ok("buckets"),
+        Ok(_) => Ok("close"),
         Err(error) => {
             let reason = error.downcast_ref::<model::LifecycleError>().map_or(
                 "部分关闭资格核验未完成，原始证据、文件或进程身份无法安全确认",
@@ -97,7 +98,7 @@ fn initial(
                 json!({"category":model::category(error.as_ref()),"reason":reason,
                 "advice":"核对原始首代账本、冻结请求、控制器、启动收据与完整进程树；保留现场，不重签绑定、不重放启动，不绕过状态执行关闭"}),
             );
-            Ok(next)
+            Ok("reconcile-evidence")
         }
     }
 }

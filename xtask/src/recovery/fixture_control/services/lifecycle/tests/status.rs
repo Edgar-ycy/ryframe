@@ -30,6 +30,10 @@ fn initial_status_never_skips_failed_or_running_stages_or_existing_evidence() {
                 continue;
             }
             for existing in [false, true] {
+                if count == 2 && outcome == "passed" && !existing {
+                    // 完成双服务后的建议由完整首代 fixture 覆盖，不能只凭账本推断存活。
+                    continue;
+                }
                 let mut runtime = FakeRuntime::new();
                 let operation = if count == 1 { "redis" } else { "buckets" };
                 let next = runtime.fixture.run.join(operation);
@@ -178,7 +182,7 @@ fn failed_close_status_requires_complete_evidence_and_never_repeats_shutdown() {
     }
 }
 
-fn snapshot(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+pub(super) fn snapshot(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
     let mut files = std::collections::BTreeMap::new();
     let mut directories = vec![root.to_path_buf()];
     while let Some(directory) = directories.pop() {

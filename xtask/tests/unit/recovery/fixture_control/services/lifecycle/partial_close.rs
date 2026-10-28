@@ -1,3 +1,4 @@
+use super::status_tests::snapshot;
 use super::*;
 
 struct PartialRuntime {
@@ -6,10 +7,15 @@ struct PartialRuntime {
     changed_identity: bool,
     lose_stop_response: bool,
     late_initial_evidence: bool,
+    cache_state: &'static str,
 }
 
 impl PartialRuntime {
     fn new() -> Self {
+        Self::with_cache(false)
+    }
+
+    fn with_cache(passed: bool) -> Self {
         let inner = registration_tests::frozen();
         let mut ledger = inner.fixture.state();
         fs::remove_file(Path::new(
@@ -18,6 +24,7 @@ impl PartialRuntime {
         .unwrap();
         ledger["attempts"].as_array_mut().unwrap().truncate(2);
         let result = PathBuf::from(ledger["attempts"][1]["result"]["path"].as_str().unwrap());
+        let cache = read(&result).unwrap();
         fs::remove_file(result).unwrap();
         ledger["attempts"][1]["status"] = json!("running");
         ledger["attempts"][1]["result"] = Value::Null;
@@ -57,15 +64,24 @@ impl PartialRuntime {
         let owner = RunLock::claim(&inner.fixture.run).unwrap();
         state::bind_controller(&inner.fixture.run, 2, &owner.owner, &ledger["attempts"][1])
             .unwrap();
-        state::finish(&inner.fixture.run, 2, None, Some("ValueError")).unwrap();
+        state::finish(
+            &inner.fixture.run,
+            2,
+            passed.then_some(&cache),
+            (!passed).then_some("ValueError"),
+        )
+        .unwrap();
         owner.release().unwrap();
-        fs::remove_file(inner.fixture.run.join("redis").join("runtime.json")).unwrap();
+        if !passed {
+            fs::remove_file(inner.fixture.run.join("redis").join("runtime.json")).unwrap();
+        }
         Self {
             inner,
             stopped: false,
             changed_identity: false,
             lose_stop_response: false,
             late_initial_evidence: false,
+            cache_state: if passed { "running" } else { "stopped" },
         }
     }
 
@@ -144,6 +160,14 @@ impl Runtime for PartialRuntime {
         self.inner.pause(delay);
     }
     fn call(&mut self, operation: &str, args: Value) -> Result<Value> {
+        if operation == "cache-status" {
+            self.inner.events.push(operation.to_owned());
+            check(
+                self.inner.fail.as_deref() != Some(operation),
+                "缓存身份或端口核验失败",
+            )?;
+            return Ok(json!({"state":self.cache_state}));
+        }
         if operation == "tree-read" && self.inner.fail.as_deref() == Some("tree-read") {
             return Err(std::io::Error::other("synthetic-private-json credential-marker").into());
         }
@@ -184,6 +208,9 @@ impl Runtime for PartialRuntime {
         }
         let tree = args["tree"].clone();
         let result = self.inner.call(operation, args);
+        if operation == "cache-stop" && result.is_ok() {
+            self.cache_state = "stopped";
+        }
         if operation == "tree-stop" && result.is_ok() {
             self.stopped = true;
             json_io::write_new(
@@ -202,6 +229,138 @@ impl Runtime for PartialRuntime {
             }
         }
         result
+    }
+}
+
+#[test]
+fn passed_initial_cache_state_controls_bucket_advice_and_single_partial_close() {
+    for cache in ["running", "stopped"] {
+        let mut runtime = PartialRuntime::with_cache(true);
+        runtime.cache_state = cache;
+        let prefix = runtime.inner.fixture.state()["attempts"].clone();
+        let before = snapshot(&runtime.inner.fixture.run);
+        let tree = read(&runtime.inner.fixture.run.join("rustfs/rustfs-tree.json")).unwrap();
+        let status = runtime.execute("status").unwrap();
+        assert_eq!(
+            status["next_operation"],
+            if cache == "running" {
+                "buckets"
+            } else {
+                "close"
+            }
+        );
+        assert_eq!(snapshot(&runtime.inner.fixture.run), before);
+        assert!(
+            runtime
+                .inner
+                .events
+                .iter()
+                .all(|event| !event.ends_with("-stop"))
+        );
+        let result = runtime.execute("close").unwrap();
+        assert_eq!(result["status"], "services_partially_closed");
+        assert_eq!(
+            &runtime.inner.fixture.state()["attempts"]
+                .as_array()
+                .unwrap()[..2],
+            prefix.as_array().unwrap().as_slice()
+        );
+        let output = runtime.inner.fixture.run.join("lifecycle-0003");
+        let stopped = read(&output.join("stopped.json")).unwrap();
+        assert_eq!(
+            stopped["runtime"],
+            read(&runtime.inner.fixture.run.join("redis/runtime.json")).unwrap()
+        );
+        assert_eq!(stopped["alive"], false);
+        assert_eq!(stopped["resources_deleted"], false);
+        assert_eq!(stopped["already_stopped"] == true, cache == "stopped");
+        assert_eq!(
+            runtime
+                .inner
+                .events
+                .iter()
+                .filter(|event| *event == "cache-stop")
+                .count(),
+            usize::from(cache == "running")
+        );
+        assert_eq!(
+            runtime
+                .inner
+                .events
+                .iter()
+                .filter(|event| *event == "tree-stop")
+                .count(),
+            1
+        );
+        let proof = read(&output.join("partial-closed.json")).unwrap();
+        assert_eq!(proof["rustfs"]["tree"], tree);
+        assert_eq!(
+            read(Path::new(
+                text(&proof["rustfs"]["completion"], "path").unwrap()
+            ))
+            .unwrap(),
+            stopped_tree(&tree)
+        );
+        let ledger = runtime.inner.fixture.state();
+        assert_eq!(
+            history::validate(&runtime.inner.fixture.run, &ledger, false, true).unwrap()["closed"],
+            true
+        );
+        assert_eq!(
+            runtime.execute("status").unwrap()["next_operation"],
+            "new-scenario"
+        );
+        let controls = runtime
+            .inner
+            .events
+            .iter()
+            .filter(|event| event.ends_with("-stop"))
+            .count();
+        assert_eq!(
+            runtime.execute("close").unwrap()["status"],
+            "services_already_partially_closed"
+        );
+        assert_eq!(runtime.inner.fixture.state(), ledger);
+        assert_eq!(
+            runtime
+                .inner
+                .events
+                .iter()
+                .filter(|event| event.ends_with("-stop"))
+                .count(),
+            controls
+        );
+    }
+}
+
+#[test]
+fn passed_initial_unknown_cache_or_changed_inputs_reject_before_any_control() {
+    for case in ["unknown", "permission", "reused", "drift"] {
+        let mut runtime = PartialRuntime::with_cache(true);
+        runtime.cache_state = "stopped";
+        match case {
+            "unknown" => runtime.cache_state = "unknown",
+            "permission" => runtime.inner.fail = Some("cache-status".into()),
+            "reused" => runtime.changed_identity = true,
+            "drift" => {
+                fs::write(runtime.inner.fixture.run.join("redis/runtime.json"), b"{}").unwrap()
+            }
+            _ => unreachable!(),
+        }
+        let before = snapshot(&runtime.inner.fixture.run);
+        let status = runtime.execute("status").unwrap();
+        assert_eq!(status["next_operation"], "reconcile-evidence", "{case}");
+        assert!(status["partial_close_rejection"].is_object());
+        assert!(runtime.execute("close").is_err(), "{case}");
+        assert_eq!(snapshot(&runtime.inner.fixture.run), before);
+        assert!(!runtime.stopped);
+        assert!(
+            runtime
+                .inner
+                .events
+                .iter()
+                .all(|event| !event.ends_with("-stop") && !event.ends_with("-start"))
+        );
     }
 }
 

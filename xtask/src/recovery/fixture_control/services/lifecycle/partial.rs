@@ -33,7 +33,7 @@ pub(super) fn close(
             json!({"initial_complete":false}),
         );
     }
-    running(runtime, &services)?;
+    ready_to_close(runtime, &services)?;
     let _guard = ProcessGuard::acquire(&context.run)?;
     owned(context, |owner| {
         stable(runtime, context, &services, None)?;
@@ -109,8 +109,12 @@ fn close_cache(
         reconciliation::observe(runtime, services)?;
         return Ok(json!({"status":"redis_process_stopped"}));
     }
-    if services["failed_cleanup"] == true {
-        cache_state(runtime, services, "stopped")?;
+    let state = cache_state(runtime, services, None)?;
+    check(
+        services["failed_cleanup"] != true || state == "stopped",
+        "失败清理的原 Redis 必须保持停止",
+    )?;
+    if state == "stopped" {
         let receipt = json!({"status":"redis_process_stopped","already_stopped":true,
             "alive":false,"resources_deleted":false,"runtime":services["runtime"]});
         json_io::write_new(&output.join("stopped.json"), &receipt)?;
@@ -123,20 +127,31 @@ fn close_cache(
     )
 }
 
-fn cache_state(runtime: &mut dyn Runtime, services: &Value, expected: &str) -> Result<()> {
+fn cache_state(
+    runtime: &mut dyn Runtime,
+    services: &Value,
+    expected: Option<&str>,
+) -> Result<&'static str> {
     if services["reconciliation"].is_object() {
-        check(expected == "stopped", "协调不能要求或声明启动成功")?;
-        return reconciliation::observe(runtime, services).map(|_| ());
+        check(expected != Some("running"), "协调不能要求或声明启动成功")?;
+        reconciliation::observe(runtime, services)?;
+        return Ok("stopped");
     }
     let observed = runtime.call(
         "cache-status",
         json!({"request":services["requests"]["redis"],
         "runtime":services["runtime"],"effective":null}),
     )?;
+    let state = match observed["state"].as_str() {
+        Some("running") => "running",
+        Some("stopped") => "stopped",
+        _ => return Err(model::error("部分关闭 Redis 原代次状态未知，保留现场")),
+    };
     check(
-        observed["state"] == expected,
+        expected.is_none_or(|expected| state == expected),
         "部分关闭 Redis 状态与原代次要求不同",
-    )
+    )?;
+    Ok(state)
 }
 
 fn stable(
@@ -153,18 +168,20 @@ fn stable(
     )
 }
 
-fn running(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
-    if !services["runtime"].is_null() {
+fn ready_to_close(runtime: &mut dyn Runtime, services: &Value) -> Result<&'static str> {
+    let cache = if !services["runtime"].is_null() {
         cache_state(
             runtime,
             services,
             if services["failed_cleanup"] == true {
-                "stopped"
+                Some("stopped")
             } else {
-                "running"
+                None
             },
-        )?;
-    }
+        )?
+    } else {
+        "not_started"
+    };
     if !services["tree"].is_null() {
         let tree = &services["tree"];
         let directory = Path::new(text(tree, "runtime_directory")?);
@@ -192,12 +209,12 @@ fn running(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
             "部分关闭前 RustFS 产品身份已变化",
         )?;
     }
-    Ok(())
+    Ok(cache)
 }
 
 fn stopped(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
     if !services["runtime"].is_null() {
-        cache_state(runtime, services, "stopped")?;
+        cache_state(runtime, services, Some("stopped"))?;
     }
     if !services["tree"].is_null() {
         check(
@@ -225,9 +242,9 @@ pub(super) fn verify_closed(runtime: &mut dyn Runtime, context: &Context) -> Res
     Ok(states)
 }
 
-pub(super) fn can_close(runtime: &mut dyn Runtime, context: &Context) -> Result<()> {
+pub(super) fn can_close(runtime: &mut dyn Runtime, context: &Context) -> Result<&'static str> {
     let services = inputs::load(runtime, context)?;
-    running(runtime, &services)
+    ready_to_close(runtime, &services)
 }
 
 #[cfg(test)]
@@ -272,7 +289,10 @@ mod tests {
             };
             let services = json!({"failed_cleanup":true,"requests":{"redis":{}},
                 "runtime":{"original":true},"tree":null});
-            assert_eq!(running(&mut runtime, &services).is_ok(), state == "stopped");
+            assert_eq!(
+                ready_to_close(&mut runtime, &services).is_ok(),
+                state == "stopped"
+            );
             let result = close_cache(&mut runtime, &context, &services, &output);
             assert_eq!(result.is_ok(), state == "stopped");
             assert_eq!(runtime.calls, ["cache-status", "cache-status"]);
@@ -294,7 +314,10 @@ mod tests {
                 state,
                 calls: Vec::new(),
             };
-            assert_eq!(running(&mut runtime, &services).is_ok(), state == "running");
+            assert_eq!(
+                ready_to_close(&mut runtime, &services).is_ok(),
+                state != "unknown"
+            );
             assert_eq!(runtime.calls, ["cache-status"]);
         }
     }
