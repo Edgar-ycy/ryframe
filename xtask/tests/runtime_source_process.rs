@@ -1,4 +1,4 @@
-//! Runtime 与 comparison 保留受管协议；来源验证的失败请求直接由原生入口拒绝。
+//! Runtime 保留受管协议；来源验证与比较的失败请求由原生入口只读拒绝。
 
 use std::{
     fs,
@@ -120,7 +120,7 @@ fn runtime_status_uses_managed_file_and_rejects_ambient_python_hooks() {
 }
 
 #[test]
-fn source_comparison_verify_uses_stdin_ignores_ambient_protocol_and_preserves_files() {
+fn source_comparison_rejects_invalid_receipt_without_ambient_hooks_or_file_changes() {
     let fixture = Fixture::new();
     let arguments = vec![
         "check".into(),
@@ -138,22 +138,8 @@ fn source_comparison_verify_uses_stdin_ignores_ambient_protocol_and_preserves_fi
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
-    let stdout = String::from_utf8(result.stdout.clone()).unwrap();
-    assert!(
-        stdout.contains("tools/python/restore_source.py --private-stdin"),
-        "{stdout}"
-    );
-    assert_eq!(
-        stdout
-            .matches("tools/python/restore_source.py --private-stdin")
-            .count(),
-        1
-    );
-    assert_private_dispatch(
-        result,
-        "tools/python/restore_source.py",
-        &[&fixture.source_receipt],
-    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stdout.is_empty());
     let after = fs::read_dir(&fixture.directory)
         .unwrap()
         .map(|entry| {
@@ -163,6 +149,7 @@ fn source_comparison_verify_uses_stdin_ignores_ambient_protocol_and_preserves_fi
         .collect::<std::collections::BTreeMap<_, _>>();
     assert_eq!(before, after);
     assert!(!fixture.capture.exists());
+    assert!(!fixture.directory.join("__pycache__").exists());
 }
 
 #[test]
@@ -199,7 +186,6 @@ fn source_verify_and_recover_reject_unregistered_start_without_python_or_new_evi
             "{stderr}"
         );
         assert!(!stderr.contains("Traceback"), "{stderr}");
-        assert!(!stderr.contains("restore_source.py"), "{stderr}");
         assert_eq!(fs::read(&fixture.registration).unwrap(), input);
         assert!(fs::read_dir(&verification).unwrap().next().is_none());
         assert!(!fixture.directory.join("run.lock").exists());

@@ -1,19 +1,15 @@
-"""当前来源和比较业务派发；私有协议与公开参数由专门测试覆盖。"""
-from rate_limit_tool import tool_binding
+"""共享来源证明的恢复审计、诊断绑定与私有配置行为。"""
 import json
 import hashlib
 from pathlib import Path
-import subprocess
 import sys
 import unittest
 import uuid
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace_directory import WorkspaceDirectory
 import restore_build
 import restore_reference
-import restore_source as source
 import restore_source_runtime_producer as producer
 from restore_reference_fixture import environment
 
@@ -61,7 +57,7 @@ def capture_dynamic_evidence(output: Path) -> None:
                 "returncode": 0, "error_type": None, "stdin": None, "stdout": "只读清单", "stderr": ""})
 
 
-class SourceDispatchTests(unittest.TestCase):
+class SourceEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.backend, self.plan = environment(self)
         self.work = restore_reference.work_directory(self.plan)
@@ -70,54 +66,6 @@ class SourceDispatchTests(unittest.TestCase):
         path = self.work / name
         restore_reference.write_json(path, value)
         return path
-
-    def test_source_request_delegates_only_generation_receipt(self):
-        start = self.work / "results/start.json"
-        output = self.work / "g0001/verification/source-runtime.json"
-        request = source.SourceRequest("verify", {
-            "backend_dir": self.backend,
-            "source_generation": start,
-            "output": output,
-            "write": True,
-        }, native_tool=tool_binding())
-        result = {"output": str(output), "status": "source_runtime_verified"}
-        with patch.object(
-                source, "execute_source_verification", return_value=result) as verify, \
-                patch("builtins.print") as printed:
-            source.main(request)
-        verify.assert_called_once_with(self.backend.resolve(), start, output)
-        self.assertEqual(json.loads(printed.call_args.args[0]), result)
-
-    def test_request_failure_preserves_no_lock_or_success_receipt(self):
-        start = self.work / "results/start.json"
-        output = self.work / "g0001/verification/source-runtime.json"
-        request = source.SourceRequest("verify", {
-            "backend_dir": self.backend,
-            "source_generation": start,
-            "output": output,
-            "write": True,
-        }, native_tool=tool_binding())
-        failure = subprocess.CalledProcessError(1, ["node"], stderr=b"preserved protocol failure")
-        with patch.object(
-                source, "execute_source_verification", side_effect=failure
-        ), self.assertRaises(subprocess.CalledProcessError):
-            source.main(request)
-        self.assertFalse(output.exists())
-        self.assertFalse((self.work / ".reference-lock").exists())
-
-    def test_recovery_dispatch_preserves_the_original_generation_and_output(self):
-        start = self.work / "results/start.json"
-        output = self.work / "g0001/verification/source-runtime.json"
-        request = source.SourceRequest("verify-recover", {
-            "backend_dir": self.backend, "source_generation": start,
-            "output": output, "write": True,
-        }, native_tool=tool_binding())
-        result = {"output": str(output), "status": "source_runtime_verified"}
-        with patch.object(source, "execute_source_verification_recovery", return_value=result) as recover, \
-                patch.object(source, "execute_source_verification") as ordinary:
-            self.assertEqual(source.execute(request), result)
-        recover.assert_called_once_with(self.backend.resolve(), start, output)
-        ordinary.assert_not_called()
 
     def test_recovery_audit_accepts_only_same_control_query_command_records(self):
         directory = self.work / "verification"

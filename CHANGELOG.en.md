@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the old Python CLI and decoder replaced by native Rust source verification and comparison, together with their forwarding and private-protocol tests. Formal process tests retain environment isolation, failure without success receipts, and unchanged before/after files; shared producers remain.
+
 - Move reboot-observation configuration contracts, original process identities, and kernel boot proofs into the native tool, retaining independent build-drift blockers and original-ledger controller verification. Remove replaced Python role, endpoint, and failed-prefix implementations and their obsolete tests.
 
 - Register physical ownership with the explicit scope during first control/tenant initialization and complete SQL export. Adopt existing unmarked databases through a separate ownership-adopt plan, strict before/after verification, and transactional registration, retaining business adoption, rejection of conflicting ownership, and no-replay boundaries.

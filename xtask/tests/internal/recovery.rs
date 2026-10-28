@@ -68,7 +68,6 @@ fn private_recovery_scripts_exist_in_checkout() {
     assert!(!root.join("tools/python/full_stack_artifacts.py").exists());
     assert!(root.join("tools/python/devex_clone.py").is_file());
     assert!(root.join("tools/python/restore_runtime.py").is_file());
-    assert!(root.join("tools/python/restore_source.py").is_file());
     assert!(!root.join("tools/js/restore_reference_dataset.mjs").exists());
     assert!(root.join("xtask/src/recovery/dataset_prepare.rs").is_file());
     assert!(root.join("xtask/src/recovery/fixture_prepare.rs").is_file());

@@ -1,4 +1,3 @@
-import io
 import json
 import os
 from pathlib import Path
@@ -6,11 +5,9 @@ import subprocess
 import sys
 import unittest
 from unittest.mock import patch
-from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_runtime
-import restore_source
 from rate_limit_tool import tool_binding
 from workspace_directory import WorkspaceDirectory
 
@@ -76,29 +73,6 @@ def runtime_protocol(operation: str) -> dict:
     return {**common, **fields[operation]}
 
 
-def source_protocol(operation: str) -> dict:
-    root = str(ROOT)
-    common = {
-        "backend_dir": root,
-        "format_version": 1,
-        "kind": restore_source.PROTOCOL_KIND,
-        "native_tool": tool_binding(),
-        "operation": operation,
-        "write": operation in restore_source.WRITING_OPERATIONS,
-    }
-    fields = {
-        "verify": {
-            "source_generation": str(ROOT / ".local-tests/start.json"),
-            "output": str(ROOT / ".local-tests/source-runtime.json"),
-        },
-        "verify-recover": {
-            "source_generation": str(ROOT / ".local-tests/start.json"),
-            "output": str(ROOT / ".local-tests/source-runtime.json"),
-        },
-    }
-    return {**common, **fields[operation]}
-
-
 def private_environment() -> dict[str, str]:
     values = dict(os.environ)
     values["PYTHONIOENCODING"] = "utf-8"
@@ -116,42 +90,15 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                     operation in restore_runtime.WRITING_OPERATIONS,
                 )
 
-    def test_source_decodes_every_operation_from_bounded_stdin(self):
-        for operation in sorted(restore_source.OPERATIONS):
-            with self.subTest(operation=operation):
-                request = restore_source.private_protocol_request(
-                    ["--private-stdin"],
-                    io.BytesIO(json.dumps(source_protocol(operation)).encode("utf-8")),
-                )
-                self.assertEqual(request.operation, operation)
-                self.assertEqual(
-                    request.namespace().write,
-                    operation in restore_source.WRITING_OPERATIONS,
-                )
-
-    def test_protocols_reject_duplicates_unknown_fields_and_wrong_write(self):
-        for module, payload in (
-            (restore_runtime, runtime_protocol("status")),
-            (restore_source, source_protocol("verify")),
+    def test_runtime_rejects_duplicates_unknown_fields_and_wrong_write(self):
+        payload = runtime_protocol("status")
+        for case, raw in (
+            ("unknown", json.dumps({**payload, "unknown": "value"})),
+            ("write", json.dumps({**payload, "write": not payload["write"]})),
+            ("duplicate", json.dumps(payload)[:-1] + ',"operation":"status"}'),
         ):
-            with self.subTest(module=module.__name__, case="unknown"):
-                invalid = {**payload, "unknown": "value"}
-                with self.assertRaises(ValueError):
-                    self.decode(module, json.dumps(invalid))
-            with self.subTest(module=module.__name__, case="write"):
-                invalid = {**payload, "write": not payload["write"]}
-                with self.assertRaises(ValueError):
-                    self.decode(module, json.dumps(invalid))
-            with self.subTest(module=module.__name__, case="duplicate"):
-                raw = json.dumps(payload)[:-1] + ',"operation":"status"}'
-                with self.assertRaises(ValueError):
-                    self.decode(module, raw)
-
-    @staticmethod
-    def decode(module, raw):
-        if module is restore_runtime:
-            return module.decode_request(raw)
-        return module.decode_request(raw)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                restore_runtime.decode_request(raw)
 
     def test_runtime_rejects_invalid_adapter_generation_and_timeout(self):
         start = runtime_protocol("start")
@@ -166,115 +113,6 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             payload[name] = value
             with self.assertRaises(ValueError):
                 restore_runtime.decode_request(json.dumps(payload))
-
-    def test_source_recovery_requires_explicit_write_and_exact_bound_paths(self):
-        payload = source_protocol("verify-recover")
-        for changes in ({"write": False}, {"write": 1}, {"output": "relative.json"},
-                        {"source_generation": ""}, {"resume": True}):
-            with self.subTest(changes=changes), self.assertRaises(ValueError):
-                restore_source.decode_request(json.dumps({**payload, **changes}))
-
-    def test_source_stdin_ignores_retired_environment_before_dispatch(self):
-        payload = source_protocol("verify")
-        retired = {
-            "RYFRAME_RESTORE_SOURCE_PROTOCOL": "invalid inherited source",
-            "RYFRAME_RESTORE_SOURCE_UNKNOWN": "invalid inherited field",
-            "RYFRAME_RESTORE_RUNTIME_PROTOCOL": "invalid inherited runtime",
-        }
-        with patch.dict(os.environ, retired), patch.object(
-            sys, "argv", [restore_source.__file__, "--private-stdin"]
-        ), patch.object(
-            sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps(payload).encode("utf-8")))
-        ), patch.object(restore_source, "execute", return_value={"status": "checked"}) as execute, \
-                patch("builtins.print"):
-            restore_source.main()
-            execute.assert_called_once()
-            self.assertEqual(execute.call_args.args[0].operation, "verify")
-            self.assertEqual({key: os.environ[key] for key in retired}, retired)
-
-    def test_source_transport_limits_bytes_and_requires_exact_marker(self):
-        raw = json.dumps(source_protocol("verify")).encode("utf-8")
-        exact = io.BytesIO(raw + b" " * (restore_source.PROTOCOL_MAX_BYTES - len(raw)))
-        self.assertEqual(restore_source.private_protocol_request(
-            ["--private-stdin"], exact
-        ).operation, "verify")
-        oversized = io.BytesIO(b"x" * (restore_source.PROTOCOL_MAX_BYTES * 2))
-        with self.assertRaises(restore_source.SourceProtocolError):
-            restore_source.private_protocol_request(["--private-stdin"], oversized)
-        self.assertEqual(oversized.tell(), restore_source.PROTOCOL_MAX_BYTES + 1)
-        for arguments in ([], ["verify"], ["--private-stdin", "extra"],
-                          ["--private-stdin", "--private-stdin"]):
-            stream = io.BytesIO(raw)
-            with self.subTest(arguments=arguments), self.assertRaises(restore_source.SourceProtocolError):
-                restore_source.private_protocol_request(arguments, stream)
-            self.assertEqual(stream.tell(), 0)
-
-    def test_source_rejects_invalid_requests_before_dispatch_without_file_changes(self):
-        valid = source_protocol("verify")
-        invalid = [b"", b"\xff", b"\xef\xbb\xbf{}", b"[]", b"null", b"{", b"{}",
-                   json.dumps(valid).encode() + b"\n",
-                   (json.dumps(valid)[:-1] + ',"operation":"verify"}').encode()]
-        for changes in ({"format_version": True}, {"format_version": 2}, {"kind": "other"},
-                        {"operation": "unknown"}, {"write": 1}, {"write": False},
-                        {"source_generation": "relative"}, {"source_generation": ""}, {"source_generation": str(ROOT) + "\0"},
-                        {"source_generation": str(ROOT) + "\n"}, {"source_generation": str(ROOT) + "\r"},
-                        {"source_generation": float("nan")}, {"source_generation": float("inf")},
-                        {"source_generation": -float("inf")}, {"unknown": "value"}):
-            invalid.append(json.dumps({**valid, **changes}).encode("utf-8"))
-        invalid.append(json.dumps({**valid, "source_generation": str(ROOT / ("界" * 6000))},
-                                  ensure_ascii=False).encode("utf-8"))
-        with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
-            sentinel = Path(directory) / "unchanged.json"
-            sentinel.write_bytes(b"{\"before\":true}")
-            before = {path.name: path.read_bytes() for path in Path(directory).iterdir()}
-            for raw in invalid:
-                with self.subTest(raw=raw[:32]), patch.object(
-                    sys, "argv", [restore_source.__file__, "--private-stdin"]
-                ), patch.object(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(raw))), \
-                        patch.object(restore_source, "execute") as execute:
-                    with self.assertRaises(restore_source.SourceProtocolError):
-                        restore_source.main()
-                    execute.assert_not_called()
-                    self.assertEqual({path.name: path.read_bytes() for path in Path(directory).iterdir()}, before)
-
-    def test_source_cancel_and_stdin_read_failure_never_dispatch(self):
-        for failure in (OSError("unavailable"), KeyboardInterrupt()):
-            stream = io.BytesIO()
-            with patch.object(stream, "read", side_effect=failure) as read, patch.object(
-                sys, "stdin", SimpleNamespace(buffer=stream)
-            ), patch.object(sys, "argv", [restore_source.__file__, "--private-stdin"]), \
-                    patch.object(restore_source, "execute") as execute:
-                with self.assertRaises(restore_source.SourceProtocolError if isinstance(failure, OSError)
-                                       else KeyboardInterrupt):
-                    restore_source.main()
-                read.assert_called_once_with(restore_source.PROTOCOL_MAX_BYTES + 1)
-                execute.assert_not_called()
-
-    def test_source_script_rejects_bad_transport_even_with_valid_retired_environment(self):
-        raw = json.dumps(source_protocol("verify")).encode("utf-8")
-        environment = private_environment()
-        environment.update({
-            "RYFRAME_RESTORE_SOURCE_PROTOCOL": raw.decode("utf-8"),
-            "RYFRAME_RESTORE_RUNTIME_PROTOCOL": json.dumps(runtime_protocol("status")),
-        })
-        cases = (([], raw), (["--private-stdin", "extra"], raw),
-                 (["--private-stdin"], b""), (["--private-stdin"], b"\xff"),
-                 (["--private-stdin"], b"x" * (restore_source.PROTOCOL_MAX_BYTES + 1)))
-        with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
-            sentinel = Path(directory) / "unchanged.json"
-            sentinel.write_bytes(b"{\"before\":true}")
-            before = {path.name: path.read_bytes() for path in Path(directory).iterdir()}
-            for arguments, data in cases:
-                with self.subTest(arguments=arguments, size=len(data)):
-                    result = subprocess.run(
-                        [sys.executable, "-X", "utf8", "-B", restore_source.__file__, *arguments],
-                        cwd=directory, input=data, env=environment,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=30,
-                    )
-                    self.assertEqual(result.returncode, 2, result.stderr.decode("utf-8"))
-                    self.assertEqual(result.stdout, b"")
-                    self.assertNotIn(b"Traceback", result.stderr)
-                    self.assertEqual({path.name: path.read_bytes() for path in Path(directory).iterdir()}, before)
 
     def test_runtime_file_protocol_preserves_stdin_and_ignores_ambient_protocol(self):
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
@@ -298,59 +136,36 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                     restore_runtime.private_protocol_request(["--request-file", str(path)])
 
     def test_direct_script_argv_is_rejected_with_parameter_exit_code(self):
-        for script in (ROOT / "tools/python/restore_runtime.py", ROOT / "tools/python/restore_source.py"):
-            result = subprocess.run(
-                [sys.executable, "-B", str(script), "verify"],
-                cwd=ROOT,
-                env=private_environment(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                check=False,
-            )
-            self.assertEqual(result.returncode, 2, result.stderr)
-            self.assertNotIn(str(ROOT), result.stderr)
+        result = subprocess.run(
+            [sys.executable, "-B", str(ROOT / "tools/python/restore_runtime.py"), "verify"],
+            cwd=ROOT,
+            env=private_environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn(str(ROOT), result.stderr)
 
     def test_business_failure_preserves_the_task_exit_code_and_diagnostic(self):
         runtime = runtime_protocol("status")
         runtime["runtime_registration"] = str(
             ROOT / ".local-tests" / f"missing-runtime-{os.getpid()}.json"
         )
-        source = source_protocol("verify")
-        source["source_generation"] = str(
-            ROOT / ".local-tests" / f"missing-source-{os.getpid()}.json"
-        )
-        cases = (
-            (
-                ROOT / "tools/python/restore_runtime.py",
-                None,
-                runtime,
-            ),
-            (
-                ROOT / "tools/python/restore_source.py",
-                "stdin",
-                source,
-            ),
-        )
-        for script, key, protocol in cases:
-            environment = private_environment()
-            arguments = [sys.executable, "-X", "utf8", "-B", str(script)]
-            with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
-                if key is None:
-                    path = Path(directory) / "request.json"
-                    path.write_text(json.dumps({"request": protocol, "native_tool": json.dumps(tool_binding())}), encoding="utf-8")
-                    arguments += ["--request-file", str(path)]
-                else:
-                    arguments += ["--private-stdin"]
-                result = subprocess.run(
-                    arguments, cwd=ROOT, env=environment,
-                    input=json.dumps(protocol) if key == "stdin" else None,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, encoding="utf-8", check=False,
-                )
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn("Traceback", result.stderr)
+        with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
+            path = Path(directory) / "request.json"
+            path.write_text(json.dumps({"request": runtime, "native_tool": json.dumps(tool_binding())}), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-X", "utf8", "-B", str(ROOT / "tools/python/restore_runtime.py"),
+                 "--request-file", str(path)],
+                cwd=ROOT, env=private_environment(),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", check=False,
+            )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Traceback", result.stderr)
 
 
 class NativeBindingEntrypointProcesses(unittest.TestCase):
@@ -371,7 +186,7 @@ assert tool_binding() is None
 runpy.run_path(sys.argv[0],run_name='__main__')
 """
 
-    def test_seven_formal_entries_reject_missing_or_bad_tools_before_children_and_writes(self):
+    def test_formal_entries_reject_missing_or_bad_tools_before_children_and_writes(self):
         registered = tool_binding()
         self.assertIsNotNone(registered, "本测试须由正式 run_checks 绑定工具")
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
@@ -379,8 +194,6 @@ runpy.run_path(sys.argv[0],run_name='__main__')
             evidence = root / "input.json"
             evidence.write_text("{}", encoding="utf-8")
             bad = {**registered, "sha256": "0" * 64}
-            source = source_protocol("verify")
-            source["source_generation"] = str(evidence)
             runtime = {"format_version":1,"operation":"verify","backend_dir":str(ROOT),
                        "environment":str(evidence),"output":str(root),"write":False}
             monitoring = {"format_version":1,"kind":"monitoring-preflight","backend":str(ROOT),
@@ -393,7 +206,6 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                     return json.dumps(result)
                 tool_args = [] if binding is None else ["--native-tool", json.dumps(binding)]
                 cases = [
-                    ("restore_source.py", ["--private-stdin"], envelope(source)),
                     ("restore_reference.py", [*tool_args,"--stdin"], json.dumps({"format_version":1,
                         "kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":str(ROOT),
                         "format_version":1,"operation":"check-existing","plan":str(evidence),"side":"source","write":False}})),
@@ -409,7 +221,6 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                     ("devex_provenance.py", [], envelope({})),
                 ]
                 diagnostics = {
-                    "restore_source.py": (2, "restore_source_protocol_error：恢复来源私有协议无效。"),
                     "restore_reference.py": (2, "restore_reference_protocol_error：私有参数协议无效。"),
                     "reference_fixture_runtime.py": (2, "reference_fixture_runtime_protocol_error：夹具运行时私有协议无效。"),
                     "restore_monitoring_authority.py": (1, "正式恢复预检失败：ValueError；请核对 runtime verify 的来源与代次证据"),
