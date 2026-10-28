@@ -13,10 +13,6 @@ fn signed_i64_contract_is_preserved() {
 fn unsigned_id_keeps_all_bits_and_supplied_error_message() {
     for value in [0, i64::MAX as u64 + 1, u64::MAX] {
         assert_eq!(
-            id_parser::parse_unsigned_id(&value.to_string(), "业务 ID 无效").unwrap(),
-            value
-        );
-        assert_eq!(
             ryframe_api::parse_unsigned_id(&value.to_string(), "业务 ID 无效").unwrap(),
             value
         );

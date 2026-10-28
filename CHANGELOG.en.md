@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove duplicate positive unsigned-ID assertions against the same parser implementation, retaining the public entry's full-range boundaries, invalid-input checks and caller-supplied business error messages.
+
 - Remove obsolete cache resource-stub tests that cannot reach current native stages, retaining existing Rust coverage for unknown writes and recovery. Verify RESP encoding and parsing, original exceptions and no replay at the active Python transport and session boundaries, preserving shared fixtures used by other callers.
 
 - Add a native read-only authority entry for recovery datasets, validating target plans, runtime generations, dataset lineage, independent source and explicit configuration bindings, then rechecking all consumed inputs before returning. Formal frontend consumer migration and complete recovery-chain acceptance remain separate pending work.
