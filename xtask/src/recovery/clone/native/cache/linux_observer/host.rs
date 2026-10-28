@@ -179,7 +179,7 @@ fn configured(backend: &Path) -> Result<LinuxObserverSettings> {
         super::super::rejected("需要 WSL 观察：请在 config/tools.toml 或 .local-tests/tools.toml 配置 [verification.linux_observer] 的 distribution/user/uid、双端 program/source_root、source_commit/sha256/source_sha256；从明确 SHA 的普通 clone 构建受管 xtask，禁止回退解释器"))
 }
 
-pub(in crate::recovery::clone::native::cache) fn validate(
+pub(in crate::recovery::clone::native::cache) fn validate_paths(
     settings: &LinuxObserverSettings,
 ) -> Result<()> {
     let name = |value: &str| {
@@ -223,6 +223,13 @@ pub(in crate::recovery::clone::native::cache) fn validate(
             return Err("观察器 Windows 路径必须是无链接的完整绝对路径".into());
         }
     }
+    Ok(())
+}
+
+pub(in crate::recovery::clone::native::cache) fn validate(
+    settings: &LinuxObserverSettings,
+) -> Result<()> {
+    validate_paths(settings)?;
     let mut file = fs::File::open(&settings.program)?;
     let mut header = [0_u8; 20];
     file.read_exact(&mut header)?;

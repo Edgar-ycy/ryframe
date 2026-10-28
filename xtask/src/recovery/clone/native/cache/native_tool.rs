@@ -55,6 +55,58 @@ pub(super) struct NativeTool {
     pub sources: Value,
 }
 
+enum Check {
+    Image,
+    Git,
+    Manifest,
+}
+
+impl Check {
+    fn verify(&self, settings: &LinuxObserverSettings) -> Result<Option<Value>> {
+        match self {
+            Self::Image => super::linux_observer::validate_settings(settings).map(|()| None),
+            Self::Git => {
+                manifest::git_source(&settings.source_root, &settings.source_commit)?;
+                Ok(None)
+            }
+            Self::Manifest => {
+                let sources = manifest::capture(&settings.source_root)?;
+                if manifest::sha256(&sources)? != settings.source_sha256 {
+                    return Err("缓存原生工具完整来源摘要不符".into());
+                }
+                Ok(Some(sources))
+            }
+        }
+    }
+}
+
+// 现有协议会按 io::Error 分类；不能让并行扫描将其降为普通错误文本。
+enum Checked {
+    Passed(Option<Value>),
+    Io(std::io::Error),
+    Rejected(String),
+}
+
+impl Checked {
+    fn transport(result: Result<Option<Value>>) -> Self {
+        match result {
+            Ok(value) => Self::Passed(value),
+            Err(error) => match error.downcast::<std::io::Error>() {
+                Ok(error) => Self::Io(*error),
+                Err(error) => Self::Rejected(error.to_string()),
+            },
+        }
+    }
+
+    fn finish(self) -> Result<Option<Value>> {
+        match self {
+            Self::Passed(value) => Ok(value),
+            Self::Io(error) => Err(Box::new(error)),
+            Self::Rejected(error) => Err(error.into()),
+        }
+    }
+}
+
 impl NativeTool {
     pub(super) fn capture(backend: &Path) -> Result<Self> {
         crate::recovery::runtime::dataset_authority::reads::tool_settings(backend)?;
@@ -62,12 +114,28 @@ impl NativeTool {
             .verification
             .linux_observer
             .ok_or("缓存原生控制需要 verification.linux_observer 的显式来源与 ELF 绑定")?;
-        super::linux_observer::validate_settings(&settings)?;
-        manifest::git_source(&settings.source_root, &settings.source_commit)?;
-        let sources = manifest::capture(&settings.source_root)?;
-        if manifest::sha256(&sources)? != settings.source_sha256 {
-            return Err("缓存原生工具完整来源摘要不符".into());
-        }
+        super::linux_observer::validate_settings_paths(&settings)?;
+        let active = crate::recovery::runtime::dataset_authority::reads::is_active();
+        let checked = crate::frontend_origin::scan::ordered(
+            &[Check::Image, Check::Git, Check::Manifest],
+            |check| {
+                let result = check.verify(&settings);
+                if active {
+                    // 活跃窗口仍在原线程按原顺序登记输入，遇错立即返回原始错误。
+                    result.map(Checked::Passed)
+                } else {
+                    Ok(Checked::transport(result))
+                }
+            },
+        )?;
+        let sources = checked
+            .into_iter()
+            .map(Checked::finish)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or("缓存原生工具缺少已核验完整来源")?;
         Ok(Self::from_settings(settings, sources))
     }
 
