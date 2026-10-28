@@ -57,6 +57,7 @@ pub(super) struct NativeTool {
 
 impl NativeTool {
     pub(super) fn capture(backend: &Path) -> Result<Self> {
+        crate::recovery::runtime::dataset_authority::reads::tool_settings(backend)?;
         let settings = ToolSettings::load(backend)?
             .verification
             .linux_observer

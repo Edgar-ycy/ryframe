@@ -407,6 +407,7 @@ pub(crate) fn file_sha256(path: &Path) -> Result<String> {
 }
 
 pub(crate) fn file_size(path: &Path) -> Result<u64> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     Ok(fs::symlink_metadata(path)?.len())
 }
 

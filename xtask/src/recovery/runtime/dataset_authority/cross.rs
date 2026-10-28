@@ -34,7 +34,10 @@ pub(super) fn read(inputs: &mut Inputs, runtime: &Value) -> Result<RuntimeDocume
         "恢复运行内嵌构建与原始文件不同",
     )?;
     check(
-        launch.path == path(&runtime["paths"]["runtime_dir"])?.join("runtime-launch.json"),
+        super::commands::same_path(
+            &launch.path,
+            &path(&runtime["paths"]["runtime_dir"])?.join("runtime-launch.json"),
+        )?,
         "恢复运行启动收据路径不属于同代目录",
     )?;
     Ok(RuntimeDocuments {
@@ -82,7 +85,7 @@ pub(super) fn verify(
         ("frontend_root", "frontend"),
     ] {
         check(
-            runtime["paths"][key] == roots[root],
+            super::commands::same_path(&path(&runtime["paths"][key])?, &path(&roots[root])?)?,
             "恢复运行产品路径与目标来源不同",
         )?;
     }

@@ -24,7 +24,9 @@ struct Directory {
     identity: (u64, u64),
 }
 
-pub(super) struct Window;
+pub(super) struct Window {
+    _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
 
 impl Window {
     pub(super) fn begin() -> Result<Self> {
@@ -34,7 +36,9 @@ impl Window {
                 return Err("恢复静态读取窗口不能嵌套".into());
             }
             *slot = Some(ReadSet::default());
-            Ok(Self)
+            Ok(Self {
+                _thread_bound: std::marker::PhantomData,
+            })
         })
     }
 
@@ -91,16 +95,18 @@ fn with_set(action: impl FnOnce(&mut ReadSet) -> Result<()>) -> Result<()> {
 }
 
 pub(crate) fn file(path: &Path) -> Result<()> {
-    with_set(|set| {
-        let path = std::path::absolute(path)?;
-        if let std::collections::btree_map::Entry::Vacant(entry) = set.files.entry(path.clone()) {
-            entry.insert(ProtectedInputs::open([path.clone()])?);
-        }
-        if let Some(parent) = path.parent() {
-            remember_directory(set, parent)?;
-        }
-        Ok(())
-    })
+    with_set(|set| record_file(set, path))
+}
+
+fn record_file(set: &mut ReadSet, path: &Path) -> Result<()> {
+    let path = std::path::absolute(path)?;
+    if let std::collections::btree_map::Entry::Vacant(entry) = set.files.entry(path.clone()) {
+        entry.insert(ProtectedInputs::open([path.clone()])?);
+    }
+    if let Some(parent) = path.parent() {
+        remember_directory(set, parent)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn directory(path: &Path) -> Result<()> {
@@ -117,6 +123,15 @@ pub(crate) fn source(
     value: &crate::recovery::clone::native::source::Inventory,
 ) -> Result<()> {
     with_set(|set| {
+        for file in &value.files {
+            let path = std::path::absolute(root.join(&file.path))?;
+            if !set.files.contains_key(&path) {
+                return Err(
+                    "来源文件读取未登记到当前静态权威窗口；并行来源读取必须显式传递保护上下文"
+                        .into(),
+                );
+            }
+        }
         if let Some(previous) = set.sources.get(root) {
             if previous != value {
                 return Err("恢复静态核验期间完整来源漂移".into());
@@ -129,14 +144,21 @@ pub(crate) fn source(
 }
 
 pub(crate) fn optional(path: &Path) -> Result<()> {
-    if path.try_exists()? {
-        file(path)
-    } else {
-        with_set(|set| {
+    with_set(|set| {
+        if path.try_exists()? {
+            record_file(set, path)
+        } else {
             set.absent.insert(path.to_owned());
             Ok(())
-        })
+        }
+    })
+}
+
+pub(crate) fn tool_settings(backend: &Path) -> Result<()> {
+    for relative in ["config/tools.toml", ".local-tests/tools.toml"] {
+        optional(&backend.join(relative))?;
     }
+    Ok(())
 }
 
 fn remember_directory(set: &mut ReadSet, path: &Path) -> Result<()> {

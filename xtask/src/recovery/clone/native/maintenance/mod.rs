@@ -379,6 +379,7 @@ pub(crate) fn toolchain(root: &Path, runner: &dyn Runner) -> Result<Value> {
 }
 
 pub(super) fn target_directory(backend: &Path) -> Result<PathBuf> {
+    crate::recovery::runtime::dataset_authority::reads::tool_settings(backend)?;
     let settings =
         ryframe_config::ToolSettings::load(backend).map_err(|error| error.message().to_owned())?;
     let target = if settings.generator.target_dir.is_some() {

@@ -75,3 +75,41 @@ fn unknown_arguments_and_duplicate_fields_cannot_open_a_read_window() {
     let window = reads::Window::begin().unwrap();
     assert!(window.finish(Ok(())).is_ok());
 }
+
+#[test]
+fn source_read_on_an_unbound_worker_thread_cannot_claim_complete_protection() {
+    use crate::recovery::clone::native::source;
+    let directory = fixture();
+    let file = directory.path().join("input.json");
+    std::fs::write(&file, b"{\"value\":1}").unwrap();
+    let digest = digest::file(&file).unwrap();
+    let inventory = source::Inventory {
+        source: source::SourceBinding {
+            snapshot: source::SourceSnapshot {
+                head: "a".repeat(40),
+                patch_sha256: "b".repeat(64),
+                files: vec![],
+                clean: true,
+            },
+            worktree_fingerprint: format!("sha256:{}", "c".repeat(64)),
+        },
+        files: vec![source::FileRecord {
+            path: "input.json".into(),
+            sha256: digest.sha256,
+        }],
+        guard: source::SourceGuard {
+            head: "a".repeat(40),
+            index_sha256: "d".repeat(64),
+            modes_sha256: "e".repeat(64),
+        },
+    };
+    let window = reads::Window::begin().unwrap();
+    assert!(
+        std::thread::spawn(move || strict::read(&file).is_ok())
+            .join()
+            .unwrap()
+    );
+    let error = reads::source(directory.path(), &inventory).unwrap_err();
+    assert!(error.to_string().contains("并行来源读取"));
+    assert!(window.finish::<()>(Err(error)).is_err());
+}

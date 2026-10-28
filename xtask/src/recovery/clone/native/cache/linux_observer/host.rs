@@ -174,6 +174,7 @@ impl<'a> Observer<'a> {
 }
 
 fn configured(backend: &Path) -> Result<LinuxObserverSettings> {
+    crate::recovery::runtime::dataset_authority::reads::tool_settings(backend)?;
     ToolSettings::load(backend)?.verification.linux_observer.ok_or_else(||
         super::super::rejected("需要 WSL 观察：请在 config/tools.toml 或 .local-tests/tools.toml 配置 [verification.linux_observer] 的 distribution/user/uid、双端 program/source_root、source_commit/sha256/source_sha256；从明确 SHA 的普通 clone 构建受管 xtask，禁止回退解释器"))
 }
