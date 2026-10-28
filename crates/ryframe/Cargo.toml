@@ -111,6 +111,9 @@ bin-worker = [
     "ryframe-sdk/runtime",
 ]
 bin-migrate = [
+    "dep:serde",
+    "dep:sha2",
+    "dep:hex",
     "dep:serde_json",
     "dep:ryframe-auth",
     "dep:ryframe-application",

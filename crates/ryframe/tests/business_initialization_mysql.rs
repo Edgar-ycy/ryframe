@@ -19,8 +19,12 @@ mod adoption_unknown;
 mod configuration_fixture;
 #[path = "../src/bin/ryframe_migrate/diagnostic.rs"]
 mod diagnostic;
+#[path = "../src/bin/ryframe_migrate/ownership/guard.rs"]
+mod migration_guard;
 #[path = "../src/bin/ryframe_migrate/targets.rs"]
 mod migration_targets;
+#[path = "business_initialization_mysql/ownership.rs"]
+mod ownership;
 #[cfg(feature = "bin-api")]
 #[path = "business_initialization_mysql/replicas.rs"]
 mod replicas;
@@ -299,6 +303,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
         let migration = migration(false).with_initialization_sql(&[DDL]);
         let tenant = tenant_migration();
         let sql = ryframe::business::shared_control_initialization_sql(
+            "initialization-ownership-test",
             &hashes()?,
             &[&migration, &tenant],
         )
@@ -337,10 +342,7 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
             ryframe_tenant_db::migration::up_pending_business_migrations(&migrated)
                 .await
                 .map_err(mysql::db_error)?;
-            tenant
-                .up(&migrated)
-                .await
-                .map_err(|error| error.to_string())?;
+            migrate_tenant_on_retained_session(&migrated, &tenant).await?;
             ryframe_tenant_db::migration::verify_shared_control(&migrated)
                 .await
                 .map_err(mysql::db_error)?;
@@ -354,6 +356,15 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
             verify_business_migrations(&migrated, BusinessMigrationScope::Control, &[&migration])
                 .await
                 .map_err(|error| error.to_string())?;
+            for kind in ["control", "tenant-data"] {
+                ryframe_db::resource_ownership::ensure_resource_ownership(
+                    &migrated,
+                    "initialization-ownership-test",
+                    kind,
+                )
+                .await
+                .map_err(mysql::db_error)?;
+            }
             assert_eq!(expected, shared_inventory(&migrated).await?);
             migration
                 .up(&migrated)
@@ -374,11 +385,38 @@ async fn full_sql_and_up_keep_business_schema_and_ledger_equivalent() {
     .await;
 }
 
+async fn migrate_tenant_on_retained_session(
+    database: &sea_orm::DatabaseConnection,
+    tenant: &dyn BusinessMigration,
+) -> Result<(), String> {
+    let mut retained = migration_guard::Guard::acquire(database)
+        .await
+        .map_err(mysql::db_error)?;
+    assert!(tenant.up_in_session(retained.session_mut()).await.is_err());
+    retained
+        .session_mut()
+        .finish_mysql_root(false)
+        .await
+        .map_err(mysql::db_error)?;
+    tenant
+        .up_in_session(retained.session_mut())
+        .await
+        .map_err(|error| error.to_string())?;
+    ryframe_sdk::verify_business_migrations_in_session(
+        retained.session(),
+        BusinessMigrationScope::Tenant,
+        &[tenant],
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    retained.close().await.map_err(mysql::db_error)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interrupted_business_sql_cannot_register_control_completion() {
     mysql::run_mysql_test("businessfail", |database| async move {
         let broken = migration(false).with_initialization_sql(&[DDL, "CREATE TABLE broken syntax"]);
-        let sql = ryframe::business::shared_control_initialization_sql(&hashes()?, &[&broken]).map_err(|error| error.to_string())?;
+        let sql = ryframe::business::shared_control_initialization_sql("initialization-ownership-test", &hashes()?, &[&broken]).map_err(|error| error.to_string())?;
         assert!(database.execute_unprepared(&sql).await.is_err());
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='biz_sql_example'", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM ryframe_business_migration", 0).await?;
@@ -700,6 +738,7 @@ async fn shared_inventory(database: &DatabaseConnection) -> Result<Vec<Vec<Strin
         "SELECT CONCAT_WS('|',TABLE_NAME,COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COALESCE(COLUMN_DEFAULT,'NULL'),EXTRA) AS item FROM information_schema.columns WHERE table_schema=DATABASE() AND (LEFT(table_name,4)='biz_' OR table_name='seaql_tenant_data_migrations') ORDER BY TABLE_NAME,ORDINAL_POSITION",
         "SELECT CONCAT_WS('|',TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME) AS item FROM information_schema.statistics WHERE table_schema=DATABASE() AND (LEFT(table_name,4)='biz_' OR table_name='seaql_tenant_data_migrations') ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX",
         "SELECT version AS item FROM seaql_tenant_data_migrations ORDER BY version",
+        "SELECT CONCAT_WS('|',resource_kind,scope_id,marker) AS item FROM ryframe_resource_ownership ORDER BY resource_kind",
         "SELECT CONCAT_WS('|',tenant_id,target_key,placement_generation,state,switch_token) AS item FROM biz_tenant_fence ORDER BY tenant_id",
         "SELECT CONCAT_WS('|',slot_id,COALESCE(tenant_id,'NULL'),COALESCE(placement_generation,0),COALESCE(switch_token,'NULL')) AS item FROM biz_tenant_target_slot ORDER BY slot_id",
     ] {

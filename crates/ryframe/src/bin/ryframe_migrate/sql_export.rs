@@ -76,6 +76,7 @@ pub(super) fn run(directory: &Path, output: &Path, write: bool) -> Result<(), Bo
         )?;
         phase = "初始化 SQL 离线生成";
         Ok::<_, Box<dyn Error>>(ryframe::business::shared_control_initialization_sql(
+            config.scope_id.as_str(),
             &hashes,
             &migrations,
         )?)

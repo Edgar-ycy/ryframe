@@ -114,3 +114,5 @@ Contract synchronization exports the current backend candidate OpenAPI and atomi
 - [Operations](docs/operations.en.md): deployment, upgrades, reset and troubleshooting.
 
 OpenAPI, the access catalog, configuration types and command help define fields, menus, permissions and defaults. Optional MQTT, email and optimistic-locking plugins are future work; this iteration adds no placeholder interfaces or extra service requirements.
+
+First initialization registers physical database ownership. Existing unowned databases require explicit planned adoption; conflicts fail without modifying business data. See the [data guide](docs/data.en.md#initial-ownership-registration-and-explicit-adoption-of-existing-databases) for commands and producer-stop requirements.

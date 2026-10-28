@@ -65,6 +65,35 @@ fn sql_plan_does_not_read_secrets_or_create_output_directories() {
 }
 
 #[test]
+fn ownership_plan_is_offline_and_separate_from_business_adoption() {
+    let directory = directory();
+    let missing = directory.path().join("missing-config");
+    let output = directory.path().join("missing-output/plan.json");
+    let result = Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"))
+        .arg("--config-dir")
+        .arg(&missing)
+        .args(["control", "ownership-adopt", "--plan", "--output"])
+        .arg(&output)
+        .env("APP_ENV", "invalid-environment")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!missing.exists() && !output.parent().unwrap().exists());
+    let mixed = Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"))
+        .arg("--config-dir")
+        .arg(&missing)
+        .args(["control", "ownership-adopt", "--module", "order", "--plan"])
+        .output()
+        .unwrap();
+    assert!(!mixed.status.success());
+    assert!(!missing.exists());
+}
+
+#[test]
 fn export_requires_explicit_password_and_refuses_overwrite() {
     let directory = directory();
     let output = directory.path().join("init.sql");

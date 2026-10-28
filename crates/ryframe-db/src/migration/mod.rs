@@ -152,7 +152,7 @@ pub async fn up(db: &DatabaseConnection, bootstrap: Option<&BootstrapHashes>) ->
 
 /// 在不执行 DDL 或初始化写入的情况下，校验迁移账本完整且主库 schema 与当前迁移
 /// 指纹相匹配。
-pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn verify<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     verify_control_baseline(db).await?;
     verify_business_access_catalog(db).await
 }
@@ -160,7 +160,7 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 只读核验控制库框架账本与完整物理结构，保留未知应用表拒绝。
 /// 接管前置使用此入口；新增业务权限与菜单由接管后的显式 up 初始化，
 /// 正常启动和 verify 必须继续使用包含访问目录核验的完整入口。
-pub async fn verify_control_baseline(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn verify_control_baseline<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let status = status(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
@@ -177,7 +177,7 @@ pub async fn verify_control_baseline(db: &DatabaseConnection) -> Result<(), DbEr
 }
 
 /// 在不改变数据库状态的情况下读取迁移账本状态。
-pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
+pub async fn status<C: ConnectionTrait>(db: &C) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
     let ledger_exists = scalar_i64(
@@ -218,7 +218,7 @@ struct MigrationVersionRow {
 }
 
 /// 仅接受支持受约束 CHECK 的 MySQL 8.0.16 或更高版本。
-async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
+async fn verify_mysql_80<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let identity = ServerIdentityRow::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT VERSION() AS version, @@version_comment AS version_comment",
@@ -259,14 +259,14 @@ pub fn supports_mysql_80_or_newer(version: &str, version_comment: &str) -> bool 
     (major, minor, patch) >= (8, 0, 16)
 }
 
-fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {
+fn ensure_mysql<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     if db.get_database_backend() != DatabaseBackend::MySql {
         return Err(DbErr::Custom("RyFrame supports MySQL only".into()));
     }
     Ok(())
 }
 
-async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
+async fn scalar_i64<C: ConnectionTrait>(db: &C, sql: &str) -> Result<i64, DbErr> {
     let row = db
         .query_one_raw(Statement::from_string(DbBackend::MySql, sql.to_owned()))
         .await?
@@ -291,6 +291,25 @@ where
     verify_current_schema(db)
         .await
         .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
+}
+
+/// 组合根持有物理目标迁移互斥期间，在同一会话执行首次初始化或升级。
+#[cfg(feature = "migration")]
+pub async fn up_in_session(
+    session: &mut sea_orm::DatabaseTransaction,
+    bootstrap: Option<&BootstrapHashes>,
+) -> Result<(), DbErr> {
+    bootstrap::require_credentials_for_new_users(session, bootstrap).await?;
+    let held = scalar_i64(
+        session,
+        "SELECT IS_USED_LOCK(SHA2(CONCAT('ryframe:migration:',DATABASE()),256))=CONNECTION_ID()",
+    )
+    .await?;
+    if held != 1 {
+        return Err(DbErr::Custom("初始化会话未持有控制迁移互斥".into()));
+    }
+    migrate_seed_verify(session, bootstrap).await?;
+    session.finish_mysql_root(true).await
 }
 
 #[cfg(feature = "migration")]

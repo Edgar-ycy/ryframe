@@ -24,6 +24,9 @@ pub fn mysql_initialization_sql_with_business(
          CREATE TEMPORARY TABLE `ryframe_initialization_guard` (`valid` TINYINT NOT NULL CHECK (`valid` = 1));\n\
          INSERT INTO `ryframe_initialization_guard` SELECT IF(\
          (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()) = 0 \
+         AND (SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema = DATABASE()) = 0 \
+         AND (SELECT COUNT(*) FROM information_schema.events WHERE event_schema = DATABASE()) = 0 \
+         AND (SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = DATABASE()) = 0 \
          AND VERSION() NOT LIKE '%MariaDB%' \
          AND (CAST(SUBSTRING_INDEX(VERSION(), '.', 1) AS UNSIGNED) > 8 \
          OR (CAST(SUBSTRING_INDEX(VERSION(), '.', 1) AS UNSIGNED) = 8 \

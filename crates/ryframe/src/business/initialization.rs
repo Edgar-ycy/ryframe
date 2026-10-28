@@ -4,6 +4,7 @@ use ryframe_sdk::BusinessMigration;
 
 /// 导出同一物理控制库的控制面及 shared-control 数据面，不连接数据库。
 pub fn shared_control_initialization_sql(
+    scope_id: &str,
     hashes: &ryframe_db::migration::BootstrapHashes,
     migrations: &[&dyn BusinessMigration],
 ) -> AppResult<String> {
@@ -32,13 +33,13 @@ pub fn shared_control_initialization_sql(
     statements.extend(final_table_set(&framework, migrations));
     statements.extend(SchemaAssertion { category: "framework_ledger", sql: "(SELECT COUNT(*) FROM seaql_migrations)=0 AND (SELECT COUNT(*) FROM seaql_tenant_data_migrations)=0 AND (SELECT COUNT(*) FROM ryframe_initialization_guard WHERE valid=1)=1".into() }.diagnostic_guard("framework", "before-completion"));
     statements.extend(tenant.completion);
-    Ok(
-        ryframe_db::migration::mysql_initialization_sql_with_business(
-            hashes,
-            &statements,
-            &business.finish,
-        ),
+    let mut finish = ryframe_db::resource_ownership::initialization_statements(
+        scope_id,
+        &["control", "tenant-data"],
     )
+    .map_err(config)?;
+    finish.extend(business.finish);
+    Ok(ryframe_db::migration::mysql_initialization_sql_with_business(hashes, &statements, &finish))
 }
 
 fn final_table_set(

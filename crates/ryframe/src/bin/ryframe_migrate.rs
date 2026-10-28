@@ -13,6 +13,8 @@ mod adoption;
 mod bootstrap;
 #[path = "ryframe_migrate/diagnostic.rs"]
 mod diagnostic;
+#[path = "ryframe_migrate/ownership.rs"]
+mod ownership;
 #[path = "ryframe_migrate/private_artifact.rs"]
 mod private_artifact;
 #[path = "ryframe_migrate/sql_export.rs"]
@@ -20,7 +22,7 @@ mod sql_export;
 #[path = "ryframe_migrate/targets.rs"]
 mod targets;
 
-const USAGE: &str = "用法：\n  cargo migrate -- control <up|verify|status>\n  cargo migrate -- tenant-data <up|verify|status> (--target <key>|--all)\n  cargo migrate -- <control|tenant-data> adopt --module <模块> [--target <键>] [--output .local-tests/adopt.json --write]\n  cargo migrate -- <control|tenant-data> adopt <--inspect|--apply> .local-tests/adopt.json [--target <键>] [--write]\n  接管支持 --plan：只显示任务图，不读配置、文件或数据库。";
+const USAGE: &str = "用法：\n  cargo migrate -- control <up|verify|status>\n  cargo migrate -- tenant-data <up|verify|status> (--target <key>|--all)\n  cargo migrate -- <control|tenant-data> adopt --module <模块> [--target <键>] [--output .local-tests/adopt.json --write]\n  cargo migrate -- <control|tenant-data> adopt <--inspect|--apply> .local-tests/adopt.json [--target <键>] [--write]\n  cargo migrate -- control ownership-adopt [--output .local-tests/ownership.json --write]\n  cargo migrate -- tenant-data ownership-adopt --target <键> [--output .local-tests/ownership.json --write]\n  cargo migrate -- <control|tenant-data> ownership-adopt <--inspect|--apply> .local-tests/ownership.json [--target <键>] [--write]\n  接管支持 --plan：只显示任务图，不读配置、文件或数据库。";
 
 #[derive(Clone, Copy)]
 enum Operation {
@@ -41,6 +43,7 @@ enum TargetSelection {
 
 enum Command {
     Adopt(adoption::Options),
+    OwnershipAdopt(ownership::Options),
     Migrate {
         scope: MigrationScope,
         operation: Operation,
@@ -87,6 +90,9 @@ async fn execute() -> Result<(), diagnostic::Failure> {
             return sql_export::run(&arguments.directory, &output, write);
         }
         Command::Adopt(options) => return adoption::run(&arguments.directory, options).await,
+        Command::OwnershipAdopt(options) => {
+            return ownership::run(&arguments.directory, options).await;
+        }
     };
     let command = format!(
         "{} {}",
@@ -150,6 +156,9 @@ impl Operation {
 }
 
 fn parse_command(args: Vec<String>) -> Result<Command, Box<dyn std::error::Error>> {
+    if args.get(1).is_some_and(|value| value == "ownership-adopt") {
+        return ownership::parse(&args).map(Command::OwnershipAdopt);
+    }
     if args.get(1).is_some_and(|value| value == "adopt") {
         return adoption::parse(&args).map(Command::Adopt);
     }
@@ -208,8 +217,14 @@ async fn run_control(
     let result = async {
         match operation {
             Operation::Up => {
-                ryframe_db::migration::up(&database, hashes.as_ref()).await?;
-                println!("scope=control migration=completed schema=verified");
+                ownership::control_up(
+                    &database,
+                    config.scope_id.as_str(),
+                    hashes.as_ref(),
+                    business_modules,
+                )
+                .await?;
+                return Ok(());
             }
             Operation::Verify => {
                 ryframe_db::migration::verify(&database).await?;
@@ -280,6 +295,7 @@ async fn run_tenant_data(
             error.as_ref(),
         )
     })?;
+    let targets = targets::unique_targets(&registry, &identities).await?;
     let mut previous_writes = false;
     for target in targets {
         let report = diagnostic::Context {
@@ -287,10 +303,15 @@ async fn run_tenant_data(
             ..*context
         };
         let expected = identities.get(&target).ok_or("迁移预检遗漏目标身份")?;
+        let aliases = identities
+            .iter()
+            .filter(|(_, identity)| *identity == expected)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
         run_target(
             operation,
             &target,
-            expected,
+            (expected, &aliases),
             &registry,
             business_modules,
             &report,
@@ -305,12 +326,13 @@ async fn run_tenant_data(
 async fn run_target(
     operation: Operation,
     target: &str,
-    expected: &ryframe_db::connection::DatabaseIdentity,
+    binding: (&ryframe_db::connection::DatabaseIdentity, &[String]),
     registry: &TenantDatabaseTargetRegistry,
     modules: &[RyFrameBusinessModule],
     context: &diagnostic::Context<'_>,
     previous_writes: bool,
 ) -> Result<(), diagnostic::Failure> {
+    let (expected, aliases) = binding;
     let config = context.config.ok_or("迁移上下文缺少配置")?;
     let prior = if previous_writes {
         diagnostic::Writes::Database
@@ -333,8 +355,16 @@ async fn run_target(
                 if matches!(operation, Operation::Up) {
                     writes = diagnostic::Writes::Database;
                 }
-                run_tenant_data_operation(operation, target, &database, false, modules, &mut phase)
-                    .await?;
+                run_tenant_data_operation(
+                    operation,
+                    target,
+                    &database,
+                    false,
+                    modules,
+                    &mut phase,
+                    (config.scope_id.as_str(), aliases),
+                )
+                .await?;
                 Ok::<(), diagnostic::Failure>(())
             }
             .await;
@@ -358,6 +388,7 @@ async fn run_target(
                 true,
                 modules,
                 &mut phase,
+                (config.scope_id.as_str(), aliases),
             )
             .await
             .map_err(|error| context.error(phase, operation.writes(), &error))?;
@@ -375,32 +406,21 @@ async fn run_tenant_data_operation(
     mysql_target: bool,
     business_modules: &[RyFrameBusinessModule],
     phase: &mut &'static str,
+    binding: (&str, &[String]),
 ) -> Result<(), sea_orm::DbErr> {
+    let (scope_id, aliases) = binding;
     *phase = "租户框架/边界只读核验";
     match operation {
         Operation::Up => {
-            if mysql_target {
-                ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?;
-            }
-            *phase = "租户框架迁移";
-            ryframe_tenant_db::migration::up_pending_business_migrations(database).await?;
-            *phase = "租户业务迁移";
-            run_business_migrations(
-                operation,
-                BusinessMigrationScope::Tenant,
+            return ownership::tenant_up(
                 database,
+                scope_id,
+                target,
+                mysql_target,
                 business_modules,
-                &format!("tenant-data/{target}"),
+                aliases,
             )
-            .await?;
-            *phase = "租户最终结构核验";
-            if mysql_target {
-                ryframe_tenant_db::migration::verify_mysql_target(database).await?;
-            } else {
-                ryframe_tenant_db::migration::verify_shared_control(database).await?;
-            }
-            println!("scope=tenant-data target={target} migration=completed schema=verified");
-            return Ok(());
+            .await;
         }
         Operation::Verify => {
             if mysql_target {

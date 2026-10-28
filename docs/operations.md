@@ -100,7 +100,7 @@ cargo xtask data backup status
 
 ### 隔离恢复与验收
 
-1. 准备全新的隔离数据库和对象前缀，先按当前基线初始化并建立目标 ownership。逻辑 target key 保持一致，物理数据库、scope、JWT 密钥和 Redis namespace 必须与原环境不同，Worker 使用 external 模式。维护命令的 `--config-dir <directory>` 选择源侧登记库配置，`--restore-config-dir <directory>` 只选择隔离恢复目标配置；核对两份明文文件中的物理身份、scope 和端点，避免混用源与目标。应用相对配置目录以命令当前工作目录解析，建议使用绝对路径。产品 `backup-register`、`restore-begin` 和后续验证状态均写入源侧登记库。
+1. 准备全新的隔离数据库和对象前缀，先按当前基线初始化并建立目标 ownership。首次初始化自动登记归属；既有未登记库须先停止生产者，按[数据指南](data.md#首次初始化与既有数据库归属接管)审阅并执行 `ownership-adopt`，不能手工补 marker、重跑 `up` 认领或用 `reset` 替代；提交未知先 `inspect` 原计划。逻辑 target key 保持一致，物理数据库、scope、JWT 密钥和 Redis namespace 必须与原环境不同，Worker 使用 external 模式。维护命令的 `--config-dir <directory>` 选择源侧登记库配置，`--restore-config-dir <directory>` 只选择隔离恢复目标配置；核对两份明文文件中的物理身份、scope 和端点，避免混用源与目标。应用相对配置目录以命令当前工作目录解析，建议使用绝对路径。产品 `backup-register`、`restore-begin` 和后续验证状态均写入源侧登记库。
 2. 按 `crates/ryframe-application/src/ports/backup/restore.rs` 的 `RestorePlan` 填写完整目标、故障时间、前端 SHA、API/Worker 就绪地址和新对象前缀。物理数据库身份必须匹配，不能指向任一原业务库。
 3. 在开始外部还原之前执行 `restore-begin`。重复相同 plan 不重置计时。外部还原仅覆盖该 plan 中已核验的隔离资源，保留目标自己的 ownership 和备份登记元数据；数据库转储只含清单中的业务表，不执行指向源库的 `USE`、数据库创建或跨库语句。对象路径仅替换 scope 前缀，不能复制源 ownership 标记。
 4. 停止目标业务写入，执行 `restore-verify-data`。它重新验证备份文件、当前 schema、完整表内容、租户关系和完整对象集合，缺失、多余、损坏或错误 ownership 都会失败。

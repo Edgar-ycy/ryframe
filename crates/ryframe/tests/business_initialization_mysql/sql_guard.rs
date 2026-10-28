@@ -205,8 +205,12 @@ async fn sql_create_alter_and_ledger_disagreements_never_register_completion() {
             if let Some(next) = &next {
                 migrations.push(next);
             }
-            let sql = ryframe::business::shared_control_initialization_sql(&hashes()?, &migrations)
-                .map_err(|e| e.to_string())?;
+            let sql = ryframe::business::shared_control_initialization_sql(
+                "initialization-ownership-test",
+                &hashes()?,
+                &migrations,
+            )
+            .map_err(|e| e.to_string())?;
             let error = database
                 .execute_unprepared(&sql)
                 .await
@@ -245,9 +249,12 @@ async fn sql_valid_incremental_chain_records_only_verified_shapes() {
         let initial = migration(false).with_initialization_sql(&[DDL]);
         let next = next_migration()
             .with_initialization_sql(&["ALTER TABLE biz_sql_example ADD memo VARCHAR(32) NULL"]);
-        let sql =
-            ryframe::business::shared_control_initialization_sql(&hashes()?, &[&initial, &next])
-                .map_err(|e| e.to_string())?;
+        let sql = ryframe::business::shared_control_initialization_sql(
+            "initialization-ownership-test",
+            &hashes()?,
+            &[&initial, &next],
+        )
+        .map_err(|e| e.to_string())?;
         // 完整导出含会话设置、临时表和登记事务，必须在同一连接以多语句执行。
         database
             .execute_unprepared(&sql)

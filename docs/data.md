@@ -4,41 +4,27 @@
 
 ## 全新环境初始化
 
-先创建隔离的空 MySQL database，再通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`。`config/app.toml` 可省略，所选 `config/app.<environment>.toml` 必须存在；省略公共文件时，环境文件须完整提供必填配置；数据库密码、JWT 和 `[bootstrap] admin_password` 直接写入明文配置，准备方式见 [README](../README.md#下载后首次运行)。用 `--config-dir <directory>` 选择其他目录，应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，从后端根目录依次运行： 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
+先创建隔离的 MySQL 空库，通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`，并按 [README：下载后首次运行](../README.md#下载后首次运行)准备明文数据库密码、JWT 和 `[bootstrap] admin_password`。`config/app.toml` 可省略，所选 `config/app.<environment>.toml` 必须存在；省略公共文件时，环境文件须完整提供必填配置。应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，按 README 顺序完成两侧初始化、校验后再启动。本机沿用其忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
 `cargo migrate` 的失败诊断写入 stderr，标明实际阶段、已选择的配置文件、配置键和脱敏原因；成功输出保持原契约。连接或配置失败时尚未执行迁移；进入 `up` 或 `adopt --apply` 后，DDL 或账本可能已部分提交，不代表整体回滚。保留现场，修正原因后使用同一 `--config-dir` 和 `APP_ENV` 先执行 `status` 与 `verify`，不能自动重放写入；导出失败也须先核对已创建的目录、临时文件或目标文件。独立 MySQL 目标保留已脱敏的连接、健康及结构校验原因供内部诊断；公开 API 不包含该原因，无底层错误时不可据“不可用”猜测认证错误。租户数据访问返回 503 时，按 `request_id` 关联服务日志中的 `tenant_data_error` 分类，区分投影版本、目标、放置和连接预算；日志只保留安全原因，不自动重放写入；生成的业务持久化复用同一转换入口，事务内投影锁定也记录缺失或落后的具体版本。 建议命令均显式携带 `--config-dir` 目录占位，必须先替换为诊断中显示配置文件的父目录，再按当前 shell 正确引用；PowerShell 单引号内的单引号须写成两个单引号，不得照抄占位或省略目录后检查默认另一库。
-
-```powershell
-cargo migrate -- control up
-cargo migrate -- control verify
-cargo migrate -- tenant-data up --target shared-control
-cargo migrate -- tenant-data verify --target shared-control
-cargo serve
-```
 
 迁移路径使用 `control up` 新建或升级控制库；全新空物理库也可选下文完整 SQL 一次初始化；`control verify` 只校验账本、结构和编译期业务目录，新空库上不能代替初始化。首次初始化需要配置 `[bootstrap] admin_password`，API 与 Worker 启动时只校验，不执行 DDL。非生产默认 `jobs.mode="embedded"`，`cargo serve` 已消费后台任务；验证独立进程时按[开发指南](development.md#启动后端)创建 API／Worker 两份私有配置，均设置 `jobs.mode="external"`，采用不同实例编号并显式传入各自配置目录。每个 MySQL 租户目标都要先创建空库、登记配置并单独执行 `tenant-data up/verify`。
 
 ## 控制库初始化 SQL
 
-```powershell
-cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan
-cargo migrate -- control export-sql --output .local-tests/control-init.sql --write
-```
+- 预览：`cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan`
+- 导出：`cargo migrate -- control export-sql --output .local-tests/control-init.sql --write`
 
-`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式导出覆盖同一物理库的控制面与 `shared-control` 租户数据面：控制库结构、后置约束、系统数据、fence/slot/投影基础表和初始化行、两个框架迁移账本，以及已注册 Control 与 Tenant 业务初始化迁移及单一业务账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管；输出文件必须新建，不能覆盖旧文件。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选文件一致，远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 使用：
+`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式 `control export-sql` 从选定配置的 `scope_id` 生成 control 与 tenant-data 两类归属，并覆盖同一物理库的控制面与 `shared-control` 租户数据面：控制库结构、后置约束、系统数据、fence/slot/投影基础表和初始化行、两个框架迁移账本，以及已注册 Control 与 Tenant 业务初始化迁移及单一业务账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管；输出文件必须新建，不能覆盖旧文件。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选文件一致，远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 使用：
 
-```powershell
-mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source .local-tests/control-init.sql"
-```
+- `mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source .local-tests/control-init.sql"`
 
 bash 可使用 `< .local-tests/control-init.sql`；PowerShell 不支持该重定向，不要把 bash 命令原样用于 PowerShell。导入后执行：
 
-```powershell
-cargo migrate -- control verify
-cargo migrate -- tenant-data verify --target shared-control
-```
+- 校验控制面：`cargo migrate -- control verify`
+- 校验租户数据面：`cargo migrate -- tenant-data verify --target shared-control`
 
-成功导入后直接完成上述两侧 verify，无需补 `up`；独立 MySQL 租户目标不在此物理库导出范围内，仍须使用各自 `tenant-data up/verify`。`sql/ryframe_config.sql` 是含占位哈希、没有账本的审阅快照，不能部署；导入中断后不要通过重复 `up` 猜测补齐或自动删除对象，确认用途后另建隔离库。MySQL DDL 不能依赖外层事务整体回滚。导入按迁移执行前置与执行后实际元数据断言，覆盖列顺序、默认值、排序规则、索引、外键及 `CHECK` 表达式和 `enforced`；仅通过后登记本次业务账本。最终复核框架、业务结构及归属/账本，并在持有元数据锁的登记事务内写入两侧框架完成标记。失败前已完成的迁移及 DDL 可能保留；错误结果先核对输出的迁移、阶段、类别与现场，禁止自动重放。
+成功导入后直接完成上述两侧 verify，无需补 `up`；独立 MySQL 租户目标不在此物理库导出范围内，仍须使用各自 `tenant-data up/verify`。`sql/ryframe_config.sql` 是含占位哈希、没有账本的审阅快照，不能部署；导入中断后不要通过重复 `up` 猜测补齐或自动删除对象，确认用途后另建隔离库。MySQL DDL 不能依赖外层事务整体回滚。导入按迁移执行前置与执行后实际元数据断言，覆盖列顺序、默认值、排序规则、索引、外键及 `CHECK` 表达式和 `enforced`；仅通过后登记本次业务账本。最终复核框架、业务结构及归属/账本，并在持有元数据锁的登记事务内写入两侧框架完成标记。归属只在全部适用初始化及最终核验成功后登记；不能把旧初始化成功或历史 HTTP 200 当作现有数据库已满足归属合同。失败前已完成的迁移及 DDL 可能保留；错误结果先核对输出的迁移、阶段、类别与现场，禁止自动重放。
 
 ## 数据边界与迁移
 
@@ -46,12 +32,8 @@ cargo migrate -- tenant-data verify --target shared-control
 
 当前 `0.x` 只面向全新隔离库。旧结构或无效能力代码不会被自动转换；`v1.0.0` 后冻结迁移只追加并 roll-forward。迁移账号需要读取业务表元数据。DDL 可能隐式提交，账本事务不保证整个迁移回滚；执行后校验失败应保留现场，不能假定回滚或自动重放。常用检查为：
 
-```powershell
-cargo migrate -- control status
-cargo migrate -- control verify
-cargo migrate -- tenant-data status --all
-cargo migrate -- tenant-data verify --all
-```
+- 控制库：`cargo migrate -- control status`、`cargo migrate -- control verify`
+- 已登记租户目标：`cargo migrate -- tenant-data status --all`、`cargo migrate -- tenant-data verify --all`
 
 框架维护者可用 `cargo xtask data migrate check` 只读核验迁移目录、注册顺序、生成迁移接线和 `catalog/migrations.lock.toml` 摘要；提交前检查使用 `cargo xtask data migrate check --require-frozen`。开发版显式重整基线使用 `cargo xtask data migrate baseline --write`，稳定版只冻结当前工作树中的新迁移，使用 `cargo xtask data migrate freeze`。`cargo xtask data migrate reconcile --write` 按当前版本阶段选择 baseline 或 freeze，全栈夹具复用它。以上命令不连接或修改数据库。
 
@@ -64,8 +46,6 @@ cargo migrate -- control adopt --module order --output .local-tests/order-adopt.
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
-cargo migrate -- control up
-cargo migrate -- control verify
 ```
 
 租户表的接管与 inspect 使用 `tenant-data adopt`，必须显式提供单个 `--target business-shared`，不接受 `--all`。后续 `tenant-data up`、`verify` 和 `status` 可选择单个 `--target`，也可显式使用 `--all` 处理全部已登记目标；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
@@ -197,4 +177,24 @@ replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询�
 
 从单租户 `shared-control` 演进时，先在配置中增加共享或独立目标，创建空库并在目标的 `password` 字段填写密码，运行 `cargo migrate -- tenant-data up --target <target-key>` 与 `verify`，在“平台管理 → 数据目标”完成实时探测。新租户开通时选择目标键；已有非系统租户改用租户数据放置/迁移流程，先预览和校验 placement generation、计划哈希与幂等键，再复制数据并切换 placement。修改 `default_target`、DNS 或复制 schema 都不会迁移既有数据；系统租户禁止迁移业务数据，独立目标被占用时先完成迁移或清理。
 
-独立目标池按需建立，每池默认上限为 `max_total_connections / max_open_targets` 的整数商，目标 `max_connections` 可覆盖；两项预算仅约束 MySQL 租户目标，不包含 primary、replicas、sources 或复用控制库池的 `shared-control`，API 与 Worker 各自计数。达到预算时仅回收无活动租约的闲置池；仍不足则拒绝新池，不挤占活动会话。`tenant-data up/verify/status` 使用目标键，`--all` 只处理登记目标；多个目标先核对物理实例与 schema，别名重复时在 DDL 前拒绝，失败后先查状态，不自动重放已完成目标。
+独立目标池按需建立，每池默认上限为 `max_total_connections / max_open_targets` 的整数商，目标 `max_connections` 可覆盖；两项预算仅约束 MySQL 租户目标，不包含 primary、replicas、sources 或复用控制库池的 `shared-control`，API 与 Worker 各自计数。达到预算时仅回收无活动租约的闲置池；仍不足则拒绝新池，不挤占活动会话。`tenant-data up/verify/status` 使用目标键，`--all` 只处理登记目标；多个目标先核对物理实例与 schema；物理相同的共享别名仅按下文相容的路由与槽规则合并，dedicated、多个既有路由或组外 fence 均在 DDL 前拒绝。失败后先查状态，不自动重放已完成目标。
+
+## 首次初始化与既有数据库归属接管
+
+`control up` 和 `tenant-data up` 只在本次写入前已确认的首次目标上自动登记归属。独立首次目标必须没有表、视图、例程、事件或触发器；同库 shared-control 的租户面允许已验证且归属匹配的控制面，但租户账本及租户专属表必须尚不存在。已有完整或部分租户对象而无归属时不会自动认领。已有匹配归属仍允许正常升级和新增业务模块；不匹配归属立即拒绝，不能覆盖。replicas 与 sources 不会被认领。
+
+既有无归属数据库使用显式物理接管，不能用 up 补 marker，也不能运行 reset 代替接管：
+
+```powershell
+cargo migrate -- --config-dir <directory> control ownership-adopt --output .local-tests/control-ownership.json --write
+cargo migrate -- --config-dir <directory> control ownership-adopt --inspect .local-tests/control-ownership.json
+cargo migrate -- --config-dir <directory> control ownership-adopt --apply .local-tests/control-ownership.json --write
+cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --output .local-tests/tenant-ownership.json --write
+cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --apply .local-tests/tenant-ownership.json --write
+```
+
+先停止 API、Worker、scheduler 和其他生产者，并在绑定配置声明 `reset.services_stopped=true`。该字段在本命令中仅确认运维停止边界，不执行 reset，也不是自动取得的进程停止证明。`--plan` 只显示任务图；不带写入选项的预览只读数据库并输出计划。计划只允许保存到当前后端 `.local-tests` 的新文件。先审阅物理 UUID/schema、scope、配置指纹、完整结构/账本、归属前像及 fence/placement 绑定，再显式 apply。未知对象、部分初始化、在途或不能解释的 fence/placement、配置漂移及已有归属冲突均拒绝；命令不会修复业务数据或重放历史 DDL。
+
+物理 `ownership-adopt` 与业务 `adopt --module` 分开：后者只接管业务迁移账本，前者要求适用业务账本和结构已经有效。提交结果未知时先 inspect 原计划核对完整前后像，不修改计划、不自动重放。独立控制库与目标库的一致性依赖外部生产者停止边界，不宣称跨库原子提交。
+
+物理相同的共享别名只在路由及槽语义相容时合并。没有 fence 路由时选择确定代表键；已有 fence 时只能采用组内唯一的已有路由键。dedicated、多个不同路由及组外 fence 均拒绝。该选择在迁移互斥内再次核对，不能任取字典序首键。

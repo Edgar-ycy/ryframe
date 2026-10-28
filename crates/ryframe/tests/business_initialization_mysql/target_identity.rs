@@ -3,7 +3,7 @@ use ryframe_config::{SqlLogLevel, TenantDataConfig, TenantDatabaseTargetConfig};
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn aliases_of_one_physical_database_fail_before_any_migration() {
+async fn dedicated_aliases_of_one_physical_database_fail_before_any_migration() {
     mysql::run_mysql_test("migrationalias", |database| async move {
         let identity = ryframe_db::connection::physical_identity(&database)
             .await
@@ -13,8 +13,10 @@ async fn aliases_of_one_physical_database_fail_before_any_migration() {
         let primary = configured
             .connection(&identity.database, None)
             .unwrap_or_else(|error| panic!("{error}"));
-        let first = target("first", &primary);
+        let mut first = target("first", &primary);
+        first.mode = ryframe_config::TenantDatabaseTargetMode::Dedicated;
         let mut second = target("second", &primary);
+        second.mode = ryframe_config::TenantDatabaseTargetMode::Dedicated;
         if primary.host == "127.0.0.1" {
             second.host = Some("localhost".into());
         }
@@ -136,6 +138,36 @@ fn target(key: &str, connection: &ryframe_config::DbConnection) -> TenantDatabas
         max_connections: Some(2),
         ..TenantDatabaseTargetConfig::shared_control()
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_aliases_coalesce_only_without_dedicated_slot_identity() {
+    mysql::run_mysql_test("sharedaliases", |database| async move {
+        let identity = ryframe_db::connection::physical_identity(&database).await.map_err(message)?;
+        let primary = mysql::MySqlTestConfiguration::load()?.connection(&identity.database,None)?;
+        let config = TenantDataConfig { targets: vec![target("first",&primary),target("second",&primary)],
+            ..TenantDataConfig::default() };
+        let registry = TenantDatabaseTargetRegistry::new(&config,SqlLogLevel::Off,200).map_err(message)?;
+        let context = diagnostic::Context { directory: std::path::Path::new(".local-tests/mysql/config"),
+            environment: Some(ryframe_config::Environment::Test), config: None,
+            command: "tenant-data up", target: None };
+        let keys = ["first".into(),"second".into()];
+        let selected = migration_targets::preflight(&registry,&primary,SqlLogLevel::Off,200,&keys,&context)
+            .await.map_err(message)?;
+        assert_eq!(selected.len(),2);
+        assert_eq!(migration_targets::unique_targets(&registry,&selected).await.map_err(message)?.len(),1);
+        mysql::execute(&database,ryframe_tenant_db::migration::TENANT_TARGET_SLOT_DDL).await?;
+        mysql::execute(&database,"INSERT INTO biz_tenant_target_slot(slot_id,tenant_id,placement_generation,switch_token) VALUES (1,'fixture-tenant',1,'fixture-slot')").await?;
+        assert!(migration_targets::preflight(&registry,&primary,SqlLogLevel::Off,200,&keys,&context).await.is_err());
+        mysql::execute(&database,"UPDATE biz_tenant_target_slot SET tenant_id=NULL,placement_generation=NULL,switch_token=NULL").await?;
+        mysql::execute(&database,ryframe_tenant_db::migration::TENANT_FENCE_DDL).await?;
+        mysql::execute(&database,"INSERT INTO biz_tenant_fence(tenant_id,target_key,placement_generation,state,switch_token) VALUES ('fixture-a','first',1,'active','fixture-a'),('fixture-b','second',1,'active','fixture-b')").await?;
+        assert!(migration_targets::preflight(&registry,&primary,SqlLogLevel::Off,200,&keys,&context).await.is_err());
+        mysql::execute(&database,"DELETE FROM biz_tenant_fence WHERE tenant_id='fixture-a'").await?;
+        let selected = migration_targets::preflight(&registry,&primary,SqlLogLevel::Off,200,&keys,&context).await.map_err(message)?;
+        assert_eq!(migration_targets::unique_targets(&registry,&selected).await.map_err(message)?,vec!["second".to_owned()]);
+        Ok(())
+    }).await;
 }
 
 fn message(error: impl std::fmt::Display) -> String {

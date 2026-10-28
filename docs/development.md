@@ -12,35 +12,30 @@
 
 本机真实凭据只保存在忽略目录。以下从后端根目录复制公共及 dev 样例到全新的 `.local-tests/dev-config`；目标已存在必须停止，不覆盖用户真实配置：
 
-```powershell
-if (Test-Path -LiteralPath .local-tests/dev-config) { throw "Configuration directory already exists; preserve it and choose a new directory" }
-New-Item -ItemType Directory -Path .local-tests/dev-config -ErrorAction Stop | Out-Null
-Copy-Item -LiteralPath config/app.toml,config/app.dev.toml -Destination .local-tests/dev-config -ErrorAction Stop
-```
-在编辑器中打开 `.local-tests/dev-config/app.dev.toml`，填写真实数据库、JWT、Redis、存储及 `[bootstrap] admin_password`，不修改受版本控制的原始样例，也不把密码放入命令参数。先设置 `$env:APP_ENV = "dev"`，并确保已创建空 MySQL database；若另选配置目录，须同步替换后续绑定 `.local-tests/dev-config` 的路径。从后端根目录依次运行 `cargo migrate -- --config-dir .local-tests/dev-config control up`、`cargo migrate -- --config-dir .local-tests/dev-config control verify`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target shared-control`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data verify --target shared-control`、`cargo serve -- --config-dir .local-tests/dev-config`。`control verify` 只校验，不能初始化新空库；控制库和默认 `shared-control` 租户数据面有不同账本，两者都要完成初始化和校验。API/Worker 启动只做结构校验，不自动执行 DDL。完整步骤、SQL 导入和多目标说明见[数据指南](data.md#全新环境初始化)。
+- `if (Test-Path -LiteralPath .local-tests/dev-config) { throw "Configuration directory already exists; preserve it and choose a new directory" }`
+- `New-Item -ItemType Directory -Path .local-tests/dev-config -ErrorAction Stop | Out-Null`
+- `Copy-Item -LiteralPath config/app.toml,config/app.dev.toml -Destination .local-tests/dev-config -ErrorAction Stop`
+
+在编辑器中打开 `.local-tests/dev-config/app.dev.toml`，填写真实数据库、JWT、Redis、存储及 `[bootstrap] admin_password`，不修改受版本控制的原始样例，也不把密码放入命令参数。先设置 `$env:APP_ENV = "dev"`，并确保已创建空 MySQL database；若另选配置目录，须同步替换后续绑定 `.local-tests/dev-config` 的路径。从后端根目录按 [README：下载后首次运行](../README.md#下载后首次运行)的同目录命令，依次初始化、校验两个账本并启动后端。`control verify` 只校验，不能初始化新空库；控制库和默认 `shared-control` 租户数据面有不同账本，两者都要完成初始化和校验。API/Worker 启动只做结构校验，不自动执行 DDL。完整步骤、SQL 导入和多目标说明见[数据指南](data.md#全新环境初始化)。
 
 非生产默认 `jobs.mode="embedded"`，`cargo serve -- --config-dir .local-tests/dev-config` 已消费后台任务。独立 API／Worker 必须使用两份实例配置；以下示例从后端根目录开始，要求两个目录都是全新目录，任一目录存在就停止，不覆盖用户真实配置。从刚才已填写真实值的 `.local-tests/dev-config` 复制公共配置和 dev 配置，不再复制受版本控制的空样例：
 
-```powershell
-if ((Test-Path -LiteralPath .local-tests/api-config) -or (Test-Path -LiteralPath .local-tests/worker-config)) { throw "Configuration directory already exists; preserve it and choose two new directories" }
-New-Item -ItemType Directory -Path .local-tests/api-config,.local-tests/worker-config -ErrorAction Stop | Out-Null
-Copy-Item -LiteralPath .local-tests/dev-config/app.toml,.local-tests/dev-config/app.dev.toml -Destination .local-tests/api-config -ErrorAction Stop
-Copy-Item -LiteralPath .local-tests/dev-config/app.toml,.local-tests/dev-config/app.dev.toml -Destination .local-tests/worker-config -ErrorAction Stop
-```
+- `if ((Test-Path -LiteralPath .local-tests/api-config) -or (Test-Path -LiteralPath .local-tests/worker-config)) { throw "Configuration directory already exists; preserve it and choose two new directories" }`
+- `New-Item -ItemType Directory -Path .local-tests/api-config,.local-tests/worker-config -ErrorAction Stop | Out-Null`
+- `Copy-Item -LiteralPath .local-tests/dev-config/app.toml,.local-tests/dev-config/app.dev.toml -Destination .local-tests/api-config -ErrorAction Stop`
+- `Copy-Item -LiteralPath .local-tests/dev-config/app.toml,.local-tests/dev-config/app.dev.toml -Destination .local-tests/worker-config -ErrorAction Stop`
 
 在编辑器中打开 `.local-tests/api-config/app.dev.toml` 和 `.local-tests/worker-config/app.dev.toml`：将各自文件顶部的根字段分别设为 API `snowflake_worker_id=1`、Worker `snowflake_worker_id=2`，在两份文件的 `[jobs]` 中均设置 `mode="external"`；同一部署的 `scope_id`、数据库、Redis 与 JWT 配置保持一致。密码只在配置文件中编辑，不放入命令参数。保存后另开两个 PowerShell 终端，各自先设置下面的 `APP_ENV`，分别执行 API 命令或 Worker 命令；`--` 将参数传给对应应用：
 
-```powershell
-$env:APP_ENV = "dev"
-cargo serve -- --config-dir .local-tests/api-config
-cargo worker -- --config-dir .local-tests/worker-config
-```
+- `$env:APP_ENV = "dev"`
+- `cargo serve -- --config-dir .local-tests/api-config`
+- `cargo worker -- --config-dir .local-tests/worker-config`
 
 前端单独运行 `corepack pnpm dev`。非生产重建使用直接入口 `cargo reset`；执行前先停止全部生产者，完整安全步骤见[运维指南](operations.md#非生产重建)。 Worker 未消费任务时，确认文件配置 `jobs.mode="external"` 并检查健康端口、lease 和数据库连接；Redis 或对象存储故障按运维指南核对 `scope_id`、连接模式、TLS、ownership marker 与服务端口。
 
 ## 数据库迁移
 
-控制库使用默认目标；租户数据可操作全部已登记目标或单个目标。常用命令为 `cargo migrate -- --config-dir .local-tests/dev-config control status`、`cargo migrate -- --config-dir .local-tests/dev-config control verify`、`cargo migrate -- --config-dir .local-tests/dev-config control up`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data status --all`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>` 和 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data verify --target <target-key>`。租户目标使用配置键而非数据库名；`--all` 只处理已登记目标，多个目标会先做物理身份预检，任何别名重复都会在 DDL 前拒绝。修改迁移源码后，用 `cargo xtask data migrate check` 只读检查历史与注册，提交前用 `cargo xtask data migrate check --require-frozen`；开发版重整基线显式执行 `cargo xtask data migrate baseline --write`，稳定版只追加并执行 `cargo xtask data migrate freeze`。生产配置仍保持 `database.migration_mode="verify"`，DDL 只由显式迁移命令执行，迁移历史维护命令不连接数据库。 初始化前在 `[bootstrap]` 中显式填写 `admin_password`。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符；JWT 使用 `auth.jwt_secret`，监控 token 使用 `monitor.metrics_bearer_token`。根 TOML 字段 `snowflake_worker_id` 必须在同一部署的每个实例上不同。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。 启动报告迁移不一致时，先检查 status 与 verify 结果，再决定是否执行 up。
+控制库使用默认目标；租户数据可操作全部已登记目标或单个目标。常用命令为 `cargo migrate -- --config-dir .local-tests/dev-config control status`、`cargo migrate -- --config-dir .local-tests/dev-config control verify`、`cargo migrate -- --config-dir .local-tests/dev-config control up`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data status --all`、`cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>` 和 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data verify --target <target-key>`。租户目标使用配置键而非数据库名；`--all` 只处理已登记目标，多个目标会先做物理身份预检，相容共享别名可以合并，dedicated、多个既有路由及组外 fence 仍在 DDL 前拒绝；代表键规则见[初始化与归属接管](data.md#首次初始化与既有数据库归属接管)。修改迁移源码后，用 `cargo xtask data migrate check` 只读检查历史与注册，提交前用 `cargo xtask data migrate check --require-frozen`；开发版重整基线显式执行 `cargo xtask data migrate baseline --write`，稳定版只追加并执行 `cargo xtask data migrate freeze`。生产配置仍保持 `database.migration_mode="verify"`，DDL 只由显式迁移命令执行，迁移历史维护命令不连接数据库。 初始化前在 `[bootstrap]` 中显式填写 `admin_password`。密码须包含大小写字母、数字、符号，长度为 8～72 个可见 ASCII 字符；JWT 使用 `auth.jwt_secret`，监控 token 使用 `monitor.metrics_bearer_token`。根 TOML 字段 `snowflake_worker_id` 必须在同一部署的每个实例上不同。普通初始化用户 `user`、新建及批量导入的普通用户使用 `123456`，每个新账号首次登录都必须改密。已有正常账号不会被重复初始化重置。 启动报告迁移不一致时，先检查 status 与 verify 结果，再决定是否执行 up。
 
 ## 创建业务 crate
 
@@ -83,6 +78,11 @@ cargo worker -- --config-dir .local-tests/worker-config
 生成器不执行数据库迁移。受管文件写入并审阅后，按模型存储范围先运行 `status`，再运行 `cargo migrate -- --config-dir .local-tests/dev-config control up` 或 `cargo migrate -- --config-dir .local-tests/dev-config tenant-data up --target <target-key>`，最后用对应 `verify` 校验；多个目标共享版本时可显式用 `--all`，但不能替代 `control up`。最终结构校验失败仍应保留现场，先核对账本和实际表，不重放未知结果。 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
 
 租户业务资源同时生成 `generated/tenant_catalog.rs` 与 `generated/tenant_catalog.json`，包含完整列、类型、复制游标及规范化 schema。模块通过 `tenant_data_tables()` 声明生成描述，组合根在连接数据库前统一装配、核验依赖并冻结目录；同一进程再次登记只能使用相同描述。重复表、缺失描述或无效 schema 会阻止启动，不会忽略业务表。复制和恢复校验使用完整目录，并保留业务迁移账本。生成迁移同时注册模型指纹与每张表的 before/after 物理结构；手写 `SeaOrmBusinessMigration` 也必须提供 `BusinessMigrationSchema`。单条 `verify_ledger` 仅校验历史账本，整组 `verify_business_migrations(database, scope, migrations)` 接收该范围的全部注册迁移，拒绝未知账本和归属冲突，再按每张表最新状态校验实际结构，避免合法追加迁移被旧结构误判。修改模型后先通过正式生成入口更新受管资产，再显式执行业务迁移；不要手改目录或 ownership 摘要。已有表按[已有表接管](#已有表接管)预览、保存、核对和执行计划；租户接管必须选择单个目标，不用 up 猜测接管。
+
+- 通常继续使用 `SeaOrmBusinessMigration::new(...).with_initialization_sql(...)`，生成器也使用该封装，无需业务模块手写会话管理。该实现的普通 `up` 与 `up_in_session` 共用 DDL 前置条件、历史账本/归属核验和执行后结构核验；只有连接持有方式不同。
+- 直接实现 SDK `BusinessMigration` trait 的使用者必须同时实现 `up_in_session(&mut DatabaseTransaction)` 和 `verify_ledger_in_session(&DatabaseTransaction)`，与原 `up`、`verify_ledger` 保持相同校验强度，不提供成功默认值，不重新租用连接。初始化工具在整个窗口保留该物理会话的迁移互斥，因此单连接池也必须可用。自定义实现和受管生成业务源码升级到当前 SDK 时须同步方法合同。
+- 业务 DDL 可能隐式提交，不能声称整个初始化可回滚；本次业务账本登记仍必须在独立原子事务中完成完整元数据锁、结构及归属核验，成功后才记录 executed。数据库归属登记发生在全部适用初始化及最终核验成功后，是另一个元数据事务。任一提交结果未知都先核对完整前后像，不自动重放 DDL 或登记。
+- 保留的 MySQL 会话通过两个最小 SeaORM 操作调用现有 SQLx TransactionManager：`finish_mysql_root` 只接受深度一，`begin_mysql_root` 只接受深度零，均要求独占可变持有者，拒绝嵌套与其他后端。SDK 会话迁移从已结束的根事务开始，不会提交调用方无关的活跃事务。事务网络操作前先使会话失效并标记连接丢弃，成功后才恢复可用；取消或提交未知会永久禁止该持有者继续 SQL/begin，防止迟到 Drop 回滚下一代事务。只有当前事务已结束或已回滚，才显式释放命名锁；否则依靠丢弃连接与断连释放，不宣称已确认释放。未知结果用新连接和原计划只读核对。DDL 隐式提交、业务账本原子登记及最终 ownership 登记分别具有独立边界。
 
 1. 创建业务 crate、登记 `ResourceModel` 后预览生成，再用 `--write` 写入；再次预览应没有差异。
 2. 为业务模型和用例添加测试，执行 `cargo test --locked -p order-business`。先通过控制库与明确租户目标的迁移状态检查，再显式应用本模块迁移，命令见[数据指南](data.md)。

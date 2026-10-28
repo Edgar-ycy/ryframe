@@ -3,7 +3,7 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 
-use sea_orm::{DatabaseConnection, DbErr};
+use sea_orm::{ConnectionTrait, DbErr};
 
 static BUSINESS_TABLES: OnceLock<RwLock<BTreeMap<String, String>>> = OnceLock::new();
 
@@ -60,7 +60,7 @@ pub(super) fn registered_business_tables() -> Result<BTreeMap<String, String>, D
 }
 
 /// 服务启动只读核对当前业务结构；不运行迁移、不登记账本、不修复已有数据。
-pub async fn verify_business_schema(database: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn verify_business_schema<C: ConnectionTrait>(database: &C) -> Result<(), DbErr> {
     for (table, expected) in registered_business_tables()? {
         let actual = crate::schema::canonical_table_schema(database, &table).await.map_err(|error| DbErr::Custom(format!("无法校验控制库业务表 {table}：{error}；本次结构校验未写入，请运行 cargo migrate -- control verify 核对缺失迁移与连接权限")))?;
         if actual != expected {

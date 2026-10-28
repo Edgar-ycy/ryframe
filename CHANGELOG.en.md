@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Register physical ownership with the explicit scope during first control/tenant initialization and complete SQL export. Adopt existing unmarked databases through a separate ownership-adopt plan, strict before/after verification, and transactional registration, retaining business adoption, rejection of conflicting ownership, and no-replay boundaries.
+
 - Add strict read-only reconciliation for failed initial generations: preserve unconfirmed parent cleanup and, only after complete Linux terminal evidence and current identity, launcher, and port proofs pass, append reconciliation evidence in a new formal partial-close stage and close the original RustFS supervision tree. Propagate fixed safe cleanup diagnostics to current consumers without fabricating stop or startup success.
 
 - Native initial-generation late failures after runtime publication still execute exact cleanup. Partial closure accepts them only when complete acceptance, failure, stop and exit evidence agrees and the runtime exactly matches the original stop receipt, binding all receipts before and after verification without resending stop or claiming startup success.

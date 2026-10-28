@@ -41,7 +41,7 @@ pub use m20260820_000000_tenant_baseline::{
     TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
 };
 #[cfg(feature = "migration")]
-pub use runtime::{Migrator, up, up_pending_business_migrations};
+pub use runtime::{Migrator, up, up_in_session, up_pending_business_migrations};
 pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
     canonical_table_schema, ensure_mysql_target_boundary, verify, verify_for_catalog,
