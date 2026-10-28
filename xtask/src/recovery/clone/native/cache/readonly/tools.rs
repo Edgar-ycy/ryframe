@@ -56,9 +56,8 @@ pub(super) fn observe(
     let declared = target_verify::input::request_configuration::canonical_path(Path::new(
         document::text(&tools["wsl"]["path"], "预检 WSL")?,
     ))?;
-    let actual = crate::process::resolved_executable(backend, "wsl")?;
-    if target_verify::input::request_configuration::canonical_path(Path::new(&actual))? != declared
-    {
+    let actual = super::super::native_tool::wsl_program()?;
+    if target_verify::input::request_configuration::canonical_path(&actual)? != declared {
         return Err("本机 WSL 入口不同于后继审阅冻结工具".into());
     }
     let executable = observer.read("/usr/bin/readlink", &["-f", "/usr/bin/redis-server"])?;

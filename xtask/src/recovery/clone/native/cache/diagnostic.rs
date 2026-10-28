@@ -13,6 +13,7 @@ pub(super) enum Category {
     ConfigurationDrift,
     IdentityMismatch,
     ToolConfigurationRejected,
+    WslEntryRejected,
     ParentAuthorizationRejected,
     ExecFailed,
     PidfdUnsupported,
@@ -90,6 +91,11 @@ impl Diagnostic {
                 "tool-configuration",
                 "verification.linux_observer",
                 "核对工具配置文件、完整来源和实际ELF；禁止回退解释器",
+            ),
+            WslEntryRejected => (
+                "tool-configuration",
+                "PATH.wsl",
+                "核对标准OS PATH的绝对目录顺序及首个WSL入口，必须是无链接普通文件",
             ),
             ParentAuthorizationRejected => (
                 "exec-authorization",

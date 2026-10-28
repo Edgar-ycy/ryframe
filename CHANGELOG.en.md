@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix native fixture preflight and successor verification rejecting a bare `wsl` command where an absolute path is required. Share controlled PATH resolution that selects only a regular, unlinked launcher from absolute directories; missing or unsafe entries produce fixed redacted diagnostics without weakening tool digests or call deadlines.
+
 - Correct obsolete environment-variable guidance and the Compose mount-path base in production deployment instructions, synchronizing both operations guides. Align alert runbook links with the current Redis and dependency troubleshooting sections while retaining deployment heading-anchor validation.
 
 - Send only the existing review file binding across the cache process-model boundary. Rust reads the complete review and verifies the same byte binding before and after the model; normal and pending/successor paths retain their respective validated canonical provenance. Both cache lifecycle primitives use a child of the currently bound Rust xtask, reusing the original 4 MiB private I/O and whole-process 180-second boundary. Timeout reclaims only the exact primitive handle and leaves services unknown.

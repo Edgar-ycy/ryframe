@@ -20,8 +20,7 @@ pub(super) fn observe(backend: &Path, review: &Value) -> Result<Value> {
         }
         result[role] = json!({"path":path,"sha256":value["sha256"]});
     }
-    let program = crate::process::resolved_executable(backend, "wsl")?;
-    let path = super::model::plain(Path::new(&program))?;
+    let path = native_tool::wsl_program()?;
     let wsl = json!({"path":path,"sha256":digest::file(&path)?.sha256});
     let tool = NativeTool::capture(backend)?;
     if review["tools"]["redis_server"]["distribution"] != tool.distribution {

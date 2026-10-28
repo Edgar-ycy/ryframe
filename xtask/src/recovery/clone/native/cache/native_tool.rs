@@ -8,6 +8,37 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub(super) fn wsl_program() -> Result<PathBuf> {
+    let path = std::env::var_os("PATH").ok_or_else(wsl_entry_error)?;
+    wsl_from_path(&path)
+}
+
+fn wsl_entry_error() -> Box<dyn std::error::Error> {
+    super::diagnostic::failure(
+        super::diagnostic::Category::WslEntryRejected,
+        super::diagnostic::Outcome::NotStarted,
+    )
+}
+
+fn wsl_from_path(path: &std::ffi::OsStr) -> Result<PathBuf> {
+    let name = if cfg!(windows) { "wsl.exe" } else { "wsl" };
+    for directory in std::env::split_paths(path).filter(|path| path.is_absolute()) {
+        let candidate = directory.join(name);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) => {
+                let path = super::model::plain(&candidate).map_err(|_| wsl_entry_error())?;
+                if !metadata.is_file() {
+                    return Err(wsl_entry_error());
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(wsl_entry_error()),
+        }
+    }
+    Err(wsl_entry_error())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct NativeTool {
@@ -261,5 +292,35 @@ pub(crate) fn tools_hash(process: &Value) -> Result<String> {
         digest::plan_hash(&json!({"wsl":process["wsl"],"native_tool":process["native_tool"]}))
     } else {
         digest::plan_hash(&json!({"wsl":process["wsl"],"python":process["python"]}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wsl_path_preserves_order_ignores_relative_and_rejects_first_unsafe_candidate() {
+        let backend = crate::workspace::root_dir();
+        std::fs::create_dir_all(backend.join(".local-tests")).unwrap();
+        let directory = tempfile::tempdir_in(backend.join(".local-tests")).unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let name = if cfg!(windows) { "wsl.exe" } else { "wsl" };
+        let candidate = first.join(name);
+        std::fs::write(&candidate, b"fixture").unwrap();
+        std::fs::write(second.join(name), b"fixture").unwrap();
+        let path =
+            std::env::join_paths([Path::new(""), Path::new("relative"), &first, &second]).unwrap();
+        assert_eq!(wsl_from_path(&path).unwrap(), candidate);
+        std::fs::remove_file(&candidate).unwrap();
+        assert_eq!(wsl_from_path(&path).unwrap(), second.join(name));
+        std::fs::create_dir(&candidate).unwrap();
+        let error = wsl_from_path(&path).unwrap_err();
+        assert!(error.to_string().contains("PATH.wsl"));
+        assert!(!error.to_string().contains("relative"));
+        assert!(wsl_from_path(std::ffi::OsStr::new("relative")).is_err());
     }
 }
