@@ -76,6 +76,10 @@ fn frozen_requests_tree_results_and_launch_evidence_must_agree() {
         observed["origin"]["storage"]["identity"]
     );
     assert_eq!(observed["storage_observation"]["state"], "recorded");
+    assert_eq!(
+        observed["evidence"]["redis_runtime"],
+        binding(&runtime.fixture.run.join("redis").join("runtime.json")).unwrap()
+    );
     assert!(observed["cache_effective"].is_null());
     assert_eq!(runtime.fixture.state(), before);
     assert_eq!(runtime.events, ["tree-read"]);

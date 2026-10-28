@@ -43,7 +43,7 @@ pub(super) fn load(
         validate_storage(&storage, &observed, &requests["rustfs"], &tree)?;
     }
     let runtime_path = if history["active_generation"]["kind"] == "initial" {
-        context.run.join("redis/runtime.json")
+        context.run.join("redis").join("runtime.json")
     } else {
         Path::new(text(&cache["runtime"], "output")?).join("runtime.json")
     };
