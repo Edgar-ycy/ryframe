@@ -7,13 +7,15 @@ use crate::{
     recovery::clone::native::{
         cache, json as document,
         resources::{common, storage::registered},
-        seed::generation::coordinator,
     },
 };
 use serde_json::{Value, json};
 use std::path::Path;
 #[path = "reboot/host.rs"]
 mod host;
+#[path = "reboot/observation.rs"]
+mod observation;
+pub(in crate::recovery::source::evidence) use observation::request;
 
 const CLOSE: &str = "source-generation-reboot-close";
 
@@ -73,8 +75,9 @@ pub(super) fn tail(
             return Err("主机重启收尾后的目标存储与缓存重启不完整或不相邻".into());
         }
     }
-    observe(backend, run, attempts, start)?;
-    let issued = closure(backend, run, published[0])?;
+    let observed = observation::read(backend, run, attempts, start)?;
+    observation::require_closed(&observed)?;
+    let issued = closure(backend, run, published[0], start)?;
     if published[0]["number"] != rows[0]["number"] {
         return Err("重启段没有采用当前唯一收尾收据".into());
     }
@@ -117,110 +120,15 @@ fn restarted(
     )
 }
 
-fn observe(backend: &Path, run: &Path, attempts: &[Value], start: &Value) -> Result<()> {
-    if attempts.iter().any(|row| {
-        row["status"] == "running" && (row["stage"] != "seed-runtime" || row["mode"] != CLOSE)
-    }) || attempts
-        .iter()
-        .filter(|row| row["status"] == "running")
-        .count()
-        > 1
-        || start["status"] != "passed"
+fn closure(backend: &Path, run: &Path, record: &Value, start: &Value) -> Result<Value> {
+    if record["stage"] != "seed-runtime"
+        || record["mode"] != CLOSE
+        || record["status"] != "passed"
+        || !record["error_type"].is_null()
     {
-        return Err("重启观察缺少唯一已收尾成功 START 或仍有未收尾控制动作".into());
+        return Err("重启收尾必须为原账本唯一成功阶段".into());
     }
-    let number = start["number"].as_u64().ok_or("C70 源代次序号无效")?;
-    if attempts.iter().any(|row| {
-        row["number"].as_u64().is_some_and(|n| n > number)
-            && row["stage"] == "seed-runtime"
-            && row["mode"] != CLOSE
-    }) {
-        return Err("源代次之后存在停止、恢复或其他源阶段，不能按重启中断观察".into());
-    }
-    let value = stops::result(backend, run, start)?;
-    document::exact(
-        &value,
-        coordinator::receipts::START_FIELDS,
-        "重启源代次收据",
-    )?;
-    if value["status"] != "seed_source_generation_running" || value["restore_qualified"] != false {
-        return Err("源代次收据状态不是运行中的冻结来源".into());
-    }
-    let request = common::read_bound(backend, &value["request"], "重启源请求")?;
-    coordinator::request(&request)?;
-    let output = run.join(document::text(&value["generation_id"], "源代次目录")?);
-    if output != run.join(format!("g{number:04}"))
-        || document::read(&output.join("request.json"))? != request
-    {
-        return Err("源代次目录、请求副本与账本不一致".into());
-    }
-    let intent = common::read_bound(backend, &value["intent"], "重启源启动意图")?;
-    document::exact(
-        &intent,
-        &[
-            "format_version",
-            "kind",
-            "request",
-            "runtime_directory",
-            "operations",
-        ],
-        "重启源启动意图",
-    )?;
-    document::exact(&intent["operations"], &["api", "worker"], "重启源角色集合")?;
-    let runtime = output.join("runtime");
-    if common::read_bound(backend, &intent["request"], "源启动意图请求")? != request
-        || intent["runtime_directory"] != json!(runtime)
-    {
-        return Err("源代次启动意图与收据或角色集合不一致".into());
-    }
-    failed_prefix(backend, &output.join("verification"))?;
-    let boot = host::boot()?;
-    let contract = document::read(&runtime.join("runtime.json"))?;
-    for role in ["api", "worker"] {
-        let tree = super::super::roles::tree(&runtime, role, &contract["scope_id"])?;
-        if tree["operation_id"] != intent["operations"][role] {
-            return Err("进程树不属于 C70 启动意图".into());
-        }
-        for member in ["process", "supervisor", "monitor"] {
-            host::exited(&tree[member], boot)?;
-        }
-    }
-    closed_ports(&request, &contract, boot)?;
-    common::bound_file(backend, &start["result"], "重启源代次收据")?;
-    Ok(())
-}
-
-fn failed_prefix(backend: &Path, directory: &Path) -> Result<()> {
-    let allowed = ready::verify(&json!({"action":"failed-entries","arguments":{}}))?;
-    let allowed = document::array(&allowed, "重启中断失败目录集合")?
-        .iter()
-        .map(|v| document::text(v, "失败目录名称"))
-        .collect::<Result<std::collections::BTreeSet<_>>>()?;
-    common::local_directory(backend, directory, "重启中断失败目录")?;
-    let names = crate::recovery::runtime::dataset_authority::reads::entries(directory)?
-        .map(|e| e.map(|e| e.file_name()))
-        .collect::<std::io::Result<Vec<_>>>()?;
-    let names = names
-        .iter()
-        .map(|name| name.to_str().ok_or("失败目录名称不是 UTF-8".into()))
-        .collect::<Result<std::collections::BTreeSet<_>>>()?;
-    if names != allowed
-        || document::read(&directory.join("failed.json"))?
-            != json!({"status":"failed","error":"ValueError"})
-    {
-        return Err("来源验收失败前缀不是已知未清理缓存失败的精确集合".into());
-    }
-    ready::verify(
-        &json!({"action":"producer-bindings","arguments":{"backend":backend,"directory":directory}}),
-    )?;
-    for name in ["audit/login-audit.json", "before/image.json"] {
-        common::binding(&directory.join(name))?;
-    }
-    Ok(())
-}
-
-fn closure(backend: &Path, run: &Path, record: &Value) -> Result<Value> {
-    let result = common::read_bound(backend, &record["result"], "重启收尾结果")?;
+    let result = stops::result(backend, run, record)?;
     document::exact(
         &result,
         &[
@@ -284,48 +192,51 @@ fn closure(backend: &Path, run: &Path, record: &Value) -> Result<Value> {
     {
         return Err("主机重启收尾收据的状态、计数或声明增量无效".into());
     }
+    closure_contract(backend, run, start, &result, &value)?;
+    common::bound_file(backend, &record["result"], "重启收尾阶段后像")?;
+    common::bound_file(backend, &result["closure"], "重启收尾内容后像")?;
+    Ok(json!({"binding":result["closure"],"result":record["result"],"receipt":value}))
+}
+
+/// 历史收尾证明不重新应用当前采集的新鲜度；当前主机事实由 observation 另行核验。
+fn closure_contract(
+    backend: &Path,
+    run: &Path,
+    start: &Value,
+    result: &Value,
+    value: &Value,
+) -> Result<()> {
     let generations = document::array(&value["cache"]["generations"], "重启收尾缓存代次")?;
     if generations.is_empty() || generations.iter().any(|row| row["state"] != "stopped") {
         return Err("主机重启收尾收据没有记录已完成退出的缓存代次".into());
     }
-    Ok(json!({"binding":result["closure"],"receipt":value}))
-}
-
-fn closed_ports(request: &Value, contract: &Value, boot: u64) -> Result<()> {
-    let execution = Path::new(document::text(
-        &request["execution_backend"],
-        "重启源执行根",
-    )?);
-    let config = Path::new(document::text(
-        &contract["api_config_dir"],
-        "重启源冻结配置目录",
-    )?);
-    let table = crate::rate_limit::load_app_table(execution, Some(config), "test")
-        .map_err(|_| "重启源配置无法读取；检查冻结配置目录")?;
-    let app = table
-        .get("app")
-        .and_then(toml::Value::as_table)
-        .ok_or("重启源配置缺少 app")?;
-    let host = app
-        .get("host")
-        .and_then(toml::Value::as_str)
-        .ok_or("重启源配置缺少 app.host")?;
-    let port = app
-        .get("port")
-        .and_then(toml::Value::as_integer)
-        .filter(|p| (1..=65535).contains(p))
-        .ok_or("重启源配置 app.port 无效")?;
-    common::require_closed_port(&format!("http://{host}:{port}"))?;
-    common::require_closed_port(document::text(
-        &contract["worker_ready_url"],
-        "重启源 Worker 地址",
-    )?)?;
-    host::exited(&request["current_storage"]["storage"]["identity"], boot)?;
-    for key in ["api_url", "console_url"] {
-        common::require_closed_port(document::text(
-            &request["current_storage"][key],
-            "重启源旧存储端点",
-        )?)?;
+    let original = stops::result(backend, run, start)?;
+    if start["status"] != "passed"
+        || value["start"] != start["result"]
+        || value["request"] != original["request"]
+        || value["baseline"] != original["before"]
+        || value["running"] != original["running"]
+        || result["producer"] != value["failed_prefix"]["producer"]
+    {
+        return Err("重启收尾没有绑定同一原 START、请求及原始像".into());
     }
+    for key in [
+        "status",
+        "start",
+        "request",
+        "baseline",
+        "reboot",
+        "failed_prefix",
+        "declared_deltas",
+        "verification_qualified",
+        "replay_allowed",
+        "remote_writes",
+        "restore_qualified",
+    ] {
+        if result[key] != value[key] {
+            return Err("重启收尾内外重复字段不一致".into());
+        }
+    }
+    common::bound_file(backend, &value["request"], "重启收尾原请求")?;
     Ok(())
 }

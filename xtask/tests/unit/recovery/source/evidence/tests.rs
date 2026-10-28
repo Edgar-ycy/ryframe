@@ -2,6 +2,26 @@ use serde_json::{Value, json};
 
 use super::{execute, model};
 
+#[test]
+fn reboot_observation_protocol_rejects_write_authorization_and_caller_supplied_facts() {
+    let mut request = json!({"operation":"source-generation-reboot-observation","write":true,
+        "arguments":{"backend":"missing","directory":"missing"}});
+    assert!(
+        execute(&serde_json::to_vec(&request).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("写入授权")
+    );
+    request["write"] = json!(false);
+    request["arguments"]["boot"] = json!({"boot_ticks":1});
+    assert!(
+        execute(&serde_json::to_vec(&request).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("字段")
+    );
+}
+
 #[expect(
     dead_code,
     reason = "消费者契约须导入完整产品键工厂；其中三个租户 namespace 函数不属于本授权缓存契约"

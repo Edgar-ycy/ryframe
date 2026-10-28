@@ -117,6 +117,14 @@ pub(in crate::recovery) fn register(
 }
 
 pub(crate) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
+    let binding = verify_configuration(root, directory)?;
+    verify_binaries(directory, &binding.receipt)?;
+    super::source::verify(root, directory)?;
+    Ok(binding)
+}
+
+/// 重启事实只核对原运行配置合同；当前产物和源码漂移由完整核验单独报告。
+pub(crate) fn verify_configuration(root: &Path, directory: &Path) -> Result<Binding> {
     let receipt = read_json(&directory.join("runtime.json"), "全栈运行收据", 64 * 1024)?;
     exact_object(
         &receipt,
@@ -163,8 +171,19 @@ pub(crate) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
         return Err("全栈运行收据与绑定文件配置摘要不匹配".into());
     }
     let (api_table, scope) = validate_tables(&receipt, tables)?;
-    verify_binaries(directory, &receipt)?;
-    super::source::verify(root, directory)?;
+    exact_object(&receipt["artifacts"], &["api", "worker"], "运行产物")?;
+    for role in ["api", "worker"] {
+        let artifact = &receipt["artifacts"][role];
+        exact_object(artifact, &["path", "sha256"], "运行产物绑定")?;
+        if !Path::new(text_field(artifact, "path", "运行产物绑定")?).is_absolute()
+            || !text_field(artifact, "sha256", "运行产物绑定")?
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || text_field(artifact, "sha256", "运行产物绑定")?.len() != 64
+        {
+            return Err("运行产物绑定缺少绝对路径或规范摘要".into());
+        }
+    }
     Ok(Binding {
         receipt,
         table: api_table,

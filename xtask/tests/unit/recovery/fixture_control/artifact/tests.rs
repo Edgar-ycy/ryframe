@@ -267,9 +267,16 @@ fn artifact_runtime_binds_files_scope_instances_and_all_binaries() {
     fs::write(&config, original).unwrap();
     fs::write(directory.join("ryframe.exe"), b"changed").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+    assert_eq!(
+        runtime::verify_configuration(root.path(), &directory)
+            .unwrap()
+            .receipt,
+        receipt
+    );
     fs::write(directory.join("ryframe.exe"), b"ryframe").unwrap();
     fs::remove_file(directory.join("ryframe-reset.exe")).unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+    assert!(runtime::verify_configuration(root.path(), &directory).is_ok());
 }
 
 #[test]
@@ -292,6 +299,75 @@ fn artifact_runtime_rejects_duplicate_json_and_unexpected_evidence() {
     )
     .unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+}
+
+#[test]
+fn configuration_only_contract_keeps_both_directories_worker_drift_and_artifact_shape_strict() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, original) = runtime_fixture(root.path());
+    let alternate = root.path().join("isolated");
+    fs::create_dir(&alternate).unwrap();
+    for name in ["config", "worker-config"] {
+        fs::rename(root.path().join(name), alternate.join(name)).unwrap();
+    }
+    let mut receipt = original.clone();
+    receipt["api_config_dir"] = json!(alternate.join("config"));
+    receipt["worker_config_dir"] = json!(alternate.join("worker-config"));
+    let path = directory.join("runtime.json");
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    assert!(runtime::verify_configuration(root.path(), &directory).is_err());
+    let api_digest = runtime::configuration_digest(&alternate.join("config")).unwrap();
+    let worker_digest = runtime::configuration_digest(&alternate.join("worker-config")).unwrap();
+    receipt["api_configuration_sha256"] = json!(api_digest);
+    receipt["worker_configuration_sha256"] = json!(worker_digest);
+    receipt["configuration_sha256"] =
+        json!(runtime::hash(&json!([api_digest, worker_digest])).unwrap());
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    runtime::verify_configuration(root.path(), &directory).unwrap();
+    let worker = alternate.join("worker-config/app.test.toml");
+    let bytes = fs::read(&worker).unwrap();
+    fs::write(&worker, b"scope_id='changed'").unwrap();
+    assert!(runtime::verify_configuration(root.path(), &directory).is_err());
+    fs::write(&worker, &bytes).unwrap();
+    for (pointer, value) in [
+        (
+            "/worker_config_dir",
+            json!(root.path().join("worker-config")),
+        ),
+        ("/worker_ready_url", json!("http://127.0.0.1:18082/readyz")),
+        ("/artifacts/api/sha256", json!("unknown")),
+        ("/artifacts/worker/path", json!("relative.exe")),
+        (
+            "/artifacts/api",
+            json!({"path":directory.join("ryframe.exe"),"sha256":"a".repeat(64),"extra":true}),
+        ),
+    ] {
+        let mut changed = receipt.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(
+            runtime::verify_configuration(root.path(), &directory).is_err(),
+            "{pointer}"
+        );
+    }
+    // 文件摘要同步变化仍不能掩盖 Worker 与 API 的合并值或实例编号冲突。
+    for content in [
+        String::from_utf8(bytes.clone())
+            .unwrap()
+            .replace("snowflake_worker_id=2", "snowflake_worker_id=3"),
+        String::from_utf8(bytes)
+            .unwrap()
+            .replace("health_port=18081", "health_port=18082"),
+    ] {
+        fs::write(&worker, content).unwrap();
+        let api = runtime::configuration_digest(&alternate.join("config")).unwrap();
+        let worker = runtime::configuration_digest(&alternate.join("worker-config")).unwrap();
+        receipt["api_configuration_sha256"] = json!(api);
+        receipt["worker_configuration_sha256"] = json!(worker);
+        receipt["configuration_sha256"] = json!(runtime::hash(&json!([api, worker])).unwrap());
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        assert!(runtime::verify_configuration(root.path(), &directory).is_err());
+    }
 }
 
 fn source_fixture_root() -> tempfile::TempDir {
@@ -378,6 +454,7 @@ fn artifact_source_rejects_source_and_receipt_drift() {
     runtime::verify(root.path(), &directory).unwrap();
     fs::write(root.path().join("source.txt"), b"drift").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+    assert!(runtime::verify_configuration(root.path(), &directory).is_ok());
     fs::write(root.path().join("source.txt"), b"source").unwrap();
     fs::write(directory.join("runtime-evidence.json"), b"{}").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());

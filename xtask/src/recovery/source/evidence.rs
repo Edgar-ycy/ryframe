@@ -92,6 +92,11 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 
 fn execute(bytes: &[u8]) -> Result<Value> {
     let request = parse_request(bytes)?;
+    require_write_authorization(&request)?;
+    dispatch(&request)
+}
+
+fn require_write_authorization(request: &Value) -> Result<()> {
     let writes = if request["operation"]
         .as_str()
         .is_some_and(|v| v.starts_with("comparison-"))
@@ -121,6 +126,10 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     if request["write"].as_bool() != Some(writes) {
         return Err("来源证据写入授权与操作不一致".into());
     }
+    Ok(())
+}
+
+fn dispatch(request: &Value) -> Result<Value> {
     let args = &request["arguments"];
     match request["operation"].as_str() {
         Some("restore-dataset-authority") => {
@@ -136,6 +145,7 @@ fn execute(bytes: &[u8]) -> Result<Value> {
         ) => comparison::request(operation, args),
         Some("recorded-process-stopped") => recorded_process_stopped(args),
         Some("historical-storage-restart-failure") => running::history::restart_request(args),
+        Some("source-generation-reboot-observation") => running::history::reboot::request(args),
         Some("source-runtime-stopped") => stopped::request(args),
         Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),

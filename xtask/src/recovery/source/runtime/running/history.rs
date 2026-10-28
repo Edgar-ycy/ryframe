@@ -20,7 +20,7 @@ pub(in crate::recovery::source::evidence) mod lineage;
 #[path = "history/prelaunch.rs"]
 pub(in crate::recovery::source::evidence) mod prelaunch;
 #[path = "history/reboot.rs"]
-mod reboot;
+pub(in crate::recovery::source::evidence) mod reboot;
 #[path = "history/resolution.rs"]
 mod resolution;
 #[path = "history/segment.rs"]
