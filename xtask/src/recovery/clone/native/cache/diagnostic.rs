@@ -22,6 +22,8 @@ pub(super) enum Category {
     SignalFailed,
     ExitWaitFailed,
     ExecWaitTimeout,
+    ProcessReceiptTimeout,
+    AcceptanceTimeout,
     AcknowledgementTimeout,
     SupervisorInterrupted,
 }
@@ -132,6 +134,16 @@ impl Diagnostic {
                 "exec-wait",
                 "timeout_seconds",
                 "核对监督器日志、最终Redis映像与失败回收证明",
+            ),
+            ProcessReceiptTimeout => (
+                "process-receipt",
+                "linux-process.json",
+                "核对启动、创建身份与失败清理证明；保留现场，禁止重放",
+            ),
+            AcceptanceTimeout => (
+                "acceptance",
+                "accepted.json",
+                "核对 acknowledged.json、accepted.json 与原启动截止时间；保留现场，禁止重放",
             ),
             AcknowledgementTimeout => (
                 "acknowledgement",

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Correct native Redis startup timeout diagnostics to distinguish process-creation receipts from final acceptance. Consolidate adjacent duplicate validation of identical inputs without external operations between them, retaining full provenance, identity, authorization and checks across operations without extending startup deadlines.
+
 - Fix native fixture preflight and successor verification rejecting a bare `wsl` command where an absolute path is required. Share controlled PATH resolution that selects only a regular, unlinked launcher from absolute directories; missing or unsafe entries produce fixed redacted diagnostics without weakening tool digests or call deadlines.
 
 - Correct obsolete environment-variable guidance and the Compose mount-path base in production deployment instructions, synchronizing both operations guides. Align alert runbook links with the current Redis and dependency troubleshooting sections while retaining deployment heading-anchor validation.

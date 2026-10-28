@@ -105,10 +105,10 @@ fn run(args: &[String], exec: bool) -> Result<Option<Value>> {
     })?;
     #[cfg(target_os = "linux")]
     {
-        launch.native_tool.verify_linux()?;
         if exec {
             return inputs::exec(&launch, path, &args[offset + 3]).map(|()| None);
         }
+        launch.native_tool.verify_linux()?;
         match args[1].as_str() {
             "serve" => {
                 let mut bytes = Vec::new();

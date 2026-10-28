@@ -121,21 +121,39 @@ fn stop_failure_observes_once_and_preserves_original_failure_if_alive_or_unknown
 
 #[test]
 fn diagnostics_only_accept_fixed_fields_and_never_disclose_remote_advice_or_categories() {
-    let diagnostic = Diagnostic {
-        category: Category::ParentAuthorizationRejected,
-        write_outcome: Outcome::Unknown,
-        os_code: None,
-    };
-    let expected = diagnostic.value();
-    let decoded = Diagnostic::decode(&expected).unwrap();
-    assert!(decoded.to_string().contains("linux-intent.supervisor"));
-    for field in ["advice", "phase", "field", "category", "write_outcome"] {
-        let mut wrong = expected.clone();
-        wrong[field] = json!("private-password-marker");
-        let error = Diagnostic::decode(&wrong).unwrap_err().to_string();
-        assert!(!error.contains("private-password-marker"));
+    for (category, phase, field) in [
+        (
+            Category::ParentAuthorizationRejected,
+            "exec-authorization",
+            "linux-intent.supervisor",
+        ),
+        (
+            Category::ProcessReceiptTimeout,
+            "process-receipt",
+            "linux-process.json",
+        ),
+        (Category::AcceptanceTimeout, "acceptance", "accepted.json"),
+    ] {
+        let diagnostic = Diagnostic {
+            category,
+            write_outcome: Outcome::Unknown,
+            os_code: None,
+        };
+        let expected = diagnostic.value();
+        let decoded = Diagnostic::decode(&expected).unwrap();
+        assert_eq!(expected["phase"], phase);
+        assert_eq!(expected["field"], field);
+        assert_eq!(expected["write_outcome"], "unknown");
+        assert_eq!(decoded.value(), expected);
+        assert!(decoded.to_string().contains(field));
+        for field in ["advice", "phase", "field", "category", "write_outcome"] {
+            let mut wrong = expected.clone();
+            wrong[field] = json!("private-password-marker");
+            let error = Diagnostic::decode(&wrong).unwrap_err().to_string();
+            assert!(!error.contains("private-password-marker"));
+        }
+        let response = json!({"ok":false,"error":"NativeCacheRejected","diagnostic":expected});
+        Diagnostic::decode_output(&serde_json::to_vec(&response).unwrap()).unwrap();
     }
-    let response = json!({"ok":false,"error":"NativeCacheRejected","diagnostic":expected});
-    Diagnostic::decode_output(&serde_json::to_vec(&response).unwrap()).unwrap();
     assert!(Diagnostic::decode_output(&vec![b'x'; 16385]).is_err());
 }

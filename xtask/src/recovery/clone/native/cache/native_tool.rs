@@ -156,7 +156,7 @@ impl NativeTool {
         output: &Path,
         action: &str,
     ) -> Result<Vec<String>> {
-        self.validate()?;
+        // 仅接收 evidence::command 经 from_request 校验后的工具绑定。
         let path = output.join("launch-request.json");
         Ok(vec![
             doc::text(&request["wsl"]["path"], "WSL 工具")?.into(),

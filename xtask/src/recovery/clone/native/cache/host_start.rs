@@ -135,7 +135,12 @@ fn launch_and_accept(
     let runtime = &mut attempt.runtime;
     let deadline = Instant::now()
         + Duration::from_secs(request["timeout_seconds"].as_u64().ok_or("缓存超时无效")?);
-    wait_file(child, &output.join("linux-process.json"), deadline)?;
+    wait_file(
+        child,
+        &output.join("linux-process.json"),
+        deadline,
+        super::diagnostic::Category::ProcessReceiptTimeout,
+    )?;
     let initial = evidence::inspect(request, output)?;
     *runtime = Some(initial.clone());
     let observed = loop {
@@ -159,7 +164,12 @@ fn launch_and_accept(
         &output.join("acknowledged.json"),
         &json!({"request_sha256":digest::plan_hash(request)?,"identity":observed["linux_identity"]}),
     )?;
-    wait_file(child, &output.join("accepted.json"), deadline)?;
+    wait_file(
+        child,
+        &output.join("accepted.json"),
+        deadline,
+        super::diagnostic::Category::AcceptanceTimeout,
+    )?;
     if doc::read(&output.join("accepted.json"))? != doc::read(&output.join("acknowledged.json"))? {
         return Err("缓存 accepted 与 acknowledged 不同".into());
     }
@@ -251,14 +261,19 @@ fn restricted(command: &mut std::process::Command, private: &Value) -> Result<()
     Ok(())
 }
 
-fn wait_file(child: &mut Child, path: &Path, deadline: Instant) -> Result<()> {
+fn wait_file(
+    child: &mut Child,
+    path: &Path,
+    deadline: Instant,
+    category: super::diagnostic::Category,
+) -> Result<()> {
     while !path.try_exists()? {
         if let Some(status) = child.try_wait()? {
             return Err(super::process::ControlFailure(status.code()).into());
         }
         if Instant::now() >= deadline {
             return Err(super::diagnostic::failure(
-                super::diagnostic::Category::AcknowledgementTimeout,
+                category,
                 super::diagnostic::Outcome::Unknown,
             ));
         }
