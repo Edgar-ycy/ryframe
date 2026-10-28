@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python Linux Redis startup, supervision, frozen-helper implementation and disabled entry points, together with tests exclusive to that retired implementation. Current start, observe and stop calls continue through the bound Rust tool; retain active Python adapters, readonly historical evidence checks, atomic publication and error/no-replay protections. Historical frozen files and Git records remain unchanged.
+
 - Complete strict partial closure when initial Redis creation succeeds but readiness fails and cleanup has completed. Verify complete original evidence and read-only exit proof without resending stop or fabricating runtime records; unknown, missing, or drifting evidence remains rejected and the original failed scene is preserved.
 
 - Correct native Redis startup timeout diagnostics to distinguish process-creation receipts from final acceptance. Consolidate adjacent duplicate validation of identical inputs without external operations between them, retaining full provenance, identity, authorization and checks across operations without extending startup deadlines.
