@@ -27,7 +27,6 @@ use operations::{
     verify_seed_hashes, verify_server_writable,
 };
 
-pub use crate::reset::connections::same_credentials;
 pub use identity::parse_lower_case_table_names;
 pub use operations::quote_identifier;
 

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Review reset coverage and remove a duplicate old-ledger-version scenario, a self-comparison hash assertion, and a credential comparison already covered by configuration aliases. Retain effective recovery, idempotent reuse, identity drift, password policy, and diagnostic coverage.
+
 - Report the configuration field, path, underlying cause, and repair advice when local object-storage reset preflight fails, requiring inspection of existing ledgers and resources before retrying. Preserve remote-error redaction and no automatic replay. Correct migration import boundaries for worker-only builds.
 
 - Remove the old Python CLI and decoder replaced by native Rust source verification and comparison, together with their forwarding and private-protocol tests. Formal process tests retain environment isolation, failure without success receipts, and unchanged before/after files; shared producers remain.
