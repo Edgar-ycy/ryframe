@@ -1,13 +1,19 @@
 //! 本 producer 的读取窗口；原生读取端口只登记实际消费的文件，不猜测 JSON 中的路径。
 use crate::{Result, recovery::monitoring::execution::ProtectedInputs};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
 thread_local! {
     static ACTIVE: RefCell<Option<ReadSet>> = const { RefCell::new(None) };
+    // with_set 临时取出集合期间也必须保持同线程读取，直到 Window 释放。
+    static WINDOW_ACTIVE: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn is_active() -> bool {
+    WINDOW_ACTIVE.get()
 }
 
 #[derive(Default)]
@@ -32,10 +38,11 @@ impl Window {
     pub(super) fn begin() -> Result<Self> {
         ACTIVE.with(|slot| {
             let mut slot = slot.borrow_mut();
-            if slot.is_some() {
+            if is_active() {
                 return Err("恢复静态读取窗口不能嵌套".into());
             }
             *slot = Some(ReadSet::default());
+            WINDOW_ACTIVE.set(true);
             Ok(Self {
                 _thread_bound: std::marker::PhantomData,
             })
@@ -79,6 +86,7 @@ impl Drop for Window {
         ACTIVE.with(|slot| {
             slot.borrow_mut().take();
         });
+        WINDOW_ACTIVE.set(false);
     }
 }
 

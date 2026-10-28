@@ -294,22 +294,27 @@ fn file_inventory(root: &Path) -> Result<(Vec<FileRecord>, SourceGuard)> {
     )?)?;
     paths.sort();
     paths.dedup();
-    let mut files = Vec::new();
-    let mut modes = Vec::new();
-    for raw in paths {
-        let relative = String::from_utf8(raw).map_err(|_| "源码路径必须为 UTF-8")?;
-        let Some(path) = source_file(root, &relative, true)? else {
-            continue;
+    let entries = crate::frontend_origin::scan::ordered(&paths, |raw| {
+        let relative = std::str::from_utf8(raw).map_err(|_| "源码路径必须为 UTF-8")?;
+        let Some(path) = source_file(root, relative, true)? else {
+            return Ok(None);
         };
         let metadata = fs::symlink_metadata(&path)?;
-        files.push(FileRecord {
-            path: relative.clone(),
+        let file = FileRecord {
+            path: relative.to_owned(),
             sha256: digest::file(&path)?.sha256,
-        });
-        modes.push(json!({
+        };
+        let mode = json!({
             "path": relative,
             "executable": executable(&metadata),
-        }));
+        });
+        Ok(Some((file, mode)))
+    })?;
+    let mut files = Vec::new();
+    let mut modes = Vec::new();
+    for (file, mode) in entries.into_iter().flatten() {
+        files.push(file);
+        modes.push(mode);
     }
     let head = text_output(git(root, &["rev-parse", "HEAD"])?)?;
     let guard = SourceGuard {

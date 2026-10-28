@@ -10,14 +10,14 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 pub(crate) fn capture(root: &Path) -> Result<Value> {
-    let mut entries = Vec::new();
-    for relative in sources::discover(root)? {
-        let path = root.join(&relative);
+    let paths = sources::discover(root)?;
+    let entries = super::scan::ordered(&paths, |relative| {
+        let path = root.join(relative);
         if digest::linked_path(&path)?.contains(&true) {
             return Err("观察器来源不能经过链接".into());
         }
-        entries.push(json!({"path":relative,"sha256":digest::file(&path)?.sha256}));
-    }
+        Ok(json!({"path":relative,"sha256":digest::file(&path)?.sha256}))
+    })?;
     Ok(json!(entries))
 }
 

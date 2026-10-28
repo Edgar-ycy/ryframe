@@ -10,6 +10,83 @@ fn fixture() -> tempfile::TempDir {
 }
 
 #[test]
+fn parallel_and_protected_serial_source_scans_preserve_complete_results_and_guards() {
+    use crate::frontend_origin::{manifest, sources};
+    use crate::recovery::clone::native::source;
+    let directory = fixture();
+    let root = directory.path();
+    std::fs::create_dir(root.join("xtask")).unwrap();
+    std::fs::write(root.join(sources::POLICY), br#"{"format_version":1,"files":["xtask/source-inventory.json"],"trees":["inputs"],"excluded_directories":[]}"#).unwrap();
+    std::fs::create_dir(root.join("inputs")).unwrap();
+    for index in 0..17 {
+        std::fs::write(
+            root.join(format!("inputs/来源-{index:02}.txt")),
+            format!("input-{index}"),
+        )
+        .unwrap();
+    }
+    for arguments in [
+        vec!["init", "--quiet"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=source-unit",
+            "-c",
+            "user.email=source-unit@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        let mut command = std::process::Command::new("git");
+        command.arg("-C").arg(root).args(arguments);
+        for (name, _) in std::env::vars_os() {
+            if name
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("GIT_")
+            {
+                command.env_remove(name);
+            }
+        }
+        assert!(
+            command
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let parallel_source = source::capture(root).unwrap();
+    let parallel_manifest = manifest::capture(root).unwrap();
+    assert_eq!(parallel_source.files.len(), 18);
+    assert_eq!(parallel_manifest.as_array().unwrap().len(), 18);
+    let window = reads::Window::begin().unwrap();
+    assert!(reads::is_active());
+    assert_eq!(source::capture(root).unwrap(), parallel_source);
+    assert_eq!(manifest::capture(root).unwrap(), parallel_manifest);
+    // finish 会取出读取集合并再次采集完整来源；窗口仍须保持串行和完整保护。
+    window.finish(Ok(())).unwrap();
+    let changed = std::fs::write(root.join("inputs/来源-00.txt"), b"changed");
+    let checked = window.finish(Ok(()));
+    assert_eq!(checked.is_err(), changed.is_ok());
+    drop(window);
+    assert!(!reads::is_active());
+    std::fs::write(
+        root.join(sources::POLICY),
+        br#"{"format_version":1,"files":["missing"],"trees":[],"excluded_directories":[]}"#,
+    )
+    .unwrap();
+    assert!(manifest::capture(root).is_err());
+    let window = reads::Window::begin().unwrap();
+    assert!(manifest::capture(root).is_err());
+    assert!(window.finish(Ok(())).is_ok());
+}
+
+#[test]
 fn delegated_json_read_remains_protected_after_reader_returns() {
     let directory = fixture();
     let file = directory.path().join("input.json");

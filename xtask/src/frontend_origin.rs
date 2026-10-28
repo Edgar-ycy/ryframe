@@ -13,6 +13,8 @@ use url::Url;
 
 #[path = "frontend_origin/manifest.rs"]
 pub(crate) mod manifest;
+#[path = "frontend_origin/scan.rs"]
+pub(crate) mod scan;
 #[path = "frontend_origin/source_guard.rs"]
 mod source_guard;
 #[path = "frontend_origin/sources.rs"]

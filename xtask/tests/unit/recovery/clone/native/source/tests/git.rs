@@ -196,6 +196,7 @@ fn intermediate_and_leaf_symlinks_are_rejected_before_reading() {
     for path in ["linked/Cargo.toml", "leaf"] {
         assert!(source_file(&fixture.0, path, false).is_err());
     }
+    assert!(super::super::file_inventory(&fixture.0).is_err());
     assert!(
         protocol::request(&json!({"action":"capture","root":fixture.0,"source":null})).is_err()
     );
@@ -218,8 +219,15 @@ fn intermediate_junction_is_rejected_before_file_read() {
         String::from_utf8_lossy(&result.stderr)
     );
     let observed = source_file(&fixture.0, "linked/Cargo.toml", false);
+    fs::create_dir(fixture.0.join("xtask")).unwrap();
+    fs::write(
+        fixture.0.join(crate::frontend_origin::sources::POLICY),
+        br#"{"format_version":1,"files":["Cargo.toml","linked/Cargo.toml"],"trees":[],"excluded_directories":[]}"#,
+    ).unwrap();
+    let manifest = crate::frontend_origin::manifest::capture(&fixture.0);
     fs::remove_dir(&junction).unwrap();
     assert!(observed.is_err());
+    assert!(manifest.is_err());
 }
 
 #[cfg(unix)]
