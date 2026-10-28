@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     process::ExitStatus,
     thread,
@@ -190,9 +190,15 @@ fn create_stdin(path: &Path, input: Option<&[u8]>) -> Result<Option<File>> {
     let Some(input) = input else {
         return Ok(None);
     };
-    let mut file = create_file(path, "stdin")?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("无法创建 stdin 证据 {}：{error}", path.display()))?;
     file.write_all(input)?;
     file.flush()?;
+    file.rewind()?;
     Ok(Some(file))
 }
 
