@@ -3,6 +3,7 @@ import copy
 import io
 import json
 import os
+import queue
 from pathlib import Path
 import subprocess
 import threading
@@ -21,6 +22,64 @@ class CacheNativeTransportTests(unittest.TestCase):
     def binding(self):
         from contextlib import nullcontext
         return patch.object(native, "verified_tool", return_value=nullcontext("bound-tool.exe"))
+
+    def test_exchange_finishes_without_eof_and_error_cleanup_never_closes_a_foreign_read(self):
+        class ShortQueue(queue.Queue):
+            def get(self, block=True, timeout=None):
+                return super().get(block, timeout=0.05)
+        final = b'{"ok":true,"result":"published"}\n'
+        port = b'{"port":"producers-stopped","arguments":null,"sequence":1}\n'
+        primary = KeyboardInterrupt("original callback failure")
+        cases = (("final", final, None),
+                 ("json", b'{private-invalid-json}\n', ValueError),
+                 ("sequence", port.replace(b'"sequence":1', b'"sequence":2'), RuntimeError),
+                 ("callback", port + final, KeyboardInterrupt),
+                 ("timeout", b"", TimeoutError))
+        for name, frames, expected in cases:
+            with self.subTest(case=name):
+                read_fd, writer = os.pipe()
+                child = Mock()
+                child.stdin = io.BytesIO()
+                child.stdout = os.fdopen(read_fd, "rb")
+                child.poll.return_value = 0
+                child.wait.return_value = 0
+                if frames:
+                    os.write(writer, frames)
+                callback = Mock(side_effect=primary) if name == "callback" else Mock()
+                result, failures = [], []
+                def exchange():
+                    try:
+                        result.append(native.exchange({"operation": "stage"}, callback))
+                    except BaseException as error:
+                        failures.append(error)
+                # 真匿名管道的 writer 始终持有；旧实现会卡在下一次 read 与 close 的流锁。
+                with self.binding(), patch.object(native.subprocess, "Popen", return_value=child) as spawn, \
+                        patch.object(queue, "Queue", ShortQueue):
+                    worker = threading.Thread(target=exchange, daemon=True)
+                    worker.start()
+                    try:
+                        worker.join(3)
+                        bounded = not worker.is_alive()
+                        if name != "timeout" and bounded:
+                            self.assertTrue(child.stdout.closed)
+                    finally:
+                        # 即使被测实现回归，也先解除测试自己的阻塞，再断言，不能挂住门禁。
+                        os.close(writer)
+                        worker.join(3)
+                    self.assertTrue(bounded, "writer 未关闭时 exchange 必须有界返回")
+                    self.assertFalse(worker.is_alive())
+                    spawn.assert_called_once()
+                    child.kill.assert_not_called()
+                if expected is None:
+                    self.assertEqual(result, ["published"])
+                    self.assertFalse(failures)
+                else:
+                    self.assertEqual(len(failures), 1)
+                    self.assertIsInstance(failures[0], expected)
+                    if name == "callback":
+                        self.assertIs(failures[0], primary)
+                    else:
+                        callback.assert_not_called()
 
     def test_credentials_only_travel_in_stdin_and_ambient_secrets_are_removed(self):
         response = subprocess.CompletedProcess([], 0, b'{"ok":true,"result":null}', b'')

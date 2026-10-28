@@ -94,22 +94,33 @@ def exchange(payload, port):
             env=configured({}, inherited=_child_environment()), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **options)
         messages = queue.Queue(maxsize=1)
+        permit = threading.Event()
+        stopped = threading.Event()
         def receive():
             try:
                 while True:
-                    line = child.stdout.readline(1024 * 1024 + 1)
-                    messages.put(line)
+                    permit.wait()
+                    permit.clear()
+                    if stopped.is_set():
+                        return
+                    try:
+                        line = child.stdout.readline(1024 * 1024 + 1)
+                    except OSError:
+                        line = b""
+                    messages.put_nowait(line)
                     if not line:
                         return
-            except OSError:
-                messages.put(b"")
+            finally:
+                # stdout 仅由读取线程关闭，主线程不能等待另一个线程持有的 read 锁。
+                child.stdout.close()
         reader = threading.Thread(target=receive, daemon=True)
-        reader.start()
         pending = None
         sequence = 0
         wait_seconds = 100 if payload["operation"] == "stage" else 50
         try:
+            reader.start()
             send(child, payload)
+            permit.set()
             while True:
                 try:
                     line = messages.get(timeout=wait_seconds)
@@ -139,6 +150,8 @@ def exchange(payload, port):
                         wait_seconds = timeout + 70 + max(50, timeout + 20) + 30
                     else:
                         wait_seconds = 100
+                    # 完整处理并回复当前端口后才许可下一次读取；终结或异常均不许可。
+                    permit.set()
                     continue
                 child.stdin.close()
                 code = child.wait(timeout=5)
@@ -159,13 +172,21 @@ def exchange(payload, port):
                     raise ValueError(response["message"])
                 raise RuntimeError("缓存阶段响应或退出状态无效；禁止重放")
         finally:
-            if child.poll() is None:
-                child.kill()
-            child.wait(timeout=5)
-            if not child.stdin.closed:
-                child.stdin.close()
-            child.stdout.close()
-            reader.join(timeout=1)
+            stopped.set()
+            permit.set()
+            try:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+            finally:
+                try:
+                    if not child.stdin.closed:
+                        child.stdin.close()
+                finally:
+                    if reader.ident is None:
+                        child.stdout.close()
+                    else:
+                        reader.join(timeout=1)
 
 
 def images(markers):
