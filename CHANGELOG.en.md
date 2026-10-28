@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Report the configuration field, path, underlying cause, and repair advice when local object-storage reset preflight fails, requiring inspection of existing ledgers and resources before retrying. Preserve remote-error redaction and no automatic replay. Correct migration import boundaries for worker-only builds.
+
 - Remove the old Python CLI and decoder replaced by native Rust source verification and comparison, together with their forwarding and private-protocol tests. Formal process tests retain environment isolation, failure without success receipts, and unchanged before/after files; shared producers remain.
 
 - Move reboot-observation configuration contracts, original process identities, and kernel boot proofs into the native tool, retaining independent build-drift blockers and original-ledger controller verification. Remove replaced Python role, endpoint, and failed-prefix implementations and their obsolete tests.

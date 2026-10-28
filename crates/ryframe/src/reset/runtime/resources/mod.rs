@@ -90,6 +90,7 @@ fn validate_redis_identity(config: &RedisConfig, manifest: &ResetManifest) -> Re
 
 pub struct StorageReset {
     storage: Arc<dyn ObjectStorage>,
+    local_root: Option<PathBuf>,
 }
 
 impl StorageReset {
@@ -112,7 +113,12 @@ impl StorageReset {
                 .map_err(|_| ResetError::new("对象存储配置无法创建安全客户端"))?,
             ),
         };
-        Ok(Self { storage })
+        let local_root = (config.object_storage.backend == StorageBackend::Local)
+            .then(|| PathBuf::from(&manifest.object_storage.endpoint));
+        Ok(Self {
+            storage,
+            local_root,
+        })
     }
 
     pub async fn inspect(&self, manifest: &ResetManifest) -> ResetResult<PhaseEvidence> {
@@ -120,7 +126,14 @@ impl StorageReset {
             self.storage
                 .readiness_check(&item.bucket)
                 .await
-                .map_err(|_| ResetError::new("对象存储桶不存在或不可读"))?;
+                .map_err(|error| match &self.local_root {
+                    Some(root) => ResetError::new(format!(
+                        "object_storage.local_base_dir 本地对象存储桶不存在或不可读：桶={}，路径={}；原因={error}；请按所选本地路径准备桶目录并核对访问权限；已有写入阶段须先核对原账本与现场，不要盲目重跑",
+                        item.bucket, root.join(&item.bucket).display(),
+                    )),
+                    // 远端错误可能携带端点或服务响应，保留原有脱敏边界。
+                    None => ResetError::new("对象存储桶不存在或不可读"),
+                })?;
             let marker_exists = self
                 .storage
                 .exists(&item.bucket, &item.ownership_marker_key)

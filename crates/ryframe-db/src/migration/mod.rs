@@ -2,12 +2,11 @@
 
 use std::collections::BTreeSet;
 
-#[cfg(feature = "migration")]
-use sea_orm::TransactionTrait;
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult,
-    Statement, TryGetable,
+    ConnectionTrait, DatabaseBackend, DbBackend, DbErr, FromQueryResult, Statement, TryGetable,
 };
+#[cfg(feature = "migration")]
+use sea_orm::{DatabaseConnection, TransactionTrait};
 #[cfg(feature = "migration")]
 use sea_orm_migration::prelude::*;
 

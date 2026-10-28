@@ -105,6 +105,85 @@ impl Fixture {
 }
 
 #[test]
+fn missing_local_storage_root_reports_io_without_creating_it() {
+    let mut fixture = Fixture::new();
+    let missing = fixture.directory.path().join("missing-objects");
+    fixture.config.object_storage.local_base_dir = missing.to_str().unwrap().into();
+    let cause = fs::symlink_metadata(&missing).unwrap_err().to_string();
+    let before = directory_snapshot(fixture.directory.path());
+    let error = build_manifest(
+        &fixture.config,
+        &load_code_sha(&fixture.config.reset).unwrap(),
+    )
+    .unwrap_err()
+    .to_string();
+    for detail in [
+        "object_storage.local_base_dir",
+        missing.to_str().unwrap(),
+        &cause,
+        "准备已存在目录",
+        "核对访问权限",
+        "不要盲目重跑",
+    ] {
+        assert!(
+            error.contains(detail),
+            "根目录诊断必须保留安全路径、原因和处置提示"
+        );
+    }
+    for secret in [PRIMARY_PASSWORD, "redis-private-marker", "Reset!Admin123"] {
+        assert!(!error.contains(secret), "根目录诊断不得回显凭据");
+    }
+    assert!(!missing.exists(), "身份读取失败不得自动创建根目录");
+    assert_eq!(directory_snapshot(fixture.directory.path()), before);
+}
+
+#[tokio::test]
+async fn local_bucket_readiness_reports_cause_without_resource_changes() {
+    use ryframe::reset::runtime::resources::StorageReset;
+    use ryframe_adapters::storage::{LocalObjectStorage, ObjectStorage};
+
+    let fixture = Fixture::new();
+    let manifest = fixture.manifest();
+    let root = PathBuf::from(&manifest.object_storage.endpoint);
+    let bucket = &manifest.object_storage.prefixes[0].bucket;
+    let path = root.join(bucket);
+    let storage = StorageReset::new(&fixture.config, &manifest).unwrap();
+    let adapter = LocalObjectStorage::new(root);
+    // 普通文件占用桶路径是可移植的非目录失败，不依赖平台权限或管理员身份。
+    for occupied in [false, true] {
+        if occupied {
+            fs::write(&path, b"preserve-existing-local-object-path").unwrap();
+        }
+        let cause = adapter
+            .readiness_check(bucket)
+            .await
+            .unwrap_err()
+            .to_string();
+        let before = directory_snapshot(fixture.directory.path());
+        let error = storage.inspect(&manifest).await.unwrap_err().to_string();
+        for detail in [
+            "object_storage.local_base_dir",
+            bucket.as_str(),
+            path.to_str().unwrap(),
+            &cause,
+            "准备桶目录",
+            "核对访问权限",
+            "不要盲目重跑",
+        ] {
+            assert!(
+                error.contains(detail),
+                "桶诊断必须保留路径、底层原因和处置提示"
+            );
+        }
+        for secret in [PRIMARY_PASSWORD, "redis-private-marker", "Reset!Admin123"] {
+            assert!(!error.contains(secret), "桶诊断不得回显凭据");
+        }
+        assert_eq!(path.exists(), occupied);
+        assert_eq!(directory_snapshot(fixture.directory.path()), before);
+    }
+}
+
+#[test]
 fn explicit_directory_and_required_environment_file_are_used_without_process_mutation() {
     let fixture = Fixture::new();
     let args = ConfigurationArgs::parse(vec![

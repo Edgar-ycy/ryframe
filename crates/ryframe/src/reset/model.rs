@@ -243,12 +243,12 @@ fn canonical_local_storage_root(configured: &str) -> ResetResult<String> {
         ));
     }
     let link_metadata = std::fs::symlink_metadata(path)
-        .map_err(|_| ResetError::new("无法读取本地对象存储根目录身份"))?;
+        .map_err(|error| local_storage_root_io_error(path, "读取根目录身份", error))?;
     if is_link_or_reparse(&link_metadata) {
         return Err(ResetError::new("本地对象存储根目录不能是符号链接"));
     }
-    let canonical =
-        std::fs::canonicalize(path).map_err(|_| ResetError::new("无法规范化本地对象存储根目录"))?;
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| local_storage_root_io_error(path, "规范化根目录", error))?;
     if !canonical.is_dir() {
         return Err(ResetError::new("本地对象存储根路径必须是已存在目录"));
     }
@@ -256,6 +256,13 @@ fn canonical_local_storage_root(configured: &str) -> ResetResult<String> {
         .to_str()
         .map(str::to_owned)
         .ok_or_else(|| ResetError::new("本地对象存储规范路径必须使用 Unicode 编码"))
+}
+
+fn local_storage_root_io_error(path: &Path, operation: &str, error: std::io::Error) -> ResetError {
+    ResetError::new(format!(
+        "object_storage.local_base_dir 本地对象存储{operation}失败：路径={}；IO 原因={error}；请按所选本地路径准备已存在目录并核对访问权限；已有写入阶段须先核对原账本与现场，不要盲目重跑",
+        path.display(),
+    ))
 }
 
 fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
