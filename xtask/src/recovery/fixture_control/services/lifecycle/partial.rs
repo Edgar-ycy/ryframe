@@ -6,6 +6,8 @@ use crate::recovery::clone::native::resources::common;
 mod inputs;
 #[path = "partial/proof.rs"]
 pub(in crate::recovery::fixture_control::services) mod proof;
+#[path = "partial/reconciliation.rs"]
+mod reconciliation;
 
 pub(super) fn close(
     runtime: &mut dyn Runtime,
@@ -76,6 +78,9 @@ fn stop(
     };
     stable(runtime, context, services, Some(current))?;
     let file = output.join("partial-closed.json");
+    if services["reconciliation"].is_object() {
+        reconciliation::publish(runtime, context, services, output)?;
+    }
     let receipt = proof::create(context, services, output, completion)?;
     json_io::write_new(&file, &receipt)?;
     let result = result(
@@ -100,6 +105,10 @@ fn close_cache(
     services: &Value,
     output: &Path,
 ) -> Result<Value> {
+    if services["reconciliation"].is_object() {
+        reconciliation::observe(runtime, services)?;
+        return Ok(json!({"status":"redis_process_stopped"}));
+    }
     if services["failed_cleanup"] == true {
         cache_state(runtime, services, "stopped")?;
         let receipt = json!({"status":"redis_process_stopped","already_stopped":true,
@@ -115,6 +124,10 @@ fn close_cache(
 }
 
 fn cache_state(runtime: &mut dyn Runtime, services: &Value, expected: &str) -> Result<()> {
+    if services["reconciliation"].is_object() {
+        check(expected == "stopped", "协调不能要求或声明启动成功")?;
+        return reconciliation::observe(runtime, services).map(|_| ());
+    }
     let observed = runtime.call(
         "cache-status",
         json!({"request":services["requests"]["redis"],
@@ -184,15 +197,7 @@ fn running(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
 
 fn stopped(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
     if !services["runtime"].is_null() {
-        let observed = runtime.call(
-            "cache-status",
-            json!({"request":services["requests"]["redis"],
-            "runtime":services["runtime"],"effective":null}),
-        )?;
-        check(
-            observed["state"] == "stopped",
-            "部分关闭后 Redis 尚未精确退出",
-        )?;
+        cache_state(runtime, services, "stopped")?;
     }
     if !services["tree"].is_null() {
         check(

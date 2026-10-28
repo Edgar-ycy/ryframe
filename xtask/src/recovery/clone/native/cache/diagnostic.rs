@@ -254,6 +254,9 @@ pub(super) fn from_error(error: &(dyn std::error::Error + 'static)) -> Value {
 }
 
 pub(crate) fn primitive_detail(error: &(dyn std::error::Error + 'static)) -> (Value, Value) {
+    if let Some(failure) = error.downcast_ref::<super::cleanup_diagnostic::Failure>() {
+        return primitive_detail(failure.primary.as_ref());
+    }
     if let Some(remote) = error.downcast_ref::<super::process::RemoteFailure>() {
         return (remote.diagnostic.value(), json!(remote.code));
     }
@@ -287,6 +290,9 @@ pub(crate) fn primitive_error(detail: &Value, code: &Value) -> Result<Box<dyn st
 }
 
 pub(crate) fn primitive_message(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(failure) = error.downcast_ref::<super::cleanup_diagnostic::Failure>() {
+        return Some(failure.to_string());
+    }
     error
         .downcast_ref::<super::process::RemoteFailure>()
         .map(ToString::to_string)

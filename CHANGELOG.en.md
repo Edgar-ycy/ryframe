@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add strict read-only reconciliation for failed initial generations: preserve unconfirmed parent cleanup and, only after complete Linux terminal evidence and current identity, launcher, and port proofs pass, append reconciliation evidence in a new formal partial-close stage and close the original RustFS supervision tree. Propagate fixed safe cleanup diagnostics to current consumers without fabricating stop or startup success.
+
 - Native initial-generation late failures after runtime publication still execute exact cleanup. Partial closure accepts them only when complete acceptance, failure, stop and exit evidence agrees and the runtime exactly matches the original stop receipt, binding all receipts before and after verification without resending stop or claiming startup success.
 
 - Split native Redis startup into authenticated readiness and acceptance confirmation: `timeout_seconds` remains the readiness budget, followed by a separate 15-second acceptance budget after ack publication. Both sides check deadlines on successful completion, retaining complete source and identity verification and failure cleanup without resetting loop budgets or replaying operations.

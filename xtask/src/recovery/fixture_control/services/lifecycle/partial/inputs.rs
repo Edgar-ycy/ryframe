@@ -66,6 +66,9 @@ pub(super) fn load(runtime: &mut dyn Runtime, context: &Context) -> Result<Value
             })?;
             result["runtime"] = validated["runtime"].clone();
             result["failed_cleanup"] = json!(true);
+            if validated["reconcile_required"] == true {
+                result["reconciliation"] = validated.clone();
+            }
             result["bindings"]
                 .as_object_mut()
                 .ok_or("部分关闭绑定集合无效")?

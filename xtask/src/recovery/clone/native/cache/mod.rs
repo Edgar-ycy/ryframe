@@ -1,6 +1,10 @@
 //! 缓存恢复的请求、收据与有界控制调用；不接管外层锁或重放写入。
 pub(crate) mod binding;
+mod cleanup_diagnostic;
 mod diagnostic;
+pub(crate) use cleanup_diagnostic::{
+    decode as primitive_cleanup_error, detail as primitive_cleanup,
+};
 pub(crate) use diagnostic::{primitive_detail, primitive_error, primitive_message};
 mod evidence;
 mod facts;
@@ -84,11 +88,13 @@ fn protocol_response(result: Result<Value>) -> (i32, Value) {
         Ok(value) => (0, json!({"ok":true,"result":value})),
         // 解析错误和远端输出可能包含密码；只发布固定诊断，禁止重放。
         Err(error) => {
-            let observer = error.downcast_ref::<ObserverFailure>();
+            let (_, exit_code) = primitive_detail(error.as_ref());
+            let classified = cleanup_diagnostic::primary(error.as_ref());
+            let observer = classified.downcast_ref::<ObserverFailure>();
             let category = if observer.is_some_and(ObserverFailure::is_timeout) {
                 "CacheObservationTimeout"
             } else {
-                match error
+                match classified
                     .downcast_ref::<std::io::Error>()
                     .map(std::io::Error::kind)
                 {
@@ -96,26 +102,23 @@ fn protocol_response(result: Result<Value>) -> (i32, Value) {
                     Some(std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
                         "CacheObservationTimeout"
                     }
-                    _ if error.downcast_ref::<process::ControlFailure>().is_some()
-                        || error.downcast_ref::<process::RemoteFailure>().is_some() =>
+                    _ if classified
+                        .downcast_ref::<process::ControlFailure>()
+                        .is_some()
+                        || classified
+                            .downcast_ref::<process::RemoteFailure>()
+                            .is_some()
+                        || !exit_code.is_null() =>
                     {
                         "CacheControlFailed"
                     }
                     _ => "CacheProcessRejected",
                 }
             };
-            let detail = error
-                .downcast_ref::<process::RemoteFailure>()
-                .map(ToString::to_string)
-                .or_else(|| {
-                    error
-                        .downcast_ref::<diagnostic::Diagnostic>()
-                        .map(ToString::to_string)
-                });
+            let detail = primitive_message(error.as_ref());
             (
                 1,
-                json!({"ok":false,"error":category,"exit_code":error.downcast_ref::<process::ControlFailure>().and_then(|failure| failure.0)
-                    .or_else(||error.downcast_ref::<process::RemoteFailure>().and_then(|failure| failure.code)),
+                json!({"ok":false,"error":category,"exit_code":exit_code,
                 "message":detail.or_else(||observer.map(ToString::to_string)).unwrap_or_else(||error.downcast_ref::<PolicyFailure>().map_or_else(||"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。".to_string(),|failure|format!("{}；保留意图与完整前后像，核对固定请求和已登记代次后显式恢复，禁止自动重放。",failure.0)))}),
             )
         }

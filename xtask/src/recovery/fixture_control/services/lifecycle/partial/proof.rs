@@ -23,7 +23,11 @@ pub(super) fn create(
     let redis = if services["runtime"].is_null() {
         Value::Null
     } else {
-        binding(&output.join("stopped.json"))?
+        binding(&output.join(if services["reconciliation"].is_object() {
+            "redis-reconciled.json"
+        } else {
+            "stopped.json"
+        }))?
     };
     Ok(
         json!({"format_version":1,"kind":"reference-fixture-partial-close","run":context.run,
@@ -215,6 +219,16 @@ fn validate_roles(run: &Path, number: usize, proof: &Value) -> Result<()> {
             )?;
             members(&proof["rustfs"], run)?;
         } else {
+            if let Some(validated) = failed_cache(run, proof)?
+                && validated["reconcile_required"] == true
+            {
+                check(
+                    proof["services"][role] == "stopped",
+                    "协调角色必须确认为已退出",
+                )?;
+                reconciliation::validate(run, number, &proof["redis"], &validated)?;
+                continue;
+            }
             let expected = run.join(format!("lifecycle-{number:04}/stopped.json"));
             let stopped = bound(run, &proof["redis"])?;
             let original = if let Some(validated) = failed_cache(run, proof)? {

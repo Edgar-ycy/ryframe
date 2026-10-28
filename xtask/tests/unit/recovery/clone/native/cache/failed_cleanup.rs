@@ -1,5 +1,81 @@
 use super::*;
 
+#[test]
+fn unconfirmed_parent_retains_false_and_requires_complete_linux_terminal_chain() {
+    let (fixture, runtime) = failed_cleanup_fixture();
+    let parent = fixture.output.join("failure.json");
+    let mut value = document::read(&parent).unwrap();
+    value["cleanup_completed"] = json!(false);
+    document::write_replace(&parent, &value).unwrap();
+    let bytes = std::fs::read(&parent).unwrap();
+    std::fs::remove_file(fixture.output.join("failure-stop/stopped.json")).unwrap();
+    let mut linux = linux_acceptance_failure(&fixture, &runtime);
+    linux["diagnostic"] = super::super::diagnostic::Diagnostic {
+        category: super::super::diagnostic::Category::AcknowledgementTimeout,
+        write_outcome: super::super::diagnostic::Outcome::Stopped,
+        os_code: None,
+    }
+    .value();
+    fixture.write("linux-failure.json", linux.clone());
+    let validate = || super::super::failed_cleanup::validate(&fixture.request, &fixture.output);
+    let original = validate().unwrap();
+    assert_eq!(original["runtime"], runtime);
+    assert_eq!(original["reconcile_required"], true);
+    for name in [
+        "acknowledged.json",
+        "accepted.json",
+        "runtime.json",
+        "failure-stop/stopped.json",
+        "failure-stop/unknown.json",
+    ] {
+        fixture.write(name, json!({}));
+        assert!(validate().is_err(), "{name}");
+        std::fs::remove_file(fixture.output.join(name)).unwrap();
+    }
+    for name in [
+        "linux-failure.json",
+        "linux-exited.json",
+        "linux-process.json",
+    ] {
+        let path = fixture.output.join(name);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(validate().is_err(), "missing {name}");
+        std::fs::write(path, bytes).unwrap();
+    }
+    for (pointer, replacement) in [
+        ("/cleanup_completed", json!(false)),
+        ("/child_returncode", json!(9)),
+        ("/identity/started", json!("different")),
+        ("/diagnostic/write_outcome", json!("unknown")),
+    ] {
+        let mut changed = linux.clone();
+        *changed.pointer_mut(pointer).unwrap() = replacement;
+        document::write_replace(&fixture.output.join("linux-failure.json"), &changed).unwrap();
+        assert!(validate().is_err());
+    }
+    document::write_replace(&fixture.output.join("linux-failure.json"), &linux).unwrap();
+    assert_eq!(validate().unwrap(), original);
+    assert_eq!(std::fs::read(&parent).unwrap(), bytes);
+    let cleanup = super::super::cleanup_diagnostic::capture(&std::io::Error::from_raw_os_error(5));
+    let sidecar = json!({"request_sha256":digest::plan_hash(&fixture.request).unwrap(),
+        "launcher":runtime["launcher"],"cleanup":cleanup});
+    fixture.write("cleanup-diagnostic.json", sidecar.clone());
+    assert_eq!(validate().unwrap()["reconcile_required"], true);
+    let mut changed = sidecar;
+    changed["cleanup"]["operation"] = json!("private-marker");
+    document::write_replace(&fixture.output.join("cleanup-diagnostic.json"), &changed).unwrap();
+    assert!(
+        !validate()
+            .unwrap_err()
+            .to_string()
+            .contains("private-marker")
+    );
+    assert_eq!(std::fs::read(&parent).unwrap(), bytes);
+    assert!(!fixture.output.join("runtime.json").exists());
+    assert!(!fixture.output.join("failure-stop/stopped.json").exists());
+}
+
 fn linux_acceptance_failure(fixture: &Fixture, runtime: &Value) -> Value {
     use super::super::diagnostic::{Category, Diagnostic, Outcome};
     let mut intent = common::binding(&fixture.output.join("linux-intent.json")).unwrap();

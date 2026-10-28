@@ -104,12 +104,23 @@ fn failed(
         attempt.runtime.as_ref(),
         attempt.authorized,
     );
+    let cleanup_detail = cleanup
+        .as_ref()
+        .err()
+        .map(|error| super::cleanup_diagnostic::capture(error.as_ref()));
     linux_write::publish(
         &output.join("failure.json"),
         &json!({"error_type":"NativeCacheFailure",
         "launcher":attempt.trusted,"request_sha256":digest::plan_hash(request)?,"runtime_recorded":attempt.runtime.is_some(),
         "cleanup_completed":cleanup.is_ok()}),
     )?;
+    if let Some(detail) = &cleanup_detail {
+        linux_write::publish(
+            &output.join("cleanup-diagnostic.json"),
+            &json!({
+            "request_sha256":digest::plan_hash(request)?,"launcher":attempt.trusted,"cleanup":detail}),
+        )?;
+    }
     if output.join("linux-failure.json").try_exists()? {
         let failure = doc::read(&output.join("linux-failure.json"))?;
         if failure["request_sha256"] != digest::plan_hash(request)? {
@@ -135,6 +146,12 @@ fn failed(
         if !phase_timeout {
             result = Err(Box::new(super::process::RemoteFailure { code, diagnostic }));
         }
+    }
+    if let Some(detail) = cleanup_detail {
+        result = match result {
+            Ok(value) => Ok(value),
+            Err(error) => Err(super::cleanup_diagnostic::attach(error, detail)?),
+        };
     }
     result
 }
@@ -352,36 +369,55 @@ fn cleanup(
     runtime: Option<&Value>,
     authorized: bool,
 ) -> Result<()> {
+    use super::cleanup_diagnostic::{Operation, context};
     let observed = if let Some(runtime) = runtime {
         Some(runtime.clone())
     } else if output.join("linux-process.json").try_exists()? {
-        Some(evidence::inspect(request, output)?)
+        Some(evidence::inspect(request, output).map_err(|e| context(Operation::Inspect, e))?)
     } else {
         None
     };
     if let Some(runtime) = observed {
         let cleanup = output.join("failure-stop");
-        std::fs::create_dir(&cleanup)?;
-        host_control::stop(backend, request, &runtime, &cleanup)?;
+        std::fs::create_dir(&cleanup).map_err(|e| context(Operation::CreateDirectory, e.into()))?;
+        host_control::stop(backend, request, &runtime, &cleanup)
+            .map_err(|e| context(Operation::Stop, e))?;
         return Ok(());
     }
-    let child = child.ok_or("缓存尚未取得自有 launcher，启动结果需核对")?;
+    let child = child.ok_or_else(|| {
+        context(
+            Operation::WaitLauncher,
+            "缓存尚未取得自有 launcher，启动结果需核对".into(),
+        )
+    })?;
     let deadline = Instant::now()
         + Duration::from_secs(request["timeout_seconds"].as_u64().ok_or("缓存超时无效")? + 20);
     let status = loop {
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| context(Operation::WaitLauncher, e.into()))?
+        {
             break status;
         }
         if Instant::now() >= deadline {
-            return Err("缓存监督器清理未确认；禁止重放".into());
+            return Err(context(
+                Operation::WaitLauncher,
+                "缓存监督器清理未确认；禁止重放".into(),
+            ));
         }
         std::thread::sleep(Duration::from_millis(50));
     };
     let failure = output.join("linux-failure.json");
     let not_started = !authorized && !output.join("linux-intent.json").try_exists()?;
-    if !not_started && (!failure.try_exists()? || doc::read(&failure)?["cleanup_completed"] != true)
+    if !not_started
+        && (!failure.try_exists()?
+            || doc::read(&failure).map_err(|e| context(Operation::ReadFailure, e))?["cleanup_completed"]
+                != true)
     {
-        return Err("缓存缺少精确部分失败收据".into());
+        return Err(context(
+            Operation::ReadFailure,
+            "缓存缺少精确部分失败收据".into(),
+        ));
     }
     let code = status.code().ok_or("缓存 launcher 没有明确退出码")?;
     linux_write::publish(
@@ -391,8 +427,8 @@ fn cleanup(
         "request_sha256":digest::plan_hash(request)?,"intent":common::binding(&output.join("intent.json"))?,
         "launcher_pid":child.id(),"launcher_returncode":code,"authorization_sent":authorized,
         "linux_cleanup":if not_started {Value::Null} else {common::binding(&failure)?}}),
-    )?;
-    evidence::inspect(request, output)?;
+    ).map_err(|e| context(Operation::PublishPartial, e))?;
+    evidence::inspect(request, output).map_err(|e| context(Operation::Inspect, e))?;
     Ok(())
 }
 
@@ -464,24 +500,18 @@ fn cleanup_diagnostics_do_not_replace_the_initiating_windows_phase_timeout() {
             Err(failure(category, Outcome::Unknown)),
         );
         let error = result.unwrap_err();
-        if index < 2 {
-            assert_eq!(
-                error
-                    .downcast_ref::<Diagnostic>()
-                    .unwrap_or_else(|| panic!("应保留启动阶段诊断，实际错误：{error}"))
-                    .value()["category"],
+        let (detail, _) = super::diagnostic::primitive_detail(error.as_ref());
+        assert_eq!(
+            detail["category"],
+            if index < 2 {
                 json!(category)
-            );
-        } else {
-            assert_eq!(
-                error
-                    .downcast_ref::<super::process::RemoteFailure>()
-                    .unwrap_or_else(|| panic!("应保留远端失败诊断，实际错误：{error}"))
-                    .diagnostic
-                    .value(),
-                remote.value()
-            );
-        }
+            } else {
+                remote.value()["category"].clone()
+            }
+        );
+        let cleanup = super::cleanup_diagnostic::detail(error.as_ref());
+        super::cleanup_diagnostic::validate(&cleanup).unwrap();
+        assert_eq!(cleanup["operation"], "wait_launcher");
         assert_eq!(
             doc::read(&output.join("failure.json")).unwrap()["cleanup_completed"],
             false

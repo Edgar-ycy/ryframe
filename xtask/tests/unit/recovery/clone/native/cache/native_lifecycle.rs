@@ -9,6 +9,53 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
 #[test]
+fn cleanup_diagnostics_preserve_safe_causes_and_reject_untrusted_protocol_fields() {
+    use super::cleanup_diagnostic::{self, Operation};
+    let error = cleanup_diagnostic::context(
+        Operation::Stop,
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "private-credential-marker",
+        )
+        .into(),
+    );
+    let detail = cleanup_diagnostic::capture(error.as_ref());
+    assert_eq!(detail["cause"], "permission_denied");
+    assert!(!detail.to_string().contains("private-credential-marker"));
+    cleanup_diagnostic::validate(&detail).unwrap();
+    let primary = super::diagnostic::failure(Category::ReadinessTimeout, Outcome::Unknown);
+    let wrapped = cleanup_diagnostic::decode(primary, &detail).unwrap();
+    assert_eq!(
+        super::diagnostic::primitive_detail(wrapped.as_ref()).0["category"],
+        "readiness_timeout"
+    );
+    assert!(wrapped.to_string().contains("permission_denied"));
+    assert!(!wrapped.to_string().contains("private-credential-marker"));
+    for (field, replacement) in [
+        ("operation", json!("private-credential-marker")),
+        ("cause", json!("private-credential-marker")),
+        ("os_code", json!("private-credential-marker")),
+        ("diagnostic", json!({"advice":"private-credential-marker"})),
+    ] {
+        let mut changed = detail.clone();
+        changed[field] = replacement;
+        assert!(
+            !cleanup_diagnostic::validate(&changed)
+                .unwrap_err()
+                .to_string()
+                .contains("private-credential-marker")
+        );
+    }
+    let raw = cleanup_diagnostic::context(
+        Operation::CreateDirectory,
+        std::io::Error::from_raw_os_error(5).into(),
+    );
+    let raw = cleanup_diagnostic::capture(raw.as_ref());
+    assert_eq!(raw["os_code"], 5);
+    cleanup_diagnostic::validate(&raw).unwrap();
+}
+
+#[test]
 fn readiness_retries_keep_one_budget_and_cannot_promote_a_late_success() {
     let start = Instant::now();
     let deadline = Deadline::new(start, Duration::from_secs(60));

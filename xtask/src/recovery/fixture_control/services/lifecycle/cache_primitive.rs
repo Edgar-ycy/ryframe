@@ -114,7 +114,7 @@ fn response(result: Result<Value>) -> (i32, Value) {
             } else {
                 (
                     1,
-                    json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":null}),
+                    json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":null,"cleanup_diagnostic":null}),
                 )
             }
         }
@@ -131,7 +131,7 @@ fn response(result: Result<Value>) -> (i32, Value) {
             };
             (
                 1,
-                json!({"ok":false,"error":category,"diagnostic":diagnostic,"exit_code":exit_code}),
+                json!({"ok":false,"error":category,"diagnostic":diagnostic,"exit_code":exit_code,"cleanup_diagnostic":cache::primitive_cleanup(error.as_ref())}),
             )
         }
     }
@@ -145,7 +145,13 @@ pub(super) fn decode(success: bool, value: &Value) -> Result<Value> {
     }
     doc::exact(
         value,
-        &["ok", "error", "diagnostic", "exit_code"],
+        &[
+            "ok",
+            "error",
+            "diagnostic",
+            "exit_code",
+            "cleanup_diagnostic",
+        ],
         "原生cache原语失败响应",
     )?;
     check(
@@ -157,12 +163,19 @@ pub(super) fn decode(success: bool, value: &Value) -> Result<Value> {
         "原生cache原语失败类别无效",
     )?;
     if !value["diagnostic"].is_null() || !value["exit_code"].is_null() {
-        return Err(cache::primitive_error(
-            &value["diagnostic"],
-            &value["exit_code"],
+        let error = cache::primitive_error(&value["diagnostic"], &value["exit_code"])?;
+        return Err(cache::primitive_cleanup_error(
+            error,
+            &value["cleanup_diagnostic"],
         )?);
     }
-    super::runtime::decode(false, &json!({"ok":false,"error":value["error"]}))
+    match super::runtime::decode(false, &json!({"ok":false,"error":value["error"]})) {
+        Err(error) => Err(cache::primitive_cleanup_error(
+            error,
+            &value["cleanup_diagnostic"],
+        )?),
+        Ok(_) => Err("原语失败响应不得解释为成功".into()),
+    }
 }
 
 #[cfg(test)]
@@ -193,10 +206,14 @@ mod tests {
     #[test]
     fn private_native_response_preserves_exit_status_and_rejects_untrusted_diagnostics() {
         let original = cache::primitive_error(&Value::Null, &json!(17)).unwrap();
+        let cleanup = json!({"format_version":1,"kind":"cache-cleanup-diagnostic","operation":"stop",
+            "cause":"permission_denied","os_code":5,"diagnostic":null,"exit_code":null});
+        let original = cache::primitive_cleanup_error(original, &cleanup).unwrap();
         let (code, value) = response(Err(original));
         assert_eq!(code, 1);
         assert_eq!(value["exit_code"], 17);
         let error = decode(false, &value).unwrap_err();
+        assert_eq!(cache::primitive_cleanup(error.as_ref()), cleanup);
         assert!(
             cache::primitive_message(error.as_ref())
                 .unwrap()
@@ -205,19 +222,19 @@ mod tests {
         for (success, value) in [
             (
                 true,
-                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":null}),
+                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":null,"cleanup_diagnostic":null}),
             ),
             (
                 false,
-                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":{"advice":"private-marker"},"exit_code":17}),
+                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":{"advice":"private-marker"},"exit_code":17,"cleanup_diagnostic":null}),
             ),
             (
                 false,
-                json!({"ok":false,"error":"private-marker","diagnostic":null,"exit_code":null}),
+                json!({"ok":false,"error":"private-marker","diagnostic":null,"exit_code":null,"cleanup_diagnostic":null}),
             ),
             (
                 false,
-                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":"private-marker"}),
+                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":"private-marker","cleanup_diagnostic":null}),
             ),
         ] {
             assert!(
