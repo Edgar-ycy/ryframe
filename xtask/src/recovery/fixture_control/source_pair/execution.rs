@@ -113,7 +113,7 @@ fn require_exact_files(
     files: &BTreeSet<&str>,
     managed: &[&str],
 ) -> Result<()> {
-    for entry in fs::read_dir(directory)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(directory)? {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name();

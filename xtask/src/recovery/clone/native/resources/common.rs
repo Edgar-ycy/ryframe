@@ -45,8 +45,10 @@ pub(crate) fn local_directory(backend: &Path, path: &Path, label: &str) -> Resul
 }
 
 pub(crate) fn common_file(backend: &Path, path: &Path, label: &str) -> Result<PathBuf> {
-    validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)
-        .map_err(|error| format!("{label}无效：{error}").into())
+    let path = validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)
+        .map_err(|error| format!("{label}无效：{error}"))?;
+    crate::recovery::runtime::dataset_authority::reads::file(&path)?;
+    Ok(path)
 }
 
 pub(crate) fn directory_identity(backend: &Path, value: &Value) -> Result<PathBuf> {

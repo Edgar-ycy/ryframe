@@ -22,7 +22,7 @@ pub(crate) const START_FIELDS: &[&str] = &[
     "remote_writes",
     "restore_qualified",
 ];
-const RESULT_FIELDS: &[&str] = &[
+pub(crate) const RESULT_FIELDS: &[&str] = &[
     "status",
     "request",
     "source_registration",

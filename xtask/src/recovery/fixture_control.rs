@@ -272,6 +272,7 @@ fn serialize_protocol(protocol: Value) -> Result<String> {
 }
 
 pub(super) fn read_json(path: &Path, label: &str, limit: u64) -> Result<Value> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("无法读取{label} {}：{error}", path.display()))?;
     if !metadata.file_type().is_file() || digest::linked(&metadata) {

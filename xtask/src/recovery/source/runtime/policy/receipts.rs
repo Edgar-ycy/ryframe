@@ -122,7 +122,7 @@ pub(super) fn schema(args: &Value) -> Result<Value> {
         fields.push("recovery");
     }
     documents::exact(value, &fields, "来源运行收据")?;
-    let actual = std::fs::read_dir(&directory)?
+    let actual = crate::recovery::runtime::dataset_authority::reads::entries(&directory)?
         .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
         .collect::<std::io::Result<BTreeSet<_>>>()?;
     let mut expected = root_entries(recovered)

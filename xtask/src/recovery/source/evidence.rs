@@ -123,6 +123,9 @@ fn execute(bytes: &[u8]) -> Result<Value> {
     }
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("restore-dataset-authority") => {
+            crate::recovery::runtime::dataset_authority::request(args)
+        }
         Some("runtime-build-read") => crate::recovery::runtime::build::request(args),
         Some("generation-request-rebuild") => generation_request::request(args),
         Some("generation-request-configuration") => generation_configuration(args),

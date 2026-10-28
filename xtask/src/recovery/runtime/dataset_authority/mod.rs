@@ -1,0 +1,112 @@
+//! 首次浏览器会话前的静态运行权威模型；不执行产品或解释器。
+use crate::{
+    Result,
+    recovery::clone::native::{digest, json as strict},
+};
+use serde_json::Value;
+use serde_json::json;
+use std::path::{Component, PathBuf};
+
+pub(crate) fn request(arguments: &Value) -> Result<Value> {
+    strict::exact(
+        arguments,
+        &["backend_dir", "runtime_receipt", "target_plan"],
+        "恢复数据集权威参数",
+    )?;
+    let window = reads::Window::begin()?;
+    let result = (|| {
+        let backend = path(&arguments["backend_dir"])?;
+        let actual = crate::recovery::fixture_control::git_root(&backend, "恢复数据集协调后端")?;
+        check(
+            actual == backend,
+            "恢复数据集协调后端必须为实际 Git 工作树根",
+        )?;
+        let mut inputs = inputs::Inputs::new(&backend);
+        let result = produce(&backend, &mut inputs, arguments);
+        inputs.finish(result)
+    })();
+    window.finish(result)
+}
+
+fn produce(
+    backend: &std::path::Path,
+    inputs: &mut inputs::Inputs,
+    arguments: &Value,
+) -> Result<Value> {
+    let runtime = inputs.read(&path(&arguments["runtime_receipt"])?)?;
+    schema::runtime(&runtime.value)?;
+    let target = inputs.read(&path(&arguments["target_plan"])?)?;
+    let documents = cross::read(inputs, &runtime.value)?;
+    check(
+        commands::same_path(
+            backend,
+            &path(&documents.launch.value["request"]["tools"]["coordinator_root"])?,
+        )?,
+        "恢复启动工具未绑定当前协调后端",
+    )?;
+    let reference = registration::reference(inputs, &documents.launch.value, &target)?;
+    let (chain, verified, _product) =
+        crate::recovery::inputs::target_plan::verify(backend, reference, &target.path)?;
+    crate::recovery::source::evidence::comparison::verify(
+        backend,
+        &chain.comparison_document.value,
+        true,
+    )?;
+    let python = commands::interpreter(backend, inputs)?;
+    cross::verify(
+        &runtime.value,
+        &verified,
+        &chain.reference.value,
+        &chain.backup.manifest,
+        &documents,
+    )?;
+    environment::verify(inputs, &documents.launch.value["request"], &verified)?;
+    lifecycle::verify(inputs, &documents.launch, &chain.reference.value, &python)?;
+    let dataset = lineage::extract(inputs, &chain.backup.result)?;
+    let selected = &chain.reference.value["target"];
+    Ok(
+        json!({"format_version":1,"kind":"restore-dataset-authority",
+        "runtime":crate::recovery::inputs::document::binding(&runtime),
+        "target_plan":crate::recovery::inputs::document::binding(&target),
+        "source_generation":dataset["source_generation"],"dataset_lineage":dataset["dataset_lineage"],
+        "target":{"scope_id":selected["scope_id"],"api_url":selected["api_url"],"frontend_url":selected["frontend_url"]},
+        "execution_backend":verified["product_execution"]["roots"]["execution_backend"]}),
+    )
+}
+
+pub(crate) mod commands;
+mod cross;
+mod environment;
+mod inputs;
+mod lifecycle;
+mod lineage;
+pub(crate) mod reads;
+mod registration;
+mod request_shape;
+mod schema;
+#[cfg(test)]
+mod tests;
+
+fn check(condition: bool, message: &str) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(message.into())
+    }
+}
+
+fn path(value: &Value) -> Result<PathBuf> {
+    let path = PathBuf::from(strict::text(value, "恢复静态权威路径")?);
+    check(
+        path.is_absolute()
+            && !path
+                .components()
+                .any(|part| matches!(part, Component::ParentDir | Component::CurDir)),
+        "恢复静态权威路径必须为无父目录跳转的绝对路径",
+    )?;
+    check(
+        !digest::linked_path(&path)?.contains(&true),
+        "恢复静态权威路径不得经过链接或重解析点",
+    )?;
+    Ok(path)
+}

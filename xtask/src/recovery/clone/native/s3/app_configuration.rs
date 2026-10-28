@@ -60,6 +60,7 @@ pub(crate) fn load(
     let mut files = serde_json::Map::new();
     for (index, name) in ["app.toml", environment.as_str()].iter().enumerate() {
         let file = directory.join(name);
+        crate::recovery::runtime::dataset_authority::reads::optional(&file)?;
         if index == 0 && !file.exists() {
             continue;
         }

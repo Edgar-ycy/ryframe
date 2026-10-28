@@ -47,7 +47,7 @@ pub(in crate::recovery::source::evidence) fn directory(
         ]);
         control::verify(runtime, role, operation)?;
     }
-    for entry in std::fs::read_dir(runtime)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(runtime)? {
         let entry = entry?;
         let name = entry
             .file_name()

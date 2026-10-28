@@ -125,7 +125,7 @@ pub(in crate::recovery::source::evidence) fn exact_directory(
 ) -> Result<()> {
     common::local_directory(backend, path, "历史完整证据目录")?;
     let mut names = std::collections::BTreeSet::new();
-    for entry in std::fs::read_dir(path)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(path)? {
         let entry = entry?;
         let metadata = std::fs::symlink_metadata(entry.path())?;
         let name = entry

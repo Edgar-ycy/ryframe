@@ -58,11 +58,13 @@ pub(crate) fn current(root: &Path) -> Result<Value> {
 }
 
 pub(crate) fn capture(root: &Path) -> Result<Inventory> {
-    capture_observed(
+    let captured = capture_observed(
         || snapshot(root),
         |head| worktree_fingerprint(root, head),
         || file_inventory(root),
-    )
+    )?;
+    crate::recovery::runtime::dataset_authority::reads::source(root, &captured)?;
+    Ok(captured)
 }
 
 fn capture_observed(
@@ -273,6 +275,7 @@ fn worktree_fingerprint(root: &Path, commit: &str) -> Result<String> {
         let relative = String::from_utf8(raw.clone()).map_err(|_| "源码路径必须为 UTF-8")?;
         let path = source_file(root, &relative, false)?.ok_or("未跟踪源码文件不存在")?;
         digest_bytes(&mut digest, &raw);
+        crate::recovery::runtime::dataset_authority::reads::file(&path)?;
         digest_bytes(&mut digest, &fs::read(path)?);
     }
     Ok(format!("sha256:{}", hex::encode(digest.finalize())))

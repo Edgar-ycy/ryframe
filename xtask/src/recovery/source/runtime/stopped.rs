@@ -92,7 +92,7 @@ fn entries(backend: &Path, directory: &Path) -> Result<BTreeSet<String>> {
         .map(str::to_owned),
     );
     let mut names = BTreeSet::new();
-    for entry in std::fs::read_dir(directory)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(directory)? {
         let entry = entry?;
         if digest::linked(&std::fs::symlink_metadata(entry.path())?) {
             return Err("来源验收包含链接或重解析点".into());
@@ -188,7 +188,7 @@ fn completion(
 
 fn directories(root: &Path, path: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    for entry in std::fs::read_dir(path)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(path)? {
         let entry = entry?;
         let metadata = std::fs::symlink_metadata(entry.path())?;
         if digest::linked(&metadata) {

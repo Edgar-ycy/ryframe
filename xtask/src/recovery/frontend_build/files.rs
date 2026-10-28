@@ -168,6 +168,7 @@ pub(super) struct StableFile {
 }
 impl StableFile {
     pub(super) fn open(path: &Path) -> Result<Self> {
+        crate::recovery::runtime::dataset_authority::reads::file(path)?;
         let before = fs::symlink_metadata(path).map_err(|_| fail("无法读取文件身份"))?;
         let modified = before
             .modified()
@@ -242,6 +243,7 @@ pub(crate) fn artifacts(root: &Path) -> Result<Artifacts> {
     let mut pending = vec![dist.clone()];
     let mut held = Vec::new();
     while let Some(directory) = pending.pop() {
+        crate::recovery::runtime::dataset_authority::reads::directory(&directory)?;
         for entry in
             fs::read_dir(&directory).map_err(|_| fail("dist 枚举失败；检查产物目录权限"))?
         {

@@ -21,6 +21,7 @@ pub(crate) fn plan_hash(value: &Value) -> Result<String> {
 }
 
 pub(crate) fn file(path: &Path) -> Result<FileDigest> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("无法读取复制证据 {}：{error}", path.display()))?;
     if !metadata.file_type().is_file() || linked(&metadata) {
@@ -99,6 +100,7 @@ pub(crate) fn safe_file(root: &Path, relative: &str) -> Result<PathBuf> {
     if !canonical.starts_with(&canonical_root) {
         return Err("复制证据解析后越过已登记根目录".into());
     }
+    crate::recovery::runtime::dataset_authority::reads::file(&candidate)?;
     Ok(candidate)
 }
 

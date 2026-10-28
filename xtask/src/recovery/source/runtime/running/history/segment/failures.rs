@@ -51,13 +51,17 @@ pub(super) fn stop(
     super::product(&row["sources"], row)?;
     let output = run.join(format!("storage-target/a{:04}", super::number(row)?));
     common::local_directory(backend, &output, "失败存储停止输出")?;
-    let entries = std::fs::read_dir(&output)?.collect::<std::io::Result<Vec<_>>>()?;
+    let entries = crate::recovery::runtime::dataset_authority::reads::entries(&output)?
+        .collect::<std::io::Result<Vec<_>>>()?;
     let expected = output.join(format!("p{first:04}"));
     if entries.len() != 1 || entries[0].path() != expected {
         return Err("失败存储停止留下未知输出或触碰其他代次".into());
     }
     common::local_directory(backend, &expected, "失败存储停止首代观察")?;
-    if std::fs::read_dir(expected)?.next().is_some() {
+    if crate::recovery::runtime::dataset_authority::reads::entries(expected)?
+        .next()
+        .is_some()
+    {
         return Err("失败存储停止留下未知输出或触碰其他代次".into());
     }
     Ok(vec![failure, controller])

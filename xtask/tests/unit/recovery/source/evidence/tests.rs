@@ -11,6 +11,7 @@ mod product_authorization_keyspace;
 
 #[path = "business_catalog.rs"]
 mod business_catalog;
+mod dataset_authority;
 
 #[path = "../../../../../src/recovery/source/evidence/tests/staging.rs"]
 mod staging;

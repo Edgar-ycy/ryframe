@@ -83,7 +83,8 @@ fn walk(root: &Path, directory: &Path, rows: &mut Vec<Value>) -> Result<()> {
     if !metadata.is_dir() || digest::linked(&metadata) {
         return Err("来源验收证据目录不是普通目录".into());
     }
-    let entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+    let entries = crate::recovery::runtime::dataset_authority::reads::entries(directory)?
+        .collect::<std::io::Result<Vec<_>>>()?;
     if entries.is_empty() {
         return Err("来源验收证据包含空目录".into());
     }
@@ -119,7 +120,7 @@ pub(super) fn manifest(root: &Path) -> Result<Vec<Value>> {
 
 fn evidence_files(directory: &Path) -> Result<Vec<Value>> {
     let mut rows = Vec::new();
-    for entry in fs::read_dir(directory)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(directory)? {
         let path = entry?.path();
         let metadata = fs::symlink_metadata(&path)?;
         if digest::linked(&metadata) {
@@ -133,7 +134,10 @@ fn evidence_files(directory: &Path) -> Result<Vec<Value>> {
                 return Err("来源验收中间证据包含未知目录".into());
             }
             // 仅阶段根允许为空；嵌套空目录仍由同一 manifest 拒绝。
-            if fs::read_dir(&path)?.next().is_some() {
+            if crate::recovery::runtime::dataset_authority::reads::entries(&path)?
+                .next()
+                .is_some()
+            {
                 walk(directory, &path, &mut rows)?;
             }
         } else if metadata.is_file() {

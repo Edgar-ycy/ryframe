@@ -197,7 +197,7 @@ fn failed_prefix(backend: &Path, directory: &Path) -> Result<()> {
         .map(|v| document::text(v, "失败目录名称"))
         .collect::<Result<std::collections::BTreeSet<_>>>()?;
     common::local_directory(backend, directory, "重启中断失败目录")?;
-    let names = std::fs::read_dir(directory)?
+    let names = crate::recovery::runtime::dataset_authority::reads::entries(directory)?
         .map(|e| e.map(|e| e.file_name()))
         .collect::<std::io::Result<Vec<_>>>()?;
     let names = names

@@ -398,6 +398,7 @@ pub(crate) fn validate_local_optional(value: &Path, boundary: &Path, label: &str
 }
 
 pub(crate) fn file_sha256(path: &Path) -> Result<String> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file() || linked(&metadata) {
         return Err(format!("恢复核验输入必须是普通文件：{}", path.display()).into());

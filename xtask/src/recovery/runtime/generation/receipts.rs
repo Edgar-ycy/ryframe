@@ -62,6 +62,11 @@ fn tree(directory: &Path, role: &str, scope: &Value) -> Result<Value> {
 fn process(directory: &Path, role: &str, scope: &Value) -> Result<(Value, Value)> {
     let path = directory.join(format!("{role}.json"));
     let value = files::document(&path)?;
+    strict::exact(
+        &value,
+        &["format_version", "role", "scope_id", "identity"],
+        "恢复产品进程收据",
+    )?;
     // 进程收据与现有监督协议保持同构，只提取权威创建身份。
     check(
         value["format_version"].as_u64() == Some(1)
@@ -187,7 +192,10 @@ fn validate_launch_role(
             && item["process_receipt"] == binding
             && item["tree"] == current_tree
             && current_tree["process"] == identity
-            && super::path(&identity["executable"])? == super::path(&commands[role][0])?,
+            && crate::recovery::runtime::dataset_authority::commands::same_path(
+                &super::path(&identity["executable"])?,
+                &super::path(&commands[role][0])?,
+            )?,
         "恢复启动收据没有绑定当前命令和完整进程树",
     )
 }

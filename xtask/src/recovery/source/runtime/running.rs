@@ -134,7 +134,7 @@ pub(super) fn directory(backend: &Path, output: &Path) -> Result<()> {
         "reboot-close",
         "runtime-configuration",
     ]);
-    for entry in std::fs::read_dir(output)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(output)? {
         let entry = entry?;
         let name = entry
             .file_name()

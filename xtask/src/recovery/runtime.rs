@@ -15,6 +15,8 @@ use crate::{
 #[path = "runtime/build.rs"]
 pub(in crate::recovery) mod build;
 
+#[path = "runtime/dataset_authority/mod.rs"]
+pub(crate) mod dataset_authority;
 #[path = "runtime/generation/mod.rs"]
 pub(crate) mod generation;
 #[path = "runtime/probes.rs"]

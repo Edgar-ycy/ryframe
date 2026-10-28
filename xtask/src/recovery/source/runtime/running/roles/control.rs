@@ -11,6 +11,7 @@ pub(super) fn verify(runtime: &Path, role: &str, id: &str) -> Result<()> {
     let guard = runtime.join(format!("{role}-control.guard"));
     if guard.try_exists()? {
         plain(&guard, false)?;
+        crate::recovery::runtime::dataset_authority::reads::file(&guard)?;
         if std::fs::read(&guard)? != [0] {
             return Err("源角色内核互斥文件内容无效".into());
         }
@@ -21,7 +22,8 @@ pub(super) fn verify(runtime: &Path, role: &str, id: &str) -> Result<()> {
     }
     if archives.try_exists()? {
         plain(&archives, true)?;
-        let entries = std::fs::read_dir(&archives)?.collect::<std::io::Result<Vec<_>>>()?;
+        let entries = crate::recovery::runtime::dataset_authority::reads::entries(&archives)?
+            .collect::<std::io::Result<Vec<_>>>()?;
         if entries.len() != 1 || entries[0].file_name().to_str() != Some(id) || selected.is_some() {
             return Err("源角色档案必须恰为同一启动ID且不能与运行锁并存".into());
         }
@@ -92,7 +94,7 @@ fn receipt(runtime: &Path, role: &str, id: &str, directory: &Path, archived: boo
     ];
     let mut records = serde_json::Map::new();
     let mut bindings = Vec::new();
-    for entry in std::fs::read_dir(directory)? {
+    for entry in crate::recovery::runtime::dataset_authority::reads::entries(directory)? {
         let entry = entry?;
         let name = entry
             .file_name()
