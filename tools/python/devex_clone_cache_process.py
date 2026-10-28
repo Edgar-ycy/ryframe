@@ -316,7 +316,7 @@ def windows_identity(backend, request, runtime, *, required):
     return True
 
 
-def observe(backend, request, environment, runtime, output=None):
+def _legacy_observe(backend, request, environment, runtime, output=None):
     validate(request)
     windows_identity(backend, request, runtime, required=True)
     before = linux_call(request, runtime, "observe")
@@ -334,7 +334,7 @@ def observe(backend, request, environment, runtime, output=None):
     return result
 
 
-def stop(backend, request, environment, runtime, output):
+def _legacy_stop(backend, request, environment, runtime, output):
     from devex_clone_source_proof import require_closed_port
     from full_stack_process import process_identity
     validate(request)
@@ -372,7 +372,7 @@ def stop(backend, request, environment, runtime, output):
     return result
 
 
-def start(backend, request, environment, output, guard):
+def _legacy_start(backend, request, environment, output, guard):
     from devex_clone_source_proof import require_closed_port
     from full_stack_process import process_identity
     from devex_clone_target_evidence import evidence
@@ -461,7 +461,34 @@ def start(backend, request, environment, output, guard):
         raise
 
 
+def start(backend, request, environment, output, guard):
+    from devex_clone_cache_native import exchange
+    def port(operation, arguments):
+        if operation != "checkpoint" or arguments is not None:
+            raise ValueError("缓存启动拒绝未知回调")
+        return guard()
+    return exchange({"format_version": 1, "kind": "ryframe-cache-process", "operation": "start-session",
+                     "arguments": {"request": request, "private": environment, "output": str(output)}}, port)
+
+
+def observe(backend, request, environment, runtime, output=None):
+    from devex_clone_cache_native import invoke
+    result = invoke("observe", request=request, runtime=runtime)
+    if output is not None:
+        write(Path(output) / "observed.json", result)
+    return result
+
+
+def stop(backend, request, environment, runtime, output):
+    from devex_clone_cache_native import invoke
+    return invoke("stop", request=request, runtime=runtime, output=str(output))
+
+
 def main():
+    raise ValueError("旧 Linux Python 执行入口已冻结；仅保留历史源码，使用 v2 原生 cache 工具")
+
+
+def _legacy_main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("serve", "observe", "check", "stop"))
     parser.add_argument("--request", type=Path, required=True)

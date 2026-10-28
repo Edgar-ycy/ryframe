@@ -15,6 +15,7 @@ import devex_clone_cache_request as model
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding, begin, bind_controller_attempt, finish, initialize_state, run_lock
 from rate_limit_client import load_app_table
+from restore_reference_plan import plan_hash
 from devex_clone_target_resources import Resources
 
 
@@ -54,6 +55,8 @@ class CacheFixture(unittest.TestCase):
             "request_storage": self.previous, "scope_id": "cache-service", "linux_identity": {**identity, "boot_id": boot}})
         self.review = {"services": {"redis": {"directory": str(self.data), "scope_id": "cache-service"}},
                        "tools": {"redis_server": {"path": "/usr/bin/redis-server"}}}
+        self.review_binding = self.json("review.json", self.review)
+        self.original["review"] = {**self.review_binding, "canonical_sha256": plan_hash(self.review)}
         self.selected = {"redis": {**{key: self.marker[key] for key in ("namespace", "ownership_key", "ownership_value")},
                                    "url": "redis://127.0.0.1:16390/0"}}
         process_request = {key: self.previous[key] for key in ("wsl", "distribution", "executable", "sha256", "configuration", "port")}
@@ -169,8 +172,9 @@ class TransportTests(unittest.TestCase):
 
 class RequestTests(CacheFixture):
     def test_request_accepts_original_markers_and_distinct_service_scope(self):
-        with self.patches():
+        with self.patches(), patch.object(model, "process_binding", wraps=model.process_binding) as process_bound:
             self.assertEqual(model.validate_request(self.backend, self.directory, self.value, self.request), self.private)
+        self.assertEqual(process_bound.call_args.kwargs["review_binding"], self.review_binding)
 
     def test_registered_lookup_passes_only_explicit_initialization_lock(self):
         with self.patches():

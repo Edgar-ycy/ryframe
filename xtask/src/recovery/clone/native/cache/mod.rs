@@ -1,12 +1,21 @@
 //! 缓存恢复的请求、收据与有界控制调用；不接管外层锁或重放写入。
 pub(crate) mod binding;
+mod diagnostic;
+pub(crate) use diagnostic::{primitive_detail, primitive_error, primitive_message};
 mod evidence;
 mod facts;
 mod history;
 mod linux_observer;
 pub(crate) use linux_observer::Failure as ObserverFailure;
+pub(crate) mod host_control;
+pub(crate) mod host_start;
+mod linux_write;
 mod markers;
 mod model;
+mod native_tool;
+mod review_tools;
+pub(crate) use native_tool::review_value as validate_native_tool;
+pub(crate) use native_tool::successor as native_tool_successor;
 mod process;
 pub(crate) mod readonly;
 mod request;
@@ -19,6 +28,9 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = linux_write::run_hidden_if_requested() {
+        return Some(code);
+    }
     if let Some(code) = linux_observer::run_hidden_if_requested() {
         return Some(code);
     }
@@ -39,22 +51,34 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         }
         let backend = crate::workspace::root_dir();
         let first = document::parse_fragment(std::str::from_utf8(&bytes)?, "缓存控制");
-        if !first
-            .as_ref()
-            .is_ok_and(|value| value["operation"] == "stage")
-        {
+        if !first.as_ref().is_ok_and(|value| {
+            matches!(value["operation"].as_str(), Some("stage" | "start-session"))
+        }) {
             let remaining = (1024 * 1024 + 1_usize).saturating_sub(bytes.len());
             std::io::Read::take(&mut input, remaining as u64).read_to_end(&mut bytes)?;
             return execute(&backend, &bytes);
         }
         let value = first?;
-        if value["operation"] == "stage" {
+        if value["operation"] == "start-session" {
+            session::start(&backend, &value, &mut input, &mut std::io::stdout().lock())
+        } else if value["operation"] == "stage" {
             session::execute(&backend, &value, &mut input, &mut std::io::stdout().lock())
         } else {
             execute(&backend, &bytes)
         }
     })();
-    let (code, response) = match result {
+    let (code, response) = protocol_response(result);
+    Some(
+        if writeln!(std::io::stdout().lock(), "{response}").is_ok() {
+            code
+        } else {
+            1
+        },
+    )
+}
+
+fn protocol_response(result: Result<Value>) -> (i32, Value) {
+    match result {
         Ok(value) => (0, json!({"ok":true,"result":value})),
         // 解析错误和远端输出可能包含密码；只发布固定诊断，禁止重放。
         Err(error) => {
@@ -70,26 +94,30 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
                     Some(std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
                         "CacheObservationTimeout"
                     }
-                    _ if error.downcast_ref::<process::ControlFailure>().is_some() => {
+                    _ if error.downcast_ref::<process::ControlFailure>().is_some()
+                        || error.downcast_ref::<process::RemoteFailure>().is_some() =>
+                    {
                         "CacheControlFailed"
                     }
                     _ => "CacheProcessRejected",
                 }
             };
+            let detail = error
+                .downcast_ref::<process::RemoteFailure>()
+                .map(ToString::to_string)
+                .or_else(|| {
+                    error
+                        .downcast_ref::<diagnostic::Diagnostic>()
+                        .map(ToString::to_string)
+                });
             (
                 1,
-                json!({"ok":false,"error":category,"exit_code":error.downcast_ref::<process::ControlFailure>().and_then(|failure| failure.0),
-                "message":observer.map(ToString::to_string).unwrap_or_else(||error.downcast_ref::<PolicyFailure>().map_or_else(||"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。".to_string(),|failure|format!("{}；保留意图与完整前后像，核对固定请求和已登记代次后显式恢复，禁止自动重放。",failure.0)))}),
+                json!({"ok":false,"error":category,"exit_code":error.downcast_ref::<process::ControlFailure>().and_then(|failure| failure.0)
+                    .or_else(||error.downcast_ref::<process::RemoteFailure>().and_then(|failure| failure.code)),
+                "message":detail.or_else(||observer.map(ToString::to_string)).unwrap_or_else(||error.downcast_ref::<PolicyFailure>().map_or_else(||"缓存请求、冻结收据或 WSL 精确进程调用失败；保留意图、前后像与锁，核对绑定配置、工具摘要及进程代次后显式恢复，禁止自动重放。".to_string(),|failure|format!("{}；保留意图与完整前后像，核对固定请求和已登记代次后显式恢复，禁止自动重放。",failure.0)))}),
             )
         }
-    };
-    Some(
-        if writeln!(std::io::stdout().lock(), "{response}").is_ok() {
-            code
-        } else {
-            1
-        },
-    )
+    }
 }
 
 pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> {
@@ -107,16 +135,48 @@ pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> 
     }
     let args = &value["arguments"];
     match value["operation"].as_str() {
+        Some("process-model") => request::bound_process(backend, args),
+        Some("preflight-tools") => {
+            document::exact(args, &["review"], "缓存原生工具预检")?;
+            review_tools::observe(backend, &args["review"])
+        }
+        Some("native-tool") => {
+            document::exact(args, &[], "缓存原生工具配置")?;
+            native_tool::value(backend)
+        }
+        Some("observe") => {
+            document::exact(args, &["request", "runtime"], "缓存原生观察")?;
+            host_control::observe(backend, &args["request"], &args["runtime"])
+        }
+        Some("stop") => {
+            document::exact(args, &["request", "runtime", "output"], "缓存原生停止")?;
+            host_control::stop(
+                backend,
+                &args["request"],
+                &args["runtime"],
+                std::path::Path::new(document::text(&args["output"], "缓存停止输出")?),
+            )
+        }
         Some(
             operation @ ("environment-select" | "environment-model" | "request-head"
-            | "request-model" | "process-model" | "successor-model" | "pending-target"),
+            | "request-model" | "successor-model" | "pending-target"),
         ) => request::run(operation, args),
-        Some("images") => {
+        _ => execute_control(
+            backend,
+            value["operation"].as_str().ok_or("缓存操作必须为文本")?,
+            args,
+        ),
+    }
+}
+
+fn execute_control(backend: &std::path::Path, operation: &str, args: &Value) -> Result<Value> {
+    match operation {
+        "images" => {
             document::exact(args, &["markers"], "缓存标记前后像")?;
             let (before, after) = markers::images(&args["markers"]);
             Ok(json!([before, after]))
         }
-        Some("validate") => {
+        "validate" => {
             document::exact(args, &["request", "files"], "缓存请求校验")?;
             model::validate(
                 backend,
@@ -125,24 +185,24 @@ pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> 
             )?;
             Ok(Value::Null)
         }
-        Some("password") => {
+        "password" => {
             document::exact(args, &["value"], "缓存密码校验")?;
             model::password(&args["value"])?;
             Ok(Value::Null)
         }
-        Some("inspect") => {
+        "inspect" => {
             document::exact(args, &["request", "output"], "缓存创建证据")?;
             evidence::inspect(
                 &args["request"],
                 std::path::Path::new(document::text(&args["output"], "缓存证据目录")?),
             )
         }
-        Some("facts") => {
+        "facts" => {
             document::exact(args, &["request"], "缓存只读核验")?;
             model::validate(backend, &args["request"], false)?;
             facts::observe(&args["request"])
         }
-        Some("check-facts") => {
+        "check-facts" => {
             document::exact(
                 args,
                 &["request", "identity", "facts", "run_id"],
@@ -156,7 +216,7 @@ pub(crate) fn execute(backend: &std::path::Path, bytes: &[u8]) -> Result<Value> 
             )?;
             Ok(Value::Null)
         }
-        Some("call") => {
+        "call" => {
             document::exact(args, &["request", "runtime", "action"], "缓存进程调用")?;
             process::call(
                 backend,
@@ -179,6 +239,10 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/cache/stage_tests.rs"]
 mod stage_tests;
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/cache/native_lifecycle.rs"]
+mod native_lifecycle_tests;
 
 #[derive(Debug)]
 struct PolicyFailure(&'static str);

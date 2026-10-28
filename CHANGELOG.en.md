@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+- Correct obsolete environment-variable guidance and the Compose mount-path base in production deployment instructions, synchronizing both operations guides. Align alert runbook links with the current Redis and dependency troubleshooting sections while retaining deployment heading-anchor validation.
+
+- Send only the existing review file binding across the cache process-model boundary. Rust reads the complete review and verifies the same byte binding before and after the model; normal and pending/successor paths retain their respective validated canonical provenance. Both cache lifecycle primitives use a child of the currently bound Rust xtask, reusing the original 4 MiB private I/O and whole-process 180-second boundary. Timeout reclaims only the exact primitive handle and leaves services unknown.
+
+- Connect initial fixture Redis startup, recovery start/stop, and supervision to a separate native entry in the bound Linux xtask. Version 2 requests and launches bind complete native_tool provenance; current preflight and tool successors no longer probe Linux Python. Preserve stdin authorization order, same-ELF exec parent-supervisor checks, exact pidfds, exclusive port-closure proof, and failure/unknown receipts. Stable diagnostics disclose neither configuration nor remote stderr. Retain frozen Python and historical evidence until real acceptance is complete, without fallback to legacy execution.
+
 - Add the formal Worker-only library test entry: full backend checks run `--lib` tests with only `bin-worker` enabled after successful all-feature Workspace tests; smart checks run them once only when ryframe is affected, reusing the target directory and test concurrency without a filter. The existing feature command contract checks the generated arguments; product features, existing tests, and AST gates remain intact.
 
 - Remove reviewed redundant tests and fixture-only assertions while retaining configuration redaction, read-only before/after images, real connection causes and budget release, independent catalog fingerprints, capability validation, and exact schedule target lists. Remove the tenant migration source-count test and its obsolete Cargo and targeted resource-test entries. Check name uniqueness in the existing actual Migrator name and separate-ledger case without requiring global alphabetical order; retain the tenant database Clippy compilation surface and effective migration tests in the full Rust gate, and remove unused test imports.

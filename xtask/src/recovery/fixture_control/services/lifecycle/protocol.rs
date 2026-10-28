@@ -17,6 +17,9 @@ struct Request {
 }
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = super::cache_primitive::run_hidden_if_requested() {
+        return Some(code);
+    }
     let mut args = env::args_os().skip(1);
     if args.next()?.as_os_str() != "__fixture-service-lifecycle" {
         return None;
@@ -52,6 +55,9 @@ pub(crate) fn execute(input: &[u8]) -> (i32, Value) {
                     error
                         .downcast_ref::<crate::recovery::clone::native::cache::ObserverFailure>()
                         .map(ToString::to_string)
+                })
+                .or_else(|| {
+                    crate::recovery::clone::native::cache::primitive_message(error.as_ref())
                 });
             failure(reason.as_deref())
         }

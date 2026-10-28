@@ -25,7 +25,7 @@ pub struct VerificationSettings {
     pub node_program: Option<PathBuf>,
 }
 
-/// 只读 Linux 观察器的显式双端路径与冻结来源；不读取环境覆盖。
+/// Linux 夹具工具的显式双端路径与冻结来源；观察与写入口分别授权，不读取环境覆盖。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LinuxObserverSettings {

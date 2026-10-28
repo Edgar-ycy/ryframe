@@ -13,6 +13,11 @@ impl<'a> Observer<'a> {
     pub(super) fn new(backend: &'a Path, request: &'a Value) -> Result<Self> {
         model::validate(backend, request, true)?;
         let result = Self { backend, request };
+        if request["format_version"] == 2 {
+            let tool = super::super::native_tool::from_request(request)?;
+            super::super::native_tool::verify_remote(backend, &request["wsl"], &tool)?;
+            return Ok(result);
+        }
         let interpreter = document::text(&request["python"]["path"], "冻结 Linux 解释器路径")?;
         if result
             .read("/usr/bin/readlink", &["-f", interpreter])?
@@ -93,6 +98,9 @@ impl<'a> Observer<'a> {
 
     pub(super) fn finish(&self) -> Result<()> {
         model::validate(self.backend, self.request, true)?;
+        if self.request["format_version"] == 2 {
+            return super::super::native_tool::from_request(self.request)?.finish(self.backend);
+        }
         self.sha(
             document::text(&self.request["python"]["executable"], "冻结解释器")?,
             document::text(&self.request["python"]["sha256"], "冻结解释器摘要")?,

@@ -4,7 +4,7 @@ use super::{
     evidence, session, stage,
 };
 #[path = "readonly/request.rs"]
-mod request;
+pub(in crate::recovery::clone::native::cache) mod request;
 #[path = "readonly/source.rs"]
 pub(crate) mod source;
 #[path = "readonly/tools.rs"]

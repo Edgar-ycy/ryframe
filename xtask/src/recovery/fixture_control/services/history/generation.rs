@@ -178,8 +178,15 @@ fn validate_redis(original: &Value, current: &Value, review: &Value) -> Result<(
         check(binding(path)? == *review, "夹具服务重启工具审阅缺失或变化")?;
         let document = read(path)?;
         let tools = &document["tools"];
-        let projection = tool_projection(tools);
-        for key in ["wsl", "python", "executable", "sha256", "distribution"] {
+        let projection = tool_projection(tools)?;
+        for key in [
+            "wsl",
+            "python",
+            "native_tool",
+            "executable",
+            "sha256",
+            "distribution",
+        ] {
             if expected.contains_key(key)
                 && stable.get(key) != expected.get(key)
                 && let Some(value) = projection.get(key)
@@ -194,8 +201,12 @@ fn validate_redis(original: &Value, current: &Value, review: &Value) -> Result<(
     )
 }
 
-fn tool_projection(tools: &Value) -> Map<String, Value> {
+fn tool_projection(tools: &Value) -> Result<Map<String, Value>> {
     let mut values = Map::new();
+    if tools["native_tool"].is_object() {
+        crate::recovery::clone::native::cache::validate_native_tool(&tools["native_tool"])?;
+        values.insert("native_tool".into(), tools["native_tool"].clone());
+    }
     if tools["wsl"].is_object() {
         values.insert(
             "wsl".into(),
@@ -214,5 +225,5 @@ fn tool_projection(tools: &Value) -> Map<String, Value> {
             values.insert(key.into(), tools["redis_server"][source].clone());
         }
     }
-    values
+    Ok(values)
 }

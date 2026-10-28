@@ -264,6 +264,15 @@ fn effective(context: &Context, original: &Value) -> Result<Value> {
         return Ok(Value::Null);
     }
     let tools = &context.value["documents"]["review"]["tools"];
+    if original["format_version"] == 2 {
+        let effective =
+            crate::recovery::clone::native::cache::native_tool_successor(original, tools)?;
+        return Ok(if effective == *original {
+            Value::Null
+        } else {
+            effective
+        });
+    }
     let redis = &tools["redis_server"];
     let python = &tools["redis_python"];
     check(

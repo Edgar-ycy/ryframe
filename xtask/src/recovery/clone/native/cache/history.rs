@@ -63,9 +63,7 @@ pub(super) fn starts(
                     || proof["observation"]["state"] != "stopped"
                     || old != process
                         && proof["observation"]["tools_sha256"]
-                            != digest::plan_hash(
-                                &json!({"wsl":process["wsl"],"python":process["python"]}),
-                            )?
+                            != super::native_tool::tools_hash(&process)?
                 {
                     return Err(rejected("缓存工具后继缺少每个旧代次的死亡证明"));
                 }

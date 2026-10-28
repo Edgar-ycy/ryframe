@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Vec<String>> {
+    if request["format_version"] == 2 {
+        return super::native_tool::from_request(request)?.arguments(request, output, action);
+    }
     let payload = document::read(&output.join("launch-request.json"))?;
     Ok(vec![
         document::text(&request["wsl"]["path"], "WSL 工具")?.into(),
@@ -34,6 +37,16 @@ fn frozen(request: &Value, output: &Path) -> Result<Value> {
         || payload["windows_output"] != output.to_str().ok_or("缓存输出路径不是UTF-8")?
     {
         return Err("Redis 冻结运行不属于明确请求及输出目录".into());
+    }
+    if request["format_version"] == 2 {
+        let launch: super::linux_write::Launch = serde_json::from_value(payload.clone())?;
+        if launch.format_version != 2
+            || serde_json::to_value(&launch.native_tool)? != request["native_tool"]
+        {
+            return Err("缓存原生 launch 工具绑定不同".into());
+        }
+        launch.native_tool.validate()?;
+        return Ok(payload);
     }
     document::exact(&payload["helpers"], &["cache", "process"], "缓存冻结工具")?;
     for value in payload["helpers"].as_object().unwrap().values() {
@@ -176,11 +189,16 @@ fn recorded(request: &Value, output: &Path, payload: &Value) -> Result<Value> {
     if linux["identity"]["executable"] != request["executable"] {
         return Err("Redis Linux 创建产物不符".into());
     }
-    Ok(
-        json!({"format_version":1,"request_sha256":digest::plan_hash(request)?,"output":output,
+    let mut value = json!({"format_version":1,"request_sha256":digest::plan_hash(request)?,"output":output,
         "launch":common::binding(&output.join("launch-request.json"))?,"launcher":launcher["identity"],
         "linux_identity":linux["identity"],"boot_id":linux["identity"]["boot_id"],
         "launcher_receipt":common::binding(&output.join("launcher.json"))?,
-        "process_receipt":common::binding(&output.join("linux-process.json"))?,"helpers_sha256":digest::plan_hash(&payload["helpers"])?}),
-    )
+        "process_receipt":common::binding(&output.join("linux-process.json"))?});
+    if request["format_version"] == 2 {
+        value["format_version"] = json!(2);
+        value["native_tool_sha256"] = json!(digest::plan_hash(&payload["native_tool"])?);
+    } else {
+        value["helpers_sha256"] = json!(digest::plan_hash(&payload["helpers"])?);
+    }
+    Ok(value)
 }

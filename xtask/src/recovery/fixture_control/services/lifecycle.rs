@@ -16,6 +16,8 @@ use std::{
     time::Duration,
 };
 
+#[path = "lifecycle/cache_primitive.rs"]
+mod cache_primitive;
 #[path = "lifecycle/close.rs"]
 mod close;
 #[path = "lifecycle/context.rs"]

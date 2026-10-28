@@ -11,6 +11,36 @@ use std::{
     time::Duration,
 };
 
+pub(super) fn bounded(backend: &std::path::Path, request: &Value) -> Result<Value> {
+    // 保留原 facts 单次有界调用的30s期限，防止内联后按每次读写重新计时。
+    let input = serde_json::to_vec(&json!({"format_version":1,"kind":"ryframe-cache-process",
+        "operation":"facts","arguments":{"request":request}}))?;
+    if input.len() > 1024 * 1024 {
+        return Err("缓存完整来源请求超过1MiB".into());
+    }
+    let executable = std::env::current_exe()?;
+    let output = crate::process::command_output_with_input_timeout(
+        backend,
+        executable.to_str().ok_or("缓存事实工具路径不是UTF-8")?,
+        &["__cache-process"],
+        &[],
+        Some(&input),
+        Duration::from_secs(30),
+    )?;
+    if output.stdout.len() > 1024 * 1024 {
+        return Err("缓存事实响应超限".into());
+    }
+    let value = document::parse_fragment(std::str::from_utf8(&output.stdout)?, "缓存事实响应")?;
+    if !output.status.success() || value["ok"] != true {
+        if value["error"] == "CacheConnectionRefused" {
+            return Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into());
+        }
+        return Err("缓存事实读取未完成；保留现场".into());
+    }
+    document::exact(&value, &["ok", "result"], "缓存事实成功响应")?;
+    Ok(value["result"].clone())
+}
+
 pub(super) fn observe(request: &Value) -> Result<Value> {
     let password = model::password(&request["password"])?;
     let port = request["port"]

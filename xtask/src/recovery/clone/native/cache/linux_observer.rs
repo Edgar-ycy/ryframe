@@ -13,6 +13,7 @@ mod host;
 mod kernel;
 pub(super) use host::Observer;
 pub(crate) use host::owned::Failure;
+pub(super) use host::validate as validate_settings;
 pub(super) const LIMIT: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

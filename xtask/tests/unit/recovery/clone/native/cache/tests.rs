@@ -9,7 +9,7 @@ use std::io::Cursor;
 
 const BOOT: &str = "5a81dc04-9e9a-416b-8eab-1b059bddf489";
 
-fn request() -> Value {
+pub(super) fn request() -> Value {
     json!({"scope_id":"cache-test","wsl":{"path":"D:\\wsl.exe","sha256":"a".repeat(64)},
         "distribution":"Ubuntu-24.04","launcher":"/usr/bin/redis-server","executable":"/usr/bin/redis-check-rdb",
         "sha256":"a".repeat(64),"configuration":{"path":"D:\\data\\redis.conf","bytes":5,"sha256":"b".repeat(64)},
@@ -216,6 +216,11 @@ struct Fixture {
 
 #[cfg(windows)]
 impl Fixture {
+    fn native() -> Self {
+        let mut fixture = Self::new();
+        fixture.request = super::native_lifecycle_tests::native_request(fixture.request);
+        fixture
+    }
     fn new() -> Self {
         let base = crate::workspace::root_dir().join(".local-tests");
         std::fs::create_dir_all(&base).unwrap();
@@ -244,6 +249,18 @@ impl Fixture {
         document::write_new(&self.output.join(name), &value).unwrap();
     }
     fn intent(&self) {
+        if self.request["format_version"] == 2 {
+            self.write("launch-request.json", json!({"format_version":2,"request":self.request,
+                "request_sha256":digest::plan_hash(&self.request).unwrap(),"windows_output":self.output,
+                "linux_output":model::linux_path(self.output.to_str().unwrap()).unwrap(),"native_tool":self.request["native_tool"]}));
+            self.write(
+                "intent.json",
+                json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),
+                "arguments":evidence::command(&self.request,&self.output,"serve").unwrap(),
+                "launch":common::binding(&self.output.join("launch-request.json")).unwrap()}),
+            );
+            return;
+        }
         let helpers = self.output.join("helpers");
         std::fs::create_dir(&helpers).unwrap();
         let mut sources = json!({});
@@ -338,7 +355,7 @@ fn frozen_receipts_bind_generation_tools_directory_and_fail_unknown_launches() {
 #[test]
 fn control_rechecks_frozen_receipts_before_single_call_and_never_retries() {
     use std::os::windows::process::ExitStatusExt;
-    let fixture = Fixture::new();
+    let fixture = Fixture::native();
     let runtime = fixture.recorded();
     let mut calls = 0;
     let failure = process::call_with(&fixture.request, &runtime, "stop", |args, input| {

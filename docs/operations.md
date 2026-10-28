@@ -11,9 +11,11 @@
 $sourceCommit = git rev-parse HEAD
 docker build --build-arg "SOURCE_COMMIT=$sourceCommit" -f deploy/Dockerfile .
 ```
+以下命令在后端仓库根目录执行；`--project-directory .` 使配置和 TLS 挂载路径均相对该根目录解析，与正式 CI 一致。配置解析、固定镜像和实际启动需分别验证，示例本身不表示运行验收通过。
+
 ```powershell
-docker compose -f deploy/compose.prod.yml config
-docker compose -f deploy/compose.prod.yml up -d
+docker compose --project-directory . -f deploy/compose.prod.yml config
+docker compose --project-directory . -f deploy/compose.prod.yml up -d
 ```
 四角色部署顺序是先更新控制库与租户库，再启动 Worker 和 API；模板结构检查不替代真实环境的启动和升级验收。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；完整 SQL 导入同一物理控制库后，直接执行 `control verify` 与 `tenant-data verify --target shared-control`，无需补 `up`；其他独立 MySQL 租户目标仍须各自 `tenant-data up/verify`。生产默认且只允许 `jobs.mode="external"`，不能只启动 API；为 API、Worker 分别准备含 `app.prod.toml` 的私有目录，在两个终端均显式设置 `APP_ENV=prod`，以各自的 `--config-dir <directory>` 先启动 Worker 再启动 API；两角色使用不同 `snowflake_worker_id`，指向同一控制库和 scope。 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。 完整 SQL 的结构断言失败会输出迁移、阶段与类别；保存原始结果和现场，不因账本仍为空就认定 DDL 已回滚。先只读核对，禁止自动重放或补写完成标记。
 
@@ -27,13 +29,9 @@ docker compose -f deploy/compose.prod.yml up -d
 
 应用日志过滤级别使用配置中的 `logger.level`；`RUST_LOG` 不会覆盖该级别。排查时修改所选配置文件并重启对应进程。 先按请求 ID 检查 API 日志和 trace，再检查数据库、Redis、对象存储与 Worker。确认是单一依赖故障后按降级策略处理；不要通过扩大重试放大故障。
 
-## Redis 降级
-
-检查连接模式、TLS、ownership marker 和 scope 前缀。授权缓存不可用时必须失败关闭或按配置禁用缓存；禁止清空共享 Redis DB。
-
 ## Redis 与对象存储约定
 
-- Redis `timeout_secs` 统一约束连接、响应和事务，范围 1–60 秒；兼容 S3 后端使用 `object_storage.request_timeout_secs`，范围 1–300 秒。不得在调用点叠加无上限重试。
+- Redis `timeout_secs` 统一约束连接、响应和事务，范围 1–60 秒；兼容 S3 后端使用 `object_storage.request_timeout_secs`，范围 1–300 秒。不得在调用点叠加无上限重试。Redis 故障时检查连接模式、TLS、ownership marker 和 scope 前缀；授权缓存不可用时必须失败关闭或按配置禁用缓存，禁止清空共享 Redis DB。
 - 就绪探针只执行 Redis `PING` 和对象存储私有桶检查，并受独立短超时保护；`required` 依赖失败才阻断就绪，可选依赖明确进入降级状态。
 - `ryframe_connector_operations_total` 与 `ryframe_connector_operation_duration_seconds` 只使用 connector、固定 operation 和 result 三类低基数标签。端点、租户、Redis 键、桶名和对象键禁止进入指标标签。
 - Redis 与 S3 配置的 `Debug` 输出会隐藏密码、访问密钥和客户端私钥。S3 非成功响应只保留稳定操作名和 HTTP 状态，直接丢弃远端响应体；传输错误移除请求 URL。文件维护错误只携带内部文件 ID，不记录桶名、对象键、Authorization、签名或负载。
@@ -217,6 +215,10 @@ fixture 启动后，执行器独占创建三个 TLS 角色配置目录。Redis �
 ## 故障记录
 
 隔离参考夹具服务通过 `cargo xtask check recovery fixture services status --review <review-receipt> --environment <bootstrap.json>` 查看只读状态，输出原账本、控制器身份及下一合法操作。关闭时改用 `close` 并显式追加 `--write`，按 Redis、RustFS 顺序回收原进程树，确认端口释放；数据库、对象及服务目录保留。正常关闭后需要继续同一夹具时，先确认 `status` 返回 `restart`，再把状态中的当前 `state.json` 路径传给 `restart --owner-binding <state.json> --write`；重启追加新代次，不重放关闭或先前业务写入。若宿主在正常关闭收据发布前回收了整棵服务树，`status` 仅在全部登记身份消失、端口关闭且 ownership 未变化时报告外部终止，并返回当前 `state.json` 的 owner binding；先用该文件执行 `recover --owner-binding <state.json> --write` 追加独立核对证据，再对新的 state binding 执行 `restart --owner-binding <state.json> --write`。重启在新代次目录保存请求、进程树和前代 lineage，不补造旧代次的正常关闭证明。业务 crate 产品运行时启动后，同一恢复入口先发布只含来源、工具、端点、限流和受管凭据引用的浏览器绑定，再明确执行前端 `build --real` 与 业务 crate preview 浏览器阶段；绑定和预检不创建登录预算账本，实际登录才首次创建，失败或中断后保留 intent 且禁止重放。Corepack、Node、Vite、Playwright 和 Chrome 都处于本次监督进程树内，控制器退出前核对完整后代停止证明；日志及收据不保存密码。业务套件内的 Worker 控制由正式全栈监督器启动并登记进程树；套件进程树收口会连同其中的 Worker 一起回收，Worker 控制仅在监督进程、成员监督器与产品进程全部确认退出、端口释放且不存在正常关闭证明时登记外部终止，证据阶段随后在套件进程树之外重新启动 Worker；任一身份存活、PID 复用或记录不一致时失败关闭，不补造正常关闭证明。RustFS 启动以 `server --access-key-file <path> --secret-key-file <path> --console-enable` 显式传入已绑定的凭据文件路径与控制台开关，清除继承的 `RUSTFS_*`、`MINIO_*` 环境覆盖；凭据正文不进入参数或公开收据，私有环境文件的 APP_ENV/TEMP/TMP 控制绑定保留。新首代 RustFS 在产品代码执行前建立 Job Object 或 Unix session；独立的私有成员监督器持有完整成员的内核句柄，确认全部退出后才签发完成证明。历史收据缺少进程树归属时不能补造完整关闭证据。 首代未完整就绪且在对象桶写入前失败时，可用同一 `close --write` 严格部分关闭：实际启动者须有冻结请求、精确创建身份及完整监督树，未启动步骤须证明没有 intent、launch、process 或其他未知写入。关闭保留失败账本、文件和数据，未启动角色记录为 `not_started`；不会补造完整就绪，状态返回 `new-scenario`，须保留证据后另建场景，不续接初始化或重启。身份、部分启动结果或对象桶写入不明时拒绝关闭，不自动重放。Windows 资源目录身份使用高精度 `FILE_ID_INFO` 的完整 64 位卷号，文件 ID 仅在可完整表示为现有 `inode` 的 `u64` 时接受；超宽、读取失败或非高精度结果均拒绝，不截断、不回退 32 位卷号，也不重签原请求。未完整初代的部分关闭资格核验失败时，`status` 保持 `reconcile-evidence`，可返回 `partial_close_rejection` 的类别、安全静态原因和核查建议；无法安全描述的底层错误使用固定原因，不输出原始错误或凭据。 Redis 首次启动与恢复只以 APP_ENV=test 选择应用配置，绑定私有环境中的 TEMP/TMP 和标准 OS 运行环境按原职责传递；连接与密码仍只取绑定文件和请求，其他应用或凭据环境键在 prepare/启动前拒绝。Redis 普通、successor、partial 和 closed 状态由受管 Linux xtask 在明确 WSL 用户/UID 下只读观察；首次需要前按[开发指南](development.md)配置 `[verification.linux_observer]`，以实际独占 bind 后 close 证明端口闭合。配置、来源或 ELF 漂移须修复绑定，不得回退解释器。 观察超时保留准确类别及 launcher 收尾结果；kill 失败仍在原20秒截止的剩余预算内尝试 wait，不追加清理预算；预算耗尽只做非阻塞核对。wait 成功只确认 launcher 退出，Linux/Git 后代仍未知，不能据此自动重试。
+
+cache 两项生命周期原语保留独立进程的整次 180 秒边界和原 4 MiB 私有输入输出。原语超时或输出超限只回收该确切进程，不据此宣布 WSL 监督器或 Redis 已关闭；服务仍可能已写入，须保留现场与 unknown，使用原显式核对/恢复流程。正常原语结束不会终止独立 WSL 监督器。
+
+新 Redis 启动须使用经当前预检的 v2 native_tool 审阅与绑定 Linux xtask，不再依赖 WSL Python 或冻结脚本。公开生命周期命令和资源隔离要求不变；已有 v1 收据只读核验，不转换、重签或据此回退旧执行。启动授权、Linux 创建身份、AUTH/INFO/CONFIG、accepted 与 outer ready 必须属于同一代次，accepted 不能单独证明可用。配置或来源漂移、父监督器授权不符、UID 错误、pidfd 不支持/权限错误和等待超时返回固定脱敏诊断；按阶段、类别和字段核查绑定文件、内核能力及失败收据。未确认回收时保留完整目录与 unknown，禁止重放；停止失败仅允许一次只读核对，不重新发送停止。
 
 死亡控制器通过同一入口的 `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。
 

@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+- 修正生产部署说明中的旧环境变量入口和 Compose 挂载路径基准，同步中英文运维示例；将告警排障链接对齐当前 Redis 与依赖排障章节，保留部署资产的标题锚点校验。
+
+- 缓存 process-model 跨进程只传既有 review 文件绑定，Rust 读取完整审阅并在模型前后复核同一字节绑定；normal 与 pending/successor 保持各自已验证的 canonical 来源关系。cache 两项生命周期原语使用当前绑定 Rust xtask 子进程，复用原 4 MiB 私有输入输出及整次 180 秒进程边界，超时仅回收确切原语句柄并保留服务 unknown。
+
+- 将夹具 Redis 的首代、恢复启停与监督接入绑定 Linux xtask 的独立原生入口：v2 请求与 launch 使用完整 native_tool 来源，当前预检和工具后继不再探测 Linux Python；保留 stdin 授权顺序、同 ELF exec 父监督器核验、精确 pidfd、独占端口关闭证明及失败/unknown 收据，稳定诊断不公开配置或远端 stderr。既有冻结 Python 与历史证据在真实验收完成前保留，旧执行不回退。
+
 - 补齐 Worker 专属库测试的正式执行入口：完整后端检查在全 feature Workspace 测试成功后串行执行仅启用 `bin-worker` 的 `--lib` 测试；智能检查仅在受影响包包含 ryframe 时执行一次，复用 target 与测试并发且不加过滤器。现有 feature 命令合同核对实际生成参数，保留产品 feature、原测试及 AST 门禁。
 
 - 清理经审核确认的重复测试与纯夹具断言，保留配置脱敏、只读前后像、真实连接原因及预算释放、独立目录指纹、能力校验与精确调度目标列表。删除租户迁移源码计数测试及失效 Cargo／定向资源测试入口，在现有真实 Migrator 名称与独立账本用例中校验名称唯一性，不要求全局字典序；保留租户库 Clippy 编译面及完整 Rust 门禁的有效迁移测试，并移除不再使用的测试 import。

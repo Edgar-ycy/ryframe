@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const LIMIT: usize = 4 * 1024 * 1024;
+pub(super) const LIMIT: usize = 4 * 1024 * 1024;
 pub(super) struct PythonRuntime {
     backend: PathBuf,
     tool: Value,
@@ -45,10 +45,8 @@ impl PythonRuntime {
     }
     fn invoke(&self, operation: &str, arguments: Value) -> Result<Value> {
         super::primitive::validate(&self.backend, operation, &arguments)?;
-        check(
-            source_snapshot(&self.backend.join("tools/python"))? == self.sources,
-            "服务原语入口在运行期间变化",
-        )?;
+        let native = matches!(operation, "cache-start" | "cache-stop");
+        self.verify(native)?;
         let payload = serde_json::to_vec(
             &json!({"format_version":1,"kind":"ryframe-fixture-service-primitive",
             "backend":self.backend,"native_tool":self.tool,"operation":operation,"arguments":arguments}),
@@ -59,11 +57,8 @@ impl PythonRuntime {
         input.write_all(&payload)?;
         input.seek(SeekFrom::Start(0))?;
         let mut output = tempfile::tempfile_in(&local)?;
-        let executable = crate::process::resolved_executable(&self.backend, "python")?;
-        let mut command = crate::process::child_command(executable);
+        let mut command = self.command(native)?;
         command
-            .args(["-X", "utf8", "-B"])
-            .arg(&self.helper)
             .current_dir(&self.backend)
             .stdin(Stdio::from(input))
             .stdout(Stdio::from(output.try_clone()?))
@@ -86,11 +81,39 @@ impl PythonRuntime {
             }
         };
         let response = read_response(&mut output)?;
-        check(
-            source_snapshot(&self.backend.join("tools/python"))? == self.sources,
-            "服务原语入口执行后发生变化；保留现场",
-        )?;
-        decode(status.success(), &response)
+        self.verify(native)?;
+        if native {
+            super::cache_primitive::decode(status.success(), &response)
+        } else {
+            decode(status.success(), &response)
+        }
+    }
+
+    fn verify(&self, native: bool) -> Result<()> {
+        if native {
+            check(
+                self.tool == crate::check::python_suite::native_tool_binding()?,
+                "原生cache原语当前工具字节或身份变化；保留现场",
+            )
+        } else {
+            check(
+                source_snapshot(&self.backend.join("tools/python"))? == self.sources,
+                "服务原语入口在运行期间变化；保留现场",
+            )
+        }
+    }
+
+    fn command(&self, native: bool) -> Result<std::process::Command> {
+        if native {
+            let mut command = crate::process::child_command(model::text(&self.tool, "path")?);
+            command.arg(super::cache_primitive::ENTRY);
+            Ok(command)
+        } else {
+            let executable = crate::process::resolved_executable(&self.backend, "python")?;
+            let mut command = crate::process::child_command(executable);
+            command.args(["-X", "utf8", "-B"]).arg(&self.helper);
+            Ok(command)
+        }
     }
 }
 
@@ -134,6 +157,9 @@ fn wait_primitive(
 }
 impl Runtime for PythonRuntime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if matches!(operation, "cache-start" | "cache-stop") {
+            return self.invoke(operation, arguments);
+        }
         if matches!(operation, "tree-stop" | "recover-controller") {
             super::primitive::validate(&self.backend, operation, &arguments)?;
             return match operation {
@@ -195,7 +221,7 @@ fn read_response(file: &mut File) -> Result<Value> {
         .map_err(|_| model::error("服务原语响应无效；不回显私有输出"))
 }
 
-fn decode(success: bool, value: &Value) -> Result<Value> {
+pub(super) fn decode(success: bool, value: &Value) -> Result<Value> {
     if success && value["ok"] == true {
         json_io::exact(value, &["ok", "result"], "服务原语成功响应")?;
         return Ok(value["result"].clone());

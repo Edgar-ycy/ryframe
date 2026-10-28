@@ -12,6 +12,20 @@ pub(super) const TOOLS: &[&str] = &[
     "redis_python",
 ];
 
+fn tool_names(review: &Value) -> Vec<&'static str> {
+    if review["tools"].get("native_tool").is_some() {
+        TOOLS
+            .iter()
+            .copied()
+            .filter(|name| *name != "redis_python")
+            .chain(["native_tool"])
+            .collect()
+    } else {
+        // 旧预检仅保留原登记字段的只读核验。
+        TOOLS.to_vec()
+    }
+}
+
 pub(super) fn fixture(value: &Value) -> Result<()> {
     check(
         value["format_version"].as_u64() == Some(1)
@@ -65,15 +79,24 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     let message = "夹具审阅计划缺少当前工具预检收据";
     let tools = review["tools"].as_object();
     check(
-        tools.is_some_and(|tools| TOOLS.iter().all(|name| tools.contains_key(*name))),
+        tools.is_some_and(|tools| {
+            tool_names(review)
+                .iter()
+                .all(|name| tools.contains_key(*name))
+        }),
         message,
     )?;
     let expected = Value::Object(
-        TOOLS
+        tool_names(review)
             .iter()
             .map(|name| ((*name).into(), review["tools"][*name].clone()))
             .collect(),
     );
+    if review["tools"].get("native_tool").is_some() {
+        crate::recovery::clone::native::cache::validate_native_tool(
+            &review["tools"]["native_tool"],
+        )?;
+    }
     let preflight = &review["preflight"];
     check(
         native_json::exact(
@@ -131,8 +154,8 @@ fn semantics(review: &Value) -> Result<Value> {
     let tools = value["tools"]
         .as_object_mut()
         .ok_or("审阅计划工具定义无效")?;
-    for role in TOOLS {
-        tools.remove(*role);
+    for role in TOOLS.iter().copied().chain(["native_tool"]) {
+        tools.remove(role);
     }
     value
         .as_object_mut()

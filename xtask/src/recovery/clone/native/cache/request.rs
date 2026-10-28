@@ -4,7 +4,10 @@ use super::rejected;
 use super::{markers, model};
 use crate::Result;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::Path;
+
 const FIELDS: &[&str] = &[
     "format_version",
     "kind",
@@ -28,6 +31,60 @@ const REDIS_FIELDS: &[&str] = &[
     "run_id",
     "configuration",
 ];
+
+pub(super) fn bound_process(backend: &Path, arguments: &Value) -> Result<Value> {
+    bound_process_with(backend, arguments, |memory| run("process-model", memory))
+}
+
+fn bound_process_with(
+    backend: &Path,
+    arguments: &Value,
+    model: impl FnOnce(&Value) -> Result<Value>,
+) -> Result<Value> {
+    use super::super::resources::common;
+    doc::exact(
+        arguments,
+        &[
+            "request",
+            "review",
+            "receipt",
+            "directory",
+            "config",
+            "options",
+        ],
+        "缓存绑定review模型",
+    )?;
+    let binding = &arguments["review"];
+    doc::exact(binding, &["path", "bytes", "sha256"], "缓存review文件绑定")?;
+    let path = common::bound_file(backend, binding, "缓存review")?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(doc::MAX_JSON_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    let review = review_bytes(binding, &bytes)?;
+    common::bound_file(backend, binding, "解析后缓存review")?;
+    let mut memory = arguments.clone();
+    memory["review"] = review;
+    let result = model(&memory);
+    common::bound_file(backend, binding, "模型执行后缓存review")?;
+    result
+}
+
+fn review_bytes(binding: &Value, bytes: &[u8]) -> Result<Value> {
+    if bytes.len() as u64 > doc::MAX_JSON_BYTES
+        || binding["bytes"].as_u64() != Some(bytes.len() as u64)
+        || binding["sha256"].as_str() != Some(hex::encode(Sha256::digest(bytes)).as_str())
+    {
+        return Err(rejected("缓存review实际读取字节与绑定不一致"));
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "缓存review不是UTF-8 JSON")?;
+    let value =
+        doc::parse_fragment(text, "缓存review").map_err(|_| "缓存review不是唯一字段的严格JSON")?;
+    if !value.is_object() {
+        return Err(rejected("缓存review必须为对象"));
+    }
+    Ok(value)
+}
 
 pub(super) fn run(operation: &str, a: &Value) -> Result<Value> {
     match operation {
@@ -265,6 +322,13 @@ fn successor(a: &Value) -> Result<Value> {
     }
     let original = &a["request"]["process"];
     let tools = &a["tools"];
+    if original["format_version"] == 2 {
+        let next = super::native_tool::successor(original, tools)?;
+        if next == *original {
+            return Err(rejected("缓存工具没有变化，无需登记 successor"));
+        }
+        return Ok(next);
+    }
     let redis = &tools["redis_server"];
     let python = &tools["redis_python"];
     if redis["distribution"] != original["distribution"]
@@ -285,4 +349,73 @@ fn successor(a: &Value) -> Result<Value> {
         return Err(rejected("缓存工具没有变化，无需登记 successor"));
     }
     Ok(effective)
+}
+
+#[cfg(test)]
+mod bound_review_tests {
+    use super::super::super::resources::common;
+    use super::*;
+
+    #[test]
+    fn bound_review_rpc_keeps_full_sources_and_rejects_raw_review_or_any_file_drift() {
+        let backend = crate::workspace::root_dir();
+        std::fs::create_dir_all(backend.join(".local-tests")).unwrap();
+        let directory = tempfile::tempdir_in(backend.join(".local-tests")).unwrap();
+        let file = directory.path().join("review.json");
+        let mut sources =
+            vec![json!({"path":"xtask/source-inventory.json","sha256":"a".repeat(64)})];
+        for index in 0..5000 {
+            sources.push(
+                json!({"path":format!("xtask/src/fixture{index:05}.rs"),"sha256":"b".repeat(64)}),
+            );
+        }
+        let review = json!({"tools":{"native_tool":{"sources":sources}},
+            "preflight":{"tools":{"native_tool":{"sources":sources}}}});
+        doc::write_new(&file, &review).unwrap();
+        let mut rpc = json!({"request":{"process":{"native_tool":{"sources":sources}}},
+            "review":common::binding(&file).unwrap(),"receipt":{},"directory":"D:/fixture","config":"D:/fixture/redis.conf","options":[]});
+        let bytes = std::fs::read(&file).unwrap();
+        assert_eq!(review_bytes(&rpc["review"], &bytes).unwrap(), review);
+        let mut changed = bytes.clone();
+        let index = changed.iter().position(|byte| *byte == b'a').unwrap();
+        changed[index] = b'b';
+        assert!(review_bytes(&rpc["review"], &changed).is_err());
+        assert!(review_bytes(&rpc["review"], &bytes[..bytes.len() - 1]).is_err());
+        let duplicate = br#"{"private-marker":1,"private-marker":2}"#;
+        let binding =
+            json!({"bytes":duplicate.len(),"sha256":hex::encode(Sha256::digest(duplicate))});
+        assert!(
+            !review_bytes(&binding, duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("private-marker")
+        );
+        let mut raw = rpc.clone();
+        raw["review"] = review.clone();
+        assert!(serde_json::to_vec(&raw).unwrap().len() > 1024 * 1024);
+        let bytes = serde_json::to_vec(&json!({"format_version":1,"kind":"ryframe-cache-process",
+            "operation":"process-model","arguments":rpc}))
+        .unwrap();
+        assert!(bytes.len() < 1024 * 1024);
+        assert!(super::super::execute(&backend,&serde_json::to_vec(&json!({
+            "format_version":1,"kind":"ryframe-cache-process","operation":"process-model","arguments":raw})).unwrap()).is_err());
+        bound_process_with(&backend, &rpc, |memory| {
+            assert_eq!(memory["review"], review);
+            Ok(Value::Null)
+        })
+        .unwrap();
+        assert!(
+            bound_process_with(&backend, &rpc, |memory| {
+                assert_eq!(memory["review"], review);
+                std::fs::write(&file, b"{\"changed\":true}").unwrap();
+                Ok(Value::Null)
+            })
+            .is_err()
+        );
+        assert!(bound_process_with(&backend, &rpc, |_| panic!("漂移review不得进入模型")).is_err());
+        rpc["review"] = review;
+        assert!(
+            bound_process_with(&backend, &rpc, |_| panic!("raw review不得作为旧RPC回退")).is_err()
+        );
+    }
 }

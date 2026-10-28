@@ -24,7 +24,7 @@ def environment(backend, request):
     return value
 
 
-def process_binding(backend, request, review, private, *, effective=None, observe_effective_files=True):
+def process_binding(backend, request, review, private, *, review_binding, effective=None, observe_effective_files=True):
     from devex_clone_cache_process import validate
     previous, process = request["previous"], request["process"]
     validate(process, files=effective is None)
@@ -37,20 +37,24 @@ def process_binding(backend, request, review, private, *, effective=None, observ
     if effective is None:
         external_file(previous["wsl"])
     options = [shlex.split(line) for line in config.read_text(encoding="utf-8").splitlines() if line.strip()]
-    invoke("process-model", request=request, review=review, receipt=receipt,
+    invoke("process-model", request=request, review=review_binding, receipt=receipt,
            directory=str(directory), config=str(config), options=options)
 
 
 def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None,
-                      effective=None, initialization=None, observe_effective_files=True):
+                      effective=None, initialization=None, observe_effective_files=True, review_descriptor=None):
     invoke("request-head", request=request, manifest=binding(directory / "manifest.json"), value=value)
     filename = bound_file(backend, request["initialized"])
     initial, original = (initialization_history(backend, filename, owned_lock_identity)
                          if initialization is None else initialization)
     review, selected = bind_request(backend, original)
+    from reference_fixture_successor import _descriptor_path
+    descriptor = original["review"] if review_descriptor is None else review_descriptor
+    _descriptor_path(descriptor, "cache process review", canonical=True)
+    review_binding = {key: item for key, item in descriptor.items() if key != "canonical_sha256"}
     invoke("request-model", request=request, initial=initial, original=original, selected=selected)
     private = environment(backend, request)
-    process_binding(backend, request, review, private, effective=effective,
+    process_binding(backend, request, review, private, review_binding=review_binding, effective=effective,
                     observe_effective_files=observe_effective_files)
     return private
 
@@ -81,5 +85,6 @@ def successor_process(backend, directory, value, request, successor, *, owned_lo
     private = _validate_request(backend, directory, value, request, bind_pending,
                                  owned_lock_identity=owned_lock_identity, effective=effective,
                                  initialization=(source["initialization"], source["seed_target"]),
-                                 observe_effective_files=observe_current_tools)
+                                 observe_effective_files=observe_current_tools,
+                                 review_descriptor=relationship["predecessor_review"])
     return effective, private, source

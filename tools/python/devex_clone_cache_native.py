@@ -29,7 +29,7 @@ def invoke(operation, **arguments):
             result = run_native([executable, "__cache-process"], cwd=ROOT,
                                     env=configured({}, inherited=_child_environment()), input=payload,
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    timeout=30, check=False, **options)
+                                    timeout={"preflight-tools": 110, "observe": 100, "stop": 80}.get(operation, 30), check=False, **options)
         if len(result.stdout) > 1024 * 1024:
             raise ValueError("缓存原生响应超过 1 MiB")
         response = json.loads(result.stdout.decode("utf-8"), object_pairs_hook=unique_object)
@@ -70,11 +70,16 @@ def _wire(value):
 
 def stage_session(action, directory, parameters, port):
     """复用缓存协议，在原锁存续期间按 Rust 请求执行单次 I/O。"""
-    import queue
-    import threading
     payload = {"format_version": 1, "kind": "ryframe-cache-process", "operation": "stage",
                "arguments": {"action": action, "directory": str(directory), "caller": os.getpid(),
                              "parameters": parameters}}
+    return exchange(payload, port)
+
+
+def exchange(payload, port):
+    """仅转发原生阶段消息；授权与生命周期由 Rust 决定。"""
+    import queue
+    import threading
     def send(child, value):
         data = json.dumps(_wire(value), ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
         if len(data) > 1024 * 1024:
@@ -102,11 +107,12 @@ def stage_session(action, directory, parameters, port):
         reader.start()
         pending = None
         sequence = 0
+        wait_seconds = 100 if payload["operation"] == "stage" else 50
         try:
             send(child, payload)
             while True:
                 try:
-                    line = messages.get(timeout=30)
+                    line = messages.get(timeout=wait_seconds)
                 except queue.Empty:
                     raise TimeoutError("缓存阶段无响应；保留意图、锁及未知写入，禁止重放") from None
                 if not line or len(line) > 1024 * 1024:
@@ -123,6 +129,16 @@ def stage_session(action, directory, parameters, port):
                         send(child, {"sequence": sequence, "ok": False, "result": None})
                     else:
                         send(child, {"sequence": sequence, "ok": True, "result": result})
+                    if response["port"] == "checkpoint":
+                        request = (response["arguments"]["process"] if response["arguments"] is not None
+                                   else payload["arguments"]["request"])
+                        timeout = request["timeout_seconds"]
+                        if type(timeout) is not int or not 1 <= timeout <= 180:
+                            raise ValueError("缓存阶段期限不是已核对的请求预算")
+                        # 启动期限 + 一次完整观察(20+30+20) + 原失败回收较大分支 + 原30s传输余量。
+                        wait_seconds = timeout + 70 + max(50, timeout + 20) + 30
+                    else:
+                        wait_seconds = 100
                     continue
                 child.stdin.close()
                 code = child.wait(timeout=5)
@@ -130,7 +146,14 @@ def stage_session(action, directory, parameters, port):
                     raise pending
                 if code == 0 and isinstance(response, dict) and set(response) == {"ok", "result"} and response["ok"] is True:
                     return response["result"]
-                if code == 1 and isinstance(response, dict) and set(response) == {"ok", "error", "message", "exit_code"} and response["ok"] is False and response["error"] in {"CacheProcessRejected", "CacheObservationTimeout"} and response["exit_code"] is None and isinstance(response["message"], str):
+                if code == 1 and isinstance(response, dict) and set(response) == {"ok", "error", "message", "exit_code"} and response["ok"] is False and response["error"] in {"CacheProcessRejected", "CacheObservationTimeout", "CacheControlFailed"} and isinstance(response["message"], str):
+                    status = response["exit_code"]
+                    if status is not None and (type(status) is not int or status == 0 or not -(2 ** 31) <= status < 2 ** 31):
+                        raise RuntimeError("缓存阶段退出码无效；保留现场")
+                    if response["error"] != "CacheControlFailed" and status is not None:
+                        raise RuntimeError("缓存阶段错误类别与退出码不同")
+                    if response["error"] == "CacheControlFailed":
+                        raise RuntimeError(response["message"] + " 原始退出码：" + str(status))
                     if response["error"] == "CacheObservationTimeout":
                         raise TimeoutError(response["message"])
                     raise ValueError(response["message"])

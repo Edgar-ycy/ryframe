@@ -31,7 +31,11 @@ pub(super) fn observe(
         "rustfs",
         "redis_server",
         "wsl",
-        "redis_python",
+        if process["format_version"] == 2 {
+            "native_tool"
+        } else {
+            "redis_python"
+        },
     ] {
         tools.insert(field.into(), review["tools"][field].clone());
     }
@@ -43,7 +47,11 @@ pub(super) fn observe(
     }
     let mut effective = process.clone();
     effective["wsl"] = tools["wsl"].clone();
-    effective["python"] = json!({"path":tools["redis_python"]["path"],"executable":tools["redis_python"]["resolved_path"],"sha256":tools["redis_python"]["sha256"]});
+    if process["format_version"] == 2 {
+        effective = super::super::native_tool::successor(process, &Value::Object(tools.clone()))?;
+    } else {
+        effective["python"] = json!({"path":tools["redis_python"]["path"],"executable":tools["redis_python"]["resolved_path"],"sha256":tools["redis_python"]["sha256"]});
+    }
     let observer = wsl::Observer::new(backend, &effective)?;
     let declared = target_verify::input::request_configuration::canonical_path(Path::new(
         document::text(&tools["wsl"]["path"], "预检 WSL")?,
@@ -61,7 +69,8 @@ pub(super) fn observe(
         || hash.split_whitespace().next() != redis["sha256"].as_str()
         || version.trim() != document::text(&redis["version"], "Redis 版本")?
         || redis["distribution"] != effective["distribution"]
-        || tools["redis_python"]["distribution"] != effective["distribution"]
+        || (process["format_version"] != 2
+            && tools["redis_python"]["distribution"] != effective["distribution"])
     {
         return Err("夹具审阅中的当前 WSL 工具代次已经变化".into());
     }

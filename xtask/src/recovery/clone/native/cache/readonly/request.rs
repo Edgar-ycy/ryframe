@@ -161,7 +161,7 @@ pub(super) fn process(
     Ok(())
 }
 
-fn words(line: &str) -> Result<Vec<String>> {
+pub(in crate::recovery::clone::native::cache) fn words(line: &str) -> Result<Vec<String>> {
     let mut result = Vec::new();
     let mut word = String::new();
     let mut quoted = None;
@@ -169,6 +169,7 @@ fn words(line: &str) -> Result<Vec<String>> {
     let mut input = line.chars().peekable();
     while let Some(character) = input.next() {
         match (quoted, character) {
+            (None, '#') => break,
             (Some('\''), '\'') | (Some('"'), '"') => quoted = None,
             (None, '\'' | '"') => {
                 quoted = Some(character);

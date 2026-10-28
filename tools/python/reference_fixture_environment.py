@@ -15,7 +15,7 @@ import subprocess
 from devex_clone_capture import read_json, write_json
 from process_environment import Environments, configured
 from devex_clone_model import linked, local_path
-from devex_clone_target_binding import REVIEW_FILE_TOOLS, REVIEW_TOOLS, validate_review
+from devex_clone_target_binding import REVIEW_FILE_TOOLS, validate_review
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
 from reference_fixture_service_context import load_prepared_environment, service_run
@@ -98,7 +98,7 @@ def _command(run, arguments: list[str]) -> str:
     return completed.stdout.decode("utf-8").strip()
 
 
-def _preflight(review: dict, run=subprocess.run) -> dict:
+def _preflight_python(review: dict, run=subprocess.run) -> dict:
     """重新读取计划绑定的工具，不启动服务、不连接业务资源。"""
     if type(review.get("ready_for_execution")) is not bool:
         raise ValueError("夹具审阅计划就绪状态无效")
@@ -147,14 +147,18 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
     return observed
 
 
-def _preflight_binding(review: dict) -> None:
-    environment_native("preflight-binding", review)
+def _preflight_binding(review: dict) -> dict:
+    return environment_native("preflight-binding", review)
+
+
+def _preflight(review: dict, run=subprocess.run) -> dict:
+    from devex_clone_cache_native import invoke
+    return invoke("preflight-tools", review=review)
 
 
 def validate_current_review_tools(review: dict, run=subprocess.run) -> dict:
-    """重新观察 ready 审阅绑定的七项工具，并拒绝本机工具代次漂移。"""
-    _preflight_binding(review)
-    expected = {name: review["tools"][name] for name in REVIEW_TOOLS}
+    """重新观察 ready 审阅绑定的工具，并拒绝本机工具代次漂移。"""
+    expected = _preflight_binding(review)
     observed = _preflight(review, run)
     if observed != expected:
         raise ValueError("夹具审阅计划中的当前工具已经变化")
@@ -163,8 +167,7 @@ def validate_current_review_tools(review: dict, run=subprocess.run) -> dict:
 
 def validated_recorded_review_tools(review: dict) -> dict:
     """只验证已发布预检收据的冻结工具，不声称当前本机工具仍可用。"""
-    _preflight_binding(review)
-    return copy.deepcopy({name: review["tools"][name] for name in REVIEW_TOOLS})
+    return copy.deepcopy(_preflight_binding(review))
 
 
 def validate_preflight_successor(previous: dict, review: dict) -> None:
@@ -186,6 +189,7 @@ def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.ru
     revised = copy.deepcopy(review)
     revised["ready_for_execution"] = True
     revised["tools"] = {**review["tools"], **observed}
+    revised["tools"].pop("redis_python", None)
     seed = revised["scopes"]["seed"]
     service_directory = service_run(revised)
     revised["services"]["rustfs"].update(

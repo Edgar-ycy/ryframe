@@ -19,6 +19,34 @@ struct Stream<'a, R, W> {
 
 impl<R: BufRead, W: Write> Runtime for Stream<'_, R, W> {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if operation == "start" {
+            let backend = self.backend;
+            return super::host_start::start(
+                backend,
+                &arguments["request"],
+                &arguments["private"],
+                Path::new(doc::text(&arguments["output"], "缓存启动目录")?),
+                || {
+                    self.call("checkpoint", arguments["guard"].clone())
+                        .map(|_| ())
+                },
+            );
+        }
+        if operation == "observe" {
+            return super::host_control::observe(
+                self.backend,
+                &arguments["request"],
+                &arguments["runtime"],
+            );
+        }
+        if operation == "stop" {
+            return super::host_control::stop(
+                self.backend,
+                &arguments["request"],
+                &arguments["runtime"],
+                Path::new(doc::text(&arguments["output"], "缓存停止目录")?),
+            );
+        }
         if matches!(operation, "status" | "predecessor") {
             return super::readonly::port(self.backend, operation, &arguments);
         }
@@ -80,6 +108,44 @@ pub(super) fn execute(
     )
 }
 
+pub(super) fn start(
+    backend: &Path,
+    value: &Value,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<Value> {
+    doc::exact(
+        value,
+        &["format_version", "kind", "operation", "arguments"],
+        "缓存启动会话",
+    )?;
+    if value["format_version"] != 1
+        || value["kind"] != "ryframe-cache-process"
+        || value["operation"] != "start-session"
+    {
+        return Err(rejected("缓存启动会话类型无效"));
+    }
+    let arguments = &value["arguments"];
+    doc::exact(
+        arguments,
+        &["request", "private", "output"],
+        "缓存启动会话参数",
+    )?;
+    let mut stream = Stream {
+        backend,
+        input,
+        output,
+        sequence: 0,
+    };
+    super::host_start::start(
+        backend,
+        &arguments["request"],
+        &arguments["private"],
+        Path::new(doc::text(&arguments["output"], "缓存启动目录")?),
+        || stream.call("checkpoint", Value::Null).map(|_| ()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Runtime, Stream};
@@ -103,7 +169,7 @@ mod tests {
                 output: &mut output,
                 sequence: 0,
             };
-            let error = runtime.call("observe", json!({})).unwrap_err();
+            let error = runtime.call("quiet", json!({})).unwrap_err();
             assert!(!error.to_string().contains("private-secret"));
             let sent: Value = serde_json::from_slice(&output).unwrap();
             assert_eq!(sent["sequence"], 1);
@@ -119,7 +185,7 @@ mod tests {
             output: &mut output,
             sequence: 0,
         };
-        assert!(runtime.call("start", json!({})).is_err());
+        assert!(runtime.call("quiet", json!({})).is_err());
         assert_eq!(output.iter().filter(|b| **b == b'\n').count(), 1);
         let mut input = Cursor::new(
             b"{\"sequence\":1,\"ok\":true,\"result\":{\"state\":\"stopped\"}}\n".to_vec(),

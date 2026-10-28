@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 import devex_clone_cache_request as model
 from devex_clone_run_state import binding
+from restore_reference_plan import plan_hash
 from test_devex_clone_cache import CacheFixture
 
 
@@ -19,9 +20,10 @@ class SuccessorRequestTests(CacheFixture):
                              "sha256": self.previous["sha256"]},
         }
         self.ready = self.json("ready-review.json", {"tools": self.tools})
+        self.ready["canonical_sha256"] = plan_hash({"tools":self.tools})
         self.source = {"directory": self.directory, "manifest": self.value, "seed_target": self.original,
                        "initialization": self.initial,
-                       "review_successor": {"successor_review": self.ready, "predecessor_review": self.ready}}
+                       "review_successor": {"successor_review": self.ready, "predecessor_review": self.original["review"]}}
         return successor
 
     def successor_patches(self):
@@ -35,11 +37,14 @@ class SuccessorRequestTests(CacheFixture):
         successor = self.successor()
         with (self.successor_patches(),
               patch("reference_fixture_environment.validated_recorded_review_tools", return_value=self.tools),
-              patch("devex_clone_cache_process.validate") as validate):
+              patch("devex_clone_cache_process.validate") as validate,
+              patch.object(model, "process_binding", wraps=model.process_binding) as process_bound):
             model.successor_process(
                 self.backend, self.directory, self.value, self.request, successor,
                 observe_current_tools=False)
         self.assertEqual(validate.call_count, 3)
+        self.assertEqual(process_bound.call_args.kwargs["review_binding"], self.review_binding)
+        self.assertNotEqual(process_bound.call_args.kwargs["review_binding"]["path"], self.ready["path"])
         self.assertEqual([call.kwargs for call in validate.call_args_list],
                          [{"files": False}, {"files": False}, {"files": False}])
 

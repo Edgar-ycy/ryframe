@@ -28,6 +28,8 @@ def _port(backend, directory, operation, arguments):
     from devex_clone_cache_process import inspect_start, observe, start, stop
     manifest = lambda: read_json(directory / "manifest.json")
     checkpoint = lambda spec: _invoke(backend, directory, "guard", **spec)
+    if operation == "checkpoint":
+        return checkpoint(arguments)
     if operation == "validate":
         return validate_request(backend, directory, manifest(), arguments["request"],
                                 owned_lock_identity=arguments["owned_lock_identity"])

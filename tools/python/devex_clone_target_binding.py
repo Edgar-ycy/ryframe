@@ -29,7 +29,7 @@ KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared")
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
 EXCLUSIVE = {"mysql_exclusive", "redis_exclusive", "object_storage_exclusive"}
 REVIEW_FILE_TOOLS = ("mysql", "mysqldump", "rustfs")
-REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "redis_python")
+REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "native_tool")
 REVIEW_TOOLS = (*REVIEW_FILE_TOOLS, *REVIEW_SUPERVISOR_TOOLS)
 _UUID = r"[a-f0-9]{32}"
 _REGISTRATION_FIELDS = {"format_version", "kind", "request", "environment", "storage_run",

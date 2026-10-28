@@ -242,9 +242,13 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
     if not isinstance(password, str) or not password:
         raise ValueError("Redis 首代缺少私有认证")
     tools = review["tools"]
-    redis_tool, wsl, python = tools["redis_server"], tools["wsl"], tools["redis_python"]
-    if (redis_tool["distribution"] != service["wsl_distribution"] or python["distribution"] != service["wsl_distribution"]
-            or set(wsl) != {"path", "sha256"} or set(python) != {"distribution", "path", "resolved_path", "sha256"}):
+    redis_tool, wsl = tools["redis_server"], tools["wsl"]
+    from devex_clone_cache_native import invoke
+    native_tool = tools.get("native_tool")
+    if native_tool is None or native_tool != invoke("native-tool"):
+        raise ValueError("Redis 首代必须使用已预检的 v2 原生工具审阅；旧记录只读保留")
+    if (redis_tool["distribution"] != service["wsl_distribution"] or native_tool["distribution"] != service["wsl_distribution"]
+            or set(wsl) != {"path", "sha256"}):
         raise ValueError("Redis 服务与冻结监督器工具不一致")
     if not directory.exists():
         directory.mkdir()
@@ -253,13 +257,13 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
         stream.write("\n".join(("bind 127.0.0.1", f"port {port}", f"dir /mnt/{directory.drive[0].lower()}/" + "/".join(directory.parts[1:]),
                                   "databases 1", "protected-mode yes", 'save ""', "appendonly no", "daemonize no",
                                   "requirepass " + shlex.quote(password))) + "\n")
-    request = {"scope_id": "services-" + bootstrap["plan"]["scope_id"], "wsl": wsl,
+    request = {"format_version": 2, "scope_id": "services-" + bootstrap["plan"]["scope_id"], "wsl": wsl,
                "distribution": service["wsl_distribution"], "launcher": "/usr/bin/redis-server",
                "executable": redis_tool["resolved_path"], "sha256": redis_tool["sha256"], "configuration": bound(configuration),
                "directory": {"path": str(directory), "device": directory.stat().st_dev, "inode": directory.stat().st_ino},
                "previous_identity": None, "previous_boot_id": None, "previous_run_id": None, "port": port,
                "password": password, "timeout_seconds": 60,
-               "python": {"path": python["path"], "executable": python["resolved_path"], "sha256": python["sha256"]}}
+               "native_tool": native_tool}
     output.mkdir()
     write_json(output / "request.json", request)
     sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest),

@@ -141,8 +141,10 @@ fn linux_files(
         };
         proofs.push(proof);
     }
-    for file in document::object(&payload["helpers"], "冻结辅助文件")?.values() {
-        proofs.push(serde_json::from_value(file.clone())?);
+    if payload["format_version"] == 1 {
+        for file in document::object(&payload["helpers"], "冻结辅助文件")?.values() {
+            proofs.push(serde_json::from_value(file.clone())?);
+        }
     }
     proofs.sort_by(|left, right| left.path.cmp(&right.path));
     proofs.dedup();
@@ -173,16 +175,24 @@ pub(super) fn port(backend: &Path, operation: &str, args: &Value) -> Result<Valu
 }
 
 fn successor_tools(original: &Value, effective: &Value) -> Result<String> {
-    document::exact(original, model::FIELDS, "原缓存进程")?;
-    document::exact(effective, model::FIELDS, "缓存工具后继")?;
-    for key in model::FIELDS
+    document::exact(original, &model::fields(original), "原缓存进程")?;
+    document::exact(effective, &model::fields(original), "缓存工具后继")?;
+    for key in model::fields(original)
         .iter()
         .copied()
-        .filter(|key| !["wsl", "python"].contains(key))
+        .filter(|key| !["wsl", "python", "native_tool"].contains(key))
     {
         if original[key] != effective[key] {
             return Err("缓存工具换代不得替换原资源或端点".into());
         }
+    }
+    if original["format_version"] == 2 {
+        super::native_tool::successor(
+            original,
+            &json!({"wsl":effective["wsl"],"native_tool":effective["native_tool"],
+            "redis_server":{"distribution":original["distribution"],"resolved_path":original["executable"],"sha256":original["sha256"]}}),
+        )?;
+        return super::native_tool::tools_hash(effective);
     }
     if original["wsl"]["path"]
         .as_str()

@@ -36,7 +36,43 @@ pub(super) fn password(value: &Value) -> Result<&str> {
 }
 
 pub(super) fn validate(backend: &Path, request: &Value, files: bool) -> Result<()> {
-    document::exact(request, FIELDS, "Redis 进程请求")?;
+    shape(request)?;
+    if files {
+        common::directory_identity(backend, &request["directory"])?;
+        file_bound(&request["configuration"])?;
+        let wsl = plain(Path::new(document::text(
+            &request["wsl"]["path"],
+            "WSL 工具",
+        )?))?;
+        if digest::file(&wsl)?.sha256 != document::text(&request["wsl"]["sha256"], "WSL 摘要")? {
+            return Err("WSL 实际工具变化".into());
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn fields(request: &Value) -> Vec<&'static str> {
+    if request["format_version"] == 2 {
+        FIELDS
+            .iter()
+            .copied()
+            .filter(|field| *field != "python")
+            .chain(["format_version", "native_tool"])
+            .collect()
+    } else {
+        FIELDS.to_vec()
+    }
+}
+
+pub(super) fn shape(request: &Value) -> Result<()> {
+    document::exact(request, &fields(request), "Redis 进程请求")?;
+    if request["format_version"] == 2 {
+        super::native_tool::from_request(request)?;
+    } else {
+        // 已登记 v1 证据仍可只读核验；所有原生写入口另行强制 v2。
+        document::exact(request, FIELDS, "Redis 历史进程请求")?;
+        legacy_interpreter(request)?;
+    }
     password(&request["password"])?;
     if !matches(&request["scope_id"], r"^[a-z0-9][a-z0-9_-]{2,47}$")?
         || !matches(&request["distribution"], r"^[A-Za-z0-9._-]+$")?
@@ -60,9 +96,37 @@ pub(super) fn validate(backend: &Path, request: &Value, files: bool) -> Result<(
     )?;
     document::exact(&request["wsl"], &["path", "sha256"], "WSL 工具")?;
     document::exact(
+        &request["configuration"],
+        &["path", "bytes", "sha256"],
+        "Redis 配置",
+    )?;
+    let directory = linux_path(document::text(&request["directory"]["path"], "Redis 目录")?)?;
+    let config = linux_path(document::text(
+        &request["configuration"]["path"],
+        "Redis 配置",
+    )?)?;
+    linux_path(document::text(&request["wsl"]["path"], "WSL 工具")?)?;
+    if config != format!("{directory}/redis.conf") {
+        return Err("Redis 仅使用原服务目录中的配置文件".into());
+    }
+    if request["directory"]["device"].as_u64().is_none()
+        || request["directory"]["inode"].as_u64().is_none()
+        || request["configuration"]["bytes"]
+            .as_u64()
+            .is_none_or(|n| n > 16 * 1024 * 1024)
+        || !matches(&request["configuration"]["sha256"], r"^[a-f0-9]{64}$")?
+        || !matches(&request["wsl"]["sha256"], r"^[a-f0-9]{64}$")?
+    {
+        return Err("缓存文件或目录绑定无效".into());
+    }
+    Ok(())
+}
+
+fn legacy_interpreter(request: &Value) -> Result<()> {
+    document::exact(
         &request["python"],
         &["path", "executable", "sha256"],
-        "Linux 解释器",
+        "历史 Linux 解释器",
     )?;
     if request["python"]["path"] != "/usr/bin/python3"
         || !matches(
@@ -71,31 +135,7 @@ pub(super) fn validate(backend: &Path, request: &Value, files: bool) -> Result<(
         )?
         || !matches(&request["python"]["sha256"], r"^[a-f0-9]{64}$")?
     {
-        return Err("WSL Python 必须绑定明确入口、实际文件与摘要".into());
-    }
-    let directory = Path::new(document::text(&request["directory"]["path"], "Redis 目录")?);
-    if Path::new(document::text(
-        &request["configuration"]["path"],
-        "Redis 配置",
-    )?) != directory.join("redis.conf")
-    {
-        return Err("Redis 仅使用原服务目录中的配置文件".into());
-    }
-    if files {
-        let _ = backend;
-        // Python 登记使用完整 st_dev；旧版 Windows FILE_INFORMATION 只有低32位，
-        // 原控制器继续在调用前核对完整 device/inode，不以截断值替换该核验。
-        if !plain(directory)?.is_dir() {
-            return Err("Redis 原数据目录不是实际目录".into());
-        }
-        file_bound(&request["configuration"])?;
-        let wsl = plain(Path::new(document::text(
-            &request["wsl"]["path"],
-            "WSL 工具",
-        )?))?;
-        if digest::file(&wsl)?.sha256 != document::text(&request["wsl"]["sha256"], "WSL 摘要")? {
-            return Err("WSL 实际工具变化".into());
-        }
+        return Err("历史解释器绑定不完整".into());
     }
     Ok(())
 }
@@ -169,9 +209,11 @@ pub(super) fn linux_path(value: &str) -> Result<String> {
     if bytes.len() < 3
         || !bytes[0].is_ascii_alphabetic()
         || &bytes[1..3] != b":/"
-        || normalized[3..]
-            .split('/')
-            .any(|part| part == ".." || part.contains(':'))
+        || normalized[3..].split('/').any(|part| {
+            matches!(part, "" | "." | "..")
+                || part.contains(':')
+                || part.contains(['\0', '\r', '\n'])
+        })
     {
         return Err("WSL 仅映射已登记 Windows 盘符绝对路径".into());
     }

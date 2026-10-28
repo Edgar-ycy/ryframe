@@ -71,12 +71,18 @@ impl<'a> Observer<'a> {
         files: Vec<FileProof>,
         identity: Option<Identity>,
     ) -> Result<Observation> {
-        let python: ImageProof = serde_json::from_value(self.request["python"].clone())?;
+        let mut images = Vec::new();
+        if self.request["format_version"] != 2 {
+            images.push(serde_json::from_value::<ImageProof>(
+                self.request["python"].clone(),
+            )?);
+        }
         let redis = ImageProof {
             path: document::text(&self.request["launcher"], "Redis 入口")?.into(),
             executable: document::text(&self.request["executable"], "Redis 映像")?.into(),
             sha256: document::text(&self.request["sha256"], "Redis 摘要")?.into(),
         };
+        images.push(redis);
         let input = Request {
             format_version: 1,
             uid: self.settings.uid,
@@ -87,7 +93,7 @@ impl<'a> Observer<'a> {
             source_sha256: self.settings.source_sha256.clone(),
             sources: self.sources.clone(),
             files,
-            images: vec![python, redis],
+            images,
             identity: identity.clone(),
             port: u16::try_from(self.request["port"].as_u64().ok_or("缓存端口无效")?)?,
         };
@@ -172,7 +178,9 @@ fn configured(backend: &Path) -> Result<LinuxObserverSettings> {
         super::super::rejected("需要 WSL 观察：请在 config/tools.toml 或 .local-tests/tools.toml 配置 [verification.linux_observer] 的 distribution/user/uid、双端 program/source_root、source_commit/sha256/source_sha256；从明确 SHA 的普通 clone 构建受管 xtask，禁止回退解释器"))
 }
 
-fn validate(settings: &LinuxObserverSettings) -> Result<()> {
+pub(in crate::recovery::clone::native::cache) fn validate(
+    settings: &LinuxObserverSettings,
+) -> Result<()> {
     let name = |value: &str| {
         !value.is_empty()
             && value.len() <= 128

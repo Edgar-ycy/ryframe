@@ -5178,6 +5178,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rustls",
+ "rustix",
  "ryframe-config",
  "ryframe-generator",
  "same-file",

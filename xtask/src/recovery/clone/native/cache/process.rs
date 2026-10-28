@@ -6,6 +6,22 @@ use std::{path::Path, process::Output, time::Duration};
 #[derive(Debug)]
 pub(super) struct ControlFailure(pub(super) Option<i32>);
 
+#[derive(Debug)]
+pub(super) struct RemoteFailure {
+    pub code: Option<i32>,
+    pub diagnostic: super::diagnostic::Diagnostic,
+}
+impl std::fmt::Display for RemoteFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}；原始退出码 {:?}；禁止重放",
+            self.diagnostic, self.code
+        )
+    }
+}
+impl std::error::Error for RemoteFailure {}
+
 impl std::fmt::Display for ControlFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -46,6 +62,9 @@ pub(super) fn call_with(
     if !matches!(action, "observe" | "check" | "stop") {
         return Err("缓存控制仅允许明确观察或精确停止".into());
     }
+    if request["format_version"] != 2 {
+        return Err("旧 Redis 登记仅允许只读历史核验，不执行冻结解释器".into());
+    }
     let output = Path::new(document::text(&runtime["output"], "缓存运行证据目录")?);
     let observed = evidence::inspect(request, output)?;
     let fields = observed.as_object().ok_or("缓存运行缺少创建收据")?;
@@ -60,6 +79,12 @@ pub(super) fn call_with(
     let input = serde_json::to_vec(&runtime["linux_identity"])?;
     let result = run(&args, &input)?;
     if !result.status.success() {
+        if let Ok(diagnostic) = super::diagnostic::Diagnostic::decode_output(&result.stdout) {
+            return Err(Box::new(RemoteFailure {
+                code: result.status.code(),
+                diagnostic,
+            }));
+        }
         return Err(ControlFailure(result.status.code()).into());
     }
     validate_response(&result.stdout, &runtime["linux_identity"])
