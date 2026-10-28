@@ -11,13 +11,20 @@ pub(crate) fn validate(request: &Value, output: &Path) -> Result<Value> {
     model::shape(request)?;
     model::plain(output)?;
     let bindings = files(output)?;
-    if request["format_version"] != 2
-        || output.join("runtime.json").try_exists()?
-        || output.join("partial.json").try_exists()?
-    {
-        return Err("失败清理只接受未发布运行收据的原生首代".into());
+    if request["format_version"] != 2 || output.join("partial.json").try_exists()? {
+        return Err("失败清理只接受证据完整的原生首代".into());
     }
     let original = evidence::inspect(request, output)?;
+    let runtime = stopped_runtime(request, output, &original)?;
+    authorization(request, output, &original, &runtime)?;
+    linux_failure(request, output, &original)?;
+    if bindings != files(output)? || evidence::inspect(request, output)? != original {
+        return Err("失败清理核验期间原证据变化".into());
+    }
+    Ok(json!({"runtime":runtime,"bindings":bindings}))
+}
+
+fn stopped_runtime(request: &Value, output: &Path, original: &Value) -> Result<Value> {
     let failure = doc::read(&output.join("failure.json"))?;
     doc::exact(
         &failure,
@@ -82,6 +89,18 @@ pub(crate) fn validate(request: &Value, output: &Path) -> Result<Value> {
         return Err("失败首代缺少同请求、原创建身份或完整停止退出证据".into());
     }
     doc::exact(&exited, &["identity", "returncode"], "缓存原身份退出")?;
+    Ok(runtime.clone())
+}
+
+fn authorization(request: &Value, output: &Path, original: &Value, runtime: &Value) -> Result<()> {
+    let published = output.join("runtime.json").try_exists()?;
+    if published
+        && (!output.join("acknowledged.json").try_exists()?
+            || !output.join("accepted.json").try_exists()?
+            || doc::read(&output.join("runtime.json"))? != *runtime)
+    {
+        return Err("已发布失败首代缺少完整接受确认或运行收据与原停止身份不同".into());
+    }
     if output.join("accepted.json").try_exists()?
         && !output.join("acknowledged.json").try_exists()?
     {
@@ -97,10 +116,7 @@ pub(crate) fn validate(request: &Value, output: &Path) -> Result<Value> {
             }
         }
     }
-    if bindings != files(output)? || evidence::inspect(request, output)? != original {
-        return Err("失败清理核验期间原证据变化".into());
-    }
-    Ok(json!({"runtime":runtime,"bindings":bindings}))
+    Ok(())
 }
 
 fn files(output: &Path) -> Result<Value> {
@@ -122,6 +138,8 @@ fn files(output: &Path) -> Result<Value> {
         "wsl.stderr.log",
         "acknowledged.json",
         "accepted.json",
+        "runtime.json",
+        "linux-failure.json",
     ];
     let mut result = json!({});
     for name in required {
@@ -153,4 +171,63 @@ fn files(output: &Path) -> Result<Value> {
         }
     }
     Ok(result)
+}
+
+fn linux_failure(request: &Value, output: &Path, original: &Value) -> Result<()> {
+    let path = output.join("linux-failure.json");
+    if !path.try_exists()? {
+        return Ok(());
+    }
+    let failure = doc::read(&path)?;
+    doc::exact(
+        &failure,
+        &[
+            "error_type",
+            "diagnostic",
+            "cleanup_error_type",
+            "identity",
+            "request_sha256",
+            "cleanup_completed",
+            "child_pid",
+            "child_returncode",
+            "popen_called",
+            "intent",
+        ],
+        "Linux失败清理收据",
+    )?;
+    let diagnostic = super::diagnostic::Diagnostic::decode(&failure["diagnostic"])?;
+    let exited = doc::read(&output.join("linux-exited.json"))?;
+    let mut intent = common::binding(&output.join("linux-intent.json"))?;
+    intent["path"] = json!(model::linux_path(doc::text(
+        &intent["path"],
+        "Linux启动意图路径"
+    )?)?);
+    if failure["error_type"] != "NativeCacheFailure"
+        || failure["request_sha256"] != digest::plan_hash(request)?
+        || failure["intent"] != intent
+        || failure["identity"] != original["linux_identity"]
+        || failure["child_pid"] != original["linux_identity"]["pid"]
+        || failure["popen_called"] != true
+        || failure["cleanup_completed"] != true
+        || !failure["cleanup_error_type"].is_null()
+        || failure["child_returncode"]
+            .as_i64()
+            .and_then(|code| i32::try_from(code).ok())
+            .is_none()
+        || failure["child_returncode"] != exited["returncode"]
+        || !matches!(
+            diagnostic.write_outcome,
+            super::diagnostic::Outcome::Stopped
+        )
+    {
+        return Err("Linux失败清理缺少同请求、原child身份、确定停止或一致退出码".into());
+    }
+    if matches!(
+        diagnostic.category,
+        super::diagnostic::Category::AcceptanceTimeout
+    ) && !output.join("acknowledged.json").try_exists()?
+    {
+        return Err("Linux接受复核失败缺少原确认收据".into());
+    }
+    Ok(())
 }

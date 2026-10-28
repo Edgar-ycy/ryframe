@@ -1,6 +1,7 @@
 //! 长期监督器：同 ELF 早期 exec、自有 Child 和精确 pidfd 共同持有。
 use super::super::super::{digest, json as doc, resources::common};
 use super::super::diagnostic::{self, Category, Outcome, failure};
+use super::super::start_deadline::Deadline;
 use super::{Launch, inputs, owned};
 use crate::Result;
 use serde_json::{Value, json};
@@ -89,6 +90,9 @@ pub(super) async fn serve(launch: &Launch, request_path: &Path, sha: &str) -> Re
         let cleanup = started.as_mut().map(Started::cleanup).transpose();
         let completed = cleanup.is_ok();
         let child = started.as_ref();
+        if completed && let Some(child) = child {
+            record_cleaned_exit(launch, child)?;
+        }
         let mut detail = diagnostic::Diagnostic::decode(&diagnostic::from_error(error.as_ref()))?;
         detail.write_outcome = if completed {
             Outcome::Stopped
@@ -112,6 +116,22 @@ pub(super) async fn serve(launch: &Launch, request_path: &Path, sha: &str) -> Re
         return Err(Box::new(detail));
     }
     result
+}
+
+fn record_cleaned_exit(launch: &Launch, child: &Started) -> Result<()> {
+    let (Some(identity), Some(returncode)) = (&child.expected, child.returncode) else {
+        return Ok(());
+    };
+    let value = json!({"identity":identity,"returncode":returncode});
+    let path = launch.linux_output.join("linux-exited.json");
+    if path.try_exists()? {
+        if doc::read(&path)? != value {
+            return Err("Linux清理退出收据与原child身份或退出码不同".into());
+        }
+        Ok(())
+    } else {
+        inputs::receipt(launch, "linux-exited.json", value)
+    }
 }
 
 async fn run(
@@ -195,7 +215,7 @@ async fn wait_for_exec(launch: &Launch, child: &Started, signals: &mut Signals) 
     let timeout = launch.request["timeout_seconds"]
         .as_u64()
         .ok_or("缓存超时无效")?;
-    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let deadline = Deadline::new(Instant::now(), Duration::from_secs(timeout));
     let boot = inputs::boot()?;
     let mut first_start = None;
     loop {
@@ -209,9 +229,7 @@ async fn wait_for_exec(launch: &Launch, child: &Started, signals: &mut Signals) 
                 Err(_) => failure(Category::ExecFailed, Outcome::Unknown),
             });
         }
-        if Instant::now() >= deadline {
-            return Err(failure(Category::ExecWaitTimeout, Outcome::Unknown));
-        }
+        deadline.check(Instant::now(), Category::ExecWaitTimeout)?;
         if let Some(identity) = inputs::identity(child.child.id())? {
             let start = doc::text(&identity["started"], "缓存创建时间")?.to_owned();
             if first_start.as_ref().is_some_and(|first| first != &start)
@@ -227,6 +245,7 @@ async fn wait_for_exec(launch: &Launch, child: &Started, signals: &mut Signals) 
                 {
                     return Err("Redis 映像核对期间身份变化".into());
                 }
+                deadline.check(Instant::now(), Category::ExecWaitTimeout)?;
                 return Ok(identity);
             }
             if identity["executable"] != launch.native_tool.linux_program {
@@ -247,10 +266,17 @@ async fn accept(
     let timeout = launch.request["timeout_seconds"]
         .as_u64()
         .ok_or("缓存超时无效")?;
-    let deadline = Instant::now() + Duration::from_secs(timeout + 15);
+    // 本端从进程收据发布后等待 ack；Windows 仍以授权完成的较早起点限制就绪。
+    let deadline = Deadline::new(Instant::now(), Duration::from_secs(timeout));
     let output = &launch.linux_output;
-    while !output.join("acknowledged.json").try_exists()? {
-        if owned::exited(fd, Duration::ZERO)? || Instant::now() >= deadline {
+    loop {
+        deadline.check(Instant::now(), Category::AcknowledgementTimeout)?;
+        let exists = output.join("acknowledged.json").try_exists()?;
+        deadline.check(Instant::now(), Category::AcknowledgementTimeout)?;
+        if exists {
+            break;
+        }
+        if owned::exited(fd, Duration::ZERO)? {
             return Err(failure(Category::AcknowledgementTimeout, Outcome::Unknown));
         }
         signals.pause().await?;
@@ -259,13 +285,16 @@ async fn accept(
     if ack != json!({"request_sha256":launch.request_sha256,"identity":expected}) {
         return Err("缓存确认不属于本次创建身份".into());
     }
+    let deadline = deadline.accepting(Instant::now(), Category::AcknowledgementTimeout)?;
     inputs::validate(launch)?;
     if owned::exited(fd, Duration::ZERO)?
         || inputs::identity(child.child.id())?.as_ref() != Some(expected)
     {
         return Err("缓存接受确认前已退出或身份变化".into());
     }
-    inputs::receipt(launch, "accepted.json", ack)
+    deadline.check(Instant::now(), Category::AcceptanceTimeout)?;
+    inputs::receipt(launch, "accepted.json", ack)?;
+    deadline.check(Instant::now(), Category::AcceptanceTimeout)
 }
 
 fn exit_code(status: std::process::ExitStatus) -> Result<i32> {

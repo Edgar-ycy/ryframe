@@ -1,10 +1,67 @@
 //! 核验授权边界、工具后继和unknown处理；不以这些用例替代真实Redis生命周期。
+use super::start_deadline::Deadline;
 use super::{
     super::digest,
     diagnostic::{Category, Diagnostic, Outcome},
     host_control, model, native_tool, process,
 };
 use serde_json::{Value, json};
+use std::time::{Duration, Instant};
+
+#[test]
+fn readiness_retries_keep_one_budget_and_cannot_promote_a_late_success() {
+    let start = Instant::now();
+    let deadline = Deadline::new(start, Duration::from_secs(60));
+    for seconds in [0, 20, 59] {
+        deadline
+            .check(
+                start + Duration::from_secs(seconds),
+                Category::ReadinessTimeout,
+            )
+            .unwrap();
+    }
+    for seconds in [60, 61] {
+        let error = deadline
+            .accepting(
+                start + Duration::from_secs(seconds),
+                Category::ReadinessTimeout,
+            )
+            .err()
+            .unwrap();
+        let detail = error.downcast_ref::<Diagnostic>().unwrap();
+        assert_eq!(detail.value()["write_outcome"], "unknown");
+        assert_eq!(detail.value()["category"], "readiness_timeout");
+    }
+}
+
+#[test]
+fn acceptance_has_fifteen_seconds_from_ack_and_includes_final_verification() {
+    let start = Instant::now();
+    let ready = Deadline::new(start, Duration::from_secs(60));
+    for ack_seconds in [10, 59] {
+        let ack = start + Duration::from_secs(ack_seconds);
+        let accepting = ready.accepting(ack, Category::ReadinessTimeout).unwrap();
+        // accepted 文件出现不结束预算，后续来源复核仍使用同一截止点。
+        accepting
+            .check(ack + Duration::from_secs(2), Category::AcceptanceTimeout)
+            .unwrap();
+        accepting
+            .check(ack + Duration::from_secs(14), Category::AcceptanceTimeout)
+            .unwrap();
+        for seconds in [15, 16] {
+            let error = accepting
+                .check(
+                    ack + Duration::from_secs(seconds),
+                    Category::AcceptanceTimeout,
+                )
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<Diagnostic>().unwrap().value()["category"],
+                "acceptance_timeout"
+            );
+        }
+    }
+}
 
 pub(super) fn native_request(mut request: Value) -> Value {
     let sources = json!([{"path":"xtask/source-inventory.json","sha256":"a".repeat(64)}]);
@@ -133,6 +190,12 @@ fn diagnostics_only_accept_fixed_fields_and_never_disclose_remote_advice_or_cate
             "linux-process.json",
         ),
         (Category::AcceptanceTimeout, "acceptance", "accepted.json"),
+        (Category::ReadinessTimeout, "readiness", "timeout_seconds"),
+        (
+            Category::AcknowledgementTimeout,
+            "acknowledgement",
+            "acknowledged",
+        ),
     ] {
         let diagnostic = Diagnostic {
             category,

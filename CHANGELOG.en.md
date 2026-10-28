@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Native initial-generation late failures after runtime publication still execute exact cleanup. Partial closure accepts them only when complete acceptance, failure, stop and exit evidence agrees and the runtime exactly matches the original stop receipt, binding all receipts before and after verification without resending stop or claiming startup success.
+
+- Split native Redis startup into authenticated readiness and acceptance confirmation: `timeout_seconds` remains the readiness budget, followed by a separate 15-second acceptance budget after ack publication. Both sides check deadlines on successful completion, retaining complete source and identity verification and failure cleanup without resetting loop budgets or replaying operations.
+
 - Remove duplicate positive unsigned-ID assertions against the same parser implementation, retaining the public entry's full-range boundaries, invalid-input checks and caller-supplied business error messages.
 
 - Remove obsolete cache resource-stub tests that cannot reach current native stages, retaining existing Rust coverage for unknown writes and recovery. Verify RESP encoding and parsing, original exceptions and no replay at the active Python transport and session boundaries, preserving shared fixtures used by other callers.

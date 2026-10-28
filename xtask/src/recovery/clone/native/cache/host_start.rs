@@ -2,6 +2,7 @@
 use super::{
     super::{digest, json as doc, resources::common},
     evidence, host_control, linux_write, model, native_tool,
+    start_deadline::Deadline,
 };
 use crate::Result;
 use serde_json::{Value, json};
@@ -62,12 +63,26 @@ pub(crate) fn start(
         &args,
         &mut attempt,
         &mut guard,
-    );
+    )
+    .and_then(|(observed, deadline)| {
+        deadline.check(
+            Instant::now(),
+            super::diagnostic::Category::AcceptanceTimeout,
+        )?;
+        linux_write::publish(&output.join("runtime.json"), &observed)?;
+        tool.finish(backend)?;
+        model::validate(backend, request, true)?;
+        deadline.check(
+            Instant::now(),
+            super::diagnostic::Category::AcceptanceTimeout,
+        )?;
+        Ok(observed)
+    });
     if result.is_err() {
         result = failed(backend, request, output, &mut attempt, result);
+        tool.finish(backend)?;
+        model::validate(backend, request, true)?;
     }
-    tool.finish(backend)?;
-    model::validate(backend, request, true)?;
     result
 }
 
@@ -105,10 +120,21 @@ fn failed(
             .err()
             .and_then(|error| error.downcast_ref::<super::process::ControlFailure>())
             .and_then(|error| error.0);
-        result = Err(Box::new(super::process::RemoteFailure {
-            code,
-            diagnostic: super::diagnostic::Diagnostic::decode(&failure["diagnostic"])?,
-        }));
+        let diagnostic = super::diagnostic::Diagnostic::decode(&failure["diagnostic"])?;
+        let phase_timeout = result.as_ref().err().is_some_and(|error| {
+            error
+                .downcast_ref::<super::diagnostic::Diagnostic>()
+                .is_some_and(|detail| {
+                    matches!(
+                        detail.category,
+                        super::diagnostic::Category::ReadinessTimeout
+                            | super::diagnostic::Category::AcceptanceTimeout
+                    )
+                })
+        });
+        if !phase_timeout {
+            result = Err(Box::new(super::process::RemoteFailure { code, diagnostic }));
+        }
     }
     result
 }
@@ -129,12 +155,14 @@ fn launch_and_accept(
     args: &[String],
     attempt: &mut Attempt,
     guard: &mut impl FnMut() -> Result<()>,
-) -> Result<Value> {
+) -> Result<(Value, Deadline)> {
     authorize(request, private, output, args, attempt)?;
     let child = attempt.child.as_mut().ok_or("缓存 launcher 缺失")?;
     let runtime = &mut attempt.runtime;
-    let deadline = Instant::now()
-        + Duration::from_secs(request["timeout_seconds"].as_u64().ok_or("缓存超时无效")?);
+    let deadline = Deadline::new(
+        Instant::now(),
+        Duration::from_secs(request["timeout_seconds"].as_u64().ok_or("缓存超时无效")?),
+    );
     wait_file(
         child,
         &output.join("linux-process.json"),
@@ -143,26 +171,14 @@ fn launch_and_accept(
     )?;
     let initial = evidence::inspect(request, output)?;
     *runtime = Some(initial.clone());
-    let observed = loop {
-        match host_control::observe(backend, request, &initial) {
-            Ok(value) => break value,
-            Err(error)
-                if error
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused) =>
-            {
-                if child.try_wait()?.is_some() || Instant::now() >= deadline {
-                    return Err("缓存认证就绪超时".into());
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(error) => return Err(error),
-        }
-    };
-    guard()?;
+    let observed = ready(backend, request, &initial, child, deadline, guard)?;
     linux_write::publish(
         &output.join("acknowledged.json"),
         &json!({"request_sha256":digest::plan_hash(request)?,"identity":observed["linux_identity"]}),
+    )?;
+    let deadline = deadline.accepting(
+        Instant::now(),
+        super::diagnostic::Category::ReadinessTimeout,
     )?;
     wait_file(
         child,
@@ -174,8 +190,55 @@ fn launch_and_accept(
         return Err("缓存 accepted 与 acknowledged 不同".into());
     }
     native_tool::from_request(request)?.finish(backend)?;
+    deadline.check(
+        Instant::now(),
+        super::diagnostic::Category::AcceptanceTimeout,
+    )?;
     *runtime = Some(observed.clone());
-    linux_write::publish(&output.join("runtime.json"), &observed)?;
+    Ok((observed, deadline))
+}
+
+fn ready(
+    backend: &Path,
+    request: &Value,
+    initial: &Value,
+    child: &mut Child,
+    deadline: Deadline,
+    guard: &mut impl FnMut() -> Result<()>,
+) -> Result<Value> {
+    let observed = loop {
+        deadline.check(
+            Instant::now(),
+            super::diagnostic::Category::ReadinessTimeout,
+        )?;
+        match host_control::observe(backend, request, initial) {
+            Ok(value) => break value,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused) =>
+            {
+                if child.try_wait()?.is_some() {
+                    return Err("缓存认证就绪超时".into());
+                }
+                deadline.check(
+                    Instant::now(),
+                    super::diagnostic::Category::ReadinessTimeout,
+                )?;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    deadline.check(
+        Instant::now(),
+        super::diagnostic::Category::ReadinessTimeout,
+    )?;
+    guard()?;
+    deadline.check(
+        Instant::now(),
+        super::diagnostic::Category::ReadinessTimeout,
+    )?;
     Ok(observed)
 }
 
@@ -264,22 +327,21 @@ fn restricted(command: &mut std::process::Command, private: &Value) -> Result<()
 fn wait_file(
     child: &mut Child,
     path: &Path,
-    deadline: Instant,
+    deadline: Deadline,
     category: super::diagnostic::Category,
 ) -> Result<()> {
-    while !path.try_exists()? {
+    loop {
+        let exists = path.try_exists()?;
+        if exists {
+            deadline.check(Instant::now(), category)?;
+            return Ok(());
+        }
         if let Some(status) = child.try_wait()? {
             return Err(super::process::ControlFailure(status.code()).into());
         }
-        if Instant::now() >= deadline {
-            return Err(super::diagnostic::failure(
-                category,
-                super::diagnostic::Outcome::Unknown,
-            ));
-        }
+        deadline.check(Instant::now(), category)?;
         std::thread::sleep(Duration::from_millis(50));
     }
-    Ok(())
 }
 
 fn cleanup(
@@ -332,4 +394,101 @@ fn cleanup(
     )?;
     evidence::inspect(request, output)?;
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn an_existing_receipt_does_not_turn_an_expired_phase_into_success() {
+    let base = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&base).unwrap();
+    let directory = tempfile::tempdir_in(base).unwrap();
+    let path = directory.path().join("receipt.json");
+    std::fs::write(&path, b"{}").unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--list")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    for category in [
+        super::diagnostic::Category::ReadinessTimeout,
+        super::diagnostic::Category::AcceptanceTimeout,
+    ] {
+        let result = wait_file(
+            &mut child,
+            &path,
+            Deadline::new(Instant::now(), Duration::ZERO),
+            category,
+        );
+        let error = result.unwrap_err();
+        let diagnostic = error
+            .downcast_ref::<super::diagnostic::Diagnostic>()
+            .unwrap();
+        assert_eq!(diagnostic.value()["category"], json!(category));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+    }
+    child.wait().unwrap();
+}
+
+#[cfg(test)]
+#[test]
+fn cleanup_diagnostics_do_not_replace_the_initiating_windows_phase_timeout() {
+    use super::diagnostic::{Category, Diagnostic, Outcome, failure};
+    let backend = crate::workspace::root_dir();
+    let base = backend.join(".local-tests");
+    std::fs::create_dir_all(&base).unwrap();
+    let temporary = tempfile::tempdir_in(base).unwrap();
+    for (index, category) in [
+        Category::ReadinessTimeout,
+        Category::AcceptanceTimeout,
+        Category::RequestRejected,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = temporary.path().join(index.to_string());
+        std::fs::create_dir(&output).unwrap();
+        let request = json!({});
+        let remote = Diagnostic {
+            category: Category::AcknowledgementTimeout,
+            write_outcome: Outcome::Stopped,
+            os_code: None,
+        };
+        let receipt = json!({"request_sha256":digest::plan_hash(&request).unwrap(), "diagnostic":remote.value()});
+        doc::write_new(&output.join("linux-failure.json"), &receipt).unwrap();
+        let result = failed(
+            &backend,
+            &request,
+            &output,
+            &mut Attempt::default(),
+            Err(failure(category, Outcome::Unknown)),
+        );
+        let error = result.unwrap_err();
+        if index < 2 {
+            assert_eq!(
+                error
+                    .downcast_ref::<Diagnostic>()
+                    .unwrap_or_else(|| panic!("应保留启动阶段诊断，实际错误：{error}"))
+                    .value()["category"],
+                json!(category)
+            );
+        } else {
+            assert_eq!(
+                error
+                    .downcast_ref::<super::process::RemoteFailure>()
+                    .unwrap_or_else(|| panic!("应保留远端失败诊断，实际错误：{error}"))
+                    .diagnostic
+                    .value(),
+                remote.value()
+            );
+        }
+        assert_eq!(
+            doc::read(&output.join("failure.json")).unwrap()["cleanup_completed"],
+            false
+        );
+        assert_eq!(
+            doc::read(&output.join("linux-failure.json")).unwrap(),
+            receipt
+        );
+    }
 }

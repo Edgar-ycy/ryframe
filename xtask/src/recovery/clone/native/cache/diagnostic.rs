@@ -22,6 +22,7 @@ pub(super) enum Category {
     SignalFailed,
     ExitWaitFailed,
     ExecWaitTimeout,
+    ReadinessTimeout,
     ProcessReceiptTimeout,
     AcceptanceTimeout,
     AcknowledgementTimeout,
@@ -131,6 +132,7 @@ impl Diagnostic {
                 "核对退出与端口证明；保留现场，禁止重放",
             ),
             ExecWaitTimeout
+            | ReadinessTimeout
             | ProcessReceiptTimeout
             | AcceptanceTimeout
             | AcknowledgementTimeout => timeout_fields(self.category),
@@ -176,6 +178,11 @@ impl Diagnostic {
 fn timeout_fields(category: Category) -> (&'static str, &'static str, &'static str) {
     use Category::*;
     match category {
+        ReadinessTimeout => (
+            "readiness",
+            "timeout_seconds",
+            "核对认证就绪、完整观察及guard是否在原就绪预算内完成；保留现场，禁止重放",
+        ),
         ExecWaitTimeout => (
             "exec-wait",
             "timeout_seconds",
@@ -189,14 +196,14 @@ fn timeout_fields(category: Category) -> (&'static str, &'static str, &'static s
         AcceptanceTimeout => (
             "acceptance",
             "accepted.json",
-            "核对 acknowledged.json、accepted.json 与原启动截止时间；保留现场，禁止重放",
+            "核对 acknowledged.json、accepted.json 与接受确认15秒期限；保留现场，禁止重放",
         ),
         AcknowledgementTimeout => (
             "acknowledgement",
             "acknowledged",
             "核对认证、INFO、CONFIG及本次确认收据",
         ),
-        _ => unreachable!("超时字段映射仅接收四类超时诊断"),
+        _ => unreachable!("超时字段映射仅接收超时诊断"),
     }
 }
 
