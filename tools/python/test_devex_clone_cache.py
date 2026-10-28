@@ -1,6 +1,7 @@
-"""缓存恢复的请求、原子标记及外层发布；全部使用文件和协议替身。"""
+"""缓存请求、Marker RESP 传输和原生会话异常边界的测试。"""
 from contextlib import ExitStack
 import copy
+import json
 import os
 from io import BytesIO
 from pathlib import Path
@@ -10,10 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import devex_clone_cache as cache
 import devex_clone_cache_native as markers
-import devex_clone_cache_process as process
 import devex_clone_cache_request as model
-from devex_clone_capture import read_json, write_json
-from devex_clone_run_state import binding, begin, bind_controller_attempt, finish, initialize_state, run_lock
+from devex_clone_capture import write_json
+from devex_clone_run_state import binding, initialize_state
 from rate_limit_client import load_app_table
 from restore_reference_plan import plan_hash
 from devex_clone_target_resources import Resources
@@ -67,9 +67,6 @@ class CacheFixture(unittest.TestCase):
         self.request = {"format_version": 1, "kind": "devex-clone-cache-restart", "side": "target",
             "manifest": binding(self.directory / "manifest.json"), **self.value, "previous": self.previous,
             "process_receipt": receipt, "process": process_request, "markers": self.marker}
-        self.request_file = Path(self.json("request.json", self.request)["path"])
-        self.store, self.commands = {}, []
-        self.alive, self.counter, self.failure = False, 0, None
 
     def file(self, name, contents):
         path = self.root / name
@@ -81,77 +78,85 @@ class CacheFixture(unittest.TestCase):
         write_json(path, value)
         return binding(path)
 
-    def call(self, command):
-        self.commands.append(command)
-        if command[0] == "SCAN":
-            self.assertEqual(command, ["SCAN", "0", "MATCH", self.marker["namespace"] + "*", "COUNT", "1000"])
-            return ["0", [key for key in self.store if key.startswith(self.marker["namespace"])]]
-        if command[0] == "GET":
-            return self.store.get(command[1])
-        self.assertEqual(command, ["MSETNX", self.marker["ownership_key"], self.marker["ownership_value"],
-                                  self.marker["sentinel_key"], self.marker["sentinel_value"]])
-        self.assertTrue(list(self.directory.glob("cache-target/a*/owner/intent.json")))
-        if self.failure == "before":
-            raise TimeoutError("fixture before write")
-        if any(command[index] in self.store for index in (1, 3)):
-            return 0
-        self.store.update({command[1]: command[2], command[3]: command[4]})
-        if self.failure == "after":
-            raise TimeoutError("fixture after write")
-        return 1
-
-    def start(self, request, environment, output, guard):
-        self.assertTrue(output.is_dir())
-        guard()
-        self.counter += 1
-        self.alive = True
-        self.store = {}
-        receipt = self.json(str((output / "fake-process.json").relative_to(self.root)), {"generation": self.counter})
-        base = {"process_receipt": receipt, "output": str(output), "generation": self.counter}
-        write_json(output / "base.json", base)
-        return self.observe(request, environment, base)
-
-    def inspect(self, request, output):
-        path = output / "base.json"
-        return read_json(path) if path.exists() else None
-
-    def observe(self, request, environment, base, output=None):
-        if not self.alive:
-            raise ValueError("fixture stopped")
-        return {**base, "redis": {**self.previous, "pid": 620000 + self.counter,
-                    "started": str(200 + self.counter), "run_id": str(self.counter) * 40}, "facts": {}}
-
-    def stop(self, request, environment, runtime, output):
-        self.alive = False
-        return {"state": "stopped", "runtime": runtime}
-
     def patches(self):
         stack = ExitStack()
         stack.enter_context(patch.object(model, "load_app_table", side_effect=lambda backend, environment:
                             load_app_table(backend, environment, config_dir=self.config)))
         stack.enter_context(patch.object(model, "initialization_history", return_value=(self.initial, self.original)))
         stack.enter_context(patch.object(model, "request_binding", return_value=(self.review, self.selected)))
-        stack.enter_context(patch.object(cache, "producers_stopped"))
-        stack.enter_context(patch.object(cache, "transport", return_value=self.call))
-        for name in ("start", "inspect", "observe", "stop"):
-            stack.enter_context(patch.object(process, "inspect_start" if name == "inspect" else name, side_effect=getattr(self, name)))
         return stack
-
-    def execute(self, mode, *, outer_failure=False):
-        with run_lock(self.directory) as owner:
-            number = begin(self.directory, cache.STAGE, mode, {})
-            bind_controller_attempt(self.directory, number, owner)
-            try:
-                result = cache.execute_cache(self.backend, self.directory, self.value, mode, number,
-                    request_file=self.request_file if mode == "restart" else None)
-            except BaseException as error:
-                finish(self.directory, number, error=error, verify_results=False)
-                raise
-            finish(self.directory, number, result=result, error=ValueError("outer") if outer_failure else None)
-            return result
 
 
 class TransportTests(unittest.TestCase):
+    def test_marker_transport_encodes_utf8_and_parses_successful_resp(self):
+        backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
+        cases = [
+            (["SCAN", "0", "MATCH", "ryframe:{scope}:*", "COUNT", "1000"],
+             "*2\r\n$1\r\n0\r\n*1\r\n$12\r\nowner:测试\r\n".encode(), ["0", ["owner:测试"]]),
+            (["GET", "owner:测试"], "$9\r\n所有者\r\n".encode(), "所有者"),
+            (["GET", "missing"], b"$-1\r\n", None),
+            (["MSETNX", "owner:测试", "值", "sentinel", "ready"], b":1\r\n", 1),
+        ]
+        call = cache.transport(backend, {"previous": {"port": 16390}},
+                               {"APP_ENV": "test"}, lambda: None, password="密钥")
+        for command, response, expected in cases:
+            connection = MagicMock()
+            connection.__enter__.return_value = connection
+            connection.makefile.return_value.__enter__.return_value = BytesIO(b"+OK\r\n+OK\r\n" + response)
+            with self.subTest(command=command[0], result=expected), \
+                    patch("devex_clone_target_resources.socket.create_connection", return_value=connection) as connect:
+                self.assertEqual(call(command), expected)
+            connect.assert_called_once_with(("127.0.0.1", 16390), timeout=5)
+            wire = [item.args[0] for item in connection.sendall.call_args_list]
+            self.assertEqual([Resources._response(BytesIO(item)) for item in wire],
+                             [["AUTH", "密钥"], ["SELECT", "0"], command])
+            self.assertEqual(wire[0], "*2\r\n$4\r\nAUTH\r\n$6\r\n密钥\r\n".encode())
+            if command[0] == "MSETNX":
+                self.assertEqual(wire[2], ("*5\r\n$6\r\nMSETNX\r\n$12\r\nowner:测试\r\n"
+                                          "$3\r\n值\r\n$8\r\nsentinel\r\n$5\r\nready\r\n").encode())
+
+    def test_exchange_preserves_callback_failure_and_rejects_later_port_without_replay(self):
+        backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
+        payload = {"format_version": 1, "kind": "ryframe-cache-process", "operation": "stage",
+                   "arguments": {"action": "execution-preflight", "directory": str(backend / ".local-tests/exchange"),
+                                 "caller": os.getpid(), "parameters": {"value": {}, "mode": "restart",
+                                                                        "number": 1, "request_file": None}}}
+        first = {"port": "producers-stopped", "arguments": None, "sequence": 1}
+        final = {"ok": False, "error": "CacheProcessRejected", "message": "端口失败；禁止重放", "exit_code": None}
+        later = {"port": "producers-stopped", "arguments": None, "sequence": 2}
+        # 保留真实 exchange、工具绑定核验和消息线程，仅替换进程的标准输入输出。
+        for kind in (TimeoutError, KeyboardInterrupt):
+            for extra_port in (False, True):
+                primary = kind("原始端口失败")
+                child = MagicMock()
+                child.stdin = MagicMock(spec=BytesIO)
+                child.stdin.closed = False
+                child.stdin.close.side_effect = lambda: setattr(child.stdin, "closed", True)
+                child.stdout.readline.side_effect = [
+                    json.dumps(first).encode() + b"\n",
+                    json.dumps(later if extra_port else final).encode() + b"\n", b"",
+                ]
+                child.wait.return_value = 1
+                child.poll.return_value = 1
+                callback = MagicMock(side_effect=primary)
+                with self.subTest(error=kind.__name__, extra_port=extra_port), \
+                        patch.object(markers.subprocess, "Popen", return_value=child) as spawn:
+                    if extra_port:
+                        with self.assertRaisesRegex(RuntimeError, "失败后仍请求执行"):
+                            markers.exchange(payload, callback)
+                    else:
+                        with self.assertRaises(kind) as failure:
+                            markers.exchange(payload, callback)
+                        self.assertIs(failure.exception, primary)
+                callback.assert_called_once_with("producers-stopped", None)
+                spawn.assert_called_once()
+                self.assertEqual(spawn.call_args.args[0][1:], ["__cache-process"])
+                sent = [json.loads(item.args[0]) for item in child.stdin.write.call_args_list]
+                self.assertEqual(sent, [payload, {"sequence": 1, "ok": False, "result": None}])
+                child.kill.assert_not_called()
+                child.stdin.close.assert_called_once()
+                child.stdout.close.assert_called_once()
+
     def test_checkpoint_failure_blocks_connection_or_next_protocol_send(self):
         for rejected in range(1, 5):
             connection = MagicMock()
@@ -175,14 +180,6 @@ class RequestTests(CacheFixture):
         with self.patches(), patch.object(model, "process_binding", wraps=model.process_binding) as process_bound:
             self.assertEqual(model.validate_request(self.backend, self.directory, self.value, self.request), self.private)
         self.assertEqual(process_bound.call_args.kwargs["review_binding"], self.review_binding)
-
-    def test_registered_lookup_passes_only_explicit_initialization_lock(self):
-        with self.patches():
-            self.execute("restart")
-            with patch.object(model, "initialization_history", return_value=(self.initial, self.original)) as history:
-                cache.registered_cache_binding(self.backend, self.directory, owned_lock_identity=123)
-                self.assertEqual(history.call_args.args[-1], 123)
-
 
     def test_request_rejects_changed_directory_credential_or_tool(self):
         with self.patches():
@@ -212,55 +209,6 @@ class RequestTests(CacheFixture):
                 'password="fixture-secret"', 'password="another-secret"'), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "绑定的 password"):
                 model.validate_request(self.backend, self.directory, self.value, wrong)
-
-
-
-
-class CacheAdapterTests(CacheFixture):
-    def test_restart_uses_real_redis_transport_for_marker_protocol(self):
-        bulk = lambda value: f"${len(value.encode())}\r\n{value}\r\n".encode()
-        replies = [b"*2\r\n$1\r\n0\r\n*0\r\n", b"$-1\r\n", b"$-1\r\n", b":1\r\n",
-                   b"*2\r\n$1\r\n0\r\n*1\r\n" + bulk(self.marker["ownership_key"]),
-                   bulk(self.marker["ownership_value"]), bulk(self.marker["sentinel_value"])]
-        connections = []
-        for reply in replies:
-            connection = MagicMock()
-            connection.__enter__.return_value = connection
-            connection.makefile.return_value.__enter__.return_value = BytesIO(b"+OK\r\n+OK\r\n" + reply)
-            connections.append(connection)
-        real_transport = cache.transport
-        with self.patches(), patch.object(cache, "transport", wraps=real_transport), \
-                patch("devex_clone_target_resources.socket.create_connection", side_effect=connections) as connect:
-            self.assertEqual(self.execute("restart")["status"], "cache_ready")
-        commands = []
-        for connection in connections:
-            sent = [Resources._response(BytesIO(call.args[0])) for call in connection.sendall.call_args_list]
-            self.assertEqual(sent[:2], [["AUTH", self.request["process"]["password"]], ["SELECT", "0"]])
-            self.assertEqual(len(sent), 3)
-            commands.append(sent[2])
-        self.assertEqual([command[0] for command in commands], ["SCAN", "GET", "GET", "MSETNX", "SCAN", "GET", "GET"])
-        self.assertEqual(commands[3], ["MSETNX", self.marker["ownership_key"], self.marker["ownership_value"],
-                                       self.marker["sentinel_key"], self.marker["sentinel_value"]])
-        self.assertEqual(connect.call_count, 7)
-        connect.assert_called_with(("127.0.0.1", self.previous["port"]), timeout=5)
-
-
-    def test_stage_port_preserves_original_cancellation_and_never_retries_start(self):
-        with self.patches(), patch.object(process, "start", side_effect=KeyboardInterrupt) as start:
-            with self.assertRaises(KeyboardInterrupt):
-                self.execute("restart")
-        start.assert_called_once()
-        self.assertEqual(self.commands, [])
-        self.assertFalse((self.directory / "cache-target/a0001/ready.json").exists())
-
-    def test_stage_port_keeps_unknown_transport_result_as_original_timeout(self):
-        with self.patches():
-            self.failure = "after"
-            with self.assertRaises(TimeoutError):
-                self.execute("restart")
-        self.assertEqual(sum(command[0] == "MSETNX" for command in self.commands), 1)
-        self.assertTrue((self.directory / "cache-target/a0001/owner/intent.json").is_file())
-        self.assertFalse((self.directory / "cache-target/a0001/owner/confirmed.json").exists())
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove obsolete cache resource-stub tests that cannot reach current native stages, retaining existing Rust coverage for unknown writes and recovery. Verify RESP encoding and parsing, original exceptions and no replay at the active Python transport and session boundaries, preserving shared fixtures used by other callers.
+
 - Add a native read-only authority entry for recovery datasets, validating target plans, runtime generations, dataset lineage, independent source and explicit configuration bindings, then rechecking all consumed inputs before returning. Formal frontend consumer migration and complete recovery-chain acceptance remain separate pending work.
 
 - Remove the unused Python Linux Redis startup, supervision, frozen-helper implementation and disabled entry points, together with tests exclusive to that retired implementation. Current start, observe and stop calls continue through the bound Rust tool; retain active Python adapters, readonly historical evidence checks, atomic publication and error/no-replay protections. Historical frozen files and Git records remain unchanged.
