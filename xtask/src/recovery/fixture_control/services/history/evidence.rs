@@ -3,10 +3,13 @@ use std::{collections::BTreeSet, path::Path};
 use serde_json::{Value, json};
 
 use super::{generation, prefix};
+#[path = "close_recovery.rs"]
+mod close_recovery;
 use crate::{
     Result,
     recovery::clone::native::{digest, json as json_io, lifecycle::state},
 };
+pub(crate) use close_recovery::{candidate as close_candidate, recovery_evidence};
 
 #[derive(Debug)]
 pub(super) struct HistoryError(pub(super) &'static str);
@@ -391,14 +394,27 @@ fn validate_reconciliation(
     if close {
         let (rustfs, redis) = generation::paths(run, &history["active_generation"])?;
         let tree_path = rustfs.join("rustfs-tree.json");
-        let services = json!({"tree":read(&tree_path)?,"runtime":read(&redis.join("runtime.json"))?,"evidence":{"rustfs_tree":binding(&tree_path)?}});
-        let (evidence, _) = close_evidence(
-            run,
-            failed,
-            &history["active_generation"],
-            &item["sources"],
-            &services,
-        )?;
+        let mut services = json!({"tree":read(&tree_path)?,"runtime":read(&redis.join("runtime.json"))?,"evidence":{"rustfs_tree":binding(&tree_path)?}});
+        let evidence = if proof["evidence"].get("close_recovery").is_some() {
+            services["requests"] = json!({"redis":read(&redis.join("request.json"))?});
+            recovery_evidence(
+                run,
+                failed,
+                &history["active_generation"],
+                &item["sources"],
+                &services,
+                &proof["evidence"]["close_recovery"],
+            )?
+        } else {
+            close_evidence(
+                run,
+                failed,
+                &history["active_generation"],
+                &item["sources"],
+                &services,
+            )?
+            .0
+        };
         check(proof["evidence"] == evidence, "夹具关闭和解证据不匹配")?;
     } else {
         restart_evidence(run, failed, &item["sources"], &history["external_recovery"])?;

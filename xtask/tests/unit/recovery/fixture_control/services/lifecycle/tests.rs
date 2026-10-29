@@ -17,6 +17,8 @@ mod support;
 #[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/wait.rs"]
 mod wait;
 use support::*;
+#[path = "close_recovery.rs"]
+mod close_recovery;
 #[path = "native_writes.rs"]
 mod native_writes;
 #[path = "partial_close.rs"]

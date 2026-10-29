@@ -195,51 +195,68 @@ pub(crate) fn observe(backend: &Path, request: &Value, runtime: &Value) -> Resul
     Ok(result)
 }
 
+mod stop;
+
 pub(crate) fn stop(
     backend: &Path,
     request: &Value,
     runtime: &Value,
     output: &Path,
 ) -> Result<Value> {
-    model::validate(backend, request, true)?;
-    common::local_directory(backend, output, "缓存停止输出")?;
-    let tool = native_tool::from_request(request)?;
-    tool.finish(backend)?;
-    if runtime.get("partial_receipt").is_some() {
-        let status = super::readonly::status(backend, request, runtime, None)?;
-        if status["state"] != "stopped" {
-            return Err("缓存部分启动未证明关闭".into());
-        }
-        let result = json!({"state":"stopped","status":"redis_process_stopped","runtime":runtime,"resources_deleted":false});
-        super::linux_write::publish(&output.join("stopped.json"), &result)?;
-        return Ok(result);
-    }
-    launcher(request, runtime, false)?;
-    let (mut result, recovered) =
-        stop_once(|action| process::call(backend, request, runtime, action))?;
-    if result["alive"] != false {
-        return Err("缓存停止后仍在运行".into());
-    }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while launcher(request, runtime, false)? {
-        if Instant::now() >= deadline {
-            return Err("Redis 关闭后 WSL 监督器未退出".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    bind_and_close(request)?;
-    tool.finish(backend)?;
-    model::validate(backend, request, true)?;
-    result["status"] = json!("redis_process_stopped");
-    result["runtime"] = runtime.clone();
-    result["resources_deleted"] = json!(false);
-    if recovered {
-        result["observed_after_failed_stop"] = json!(true);
-    }
-    super::linux_write::publish(&output.join("stopped.json"), &result)?;
-    Ok(result)
+    stop::run(backend, request, runtime, output, || Ok(()), false)
 }
 
+pub(crate) fn stop_guarded(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+    output: &Path,
+    guard: impl FnMut() -> Result<()>,
+) -> Result<Value> {
+    stop::run(backend, request, runtime, output, guard, true)
+}
+
+pub(crate) fn closed_port(backend: &Path, request: &Value, runtime: &Value) -> Result<()> {
+    model::validate(backend, request, true)?;
+    let tool = native_tool::from_request(request)?;
+    tool.finish(backend)?;
+    let observed = evidence::inspect(
+        request,
+        Path::new(doc::text(&runtime["output"], "原缓存目录")?),
+    )?;
+    if observed.as_object().is_none_or(|fields| {
+        fields
+            .iter()
+            .any(|(key, value)| runtime.get(key) != Some(value))
+    }) || launcher(request, runtime, false)?
+    {
+        return Err("原缓存收据或launcher身份变化".into());
+    }
+    bind_after_stop(request, false)?;
+    tool.finish(backend)?;
+    model::validate(backend, request, true)?;
+    if launcher(request, runtime, false)? {
+        return Err("独占绑定后原launcher身份变化".into());
+    }
+    Ok(())
+}
+
+fn bind_after_stop(request: &Value, requested: bool) -> Result<()> {
+    let port = u16::try_from(request["port"].as_u64().ok_or("缓存端口无效")?)?;
+    bind_once(port).map_err(|(category, error)| {
+        if matches!(category, Category::PrelaunchPortBindFailed)
+            && error.kind() == std::io::ErrorKind::AddrInUse
+        {
+            error.into()
+        } else {
+            diagnostic::stop::capture(diagnostic::stop::Stage::Port, requested, true, error.into())
+        }
+    })
+}
+
+pub(crate) fn recovery_port_error(error: Box<dyn std::error::Error>) -> Box<dyn std::error::Error> {
+    diagnostic::stop::capture(diagnostic::stop::Stage::Port, false, true, error)
+}
 pub(super) fn stop_once(mut call: impl FnMut(&str) -> Result<Value>) -> Result<(Value, bool)> {
     Ok(match call("stop") {
         Ok(value) => (value, false),

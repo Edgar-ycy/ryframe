@@ -2,6 +2,7 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+pub(super) mod stop;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -268,6 +269,9 @@ pub(super) fn from_error(error: &(dyn std::error::Error + 'static)) -> Value {
 }
 
 pub(crate) fn primitive_detail(error: &(dyn std::error::Error + 'static)) -> (Value, Value) {
+    if let Some(failure) = error.downcast_ref::<stop::Failure>() {
+        return (failure.value(), failure.exit_code());
+    }
     if let Some(failure) = error.downcast_ref::<PrelaunchFailure>() {
         return (failure.value(), Value::Null);
     }
@@ -287,6 +291,13 @@ pub(crate) fn primitive_detail(error: &(dyn std::error::Error + 'static)) -> (Va
 }
 
 pub(crate) fn primitive_error(detail: &Value, code: &Value) -> Result<Box<dyn std::error::Error>> {
+    if detail["kind"] == "cache-stop-diagnostic" {
+        let failure = stop::Failure::decode(detail)?;
+        if failure.exit_code() != *code {
+            return Err("关闭诊断与原退出码不符".into());
+        }
+        return Ok(Box::new(failure));
+    }
     let code = if code.is_null() {
         None
     } else {
@@ -318,6 +329,9 @@ pub(crate) fn primitive_error(detail: &Value, code: &Value) -> Result<Box<dyn st
 }
 
 pub(crate) fn primitive_message(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(failure) = error.downcast_ref::<stop::Failure>() {
+        return Some(failure.to_string());
+    }
     if let Some(failure) = error.downcast_ref::<PrelaunchFailure>() {
         return Some(failure.to_string());
     }

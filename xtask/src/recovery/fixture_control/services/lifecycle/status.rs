@@ -109,6 +109,29 @@ fn reconcilable(runtime: &mut dyn Runtime, context: &Context, history: &Value) -
     };
     let proof = (|| {
         let services = registered(runtime, context, false)?;
+        if !context
+            .run
+            .join(format!(
+                "lifecycle-{:04}/stopped.json",
+                failed["number"].as_u64().ok_or("失败阶段编号无效")?
+            ))
+            .try_exists()?
+        {
+            history::evidence::close_candidate(
+                &context.run,
+                failed,
+                &history["active_generation"],
+                &context.sources(),
+                &services,
+                false,
+            )?;
+            check(
+                observe(runtime, &services)?
+                    == json!({"redis":"stopped","rustfs":"running","termination":null}),
+                "关闭恢复资格要求原Redis停止和原RustFS完整身份仍在",
+            )?;
+            return Ok((Value::Null, Value::Null));
+        }
         history::evidence::close_evidence(
             &context.run,
             failed,

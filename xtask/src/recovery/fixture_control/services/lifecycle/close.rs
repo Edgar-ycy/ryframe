@@ -38,7 +38,8 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
                 let cache = runtime.call(
                     "cache-stop",
                     json!({"request":services["requests"]["redis"],
-                "private":context.value["private"],"runtime":services["runtime"],"output":output}),
+                "private":context.value["private"],"runtime":services["runtime"],"output":output,
+                "context":context.value,"running":running}),
                 )?;
                 stable(runtime, context, &services, running)?;
                 let terminated =

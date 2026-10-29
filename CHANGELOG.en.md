@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Complete redacted service-close diagnostics and Windows exclusive-port release waiting within the original deadline. Explicit reconcile can finish the original RustFS tree in a new stage after strictly binding the failed close, normal Redis exit and complete process identities, publishing independent recovery evidence without resending Redis stop, changing the old failure or fabricating an old stop receipt.
+
 - Fix type mismatches for standard Redis integer replies in fresh preflight-cleanup DEL and resumed marker EVAL. Accept only exact string replies and normalize a confirmed EVAL result to the existing integer receipt, preserving transaction reply contracts and the prohibition on replaying unknown writes. Unconfirmed DEL exposes only a fixed redacted stage diagnostic and preserves the original plan and failure, and requires complete before/after-image verification without backfilling completion for an old scene.
 
 - Add a dev package override with opt-level=3 only for locked sha2 0.11.0 to reduce the computation cost of full digest verification in development tools. Preserve dependency versions, optimization settings for other crates, full source verification, and the API/Worker preparation, readiness and outer handoff limits of 120, 60 and 300 seconds.

@@ -140,7 +140,14 @@ pub(super) fn validate(value: &Value) -> Result<()> {
         return Err("清理诊断类型、系统码或固定原因不一致".into());
     }
     if !detail.diagnostic.is_null() {
-        Diagnostic::decode(&detail.diagnostic)?;
+        if detail.diagnostic["kind"] == "cache-stop-diagnostic" {
+            let _ = super::diagnostic::primitive_error(
+                &detail.diagnostic,
+                &detail.diagnostic["exit_code"],
+            )?;
+        } else {
+            Diagnostic::decode(&detail.diagnostic)?;
+        }
     }
     Ok(())
 }

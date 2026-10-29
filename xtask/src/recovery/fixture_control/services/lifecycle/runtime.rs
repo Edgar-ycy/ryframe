@@ -157,6 +157,15 @@ fn wait_primitive(
 }
 impl Runtime for PythonRuntime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if operation == "cache-closed-port" {
+            json_io::exact(&arguments, &["request", "runtime"], "只读独占端口")?;
+            crate::recovery::clone::native::cache::host_control::closed_port(
+                &self.backend,
+                &arguments["request"],
+                &arguments["runtime"],
+            )?;
+            return Ok(json!(true));
+        }
         if matches!(operation, "cache-start" | "cache-stop") {
             return self.invoke(operation, arguments);
         }

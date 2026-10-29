@@ -86,7 +86,16 @@ fn dispatch(bytes: &[u8]) -> Result<Value> {
             },
         )
     } else {
-        cache::host_control::stop(&request.backend, &args["request"], &args["runtime"], output)
+        cache::host_control::stop_guarded(
+            &request.backend,
+            &args["request"],
+            &args["runtime"],
+            output,
+            || {
+                super::context::guarded(&request.backend, &args["context"], Some(&args["running"]))
+                    .map(|_| ())
+            },
+        )
     };
     validate_binding(&request.backend, &request.native_tool)?;
     result

@@ -46,6 +46,8 @@ pub(crate) mod query;
 pub(crate) mod readonly;
 #[path = "lifecycle/reconcile.rs"]
 mod reconcile;
+#[path = "lifecycle/reconcile_close.rs"]
+mod reconcile_close;
 #[path = "lifecycle/recover.rs"]
 mod recover;
 #[path = "lifecycle/registration.rs"]

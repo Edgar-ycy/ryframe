@@ -14,7 +14,9 @@ pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<
         "tree-stop" => &["tree", "crash"],
         "tree-read" => &["output", "scope_id"],
         "recover-controller" => &["run", "owner"],
-        "cache-stop" => &["request", "private", "runtime", "output"],
+        "cache-stop" => &[
+            "request", "private", "runtime", "output", "context", "running",
+        ],
         "cache-start" => &["request", "private", "output", "context", "running"],
         "storage-start" => &[
             "request",

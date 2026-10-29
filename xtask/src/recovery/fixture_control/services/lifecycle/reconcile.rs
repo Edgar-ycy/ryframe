@@ -70,6 +70,17 @@ pub(super) fn run(
     let failed = close.or(restart).ok_or("缺少可和解失败阶段")?;
     let is_close = close.is_some();
     let services = registered(runtime, context, false)?;
+    if is_close
+        && !context
+            .run
+            .join(format!(
+                "lifecycle-{:04}/stopped.json",
+                failed["number"].as_u64().ok_or("原关闭编号无效")?
+            ))
+            .try_exists()?
+    {
+        return super::reconcile_close::run(runtime, context, &history, failed, &services);
+    }
     let before = proof(runtime, context, &history, failed, &services, is_close)?;
     let _guard = ProcessGuard::acquire(&context.run)?;
     owned(context, |owner| {
@@ -114,7 +125,7 @@ pub(super) fn run(
     })
 }
 
-fn document(
+pub(super) fn document(
     context: &Context,
     history: &Value,
     failed: &Value,

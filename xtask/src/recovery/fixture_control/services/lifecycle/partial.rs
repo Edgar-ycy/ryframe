@@ -60,7 +60,7 @@ fn stop(
     new_output(context, output)?;
     stable(runtime, context, services, Some(current))?;
     if !services["runtime"].is_null() {
-        let cache = close_cache(runtime, context, services, output)?;
+        let cache = close_cache(runtime, context, services, output, current)?;
         check(
             cache["status"] == "redis_process_stopped",
             "部分关闭未确认 Redis 退出",
@@ -104,6 +104,7 @@ fn close_cache(
     context: &Context,
     services: &Value,
     output: &Path,
+    current: &Value,
 ) -> Result<Value> {
     if services["reconciliation"].is_object() {
         reconciliation::observe(runtime, services)?;
@@ -123,7 +124,8 @@ fn close_cache(
     runtime.call(
         "cache-stop",
         json!({"request":services["requests"]["redis"],
-        "private":context.value["private"],"runtime":services["runtime"],"output":output}),
+        "private":context.value["private"],"runtime":services["runtime"],"output":output,
+        "context":context.value,"running":current}),
     )
 }
 
@@ -293,7 +295,7 @@ mod tests {
                 ready_to_close(&mut runtime, &services).is_ok(),
                 state == "stopped"
             );
-            let result = close_cache(&mut runtime, &context, &services, &output);
+            let result = close_cache(&mut runtime, &context, &services, &output, &Value::Null);
             assert_eq!(result.is_ok(), state == "stopped");
             assert_eq!(runtime.calls, ["cache-status", "cache-status"]);
             if state == "stopped" {
