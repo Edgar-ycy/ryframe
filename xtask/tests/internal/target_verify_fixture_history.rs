@@ -11,6 +11,7 @@ use crate::recovery::clone::native::{
     lifecycle::state,
     maintenance, source,
     target_verify::{
+        fresh::initialize::reset_configuration::Snapshot,
         input::{request, request_configuration},
         proof, reset, tree,
     },
@@ -141,7 +142,10 @@ pub(super) fn publish(fixture: &Fixture, status_registration: bool) {
     migrations(fixture, &generation["maintenance"]);
     let inventory = database::initial(fixture, &generation);
     let history = proof::history(&fixture.backend, &fixture.target).unwrap();
-    assert_eq!(history.as_object().unwrap().len(), 17);
+    assert_eq!(
+        history.as_object().unwrap().len(),
+        if fixture.legacy_reset { 17 } else { 18 }
+    );
     let initialized = json!({"format_version":1,"status":"fresh_target_initialized","id":fixture.request["id"],"scope_id":SCOPE,"completed_at":"2026-10-18T00:04:00Z",
         "generation":generation,"prepare_sha256":digest::file(&fixture.target.join("prepare.json")).unwrap().sha256,"reset":completed,"inventory":inventory,
         "objects":database::objects(),"redis":storage::initialized(),"history":history,"controlled_generation_never_started":true,"external_writers_discovered":false,
@@ -267,20 +271,33 @@ fn reset_manifest(fixture: &Fixture, generation: &Value) -> Value {
         let combined=db["key"]=="shared-control";let mut owners=json!({"tenant-data":format!("ryframe-owner:v1:{SCOPE}:tenant-data")});
         if combined {owners["control"]=json!(format!("ryframe-owner:v1:{SCOPE}:control"));}
         json!({"target_keys":[db["key"]],"host":db["host"],"port":db["port"],"database":db["database"],"control_baseline":combined,"tenant_baseline":true,
-            "ownership_markers":owners,"connection":{"username":"fixture","tls_mode":db["tls_mode"],"tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null}})
+            "ownership_markers":owners,"connection":{"username":"fixture","password_config_key":if combined {"database.primary.password".to_owned()} else {format!("tenant_data.targets.{}.password",db["key"].as_str().unwrap())},"tls_mode":db["tls_mode"],"tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null}})
     }).collect::<Vec<_>>();
     let prefixes=["avatar","config-packages","exports","imports","uploads"].map(|bucket|json!({"bucket":bucket,"prefix":format!("{SCOPE}/"),
         "ownership_marker_key":format!("{SCOPE}/.ryframe-owner"),"ownership_marker":format!("ryframe-owner:v1:{SCOPE}:object-storage:{bucket}")}));
     use sha2::{Digest, Sha256};
-    json!({"manifest_version":4,"environment":"test","scope_id":SCOPE,"code_sha":generation["maintenance"]["source"]["snapshot"]["head"],
+    json!({"manifest_version":5,"environment":"test","scope_id":SCOPE,"code_sha":generation["maintenance"]["source"]["snapshot"]["head"],
         "config_sha":fixture.request["configuration_sha256"],"credential_version":"fixture-v1","confirmation_phrase":format!("RESET-RYFRAME-test-{SCOPE}"),
         "legacy_ownership":fixture.request["reset"]["legacy_ownership"],"databases":databases,
-        "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","use_ssl":false,"prefixes":prefixes},
-        "redis":{"host":"127.0.0.1","port":26379,"database":0,"tls":false,"namespace":format!("ryframe:{{{SCOPE}}}:"),"ownership_marker_key":format!("ryframe:{{{SCOPE}}}:.ryframe-owner"),
+        "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","use_ssl":false,"access_key_config_key":"object_storage.access_key","secret_key_config_key":"object_storage.secret_key","prefixes":prefixes},
+        "redis":{"host":"127.0.0.1","port":26379,"database":0,"tls":false,"password_config_key":"redis.password","tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null,"namespace":format!("ryframe:{{{SCOPE}}}:"),"ownership_marker_key":format!("ryframe:{{{SCOPE}}}:.ryframe-owner"),
             "ownership_marker":format!("ryframe-owner:v1:{SCOPE}:redis"),"outside_sentinel_key_sha256":hex::encode(Sha256::digest(fixture.request["reset"]["sentinel_key"].as_str().unwrap().as_bytes()))}})
 }
 
 fn reset_files(fixture: &Fixture, generation: &Value) -> Value {
+    let configuration = if fixture.legacy_reset {
+        None
+    } else {
+        Some(
+            Snapshot::prepare(
+                &fixture.backend,
+                &fixture.target,
+                &fixture.request,
+                generation,
+            )
+            .unwrap(),
+        )
+    };
     let manifest = reset_manifest(fixture, generation);
     let hash = digest::plan_hash(&manifest).unwrap();
     let plan = json!({"manifest":manifest,"plan_hash":hash});
@@ -345,7 +362,10 @@ fn reset_files(fixture: &Fixture, generation: &Value) -> Value {
         &root.join(format!(".{stem}.ledger.json.previous")),
         &previous,
     );
-    let result = reset::completed(&fixture.backend, &fixture.target, &manifest, &hash).unwrap();
+    let mut result = reset::completed(&fixture.backend, &fixture.target, &manifest, &hash).unwrap();
+    if let Some(configuration) = configuration {
+        result["configuration"] = configuration.binding().unwrap();
+    }
     record(fixture, "reset", "intent", json!({"plan_hash":hash}));
     record(fixture, "reset", "confirmed", result.clone());
     reset_commands(fixture, generation, &plan, &result);
@@ -388,6 +408,19 @@ fn command_receipt(fixture: &Fixture, stage: &str, command: Vec<String>, stdout:
 }
 
 fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &Value) {
+    let reset_request = if fixture.legacy_reset {
+        fixture.request.clone()
+    } else {
+        Snapshot::open(
+            &fixture.backend,
+            &fixture.target,
+            &fixture.request,
+            &generation["maintenance"],
+        )
+        .unwrap()
+        .request(&fixture.request)
+        .unwrap()
+    };
     let executable = generation["maintenance"]["artifacts"]["reset"]["executable"]
         .as_str()
         .unwrap();
@@ -398,7 +431,7 @@ fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &
             vec![
                 executable.into(),
                 "--config-dir".into(),
-                fixture.request["config_dir"].as_str().unwrap().into(),
+                reset_request["config_dir"].as_str().unwrap().into(),
                 "plan".into(),
             ],
             format!(
@@ -414,7 +447,7 @@ fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &
         vec![
             executable.into(),
             "--config-dir".into(),
-            fixture.request["config_dir"].as_str().unwrap().into(),
+            reset_request["config_dir"].as_str().unwrap().into(),
             "execute".into(),
             "--plan-hash".into(),
             plan["plan_hash"].as_str().unwrap().into(),

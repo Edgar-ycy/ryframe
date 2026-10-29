@@ -4,11 +4,8 @@ use std::{fs, io::ErrorKind, path::Path};
 use serde_json::{Value, json};
 
 use super::{
-    super::{digest, json as json_io},
-    binding_request,
-    evidence_model::*,
-    evidence_protocol::inventory_history,
-    guard, proof, reset,
+    super::digest, binding_request, evidence_model::*, evidence_protocol::inventory_history, guard,
+    proof,
 };
 use crate::{
     Result,
@@ -16,7 +13,7 @@ use crate::{
 };
 
 mod failure;
-mod tree;
+pub(super) mod tree;
 
 pub(crate) fn request_binding(backend: &Path, request: &Value) -> Result<Value> {
     binding_request::validate(backend, request, &Value::Null)
@@ -144,14 +141,9 @@ fn initialization(
             "resumed":resumed,"inventory_directory":null
         }),
     )?;
-    let plan = read(backend, &target.join("reset-plan.json"))?;
     check(
-        reset::completed(
-            backend,
-            target,
-            &plan["manifest"],
-            json_io::text(&plan["plan_hash"], "reset 计划摘要")?,
-        )? == initialized["reset"],
+        super::evidence_reset::history(backend, target, request, &initialized["generation"])?["completed"]
+            == initialized["reset"],
         "初始化历史 reset 完成证据变化",
     )
 }

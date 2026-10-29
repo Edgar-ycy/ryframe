@@ -42,15 +42,16 @@ pub(super) struct Fixture {
     pub(super) run: PathBuf,
     pub(super) request: Value,
     pub(super) environment: BTreeMap<String, String>,
+    pub(super) legacy_reset: bool,
 }
 
 impl Fixture {
     pub(super) fn new() -> Self {
-        Self::build(false, false, "fixture")
+        Self::build(false, false, "fixture", false)
     }
 
     pub(super) fn for_status() -> Self {
-        let fixture = Self::build(true, false, "fixture");
+        let fixture = Self::build(true, false, "fixture", false);
         crate::recovery::clone::native::target_verify::published::unlocked_history(
             &fixture.backend,
             &fixture.target.join("initialized.json"),
@@ -60,7 +61,11 @@ impl Fixture {
     }
 
     pub(super) fn for_initialization() -> Self {
-        Self::build(true, true, "fixture")
+        Self::build(true, true, "fixture", false)
+    }
+
+    pub(super) fn for_legacy_status() -> Self {
+        Self::build(true, false, "fixture", true)
     }
 
     pub(super) fn for_recovery() -> Self {
@@ -68,10 +73,16 @@ impl Fixture {
             true,
             true,
             &format!("fixture-恢复窗口-中文 空格-{}", "e".repeat(120)),
+            false,
         )
     }
 
-    fn build(status_registration: bool, decoy: bool, workspace_name: &str) -> Self {
+    fn build(
+        status_registration: bool,
+        decoy: bool,
+        workspace_name: &str,
+        legacy_reset: bool,
+    ) -> Self {
         let source = crate::workspace::root_dir();
         let parent = source.join(".local-tests");
         fs::create_dir_all(&parent).unwrap();
@@ -93,6 +104,7 @@ impl Fixture {
             local,
             request: Value::Null,
             environment: environment(),
+            legacy_reset,
         };
         fixture.write_request();
         if decoy {
@@ -152,10 +164,18 @@ impl Fixture {
             "database":database_name("seed","shared-control"),"username":"fixture","password":"fixture-secret","tls_mode":"disabled"}},"tenant_data":{"targets":targets},
             "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","access_key":"fixture-access","secret_key":"fixture-secret","use_ssl":false},
             "reset":{"legacy_mysql_exclusive":true,"legacy_redis_exclusive":true,"legacy_object_storage_exclusive":true,"credential_version":"fixture-v1",
-                "redis_outside_sentinel_key":self.request["reset"]["sentinel_key"],
-                "services_stopped":true,"state_directory":self.target.join("reset-state"),
-                "source_sha":crate::recovery::clone::native::source::binding_value(
-                    &crate::recovery::clone::native::source::capture(&self.backend).unwrap().source)["snapshot"]["head"]}});
+                "redis_outside_sentinel_key":self.request["reset"]["sentinel_key"]}});
+        let mut table = table;
+        if self.legacy_reset {
+            table["reset"]["source_sha"] = crate::recovery::clone::native::source::binding_value(
+                &crate::recovery::clone::native::source::capture(&self.backend)
+                    .unwrap()
+                    .source,
+            )["snapshot"]["head"]
+                .clone();
+            table["reset"]["services_stopped"] = json!(true);
+            table["reset"]["state_directory"] = json!(self.target.join("reset-state"));
+        }
         fs::write(
             self.local.join("config/app.toml"),
             crate::target_configuration_fixture::toml_text(&table),

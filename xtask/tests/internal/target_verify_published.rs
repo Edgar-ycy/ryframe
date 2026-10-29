@@ -7,7 +7,7 @@ use crate::{
         json as json_io,
         resources::common::binding,
         target_verify::{
-            guard, proof,
+            evidence_protocol, guard, proof,
             published::{owned_history, request_binding, unlocked_history},
             tree as target_tree,
         },
@@ -59,6 +59,111 @@ fn published_unlocked_history_requires_complete_double_tree_and_original_request
         request_binding(&fixture.backend, &request).unwrap()["selected"]["scope_id"],
         request["target"]["scope_id"]
     );
+    let legacy = fixture::Fixture::for_legacy_status();
+    let before = fixture::snapshot(&legacy.local);
+    let (terminal, request) =
+        unlocked_history(&legacy.backend, &legacy.target.join("initialized.json")).unwrap();
+    assert_eq!(request, legacy.request);
+    assert!(terminal["reset"].get("configuration").is_none());
+    assert!(
+        terminal["history"]
+            .get("reset-configuration.json")
+            .is_none()
+    );
+    assert!(initialized["reset"].get("configuration").is_some());
+    for (fixture, terminal) in [(&fixture, &initialized), (&legacy, &terminal)] {
+        let before = fixture::snapshot(&fixture.local);
+        let payload = json!({"format_version":1,"operation":"reset-completed",
+            "backend":fixture.backend,"target":fixture.target});
+        assert_eq!(
+            evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).unwrap(),
+            terminal["reset"]
+        );
+        for field in ["manifest", "sha"] {
+            let mut invalid = payload.clone();
+            invalid[field] = json!("removed-argument");
+            assert!(evidence_protocol::execute(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        }
+        assert_eq!(fixture::snapshot(&fixture.local), before);
+    }
+    assert_eq!(
+        fixture::snapshot(&legacy.local),
+        before,
+        "旧终态只读核验不得改写、补快照或重签"
+    );
+    assert!(
+        crate::recovery::clone::native::target_verify::evidence_reset::aggregate(
+            &legacy.backend,
+            &legacy.target,
+            &legacy.request,
+            &terminal["generation"],
+        )
+        .is_err(),
+        "旧终态只读资格不得授予新写入合同"
+    );
+}
+
+#[test]
+fn published_new_reset_rejects_missing_binding_removed_markers_and_mixed_commands() {
+    for mode in ["missing", "removed-markers", "mixed", "projection"] {
+        let fixture = complete();
+        if mode == "mixed" {
+            let receipt = fs::read_dir(&fixture.target)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .starts_with("reset-plan-")
+                        && path
+                            .file_name()
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .ends_with(".command.json")
+                })
+                .unwrap();
+            let mut value = json_io::read(&receipt).unwrap();
+            value["command"][2] = fixture.request["config_dir"].clone();
+            write(&receipt, &value);
+        } else if mode == "projection" {
+            let mut value = json_io::read(&fixture.target.join("initialized.json")).unwrap();
+            value["reset"]["completed_at"] = json!("changed");
+            write(&fixture.target.join("initialized.json"), &value);
+            write(&fixture.target.join("initialized-candidate.json"), &value);
+        } else {
+            fs::remove_file(fixture.target.join("reset-configuration.json")).unwrap();
+            if mode == "removed-markers" {
+                let mut value = json_io::read(&fixture.target.join("initialized.json")).unwrap();
+                value["reset"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("configuration");
+                value["history"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("reset-configuration.json");
+                write(&fixture.target.join("initialized.json"), &value);
+                write(&fixture.target.join("initialized-candidate.json"), &value);
+            }
+        }
+        // 重算测试集合，确保失败来自合同核验，不能只依赖外层旧文件摘要。
+        refresh(&fixture);
+        let before = fixture::snapshot(&fixture.local);
+        assert!(
+            unlocked_history(&fixture.backend, &fixture.target.join("initialized.json")).is_err(),
+            "{mode}"
+        );
+        let payload = json!({"format_version":1,"operation":"reset-completed",
+            "backend":fixture.backend,"target":fixture.target});
+        assert!(
+            evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).is_err(),
+            "{mode}"
+        );
+        assert_eq!(fixture::snapshot(&fixture.local), before);
+    }
 }
 
 #[test]
@@ -200,6 +305,8 @@ fn published_owned_history_rejects_unknown_lock_contents_without_cleanup() {
 
 fn inventory_recovered() -> fixture::Fixture {
     let fixture = complete();
+    let reset_configuration =
+        json_io::read(&fixture.target.join("reset-configuration.json")).unwrap();
     let attempt = "a".repeat(32);
     let initial = fixture.target.join("inventory-initial");
     let resumed = fixture.target.join(format!("inventory-resume-{attempt}"));
@@ -256,7 +363,7 @@ fn inventory_recovered() -> fixture::Fixture {
             json!([
                 executable,
                 "--config-dir",
-                fixture.request["config_dir"],
+                reset_configuration["snapshot"]["directory"],
                 "plan"
             ]),
             json!(stdout),

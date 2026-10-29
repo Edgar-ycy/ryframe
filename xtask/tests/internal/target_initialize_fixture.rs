@@ -150,10 +150,27 @@ impl<'a> Resources<'a> {
     }
     fn maintenance(&self, spec: CommandSpec) -> Result<CommandOutput> {
         assert_eq!(spec.args.first().map(String::as_str), Some("--config-dir"));
-        assert_eq!(
-            spec.args.get(1).map(String::as_str),
-            self.fixture.request["config_dir"].as_str()
-        );
+        if spec
+            .args
+            .get(2)
+            .is_some_and(|arg| matches!(arg.as_str(), "plan" | "execute"))
+        {
+            let maintenance = crate::recovery::clone::native::json::read(
+                &self.fixture.local.join("maintenance/build.json"),
+            )?;
+            let snapshot = crate::recovery::clone::native::target_verify::fresh::initialize::reset_configuration::Snapshot::open(
+                &self.fixture.backend, &self.fixture.target, &self.fixture.request, &maintenance,
+            )?;
+            assert_eq!(
+                spec.args.get(1).map(String::as_str),
+                snapshot.directory.to_str()
+            );
+        } else {
+            assert_eq!(
+                spec.args.get(1).map(String::as_str),
+                self.fixture.request["config_dir"].as_str()
+            );
+        }
         let mut spec = spec;
         let arguments = spec.args.split_off(2);
         spec.args = arguments;
@@ -390,6 +407,16 @@ fn output(stdout: String) -> CommandOutput {
     }
 }
 pub(super) fn retain_prepared(f: &Fixture) {
+    let generation = crate::recovery::clone::native::json::read(&f.target.join("prepare.json"))
+        .unwrap()["generation"]
+        .clone();
+    let snapshot = crate::recovery::clone::native::target_verify::fresh::initialize::reset_configuration::Snapshot::open(
+        &f.backend, &f.target, &f.request, &generation["maintenance"],
+    ).unwrap();
+    let directory = snapshot.directory.clone();
+    drop(snapshot);
+    assert!(directory.starts_with(f.backend.join(".local-tests")));
+    fs::remove_dir_all(directory).unwrap();
     let baseline =
         crate::recovery::clone::native::json::read(&f.local.join("prepared-files.json")).unwrap();
     let tree =

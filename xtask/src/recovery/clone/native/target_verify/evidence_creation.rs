@@ -87,6 +87,7 @@ pub(crate) fn paths(
         &reset["intent"],
         &reset["confirmed"],
     ]);
+    descriptors.extend(reset.get("configuration"));
     descriptors.extend(json_io::object(&reset["commands"], "reset 命令聚合")?.values());
     descriptors.extend(
         json_io::array(prefix, "迁移前缀")?

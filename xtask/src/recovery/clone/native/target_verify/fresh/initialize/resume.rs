@@ -92,6 +92,13 @@ fn inventory<T: Transport>(w: &Window<'_, T>, attempt: &mut Attempt) -> Result<(
             command[0].file_name().unwrap().to_str().unwrap().to_owned(),
         ]),
     )?;
+    let snapshot = super::reset_configuration::Snapshot::open(
+        w.inputs.backend,
+        target,
+        w.inputs.request,
+        &current["maintenance"],
+    )?;
+    let reset_request = snapshot.request(w.inputs.request)?;
     reset::plan_receipt(
         w.inputs.backend,
         target,
@@ -101,14 +108,15 @@ fn inventory<T: Transport>(w: &Window<'_, T>, attempt: &mut Attempt) -> Result<(
             .to_str()
             .ok_or("reset路径不是UTF8")?,
         &plan,
-        w.inputs.request,
+        &reset_request,
     )?;
-    let done = reset::completed(
+    let mut done = reset::completed(
         w.inputs.backend,
         target,
         &plan["manifest"],
         document::text(&plan["plan_hash"], "reset hash")?,
     )?;
+    done["configuration"] = snapshot.binding()?;
     if document::read(&target.join("reset.confirmed.json"))?["observed"] != done {
         return Err("库存恢复reset完成前像不同于当前计划".into());
     }

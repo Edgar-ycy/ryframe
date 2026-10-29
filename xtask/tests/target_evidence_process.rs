@@ -34,7 +34,7 @@ fn evidence_protocol_refuses_invalid_input_without_echoing_credentials() {
         vec![b'x'; 1024 * 1024 + 1],
         br#"{"operation":"history","operation":"reset-plan"}"#.to_vec(),
         serde_json::to_vec(&json!({"format_version":1,"operation":"reset-completed",
-            "backend":".","target":".","manifest":{"password":secret},"sha":"bad"}))
+            "backend":".","target":".","unexpected":secret}))
         .unwrap(),
     ] {
         let output = invoke(&["__target-evidence"], &input);

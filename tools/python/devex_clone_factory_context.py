@@ -56,8 +56,7 @@ def _initialization_evidence(backend: Path, filename: Path, owned_lock_identity:
             or result["id"] != request["id"] or result["scope_id"] != request["target"]["scope_id"]):
         raise ValueError("目标初始化发布、原请求或完整准备记录已变化")
     inventory_history(backend, root, result["inventory"], request, resumed=resumed)
-    reset = read_json(regular_file(root / "reset-plan.json"))
-    if evidence("reset-completed", backend, root, manifest=reset["manifest"], sha=reset["plan_hash"]) != result["reset"]:
+    if evidence("reset-completed", backend, root) != result["reset"]:
         raise ValueError("目标 reset 未取得本代次完整完成及释放证明")
     return result, request
 

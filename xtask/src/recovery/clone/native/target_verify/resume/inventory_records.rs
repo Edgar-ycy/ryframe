@@ -31,6 +31,7 @@ pub(super) struct Context<'a> {
     pub(super) prepared_files: &'a Value,
     pub(super) plan: &'a Value,
     pub(super) executable: &'a str,
+    // 父级已核验的 reset 执行请求；本层只核验库存记录，不选择配置合同。
     pub(super) request: &'a Value,
     pub(super) available: &'a BTreeSet<String>,
 }

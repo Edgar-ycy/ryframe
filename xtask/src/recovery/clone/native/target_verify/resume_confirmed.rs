@@ -54,7 +54,7 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
     initialized_proof(backend, target, initialized, &prepared, &request)?;
     let creation = super::evidence_creation::creation(backend, target, &request)?;
     let reset =
-        super::evidence_reset::aggregate(backend, target, &request, &initialized["generation"])?;
+        super::evidence_reset::history(backend, target, &request, &initialized["generation"])?;
     check(
         initialized["reset"] == reset["completed"],
         "迁移成功 reset 与已确认结果不同",

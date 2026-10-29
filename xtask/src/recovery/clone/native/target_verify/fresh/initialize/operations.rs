@@ -4,7 +4,7 @@ use super::super::{
     super::{creation_plan, evidence_reset, reset, resume_prefix},
     receipts,
 };
-use super::window::Window;
+use super::{reset_configuration::Snapshot, window::Window};
 use crate::Result;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
@@ -28,18 +28,26 @@ pub(super) fn reset_plan<T: Transport>(
     label: &str,
 ) -> Result<Value> {
     state_directory(w, original)?;
+    let snapshot = Snapshot::open(
+        w.inputs.backend,
+        w.inputs.observation_dir,
+        w.inputs.request,
+        &original["maintenance"],
+    )?;
+    let request = snapshot.request(w.inputs.request)?;
     let command = resume_prefix::configured_command(
         w.inputs
             .maintenance_executable("reset")?
             .to_str()
             .ok_or("reset路径不是UTF8")?,
-        w.inputs.request,
+        &request,
         vec!["plan".into()],
     )?
     .into_iter()
     .map(Value::String)
     .collect::<Vec<_>>();
     let raw = w.command(label, &command, 30)?;
+    snapshot.check()?;
     let result = creation_plan::execute(
         w.inputs.backend,
         w.inputs.observation_dir,
@@ -85,19 +93,25 @@ fn confirmed<T: Transport>(w: &Window<'_, T>, stage: &str, observed: &Value) -> 
         &json!({"at":chrono::Utc::now().to_rfc3339(),"stage":stage,"observed":observed}),
     )
 }
-pub(super) fn initialize<T: Transport>(w: &Window<'_, T>, original: &Value) -> Result<Value> {
+pub(super) fn initialize<T: Transport>(
+    w: &Window<'_, T>,
+    original: &Value,
+    snapshot: &Snapshot,
+) -> Result<Value> {
     let mut databases = document::array(&w.inputs.request["target"]["databases"], "四目标")?
         .iter()
         .collect::<Vec<_>>();
     databases.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
     for db in databases {
         w.unchanged(original)?;
+        snapshot.check()?;
         let (stage, observed) = create_database(w, db)?;
         w.unchanged(original)?;
         confirmed(w, &stage, &observed)?;
     }
     w.objects(false)?;
     w.redis_state(false, false)?;
+    snapshot.check()?;
     intent(
         w,
         "sentinel",
@@ -140,7 +154,7 @@ pub(super) fn create_database<T: Transport>(
     Ok((stage, observed))
 }
 fn execute_reset<T: Transport>(w: &Window<'_, T>, original: &Value) -> Result<Value> {
-    let plan = reset_plan(w, original, "reset-plan")?;
+    let plan = document::read(&w.inputs.observation_dir.join("reset-plan.json"))?;
     w.unchanged(original)?;
     if reset_plan(w, original, "reset-plan-confirm")? != plan {
         return Err("reset plan即时复核变化".into());
@@ -153,12 +167,19 @@ fn execute_reset<T: Transport>(w: &Window<'_, T>, original: &Value) -> Result<Va
     w.objects(false)?;
     w.redis_state(false, true)?;
     intent(w, "reset", &json!({"plan_hash":plan["plan_hash"]}))?;
+    let snapshot = Snapshot::open(
+        w.inputs.backend,
+        w.inputs.observation_dir,
+        w.inputs.request,
+        &original["maintenance"],
+    )?;
+    let request = snapshot.request(w.inputs.request)?;
     let command = resume_prefix::configured_command(
         w.inputs
             .maintenance_executable("reset")?
             .to_str()
             .ok_or("reset路径不是UTF8")?,
-        w.inputs.request,
+        &request,
         vec![
             "execute".into(),
             "--plan-hash".into(),
@@ -171,12 +192,14 @@ fn execute_reset<T: Transport>(w: &Window<'_, T>, original: &Value) -> Result<Va
     .map(Value::String)
     .collect::<Vec<_>>();
     w.command("reset-execute", &command, 1800)?;
-    let done = reset::completed(
+    snapshot.check()?;
+    let mut done = reset::completed(
         w.inputs.backend,
         w.inputs.observation_dir,
         &plan["manifest"],
         document::text(&plan["plan_hash"], "reset hash")?,
     )?;
+    done["configuration"] = snapshot.binding()?;
     confirmed(w, "reset", &done)?;
     let executable = w.inputs.maintenance_executable("migrate")?;
     let operations = resume_prefix::operations(

@@ -7,7 +7,7 @@ use super::super::super::{
     resume_prefix, tree,
 };
 use super::super::{failure, receipts};
-use super::{operations, window::Window};
+use super::{operations, reset_configuration::Snapshot, window::Window};
 use crate::Result;
 use serde_json::{Value, json};
 
@@ -16,6 +16,45 @@ pub(crate) fn execute<T: Transport>(
     proof: &Value,
     stage: &mut &str,
 ) -> Result<(Value, Value)> {
+    let (baseline, original, snapshot, prepared_binding) = preflight(w, proof)?;
+    let target = w.inputs.observation_dir;
+    receipts::write(
+        &target.join("initialize.started.json"),
+        &json!({"at":chrono::Utc::now().to_rfc3339(),"generation_sha256":digest::plan_hash(&original)?}),
+    )?;
+    *stage = "create_and_reset";
+    let reset = operations::initialize(w, &original, &snapshot)?;
+    *stage = "inventory";
+    let inventory = failure::capture(super::super::super::database::capture_at(
+        &w.inputs,
+        &target.join("inventory-initial"),
+        w.transport,
+        &|| w.checkpoint(),
+    ))?;
+    let initial = json!({"receipt":inventory.receipt,"observations":inventory.observations});
+    creation_plan::execute(
+        w.inputs.backend,
+        target,
+        "initial-inventory-shape",
+        &json!({"databases":w.inputs.request["target"]["databases"],"images":initial["observations"]}),
+    )?;
+    let value = publish(w, &original, &reset, &initial, &prepared_binding)?;
+    let files = validate(
+        w,
+        &baseline,
+        &original,
+        &initial,
+        &inventory.evidence_files,
+        &value,
+    )?;
+    snapshot.check()?;
+    Ok((value, files))
+}
+
+fn preflight<T: Transport>(
+    w: &Window<'_, T>,
+    proof: &Value,
+) -> Result<(Value, Value, Snapshot, Value)> {
     let target = w.inputs.observation_dir;
     let prepared_binding = common::binding(&target.join("prepare.json"))?;
     let prepared = document::read(&target.join("prepare.json"))?;
@@ -45,36 +84,10 @@ pub(crate) fn execute<T: Transport>(
     if prepared["absence"] != absence {
         return Err("prepare之后目标空前像变化，禁止接管".into());
     }
-    receipts::write(
-        &target.join("initialize.started.json"),
-        &json!({"at":chrono::Utc::now().to_rfc3339(),"generation_sha256":digest::plan_hash(&original)?}),
-    )?;
-    *stage = "create_and_reset";
-    let reset = operations::initialize(w, &original)?;
-    *stage = "inventory";
-    let inventory = failure::capture(super::super::super::database::capture_at(
-        &w.inputs,
-        &target.join("inventory-initial"),
-        w.transport,
-        &|| w.checkpoint(),
-    ))?;
-    let initial = json!({"receipt":inventory.receipt,"observations":inventory.observations});
-    creation_plan::execute(
-        w.inputs.backend,
-        target,
-        "initial-inventory-shape",
-        &json!({"databases":w.inputs.request["target"]["databases"],"images":initial["observations"]}),
-    )?;
-    let value = publish(w, &original, &reset, &initial, &prepared_binding)?;
-    let files = validate(
-        w,
-        &baseline,
-        &original,
-        &initial,
-        &inventory.evidence_files,
-        &value,
-    )?;
-    Ok((value, files))
+    let snapshot = Snapshot::prepare(w.inputs.backend, target, w.inputs.request, &original)?;
+    operations::reset_plan(w, &original, "reset-plan")?;
+    snapshot.check()?;
+    Ok((baseline, original, snapshot, prepared_binding))
 }
 fn publish<T: Transport>(
     w: &Window<'_, T>,

@@ -195,8 +195,7 @@ def verify_target(backend: Path, output: Path, observation_dir: Path, run=subpro
             )
             evidence("storage-generation", backend, observation_dir, expected=original_result["generation"],
                      actual=original, runtime=resources.storage_runtime_binding, cache_runtime=resources.cache_runtime_binding)
-            reset = read_json(output / "reset-plan.json")
-            if evidence("reset-completed", backend, output, manifest=reset["manifest"], sha=reset["plan_hash"]) != original_result["reset"]:
+            if evidence("reset-completed", backend, output) != original_result["reset"]:
                 raise ValueError("原 reset 完成证据已变化")
             observed, _ = inventory(backend, request, resources, observation_dir / "inventory")
             if (observed["observations"] != original_result["inventory"]["observations"]

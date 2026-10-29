@@ -66,7 +66,43 @@ fn initialization_publishes_four_databases_ten_migrations_and_complete_readonly_
     let f = Fixture::for_initialization();
     let resources = Resources::new(&f);
     retain_prepared(&f);
+    let base_configuration = snapshot(&f.local.join("config"));
     let value = execute(&resources, false).unwrap();
+    assert_eq!(snapshot(&f.local.join("config")), base_configuration);
+    let descriptor = document::read(&f.target.join("reset-configuration.json")).unwrap();
+    let directory = std::path::Path::new(descriptor["snapshot"]["directory"].as_str().unwrap());
+    assert!(!directory.starts_with(&f.target));
+    let base = crate::rate_limit::load_app_table(&f.backend, Some(&f.local.join("config")), "test")
+        .unwrap();
+    let mut derived =
+        crate::rate_limit::load_app_table(&f.backend, Some(directory), "test").unwrap();
+    let reset = derived.get_mut("reset").unwrap().as_table_mut().unwrap();
+    assert_eq!(
+        reset.remove("source_sha").unwrap().as_str(),
+        descriptor["source_sha"].as_str()
+    );
+    assert_eq!(
+        reset.remove("services_stopped").unwrap().as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        reset.remove("state_directory").unwrap().as_str(),
+        f.target.join("reset-state").to_str()
+    );
+    assert_eq!(
+        derived, base,
+        "凭据、物理目标与所有其他配置必须保持完全相同"
+    );
+    let public =
+        String::from_utf8(fs::read(f.target.join("reset-configuration.json")).unwrap()).unwrap();
+    for secret in [
+        "fixture-secret",
+        "fixture-redis",
+        "fixture-access",
+        "Fixture!Admin123",
+    ] {
+        assert!(!public.contains(secret));
+    }
     assert_eq!(value["status"], "fresh_target_initialized");
     assert_eq!(value["restore_qualified"], false);
     assert_eq!(resources.created.borrow().len(), 4);
@@ -108,6 +144,48 @@ fn initialization_publishes_four_databases_ten_migrations_and_complete_readonly_
     assert!(initialize::execute(&f.backend, &f.local, false).is_err());
     assert_eq!(snapshot(&f.target), target_before);
     assert_eq!(resources.created.borrow().len(), 4);
+}
+
+#[test]
+fn reset_prewrite_plan_failure_or_snapshot_drift_cannot_write_any_resource() {
+    use crate::recovery::clone::native::target_verify::fresh::initialize::reset_configuration::Snapshot;
+    for mode in ["plan", "file", "partial", "extra"] {
+        let f = Fixture::for_initialization();
+        let resources = Resources::new(&f);
+        retain_prepared(&f);
+        let generation =
+            document::read(&f.target.join("prepare.json")).unwrap()["generation"].clone();
+        if mode == "plan" {
+            resources.fail.set(Some("reset-plan"));
+        } else {
+            let configuration =
+                Snapshot::prepare(&f.backend, &f.target, &f.request, &generation).unwrap();
+            let directory = configuration.directory.clone();
+            drop(configuration);
+            match mode {
+                "file" => {
+                    fs::write(directory.join("app.test.toml"), b"scope_id = 'drift'\n").unwrap()
+                }
+                "extra" => fs::write(directory.join("app.toml"), b"[redis]\nport = 9\n").unwrap(),
+                _ => {
+                    fs::remove_file(f.target.join("reset-configuration.json")).unwrap();
+                }
+            }
+            // 私有快照已存在，但目标前像还未执行初始化；只核对，不覆盖或修补。
+            fs::remove_file(f.target.join("reset-configuration.json")).ok();
+        }
+        assert!(execute(&resources, false).is_err(), "{mode}");
+        assert!(resources.created.borrow().is_empty());
+        assert!(!resources.reset.get());
+        assert!(!f.target.join("initialize.started.json").exists());
+        assert!(
+            resources
+                .redis_calls
+                .borrow()
+                .iter()
+                .all(|parts| !matches!(parts[0].as_str(), "SET" | "EVAL" | "DEL"))
+        );
+    }
 }
 
 #[test]

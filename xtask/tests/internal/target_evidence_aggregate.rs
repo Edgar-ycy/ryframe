@@ -30,7 +30,7 @@ impl Fixture {
         let defaults = directory.path().join("mysql.cnf");
         fs::write(&defaults,"[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=private-secret\nssl-mode=DISABLED\n").unwrap();
         let request = json!({"target":{"scope_id":"fixture-scope","databases":KEYS.map(|(key,_,_)|json!({"key":key,"server_uuid":"fixture-uuid","database":key.replace('-',"_"),"defaults_file":defaults,"defaults_sha256":digest::file(&defaults).unwrap().sha256}))},
-            "storage":{"redis":{"port":16379}},"reset":{"sentinel_key":"fixture-sentinel","sentinel_value":"fixture-value","credential_version":"fixture-v1","legacy_ownership":{"mysql_exclusive":true}}});
+            "storage":{"redis":{"port":16379}},"reset":{"sentinel_key":"fixture-sentinel","sentinel_value":"fixture-value","credential_version":"fixture-v1","legacy_ownership":{"mysql_exclusive":true,"redis_exclusive":true,"object_storage_exclusive":true}}});
         let mut fixture = Self {
             backend,
             _directory: directory,
@@ -256,18 +256,18 @@ fn reset_manifest_binds_four_databases_five_buckets_owner_tls_and_sentinel() {
         if key=="shared-control" {owners.insert("control".into(),json!(format!("ryframe-owner:v1:{scope}:control")));}
         owners.insert("tenant-data".into(),json!(format!("ryframe-owner:v1:{scope}:tenant-data")));
         json!({"target_keys":[key],"host":db["host"],"port":db["port"],"database":db["database"],"control_baseline":key=="shared-control","tenant_baseline":true,"ownership_markers":owners,
-            "connection":{"tls_mode":"disabled","username":"fixture","tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null}})
+            "connection":{"tls_mode":"disabled","username":"fixture","password_config_key":if key=="shared-control" {"database.primary.password".to_owned()} else {format!("tenant_data.targets.{key}.password")},"tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null}})
     }).collect::<Vec<_>>();
     let s3 = json!({"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"fixture"});
     let redis = json!({"namespace":"fixture:","ownership_key":"fixture:owner","ownership_value":"fixture-owner"});
     let original = json!({"maintenance":{"source":{"snapshot":{"head":"a".repeat(40)}}},"physical":{"databases":physical,"s3":s3},"selected":{"redis":redis}});
     let prefixes=["uploads","avatar","exports","imports","config-packages"].map(|bucket|json!({"bucket":bucket,"prefix":format!("{scope}/"),"ownership_marker_key":format!("{scope}/.ryframe-owner"),"ownership_marker":format!("ryframe-owner:v1:{scope}:object-storage:{bucket}")}));
-    let manifest = json!({"manifest_version":4,"environment":"test","scope_id":scope,"code_sha":"a".repeat(40),"config_sha":"b".repeat(64),"credential_version":"fixture-v1","confirmation_phrase":format!("RESET-RYFRAME-test-{scope}"),"legacy_ownership":fixture.request["reset"]["legacy_ownership"],"databases":databases,
-        "object_storage":{"backend":s3["backend"],"endpoint":s3["endpoint"],"region":s3["region"],"use_ssl":false,"prefixes":prefixes},
-        "redis":{"host":"127.0.0.1","port":16379,"database":0,"tls":false,"namespace":redis["namespace"],"ownership_marker_key":redis["ownership_key"],"ownership_marker":redis["ownership_value"],"outside_sentinel_key_sha256":hex::encode(Sha256::digest(b"fixture-sentinel"))}});
+    let manifest = json!({"manifest_version":5,"environment":"test","scope_id":scope,"code_sha":"a".repeat(40),"config_sha":"b".repeat(64),"credential_version":"fixture-v1","confirmation_phrase":format!("RESET-RYFRAME-test-{scope}"),"legacy_ownership":fixture.request["reset"]["legacy_ownership"],"databases":databases,
+        "object_storage":{"backend":s3["backend"],"endpoint":s3["endpoint"],"region":s3["region"],"use_ssl":false,"access_key_config_key":"object_storage.access_key","secret_key_config_key":"object_storage.secret_key","prefixes":prefixes},
+        "redis":{"host":"127.0.0.1","port":16379,"database":0,"tls":false,"password_config_key":"redis.password","tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null,"namespace":redis["namespace"],"ownership_marker_key":redis["ownership_key"],"ownership_marker":redis["ownership_value"],"outside_sentinel_key_sha256":hex::encode(Sha256::digest(b"fixture-sentinel"))}});
     evidence_reset::validate_manifest(&fixture.backend, &manifest, &fixture.request, &original)
         .unwrap();
-    for case in 0..8 {
+    for case in 0..16 {
         let mut changed = manifest.clone();
         match case {
             0 => {
@@ -283,17 +283,40 @@ fn reset_manifest_binds_four_databases_five_buckets_owner_tls_and_sentinel() {
                 changed["object_storage"]["prefixes"][1] =
                     changed["object_storage"]["prefixes"][0].clone()
             }
-            _ => changed["code_sha"] = json!("c".repeat(40)),
+            7 => changed["code_sha"] = json!("c".repeat(40)),
+            8 => changed["manifest_version"] = json!(4),
+            9 => changed["manifest_version"] = json!(6),
+            10 => {
+                changed["databases"][0]["connection"]["password_config_key"] =
+                    json!("other.password")
+            }
+            11 => changed["object_storage"]["secret_key_config_key"] = json!("other.secret_key"),
+            12 => changed["redis"]["password_config_key"] = Value::Null,
+            13 => {
+                changed["redis"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("tls_ca_sha256");
+            }
+            14 => changed["databases"][0]["unexpected"] = json!(true),
+            _ => changed["object_storage"]["unexpected"] = json!(true),
         }
-        assert!(
-            evidence_reset::validate_manifest(
-                &fixture.backend,
-                &changed,
-                &fixture.request,
-                &original
-            )
-            .is_err(),
-            "case {case}"
+        let result = evidence_reset::validate_manifest(
+            &fixture.backend,
+            &changed,
+            &fixture.request,
+            &original,
         );
+        assert!(result.is_err(), "case {case}");
+        if matches!(case, 8 | 9) {
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains("manifest_version")
+                    && message.contains('5')
+                    && message.contains("status")
+                    && message.contains("不自动重放"),
+                "{message}"
+            );
+        }
     }
 }
