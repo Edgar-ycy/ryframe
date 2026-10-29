@@ -1,6 +1,7 @@
 //! Windows 端的原代次观察与停止；失败停止仅允许一次只读复核。
 use super::{
     super::{json as doc, resources::common},
+    diagnostic::{self, Category},
     evidence, facts, model, native_tool, process,
 };
 use crate::{
@@ -13,13 +14,66 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) fn bind_and_close(request: &Value) -> Result<()> {
+#[derive(Clone, Copy)]
+pub(super) enum PortCheck {
+    BeforeStart,
+    AfterStop,
+}
+
+pub(super) fn bind_and_close(request: &Value, context: PortCheck) -> Result<()> {
+    let failure = |category, error: std::io::Error| -> Box<dyn std::error::Error> {
+        match context {
+            PortCheck::BeforeStart => diagnostic::prelaunch(category, error.into()),
+            PortCheck::AfterStop => error.into(),
+        }
+    };
     let port = u16::try_from(request["port"].as_u64().ok_or("缓存端口无效")?)?;
-    let socket = tokio::net::TcpSocket::new_v4()?;
-    socket.set_reuseaddr(false)?;
-    socket.bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into())?;
+    let socket = tokio::net::TcpSocket::new_v4()
+        .map_err(|error| failure(Category::PrelaunchSocketFailed, error))?;
+    socket
+        .set_reuseaddr(false)
+        .map_err(|error| failure(Category::PrelaunchSocketOptionsFailed, error))?;
+    socket
+        .bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into())
+        .map_err(|error| failure(Category::PrelaunchPortBindFailed, error))?;
     drop(socket);
     Ok(())
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn occupied_prelaunch_port_keeps_bind_stage_and_os_code_across_diagnostic_wire() {
+    use super::diagnostic::{primitive_detail, primitive_error};
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let request = json!({"port":listener.local_addr().unwrap().port()});
+    let error = bind_and_close(&request, PortCheck::BeforeStart).unwrap_err();
+    let (detail, code) = primitive_detail(error.as_ref());
+    assert_eq!(detail["category"], "prelaunch_port_bind_failed");
+    assert_eq!(detail["cause"], "address_in_use");
+    assert!(detail["os_code"].is_i64());
+    assert_eq!(detail["write_outcome"], "not_started");
+    let decoded = primitive_error(&detail, &code).unwrap();
+    assert_eq!(primitive_detail(decoded.as_ref()), (detail.clone(), code));
+    for (key, value) in [
+        ("cause", json!("environment_changed")),
+        ("write_outcome", json!("unknown")),
+    ] {
+        let mut changed = detail.clone();
+        changed[key] = value;
+        assert!(primitive_error(&changed, &Value::Null).is_err());
+    }
+    let stopped = bind_and_close(&request, PortCheck::AfterStop).unwrap_err();
+    let io = stopped.downcast_ref::<std::io::Error>().unwrap();
+    assert_eq!(io.kind(), std::io::ErrorKind::AddrInUse);
+    assert_eq!(json!(io.raw_os_error()), detail["os_code"]);
+    assert_eq!(
+        primitive_detail(stopped.as_ref()),
+        (Value::Null, Value::Null)
+    );
+    assert!(super::diagnostic::primitive_message(stopped.as_ref()).is_none());
+    drop(listener);
+    bind_and_close(&request, PortCheck::BeforeStart).unwrap();
+    bind_and_close(&request, PortCheck::AfterStop).unwrap();
 }
 
 pub(super) fn launcher(request: &Value, runtime: &Value, required: bool) -> Result<bool> {
@@ -114,7 +168,7 @@ pub(crate) fn stop(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    bind_and_close(request)?;
+    bind_and_close(request, PortCheck::AfterStop)?;
     tool.finish(backend)?;
     model::validate(backend, request, true)?;
     result["status"] = json!("redis_process_stopped");

@@ -1,6 +1,7 @@
 //! 正式 cache 启动：先登记完整 launcher，再发送授权，accepted 后才发布 runtime。
 use super::{
     super::{digest, json as doc, resources::common},
+    diagnostic::{self, Category},
     evidence, host_control, linux_write, model, native_tool,
     start_deadline::Deadline,
 };
@@ -46,14 +47,7 @@ pub(crate) fn start(
         &output.join("launch-request.json"),
         &serde_json::to_value(launch)?,
     )?;
-    guard()?;
-    host_control::bind_and_close(request)?;
-    let args = evidence::command(request, output, "serve")?;
-    linux_write::publish(
-        &output.join("intent.json"),
-        &json!({"request_sha256":digest::plan_hash(request)?,
-        "arguments":args,"launch":common::binding(&output.join("launch-request.json"))?}),
-    )?;
+    let args = prelaunch(request, output, &mut guard)?;
     let mut attempt = Attempt::default();
     let mut result = launch_and_accept(
         backend,
@@ -84,6 +78,26 @@ pub(crate) fn start(
         model::validate(backend, request, true)?;
     }
     result
+}
+
+fn prelaunch(
+    request: &Value,
+    output: &Path,
+    guard: &mut impl FnMut() -> Result<()>,
+) -> Result<Vec<String>> {
+    guard().map_err(|error| diagnostic::prelaunch(Category::PrelaunchGuardRejected, error))?;
+    host_control::bind_and_close(request, host_control::PortCheck::BeforeStart)?;
+    let args = evidence::command(request, output, "serve")
+        .map_err(|error| diagnostic::prelaunch(Category::PrelaunchCommandRejected, error))?;
+    (|| {
+        linux_write::publish(
+            &output.join("intent.json"),
+            &json!({"request_sha256":digest::plan_hash(request)?,
+            "arguments":args,"launch":common::binding(&output.join("launch-request.json"))?}),
+        )
+    })()
+    .map_err(|error| diagnostic::prelaunch(Category::PrelaunchIntentFailed, error))?;
+    Ok(args)
 }
 
 fn failed(
@@ -430,6 +444,61 @@ fn cleanup(
     ).map_err(|e| context(Operation::PublishPartial, e))?;
     evidence::inspect(request, output).map_err(|e| context(Operation::Inspect, e))?;
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn prelaunch_guard_failure_keeps_stage_and_safe_cause_without_publishing_intent() {
+    use super::diagnostic::{primitive_detail, primitive_error, primitive_message};
+    let base = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&base).unwrap();
+    let directory = tempfile::tempdir_in(base).unwrap();
+    for name in ["request.json", "launch-request.json"] {
+        std::fs::write(directory.path().join(name), b"original-prelaunch-input").unwrap();
+    }
+    for (message, expected) in [
+        ("生命周期私有环境在执行期间变化", "environment_changed"),
+        (
+            "生命周期私有环境在执行期间变化; password=private-marker",
+            "rejected",
+        ),
+    ] {
+        let error =
+            prelaunch(&json!({}), directory.path(), &mut || Err(message.into())).unwrap_err();
+        let (detail, code) = primitive_detail(error.as_ref());
+        assert_eq!(detail["category"], "prelaunch_guard_rejected");
+        assert_eq!(detail["cause"], expected);
+        assert_eq!(detail["write_outcome"], "not_started");
+        assert!(code.is_null());
+        let decoded = primitive_error(&detail, &code).unwrap();
+        assert!(!format!("{decoded:?} {decoded}").contains("private-marker"));
+        assert!(
+            primitive_message(decoded.as_ref())
+                .unwrap()
+                .contains("prelaunch-guard")
+        );
+        for key in ["cause", "cause_sha256", "advice"] {
+            let mut changed = detail.clone();
+            changed[key] = json!("private-marker");
+            assert!(
+                !primitive_error(&changed, &code)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("private-marker")
+            );
+        }
+        let mut missing = detail.clone();
+        missing.as_object_mut().unwrap().remove("cause");
+        assert!(primitive_error(&missing, &code).is_err());
+        assert!(primitive_error(&detail, &json!(1)).is_err());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+        for name in ["request.json", "launch-request.json"] {
+            assert_eq!(
+                std::fs::read(directory.path().join(name)).unwrap(),
+                b"original-prelaunch-input"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

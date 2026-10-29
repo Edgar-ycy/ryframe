@@ -27,6 +27,12 @@ pub(super) enum Category {
     AcceptanceTimeout,
     AcknowledgementTimeout,
     SupervisorInterrupted,
+    PrelaunchGuardRejected,
+    PrelaunchSocketFailed,
+    PrelaunchSocketOptionsFailed,
+    PrelaunchPortBindFailed,
+    PrelaunchCommandRejected,
+    PrelaunchIntentFailed,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +66,12 @@ impl Diagnostic {
     fn fields(&self) -> (&'static str, &'static str, &'static str) {
         use Category::*;
         match self.category {
+            PrelaunchGuardRejected
+            | PrelaunchSocketFailed
+            | PrelaunchSocketOptionsFailed
+            | PrelaunchPortBindFailed
+            | PrelaunchCommandRejected
+            | PrelaunchIntentFailed => prelaunch_fields(self.category),
             RequestRejected => (
                 "request",
                 "request",
@@ -254,6 +266,9 @@ pub(super) fn from_error(error: &(dyn std::error::Error + 'static)) -> Value {
 }
 
 pub(crate) fn primitive_detail(error: &(dyn std::error::Error + 'static)) -> (Value, Value) {
+    if let Some(failure) = error.downcast_ref::<PrelaunchFailure>() {
+        return (failure.value(), Value::Null);
+    }
     if let Some(failure) = error.downcast_ref::<super::cleanup_diagnostic::Failure>() {
         return primitive_detail(failure.primary.as_ref());
     }
@@ -280,6 +295,17 @@ pub(crate) fn primitive_error(detail: &Value, code: &Value) -> Result<Box<dyn st
                 .ok_or("缓存原语退出码无效")?,
         )
     };
+    if detail.get("cause").is_some()
+        || detail.get("cause_sha256").is_some()
+        || detail["category"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("prelaunch_"))
+    {
+        if code.is_some() {
+            return Err("缓存prelaunch失败不得携带尚未创建的子进程退出码".into());
+        }
+        return Ok(Box::new(PrelaunchFailure::decode(detail)?));
+    }
     if detail.is_null() {
         return Ok(Box::new(super::process::ControlFailure(code)));
     }
@@ -290,6 +316,9 @@ pub(crate) fn primitive_error(detail: &Value, code: &Value) -> Result<Box<dyn st
 }
 
 pub(crate) fn primitive_message(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(failure) = error.downcast_ref::<PrelaunchFailure>() {
+        return Some(failure.to_string());
+    }
     if let Some(failure) = error.downcast_ref::<super::cleanup_diagnostic::Failure>() {
         return Some(failure.to_string());
     }
@@ -302,4 +331,195 @@ pub(crate) fn primitive_message(error: &(dyn std::error::Error + 'static)) -> Op
                 .downcast_ref::<super::process::ControlFailure>()
                 .map(ToString::to_string)
         })
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PrelaunchCause {
+    PermissionDenied,
+    AddressInUse,
+    AddressNotAvailable,
+    NotFound,
+    AlreadyExists,
+    TimedOut,
+    OtherIo,
+    SourcesChanged,
+    DocumentsChanged,
+    StateChanged,
+    EnvironmentChanged,
+    ForeignBackend,
+    Rejected,
+}
+
+struct PrelaunchFailure {
+    diagnostic: Diagnostic,
+    cause: PrelaunchCause,
+    sha256: String,
+}
+impl PrelaunchFailure {
+    fn value(&self) -> Value {
+        let mut value = self.diagnostic.value();
+        value["cause"] = json!(self.cause);
+        value["cause_sha256"] = json!(self.sha256);
+        value
+    }
+    fn decode(value: &Value) -> Result<Self> {
+        let mut base = value.clone();
+        let fields = base.as_object_mut().ok_or("缓存prelaunch诊断必须为对象")?;
+        let cause = fields.remove("cause").ok_or("缓存prelaunch缺少固定原因")?;
+        let sha256 = fields
+            .remove("cause_sha256")
+            .ok_or("缓存prelaunch缺少原因摘要")?;
+        let diagnostic = Diagnostic::decode(&base)?;
+        if !prelaunch_category(diagnostic.category)
+            || !matches!(diagnostic.write_outcome, Outcome::NotStarted)
+        {
+            return Err("缓存prelaunch阶段或启动结果无效".into());
+        }
+        let cause: PrelaunchCause =
+            serde_json::from_value(cause).map_err(|_| "缓存prelaunch原因不是固定安全类别")?;
+        let sha256 = sha256
+            .as_str()
+            .filter(|v| {
+                v.len() == 64
+                    && v.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+            .ok_or("缓存prelaunch原因摘要无效")?
+            .to_owned();
+        let io = matches!(
+            cause,
+            PrelaunchCause::PermissionDenied
+                | PrelaunchCause::AddressInUse
+                | PrelaunchCause::AddressNotAvailable
+                | PrelaunchCause::NotFound
+                | PrelaunchCause::AlreadyExists
+                | PrelaunchCause::TimedOut
+                | PrelaunchCause::OtherIo
+        );
+        let guard = matches!(
+            cause,
+            PrelaunchCause::SourcesChanged
+                | PrelaunchCause::DocumentsChanged
+                | PrelaunchCause::StateChanged
+                | PrelaunchCause::EnvironmentChanged
+                | PrelaunchCause::ForeignBackend
+        );
+        let socket = matches!(
+            diagnostic.category,
+            Category::PrelaunchSocketFailed
+                | Category::PrelaunchSocketOptionsFailed
+                | Category::PrelaunchPortBindFailed
+        );
+        if ((diagnostic.os_code.is_some() || socket) && !io)
+            || (guard && !matches!(diagnostic.category, Category::PrelaunchGuardRejected))
+        {
+            return Err("缓存prelaunch系统码与原因不一致".into());
+        }
+        Ok(Self {
+            diagnostic,
+            cause,
+            sha256,
+        })
+    }
+}
+impl std::fmt::Display for PrelaunchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}；固定原因={:?} 原因摘要={}",
+            self.diagnostic, self.cause, self.sha256
+        )
+    }
+}
+impl std::fmt::Debug for PrelaunchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+impl std::error::Error for PrelaunchFailure {}
+
+fn prelaunch_category(category: Category) -> bool {
+    matches!(
+        category,
+        Category::PrelaunchGuardRejected
+            | Category::PrelaunchSocketFailed
+            | Category::PrelaunchSocketOptionsFailed
+            | Category::PrelaunchPortBindFailed
+            | Category::PrelaunchCommandRejected
+            | Category::PrelaunchIntentFailed
+    )
+}
+
+fn prelaunch_fields(category: Category) -> (&'static str, &'static str, &'static str) {
+    use Category::*;
+    match category {
+        PrelaunchGuardRejected => (
+            "prelaunch-guard",
+            "sources",
+            "核对原来源、运行账本和私有环境绑定；保留现场，不重放",
+        ),
+        PrelaunchSocketFailed => (
+            "prelaunch-socket",
+            "port",
+            "核对本机套接字资源和系统权限；不重放",
+        ),
+        PrelaunchSocketOptionsFailed => (
+            "prelaunch-socket-options",
+            "port",
+            "核对本机套接字独占选项和系统权限；不重放",
+        ),
+        PrelaunchPortBindFailed => (
+            "prelaunch-bind",
+            "port",
+            "核对当次绑定端口的独占性与系统权限；当前端口空闲不能证明原失败原因",
+        ),
+        PrelaunchCommandRejected => (
+            "prelaunch-command",
+            "native_tool",
+            "核对绑定工具与完整启动参数；保留现场，不重放",
+        ),
+        PrelaunchIntentFailed => (
+            "prelaunch-intent",
+            "intent.json",
+            "核对原输出目录、权限和已存在证据；不覆盖，不重放",
+        ),
+        _ => unreachable!("仅prelaunch类别调用"),
+    }
+}
+
+pub(super) fn prelaunch(
+    category: Category,
+    error: Box<dyn std::error::Error>,
+) -> Box<dyn std::error::Error> {
+    use sha2::{Digest, Sha256};
+    use std::io::ErrorKind;
+    let text = error.to_string();
+    let io = error.downcast_ref::<std::io::Error>();
+    let cause = match io.map(std::io::Error::kind) {
+        Some(ErrorKind::PermissionDenied) => PrelaunchCause::PermissionDenied,
+        Some(ErrorKind::AddrInUse) => PrelaunchCause::AddressInUse,
+        Some(ErrorKind::AddrNotAvailable) => PrelaunchCause::AddressNotAvailable,
+        Some(ErrorKind::NotFound) => PrelaunchCause::NotFound,
+        Some(ErrorKind::AlreadyExists) => PrelaunchCause::AlreadyExists,
+        Some(ErrorKind::TimedOut) => PrelaunchCause::TimedOut,
+        Some(_) => PrelaunchCause::OtherIo,
+        None => match text.as_str() {
+            "生命周期来源在执行期间发生变化" => PrelaunchCause::SourcesChanged,
+            "生命周期输入内容与采样摘要不一致" => PrelaunchCause::DocumentsChanged,
+            "生命周期账本在采样期间变化" => PrelaunchCause::StateChanged,
+            "生命周期私有环境在执行期间变化" => PrelaunchCause::EnvironmentChanged,
+            "服务上下文属于其他后端" => PrelaunchCause::ForeignBackend,
+            _ => PrelaunchCause::Rejected,
+        },
+    };
+    Box::new(PrelaunchFailure {
+        diagnostic: Diagnostic {
+            category,
+            write_outcome: Outcome::NotStarted,
+            os_code: io.and_then(std::io::Error::raw_os_error),
+        },
+        cause,
+        sha256: hex::encode(Sha256::digest(text.as_bytes())),
+    })
 }

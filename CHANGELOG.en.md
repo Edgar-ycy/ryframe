@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add fixed stage, cause-category and OS-code diagnostics for Redis source guards, socket creation/options, exclusive port binding, command construction and intent publication between launch and intent records. Validate fixed diagnostic fields strictly across processes and retain only digests for unknown causes. Post-stop port checks retain their original I/O errors and are not marked as not started. Preserve existing checks, deadlines and failure evidence without automatically retrying or replaying services.
+
 - Merge configuration-transfer snapshot-phase tests with identical inputs and assertions, naming the retained case after the phase rule it checks. Remove restore-retry and concurrent-CAS tests that exercise only the fake repository's own implementation. Retain real MySQL coverage of authoritative records, waiting and complete-preimage CAS, together with service-level tests, production validators and shared test helpers.
 
 - Preserve original controller exit codes during startup handoff and distinguish monitor exit, candidate registration exceeding the original deadline, and ownership mismatch. Expose only exact fixed safe diagnostics; unknown output reports bounded lengths, overflow flags and digests. Retain existing deadlines, source and complete process-tree checks, failure receipts and explicit reconciliation without automatically retrying startup.

@@ -126,6 +126,21 @@ fn response(result: Result<Value>) -> (i32, Value) {
             {
                 Some(std::io::ErrorKind::PermissionDenied) => "PermissionError",
                 Some(std::io::ErrorKind::TimedOut) => "TimeoutError",
+                _ if diagnostic["cause"] == "permission_denied" => "PermissionError",
+                _ if diagnostic["cause"] == "timed_out" => "TimeoutError",
+                _ if matches!(
+                    diagnostic["cause"].as_str(),
+                    Some(
+                        "sources_changed"
+                            | "documents_changed"
+                            | "state_changed"
+                            | "environment_changed"
+                            | "foreign_backend"
+                    )
+                ) =>
+                {
+                    "ValueError"
+                }
                 _ if model::category(error.as_ref()) == "LifecycleRejected" => "ValueError",
                 _ => "PrimitiveUnknown",
             };
@@ -235,6 +250,10 @@ mod tests {
             (
                 false,
                 json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":null,"exit_code":"private-marker","cleanup_diagnostic":null}),
+            ),
+            (
+                false,
+                json!({"ok":false,"error":"PrimitiveUnknown","diagnostic":{"category":"prelaunch_guard_rejected","cause":"private-marker","cause_sha256":"0".repeat(64)},"exit_code":null,"cleanup_diagnostic":null}),
             ),
         ] {
             assert!(
