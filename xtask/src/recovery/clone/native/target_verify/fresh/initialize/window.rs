@@ -21,16 +21,16 @@ pub(crate) struct Window<'a, T> {
     pub(crate) protected: &'a Inputs,
 }
 impl<T: Transport> Window<'_, T> {
-    pub(super) fn checkpoint(&self) -> Result<()> {
+    pub(crate) fn checkpoint(&self) -> Result<()> {
         self.owner.checkpoint()?;
         self.protected.checkpoint()
     }
-    pub(super) fn generation(&self) -> Result<(Value, selection::Selected, Option<Value>)> {
+    pub(crate) fn generation(&self) -> Result<(Value, selection::Selected, Option<Value>)> {
         self.checkpoint()?;
         let result = (self.observe_generation)();
         super::super::registration::combine(result, self.checkpoint())
     }
-    pub(super) fn unchanged(&self, expected: &Value) -> Result<()> {
+    pub(crate) fn unchanged(&self, expected: &Value) -> Result<()> {
         if self.generation()?.0 != *expected {
             return Err("初始化来源、配置、维护工具或存储实际代次变化；保留现场，禁止重放".into());
         }
@@ -54,12 +54,12 @@ impl<T: Transport> Window<'_, T> {
         );
         super::super::registration::combine(result, self.checkpoint())
     }
-    pub(super) fn mysql(&self, db: &Value, sql: &str) -> Result<String> {
+    pub(crate) fn mysql(&self, db: &Value, sql: &str) -> Result<String> {
         self.checkpoint()?;
         let result = super::super::resources::mysql(&self.inputs, self.transport, db, sql);
         super::super::registration::combine(result, self.checkpoint())
     }
-    pub(super) fn redis(&self, parts: &[&str]) -> Result<Value> {
+    pub(crate) fn redis(&self, parts: &[&str]) -> Result<Value> {
         self.checkpoint()?;
         let result = self.observer.redis(
             &self.inputs,
@@ -68,12 +68,12 @@ impl<T: Transport> Window<'_, T> {
         );
         super::super::registration::combine(result, self.checkpoint())
     }
-    pub(super) fn redis_state(&self, initialized: bool, sentinel: bool) -> Result<Value> {
+    pub(crate) fn redis_state(&self, initialized: bool, sentinel: bool) -> Result<Value> {
         redis::state(&self.inputs, initialized, sentinel, &mut |parts| {
             self.redis(parts)
         })
     }
-    pub(super) fn objects(&self, initialized: bool) -> Result<Value> {
+    pub(crate) fn objects(&self, initialized: bool) -> Result<Value> {
         self.checkpoint()?;
         let result = if initialized {
             super::super::initialized_objects::observe(&self.inputs, self.transport)

@@ -361,3 +361,49 @@ fn get(command: &mut impl FnMut(&[&str]) -> Result<Value>, key: &str) -> Result<
         _ => Err("目标 Redis GET 响应不是字符串或 NULL".into()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{net::TcpListener, thread};
+
+    #[test]
+    fn standard_command_preserves_integer_resp_as_strings_over_real_loopback_tcp() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let exchanges: &[(&[&str], &[u8])] = &[
+                (&["DEL", "fixture-sentinel"], b":1\r\n"),
+                (&["EVAL", "fixture-script", "0"], b":2\r\n"),
+            ];
+            for (parts, reply) in exchanges {
+                let mut expected = format!("*{}\r\n", parts.len());
+                for part in *parts {
+                    expected.push_str(&format!("${}\r\n{}\r\n", part.len(), part));
+                }
+                let mut actual = vec![0; expected.len()];
+                stream.read_exact(&mut actual).unwrap();
+                assert_eq!(actual, expected.as_bytes());
+                stream.write_all(reply).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        let mut client = Client::connect(port).unwrap();
+        assert_eq!(
+            client.command(&["DEL", "fixture-sentinel"]).unwrap(),
+            json!("1")
+        );
+        assert_eq!(
+            client.command(&["EVAL", "fixture-script", "0"]).unwrap(),
+            json!("2")
+        );
+        server.join().unwrap();
+    }
+}

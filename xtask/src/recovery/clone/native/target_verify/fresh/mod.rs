@@ -10,6 +10,7 @@ pub(crate) mod initialized_objects;
 pub(crate) mod objects;
 mod prepare;
 mod receipts;
+pub(crate) mod reconcile;
 pub(crate) mod registration;
 pub(crate) mod resources;
 mod resume_prepare;
@@ -47,6 +48,7 @@ pub(crate) fn dispatch(
         "resume-prepare" => resume_prepare(backend, &options.workspace),
         "initialize" => initialize::execute(backend, &options.workspace, false),
         "resume-initialize" => initialize::execute(backend, &options.workspace, true),
+        "reconcile-preflight" => reconcile::execute(backend, &options.workspace),
         "verify" => verify::execute(
             backend,
             &options.workspace,

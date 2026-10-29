@@ -3,7 +3,7 @@ mod claims;
 pub(crate) mod initial;
 pub(crate) mod inputs;
 mod marker;
-mod operations;
+pub(crate) mod operations;
 pub(crate) mod reset_configuration;
 pub(crate) mod resume;
 pub(crate) mod window;

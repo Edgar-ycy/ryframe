@@ -185,7 +185,12 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
     }
     if matches!(
         options.operation.as_str(),
-        "prepare" | "resume-prepare" | "initialize" | "resume-initialize" | "verify"
+        "prepare"
+            | "resume-prepare"
+            | "initialize"
+            | "resume-initialize"
+            | "verify"
+            | "reconcile-preflight"
     ) {
         let value = clone::native::target_verify::fresh::dispatch(&root_dir(), options)?;
         println!("{}", serde_json::to_string(&value)?);

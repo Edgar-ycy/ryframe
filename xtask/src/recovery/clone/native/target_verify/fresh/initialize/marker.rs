@@ -77,10 +77,11 @@ pub(super) fn execute<T: Transport>(
             &owner_value,
             document::text(&w.inputs.request["reset"]["sentinel_value"], "sentinel值")?,
         ])?;
-        if result.as_i64() != Some(2) {
+        if result.as_str() != Some("2") {
             return Err("Redis原子marker重绑结果未确认，禁止重试".into());
         }
-        Ok((result, w.redis_state(true, true)?))
+        // 标准命令保留字符串响应；确认精确值后写入既有整数收据。
+        Ok((json!(2), w.redis_state(true, true)?))
     })();
     match result {
         Ok((result, after)) => {

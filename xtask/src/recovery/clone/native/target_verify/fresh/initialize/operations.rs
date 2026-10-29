@@ -9,7 +9,7 @@ use crate::Result;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
-pub(super) fn database<T: Transport>(w: &Window<'_, T>, db: &Value, empty: bool) -> Result<Value> {
+pub(crate) fn database<T: Transport>(w: &Window<'_, T>, db: &Value, empty: bool) -> Result<Value> {
     let name = document::text(&db["database"], "数据库名")?;
     let output=w.mysql(db,&format!("SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';"))?;
     if output.trim().lines().collect::<Vec<_>>()

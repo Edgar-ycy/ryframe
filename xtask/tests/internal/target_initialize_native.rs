@@ -21,6 +21,9 @@ use std::fs;
 #[path = "target_fresh_verification.rs"]
 mod verification;
 
+#[path = "target_preflight_reconcile.rs"]
+mod reconciliation;
+
 fn execute(resources: &Resources<'_>, resuming: bool) -> Result<Value> {
     let f = resources.fixture;
     let registration = Registration::load(&f.backend, &f.local)?;

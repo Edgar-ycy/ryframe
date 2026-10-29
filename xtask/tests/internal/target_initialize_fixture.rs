@@ -26,6 +26,7 @@ pub(super) struct Resources<'a> {
     pub(super) fixture: &'a Fixture,
     inventory: FakeTransport<'a>,
     pub(super) calls: RefCell<Vec<Vec<String>>>,
+    pub(super) sql: RefCell<Vec<String>>,
     pub(super) created: RefCell<BTreeSet<String>>,
     pub(super) reset: Cell<bool>,
     pub(super) fail: Cell<Option<&'static str>>,
@@ -55,6 +56,7 @@ impl<'a> Resources<'a> {
             fixture: f,
             inventory: FakeTransport::new(f, false, false),
             calls: RefCell::new(Vec::new()),
+            sql: RefCell::new(Vec::new()),
             created: RefCell::new(BTreeSet::new()),
             reset: Cell::new(false),
             fail: Cell::new(None),
@@ -153,6 +155,23 @@ impl<'a> Resources<'a> {
         self.redis
             .borrow_mut()
             .insert(key.into(), json!("unexpected"));
+    }
+    pub(super) fn preflight_state(&self) {
+        for db in self.fixture.request["target"]["databases"]
+            .as_array()
+            .unwrap()
+        {
+            self.created
+                .borrow_mut()
+                .insert(db["database"].as_str().unwrap().into());
+        }
+        self.redis.borrow_mut().insert(
+            self.fixture.request["reset"]["sentinel_key"]
+                .as_str()
+                .unwrap()
+                .into(),
+            self.fixture.request["reset"]["sentinel_value"].clone(),
+        );
     }
     pub(super) fn initialized_state(&self) {
         self.reset.set(true);
@@ -260,6 +279,7 @@ impl<'a> Resources<'a> {
     }
     fn mysql(&self, spec: CommandSpec) -> Result<CommandOutput> {
         let sql = String::from_utf8(spec.stdin.unwrap())?;
+        self.sql.borrow_mut().push(sql.clone());
         let db = self.fixture.request["target"]["databases"]
             .as_array()
             .unwrap()
@@ -267,6 +287,19 @@ impl<'a> Resources<'a> {
             .find(|db| sql.contains(db["database"].as_str().unwrap()))
             .ok_or("替身拒绝未知库")?;
         let name = db["database"].as_str().unwrap();
+        if sql.starts_with("DROP DATABASE") {
+            assert!(
+                self.fixture
+                    .target
+                    .join("reconciliation-plan.json")
+                    .is_file()
+            );
+            assert!(self.created.borrow_mut().remove(name));
+            if self.fail.get() == Some("drop") {
+                return Err("模拟DROP已提交但回复丢失；私有凭据不得进入公开收据".into());
+            }
+            return Ok(output(String::new()));
+        }
         if sql.starts_with("CREATE DATABASE") {
             assert!(
                 self.fixture
@@ -285,7 +318,11 @@ impl<'a> Resources<'a> {
             return Ok(output(String::new()));
         }
         if sql.starts_with("SELECT TABLE_NAME") {
-            return Ok(output(String::new()));
+            return Ok(output(if self.fail.get() == Some("nonempty") {
+                "unknown_table".into()
+            } else {
+                String::new()
+            }));
         }
         assert!(sql.starts_with("SELECT @@server_uuid; SELECT SCHEMA_NAME"));
         Ok(output(if self.created.borrow().contains(name) {
@@ -354,6 +391,9 @@ impl Transport for Resources<'_> {
         self.maintenance(spec)
     }
     fn s3(&self, request: Request) -> Result<Value> {
+        if self.fail.get() == Some("objects") {
+            return Err("模拟未知对象前像".into());
+        }
         if !self.reset.get() {
             return match request.operation {
                 Operation::HeadBucket | Operation::Versioning => Ok(json!({})),
@@ -399,6 +439,24 @@ impl StorageObserver for Resources<'_> {
                     .collect::<Vec<_>>()
             ])),
             "GET" => Ok(values.get(parts[1]).cloned().unwrap_or(Value::Null)),
+            "DEL" => {
+                assert!(
+                    self.fixture
+                        .target
+                        .join("reconciliation-plan.json")
+                        .is_file()
+                );
+                assert_eq!(
+                    parts[1],
+                    inputs.request["reset"]["sentinel_key"].as_str().unwrap()
+                );
+                let removed = u8::from(values.remove(parts[1]).is_some());
+                Ok(match self.fail.get() {
+                    Some("del-numeric") => json!(removed),
+                    Some("del-unconfirmed") => json!("0"),
+                    _ => json!(removed.to_string()),
+                })
+            }
             "EVAL" => {
                 assert_eq!(parts[2], "2");
                 assert_eq!(parts[3], format!("ryframe:{{{SCOPE}}}:.ryframe-owner"));
@@ -412,7 +470,7 @@ impl StorageObserver for Resources<'_> {
                 if self.lose_eval_reply.replace(false) {
                     return Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into());
                 }
-                Ok(json!(2))
+                Ok(json!("2"))
             }
             "SET" => {
                 assert_eq!(parts[3], "NX");

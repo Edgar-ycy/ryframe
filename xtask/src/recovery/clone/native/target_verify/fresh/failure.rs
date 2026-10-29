@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(super) const DEL_UNCONFIRMED: &str = "预检失败收尾阶段：Redis sentinel DEL 结果未确认，可能已写入；保留原 reconciliation-plan.json，核对完整资源前后像，禁止重放";
+
 #[derive(Debug)]
 pub(super) struct Publication {
     pub(super) path: PathBuf,
@@ -40,8 +42,12 @@ impl fmt::Debug for StageFailure {
 }
 impl fmt::Display for StageFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let diagnostic = super::super::database::model::TABLE_SET_ERROR;
-        if self.category == "InventoryCaptureError"
+        let diagnostic = match self.category {
+            "InventoryCaptureError" => Some(super::super::database::model::TABLE_SET_ERROR),
+            "PreflightReconciliationError" => Some(DEL_UNCONFIRMED),
+            _ => None,
+        };
+        if let Some(diagnostic) = diagnostic
             && self
                 .cause
                 .as_ref()
@@ -101,4 +107,48 @@ pub(super) fn capture<T>(result: Result<T>) -> Result<T> {
             cause: Some(cause),
         }) as Box<dyn Error>
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preflight_del_diagnostic_requires_exact_category_and_message_without_private_cause() {
+        let table_error = super::super::super::database::model::TABLE_SET_ERROR;
+        for (category, message, allowed) in [
+            (
+                "PreflightReconciliationError",
+                DEL_UNCONFIRMED.to_owned(),
+                true,
+            ),
+            ("InventoryCaptureError", table_error.to_owned(), true),
+            ("InventoryCaptureError", DEL_UNCONFIRMED.to_owned(), false),
+            ("OtherError", DEL_UNCONFIRMED.to_owned(), false),
+            (
+                "PreflightReconciliationError",
+                format!("{DEL_UNCONFIRMED} private-secret"),
+                false,
+            ),
+            (
+                "PreflightReconciliationError",
+                "private-secret arbitrary error".to_owned(),
+                false,
+            ),
+        ] {
+            let failure = StageFailure {
+                category,
+                cause: Some(message.clone().into()),
+            };
+            let public = failure.to_string();
+            if allowed {
+                assert_eq!(public, message);
+            } else {
+                assert!(public.contains("受管阶段未完成"));
+                assert_ne!(public, DEL_UNCONFIRMED);
+            }
+            assert!(!public.contains("private-secret"));
+            assert!(!format!("{failure:?}").contains("private-secret"));
+        }
+    }
 }

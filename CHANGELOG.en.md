@@ -4,7 +4,11 @@
 
 ## [Unreleased]
 
+- Fix type mismatches for standard Redis integer replies in fresh preflight-cleanup DEL and resumed marker EVAL. Accept only exact string replies and normalize a confirmed EVAL result to the existing integer receipt, preserving transaction reply contracts and the prohibition on replaying unknown writes. Unconfirmed DEL exposes only a fixed redacted stage diagnostic and preserves the original plan and failure, and requires complete before/after-image verification without backfilling completion for an old scene.
+
 - Add a dev package override with opt-level=3 only for locked sha2 0.11.0 to reduce the computation cost of full digest verification in development tools. Preserve dependency versions, optimization settings for other crates, full source verification, and the API/Worker preparation, readiness and outer handoff limits of 120, 60 and 300 seconds.
+
+- Route the formal fresh-target reconcile-preflight entry directly to Rust, reusing workspace, storage-run and target-generation guards. Cleanup is limited to the exact sentinel and rechecked empty databases of a unique reset preflight failure, with a plan published before cleanup and complete after-image validation before completion. Original failures, reports and unknown writes remain preserved; initialization is not replayed and recovery is not qualified.
 
 - Fix shared atomic receipt publication for API, Worker and frontend on long Windows paths. Preserve native canonical paths separately for staging and target parents without changing staging outside control locks, publication inside them, or portable receipt facts. Persistence failures retain the original I/O type and OS code and clean up the current temporary file, without overwriting unknown targets or automatically replaying operations.
 
