@@ -121,7 +121,6 @@ Recovery proceeds through start, data validation, and business and runtime valid
 ```powershell
 git rev-parse HEAD
 $env:APP_ENV = "test"
-cargo reset --help
 cargo reset -- plan --config-dir .local-tests/reset-config
 cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```

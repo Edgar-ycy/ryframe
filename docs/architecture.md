@@ -121,7 +121,6 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 ```powershell
 git rev-parse HEAD
 $env:APP_ENV = "test"
-cargo reset --help
 cargo reset -- plan --config-dir .local-tests/reset-config
 cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```

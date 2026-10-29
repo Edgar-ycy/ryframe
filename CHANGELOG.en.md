@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the rebuild command example that opens Cargo's own help instead of the application interface. Retain the executable planning and confirmed-execution workflow in both documentation languages.
+
 - Fix read-only storage observations clearing OS runtime fields required by Windows platform tools. Reuse the existing whitelist and bound-value precedence without restoring application environment overrides; report fixed safe failure diagnostics.
 
 - Align four-target inventory authorization-projection metadata and current migration ownership-confirmation output. Retain complete-table and unknown-table checks, copy digests and existing inventory-continuation boundaries. Preserve internal inventory failure causes while exposing only fixed safe diagnostics and repair guidance, without replaying completed writes.
