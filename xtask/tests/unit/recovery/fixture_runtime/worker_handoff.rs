@@ -78,3 +78,40 @@ fn untrusted_and_duplicate_response_text_is_never_public() {
     assert!(acceptance(Role::Api, exit(0), (b"", true), (b"", false)).is_err());
     assert!(acceptance(Role::Api, exit(0), (b"", false), (b"", true)).is_err());
 }
+
+#[test]
+fn preparation_diagnostic_handoff_requires_exact_safe_fields_and_advice() {
+    for role in [Role::Api, Role::Worker] {
+        for (stage, advice) in [
+            ("runtime_input", "核对冻结来源、配置与产物"),
+            ("request_contract", "核对原owner/request与运行合同"),
+            ("member_spawn", "核对成员创建权限与系统资源"),
+            ("member_identity", "核对成员创建身份与退出证据"),
+            ("ready_publication", "核对成员ready证据目录与权限"),
+        ] {
+            let message = format!(
+                "{}监督准备失败；阶段={stage}；原因=unknown；系统码=none；原因摘要={}；{advice}；保留现场，显式核对，不重放",
+                role.label(),
+                "a".repeat(64)
+            );
+            let response = |message: &str| {
+                serde_json::to_vec(&json!({"ok":false,
+                "error":if role == Role::Api {"ProcessRejected"} else {"WorkerRejected"},"message":message})).unwrap()
+            };
+            let bytes = response(&message);
+            let error =
+                acceptance(role, exit(1), (&bytes, false), (b"private-marker", false)).unwrap_err();
+            assert!(error.to_string().contains(&format!("阶段={stage}")));
+            assert_eq!(crate::process::failure_exit_code(error.as_ref()), Some(1));
+            assert!(!format!("{error:?}").contains("private-marker"));
+            for changed in [
+                message.clone() + "private-marker",
+                message.replace("原因=unknown", "原因=private-marker"),
+                message.replace("系统码=none", "系统码=5"),
+                message.replace("显式核对", "private-marker"),
+            ] {
+                assert!(safe_rejection(role, &response(&changed)).is_none());
+            }
+        }
+    }
+}

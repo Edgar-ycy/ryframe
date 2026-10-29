@@ -6,6 +6,7 @@ mod finite;
 mod guard;
 mod launch;
 mod operation;
+pub(in crate::recovery) mod preparation;
 mod probes;
 mod process;
 mod receipts;

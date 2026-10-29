@@ -47,6 +47,7 @@ const FILES: &[&str] = &[
     "supervisor.json",
     "progress.json",
     "result.json",
+    "preparation-failed.json",
 ];
 
 pub(super) fn now() -> u64 {

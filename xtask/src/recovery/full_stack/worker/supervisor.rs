@@ -2,6 +2,7 @@
 use super::{
     launch,
     operation::{self, Operation},
+    preparation::{self, Stage},
     process,
     role::Role,
     tree,
@@ -66,24 +67,60 @@ fn operation(role: Role, backend: &Path, directory: &Path, id: &str) -> Result<O
     }
     Ok(op)
 }
+fn monitor_operation(
+    role: Role,
+    backend: &Path,
+    directory: &Path,
+    id: &str,
+    monitor: &Value,
+) -> Result<Operation> {
+    if role == Role::Frontend {
+        operation(role, backend, directory, id)
+    } else {
+        // 先取得既有原子绑定，失败旁证只能属于本次受管操作。
+        let op = Operation::read(role, directory, &operation::source(directory)?)?;
+        if op.id()? != id || op.request["backend_root"] != json!(backend) {
+            return Err("角色监督进程不属于当前start操作".into());
+        }
+        preparation::step(&op, monitor, Stage::RuntimeInput, || {
+            super::runtime::load(role, backend, directory).map(|_| ())
+        })?;
+        preparation::step(&op, monitor, Stage::RequestContract, || {
+            op.validate("request", Value::Null)?;
+            if op.request["operation"] != "start" {
+                return Err("角色监督进程不属于当前start操作".into());
+            }
+            Ok(())
+        })?;
+        Ok(op)
+    }
+}
 pub(super) fn monitor(args: &Value) -> Result<Value> {
     let (role, backend, directory, id) = inputs(args)?;
-    let op = operation(role, &backend, &directory, &id)?;
     let monitor = process::current()?;
-    let mut command = launch::command("supervise", args, &directory)?;
-    if role == Role::Frontend {
-        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    }
-    let environment = super::environment::Environment::operation(&op.request)?;
-    if let Some(environment) = &environment {
-        environment.apply(&mut command)?;
-    }
-    let mut child = ChildGroup::new()?.spawn(command)?;
-    let supervisor = common::process_identity(child.id())?.ok_or("角色监督进程登记前退出")?;
+    let op = monitor_operation(role, &backend, &directory, &id, &monitor)?;
+    let environment = preparation::step(&op, &monitor, Stage::RuntimeInput, || {
+        super::environment::Environment::operation(&op.request)
+    })?;
+    let mut child = preparation::step(&op, &monitor, Stage::MemberSpawn, || {
+        let mut command = launch::command("supervise", args, &directory)?;
+        if role == Role::Frontend {
+            command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        }
+        if let Some(environment) = &environment {
+            environment.apply(&mut command)?;
+        }
+        ChildGroup::new()?.spawn(command)
+    })?;
+    let supervisor = preparation::step(&op, &monitor, Stage::MemberIdentity, || {
+        common::process_identity(child.id())?.ok_or_else(|| "角色监督进程登记前退出".into())
+    })?;
     let ready = json!({"format_version":1,"operation_id":id,"directory":directory,"role":role.name(),"scope_id":op.request["scope_id"],"supervisor":supervisor,"monitor":monitor});
     let mut members = vec![supervisor.clone()];
     let result: Result<()> = (|| {
-        operation::write_new(&tree::path(&directory, role, &id, "ready"), &ready)?;
+        preparation::step(&op, &monitor, Stage::ReadyPublication, || {
+            operation::write_new(&tree::path(&directory, role, &id, "ready"), &ready)
+        })?;
         loop {
             for pid in child.member_pids()? {
                 if let Some(identity) = common::process_identity(pid)?

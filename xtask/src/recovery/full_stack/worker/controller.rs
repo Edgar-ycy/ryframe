@@ -330,11 +330,9 @@ pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
             return Ok(());
         }
         if !process::alive(monitor)? {
-            return Err(super::Rejection(format!(
-                "{}监督候选登记前成员监督器已退出",
-                role.label()
-            ))
-            .into());
+            let message = super::preparation::failure(op, monitor)
+                .unwrap_or_else(|| format!("{}监督候选登记前成员监督器已退出", role.label()));
+            return Err(super::Rejection(message).into());
         }
         super::check_preparation(role, deadline)?;
         thread::sleep(Duration::from_millis(20));

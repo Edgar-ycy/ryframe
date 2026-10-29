@@ -124,7 +124,8 @@ fn acceptance(
         return Ok(());
     }
     use sha2::{Digest, Sha256};
-    let message = safe_rejection(role, stdout.0).unwrap_or("监督控制响应无可公开诊断");
+    let message =
+        safe_rejection(role, stdout.0).unwrap_or_else(|| "监督控制响应无可公开诊断".into());
     Err(super::dependency::failure(
         &format!(
             "{}交接未确认；exit_code={:?}；{}；stdout_bytes={} stdout_overflow={} stdout_sha256={}；stderr_bytes={} stderr_overflow={} stderr_sha256={}；保留owner、结果和进程树，核对原始工具与输入，不自动重放",
@@ -142,7 +143,7 @@ fn acceptance(
     ))
 }
 
-fn safe_rejection(role: Role, bytes: &[u8]) -> Option<&'static str> {
+fn safe_rejection(role: Role, bytes: &[u8]) -> Option<String> {
     let value = crate::recovery::clone::native::json::parse_fragment(
         std::str::from_utf8(bytes).ok()?,
         "监督拒绝响应",
@@ -165,6 +166,9 @@ fn safe_rejection(role: Role, bytes: &[u8]) -> Option<&'static str> {
         return None;
     }
     let message = value["message"].as_str()?;
+    if crate::recovery::full_stack::worker::preparation::safe_message(role, message) {
+        return Some(message.to_owned());
+    }
     for (suffix, safe) in [
         (
             "监督候选登记前成员监督器已退出",
@@ -187,11 +191,11 @@ fn safe_rejection(role: Role, bytes: &[u8]) -> Option<&'static str> {
         ),
     ] {
         if message == format!("{}{suffix}", role.label()) {
-            return Some(safe);
+            return Some(safe.to_owned());
         }
     }
     (message == "受监督进程原生核验失败；保留收据与锁，核对正式工具和输入后显式恢复")
-        .then_some("受监督进程原生核验失败；保留收据与锁，核对正式工具和输入后显式恢复")
+        .then(|| "受监督进程原生核验失败；保留收据与锁，核对正式工具和输入后显式恢复".into())
 }
 
 #[cfg(test)]

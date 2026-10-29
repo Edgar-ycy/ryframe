@@ -91,6 +91,7 @@ fn receipt(runtime: &Path, role: &str, id: &str, directory: &Path, archived: boo
         "supervisor.json",
         "progress.json",
         "result.json",
+        "preparation-failed.json",
     ];
     let mut records = serde_json::Map::new();
     let mut bindings = Vec::new();
@@ -147,6 +148,11 @@ fn receipt(runtime: &Path, role: &str, id: &str, directory: &Path, archived: boo
             || !records.contains_key("supervisor.json"))
     {
         return Err("源角色成功档案缺少同代ready发布".into());
+    }
+    if let Some(value) = records.get("preparation-failed.json") {
+        crate::recovery::full_stack::worker::preparation::validate_record(
+            value, runtime, owner, request,
+        )?;
     }
     members::verify(runtime, role, id, &records, archived)?;
     for binding in bindings {
