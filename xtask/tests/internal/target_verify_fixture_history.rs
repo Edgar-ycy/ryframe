@@ -307,7 +307,7 @@ fn reset_files(fixture: &Fixture, generation: &Value) -> Value {
     let phases=["preflight","object_storage","redis","databases","control_baseline","tenant_baselines","verification","release"].map(|phase|(phase.to_owned(),
         json!({"status":"complete","started_at":"2026-10-18T00:02:00Z","completed_at":"2026-10-18T00:03:00Z"}))).into_iter().collect::<serde_json::Map<_,_>>();
     let resources = reset_resources(&manifest);
-    let mut ledger = json!({"ledger_version":4,"updated_at":"2026-10-18T00:03:00Z","plan_hash":hash,"phases":phases,"resources":resources});
+    let mut ledger = json!({"ledger_version":5,"updated_at":"2026-10-18T00:03:00Z","plan_hash":hash,"phases":phases,"resources":resources});
     for field in [
         "environment",
         "scope_id",

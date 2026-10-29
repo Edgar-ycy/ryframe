@@ -27,6 +27,7 @@ const IDENTITY: [&str; 5] = [
     "config_sha",
     "credential_version",
 ];
+pub(super) const TERMINAL_VERSION_ERROR: &str = "reset ledger_version 必须为 5、report_version 必须为 2；保留现场并只读核对 fresh-target status，禁止自动转换或重放 reset";
 
 /// 重新绑定完整命令输出及其原文摘要，不接受截断、重复字段或未知结果。
 pub(crate) fn plan_receipt(
@@ -89,18 +90,25 @@ pub(crate) fn completed(
     let report_path = directory.join(format!("{stem}.report.json"));
     let ledger_path = directory.join(format!("{stem}.ledger.json"));
     let previous_path = directory.join(format!(".{stem}.ledger.json.previous"));
+    let protected = super::guard::Inputs::open([
+        report_path.clone(),
+        ledger_path.clone(),
+        previous_path.clone(),
+    ])?;
     let report = read(backend, &report_path)?;
     let ledger = read(backend, &ledger_path)?;
     let previous = read(backend, &previous_path)?;
     validate_terminal(manifest, sha, &report, &ledger)?;
     validate_previous(&previous, &ledger)?;
     validate_resources(manifest, &report)?;
-    Ok(json!({
+    let result = json!({
         "report": descriptor(target, &report_path)?,
         "ledger": descriptor(target, &ledger_path)?,
         "completed_at": report["completed_at"],
         "status": "completed",
-    }))
+    });
+    protected.check()?;
+    Ok(result)
 }
 
 fn read(backend: &Path, path: &Path) -> Result<Value> {
@@ -119,6 +127,10 @@ fn descriptor(root: &Path, path: &Path) -> Result<Value> {
 }
 
 fn validate_terminal(manifest: &Value, sha: &str, report: &Value, ledger: &Value) -> Result<()> {
+    if report["report_version"].as_u64() != Some(2) || ledger["ledger_version"].as_u64() != Some(5)
+    {
+        return Err(TERMINAL_VERSION_ERROR.into());
+    }
     for value in [report, ledger] {
         if value["plan_hash"].as_str() != Some(sha)
             || IDENTITY
@@ -143,9 +155,7 @@ fn validate_terminal(manifest: &Value, sha: &str, report: &Value, ledger: &Value
             return Err("reset 存在未确认资源".into());
         }
     }
-    if report["report_version"].as_u64() != Some(2)
-        || ledger["ledger_version"].as_u64() != Some(4)
-        || report["status"] != "completed"
+    if report["status"] != "completed"
         || !report.get("failed_phase").is_some_and(Value::is_null)
         || report["completed_at"] != ledger["phases"]["release"]["completed_at"]
         || report["phases"] != ledger["phases"]

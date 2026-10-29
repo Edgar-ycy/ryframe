@@ -116,6 +116,7 @@ const DIAGNOSTICS: &[&str] = &[
     "reset plan 对象端点或五桶不符",
     "reset plan 对象前缀越界",
     "reset plan Redis namespace、端点或 sentinel 不符",
+    super::reset::TERMINAL_VERSION_ERROR,
     "维护 CLI 在执行前发生变化",
     "初始化失败、仍持锁或观察目录无效",
     "初始化失败之前的 prepare 失败尚未显式收尾",

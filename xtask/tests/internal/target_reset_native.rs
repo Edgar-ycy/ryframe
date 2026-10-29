@@ -72,7 +72,7 @@ impl Fixture {
             .clone(),
         );
         let mut ledger = common;
-        ledger["ledger_version"] = json!(4);
+        ledger["ledger_version"] = json!(5);
         ledger["updated_at"] = json!("2026-10-18T00:01:00Z");
         let mut previous = ledger.clone();
         previous["updated_at"] = json!("2026-10-18T00:00:59Z");
@@ -205,6 +205,16 @@ fn reset_requires_exact_reported_resources_and_previous_file() {
     let fixture = Fixture::new();
     fs::remove_file(fixture.path("previous")).unwrap();
     assert!(fixture.verify().is_err());
+    for version in [4, 6] {
+        for kind in ["ledger", "previous"] {
+            let fixture = Fixture::new();
+            fixture.mutate(kind, |value| value["ledger_version"] = json!(version));
+            let error = fixture.verify().unwrap_err().to_string();
+            if kind == "ledger" {
+                assert!(error.contains("ledger_version 必须为 5"));
+            }
+        }
+    }
 }
 
 #[test]

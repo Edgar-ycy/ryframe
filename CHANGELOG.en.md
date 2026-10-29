@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix recovery acceptance rejecting current version-five rebuild ledgers while retaining exact-plan, complete-phase and release-predecessor checks. Bind report and ledger bytes before and after reading; failures do not trigger conversion or replay.
+
 - Fix nonproduction rebuild verification rejecting canonical bootstrap authorization-projection events as runtime residue. Strictly verify one event per tenant, its version, payload and undelivered state, while continuing to reject nonempty runtime tables and extra or malformed events.
 
 - Move formal source-rebind orchestration to native Rust, reusing the original run lock and complete history proofs while retaining producer quiescence, matching cache and storage successors, two complete observations, and non-overwriting receipts. Remove the old Python execution dispatch. Safe phase classifications flow through the existing ledger and CLI, preserving redacted CIM error codes and repair guidance.
