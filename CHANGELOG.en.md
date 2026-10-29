@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Merge configuration-transfer snapshot-phase tests with identical inputs and assertions, naming the retained case after the phase rule it checks. Remove restore-retry and concurrent-CAS tests that exercise only the fake repository's own implementation. Retain real MySQL coverage of authoritative records, waiting and complete-preimage CAS, together with service-level tests, production validators and shared test helpers.
+
 - Preserve original controller exit codes during startup handoff and distinguish monitor exit, candidate registration exceeding the original deadline, and ownership mismatch. Expose only exact fixed safe diagnostics; unknown output reports bounded lengths, overflow flags and digests. Retain existing deadlines, source and complete process-tree checks, failure receipts and explicit reconciliation without automatically retrying startup.
 
 - Fix authorization projections missing from complete logical copy images and continuation tool contexts still using old S3 descriptions. Compare raw business inventories before including authorization projections from raw preserved tables, and reject omitted targets with nonempty projections. Explicit continuation reuses the verified source request and target file configuration while retaining the original plan, initialization receipts, unknown-write reconciliation and lock protection.

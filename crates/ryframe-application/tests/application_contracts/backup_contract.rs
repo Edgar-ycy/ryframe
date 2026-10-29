@@ -171,38 +171,6 @@ async fn damaged_restored_data_records_failed_drill() {
 }
 
 #[tokio::test]
-async fn create_restore_retry_returns_the_first_authoritative_record() {
-    let (service, repository, _) = fixture();
-    let manifest = manifest();
-    service
-        .register(manifest.clone(), &manifest.resource_keys())
-        .await
-        .unwrap();
-    let original = service.begin_restore(plan()).await.unwrap();
-    let mut retry = original.clone();
-    retry.started_at += Duration::minutes(5);
-    retry.recovered_at += Duration::minutes(5);
-
-    let transaction = repository.begin().await.unwrap();
-    let authoritative = transaction.create_restore(&retry).await.unwrap();
-    transaction.commit().await.unwrap();
-
-    assert_eq!(authoritative, original);
-    let mut conflicting = original.clone();
-    conflicting.plan_hash = "f".repeat(64);
-    let transaction = repository.begin().await.unwrap();
-    assert!(matches!(
-        transaction.create_restore(&conflicting).await,
-        Err(AppError::Conflict(_))
-    ));
-    drop(transaction);
-    assert_eq!(
-        repository.restore("drill-1").await.unwrap().unwrap(),
-        original
-    );
-}
-
-#[tokio::test]
 async fn first_restore_create_revalidates_parent_and_recovery_point() {
     let (service, repository, _) = fixture();
     let manifest = manifest();
@@ -603,30 +571,6 @@ async fn clock_rollback_after_data_verification_is_persisted_as_failure() {
     let failed = repository.restore(&running.plan.id).await.unwrap().unwrap();
     assert_eq!(failed.status, RestoreStatus::Failed);
     assert_eq!(failed.completed_at, failed.data_verified_at);
-}
-
-#[tokio::test]
-async fn concurrent_restore_advances_allow_exactly_one_cas_winner() {
-    let (service, repository, _) = fixture();
-    let manifest = manifest();
-    service
-        .register(manifest.clone(), &manifest.resource_keys())
-        .await
-        .unwrap();
-    let running = service.begin_restore(plan()).await.unwrap();
-    let next = data_verified_record(&running);
-
-    let first = persist_restore_advance(repository.as_ref(), &running, &next);
-    let second = persist_restore_advance(repository.as_ref(), &running, &next);
-    let (first, second) = tokio::join!(first, second);
-
-    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
-    assert_eq!(
-        usize::from(matches!(first, Err(AppError::Conflict(_))))
-            + usize::from(matches!(second, Err(AppError::Conflict(_)))),
-        1
-    );
-    assert_eq!(repository.restore("drill-1").await.unwrap().unwrap(), next);
 }
 
 #[tokio::test]
