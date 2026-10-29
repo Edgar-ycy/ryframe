@@ -61,9 +61,7 @@ pub(super) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     match operation {
-        "fresh-status" | "fresh-prepare" | "fresh-resume-prepare" | "fresh-verify-target" => {
-            super::fresh::binding(backend, operation, args)
-        }
+        "fresh-verify-target" => super::fresh::verify::binding(backend, args),
         "reset-configuration" | "redis-configuration" => super::binding_configuration::validate(
             backend,
             args,

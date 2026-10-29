@@ -418,15 +418,14 @@ def _native(operation: str, backend: Path, **arguments) -> dict:
         raise ValueError("目标绑定缺少受管 Rust 工具；请通过 run_checks.py 或正式 xtask 入口执行")
     def invoke(command, **options):
         # 完整复验沿用各读命令期限，不增加整体短上界。
-        options["timeout"] = (None if operation == "fresh-verify-target" else
-                              600 if operation in {"fresh-prepare", "fresh-resume-prepare"} else 30)
+        options["timeout"] = None if operation == "fresh-verify-target" else 30
         return subprocess.run(command, **options)
 
     try:
         result, response = native_invoke(
             "__target-binding", {"format_version": 1, "operation": operation,
                                   "backend": str(backend), "arguments": arguments},
-            invoke, may_write=operation in {"fresh-prepare", "fresh-resume-prepare", "fresh-verify-target"},
+            invoke, may_write=operation == "fresh-verify-target",
         )
     except NativeS3InvocationError as error:
         raise ValueError("原生目标绑定进程未完成：" + str(error.error_type)

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove retired Python forwarding and private binding branches for fresh-target prepare, resume-prepare and status. Formal lifecycle operations continue to execute directly in Rust; Python retains the active reconcile-preflight path only. Narrow the private protocol and consolidate useful boundary coverage, removing the test that only checked script-file existence without changing recovery authority or cleanup scope.
+
 - Add fixed stage, cause-category and OS-code diagnostics for Redis source guards, socket creation/options, exclusive port binding, command construction and intent publication between launch and intent records. Validate fixed diagnostic fields strictly across processes and retain only digests for unknown causes. Post-stop port checks retain their original I/O errors and are not marked as not started. Preserve existing checks, deadlines and failure evidence without automatically retrying or replaying services.
 
 - Merge configuration-transfer snapshot-phase tests with identical inputs and assertions, naming the retained case after the phase rule it checks. Remove restore-retry and concurrent-CAS tests that exercise only the fake repository's own implementation. Retain real MySQL coverage of authoritative records, waiting and complete-preimage CAS, together with service-level tests, production validators and shared test helpers.

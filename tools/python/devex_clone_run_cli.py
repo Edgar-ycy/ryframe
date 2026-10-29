@@ -10,10 +10,7 @@ from devex_clone_model import local_path
 from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
 
 FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
-FRESH_TARGET_OPERATIONS = {
-    "prepare", "resume-prepare",
-    "reconcile-preflight", "status",
-}
+FRESH_TARGET_OPERATIONS = {"reconcile-preflight"}
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
@@ -101,6 +98,9 @@ def decode_fresh_target_protocol(source: str):
         raise FreshTargetProtocolError("fresh-target 私有协议 operation 无效")
     if not isinstance(request["write"], bool):
         raise FreshTargetProtocolError("fresh-target 私有协议 write 必须是布尔值")
+    if not request["write"] or any(request[field] is not None for field in (
+            "request", "environment", "storage_run", "observation_dir")):
+        raise FreshTargetProtocolError("fresh-target 清理协议需要 write=true，且不能附带阶段参数")
     backend = _protocol_path(request["backend_dir"], "backend_dir")
     arguments = SimpleNamespace(
         command="fresh-target",
@@ -279,28 +279,14 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "fresh-target":
         from devex_clone_target_cli import reconcile_preflight
 
-        if args.operation in {"initialize", "resume-initialize", "verify"}:
-            raise ValueError("初始化、续作与复验只接受正式 cargo xtask check recovery fresh-target 入口及 --write")
+        if args.operation not in FRESH_TARGET_OPERATIONS:
+            raise ValueError("Python fresh-target 仅接受 reconcile-preflight；其他操作请使用正式 cargo xtask 入口")
 
-        workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
+        workspace = evidence_path(backend, args.workspace)
         from devex_clone_target_cli import validate_dispatch
 
         validate_dispatch(backend, workspace, args)
-        if args.operation == "status":
-            from devex_clone_target_binding import _native
-            return _native("fresh-status", backend, workspace=str(workspace))
-        if args.operation == "prepare":
-            from devex_clone_target_binding import _native
-            return _native("fresh-prepare", backend, workspace=str(workspace),
-                           request=str(evidence_path(backend, args.request)),
-                           environment=str(evidence_path(backend, args.environment)),
-                           storage_run=str(evidence_path(backend, args.storage_run)), write=True)
-        if args.operation == "resume-prepare":
-            from devex_clone_target_binding import _native
-            return _native("fresh-resume-prepare", backend, workspace=str(workspace), write=True)
-        if args.operation == "reconcile-preflight":
-            return reconcile_preflight(backend, workspace)
-        raise ValueError("Python fresh-target 不接受此操作；请使用正式 Rust 入口")
+        return reconcile_preflight(backend, workspace)
     directory = evidence_path(backend, args.run_dir)
     if args.command == "storage":
         if args.request is not None and args.operation != "restart":

@@ -33,13 +33,13 @@ class FreshTargetProtocolTests(unittest.TestCase):
                             **file_digest(Path(sys.executable).resolve())},
             "request": {
                 "backend_dir": str(backend),
-                "operation": "status",
+                "operation": "reconcile-preflight",
                 "workspace": str(backend / ".local-tests/fresh protocol"),
                 "request": None,
                 "environment": None,
                 "storage_run": None,
                 "observation_dir": None,
-                "write": False,
+                "write": True,
             },
         }
 
@@ -47,9 +47,9 @@ class FreshTargetProtocolTests(unittest.TestCase):
         backend, request = cli.decode_fresh_target_protocol(json.dumps(self.payload()))
         self.assertTrue(backend.is_absolute())
         self.assertEqual(request.command, "fresh-target")
-        self.assertEqual(request.operation, "status")
+        self.assertEqual(request.operation, "reconcile-preflight")
         self.assertTrue(request.workspace.is_absolute())
-        self.assertFalse(request.write)
+        self.assertTrue(request.write)
         self.assertIsNone(request.request)
         self.assertEqual(request.native_tool, self.payload()["native_tool"])
 
@@ -64,15 +64,25 @@ class FreshTargetProtocolTests(unittest.TestCase):
         relative["request"]["workspace"] = ".local-tests/fresh"
         newline = self.payload()
         newline["request"]["workspace"] += "\nother"
-        native_verify = self.payload()
-        native_verify["request"]["operation"] = "verify"
+        invalid_requests = []
+        for operation in ("prepare", "resume-prepare", "status", "initialize", "resume-initialize", "verify"):
+            value = self.payload()
+            value["request"]["operation"] = operation
+            invalid_requests.append(json.dumps(value))
+        read_only = self.payload()
+        read_only["request"]["write"] = False
+        invalid_requests.append(json.dumps(read_only))
+        for field in ("request", "environment", "storage_run", "observation_dir"):
+            value = self.payload()
+            value["request"][field] = value["request"]["workspace"]
+            invalid_requests.append(json.dumps(value))
         duplicate = (
             '{"format_version":1,"format_version":1,'
             f'"kind":"{cli.FRESH_TARGET_PROTOCOL_KIND}","request":{{}}}}'
         )
         for source in (
                 "{}", json.dumps(unknown), json.dumps(wrong_write), json.dumps(boolean_version),
-                json.dumps(relative), json.dumps(newline), json.dumps(native_verify), duplicate, "not-json"):
+                json.dumps(relative), json.dumps(newline), duplicate, "not-json", *invalid_requests):
             with self.subTest(source=source), self.assertRaises(cli.FreshTargetProtocolError):
                 cli.decode_fresh_target_protocol(source)
 
@@ -82,7 +92,7 @@ class FreshTargetProtocolTests(unittest.TestCase):
 
         def dispatched(_request, _backend):
             self.assertNotIn(source, os.environ.values())
-            return {"status": "fresh_target_unregistered"}
+            return {"status": "preflight_failure_reconciled"}
 
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch("rate_limit_tool.install_binding", wraps=rate_limit_tool.install_binding) as install, \
@@ -91,7 +101,7 @@ class FreshTargetProtocolTests(unittest.TestCase):
             self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
         dispatch.assert_called_once()
         install.assert_called_once_with(json.dumps(self.payload()["native_tool"], ensure_ascii=False))
-        self.assertEqual(json.loads(output.getvalue())["status"], "fresh_target_unregistered")
+        self.assertEqual(json.loads(output.getvalue())["status"], "preflight_failure_reconciled")
 
         with patch("sys.stdin", SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))), \
                 patch("rate_limit_tool._COORDINATOR_BINDING", None), \

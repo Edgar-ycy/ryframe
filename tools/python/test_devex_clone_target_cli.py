@@ -159,67 +159,36 @@ class TargetCliTests(unittest.TestCase):
         self.assertIn("fixture services restart", result["reason"])
 
 
-    def test_missing_managed_tool_binding_fails_before_workspace_creation(self):
-        with patch("rate_limit_tool.tool_binding", return_value=None), self.assertRaisesRegex(
-                ValueError, "缺少受管 Rust 工具"):
-            cli.dispatch(self.args("prepare", request=self.request, environment=self.environment,
-                                   storage_run=self.storage_run), self.backend)
-        self.assertFalse(self.workspace.exists())
-
-
     def test_configured_filters_case_insensitively_and_private_values_win(self):
-        result = configured({"TEMP": "private-temp", "APP_SCOPE": "private"}, {
-            "Path": "tool-path", "temp": "ambient-temp", "app_old": "unsafe", "cargo_home": "unsafe",
+        result = configured({"TEMP": "private-temp", "APP_ENV": "test"}, {
+            "Path": "tool-path", "temp": "ambient-temp", "app_env": "prod", "cargo_home": "unsafe",
             "https_proxy": "unsafe", "CUSTOM_PROXY": "unsafe", "safe": "kept"})
-        self.assertEqual(result, {"Path": "tool-path", "TEMP": "private-temp", "APP_SCOPE": "private"})
+        self.assertEqual(result, {"Path": "tool-path", "TEMP": "private-temp", "APP_ENV": "test"})
 
     def test_dispatch_enforces_exact_stage_arguments_and_write_boundary(self):
-        prepare = self.args("prepare", request=self.request, environment=self.environment,
-                            storage_run=self.storage_run, write=False)
-        with self.assertRaises(ValueError):
-            cli.dispatch(prepare, self.backend)
-        prepare.write = True
-        with patch("devex_clone_target_binding._native", return_value={"status": "prepared"}) as operation:
-            self.assertEqual(cli.dispatch(prepare, self.backend)["status"], "prepared")
-            operation.assert_called_once_with(
-                "fresh-prepare", self.backend, workspace=str(self.workspace), request=str(self.request),
-                environment=str(self.environment), storage_run=str(self.storage_run), write=True)
-        resume = self.args("resume-prepare")
-        with patch("devex_clone_target_binding._native", return_value={"status": "prepared"}) as operation:
-            self.assertEqual(cli.dispatch(resume, self.backend)["status"], "prepared")
-            operation.assert_called_once_with("fresh-resume-prepare", self.backend,
-                                              workspace=str(self.workspace), write=True)
-        for operation in ("initialize", "resume-initialize"):
+        self.prepare()
+        reconcile = self.args("reconcile-preflight")
+        with patch.object(target_cli, "reconcile_preflight", return_value={"status": "preflight_failure_reconciled"}):
+            self.assertEqual(cli.dispatch(reconcile, self.backend)["status"], "preflight_failure_reconciled")
+        for operation in ("prepare", "resume-prepare", "status", "initialize", "resume-initialize", "verify"):
             with self.assertRaisesRegex(ValueError, "正式 cargo xtask"):
                 cli.dispatch(self.args(operation), self.backend)
-        invalid = [self.args("prepare", request=self.request, environment=self.environment),
-                   self.args("prepare", request=self.request, environment=self.environment,
-                             storage_run=self.storage_run, observation=self.local / "unused"),
-                   self.args("initialize", request=self.request),
-                   self.args("initialize", storage_run=self.storage_run),
-                   self.args("verify", observation=None), self.args("status", write=True),
-                   self.args("status", observation=self.local / "unused", write=False)]
+        invalid = [self.args("reconcile-preflight", write=False),
+                   self.args("reconcile-preflight", request=self.request),
+                   self.args("reconcile-preflight", environment=self.environment),
+                   self.args("reconcile-preflight", storage_run=self.storage_run),
+                   self.args("reconcile-preflight", observation=self.local / "unused")]
         for args in invalid:
             with self.subTest(operation=args.operation), self.assertRaises(ValueError):
                 cli.dispatch(args, self.backend)
 
     def test_dispatch_resolves_relative_fresh_target_workspace(self):
-        status = self.args("status", write=False)
-        status.workspace = Path(".local-tests/fresh-workspace")
-        with patch("devex_clone_target_binding._native", return_value={"status": "fresh_target_unregistered"}) as observe:
-            self.assertEqual(cli.dispatch(status, self.backend)["status"], "fresh_target_unregistered")
-        observe.assert_called_once_with("fresh-status", self.backend, workspace=str(self.workspace))
-        for operation in ("prepare", "resume-prepare"):
-            args = self.args(operation, request=self.request if operation == "prepare" else None,
-                             environment=self.environment if operation == "prepare" else None,
-                             storage_run=self.storage_run if operation == "prepare" else None)
-            args.workspace = Path(".local-tests/fresh-workspace")
-            with patch("devex_clone_target_binding._native", return_value={"status": "fresh_creation_prepared"}) as native:
-                self.assertEqual(cli.dispatch(args, self.backend)["status"], "fresh_creation_prepared")
-            expected = {"workspace": str(self.workspace), "write": True}
-            if operation == "prepare":
-                expected.update(request=str(self.request), environment=str(self.environment), storage_run=str(self.storage_run))
-            native.assert_called_once_with("fresh-" + operation, self.backend, **expected)
+        self.prepare()
+        reconcile = self.args("reconcile-preflight")
+        reconcile.workspace = Path(".local-tests/fresh-workspace")
+        with patch.object(target_cli, "reconcile_preflight", return_value={"status": "preflight_failure_reconciled"}) as execute:
+            self.assertEqual(cli.dispatch(reconcile, self.backend)["status"], "preflight_failure_reconciled")
+        execute.assert_called_once_with(self.backend, self.workspace)
 
 
     def test_storage_history_accepts_only_published_target_restart_append(self):

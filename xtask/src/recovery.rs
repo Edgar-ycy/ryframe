@@ -201,6 +201,18 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
 }
 
 pub(crate) fn fresh_target_protocol(options: &FreshTargetOptions) -> Result<String> {
+    if options.operation != crate::cli::FreshTargetOperation::ReconcilePreflight
+        || !options.write
+        || options.request.is_some()
+        || options.environment.is_some()
+        || options.storage_run.is_some()
+        || options.observation_dir.is_some()
+    {
+        return Err(
+            "Python fresh-target 协议仅接受显式写入的 reconcile-preflight，且不能附带阶段参数"
+                .into(),
+        );
+    }
     let path = |value: &Path| path_argument(value, "fresh-target 路径");
     let optional_path = |value: &Option<std::path::PathBuf>| -> Result<Option<String>> {
         value.as_deref().map(path).transpose()
