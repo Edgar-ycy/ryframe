@@ -23,7 +23,7 @@ The current version only accepts new production databases. Existing real product
 
 ## Non-production Rebuilds
 
-Rebuilds are restricted to non-production environments. See [Architecture: non-production rebuilds](architecture.en.md#non-production-rebuilds) for complete configuration, two-stage commands, ledgers, and failure recovery rules. Production permanently rejects this entry point.
+Rebuilds are restricted to non-production environments. See [Architecture: non-production rebuilds](architecture.en.md#non-production-rebuilds) for complete configuration, two-stage commands, ledgers, and failure recovery rules. Production permanently rejects this entry point. Rebuild verification preserves exactly one canonical data-scope projection bootstrap outbox seed for each current tenant and strictly checks its version, payload, and undelivered state; other runtime resource tables must remain empty. Preserve the scene on a seed mismatch rather than clearing events to bypass verification.
 
 ## HTTP 5xx and High Latency
 

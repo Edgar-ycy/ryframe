@@ -2,6 +2,9 @@ use ryframe_auth::password;
 
 use super::{identity::seed_credentials, operations::verify_seed_account};
 
+#[path = "seed_mysql.rs"]
+mod mysql;
+
 const ADMIN_PASSWORD: &str = "Reset!Admin123";
 
 #[test]
@@ -62,5 +65,35 @@ fn persisted_password_mismatches_and_invalid_hashes_fail_closed() {
             .to_string();
         assert!(!error.contains(ADMIN_PASSWORD));
         assert!(!error.contains("invalid-hash"));
+    }
+}
+
+#[test]
+fn projection_outbox_requires_one_exact_bootstrap_payload_per_current_tenant() {
+    use super::projection::verify_rows;
+    use serde_json::json;
+
+    let seeds = [
+        json!({"tenant_id":"system","source_version":1,"pristine":1,
+            "payload":{"source_version":1,"tenant_id":"system"}}),
+        json!({"tenant_id":"tenant-a","source_version":7,"pristine":1,
+            "payload":{"tenant_id":"tenant-a","source_version":7}}),
+    ];
+    verify_rows(2, &seeds).unwrap();
+    assert!(verify_rows(2, &seeds[..1]).is_err());
+    assert!(verify_rows(1, &seeds).is_err());
+    assert!(verify_rows(2, &[seeds[0].clone(), seeds[0].clone()]).is_err());
+    for case in 0..7 {
+        let mut changed = seeds.clone();
+        match case {
+            0 => changed[1]["tenant_id"] = serde_json::Value::Null,
+            1 => changed[1]["payload"]["tenant_id"] = json!("other"),
+            2 => changed[1]["payload"]["source_version"] = json!(6),
+            3 => changed[1]["payload"]["source_version"] = json!("7"),
+            4 => changed[1]["payload"]["extra"] = json!(true),
+            5 => changed[1]["source_version"] = json!(0),
+            _ => changed[1]["pristine"] = json!(0),
+        }
+        assert!(verify_rows(2, &changed).is_err(), "{case}");
     }
 }

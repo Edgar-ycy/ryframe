@@ -12,6 +12,7 @@ use crate::reset::{
 
 mod identity;
 mod operations;
+mod projection;
 
 #[cfg(test)]
 #[path = "../../../../tests/reset_contract/seed.rs"]
@@ -34,7 +35,6 @@ const EMPTY_CONTROL_TABLES: &[&str] = &[
     "sys_background_job",
     "sys_export_job",
     "sys_file",
-    "sys_outbox_event",
     "sys_oper_log",
     "sys_login_info",
     "sys_user_import_job",

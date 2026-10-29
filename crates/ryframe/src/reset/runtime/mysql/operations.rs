@@ -216,7 +216,10 @@ pub(super) fn verify_seed_account(
     Ok(())
 }
 
-pub(super) async fn verify_empty_control_resources(db: &DatabaseConnection) -> ResetResult<()> {
+pub(super) async fn verify_empty_control_resources<C>(db: &C) -> ResetResult<()>
+where
+    C: ConnectionTrait + ?Sized,
+{
     for table in EMPTY_CONTROL_TABLES {
         let quoted = quote_identifier(table)?;
         let count = scalar_i64(db, &format!("SELECT COUNT(*) FROM {quoted}"), []).await?;
@@ -226,7 +229,7 @@ pub(super) async fn verify_empty_control_resources(db: &DatabaseConnection) -> R
             )));
         }
     }
-    Ok(())
+    super::projection::verify(db).await
 }
 
 pub(super) async fn verify_empty_external_tenant(db: &DatabaseConnection) -> ResetResult<()> {
