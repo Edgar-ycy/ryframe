@@ -15,16 +15,28 @@ pub(super) fn write_new(path: &Path, value: &Value) -> Result<()> {
     publish(path.parent().ok_or("收据缺少父目录")?, path, value, false)
 }
 fn publish(directory: &Path, path: &Path, value: &Value, replace: bool) -> Result<()> {
-    let mut staged = tempfile::NamedTempFile::new_in(directory)?;
+    let name = path.file_name().ok_or("收据缺少文件名")?;
+    let parent = path.parent().ok_or("收据缺少父目录")?;
+    // 仅文件系统使用原生路径；Windows 保留长路径前缀，不改收据中的 portable 事实。
+    // 暂存目录与目标父目录分别解析，保留 runtime 根暂存、控制锁内发布的边界。
+    let native_directory = fs::canonicalize(directory)?;
+    let native_target = fs::canonicalize(parent)?.join(name);
+    let mut staged = tempfile::NamedTempFile::new_in(&native_directory)?;
     serde_json::to_writer_pretty(&mut staged, value)?;
     staged.write_all(b"\n")?;
     staged.as_file().sync_all()?;
     if replace {
-        staged.persist(path).map_err(|_| "角色 收据无法原子替换")?;
+        staged.persist(&native_target).map_err(|failure| {
+            drop(failure.file);
+            failure.error
+        })?;
     } else {
         staged
-            .persist_noclobber(path)
-            .map_err(|_| "角色 收据已存在或无法原子发布")?;
+            .persist_noclobber(&native_target)
+            .map_err(|failure| {
+                drop(failure.file);
+                failure.error
+            })?;
     }
     Ok(())
 }

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix shared atomic receipt publication for API, Worker and frontend on long Windows paths. Preserve native canonical paths separately for staging and target parents without changing staging outside control locks, publication inside them, or portable receipt facts. Persistence failures retain the original I/O type and OS code and clean up the current temporary file, without overwriting unknown targets or automatically replaying operations.
+
 - Add redacted preparation-stage failure evidence for API/Worker monitors, bound to the original operation and actual creation identity. Parent authorization strictly validates it before exposing fixed causes, available I/O OS codes and advice; unknown causes retain only a digest. Missing or invalid evidence preserves the original failure. Preparation/readiness/handoff limits, process ownership and cleanup remain unchanged, without backfilling old scenes or replaying startup.
 
 - Allow 120 seconds for API/Worker full-source verification and supervisor candidate preparation, retaining 60-second product readiness, 300-second outer handoff and final RPO/RTO requirements. Existing candidate or authorization receipts cannot bypass the deadline; expiry retains evidence for explicit reconciliation without replay.

@@ -510,3 +510,93 @@ fn readiness_accepts_200_and_never_follows_redirect_or_waits_forever() {
     assert!(started.elapsed().as_secs_f64() < 2.0);
     server.join().unwrap();
 }
+
+#[test]
+fn role_atomic_receipts_support_long_unicode_paths_and_preserve_noclobber() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let mut directory = operation::canonical(temporary.path()).unwrap();
+    while directory.to_string_lossy().encode_utf16().count() < 230 {
+        directory.push("中文 空间-1234567890");
+    }
+    std::fs::create_dir_all(&directory).unwrap();
+    for role in [role::Role::Api, role::Role::Worker, role::Role::Frontend] {
+        let path = directory.join(format!(
+            "{}-members-{}-ready.json",
+            role.name(),
+            "a".repeat(32)
+        ));
+        assert!(path.to_string_lossy().encode_utf16().count() > 260);
+        let original = json!({"role":role.name(),"path":path,"status":"原字节"});
+        operation::write_new(&path, &original).unwrap();
+        assert_eq!(operation::read(&path).unwrap(), original);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(operation::write_new(&path, &json!({"status":"不得覆盖"})).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
+}
+
+#[test]
+fn atomic_receipt_duplicate_retains_io_error_without_changing_original() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let path = directory.join("receipt.json");
+    operation::write_new(&path, &json!({"original":true})).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let error = operation::write_new(&path, &json!({"original":false})).unwrap_err();
+    let io = error
+        .downcast_ref::<std::io::Error>()
+        .expect("必须保留PersistError.error的IO类型");
+    assert_eq!(io.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(io.raw_os_error().is_some());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+}
+
+#[test]
+fn operation_atomic_replacement_keeps_control_target_and_staging_boundary() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let runtime = json!({"scope_id":"atomic-receipt","worker_ready_url":"http://127.0.0.1:19210/readyz",
+        "artifacts":{"worker":{"path":std::env::current_exe().unwrap(),"sha256":"d".repeat(64)}}});
+    operation::write_new(&directory.join("runtime.json"), &runtime).unwrap();
+    let op = operation::Operation::claim(
+        role::Role::Worker,
+        "start",
+        &directory,
+        &directory,
+        &runtime,
+        60.0,
+    )
+    .unwrap();
+    op.publish("progress.json", &json!({"stage":"original"}), false)
+        .unwrap();
+    op.publish("progress.json", &json!({"stage":"replacement"}), true)
+        .unwrap();
+    assert_eq!(
+        operation::read(&op.path.join("progress.json")).unwrap()["stage"],
+        "replacement"
+    );
+    assert!(!directory.join("progress.json").exists());
+    std::fs::remove_file(op.path.join("progress.json")).unwrap();
+    std::fs::create_dir(op.path.join("progress.json")).unwrap();
+    let error = op
+        .publish("progress.json", &json!({"stage":"must-fail"}), true)
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .raw_os_error()
+            .is_some()
+    );
+    assert!(op.path.join("progress.json").is_dir());
+    assert_eq!(std::fs::read_dir(&op.path).unwrap().count(), 3);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 2);
+}
