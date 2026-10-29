@@ -37,45 +37,8 @@ pub(super) fn control(
         !scope.is_empty(),
         &format!("{}交接缺少已登记scope", role.name()),
     )?;
-    let mut command = context.controller(role, action)?;
-    command.stdout(Stdio::piped()).stderr(Stdio::null());
-    let mut controller = Controller(command.spawn()?);
-    let stdout = controller
-        .0
-        .stdout
-        .take()
-        .ok_or_else(|| format!("{}交接缺少输出", role.name()))?;
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        let _ = sender.send(super::process::capture(stdout, 1024 * 1024));
-    });
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = controller.0.try_wait()? {
-            break status;
-        }
-        check(
-            started.elapsed() < Duration::from_secs(300),
-            &format!(
-                "{}交接控制器超时；核对已登记owner与结果，不自动重放",
-                role.name()
-            ),
-        )?;
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let (bytes, overflow) = receiver
-        .recv_timeout(Duration::from_secs(15))
-        .map_err(|_| format!("{}交接输出未关闭", role.name()))??;
-    reader
-        .join()
-        .map_err(|_| format!("{}交接输出线程失败", role.name()))?;
-    check(
-        status.success() && !overflow,
-        &format!(
-            "{}交接未确认；保留现有引擎的owner、结果和进程树",
-            role.name()
-        ),
-    )?;
+    let command = context.controller(role, action)?;
+    let bytes = exchange(command, role)?;
     let response: Value =
         serde_json::from_slice(&bytes).map_err(|_| format!("{}交接响应无效", role.name()))?;
     check(
@@ -102,6 +65,138 @@ pub(super) fn control(
     unchanged(&runtime_guard)?;
     Ok(response["result"]["state"].clone())
 }
+
+fn exchange(mut command: std::process::Command, role: Role) -> Result<Vec<u8>> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut controller = Controller(command.spawn()?);
+    let stdout = controller
+        .0
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{}交接缺少输出", role.name()))?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let _ = sender.send(super::process::capture(stdout, 1024 * 1024));
+    });
+    let stderr = controller.0.stderr.take().ok_or("交接缺少诊断管道")?;
+    let (error_sender, error_receiver) = std::sync::mpsc::channel();
+    let error_reader = std::thread::spawn(move || {
+        let _ = error_sender.send(super::process::capture(stderr, 64 * 1024));
+    });
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = controller.0.try_wait()? {
+            break status;
+        }
+        check(
+            started.elapsed() < Duration::from_secs(300),
+            &format!(
+                "{}交接控制器超时；核对已登记owner与结果，不自动重放",
+                role.name()
+            ),
+        )?;
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let failed =
+        || super::dependency::failure("交接输出读取未确认；保留现场，禁止重放", status.code());
+    let (bytes, overflow) = receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| failed())?
+        .map_err(|_| failed())?;
+    reader.join().map_err(|_| failed())?;
+    let stderr = error_receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| failed())?
+        .map_err(|_| failed())?;
+    error_reader.join().map_err(|_| failed())?;
+    acceptance(role, status, (&bytes, overflow), (&stderr.0, stderr.1))?;
+    Ok(bytes)
+}
+
+fn acceptance(
+    role: Role,
+    status: std::process::ExitStatus,
+    stdout: (&[u8], bool),
+    stderr: (&[u8], bool),
+) -> Result<()> {
+    if status.success() && !stdout.1 && !stderr.1 {
+        return Ok(());
+    }
+    use sha2::{Digest, Sha256};
+    let message = safe_rejection(role, stdout.0).unwrap_or("监督控制响应无可公开诊断");
+    Err(super::dependency::failure(
+        &format!(
+            "{}交接未确认；exit_code={:?}；{}；stdout_bytes={} stdout_overflow={} stdout_sha256={}；stderr_bytes={} stderr_overflow={} stderr_sha256={}；保留owner、结果和进程树，核对原始工具与输入，不自动重放",
+            role.name(),
+            status.code(),
+            message,
+            stdout.0.len(),
+            stdout.1,
+            hex::encode(Sha256::digest(stdout.0)),
+            stderr.0.len(),
+            stderr.1,
+            hex::encode(Sha256::digest(stderr.0))
+        ),
+        status.code(),
+    ))
+}
+
+fn safe_rejection(role: Role, bytes: &[u8]) -> Option<&'static str> {
+    let value = crate::recovery::clone::native::json::parse_fragment(
+        std::str::from_utf8(bytes).ok()?,
+        "监督拒绝响应",
+    )
+    .ok()?;
+    crate::recovery::clone::native::json::exact(
+        &value,
+        &["ok", "error", "message"],
+        "监督拒绝响应",
+    )
+    .ok()?;
+    if value["ok"] != false
+        || value["error"]
+            != if role == Role::Worker {
+                "WorkerRejected"
+            } else {
+                "ProcessRejected"
+            }
+    {
+        return None;
+    }
+    let message = value["message"].as_str()?;
+    for (suffix, safe) in [
+        (
+            "监督候选登记前成员监督器已退出",
+            "监督候选登记前成员监督器已退出",
+        ),
+        ("监督候选登记超过10秒期限", "监督候选登记超过10秒期限"),
+        ("候选与实际监督进程不匹配", "候选与实际监督进程不匹配"),
+        ("成员监督器启动未确认", "成员监督器启动未确认"),
+        (
+            "启动授权未确认；保留候选、成员关闭证明和控制锁",
+            "启动授权未确认；保留候选、成员关闭证明和控制锁",
+        ),
+        (
+            "运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程",
+            "角色运行合同核验失败；核对冻结来源、配置与产物",
+        ),
+        (
+            " start 的 owner/request 发布未确认；保留控制目录，不重放",
+            "owner/request 发布未确认；保留控制目录，不重放",
+        ),
+    ] {
+        if message == format!("{}{suffix}", role.label()) {
+            return Some(safe);
+        }
+    }
+    (message == "受监督进程原生核验失败；保留收据与锁，核对正式工具和输入后显式恢复")
+        .then_some("受监督进程原生核验失败；保留收据与锁，核对正式工具和输入后显式恢复")
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/recovery/fixture_runtime/worker_handoff.rs"]
+mod tests;
 fn verify(output: &std::path::Path, scope: &str, role: Role) -> Result<()> {
     let (tree, tree_guard) = document(&output.join(format!("{}-tree.json", role.name())))?;
     let (process, process_guard) = document(&output.join(format!("{}.json", role.name())))?;

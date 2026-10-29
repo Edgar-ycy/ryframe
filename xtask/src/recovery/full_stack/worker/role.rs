@@ -27,7 +27,7 @@ impl Role {
         }
     }
 
-    pub(super) fn label(self) -> &'static str {
+    pub(in crate::recovery) fn label(self) -> &'static str {
         match self {
             Self::Api => "API",
             Self::Worker => "Worker",

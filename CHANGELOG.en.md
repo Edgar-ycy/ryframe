@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Preserve original controller exit codes during startup handoff and distinguish monitor exit, candidate registration exceeding the original deadline, and ownership mismatch. Expose only exact fixed safe diagnostics; unknown output reports bounded lengths, overflow flags and digests. Retain existing deadlines, source and complete process-tree checks, failure receipts and explicit reconciliation without automatically retrying startup.
+
 - Fix authorization projections missing from complete logical copy images and continuation tool contexts still using old S3 descriptions. Compare raw business inventories before including authorization projections from raw preserved tables, and reject omitted targets with nonempty projections. Explicit continuation reuses the verified source request and target file configuration while retaining the original plan, initialization receipts, unknown-write reconciliation and lock protection.
 
 - Connect complete read-only fresh-target verification and four-target inventory capture to native Rust execution, checking complete two-round preimages, release snapshots and parent finalization against the original file configuration. Remove the old Python verification and capture execution while retaining active shared validation and necessary boundary adapters. Validate nonempty general sources separately from fresh empty targets without expanding recovery authority.

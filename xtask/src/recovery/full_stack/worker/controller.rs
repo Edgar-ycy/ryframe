@@ -286,9 +286,11 @@ fn start(
     let monitor_identity =
         crate::recovery::clone::native::resources::common::process_identity(monitor)?
             .ok_or("成员监督器登记前退出")?;
-    let authorize = authorize(op, &monitor_identity);
-    if authorize.is_err() {
+    if let Err(error) = authorize(op, &monitor_identity) {
         drop(guard);
+        if error.is::<super::Rejection>() {
+            return Err(error);
+        }
         return Err(super::Rejection(format!(
             "{}启动授权未确认；保留候选、成员关闭证明和控制锁",
             op.role.label()
@@ -322,8 +324,17 @@ pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
             supervisor["authorized_at_ns"] = json!(operation::now());
             return op.publish("supervisor.json", &supervisor, false);
         }
-        if !process::alive(monitor)? || Instant::now() >= deadline {
-            return Err(super::Rejection(format!("{}监督候选登记超时或退出", role.label())).into());
+        if !process::alive(monitor)? {
+            return Err(super::Rejection(format!(
+                "{}监督候选登记前成员监督器已退出",
+                role.label()
+            ))
+            .into());
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                super::Rejection(format!("{}监督候选登记超过10秒期限", role.label())).into(),
+            );
         }
         thread::sleep(Duration::from_millis(20));
     }
