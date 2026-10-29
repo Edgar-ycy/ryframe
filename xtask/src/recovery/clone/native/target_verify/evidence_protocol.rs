@@ -60,6 +60,8 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 }
 
 const DIAGNOSTICS: &[&str] = &[
+    super::storage::kernel::OBSERVATION_ERROR,
+    super::database::model::TABLE_SET_ERROR,
     super::evidence_reset::MANIFEST_VERSION_ERROR,
     "reset 报告或账本不属于当前精确 plan",
     "reset 有未完成阶段或锁释放证据缺失",

@@ -303,9 +303,29 @@ impl Transport for Resources<'_> {
         if spec.args.get(2).is_some_and(|v| v == "target-inventory")
             || spec.args.iter().any(|v| v == "--execute")
         {
+            if self.fail.get() == Some("inventory-model")
+                && spec
+                    .args
+                    .get(2)
+                    .is_some_and(|arg| arg == "target-inventory")
+            {
+                self.fail.set(None);
+                let path = std::path::PathBuf::from(&spec.args[6]);
+                let output = self.inventory.run(spec)?;
+                let mut raw = crate::recovery::clone::native::json::read(&path)?;
+                raw["target"]["preserved_tables"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|entry| entry["table"] != "biz_data_scope_projection");
+                fs::write(path, serde_json::to_vec(&raw)?)?;
+                return Ok(output);
+            }
             if self.fail.get() == Some("inventory") {
                 self.fail.set(None);
-                return Err("模拟只读库存暂不可用".into());
+                return Err(
+                    "模拟只读库存暂不可用 mysql://user:inventory-private-secret@host/database"
+                        .into(),
+                );
             }
             return self.inventory.run(spec);
         }

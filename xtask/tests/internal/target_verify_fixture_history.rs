@@ -493,7 +493,7 @@ fn migrations(fixture: &Fixture, maintenance: &Value) {
                 stage.push_str(&format!("---target-{key}"));
             }
             stdout.push_str(if action == "up" {
-                "migration=completed schema=verified\n"
+                "migration=completed schema=verified ownership=verified\n"
             } else {
                 "migration_ledger=current schema=verified\n"
             });

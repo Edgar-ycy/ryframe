@@ -229,33 +229,65 @@ fn unknown_create_keeps_intent_and_rejects_retry_without_cleanup_or_confirmation
 
 #[test]
 fn inventory_resume_never_replays_reset_or_migrations_and_keeps_failed_raw_material() {
-    let f = Fixture::for_initialization();
-    let resources = Resources::new(&f);
-    retain_prepared(&f);
-    resources.fail.set(Some("inventory"));
-    assert!(execute(&resources, false).is_err());
-    assert_eq!(
-        document::read(&f.target.join("failure.json")).unwrap()["error_type"],
-        "InventoryCaptureError"
-    );
-    let failure = fs::read(f.target.join("failure.json")).unwrap();
-    let failed = snapshot(&f.target.join("inventory-initial"));
-    let count = resources.calls.borrow().len();
-    let value = execute(&resources, true).unwrap();
-    assert_eq!(value["resumed"], true);
-    for call in &resources.calls.borrow()[count..] {
-        assert!(
-            !call
-                .get(3)
-                .is_some_and(|v| v == "execute" || v == "control" || v == "tenant-data")
+    for effect in ["inventory", "inventory-model"] {
+        let f = Fixture::for_initialization();
+        let resources = Resources::new(&f);
+        retain_prepared(&f);
+        resources.fail.set(Some(effect));
+        let error = execute(&resources, false).unwrap_err();
+        let mut cause = error.source().expect("库存分类必须保留内部原 cause");
+        while let Some(next) = cause.source() {
+            cause = next;
+        }
+        let cause = cause.to_string();
+        let public = format!("{error} {error:?}");
+        if effect == "inventory-model" {
+            assert_eq!(
+                cause,
+                crate::recovery::clone::native::target_verify::database::model::TABLE_SET_ERROR
+            );
+            let raw = document::read(
+                &f.target
+                    .join("inventory-initial/before-target-shared-control.json"),
+            )
+            .unwrap();
+            assert!(
+                raw["target"]["preserved_tables"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|entry| entry["table"] != "biz_data_scope_projection")
+            );
+            assert!(public.contains("禁止重放 reset 或迁移"));
+        } else {
+            assert!(cause.contains("inventory-private-secret"));
+            assert!(!public.contains("inventory-private-secret"));
+            assert!(!public.contains("mysql://"));
+        }
+        assert_eq!(
+            document::read(&f.target.join("failure.json")).unwrap()["error_type"],
+            "InventoryCaptureError"
         );
+        let failure = fs::read(f.target.join("failure.json")).unwrap();
+        assert!(!String::from_utf8_lossy(&failure).contains("inventory-private-secret"));
+        let failed = snapshot(&f.target.join("inventory-initial"));
+        let count = resources.calls.borrow().len();
+        let value = execute(&resources, true).unwrap();
+        assert_eq!(value["resumed"], true);
+        for call in &resources.calls.borrow()[count..] {
+            assert!(
+                !call
+                    .get(3)
+                    .is_some_and(|v| v == "execute" || v == "control" || v == "tenant-data")
+            );
+        }
+        assert_eq!(fs::read(f.target.join("failure.json")).unwrap(), failure);
+        assert_eq!(snapshot(&f.target.join("inventory-initial")), failed);
+        published::unlocked_history(&f.backend, &f.target.join("initialized.json")).unwrap();
+        let before = snapshot(&f.target);
+        assert!(initialize::execute(&f.backend, &f.local, true).is_err());
+        assert_eq!(snapshot(&f.target), before);
     }
-    assert_eq!(fs::read(f.target.join("failure.json")).unwrap(), failure);
-    assert_eq!(snapshot(&f.target.join("inventory-initial")), failed);
-    published::unlocked_history(&f.backend, &f.target.join("initialized.json")).unwrap();
-    let before = snapshot(&f.target);
-    assert!(initialize::execute(&f.backend, &f.local, true).is_err());
-    assert_eq!(snapshot(&f.target), before);
 }
 
 #[test]

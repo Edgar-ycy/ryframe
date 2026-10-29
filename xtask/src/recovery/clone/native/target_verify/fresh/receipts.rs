@@ -93,6 +93,7 @@ pub(super) fn command_with_deadline(
             } else {
                 error.unwrap_or("OSError")
             },
+            cause: None,
         }));
     }
     Ok(stdout)
@@ -129,21 +130,7 @@ pub(super) fn write(path: &std::path::Path, value: &Value) -> Result<()> {
 pub(super) fn command_environment(
     inputs: &StorageInputs<'_>,
 ) -> std::collections::BTreeMap<String, String> {
-    let mut environment = std::env::vars()
-        .filter(|(name, _)| {
-            let key = name.to_ascii_uppercase();
-            SYSTEM.contains(&key.as_str())
-                || key.starts_with("PROCESSOR_")
-                || key.starts_with("LC_")
-        })
-        .filter(|(key, _)| {
-            !inputs
-                .environment
-                .keys()
-                .any(|private| private.eq_ignore_ascii_case(key))
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    environment.extend(inputs.environment.clone());
+    let mut environment = inputs.command_environment();
     environment.remove("MYSQL_PWD");
     environment.insert(
         "MYSQL_TEST_LOGIN_FILE".into(),
@@ -176,34 +163,3 @@ pub(super) fn failure(stage: &str) -> Value {
         "automatic_retry":false,"automatic_resource_cleanup":false,"fresh_target_initialized":false,
         "clone_verified":false,"restore_qualified":false})
 }
-
-// 与既有 configured 私有环境合并规则一致，只继承操作系统运行字段。
-const SYSTEM: &[&str] = &[
-    "APPDATA",
-    "COMMONPROGRAMFILES",
-    "COMMONPROGRAMFILES(X86)",
-    "COMMONPROGRAMW6432",
-    "COMSPEC",
-    "HOME",
-    "HOMEDRIVE",
-    "HOMEPATH",
-    "LANG",
-    "LOCALAPPDATA",
-    "NUMBER_OF_PROCESSORS",
-    "OS",
-    "PATH",
-    "PATHEXT",
-    "PROGRAMDATA",
-    "PROGRAMFILES",
-    "PROGRAMFILES(X86)",
-    "PROGRAMW6432",
-    "SHELL",
-    "SYSTEMDRIVE",
-    "SYSTEMROOT",
-    "TEMP",
-    "TMP",
-    "TMPDIR",
-    "USER",
-    "USERPROFILE",
-    "WINDIR",
-];

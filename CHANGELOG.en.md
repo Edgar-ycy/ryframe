@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Fix read-only storage observations clearing OS runtime fields required by Windows platform tools. Reuse the existing whitelist and bound-value precedence without restoring application environment overrides; report fixed safe failure diagnostics.
+
+- Align four-target inventory authorization-projection metadata and current migration ownership-confirmation output. Retain complete-table and unknown-table checks, copy digests and existing inventory-continuation boundaries. Preserve internal inventory failure causes while exposing only fixed safe diagnostics and repair guidance, without replaying completed writes.
+
 - Fix recovery acceptance rejecting current version-five rebuild ledgers while retaining exact-plan, complete-phase and release-predecessor checks. Bind report and ledger bytes before and after reading; failures do not trigger conversion or replay.
 
 - Fix nonproduction rebuild verification rejecting canonical bootstrap authorization-projection events as runtime residue. Strictly verify one event per tenant, its version, payload and undelivered state, while continuing to reject nonempty runtime tables and extra or malformed events.

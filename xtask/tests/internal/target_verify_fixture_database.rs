@@ -194,11 +194,13 @@ fn raw(fixture: &Fixture, key: &str) -> Value {
         .find(|db| db["key"] == key)
         .unwrap();
     let combined = db["kind"] == "combined";
-    let (_, all, kept) = model::table_sets(&fixture.backend, combined).unwrap();
+    let (copied, all, kept) = model::table_sets(&fixture.backend, combined).unwrap();
     let table = |name: &String| {
         let rows = if name == "ryframe_resource_ownership" {
             if combined { 2 } else { 1 }
-        } else if kept.contains(name) || name == "biz_tenant_target_slot" {
+        } else if (kept.contains(name) && !copied.contains(name))
+            || name == "biz_tenant_target_slot"
+        {
             1
         } else {
             0

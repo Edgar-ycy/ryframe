@@ -14,6 +14,8 @@ use super::super::super::{
 use super::super::input::request::KEYS;
 use crate::Result;
 
+pub(crate) const TABLE_SET_ERROR: &str = "库存完整表集、保留表或迁移账本不同，不能过滤未知表；请核对当前产品目录、逐目标原始库存和工具来源，保留失败证据，仅在正式 status 确认可续作后执行既有库存续作，禁止重放 reset 或迁移";
+
 pub(crate) fn databases(
     context: &super::super::storage::StorageInputs<'_>,
 ) -> Result<BTreeMap<String, Value>> {
@@ -98,7 +100,7 @@ pub(crate) fn observation(
         || kept.keys().cloned().collect::<BTreeSet<_>>() != raw_preserved
         || names != expected
     {
-        return Err("库存完整表集、保留表或迁移账本不同，不能过滤未知表".into());
+        return Err(TABLE_SET_ERROR.into());
     }
     let mut all = tables;
     all.extend(kept);
@@ -144,6 +146,9 @@ pub(crate) fn table_sets(backend: &Path, combined: bool) -> Result<TableSets> {
     let mut raw = BTreeSet::from([
         "ryframe_resource_ownership".into(),
         "seaql_tenant_data_migrations".into(),
+        "biz_data_scope_owner".into(),
+        "biz_data_scope_dept".into(),
+        "biz_data_scope_projection".into(),
     ]);
     if combined {
         business.extend(loaded.control.keys().cloned());

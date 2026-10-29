@@ -82,7 +82,7 @@ fn sequence(executable: &str, configuration: &str) -> Vec<Operation> {
                 };
                 let write = action == "up";
                 let suffix = if write {
-                    "migration=completed schema=verified\n"
+                    "migration=completed schema=verified ownership=verified\n"
                 } else {
                     "migration_ledger=current schema=verified\n"
                 };

@@ -26,12 +26,29 @@ impl Error for Publication {
     }
 }
 
-#[derive(Debug)]
 pub(super) struct StageFailure {
     pub(super) category: &'static str,
+    pub(super) cause: Option<Box<dyn Error>>,
+}
+impl fmt::Debug for StageFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StageFailure")
+            .field("category", &self.category)
+            .field("has_cause", &self.cause.is_some())
+            .finish()
+    }
 }
 impl fmt::Display for StageFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let diagnostic = super::super::database::model::TABLE_SET_ERROR;
+        if self.category == "InventoryCaptureError"
+            && self
+                .cause
+                .as_ref()
+                .is_some_and(|cause| cause.to_string() == diagnostic)
+        {
+            return f.write_str(diagnostic);
+        }
         write!(
             f,
             "受管阶段未完成（{}）；核对固定工具、配置与保留的私有诊断，禁止重放未知写入",
@@ -39,7 +56,11 @@ impl fmt::Display for StageFailure {
         )
     }
 }
-impl Error for StageFailure {}
+impl Error for StageFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.cause.as_deref()
+    }
+}
 
 pub(super) fn publication(path: &Path, cause: io::Error) -> Box<dyn Error> {
     Box::new(Publication {
@@ -74,9 +95,10 @@ pub(super) fn os(error: &(dyn Error + 'static), receipt: Option<&Path>) -> Value
         "filename_length":file.to_string_lossy().chars().count()})
 }
 pub(super) fn capture<T>(result: Result<T>) -> Result<T> {
-    result.map_err(|_| {
+    result.map_err(|cause| {
         Box::new(StageFailure {
             category: "InventoryCaptureError",
+            cause: Some(cause),
         }) as Box<dyn Error>
     })
 }

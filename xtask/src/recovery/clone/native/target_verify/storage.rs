@@ -12,6 +12,7 @@ use super::super::{
 use super::input::TargetContext;
 use crate::Result;
 
+mod environment;
 pub(crate) mod generation;
 pub(crate) mod kernel;
 mod observer;

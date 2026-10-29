@@ -336,6 +336,7 @@ fn redis_configuration_reads_all_eight_fields_and_rejects_each_drift() {
 struct FakeTransport {
     output: String,
     calls: RefCell<Vec<String>>,
+    environments: RefCell<Vec<BTreeMap<String, String>>>,
     failure: bool,
 }
 
@@ -349,6 +350,9 @@ impl Transport for FakeTransport {
 
     fn run(&self, spec: CommandSpec) -> crate::Result<CommandOutput> {
         self.calls.borrow_mut().push(spec.label.clone());
+        self.environments
+            .borrow_mut()
+            .push(spec.environment.clone());
         assert!(spec.stdin.is_none());
         #[cfg(windows)]
         let status = {
@@ -370,10 +374,15 @@ impl Transport for FakeTransport {
 
 #[test]
 fn kernel_transport_is_read_only_and_does_not_expose_command_failure_body() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture
+        .context
+        .environment
+        .insert("path".into(), "bound-path".into());
     let transport = FakeTransport {
         output: "fixed output".into(),
         calls: RefCell::new(Vec::new()),
+        environments: RefCell::new(Vec::new()),
         failure: false,
     };
     let value = kernel::observe(
@@ -386,9 +395,50 @@ fn kernel_transport_is_read_only_and_does_not_expose_command_failure_body() {
     .unwrap();
     assert_eq!(value, "fixed output");
     assert_eq!(transport.calls.borrow().as_slice(), &["storage-test"]);
+    let environments = transport.environments.borrow();
+    let actual = &environments[0];
+    assert_eq!(actual["path"], "bound-path");
+    assert_eq!(
+        actual
+            .keys()
+            .filter(|key| key.eq_ignore_ascii_case("PATH"))
+            .count(),
+        1
+    );
+    for (key, value) in &fixture.context.environment {
+        assert_eq!(actual.get(key), Some(value));
+    }
+    for (key, value) in std::env::vars().filter(|(key, _)| {
+        [
+            "SYSTEMROOT",
+            "USERPROFILE",
+            "COMSPEC",
+            "HOME",
+            "TEMP",
+            "LANG",
+        ]
+        .iter()
+        .any(|name| key.eq_ignore_ascii_case(name))
+    }) {
+        if !fixture
+            .context
+            .environment
+            .keys()
+            .any(|bound| bound.eq_ignore_ascii_case(&key))
+        {
+            assert_eq!(actual.get(&key), Some(&value));
+        }
+    }
+    assert!(
+        actual
+            .keys()
+            .filter(|key| key.to_ascii_uppercase().starts_with("APP_"))
+            .all(|key| fixture.context.environment.contains_key(key))
+    );
     let failed = FakeTransport {
         output: "private-command-failure-body".into(),
         calls: RefCell::new(Vec::new()),
+        environments: RefCell::new(Vec::new()),
         failure: true,
     };
     let error = kernel::observe(
@@ -401,6 +451,7 @@ fn kernel_transport_is_read_only_and_does_not_expose_command_failure_body() {
     .unwrap_err()
     .to_string();
     assert!(!error.contains("private-command-failure-body"));
+    assert_eq!(error, kernel::OBSERVATION_ERROR);
 }
 
 #[test]

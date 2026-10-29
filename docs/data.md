@@ -54,7 +54,7 @@ cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 
 ## 备份、恢复与保留
 
-正式备份前停止 API、Worker、调度和消息生产者。库存以 `--quiesced-at` 表明外部已静止；`--observed-at` 只记录观察起点，不能作为正式备份资格。备份登记验证文件大小和 SHA-256，恢复数据校验比较当前 schema、完整表摘要、placement、ownership 和对象清单，资源与登记元数据不参与业务摘要。隔离恢复必须使用新 scope、数据库和对象前缀，保留目标 ownership；通过数据验证、API/Worker 就绪和真实业务证明后才登记成功。参考目标是 24 小时恢复点、60 分钟 RTO，实际结果不能由计划或单次库存推断。下列输出父目录须已存在，目标文件必须不存在；详细恢复命令见[运维指南](operations.md#备份失败或过期)。
+正式备份前停止 API、Worker、调度和消息生产者。库存以 `--quiesced-at` 表明外部已静止；`--observed-at` 只记录观察起点，不能作为正式备份资格。备份登记验证文件大小和 SHA-256，恢复数据校验比较当前 schema、完整表摘要、placement、ownership 和对象清单，资源与登记元数据不参与业务摘要。隔离恢复必须使用新 scope、数据库和对象前缀，保留目标 ownership；通过数据验证、API/Worker 就绪和真实业务证明后才登记成功。参考目标是 24 小时恢复点、60 分钟 RTO，实际结果不能由计划或单次库存推断。下列输出父目录须已存在，目标文件必须不存在；详细恢复命令见[运维指南](operations.md#备份失败或过期)。 库存表集不匹配时，保留逐目标原始库存、完整表清单、ownership 查询及原失败收据，核对产品目录和工具来源，不过滤未知表。产品原始库存中的 `biz_data_scope_owner`、`biz_data_scope_dept`、`biz_data_scope_projection` 属于保留元数据；复制观察仍按现有租户业务目录记录它们的行数和摘要，不能遗漏。迁移 `up` 成功收据必须包含 `ownership=verified`，`verify` 继续使用 `migration_ledger=current schema=verified`。已完成重建和全部迁移、随后仅库存采集失败时，先执行同一 workspace 的 `cargo xtask check recovery fresh-target --operation status --workspace <original-workspace>`；只有现有规则明确允许库存续作，才显式执行 `cargo xtask check recovery fresh-target --operation resume-initialize --workspace <original-workspace> --write`。此路径重新采集库存并保留原失败材料，不重放重建或迁移；无续作资格时保留现场，不补写收据。
 
 ```powershell
 cargo xtask data backup inventory --output .local-tests/backup/inventory.json --source-sha <40-character-sha> --quiesced-at <RFC3339>

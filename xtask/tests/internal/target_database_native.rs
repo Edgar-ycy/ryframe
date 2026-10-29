@@ -124,12 +124,14 @@ impl Fixture {
     fn raw(&self, key: &str) -> Value {
         let db = self.database(key);
         let combined = db["kind"] == "combined";
-        let (_, expected, kept) =
+        let (copied, expected, kept) =
             model::table_sets(&self.context.execution_backend().unwrap(), combined).unwrap();
         let table = |name: &String| {
             let rows = if name == "ryframe_resource_ownership" {
                 if combined { 2 } else { 1 }
-            } else if kept.contains(name) || name == "biz_tenant_target_slot" {
+            } else if (kept.contains(name) && !copied.contains(name))
+                || name == "biz_tenant_target_slot"
+            {
                 1
             } else {
                 0
@@ -336,6 +338,28 @@ fn two_rounds_eight_raw_outputs_and_physical_images() {
     assert_eq!(transport.owners.get(), 24);
     assert_eq!(*transport.order.borrow(), KEYS.repeat(2));
     assert!(checkpoints.get() > 96);
+    for key in KEYS {
+        let raw = fixture.raw(key);
+        let physical = raw["target"]["database"]["database"].as_str().unwrap();
+        let observation = &captured.observations[physical];
+        for table in [
+            "biz_data_scope_owner",
+            "biz_data_scope_dept",
+            "biz_data_scope_projection",
+        ] {
+            let entry = raw["target"]["preserved_tables"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["table"] == table)
+                .expect("产品 raw 保留投影元数据");
+            assert_eq!(
+                observation["tables"][table],
+                json!({"rows":entry["rows"],"sha256":entry["sha256"]})
+            );
+            assert!(observation["preserved"].get(table).is_none());
+        }
+    }
     let receipt = json_io::read(Path::new(captured.receipt["path"].as_str().unwrap())).unwrap();
     assert_eq!(receipt["inventories"].as_object().unwrap().len(), 8);
     assert_eq!(
@@ -690,6 +714,35 @@ fn malformed_tables_and_placements_are_rejected() {
             .is_err()
         );
     }
+    for key in ["shared-control", "shared"] {
+        let db = fixture.database(key);
+        let owners = model::expected_owners(SCOPE, key == "shared-control");
+        for misplaced in [false, true] {
+            let mut raw = fixture.raw(key);
+            let kept = raw["target"]["preserved_tables"].as_array_mut().unwrap();
+            let index = kept
+                .iter()
+                .position(|entry| entry["table"] == "biz_data_scope_projection")
+                .unwrap();
+            let projection = kept.remove(index);
+            if misplaced {
+                raw["target"]["database"]["tables"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(projection);
+            }
+            assert!(
+                model::observation(
+                    &fixture.context.execution_backend().unwrap(),
+                    &raw,
+                    &db,
+                    SCOPE,
+                    &owners
+                )
+                .is_err()
+            );
+        }
+    }
 }
 
 #[test]
@@ -735,7 +788,7 @@ fn python_can_reverify_the_complete_native_receipt() {
 from pathlib import Path
 from devex_clone_inventory import verify_side_inventory,configuration
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
-from restore_reference_plan import plan_hash
+from restore_reference_plan import plan_hash,configuration_binding
 from restore_build import file_digest
 v=json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
 result=verify_side_inventory(Path(sys.argv[1]),v['receipt'],v['target'],Path(sys.argv[2]))
@@ -745,6 +798,7 @@ request=v['request']
 review=json.loads(Path(request['review']['path']).read_text(encoding='utf-8'))
 selected=review['scopes'][request['side']]
 side={**v['target'],**{key:selected[key] for key in ('runtime_dir','api_url')}}
+side['s3']={'configuration':configuration_binding(Path(sys.argv[2]),Path(result['binding']['configuration']['directory']))}
 maintenance=Path(request['maintenance_build']['path'])
 expected={'side':'target','tools_plan_sha256':plan_hash({'target':side,'tools':request['tools']}),
           'configuration':configuration(Path(sys.argv[2]),v['environment'],side,evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),

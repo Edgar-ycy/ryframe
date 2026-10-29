@@ -5,6 +5,8 @@ use serde_json::Value;
 use super::{StorageInputs, Transport, common};
 use crate::Result;
 
+pub(crate) const OBSERVATION_ERROR: &str = "存储固定只读观察命令失败；请核对固定工具、操作系统运行环境及进程观察权限，保留失败现场，不自动重放或清理";
+
 pub(crate) fn require_observed_identity(
     identity: &Value,
     observer: &impl super::StorageObserver,
@@ -38,16 +40,16 @@ pub(crate) fn observe<T: Transport>(
             program,
             args,
             cwd: context.backend.to_path_buf(),
-            environment: context.environment.clone(),
+            environment: context.command_environment(),
             stdin: None,
             stdout: StdoutTarget::Capture,
             work_dir: context.observation_dir.to_path_buf(),
             label: label.into(),
             timeout: Duration::from_secs(15),
         })
-        .map_err(|_| "存储固定只读观察命令失败")?;
+        .map_err(|_| OBSERVATION_ERROR)?;
     if !output.status.success() {
-        return Err("存储固定只读观察命令失败".into());
+        return Err(OBSERVATION_ERROR.into());
     }
     String::from_utf8(output.stdout).map_err(|_| "存储观察输出不是 UTF-8".into())
 }

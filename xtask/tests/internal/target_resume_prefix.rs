@@ -110,7 +110,7 @@ fn sequence_matches_existing_ten_operations_and_exact_platform_output() {
                     .map(|value| format!("target={value} "))
                     .unwrap_or_default(),
                 if offset == 0 {
-                    "migration=completed schema=verified\n"
+                    "migration=completed schema=verified ownership=verified\n"
                 } else {
                     "migration_ledger=current schema=verified\n"
                 }
@@ -233,7 +233,7 @@ fn prefix_refuses_holes_duplicates_unknown_names_and_modified_operation_sequence
 
 #[test]
 fn command_receipt_requires_exact_command_status_and_full_output() {
-    for case in 0..9 {
+    for case in 0..10 {
         let fixture = Fixture::new();
         let mut value = fixture.receipt(0);
         match case {
@@ -245,12 +245,20 @@ fn command_receipt_requires_exact_command_status_and_full_output() {
             5 => value["stdout"] = json!("truncated"),
             6 => value["stdout"] = json!(false),
             7 => value["extra"] = json!(1),
-            _ => value
+            8 => value
                 .as_object_mut()
                 .unwrap()
                 .remove("stderr")
                 .map(|_| ())
                 .unwrap(),
+            _ => {
+                value["stdout"] = json!(
+                    value["stdout"]
+                        .as_str()
+                        .unwrap()
+                        .replace(" ownership=verified", "")
+                )
+            }
         }
         fs::write(fixture.path(0, 0), serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(fixture.prefix(false).is_err(), "case {case}");
