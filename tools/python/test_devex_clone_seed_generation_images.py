@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import sys
 import unittest
@@ -23,7 +24,7 @@ from restore_reference_plan import BUCKETS, plan_hash
 
 class GenerationImageTests(unittest.TestCase):
     def setUp(self):
-        self.f = inventory_fixtures.InventoryTests()
+        self.f = inventory_fixtures.InventoryFixture()
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
         self.backend, self.output = self.f.backend, self.f.local / "i"
@@ -71,9 +72,7 @@ class GenerationImageTests(unittest.TestCase):
                  "control_schema_fingerprint": "c" * 16, "tenant_schema_fingerprint": "d" * 64, "databases": [], "objects": []}
         for db in self.f.selected["databases"]:
             raw = self.f.raw(db["key"])["target"]
-            known = set(self.f.models[1]) | (set(self.f.models[2]) - {"ryframe_resource_ownership", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}
-                                               if db["kind"] == "combined" else set())
-            value["databases"].append({**raw["database"], "tables": [row for row in raw["database"]["tables"] + raw["preserved_tables"] if row["table"] in known]})
+            value["databases"].append(copy.deepcopy(raw["database"]))
         for bucket in sorted(BUCKETS):
             entries = [{"key": self.f.scope + "/post/file.txt", "bytes": 4, "sha256": hashlib.sha256(b"data").hexdigest()}] if bucket == "uploads" else []
             value["objects"].append({"bucket": bucket, "prefix": self.f.scope + "/", "entries": entries})
@@ -86,9 +85,38 @@ class GenerationImageTests(unittest.TestCase):
     def capture(self):
         with patch.dict("os.environ", self.f.environment, clear=True), patch.object(images, "Resources", return_value=self.resources), \
                 patch.object(images, "redis_configuration"), patch.object(images, "verify_tools", return_value=self.f.maintenance), \
-                patch.object(images, "verify_migrations"), patch.object(images, "schema_snapshot", side_effect=self.schema):
+                patch.object(images, "verify_migrations"), patch.object(images, "schema_snapshot", side_effect=self.schema), \
+                patch.object(images, "capture_side_inventory", side_effect=self.native_inventory):
             return images.capture_image(self.backend, self.backend, self.f.selected, self.request, self.source,
                                         self.f.environment, self.output, self.run_external)
+
+    def native_inventory(self, backend, side, tools, maintenance, output, **kwargs):
+        # 完整像编排测试的外部原生端口响应；数据库执行风险由Rust collector契约承担。
+        from dataclasses import asdict
+        from devex_clone_inventory import expected_owners, observation_from_inventory
+        from restore_build import file_digest
+
+        self.assertEqual((backend, side, maintenance), (self.backend, "source", self.f.maintenance_file))
+        output.mkdir()
+        before = {"source": self.f.maintenance["source"], "side": side}
+        artifacts, observations = {}, {}
+        for key in images.KEYS:
+            raw = self.f.raw(key)
+            declared = next(db for db in self.f.selected["databases"] if db["key"] == key)
+            observations[key] = asdict(observation_from_inventory(backend, raw, declared, self.f.scope,
+                expected_owners(self.f.scope, key == "shared-control")))
+            for phase in ("before", "after"):
+                path = output / f"{phase}-target-{key}.json"
+                write_json(path, raw)
+                artifacts[path.name] = file_digest(path)
+        for phase in ("before", "after"):
+            write_json(output / f"binding-{phase}.json", before)
+        receipt = {"format_version": 1, "status": "side_inventory_captured", "side": side, "scope_id": self.f.scope,
+            "binding_sha256": plan_hash(before), "keys": list(images.KEYS), "inventories": artifacts,
+            "observations": observations, "remote_writes": 0, "producer_stopped_proven": False,
+            "fresh_target_proven": False, "target_ready": False, "clone_verified": False, "restore_qualified": False}
+        write_json(output / "inventory.json", receipt)
+        return SimpleNamespace(receipt_file=binding(output / "inventory.json"))
 
     def schema(self, tools, models, phase):
         result = []

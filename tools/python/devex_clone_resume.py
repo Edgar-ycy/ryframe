@@ -17,7 +17,7 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_state import generation_lock
 from devex_clone_transfer import TransferSteps
 from restore_reference_io import ExternalTools
-from restore_reference_plan import plan_hash
+from restore_reference_plan import configuration_binding, plan_hash
 
 
 def session_record(backend: Path, output: Path) -> dict:
@@ -46,7 +46,11 @@ def hydrate(session: factory.CloneSession, saved: dict) -> None:
     tools = {"mysql": session.source_request["tools"]["mysql"]}
     if tools != session.target_request["tools"]:
         raise ValueError("续跑两侧 MySQL 工具不同")
-    session.tools = ExternalTools({"source": session.exported["source"], "target": target, "tools": tools},
+    from devex_clone_target_binding import application_config_directory, execution_backend
+    target_transport = {**target, "s3": {"configuration": configuration_binding(
+        execution_backend(session.backend, session.target_request)[0],
+        application_config_directory(session.backend, session.target_request))}}
+    session.tools = ExternalTools({"source": session.source_request["source"], "target": target_transport, "tools": tools},
                                   session.output, session.run)
     session.source_initial = session._source_inventory()
     observed = {key: {"tables": item.tables, "preserved": item.preserved} for key, item in session.source_initial.items()}

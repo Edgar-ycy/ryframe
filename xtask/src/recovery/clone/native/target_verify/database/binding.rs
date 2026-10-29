@@ -34,7 +34,8 @@ pub(super) fn capture_source(
     let maintenance = source.scope.maintenance(&execution, &path, &value)?;
     context.maintenance_executable("tenant-data")?;
     context.tool("mysql")?;
-    let observed = json!({"side":"source","tools_plan_sha256":digest::plan_hash(&json!({"source":selected,"tools":source.tools}))?,
+    let default_plan = json!({(source.side.as_str()):selected,"tools":source.tools});
+    let observed = json!({"side":source.side.as_str(),"tools_plan_sha256":digest::plan_hash(source.plan.unwrap_or(&default_plan))?,
         "configuration":configuration_value,"physical":physical,"maintenance":common::binding(&path)?,"source":maintenance["source"]});
     common::bound_file(context.backend, source.maintenance, "来源维护构建")?;
     if source_configuration(context, source.configuration)? != observed["configuration"] {
@@ -159,8 +160,11 @@ pub(super) fn source_configuration(
         return Err("来源库存配置绑定或共同配置缺失状态发生变化".into());
     }
     super::super::super::s3::app_configuration::unchanged(&snapshots)?;
-    Ok(
-        json!({"directory":binding["directory"],"files":binding["files"],
-        "environment_sha256":digest::plan_hash(&json!({"APP_ENV":"test"}))?}),
-    )
+    let (directory, files) = super::super::input::request_configuration::configuration_files(
+        context.backend,
+        &std::collections::BTreeMap::from([("APP_ENV".into(), "test".into())]),
+        Some(&binding["directory"]),
+    )?;
+    Ok(json!({"directory":directory,"files":files,
+        "environment_sha256":digest::plan_hash(&json!({"APP_ENV":"test"}))?}))
 }

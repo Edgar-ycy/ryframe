@@ -14,7 +14,13 @@ pub(super) fn observe(window: &Window<'_>) -> Result<(&'static str, Value)> {
         if published::unresolved(window.backend, target) {
             return Ok(("initialized-failure", Value::Null));
         }
-        snapshot(window, "initialized")?;
+        super::super::snapshot::verify(
+            window.backend,
+            window.workspace,
+            &window.target,
+            &window.binding,
+            "initialized",
+        )?;
         published::unlocked_history(window.backend, &target.join("initialized.json"))?;
         return Ok(("initialized", Value::Null));
     }
@@ -41,7 +47,13 @@ pub(super) fn observe(window: &Window<'_>) -> Result<(&'static str, Value)> {
             }
             let files = prepared_files(window)?;
             resume_baseline::prepared(window.backend, target, &files, descriptor)?;
-            snapshot(window, "prepared")?;
+            super::super::snapshot::verify(
+                window.backend,
+                window.workspace,
+                &window.target,
+                &window.binding,
+                "prepared",
+            )?;
             return Ok(("prepared", Value::Null));
         }
         let state = prepare_state::state(window.backend, target, &window.value["request"])?;
@@ -56,38 +68,6 @@ pub(super) fn observe(window: &Window<'_>) -> Result<(&'static str, Value)> {
     } else {
         ("prepare-blocked", state["reason"].clone())
     })
-}
-
-fn snapshot(window: &Window<'_>, stage: &str) -> Result<Value> {
-    let path = window.workspace.join(format!("{stage}-files.json"));
-    let descriptor = common::binding(&path)?;
-    let value = common::read_bound(window.backend, &descriptor, "fresh 阶段快照")?;
-    document::exact(
-        &value,
-        &[
-            "format_version",
-            "kind",
-            "registration",
-            "predecessor",
-            "files",
-        ],
-        "fresh 阶段快照",
-    )?;
-    let predecessor = if stage == "initialized" {
-        common::binding(&window.workspace.join("prepared-files.json"))?
-    } else {
-        Value::Null
-    };
-    if value["format_version"].as_u64() != Some(1)
-        || value["kind"] != format!("devex-clone-fresh-target-{stage}-files")
-        || value["registration"] != window.binding
-        || value["predecessor"] != predecessor
-        || value["files"] != tree::snapshot(window.backend, &window.target, false)?
-        || common::binding(&path)? != descriptor
-    {
-        return Err("fresh 阶段文件集合、内容或登记发生变化".into());
-    }
-    Ok(descriptor)
 }
 
 fn prepared_files(window: &Window<'_>) -> Result<Value> {

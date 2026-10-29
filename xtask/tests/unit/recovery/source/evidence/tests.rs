@@ -3,6 +3,42 @@ use serde_json::{Value, json};
 use super::{execute, model};
 
 #[test]
+fn inventory_capture_requires_local_write_authorization_and_keeps_failed_inputs() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("inventory-port-")
+        .tempdir_in(local)
+        .unwrap();
+    let output = directory.path().join("inventory");
+    let marker = directory.path().join("original.json");
+    std::fs::write(&marker, "original-input").unwrap();
+    let mut request = json!({"operation":"copy-side-inventory-capture","write":false,
+        "arguments":{"evidence_root":backend,"backend":backend,"output":output,"side":"source",
+            "plan":{},"maintenance":null,"configuration":null,"app_env":"prod"}});
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    assert!(!output.exists());
+    request["write"] = json!(true);
+    request["arguments"]["sql"] = json!("DELETE FROM unrelated");
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    assert!(!output.exists());
+    request["arguments"].as_object_mut().unwrap().remove("sql");
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    let failure = crate::recovery::clone::native::json::read(&output.join("failure.json")).unwrap();
+    assert_eq!(failure["remote_writes"], 0);
+    assert_eq!(failure["stage"], "inputs");
+    assert!(!output.join("inventory.json").exists());
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "original-input");
+    let original_failure = std::fs::read(output.join("failure.json")).unwrap();
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    assert_eq!(
+        std::fs::read(output.join("failure.json")).unwrap(),
+        original_failure
+    );
+}
+
+#[test]
 fn reboot_observation_protocol_rejects_write_authorization_and_caller_supplied_facts() {
     let mut request = json!({"operation":"source-generation-reboot-observation","write":true,
         "arguments":{"backend":"missing","directory":"missing"}});

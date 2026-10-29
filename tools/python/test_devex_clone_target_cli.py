@@ -41,9 +41,6 @@ class TargetCliTests(unittest.TestCase):
         write_json(self.environment, {"environment": {
             "APP_ENV": "test",
             "TEMP": str(self.temporary), "TMP": str(self.temporary)}})
-        validator = patch.object(target_cli, "_validate_registered_request", return_value=None)
-        self.request_validator = validator.start()
-        self.addCleanup(validator.stop)
         bindings = patch("devex_clone_target_binding.execution_binary_bindings", return_value=[])
         bindings.start()
         self.addCleanup(bindings.stop)
@@ -241,17 +238,6 @@ class TargetCliTests(unittest.TestCase):
     def local_files(self):
         return {path.relative_to(self.local).as_posix(): binding(path)
                 for path in self.local.rglob("*") if path.is_file()}
-
-
-    def test_verify_observation_must_be_topologically_separate(self):
-        self.prepare()
-        candidates = (self.workspace / "observation", self.workspace / "target/observation",
-                      self.storage_run / "observation")
-        with patch("devex_clone_target.verify_target") as operation:
-            for observation in candidates:
-                with self.subTest(observation=observation), self.assertRaises(ValueError):
-                    target_cli.verify(self.backend, self.workspace, observation)
-            operation.assert_not_called()
 
 
 if __name__ == "__main__":

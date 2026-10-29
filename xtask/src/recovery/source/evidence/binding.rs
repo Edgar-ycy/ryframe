@@ -145,7 +145,7 @@ fn physical_table(backend: &Path, source: &Value, table: &Value) -> Result<Value
     Ok(value)
 }
 
-pub(super) fn path(value: &Value) -> Result<PathBuf> {
+pub(in crate::recovery) fn path(value: &Value) -> Result<PathBuf> {
     let text = value
         .as_str()
         .filter(|value| {

@@ -3,6 +3,7 @@ mod status;
 mod storage;
 pub(crate) use status::observe;
 
+mod environment;
 mod failure;
 pub(crate) mod initialize;
 pub(crate) mod initialized_objects;
@@ -13,6 +14,8 @@ pub(crate) mod registration;
 pub(crate) mod resources;
 mod resume_prepare;
 pub(crate) mod selection;
+mod snapshot;
+pub(crate) mod verify;
 pub(crate) use prepare::{prepare, resume as resume_prepare};
 
 pub(crate) fn dispatch(
@@ -44,6 +47,14 @@ pub(crate) fn dispatch(
         "resume-prepare" => resume_prepare(backend, &options.workspace),
         "initialize" => initialize::execute(backend, &options.workspace, false),
         "resume-initialize" => initialize::execute(backend, &options.workspace, true),
+        "verify" => verify::execute(
+            backend,
+            &options.workspace,
+            options
+                .observation_dir
+                .as_deref()
+                .ok_or("verify 缺少观察目录")?,
+        ),
         _ => Err("原生 fresh 入口拒绝未接线的生命周期操作".into()),
     }
 }
@@ -55,6 +66,9 @@ pub(super) fn binding(
 ) -> crate::Result<serde_json::Value> {
     use super::super::json as document;
     use std::path::Path;
+    if operation == "fresh-verify-target" {
+        return verify::binding(backend, args);
+    }
     if operation == "fresh-status" {
         document::exact(args, &["workspace"], "fresh 状态请求")?;
         return observe(

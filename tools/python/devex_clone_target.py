@@ -1,22 +1,18 @@
 """目标历史、预检失败收尾和只读复核；初始化与显式续作由正式Rust入口执行。"""
 from __future__ import annotations
 
-from dataclasses import asdict
-import json
 from pathlib import Path
 import subprocess
 
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
-from devex_clone_inventory import capture_side_inventory
 from devex_clone_model import exact, local_path
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import execution_backend, generation, request_binding
 from devex_clone_target_resources import Resources
-from devex_clone_target_state import failure, generation_lock
+from devex_clone_target_state import generation_lock
 from devex_clone_target_evidence import evidence
 from restore_build import file_digest
-from restore_reference_io import ExternalTools
 
 PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
                   "generation", "absence", "fresh_target_initialized", "controlled_generation_only",
@@ -83,13 +79,6 @@ def context(backend: Path, request: dict, output: Path, run, *, request_descript
     return original, resources
 
 
-def unchanged(backend: Path, request: dict, original: dict, resources: Resources, run) -> None:
-    actual = generation(backend, request, run)
-    actual["storage"] = resources.storage_identity()
-    if actual != original:
-        raise ValueError("目标源码、配置、凭据、维护产物或存储进程代次变化")
-
-
 def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None = None,
                                 request_descriptor: dict | None = None) -> dict:
     """只清理 reset preflight 失败前创建的空 fresh 资源，绝不重放初始化。"""
@@ -145,68 +134,3 @@ def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run,
                   "automatic_retry": False, "restore_qualified": False}
         write_json(output / "reconciliation-completed.json", result)
         return result
-
-
-def inventory(backend: Path, request: dict, resources: Resources,
-              output: Path) -> tuple[dict, tuple[dict, ...]]:
-    side = {**request["target"], "s3": {"configuration": resources.object_configuration},
-            "runtime_dir": resources.selected["runtime_dir"], "api_url": resources.selected["api_url"]}
-    tools = ExternalTools({"target": side, "tools": request["tools"]}, resources.output,
-                          resources.runner, before_execute=resources.checkpoint)
-    arguments = {"environment": resources.environment}
-    if resources.execution_backend != backend:
-        arguments["evidence_root"] = backend
-    captured = capture_side_inventory(resources.execution_backend, "target", tools,
-                                      bound_file(backend, request["maintenance_build"]), output, **arguments)
-    images = {item.resource["database"]: json.loads(json.dumps(asdict(item))) for item in captured.observations}
-    evidence("initial-inventory-shape", backend, resources.output,
-             arguments={"databases": request["target"]["databases"], "images": images})
-    return {"receipt": captured.receipt_file, "observations": images}, captured.evidence_files
-
-
-def verify_target(backend: Path, output: Path, observation_dir: Path, run=subprocess.run,
-                  *, storage_run: Path | None = None, request_descriptor: dict | None = None) -> dict:
-    """只用于复制前的完整初像复验；复制中不得用它代替逐步骤 live guard。"""
-    backend = backend.resolve(strict=True)
-    output = local_path(backend, str(output))
-    observation_dir = local_path(backend, str(observation_dir), new=True)
-    if (not observation_dir.parent.is_dir() or unresolved_failure(backend, output)
-            or (output / "initialize.lock").exists()):
-        raise ValueError("初始化失败、仍持锁或观察目录无效")
-    observation_dir.mkdir()
-    stage = "verify_existing"
-    try:
-        with generation_lock(output) as lock_identity:
-            original_result = read_json(output / "initialized.json")
-            prepared = read_json(output / "prepare.json")
-            expected_request = prepared["request"] if request_descriptor is None else request_descriptor
-            if prepared["request"] != expected_request:
-                raise ValueError("verify 请求不同于固定 registration")
-            request = read_bound_json(local_path(backend, expected_request["path"]), expected_request)
-            if (file_digest(output / "prepare.json")["sha256"] != original_result["prepare_sha256"]
-                    or read_json(output / "initialized-candidate.json") != original_result
-                    or request != read_json(output / "request.json") or original_result["history"] != evidence("history", backend, output)):
-                raise ValueError("初始化发布或请求证据变化")
-            evidence("initial-inventory", backend, output, receipt=original_result["inventory"]["receipt"],
-                                     resumed=(output / "failure.json").is_file())
-            original, resources = context(
-                backend, request, observation_dir, run, storage_run=storage_run,
-                owned_lock_identity=lock_identity, lock_output=output, request_descriptor=expected_request
-            )
-            evidence("storage-generation", backend, observation_dir, expected=original_result["generation"],
-                     actual=original, runtime=resources.storage_runtime_binding, cache_runtime=resources.cache_runtime_binding)
-            if evidence("reset-completed", backend, output) != original_result["reset"]:
-                raise ValueError("原 reset 完成证据已变化")
-            observed, _ = inventory(backend, request, resources, observation_dir / "inventory")
-            if (observed["observations"] != original_result["inventory"]["observations"]
-                    or resources.objects(initialized=True) != original_result["objects"]
-                    or resources.redis_state(initialized=True, sentinel=True) != original_result["redis"]):
-                raise ValueError("目标当前完整前像与初始化像不同")
-            unchanged(backend, request, original, resources, run)
-        result = {"status": "fresh_target_reverified", "initialized": {"path": str(output / "initialized.json"), **file_digest(output / "initialized.json")},
-                  "inventory": observed, "remote_writes": 0, "target_ready": False, "clone_verified": False, "restore_qualified": False}
-        write_json(observation_dir / "verify.json", result)
-        return result
-    except BaseException as error:
-        failure(observation_dir, stage, error)
-        raise

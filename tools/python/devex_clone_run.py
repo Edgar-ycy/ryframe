@@ -139,20 +139,19 @@ def _target_snapshot(backend: Path, registration_descriptor: dict,
     files_path = bound_file(backend, files_descriptor)
     if files_path != workspace / "initialized-files.json":
         raise ValueError("arm 目标文件快照不属于 fresh-target workspace")
-    snapshot = read_json(files_path)
-    exact(snapshot, {"format_version", "kind", "registration", "predecessor", "files"})
-    from devex_clone_target_cli import _target_files
+    from devex_clone_target_binding import initialized_target_files
 
-    if (snapshot["format_version"] != 1
-            or snapshot["kind"] != "devex-clone-fresh-target-initialized-files"
-            or snapshot["registration"] != registration_descriptor
-            or snapshot["predecessor"] != binding(workspace / "prepared-files.json")
-            or snapshot["files"] != _target_files(target)):
+    # 本入口没有持有目标 Generation，不得忽略 initialize.lock 或冒称持锁核验。
+    if initialized_target_files(backend, target) != files_descriptor:
         raise ValueError("arm 目标 initialized-files 未绑定当前完整初始化目录")
     initialized, request = initialization_history(backend, initialized_path)
     prepared = read_json(target / "prepare.json")
     if prepared.get("request") != registration["request"]:
         raise ValueError("arm 目标初始化请求不属于 fresh-target registration")
+    if (initialized_target_files(backend, target) != files_descriptor
+            or binding(registration_path) != registration_descriptor
+            or binding(initialized_path) != initialized_descriptor):
+        raise ValueError("arm 目标初始化完整快照或绑定在核验期间变化")
     return registration, initialized, request
 
 

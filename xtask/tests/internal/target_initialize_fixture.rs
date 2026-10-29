@@ -71,6 +71,12 @@ impl<'a> Resources<'a> {
         }
     }
     pub(super) fn generation(&self) -> Result<(Value, Selected, Option<Value>)> {
+        self.generation_at(&self.fixture.target)
+    }
+    pub(super) fn generation_at(
+        &self,
+        directory: &std::path::Path,
+    ) -> Result<(Value, Selected, Option<Value>)> {
         let restart = self.restart.borrow();
         let (value, runtime, cache) = match restart.as_ref() {
             Some(value) => (
@@ -87,7 +93,7 @@ impl<'a> Resources<'a> {
                 .take(6)
         {
             write(
-                &self.fixture.target.join(format!(
+                &directory.join(format!(
                     "{}-{}.{}",
                     slot.name,
                     uuid::Uuid::new_v4().simple(),
@@ -147,6 +153,22 @@ impl<'a> Resources<'a> {
         self.redis
             .borrow_mut()
             .insert(key.into(), json!("unexpected"));
+    }
+    pub(super) fn initialized_state(&self) {
+        self.reset.set(true);
+        let scope = self.fixture.request["target"]["scope_id"].as_str().unwrap();
+        let mut values = self.redis.borrow_mut();
+        values.insert(
+            format!("ryframe:{{{scope}}}:.ryframe-owner"),
+            json!(format!("ryframe-owner:v1:{scope}:redis")),
+        );
+        values.insert(
+            self.fixture.request["reset"]["sentinel_key"]
+                .as_str()
+                .unwrap()
+                .into(),
+            self.fixture.request["reset"]["sentinel_value"].clone(),
+        );
     }
     fn maintenance(&self, spec: CommandSpec) -> Result<CommandOutput> {
         assert_eq!(spec.args.first().map(String::as_str), Some("--config-dir"));

@@ -12,7 +12,7 @@ from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
 FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
 FRESH_TARGET_OPERATIONS = {
     "prepare", "resume-prepare",
-    "reconcile-preflight", "verify", "status",
+    "reconcile-preflight", "status",
 }
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
@@ -277,10 +277,10 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记与重绑定必须使用原生 Rust 入口")
     if args.command == "fresh-target":
-        from devex_clone_target_cli import reconcile_preflight, verify
+        from devex_clone_target_cli import reconcile_preflight
 
-        if args.operation in {"initialize", "resume-initialize"}:
-            raise ValueError("初始化与续作只接受正式 cargo xtask check recovery fresh-target 入口及 --write")
+        if args.operation in {"initialize", "resume-initialize", "verify"}:
+            raise ValueError("初始化、续作与复验只接受正式 cargo xtask check recovery fresh-target 入口及 --write")
 
         workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
         from devex_clone_target_cli import validate_dispatch
@@ -300,7 +300,7 @@ def dispatch(args, backend: Path) -> dict:
             return _native("fresh-resume-prepare", backend, workspace=str(workspace), write=True)
         if args.operation == "reconcile-preflight":
             return reconcile_preflight(backend, workspace)
-        return verify(backend, workspace, evidence_path(backend, args.observation_dir, new=True))
+        raise ValueError("Python fresh-target 不接受此操作；请使用正式 Rust 入口")
     directory = evidence_path(backend, args.run_dir)
     if args.command == "storage":
         if args.request is not None and args.operation != "restart":

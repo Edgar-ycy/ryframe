@@ -25,7 +25,7 @@ from devex_clone_live_object import observe_target_object, verify_target_heads
 from devex_clone_object_batch import WORKERS, ordered_batches
 from devex_clone_model import local_path, name, schema_fingerprints
 from devex_clone_source_proof import bound_file, verify_generation
-from devex_clone_target import verify_target
+from devex_clone_target_binding import _native as target_binding
 from devex_clone_target_state import generation_lock
 from devex_clone_transfer import DatabaseBasis, GenerationObservation, TransferSteps
 from restore_build import file_digest
@@ -186,9 +186,20 @@ class CloneSession:
         initial, self.target_request, _ = self._target_generation()
         # 目标同样来自夹具源码树；必须在该仓库自己的完整核验下复验。
         with self.environment.use("target"):
-            target_proof = verify_target(
-                self.backend, self.target_directory, self.directory("target-precopy"), self.run,
-                storage_run=self.target_storage_run,
+            temporary = os.environ.get("TEMP")
+            other = os.environ.get("TMP")
+            if (not temporary or not other or not Path(temporary).is_absolute()
+                    or not Path(other).is_absolute()
+                    or os.path.normcase(os.path.normpath(temporary)) != os.path.normcase(os.path.normpath(other))):
+                raise ValueError("目标 TEMP/TMP 必须明确绑定同一受管私有目录；请核对目标环境文件")
+            temporary = local_path(self.backend, temporary)
+            if not temporary.is_dir():
+                raise ValueError("目标 TEMP/TMP 必须是已有受管私有目录；不创建或回退系统目录")
+            target_proof = target_binding(
+                "fresh-verify-target", self.backend, initialized=self.target_binding,
+                observation=str(self.directory("target-precopy")),
+                storage_run=None if self.target_storage_run is None else str(self.target_storage_run),
+                temporary_directory=str(temporary), app_env="test", write=True,
             )
         if target_proof["initialized"] != self.target_binding:
             raise ValueError("实际新目标复验不属于外部绑定的初始化代次")

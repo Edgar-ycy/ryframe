@@ -21,7 +21,7 @@ use super::{
 };
 use crate::Result;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 use window::Window;
 
 pub(crate) fn execute(backend: &Path, workspace: &Path, resuming: bool) -> Result<Value> {
@@ -60,7 +60,7 @@ fn run<T: Transport>(
         &registration.value["request"],
         "初始化固定请求",
     )?;
-    let environment = environment(registration, &request)?;
+    let environment = super::environment::registered(registration, &request)?;
     let protected = inputs::protect(registration, &request, &environment)?;
     let state = if resuming {
         Some(resume::state(registration, &proof, false)?)
@@ -147,21 +147,6 @@ pub(crate) fn finish(
             combine(Err(error), check)
         }
     }
-}
-fn environment(registration: &Registration, request: &Value) -> Result<BTreeMap<String, String>> {
-    let private =
-        serde_json::from_value::<BTreeMap<String, String>>(registration.environment.clone())?;
-    let private = private
-        .into_iter()
-        .map(|(k, v)| (k.to_ascii_uppercase(), v))
-        .collect::<BTreeMap<_, _>>();
-    let template = super::super::storage::StorageInputs {
-        backend: &registration.backend,
-        request,
-        environment: &private,
-        observation_dir: &registration.target,
-    };
-    Ok(receipts::command_environment(&template))
 }
 pub(crate) fn publish(registration: &Registration, files: &Value, proof: &Value) -> Result<()> {
     registration.check(true)?;

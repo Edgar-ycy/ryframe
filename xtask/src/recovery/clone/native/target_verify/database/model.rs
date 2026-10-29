@@ -264,11 +264,14 @@ pub(crate) fn owners(response: &str) -> Result<Vec<Value>> {
 pub(crate) fn physical_images(
     context: &super::super::storage::StorageInputs<'_>,
     logical: &BTreeMap<String, Value>,
+    require_fresh: bool,
 ) -> Result<BTreeMap<String, Value>> {
     let mut result = BTreeMap::new();
     for (key, db) in databases(context)? {
         let image = logical.get(&key).ok_or("库存缺少逻辑目标观察")?;
-        fresh(image, db["kind"] == "combined")?;
+        if require_fresh {
+            fresh(image, db["kind"] == "combined")?;
+        }
         result.insert(text(&db["database"], "物理库名")?.into(), image.clone());
     }
     Ok(result)

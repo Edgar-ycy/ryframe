@@ -127,6 +127,7 @@ fn require_write_authorization(request: &Value) -> Result<()> {
                     | "reference-damage"
                     | "reference-receipt-start"
                     | "reference-receipt-finish"
+                    | "copy-side-inventory-capture"
             )
         )
     };
@@ -156,6 +157,9 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("source-runtime-stopped") => stopped::request(args),
         Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),
+        Some("copy-side-inventory-capture") => {
+            crate::recovery::clone::native::target_verify::database::protocol::request(args)
+        }
         Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
         Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
             business_catalog(operation, args)

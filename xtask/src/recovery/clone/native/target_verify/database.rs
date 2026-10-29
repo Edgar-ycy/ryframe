@@ -12,8 +12,11 @@ use crate::Result;
 mod binding;
 pub(crate) mod evidence;
 pub(crate) mod model;
+pub(crate) mod protocol;
 
 pub(crate) struct Captured {
+    pub(crate) binding: Value,
+    pub(crate) inventory: Value,
     pub(crate) receipt: Value,
     pub(crate) observations: BTreeMap<String, Value>,
     pub(crate) evidence_files: Vec<Value>,
@@ -21,6 +24,8 @@ pub(crate) struct Captured {
 
 /// 由来源父控制区间传入已绑定的原始计划和当前构建作用域，不携带远端写入资格。
 pub(crate) struct SourceBinding<'a> {
+    pub(crate) side: crate::cli::CloneSide,
+    pub(crate) plan: Option<&'a Value>,
     pub(crate) selected: &'a Value,
     pub(crate) tools: &'a Value,
     pub(crate) maintenance: &'a Value,
@@ -47,7 +52,7 @@ pub(crate) fn capture_at<T: Transport>(
     transport: &T,
     checkpoint: &impl Fn() -> Result<()>,
 ) -> Result<Captured> {
-    capture_observed(context, directory, transport, checkpoint, None)
+    capture_observed(context, directory, transport, checkpoint, None, true)
 }
 
 pub(crate) fn capture_source_at<T: Transport>(
@@ -57,7 +62,14 @@ pub(crate) fn capture_source_at<T: Transport>(
     checkpoint: &impl Fn() -> Result<()>,
     source: &SourceBinding<'_>,
 ) -> Result<Captured> {
-    capture_observed(context, directory, transport, checkpoint, Some(source))
+    capture_observed(
+        context,
+        directory,
+        transport,
+        checkpoint,
+        Some(source),
+        false,
+    )
 }
 
 fn capture_observed<T: Transport>(
@@ -66,9 +78,28 @@ fn capture_observed<T: Transport>(
     transport: &T,
     checkpoint: &impl Fn() -> Result<()>,
     source: Option<&SourceBinding<'_>>,
+    require_fresh: bool,
 ) -> Result<Captured> {
     checkpoint()?;
     fs::create_dir(directory)?;
+    capture_created(
+        context,
+        directory,
+        transport,
+        checkpoint,
+        source,
+        require_fresh,
+    )
+}
+
+fn capture_created<T: Transport>(
+    context: &StorageInputs<'_>,
+    directory: &Path,
+    transport: &T,
+    checkpoint: &impl Fn() -> Result<()>,
+    source: Option<&SourceBinding<'_>>,
+    require_fresh: bool,
+) -> Result<Captured> {
     let mut capture = Capture {
         context,
         transport,
@@ -78,6 +109,7 @@ fn capture_observed<T: Transport>(
         artifacts: BTreeMap::new(),
         stage: "inputs",
         source,
+        require_fresh,
     };
     let result = capture.collect();
     if let Err(error) = &result {
@@ -104,6 +136,7 @@ struct Capture<'a, T, F> {
     artifacts: BTreeMap<String, Value>,
     stage: &'static str,
     source: Option<&'a SourceBinding<'a>>,
+    require_fresh: bool,
 }
 
 #[derive(PartialEq)]
@@ -242,9 +275,9 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
                 return Err("已采集库存文件缺失或被修改".into());
             }
         }
-        let images = model::physical_images(self.context, &round.observations)?;
+        let images = model::physical_images(self.context, &round.observations, self.require_fresh)?;
         let receipt = json!({
-            "format_version": 1, "status": "side_inventory_captured", "side": if self.source.is_some() { "source" } else { "target" },
+            "format_version": 1, "status": "side_inventory_captured", "side": self.source.map_or("target", |source| source.side.as_str()),
             "scope_id": self.context.target_scope()?, "binding_sha256": digest::plan_hash(before)?,
             "keys": KEYS.map(|(key, _, _)| key), "inventories": self.artifacts,
             "observations": round.observations, "remote_writes": 0,
@@ -260,7 +293,7 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
         let published = evidence::descriptor(&path)?;
         let result = self.evidence.files(self.directory).and_then(|files| {
             (self.checkpoint)()?;
-            Ok(Captured { receipt: json!({"path": path, "bytes": published["bytes"], "sha256": published["sha256"]}), observations: images, evidence_files: files })
+            Ok(Captured { binding: before.clone(), inventory: receipt.clone(), receipt: json!({"path": path, "bytes": published["bytes"], "sha256": published["sha256"]}), observations: images, evidence_files: files })
         });
         if result.is_err() && evidence::descriptor(&path)? == published {
             fs::remove_file(path)?;

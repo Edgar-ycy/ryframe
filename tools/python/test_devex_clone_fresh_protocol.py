@@ -64,13 +64,15 @@ class FreshTargetProtocolTests(unittest.TestCase):
         relative["request"]["workspace"] = ".local-tests/fresh"
         newline = self.payload()
         newline["request"]["workspace"] += "\nother"
+        native_verify = self.payload()
+        native_verify["request"]["operation"] = "verify"
         duplicate = (
             '{"format_version":1,"format_version":1,'
             f'"kind":"{cli.FRESH_TARGET_PROTOCOL_KIND}","request":{{}}}}'
         )
         for source in (
                 "{}", json.dumps(unknown), json.dumps(wrong_write), json.dumps(boolean_version),
-                json.dumps(relative), json.dumps(newline), duplicate, "not-json"):
+                json.dumps(relative), json.dumps(newline), json.dumps(native_verify), duplicate, "not-json"):
             with self.subTest(source=source), self.assertRaises(cli.FreshTargetProtocolError):
                 cli.decode_fresh_target_protocol(source)
 

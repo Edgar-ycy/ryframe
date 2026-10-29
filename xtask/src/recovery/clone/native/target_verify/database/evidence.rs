@@ -285,7 +285,7 @@ impl Evidence {
         stdout: Option<&mut stdout::VerifiedStdout>,
     ) -> Result<CommandOutput> {
         (port.checkpoint)()?;
-        let mut environment = (*port.context.environment).clone();
+        let mut environment = port.context.command_environment();
         environment.remove("MYSQL_PWD");
         let login = port.directory.join("unused-login.cnf");
         if fs::symlink_metadata(&login).is_ok() {

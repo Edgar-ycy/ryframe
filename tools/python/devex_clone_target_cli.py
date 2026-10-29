@@ -7,12 +7,10 @@ from pathlib import Path
 
 from artifact_digests import protect_binaries
 from devex_clone_capture import read_bound_json
-from devex_clone_factory_context import initialization_history
 from process_environment import Environments, configured
 from devex_clone_model import exact, linked, local_path
 from devex_clone_run_state import binding, historical_state, load_state, run_lock
 from devex_clone_source_proof import bound_file
-import devex_clone_target_tree_claim as snapshot_evidence
 from process_guard import process_guard
 from devex_clone_target_evidence import evidence
 
@@ -124,26 +122,6 @@ def _preflight_reconciliation(backend: Path, target: Path) -> dict:
     return _native("preflight-reconciliation", backend, target=str(target))["binding"]
 
 
-def _prepare_binding(backend: Path, value: dict) -> dict:
-    path = Path(value["target_directory"]) / "prepare.json"
-    descriptor = binding(path)
-    if read_bound_json(path, descriptor).get("request") != value["request"]:
-        raise ValueError("fresh 目标 prepare 请求不属于固定 registration")
-    bound_file(backend, value["request"])
-    return descriptor
-
-
-def _initialized(backend: Path, workspace: Path, value: dict) -> tuple[dict, dict]:
-    prepare_path = Path(value["target_directory"]) / "prepare.json"
-    prepare_binding = _prepare_binding(backend, value)
-    prepared = binding(workspace / "prepared-files.json")
-    proof = snapshot_evidence.snapshot(workspace, value, "initialized")
-    if binding(workspace / "prepared-files.json") != prepared or binding(prepare_path) != prepare_binding:
-        raise ValueError("fresh 目标 prepare 文件快照发生变化")
-    initialized, _ = initialization_history(backend, Path(value["target_directory"]) / "initialized.json")
-    return proof, initialized
-
-
 def _registration(backend: Path, workspace: Path) -> tuple[Path, dict, dict]:
     workspace = local_path(backend, str(workspace))
     observed = evidence("cli-registration", backend, workspace, arguments={})
@@ -153,14 +131,6 @@ def _registration(backend: Path, workspace: Path) -> tuple[Path, dict, dict]:
     if binding(path) != before:
         raise ValueError("fresh 目标登记在读取期间变化")
     return path, copy.deepcopy(value), copy.deepcopy(private)
-
-
-def _validate_registered_request(backend: Path, descriptor: dict) -> None:
-    """确认固定请求当前仍满足执行前置条件，不把仅有文件绑定当成可续作。"""
-    from devex_clone_target_binding import request_binding
-
-    _, request = _bound_json(backend, descriptor)
-    request_binding(backend, request)
 
 
 def _unchanged(backend: Path, path: Path, value: dict, private: dict,
@@ -226,25 +196,6 @@ def reconcile_preflight(backend: Path, workspace: Path) -> dict:
         return {"status": result["status"], "registration": binding(workspace / "registration.json"),
                 "reconciliation": binding(workspace / "target/reconciliation-completed.json"),
                 "restore_qualified": False}
-
-
-def verify(backend: Path, workspace: Path, observation_dir: Path) -> dict:
-    from devex_clone_target import verify_target
-
-    backend = backend.resolve(strict=True)
-    workspace = local_path(backend, str(workspace))
-    observation = local_path(backend, str(observation_dir), new=True)
-    with _workspace_control(workspace):
-        _, value, _ = _registration(backend, workspace)
-        storage = _storage_run(backend, value["storage_run"])
-        for existing in (workspace, Path(value["target_directory"]), storage):
-            _disjoint(backend, observation, existing)
-        initialized, _ = _initialized(backend, workspace, value)
-        result = _run_registered(backend, workspace, verify_target, observation)
-        if snapshot_evidence.snapshot(workspace, value, "initialized") != initialized:
-            raise ValueError("fresh 目标 verify 期间初始化文件快照变化")
-        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "observation": binding(observation / "verify.json"), "restore_qualified": False}
 
 
 def validate_dispatch(backend: Path, workspace: Path, args) -> None:

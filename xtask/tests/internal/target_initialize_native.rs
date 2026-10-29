@@ -18,6 +18,9 @@ use fixture::{Resources, retain_prepared};
 use serde_json::{Value, json};
 use std::fs;
 
+#[path = "target_fresh_verification.rs"]
+mod verification;
+
 fn execute(resources: &Resources<'_>, resuming: bool) -> Result<Value> {
     let f = resources.fixture;
     let registration = Registration::load(&f.backend, &f.local)?;

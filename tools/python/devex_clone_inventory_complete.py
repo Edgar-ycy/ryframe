@@ -35,6 +35,13 @@ def complete_inventory(runtime: dict, targets: list[dict], request: dict) -> dic
         if key not in databases or key in seen or database_image(database) != database_image(databases[key]):
             raise ValueError("常规库存与逐目标实际库存不一致")
         seen.add(key)
+    projections = {"biz_data_scope_owner", "biz_data_scope_dept", "biz_data_scope_projection"}
+    for target in targets:
+        key = target["target"]["database"]["key"]
+        database = databases[key]
+        # 常规库存先与原始业务部分逐项比较；逻辑复制像再纳入必须恢复的授权投影。
+        databases[key] = {**database, "tables": database["tables"] + [
+            row for row in target["target"]["preserved_tables"] if row["table"] in projections]}
     for key in declared - seen:
         database = databases[key]
         # 空目标保留初始化的唯一空 slot；其实际 NULL 语义由 SQL 全量关系核验确认。

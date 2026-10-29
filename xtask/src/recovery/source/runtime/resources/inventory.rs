@@ -41,6 +41,8 @@ impl<T: Transport> Resources<'_, T> {
             observation_dir: directory,
         };
         let source = database::SourceBinding {
+            side: crate::cli::CloneSide::Source,
+            plan: None,
             selected,
             tools,
             maintenance,

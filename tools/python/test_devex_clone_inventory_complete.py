@@ -27,6 +27,17 @@ class CompleteInventoryTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "非空"):
                 complete_inventory(self.runtime, [target], self.request)
 
+    def test_projection_is_copied_after_raw_comparison_and_nonempty_omission_is_rejected(self):
+        target = copy.deepcopy(self.target)
+        projection = {"table": "biz_data_scope_owner", "rows": 2, "sha256": "b" * 64}
+        target["target"]["preserved_tables"] = [projection]
+        runtime = {**self.runtime, "databases": [copy.deepcopy(self.database)]}
+        result = complete_inventory(runtime, [target], self.request)
+        self.assertIn(projection, result["databases"][0]["tables"])
+        self.assertNotIn(projection, runtime["databases"][0]["tables"])
+        with self.assertRaisesRegex(ValueError, "非空"):
+            complete_inventory(self.runtime, [target], self.request)
+
     def test_scope_schema_duplicate_missing_and_unknown_target_are_rejected(self):
         for field in ("scope_id", "control_schema_fingerprint", "tenant_schema_fingerprint"):
             target = copy.deepcopy(self.target)
