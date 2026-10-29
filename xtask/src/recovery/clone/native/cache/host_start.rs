@@ -85,8 +85,7 @@ fn prelaunch(
     output: &Path,
     guard: &mut impl FnMut() -> Result<()>,
 ) -> Result<Vec<String>> {
-    guard().map_err(|error| diagnostic::prelaunch(Category::PrelaunchGuardRejected, error))?;
-    host_control::bind_and_close(request, host_control::PortCheck::BeforeStart)?;
+    host_control::wait_before_start(request, guard)?;
     let args = evidence::command(request, output, "serve")
         .map_err(|error| diagnostic::prelaunch(Category::PrelaunchCommandRejected, error))?;
     (|| {

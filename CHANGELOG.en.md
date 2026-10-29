@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Before Redis startup, wait at most 60 seconds only for an occupied Windows exclusive-bind port, checking original sources each round and probing within one fixed monotonic deadline. Publish intent and launch the supervisor only after actual bind/drop succeeds. Timeout retains the last OS code and fixed recovery advice; other errors fail immediately. Post-stop port proof and the 180-second primitive, 60-second readiness and 15-second acceptance limits remain unchanged, with no automatic restart or replay.
+
 - Remove retired Python forwarding and private binding branches for fresh-target prepare, resume-prepare and status. Formal lifecycle operations continue to execute directly in Rust; Python retains the active reconcile-preflight path only. Narrow the private protocol and consolidate useful boundary coverage, removing the test that only checked script-file existence without changing recovery authority or cleanup scope.
 
 - Add fixed stage, cause-category and OS-code diagnostics for Redis source guards, socket creation/options, exclusive port binding, command construction and intent publication between launch and intent records. Validate fixed diagnostic fields strictly across processes and retain only digests for unknown causes. Post-stop port checks retain their original I/O errors and are not marked as not started. Preserve existing checks, deadlines and failure evidence without automatically retrying or replaying services.

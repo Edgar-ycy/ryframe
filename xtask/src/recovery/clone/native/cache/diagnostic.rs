@@ -31,6 +31,7 @@ pub(super) enum Category {
     PrelaunchSocketFailed,
     PrelaunchSocketOptionsFailed,
     PrelaunchPortBindFailed,
+    PrelaunchPortReleaseTimeout,
     PrelaunchCommandRejected,
     PrelaunchIntentFailed,
 }
@@ -70,6 +71,7 @@ impl Diagnostic {
             | PrelaunchSocketFailed
             | PrelaunchSocketOptionsFailed
             | PrelaunchPortBindFailed
+            | PrelaunchPortReleaseTimeout
             | PrelaunchCommandRejected
             | PrelaunchIntentFailed => prelaunch_fields(self.category),
             RequestRejected => (
@@ -410,7 +412,14 @@ impl PrelaunchFailure {
             Category::PrelaunchSocketFailed
                 | Category::PrelaunchSocketOptionsFailed
                 | Category::PrelaunchPortBindFailed
+                | Category::PrelaunchPortReleaseTimeout
         );
+        if matches!(diagnostic.category, Category::PrelaunchPortReleaseTimeout)
+            && !(matches!(cause, PrelaunchCause::AddressInUse)
+                || (matches!(cause, PrelaunchCause::TimedOut) && diagnostic.os_code.is_none()))
+        {
+            return Err("缓存端口释放超时原因无效".into());
+        }
         if ((diagnostic.os_code.is_some() || socket) && !io)
             || (guard && !matches!(diagnostic.category, Category::PrelaunchGuardRejected))
         {
@@ -446,6 +455,7 @@ fn prelaunch_category(category: Category) -> bool {
             | Category::PrelaunchSocketFailed
             | Category::PrelaunchSocketOptionsFailed
             | Category::PrelaunchPortBindFailed
+            | Category::PrelaunchPortReleaseTimeout
             | Category::PrelaunchCommandRejected
             | Category::PrelaunchIntentFailed
     )
@@ -473,6 +483,11 @@ fn prelaunch_fields(category: Category) -> (&'static str, &'static str, &'static
             "prelaunch-bind",
             "port",
             "核对当次绑定端口的独占性与系统权限；当前端口空闲不能证明原失败原因",
+        ),
+        PrelaunchPortReleaseTimeout => (
+            "prelaunch-port-release",
+            "port",
+            "启动前端口释放等待已达到固定60秒期限；核对Windows独占端口与WSL mirrored映射释放，保留现场并显式核对，不自动重启或重放",
         ),
         PrelaunchCommandRejected => (
             "prelaunch-command",
