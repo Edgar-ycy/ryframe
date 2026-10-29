@@ -303,8 +303,10 @@ fn start(
 }
 pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
     let role = op.role;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let preparation = super::preparation_timeout(role);
+    let deadline = Instant::now() + preparation;
     loop {
+        super::check_preparation(role, deadline)?;
         if op.path.join("candidate.json").exists() {
             let candidate = op.child("candidate.json")?;
             let ready = operation::read(&tree::path(op.directory(), role, op.id()?, "ready"))?;
@@ -322,7 +324,10 @@ pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
             supervisor["identity"] = candidate["identity"].clone();
             supervisor["candidate_sha256"] = json!(super::documents::hash(&candidate)?);
             supervisor["authorized_at_ns"] = json!(operation::now());
-            return op.publish("supervisor.json", &supervisor, false);
+            super::check_preparation(role, deadline)?;
+            op.publish("supervisor.json", &supervisor, false)?;
+            super::check_preparation(role, deadline)?;
+            return Ok(());
         }
         if !process::alive(monitor)? {
             return Err(super::Rejection(format!(
@@ -331,11 +336,7 @@ pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
             ))
             .into());
         }
-        if Instant::now() >= deadline {
-            return Err(
-                super::Rejection(format!("{}监督候选登记超过10秒期限", role.label())).into(),
-            );
-        }
+        super::check_preparation(role, deadline)?;
         thread::sleep(Duration::from_millis(20));
     }
 }

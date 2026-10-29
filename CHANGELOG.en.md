@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Allow 120 seconds for API/Worker full-source verification and supervisor candidate preparation, retaining 60-second product readiness, 300-second outer handoff and final RPO/RTO requirements. Existing candidate or authorization receipts cannot bypass the deadline; expiry retains evidence for explicit reconciliation without replay.
+
 - Before Redis startup, wait at most 60 seconds only for an occupied Windows exclusive-bind port, checking original sources each round and probing within one fixed monotonic deadline. Publish intent and launch the supervisor only after actual bind/drop succeeds. Timeout retains the last OS code and fixed recovery advice; other errors fail immediately. Post-stop port proof and the 180-second primitive, 60-second readiness and 15-second acceptance limits remain unchanged, with no automatic restart or replay.
 
 - Remove retired Python forwarding and private binding branches for fresh-target prepare, resume-prepare and status. Formal lifecycle operations continue to execute directly in Rust; Python retains the active reconcile-preflight path only. Narrow the private protocol and consolidate useful boundary coverage, removing the test that only checked script-file existence without changing recovery authority or cleanup scope.

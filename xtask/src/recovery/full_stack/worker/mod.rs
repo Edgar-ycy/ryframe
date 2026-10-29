@@ -44,6 +44,26 @@ pub(crate) fn control_command(
 }
 
 const LIMIT: usize = 1024 * 1024;
+// 候选准备包含完整来源核验；不占用产品启动后的就绪预算。
+fn preparation_timeout(role: role::Role) -> std::time::Duration {
+    std::time::Duration::from_secs(if role == role::Role::Frontend {
+        10
+    } else {
+        120
+    })
+}
+
+fn check_preparation(role: role::Role, deadline: std::time::Instant) -> Result<()> {
+    if std::time::Instant::now() >= deadline {
+        return Err(Rejection(format!(
+            "{}监督候选登记超过{}秒期限",
+            role.label(),
+            preparation_timeout(role).as_secs()
+        ))
+        .into());
+    }
+    Ok(())
+}
 
 pub(in crate::recovery) fn frontend_evidence(
     directory: &std::path::Path,

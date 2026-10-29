@@ -125,7 +125,7 @@ pub(super) fn run(args: &Value) -> Result<Value> {
     let op = operation(role, &backend, &directory, &id)?;
     let identity = process::current()?;
     let ready_path = tree::path(&directory, role, &id, "ready");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + super::preparation_timeout(role);
     while !ready_path.exists() {
         if Instant::now() >= deadline {
             return Err("角色成员监督器登记超时".into());
@@ -145,6 +145,9 @@ pub(super) fn run(args: &Value) -> Result<Value> {
     candidate["created_at_ns"] = json!(operation::now());
     op.publish("candidate.json", &candidate, false)?;
     loop {
+        if Instant::now() >= deadline || !op.path.exists() {
+            return Err("角色未获得授权，未启动产品".into());
+        }
         if op.path.join("supervisor.json").exists() {
             let authorized = op.child("supervisor.json")?;
             if authorized["identity"] != identity
@@ -152,10 +155,10 @@ pub(super) fn run(args: &Value) -> Result<Value> {
             {
                 return Err("角色监督授权与实际创建身份不匹配".into());
             }
+            if Instant::now() >= deadline {
+                return Err("角色未获得授权，未启动产品".into());
+            }
             break;
-        }
-        if Instant::now() >= deadline || !op.path.exists() {
-            return Err("角色未获得授权，未启动产品".into());
         }
         thread::sleep(Duration::from_millis(20));
     }

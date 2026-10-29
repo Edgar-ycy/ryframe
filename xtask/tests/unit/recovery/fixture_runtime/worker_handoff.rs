@@ -5,7 +5,7 @@ fn authorization_stage_rejections_are_exact_and_keep_exit_code() {
     for role in [Role::Api, Role::Worker] {
         for suffix in [
             "监督候选登记前成员监督器已退出",
-            "监督候选登记超过10秒期限",
+            "监督候选登记超过120秒期限",
             "候选与实际监督进程不匹配",
             "成员监督器启动未确认",
         ] {
