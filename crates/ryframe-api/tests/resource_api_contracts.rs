@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use ryframe_api::generated::crud_resources_extension;
 
 #[path = "api_contracts/snapshot_export.rs"]
@@ -16,8 +14,4 @@ fn generated_resource_metadata_is_sorted_and_unique() {
         .map(|resource| resource["name"].as_str().expect("生成资源名称必须是字符串"))
         .collect::<Vec<_>>();
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
-    assert_eq!(
-        names.len(),
-        names.iter().copied().collect::<BTreeSet<_>>().len()
-    );
 }
