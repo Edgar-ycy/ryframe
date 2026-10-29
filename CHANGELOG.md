@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 清理已退休 source verify Python CLI 的专属失效测试及其唯一导入；保留现有 runtime、producer、recovery 和工具绑定回归，正式来源验证继续由 Rust 入口及同代 lineage/显式写入约束验证。
+
 - 补齐服务关闭阶段的脱敏诊断与原期限内 Windows 独占端口释放等待；显式 reconcile 可在严格绑定原失败、正常退出与完整进程树后，于新阶段收尾原 RustFS 树并发布独立恢复证据，不重发 Redis stop、不改旧失败或补造旧停止收据。
 
 - 修复 fresh 预检失败清理 DEL 与续作 marker EVAL 对标准 Redis 整数响应的类型误判：仅接受精确字符串响应，并将已确认 EVAL 结果规范化为既有整数收据；保持事务响应契约和未知写入禁止重放。DEL 未确认时仅公开固定脱敏阶段诊断，保留原计划和失败，要求核对完整前后像，不补签旧现场完成收据。

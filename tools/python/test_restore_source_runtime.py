@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
-import restore_source as source_cli
 import restore_source_runtime as runtime
 import restore_source_runtime_producer as producer
 from workspace_directory import WorkspaceDirectory
@@ -694,38 +693,6 @@ class SourceRuntimeCliTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "原生工具绑定"):
             runtime._runtime_policy("flow", mode="verify")
         run.assert_not_called()
-
-    def test_verify_uses_only_generation_lineage_and_explicit_output(self):
-        backend = Path(__file__).resolve().parents[2]
-        start = backend / ".local-tests/run/results/start.json"
-        output = backend / ".local-tests/run/g0001/verification/source-runtime.json"
-        result = {"output": str(output), "status": "source_runtime_verified"}
-        protocol = {
-            "backend_dir": str(backend),
-            "format_version": 1,
-            "kind": source_cli.PROTOCOL_KIND,
-            "native_tool": tool_binding(),
-            "operation": "verify",
-            "source_generation": str(start),
-            "output": str(output),
-            "write": True,
-        }
-        request = source_cli.decode_request(json.dumps(protocol))
-        with patch.object(
-            source_cli, "execute_source_verification", return_value=result
-        ) as execute, patch("builtins.print") as printed:
-            source_cli.main(request)
-        execute.assert_called_once_with(backend.resolve(), start, output)
-        self.assertEqual(json.loads(printed.call_args.args[0]), result)
-
-        protocol["write"] = False
-        with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.decode_request(json.dumps(protocol))
-        with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.private_protocol_request(["verify"])
-        protocol["operation"] = "quiesce"
-        with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.decode_request(json.dumps(protocol))
 
 
 class SourceProducerStoppedTests(unittest.TestCase):

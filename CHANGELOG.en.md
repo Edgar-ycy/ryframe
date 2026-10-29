@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the obsolete test and sole import for the retired Python source verify CLI. Preserve current runtime, producer, recovery and tool-binding regressions; formal source verification remains covered by Rust entry points and generation-lineage and explicit-write constraints.
+
 - Complete redacted service-close diagnostics and Windows exclusive-port release waiting within the original deadline. Explicit reconcile can finish the original RustFS tree in a new stage after strictly binding the failed close, normal Redis exit and complete process identities, publishing independent recovery evidence without resending Redis stop, changing the old failure or fabricating an old stop receipt.
 
 - Fix type mismatches for standard Redis integer replies in fresh preflight-cleanup DEL and resumed marker EVAL. Accept only exact string replies and normalize a confirmed EVAL result to the existing integer receipt, preserving transaction reply contracts and the prohibition on replaying unknown writes. Unconfirmed DEL exposes only a fixed redacted stage diagnostic and preserves the original plan and failure, and requires complete before/after-image verification without backfilling completion for an old scene.
