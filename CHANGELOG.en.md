@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-- Synchronize the committed, verified copy-tool consumer closure, retaining authorization projections in complete inventory and using explicitly bound native tools for target and fixture adapters. Remove replaced Python execution and dedicated tests. Tool-source changes require new reuse bridges and run manifests; preserve original product builds, initialization, exports and failure receipts.
+- Synchronize the committed, verified copy-tool consumer closure, retaining authorization projections in complete inventory and using explicitly bound native tools for target and fixture adapters. Remove replaced Python execution and dedicated tests. After tool-source changes, recheck the registered product root, complete bridge inputs and current tool source. Retain existing bridges when their registered product tree is unchanged, and record coordinator tools in a new run manifest. Preserve original product builds, initialization, exports and failure receipts.
 
 - Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.
 
