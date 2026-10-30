@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse four fixed regular expressions in the copy tool's SQL parser instead of recompiling them per row and numeric literal. Preserve grammar, exact numeric text, JSON and escape handling, complete-column and multiple-statement rejection, without reducing full scans or validation.
+
 - Fix source inventory composition omitting authorization projections. Fully compare ordinary business inventory with raw per-target results before including the data-scope projections that must be restored; a target omitted with nonempty projections cannot be treated as empty. Multi-database export exclusively creates its shared dump directory once per batch, avoiding failure on the second database while continuing to reject overwrites and replay of existing directories or files.
 
 - Fix source export omitting the standalone business migration ledger when rebuilding the full schema independently. Reuse the formal complete catalog and SDK ledger definition while retaining strict rejection of unknown tables, missing columns, and type drift.

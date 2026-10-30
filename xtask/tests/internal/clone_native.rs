@@ -437,6 +437,8 @@ fn sha(content: &[u8]) -> String {
 
 #[path = "clone_native/catalog.rs"]
 mod catalog;
+#[path = "clone_native/sql.rs"]
+mod sql;
 
 #[test]
 fn native_plan_and_verify_are_deterministic_and_read_only_after_write() {

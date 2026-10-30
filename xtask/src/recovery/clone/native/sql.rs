@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
+    sync::OnceLock,
 };
 
 use regex::Regex;
@@ -81,14 +82,20 @@ pub(crate) fn for_each_row(
 }
 
 pub(crate) fn parse_row(line: &str, catalog: &Catalog) -> Result<(String, Row)> {
-    let structure = Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((.*?)\) VALUES \((.*)\);$")?;
+    static STRUCTURE: OnceLock<Regex> = OnceLock::new();
+    static NAMES: OnceLock<Regex> = OnceLock::new();
+    let structure = STRUCTURE.get_or_init(|| {
+        Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((.*?)\) VALUES \((.*)\);$")
+            .expect("固定正则必须有效")
+    });
     let part = structure
         .captures(line)
         .ok_or("SQL 行结构无效或包含多语句")?;
     let table = &part[1];
     let columns = catalog.get(table).ok_or("SQL 引用了复制清单之外的表")?;
     validate_insert(&part[2])?;
-    let names = Regex::new(r"`([a-z0-9_]+)`")?
+    let names = NAMES
+        .get_or_init(|| Regex::new(r"`([a-z0-9_]+)`").expect("固定正则必须有效"))
         .captures_iter(&part[2])
         .map(|capture| capture[1].to_owned())
         .collect::<Vec<_>>();
@@ -151,7 +158,10 @@ pub(crate) fn literals(source: &str) -> Result<Vec<SqlValue>> {
 }
 
 fn validate_insert(columns: &str) -> Result<()> {
-    let valid = Regex::new(r"^(?:`[a-z0-9_]+`)(?:, `[a-z0-9_]+`)*$")?;
+    static VALID: OnceLock<Regex> = OnceLock::new();
+    let valid = VALID.get_or_init(|| {
+        Regex::new(r"^(?:`[a-z0-9_]+`)(?:, `[a-z0-9_]+`)*$").expect("固定正则必须有效")
+    });
     if valid.is_match(columns) {
         Ok(())
     } else {
@@ -199,8 +209,11 @@ fn quoted(source: &str, start: usize) -> Result<(SqlValue, usize)> {
 }
 
 fn unsigned_literal(source: &str, start: usize) -> Result<(SqlValue, usize)> {
-    let pattern =
-        Regex::new(r"^(?:NULL|0x[0-9a-fA-F]+|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")?;
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    let pattern = PATTERN.get_or_init(|| {
+        Regex::new(r"^(?:NULL|0x[0-9a-fA-F]+|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")
+            .expect("固定正则必须有效")
+    });
     let matched = pattern.find(&source[start..]).ok_or("SQL 不是受限字面量")?;
     let token = matched.as_str();
     let value = match token {
