@@ -475,14 +475,6 @@ class ExternalTools:
         self.mysql(database, sql)
 
 
-def validate_insert(line: str, tables: set[str]) -> None:
-    native_response(*native_invoke(
-        "__source-evidence", {"operation": "reference-sql-line", "write": False,
-            "arguments": {"line": line, "tables": sorted(tables)}},
-        subprocess.run, may_write=False,
-    ))
-
-
 def normalize_dump(raw: Path, output: Path, tables: set[str]) -> None:
     native_response(*native_invoke(
         "__source-evidence", {"operation": "reference-sql-normalize", "write": True,

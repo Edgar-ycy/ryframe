@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mysql_verification_fixture import mysql_output
 from restore_reference import work_directory
-from restore_reference_io import DATA_HEADER, ExternalTools, normalize_dump, object_index, validate_dump, validate_insert
+from restore_reference_io import DATA_HEADER, ExternalTools, normalize_dump, object_index, validate_dump
 from restore_reference_fixture import environment, stored_backup
 
 
@@ -37,8 +37,10 @@ class ReferenceIoTests(unittest.TestCase):
                     "INSERT INTO `sys_post` (`name`) VALUES ('unterminated);",
                     "INSERT INTO `sys_post` (`id`) VALUES (1/*comment*/);",
                     "\\! command"):
+            path = self.work / "rejected.sql"
+            path.write_text(DATA_HEADER + sql + "\n", encoding="utf-8")
             with self.assertRaises(ValueError):
-                validate_insert(sql, {"sys_post"})
+                validate_dump(path, {"sys_post"})
 
     def test_mysql_exact_defaults_environment_and_declared_tables_only(self):
         run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b"one\n"))

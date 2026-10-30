@@ -317,6 +317,9 @@ fn source_evidence_protocol_requires_exact_write_authorization_before_dispatch()
         ("staging-create", json!(false)),
         ("staging-create", json!(1)),
         ("source-reference-projection", json!(true)),
+        ("reference-sql-stream-create", json!(false)),
+        ("reference-sql-stream-close", json!(false)),
+        ("reference-sql-stream-read", json!(true)),
     ] {
         let request = json!({"operation":operation,"write":write,"arguments":{}});
         assert!(

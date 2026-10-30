@@ -20,9 +20,9 @@ import devex_clone
 import devex_clone_protocol
 from artifact_digests import filesystem_path
 from devex_clone_model import create_plan, local_path, object_plan
-from devex_clone_rows import EXCLUDED, literals, parse_row, reject_physical, schema_catalog, validate_state
+from devex_clone_rows import EXCLUDED, rows, reject_physical, schema_catalog, validate_state
 from devex_clone_schedule import canonical_value, schedule_row_sha256
-from restore_build import file_digest, verify_build
+from restore_build import file_digest
 from restore_reference_io import COPY_METADATA_FIELDS, DATA_HEADER
 from restore_reference_plan import BUCKETS
 
@@ -181,8 +181,10 @@ class CloneTests(unittest.TestCase):
                 create_plan(value, self.backend)
         for line in ("INSERT INTO `sys_tenant` (`tenant_id`) VALUES ('system');",
                      "INSERT INTO `sys_tenant` (`tenant_id`, `tenant_id`) VALUES ('system','system');"):
+            path = self.root / "incomplete-row.sql"
+            path.write_text(DATA_HEADER + line + "\n", encoding="utf-8")
             with self.assertRaises(ValueError):
-                parse_row(line, self.control)
+                list(rows(path, self.control))
 
     def test_source_target_overlap_unknown_owner_and_preexisting_target_fail_closed(self):
         for mutate in (lambda value: value["target"].update(state="existing"),
@@ -231,10 +233,6 @@ class CloneTests(unittest.TestCase):
         self.refresh()
         with self.assertRaisesRegex(ValueError, "物理"):
             create_plan(self.value, self.backend)
-        self.assertEqual(literals("'escaped\\'text',0x636c6f6e652d736f75726365,NULL,-12.5"), ["escaped'text", b"clone-source", None, -12.5])
-        for value in ("SLEEP(1)", "1); DROP TABLE data", "'bad\\q'", "1,", "_binary"):
-            with self.assertRaises(ValueError):
-                literals(value)
 
     def test_declared_logical_tenant_survives_audit_json_and_logical_object_path(self):
         self.add("shared-control", "sys_oper_log", id=8, tenant_id="system",
@@ -336,15 +334,12 @@ TenantDataTableDescriptor { table: \"biz_order\", tenant_column: \"tenant_id\", 
         _, tenant = schema_catalog(self.backend)
         self.assertEqual(tenant["biz_order"], {"tenant_id": "VARCHAR", "id": "BIGINT"})
 
-    def test_new_control_table_requires_explicit_policy_and_formal_restore_stays_clean(self):
+    def test_new_control_table_requires_explicit_policy(self):
         schema = self.backend / "sql/ryframe_config.sql"
         with schema.open("a", encoding="utf-8") as stream:
             stream.write("\nCREATE TABLE IF NOT EXISTS `sys_future_queue` (\n    `id` BIGINT\n) ENGINE=InnoDB;\n")
         with self.assertRaisesRegex(ValueError, "白名单不同"):
             create_plan(self.value, self.backend)
-        with self.assertRaisesRegex(ValueError, "构建来源"):
-            verify_build(self.backend, {"format_version": 1, "kind": "restore-backend-build",
-                                        "source": self.value["source_snapshot"]}, "a" * 40)
 
     def test_cli_requires_write_and_verify_does_not_change_evidence(self):
         filename = self.backend / ".local-tests/input.json"

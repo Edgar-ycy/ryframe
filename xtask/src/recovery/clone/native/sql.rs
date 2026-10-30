@@ -50,35 +50,64 @@ pub(crate) fn for_each_row(
     path: &Path,
     catalog: &Catalog,
     only_table: Option<&str>,
-    mut visit: impl FnMut(&str, &Row) -> Result<()>,
+    visit: impl FnMut(&str, &Row) -> Result<()>,
 ) -> Result<()> {
     let stream = File::open(path)
         .map_err(|error| format!("无法读取复制数据转储 {}：{error}", path.display()))?;
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    if line != format!("{DATA_HEADER}\n") && line != format!("{DATA_HEADER}\r\n") {
+    for_each_reader(BufReader::new(stream), catalog, only_table, visit)
+}
+
+pub(crate) fn for_each_reader(
+    mut reader: impl BufRead,
+    catalog: &Catalog,
+    only_table: Option<&str>,
+    mut visit: impl FnMut(&str, &Row) -> Result<()>,
+) -> Result<()> {
+    if only_table.is_some_and(|table| !catalog.contains_key(table)) {
+        return Err("SQL 过滤表不属于完整目录".into());
+    }
+    let header = bounded_line(&mut reader)?.ok_or("数据转储缺少规范头")?;
+    if header != format!("{DATA_HEADER}\n") && header != format!("{DATA_HEADER}\r\n") {
         return Err("只接受现有工具规范化的数据转储".into());
     }
-    loop {
-        line.clear();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            break;
+    while let Some(line) = bounded_line(&mut reader)? {
+        let (table, row) = parse_row(line.trim_end_matches(['\r', '\n']), catalog)?;
+        if only_table.is_none_or(|selected| selected == table) {
+            visit(&table, &row)?;
         }
-        if read > MAX_ROW_BYTES {
-            return Err("单行导出超过受限检查大小".into());
-        }
-        let line = line.trim_end_matches(['\r', '\n']);
-        if let Some(table) = only_table
-            && !line.starts_with(&format!("INSERT INTO `{table}` "))
-        {
-            continue;
-        }
-        let (table, row) = parse_row(line, catalog)?;
-        visit(&table, &row)?;
     }
     Ok(())
+}
+
+fn bounded_line(reader: &mut impl BufRead) -> Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return if line.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(String::from_utf8(line)?))
+            };
+        }
+        let count = buffer
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(buffer.len(), |end| end + 1);
+        if line
+            .len()
+            .checked_add(count)
+            .is_none_or(|length| length > MAX_ROW_BYTES)
+        {
+            return Err("单行导出超过受限检查大小".into());
+        }
+        line.extend_from_slice(&buffer[..count]);
+        let complete = buffer[count - 1] == b'\n';
+        reader.consume(count);
+        if complete {
+            return Ok(Some(String::from_utf8(line)?));
+        }
+    }
 }
 
 pub(crate) fn parse_row(line: &str, catalog: &Catalog) -> Result<(String, Row)> {

@@ -306,14 +306,18 @@ def declared_tenants(value: dict, root: Path, old: dict, control: dict) -> set[s
     dumps = [dump for dump in value["databases"] if dump.get("key") == combined]
     if len(dumps) != 1:
         raise ValueError("必须恰有一个完整控制库转储")
+    artifact = dict(dumps[0]["artifact"])
+    path = bound_file(root, artifact)
     declared = set()
-    for _, row in rows(bound_file(root, dumps[0]["artifact"]), control, only_table="sys_tenant"):
+    for _, row in rows(path, control, only_table="sys_tenant"):
         tenant = row["tenant_id"]
         ambiguous = {value["source"]["scope_id"], *[db["database"] for db in old.values()]}
         if (not isinstance(tenant, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tenant)
                 or tenant in declared or tenant in ambiguous):
             raise ValueError("来源逻辑租户标识无效或重复")
         declared.add(tenant)
+    if bound_file(root, artifact) != path or dumps[0]["artifact"] != artifact:
+        raise ValueError("原始转储绑定在租户预读期间变化")
     if "system" not in declared:
         raise ValueError("完整来源必须包含系统租户")
     return declared
@@ -324,7 +328,7 @@ def database_plan(value: dict, root: Path, old: dict, new: dict, control: dict, 
         raise ValueError("必须完整列出每个数据库的数据转储")
     seen, result, observed = set(), [], state()
     actions, pending = schedule_actions(value), []
-    logical_tenants = declared_tenants(value, root, old, control)
+    logical_tenants = declared_tenants(value, root, old, control | tenant)
     forbidden = [value["source"]["scope_id"], value["source"]["object_endpoint"], *[db["database"] for db in old.values()]]
     for dump in value["databases"]:
         exact(dump, {"key", "tables", "artifact"})
@@ -338,7 +342,9 @@ def database_plan(value: dict, root: Path, old: dict, new: dict, control: dict, 
         if any(type(count) is not int or count < 0 for count in dump["tables"].values()):
             raise ValueError("表行数必须明确且非负")
         counts = dict.fromkeys(catalog, 0)
-        for table, row in rows(bound_file(root, dump["artifact"]), catalog):
+        artifact = dict(dump["artifact"])
+        path = bound_file(root, artifact)
+        for table, row in rows(path, catalog):
             if row.get("tenant_id") is not None and row["tenant_id"] not in logical_tenants:
                 raise ValueError("数据引用未登记的逻辑租户")
             reject_physical(row, forbidden, logical_tenants)
@@ -350,6 +356,8 @@ def database_plan(value: dict, root: Path, old: dict, new: dict, control: dict, 
                 validate_state(table, row)
             counts[table] += 1
             collect(observed, table, row, key)
+        if bound_file(root, artifact) != path or dump["artifact"] != artifact:
+            raise ValueError("原始转储绑定在完整扫描期间变化")
         if counts != dump["tables"]:
             raise ValueError("导出实际行数不符合完整表清单")
         result.append({"key": key, "source_database": old[key]["database"], "target_database": new[key]["database"],

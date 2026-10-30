@@ -194,7 +194,7 @@ fn declared_tenants(value: &Value, input: &ValidatedInput) -> Result<BTreeSet<St
     let mut result = BTreeSet::new();
     sql::for_each_row(
         &input.artifact_root.join(&binding.file),
-        &input.control,
+        &sql::all_columns(&input.control, &input.tenant, true),
         Some("sys_tenant"),
         |_, row| {
             let tenant = row

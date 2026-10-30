@@ -122,6 +122,8 @@ fn require_write_authorization(request: &Value) -> Result<()> {
                     | "staging-create"
                     | "database-configuration"
                     | "reference-sql-normalize"
+                    | "reference-sql-stream-create"
+                    | "reference-sql-stream-close"
                     | "reference-work-directory"
                     | "reference-copy"
                     | "reference-damage"
