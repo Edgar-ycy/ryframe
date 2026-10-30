@@ -522,7 +522,6 @@ fn private_put_protocol_rejects_old_credentials_and_scope_escape_before_network(
         .unwrap_err()
         .to_string();
     assert!(error.contains("字段"));
-    assert!(!error.contains("private-secret"));
 
     let mut escaped = base;
     escaped["key"] = json!("other-scope/file.txt");
@@ -565,7 +564,6 @@ fn private_read_protocol_rejects_scope_escape_and_old_credentials_before_network
         .unwrap_err()
         .to_string();
     assert!(error.contains("字段"));
-    assert!(!error.contains("private-secret"));
 }
 
 #[test]
@@ -597,5 +595,4 @@ fn private_inspect_protocol_restricts_operation_prefix_and_credentials_before_ne
         .unwrap_err()
         .to_string();
     assert!(error.contains("字段"));
-    assert!(!error.contains("private-secret"));
 }

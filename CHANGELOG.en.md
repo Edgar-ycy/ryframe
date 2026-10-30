@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Audit copy/recovery tests, merge duplicate missing-object coverage, and remove obsolete AWS CLI simulation and unintroduced-secret assertions while preserving conditional writes, unknown outcomes, concurrent completion, and real credential isolation. Correct file-binding assertions and case names. Two current test modules reuse workspace temporary directories to avoid Windows system-temp ACL failures during creation and cleanup.
+
 - Before creating configuration, environment preparation rejects output equal to or inside the reviewed reserved service root, explains that nothing was written, and recommends an independent directory; valid sibling and similarly prefixed directories remain allowed.
 
 - Fix complete evidence binding for ordinary source-export reconcile/resume: verify the original output, manifest, controller, request, source and storage provenance; bind the adopting execution source and complete generation/proof-file digests. Recovery publishes only its own receipt without re-exporting or rewriting original evidence.

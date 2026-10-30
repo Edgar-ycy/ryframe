@@ -154,9 +154,10 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
         self.assertFalse((self.output / "verified.json").exists())
         self.assertTrue((self.output / "failure.json").is_file())
 
-    def test_frozen_configuration_drift_rejects_after_join_without_mixing_credentials(self):
+    def test_frozen_plan_metadata_drift_rejects_after_join_without_mixing_bindings(self):
         barrier = threading.Barrier(5)
         release = threading.Event()
+        configuration = copy.deepcopy(self.plan["target"]["s3"]["configuration"])
 
         def hold(_index):
             barrier.wait(timeout=10)
@@ -180,8 +181,9 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
         self.assertCountEqual(self.finished, range(4))
         self.assertTrue(all(not any(name.startswith("AWS_") for name in value)
                             for value in self.environments))
-        self.assertTrue(all(request["configuration"]["secret_key"] == "secret-fixture"
+        self.assertTrue(all(request["configuration_binding"] == configuration
                             for request in self.requests))
+        self.assertTrue(all("configuration" not in request for request in self.requests))
         self.assertEqual(self.active, 0)
         self.assertFalse((self.output / "verified.json").exists())
         self.assertTrue((self.output / "failure.json").is_file())
