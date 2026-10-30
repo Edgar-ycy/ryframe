@@ -25,20 +25,13 @@ pub(crate) struct Models {
 }
 
 pub(crate) fn models(context: &Context) -> Result<Models> {
-    let loaded = catalog::load(&context.execution_backend)?;
-    let full_control = catalog::parse_schema(&std::fs::read_to_string(
-        context.execution_backend.join("sql/ryframe_config.sql"),
-    )?)?;
-    let mut full_tenant =
-        catalog::parse_schema(&std::fs::read_to_string(context.execution_backend.join(
-            "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs",
-        ))?)?;
-    full_tenant.extend(loaded.tenant.clone());
+    let loaded = catalog::load_ordered(&context.execution_backend, true)?;
+    let (full_control, full_tenant) = loaded.full.ok_or("源导出缺少完整 schema catalog")?;
     Ok(Models {
-        control: loaded.control,
-        tenant: loaded.tenant,
-        full_control,
-        full_tenant,
+        control: catalog::into_catalog(loaded.control),
+        tenant: catalog::into_catalog(loaded.tenant),
+        full_control: catalog::into_catalog(full_control),
+        full_tenant: catalog::into_catalog(full_tenant),
     })
 }
 

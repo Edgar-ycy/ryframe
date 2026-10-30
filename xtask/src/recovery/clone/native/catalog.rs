@@ -194,7 +194,7 @@ pub(crate) fn parse_schema(content: &str) -> Result<Catalog> {
     Ok(into_catalog(parse_ordered_schema(content)?))
 }
 
-fn into_catalog(ordered: OrderedCatalog) -> Catalog {
+pub(crate) fn into_catalog(ordered: OrderedCatalog) -> Catalog {
     ordered
         .into_iter()
         .map(|(table, columns)| (table, columns.into_iter().collect()))

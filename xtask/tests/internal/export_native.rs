@@ -30,6 +30,8 @@ const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 
 #[path = "export_native/recovery.rs"]
 mod recovery_tests;
+#[path = "export_native/schema.rs"]
+mod schema_tests;
 
 #[test]
 fn system_transport_environment_keeps_only_declared_fields_and_required_os_root() {

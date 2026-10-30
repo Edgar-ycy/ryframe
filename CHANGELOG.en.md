@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix source export omitting the standalone business migration ledger when rebuilding the full schema independently. Reuse the formal complete catalog and SDK ledger definition while retaining strict rejection of unknown tables, missing columns, and type drift.
+
 - Fix native managed copy/export subprocesses on Windows omitting SystemRoot, preventing MySQL from creating TCP/IP sockets. Inherit only OS SystemRoot when no case-insensitive explicit declaration exists, with explicit values taking precedence; do not inherit PATH, credentials, or application configuration overrides. Reject missing or empty values before creating evidence or starting a subprocess, preserving existing deadlines and source verification.
 
 - Fix the source-export stop proof incorrectly parsing the Worker `/readyz` path as part of its port. After validating the registered address, check the same listening port and continue to reject occupied API or Worker ports without relaxing resource-root address constraints.
