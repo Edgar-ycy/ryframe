@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Synchronize the committed, verified copy-tool consumer closure, retaining authorization projections in complete inventory and using explicitly bound native tools for target and fixture adapters. Remove replaced Python execution and dedicated tests. Tool-source changes require new reuse bridges and run manifests; preserve original product builds, initialization, exports and failure receipts.
+
 - Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.
 
 - Fix recovery acceptance rejecting current version-five rebuild ledgers while retaining exact-plan, complete-phase and release-predecessor checks. Bind report and ledger bytes before and after reading; failures do not trigger conversion or replay.

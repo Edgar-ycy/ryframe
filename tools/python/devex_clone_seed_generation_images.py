@@ -48,7 +48,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     verify_migrations(tools, execution, maintenance, "migrations")
     schema = schema_snapshot(tools, models, "before")
     captured = capture_side_inventory(execution, "source", tools, maintenance_path, output / "databases",
-                                      environment=environment, evidence_root=backend, control_environment=control_environment)
+                                      environment=environment, evidence_root=backend)
     inventories = {key: read_json(output / f"databases/after-target-{key}.json") for key in KEYS}
     owners = CaptureReader(tools, "source", output).owners("owners-before")
     inventory = capture_inventory(tools, execution, export_request, generation, models, "before", observed_at, observed=True)

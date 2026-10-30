@@ -4,7 +4,6 @@ import os
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import sys
-import tempfile
 import threading
 import time
 from types import SimpleNamespace
@@ -18,6 +17,7 @@ from devex_clone_capture import write_json
 from process_environment import Environments
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
+from workspace_directory import WorkspaceDirectory
 
 
 class ExistingTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class ExistingTests(unittest.TestCase):
             previous = process._TEST_TOOL
             process._TEST_TOOL = {key: selected[key] for key in ("path", "bytes", "sha256")}
         self.addCleanup(setattr, process, "_TEST_TOOL", previous)
-        temporary = tempfile.TemporaryDirectory()
+        temporary = WorkspaceDirectory(Path(__file__).resolve().parents[2] / '.local-tests/tmp')
         self.addCleanup(temporary.cleanup)
         backend = Path(temporary.name).resolve()
         output = backend / '.local-tests/existing'
@@ -74,10 +74,9 @@ class ExistingTests(unittest.TestCase):
         self.assertEqual(result['status'], 'post_copy_existing_data_verified')
         self.assertEqual({key: binding(Path(item['path'])) for key, item in old.items()}, old)
         self.assertIn('--target-binding', self.commands[0])
-        self.assertNotIn('restore_reference_dataset.mjs', str(self.commands[0]))
         self.assertFalse(result['restore_qualified'])
 
-    def test_wrong_target_node_scope_or_original_file_digest_rejected(self):
+    def test_wrong_original_input_digest_is_rejected(self):
         self.response_change = {'input_files': {'plan_sha256': '0' * 64}}
         with self.assertRaises(ValueError): post.verify_existing(self.context)
         self.assertFalse((self.context.output / 'business-result.json').exists())

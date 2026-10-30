@@ -259,10 +259,6 @@ class CloneProtocolTests(unittest.TestCase):
     def test_all_private_kinds_require_valid_native_binding_before_dispatch(self):
         requests = [
             self.payload("status", {"run_dir": str(self.run)}, False),
-            {"format_version": 1, "kind": cli.FRESH_TARGET_PROTOCOL_KIND,
-             "request": {"backend_dir": str(self.backend), "workspace": str(self.new_run),
-                         "operation": "status", "request": None, "environment": None,
-                         "storage_run": None, "observation_dir": None, "write": False}},
             {"format_version": 1, "kind": cli.SEED_SOURCE_PROTOCOL_KIND,
              "request": {"backend_dir": str(self.backend), "run_dir": str(self.run),
                          "operation": "source-generation-status", "request": None, "write": False}},

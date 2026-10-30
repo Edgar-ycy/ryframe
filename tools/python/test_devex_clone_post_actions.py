@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -14,6 +13,7 @@ import devex_clone_post_actions as actions
 from devex_clone_capture import read_json
 from devex_clone_schedule import schedule_row_sha256
 from devex_clone_run_state import binding
+from workspace_directory import WorkspaceDirectory
 
 COLUMNS = dict(id="BIGINT", tenant_id="VARCHAR", name="VARCHAR", handler_key="VARCHAR", cron_expression="VARCHAR",
                timezone="VARCHAR", enabled="TINYINT", misfire_policy="VARCHAR", concurrency_policy="VARCHAR",
@@ -57,7 +57,7 @@ class ActionsTests(unittest.TestCase):
             previous = process._TEST_TOOL
             process._TEST_TOOL = {key: selected[key] for key in ("path", "bytes", "sha256")}
         self.addCleanup(setattr, process, "_TEST_TOOL", previous)
-        temporary = tempfile.TemporaryDirectory()
+        temporary = WorkspaceDirectory(Path(__file__).resolve().parents[2] / '.local-tests/tmp')
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         base = self.backend / '.local-tests/run/post-copy'
@@ -81,7 +81,6 @@ class ActionsTests(unittest.TestCase):
         self.context.row = lambda action: {'row': copy.deepcopy(self.context.rows[action['schedule_id']]),
             'database_now': '2026-09-04 07:00:02' if not self.context.rows[action['schedule_id']]['enabled'] else '2026-09-04 07:00:00'}
         self.addCleanup(patch.stopall)
-        patch('devex_clone_post_model.schema_catalog', return_value=({'sys_job_schedule': COLUMNS}, {})).start()
         patch('devex_clone_post_model.schema_catalog', return_value=({'sys_job_schedule': COLUMNS}, {})).start()
         self.bridge = FakeBridge(self.context)
         self.number = 0

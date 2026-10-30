@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from artifact_digests import filesystem_path
+from restore_build import file_digest
 from devex_clone_factory import CloneSession
-from devex_clone_inventory import _Capture
 from devex_clone_post_context import Context
 from restore_reference import work_directory
 from restore_reference_fixture import environment
@@ -22,6 +22,11 @@ from restore_reference_io import DatabaseVerificationError, ExternalTools, Verif
 class VerificationStdoutTests(unittest.TestCase):
     def setUp(self):
         self.backend, self.plan = environment(self)
+        defaults = Path(self.plan['source']['databases'][0]['defaults_file'])
+        defaults.write_text(defaults.read_text(encoding='utf-8') + 'ssl-mode=DISABLED\n', encoding='utf-8')
+        for side in ('source', 'target'):
+            for database in self.plan[side]['databases']:
+                database['defaults_sha256'] = file_digest(defaults)['sha256']
         self.work = work_directory(self.plan)
         self.database = self.plan['source']['databases'][0]
         self.stub = self.work / 'query-stub.py'
@@ -56,6 +61,10 @@ class VerificationStdoutTests(unittest.TestCase):
         self.assertEqual(artifact['bytes'], len(raw))
         self.assertEqual(artifact['sha256'], hashlib.sha256(raw).hexdigest())
         return receipt, raw
+
+    def test_invalid_diagnostic_kind_cannot_publish_arbitrary_message(self):
+        with self.assertRaises(ValueError):
+            DatabaseVerificationError('private-sql', 'shared-control', 1, 'fixture-secret')
 
     def test_native_stdout_file_success_has_exact_raw_bytes_and_one_call(self):
         self.assertEqual(self.tools.database_verification_response(self.database, 'identity'), 'uuid-1\tsource_control')
@@ -151,18 +160,16 @@ class VerificationStdoutTests(unittest.TestCase):
         session.output = self.work / 'session'
         session.output.mkdir()
         session.copy_owner, session.secret_redaction, session.runner = None, {}, self.native
-        capture = object.__new__(_Capture)
-        capture.output, capture.environment = self.work, self.environment
-        capture.redaction, capture.original = {}, SimpleNamespace(run=session.command)
-        capture.evidence_names = set()
-        self.tools.run = capture.run
+        session.database_credentials = {"backend": str(self.backend),
+                                        "databases": self.plan['source']['databases'] + self.plan['target']['databases']}
+        self.tools.run = session.command
         return session
 
-    def test_nested_inventory_and_session_receipts_bind_same_actual_output(self):
+    def test_session_receipt_binds_same_actual_output(self):
         session = self.nested()
         self.tools.database_verification_response(self.database, 'identity')
         actual, _ = self.receipt()
-        for root in (self.work, session.output):
+        for root in (session.output,):
             receipt = json.loads(next(root.glob('command-*.json')).read_text(encoding='utf-8'))
             self.assertEqual(receipt['stdout_file'], actual['stdout_file'])
             self.assertEqual(receipt['stdout'], 'uuid-1\tsource_control\n')
@@ -174,7 +181,7 @@ class VerificationStdoutTests(unittest.TestCase):
         with self.assertRaises(DatabaseVerificationError):
             self.tools.database_verification_response(self.database, 'identity')
         actual, _ = self.receipt()
-        for root in (self.work, session.output):
+        for root in (session.output,):
             receipt = json.loads(next(root.glob('command-*.json')).read_text(encoding='utf-8'))
             self.assertEqual(receipt['stdout_file'], actual['stdout_file'])
             self.assertEqual((receipt['stdout'], receipt['returncode'], receipt['error_type']), ('partial\n', 9, 'CalledProcessError'))
@@ -182,6 +189,8 @@ class VerificationStdoutTests(unittest.TestCase):
     def test_post_context_records_same_file_without_changing_other_output(self):
         context = object.__new__(Context)
         context.output, context.redaction, context.runner = self.work, {}, self.native
+        context.database_credentials = {"backend": str(self.backend),
+                                        "databases": self.plan['source']['databases'] + self.plan['target']['databases']}
         self.tools.run = context.run
         self.tools.database_verification_response(self.database, 'identity')
         actual, _ = self.receipt()
@@ -195,7 +204,7 @@ class VerificationStdoutTests(unittest.TestCase):
             with self.assertRaises(OSError) as caught:
                 self.tools.database_verification_response(self.database, 'identity')
         self.assertIs(caught.exception, error)
-        for root in (self.work, self.work / 'session'):
+        for root in (self.work / 'session',):
             receipt = json.loads(next(root.glob('command-*.json')).read_text(encoding='utf-8'))
             self.assertIsNone(receipt['stdout'])
             self.assertEqual(receipt['stdout_capture_error'], 'OSError')

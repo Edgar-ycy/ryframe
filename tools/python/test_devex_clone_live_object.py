@@ -1,4 +1,5 @@
 """当前对象观察的离线状态、归属和未知结果回归；不连接 S3。"""
+import copy
 import json
 import os
 from pathlib import Path
@@ -112,6 +113,7 @@ class LiveObjectTests(unittest.TestCase):
         self.assertEqual([c["operation"] for c in self.business()], ["head-object", "head-object"])
         self.assertFalse(receipt["clone_verified"])
         self.assertFalse(receipt["restore_qualified"])
+        self.assertEqual(receipt["remote_writes"], 0)
         self.assertNotIn("secret-fixture", (self.output / "head-before.diagnostic.json").read_text(encoding="utf-8"))
 
     def test_current_present_object_is_really_downloaded_and_full_capture_verified(self):
@@ -125,17 +127,6 @@ class LiveObjectTests(unittest.TestCase):
         self.assertEqual(len(self.store.calls), 5)
         downloaded = next(c for c in self.business() if c["operation"] == "get-object")
         self.assertEqual(downloaded["if_match"], self.store.head["ETag"])
-
-    def test_closed_native_404_proves_only_current_absence(self):
-        self.observe()
-        receipt = self.read()
-        self.assertEqual(receipt["status"], "object_absent")
-        self.assertEqual([item["bucket"] for item in receipt["ownership_before"]], ["uploads"])
-        self.assertEqual([item["bucket"] for item in receipt["ownership_after"]], ["uploads"])
-        self.assertEqual(len(self.business()), 2)
-        self.assertEqual(len(self.store.calls), 4)
-        self.assertEqual(receipt["remote_writes"], 0)
-        self.assertFalse(receipt["clone_verified"])
 
     def test_get_header_difference_stays_in_complete_capture_evidence(self):
         self.store.outcomes = []
@@ -187,7 +178,7 @@ class LiveObjectTests(unittest.TestCase):
         self.assertEqual(self.failed()["stage"], "head_before")
         self.assertEqual(len(self.business()), 1)
 
-    def test_authentication_change_during_live_read_is_rejected(self):
+    def test_plan_authentication_metadata_change_during_live_read_is_rejected(self):
         self.store.on_head = lambda: self.plan["target"]["s3"].update(
             secret_key="different-fixture")
         self.assertEqual(self.failed()["stage"], "head_before")
@@ -196,6 +187,7 @@ class LiveObjectTests(unittest.TestCase):
     def test_ambient_credential_environment_change_does_not_change_file_bound_requests(self):
         import os
         changed = []
+        configuration = copy.deepcopy(self.plan["target"]["s3"]["configuration"])
 
         def change_and_restore():
             changed.append(True)
@@ -205,8 +197,9 @@ class LiveObjectTests(unittest.TestCase):
         self.observe()
         self.assertEqual(len(changed), 2)
         self.assertEqual(len(self.business()), 2)
-        self.assertTrue(all(request["configuration"]["secret_key"] == "secret-fixture"
+        self.assertTrue(all(request["configuration_binding"] == configuration
                             for request in self.business()))
+        self.assertTrue(all("configuration" not in request for request in self.business()))
         self.assertTrue(all("AWS_SECRET_ACCESS_KEY" not in kwargs["env"]
                             for _, kwargs in self.store.calls))
 

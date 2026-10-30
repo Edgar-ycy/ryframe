@@ -417,14 +417,15 @@ def _native(operation: str, backend: Path, **arguments) -> dict:
     if tool_binding() is None:
         raise ValueError("目标绑定缺少受管 Rust 工具；请通过 run_checks.py 或正式 xtask 入口执行")
     def invoke(command, **options):
-        options["timeout"] = 600 if operation in {"fresh-prepare", "fresh-resume-prepare"} else 30
+        # 完整复验沿用各读命令期限，不增加整体短上界。
+        options["timeout"] = None if operation == "fresh-verify-target" else 30
         return subprocess.run(command, **options)
 
     try:
         result, response = native_invoke(
             "__target-binding", {"format_version": 1, "operation": operation,
                                   "backend": str(backend), "arguments": arguments},
-            invoke, may_write=operation in {"fresh-prepare", "fresh-resume-prepare"},
+            invoke, may_write=operation == "fresh-verify-target",
         )
     except NativeS3InvocationError as error:
         raise ValueError("原生目标绑定进程未完成：" + str(error.error_type)
@@ -561,8 +562,3 @@ def generation(backend: Path, request: dict, run) -> dict:
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),
             "review_sha256": request["review"]["sha256"], "selected": selected,
             "operator_declared_controlled_generation_only": True, "external_writers_discovered": False}
-
-
-def validate_reset_manifest(manifest: dict, request: dict, original: dict) -> None:
-    _native("reset-manifest", Path(original["maintenance"]["backend_root"]),
-            manifest=manifest, request=request, original=original)

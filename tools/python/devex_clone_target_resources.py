@@ -18,7 +18,7 @@ from native_s3_client import (NativeS3InvocationError, inspect as native_s3_insp
 from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
-from restore_reference_plan import BUCKETS, identifier, plan_hash, configuration_binding
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 
 
 def fixture_redis_tool_wsl(backend: Path, cache_binding: dict) -> dict:
@@ -96,25 +96,6 @@ class Resources:
                 "--batch", "--raw", "--skip-column-names", "--binary-mode", "--default-character-set=utf8mb4"]
         # 不指定 database，才能在 CREATE 前观察明确名称；SQL 只来自本模块固定操作。
         return self.command("mysql-" + db["key"], args, data=sql.encode(), env=self.tools.mysql_environment()).stdout.decode("utf-8").strip()
-
-    def database_state(self, db: dict, *, exists: bool, empty: bool = False) -> dict:
-        name = identifier(db["database"])
-        raw = self._mysql(db, f"SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';")
-        expected = [db["server_uuid"], name] if exists else [db["server_uuid"]]
-        if raw.splitlines() != expected:
-            raise ValueError("目标 MySQL UUID 或精确数据库存在性不符")
-        if empty:
-            tables = self._mysql(db, f"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{name}' ORDER BY TABLE_NAME;")
-            if tables:
-                raise ValueError("本次新库出现非空表或 view，拒绝 reset 接管")
-        return {"server_uuid": db["server_uuid"], "database": name, "exists": exists, "empty_checked": empty}
-
-
-    def drop_empty_database(self, db: dict) -> None:
-        """只回收已由当前 fresh 代次确认为空的精确数据库。"""
-        self.database_state(db, exists=True, empty=True)
-        self._mysql(db, f"DROP DATABASE `{identifier(db['database'])}`;")
-        self.database_state(db, exists=False)
 
     def _s3(self, stage: str, request: dict, invoke) -> dict:
         if dict(os.environ) != self.environment:
@@ -306,14 +287,6 @@ class Resources:
             raise ValueError("Redis owner 或精确 sentinel 与新代次不符")
         return {"keys": sorted(found), "owner": owner, "sentinel": marker}
 
-
-    def remove_sentinel(self) -> None:
-        reset = self.request["reset"]
-        if self.redis_state(initialized=False, sentinel=True)["sentinel"] != reset["sentinel_value"]:
-            raise ValueError("Redis sentinel 不属于本次 fresh 目标，拒绝删除")
-        if self._redis(["DEL", reset["sentinel_key"]]) != 1:
-            raise ValueError("Redis sentinel 删除未确认")
-        self.redis_state(initialized=False, sentinel=False)
 
     def _cache_owned_lock_identity(self, cache_request: dict) -> int | None:
         initialized = bound_file(self.backend, cache_request["initialized"])

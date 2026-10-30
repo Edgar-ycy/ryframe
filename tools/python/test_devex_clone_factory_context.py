@@ -117,8 +117,10 @@ class TargetHistoryTests(unittest.TestCase):
 
 
     def test_external_binding_changed_during_context_cannot_rebind_publication(self):
-        def observe(*args, storage_run=None, owned_lock_identity=None):
+        def observe(*args, storage_run=None, owned_lock_identity=None, request_descriptor=None):
             self.assertIsNone(storage_run)
+            prepared = json.loads((self.f.output / "prepare.json").read_text(encoding="utf-8"))
+            self.assertEqual(request_descriptor, prepared["request"])
             path = self.f.output / "initialized.json"
             path.write_bytes(path.read_bytes() + b"\n")
             self.binding.update(self.bind(path))

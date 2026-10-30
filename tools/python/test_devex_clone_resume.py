@@ -79,7 +79,7 @@ class ResumeTests(unittest.TestCase):
         paths = [self.output / name for name in ("plan.json", "input.json", "session.json")]
         original = {path: path.read_bytes() for path in paths}
         with patch.object(factory.CloneSession, "prepare", side_effect=AssertionError("must not prepare again")), \
-                patch.object(factory, "verify_target", side_effect=AssertionError("copied target is not fresh")):
+                patch.object(factory, "target_binding", side_effect=AssertionError("copied target is not fresh")):
             result = self.continue_copy("reconcile")
             self.assertEqual(result["steps"], {})
             self.assertEqual(len(result["pending_steps"]), 3)

@@ -67,11 +67,14 @@ class FactoryTests(unittest.TestCase):
         self.mutate_final_object = None
         self.source_object_passes = 0
         self.environments = {"source": dict(os.environ, CLONE_SIDE="source"), "target": dict(os.environ, CLONE_SIDE="target")}
+        temporary = self.local / "target-private-tmp"
+        temporary.mkdir()
+        self.environments["target"].update(TEMP=str(temporary), TMP=str(temporary))
         self.patches = [patch.object(factory, "verify_source_export", return_value=self.verified),
                         patch.object(factory, "verify_export_bindings"),
                         patch.object(factory, "verify_generation", side_effect=self.generation),
                         patch.object(factory, "target_history", side_effect=self.history),
-                        patch.object(factory, "verify_target", side_effect=self.preflight),
+                        patch.object(factory, "target_binding", side_effect=self.preflight),
                         patch.object(factory, "capture_side_inventory", side_effect=self.inventory),
                         patch.object(factory, "observe_source_objects", side_effect=self.source_objects),
                         patch.object(factory, "observe_source_object", side_effect=self.source_object),
@@ -103,7 +106,15 @@ class FactoryTests(unittest.TestCase):
             keys.add("clone-target/system/unknown")
         return keys
 
-    def preflight(self, *_, storage_run=None):
+    def preflight(self, operation, backend, **arguments):
+        self.assertEqual(os.environ["CLONE_SIDE"], "target")
+        self.assertEqual(operation, "fresh-verify-target")
+        self.assertEqual(backend, self.backend)
+        self.assertEqual(set(arguments), {"initialized", "observation", "storage_run", "temporary_directory", "app_env", "write"})
+        self.assertEqual(arguments["temporary_directory"], self.environments["target"]["TEMP"])
+        self.assertEqual(arguments["initialized"], self.initialized)
+        self.assertEqual(arguments["app_env"], "test")
+        self.assertIs(arguments["write"], True)
         if self.prepared_target_changed:
             raise ValueError("actual initial inventory changed")
         return {"initialized": self.initialized}
@@ -125,7 +136,7 @@ class FactoryTests(unittest.TestCase):
                                              else (body, {**metadata, "ContentLanguage": "en"}))
         return {"fixture": "all source objects observed"}
 
-    def source_object(self, backend, tools, verified, bucket, key, output, *, environment, evidence_root):
+    def source_object(self, backend, tools, verified, bucket, key, output, *, environment):
         self.assertEqual(environment["CLONE_SIDE"], "source")
         self.assertTrue(key.startswith("clone-source/"))
 
@@ -240,6 +251,14 @@ class FactoryTests(unittest.TestCase):
             self.execute()
         self.assertEqual(self.case.writes(), [])
         self.assertTrue((self.output / "failure.json").exists())
+
+    def test_missing_target_temporary_directory_never_invokes_native_verification_or_copy_writes(self):
+        self.environments["target"].pop("TEMP")
+        with patch.object(factory, "target_binding") as verify:
+            with self.assertRaisesRegex(ValueError, "TEMP/TMP"):
+                self.execute()
+            verify.assert_not_called()
+        self.assertEqual(self.case.writes(), [])
 
     def test_different_mysql_tool_rejected_before_any_write(self):
         self.target_request["tools"] = copy.deepcopy(self.target_request["tools"])

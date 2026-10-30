@@ -15,19 +15,26 @@ import process_environment as environment
 class ConfiguredEnvironmentTests(unittest.TestCase):
     def test_only_inherits_system_locale_and_processor_values(self):
         inherited = {
-            "PATH": "tools",
+            "Path": "tool-path",
             "LC_ALL": "C.UTF-8",
             "PROCESSOR_ARCHITECTURE": "AMD64",
+            "temp": "ambient-temp",
+            "app_env": "prod",
+            "cargo_home": "unsafe",
+            "https_proxy": "unsafe",
+            "CUSTOM_PROXY": "unsafe",
+            "safe": "kept",
             "HTTP_PROXY": "http://proxy.invalid",
             "APP_AUTH_JWT_SECRET": "secret",
         }
         self.assertEqual(
-            environment.configured({"APP_SCOPE_ID": "scope"}, inherited),
+            environment.configured({"TEMP": "private-temp", "APP_ENV": "test"}, inherited),
             {
-                "PATH": "tools",
+                "Path": "tool-path",
                 "LC_ALL": "C.UTF-8",
                 "PROCESSOR_ARCHITECTURE": "AMD64",
-                "APP_SCOPE_ID": "scope",
+                "TEMP": "private-temp",
+                "APP_ENV": "test",
             },
         )
 
