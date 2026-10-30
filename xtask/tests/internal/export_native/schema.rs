@@ -226,3 +226,93 @@ fn schema_snapshot_accepts_full_catalog_and_rejects_unknown_tables_missing_colum
         }
     }
 }
+
+struct DumpTransport {
+    calls: AtomicUsize,
+}
+
+impl Transport for DumpTransport {
+    fn run(&self, spec: CommandSpec) -> crate::Result<CommandOutput> {
+        use std::io::Write;
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+
+        let native::export::transport::StdoutTarget::File(path) = spec.stdout else {
+            panic!("数据库转储必须独占文件输出")
+        };
+        let index = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        writeln!(file, "INSERT INTO `biz_order` (`id`) VALUES ({index});")?;
+        Ok(CommandOutput {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
+    fn s3(&self, _: native::s3::Request) -> crate::Result<Value> {
+        panic!("数据库批量转储不得访问对象服务")
+    }
+}
+
+#[test]
+fn multi_database_export_owns_one_dump_directory_and_refuses_replay_without_overwriting() {
+    let fixture = Fixture::new();
+    let mut context = object_capture_context(&fixture);
+    let original = context.request["source"]["databases"][0].clone();
+    context.request["source"]["databases"] = json!(
+        ["dedicated-a", "dedicated-b", "shared", "shared-control"]
+            .into_iter()
+            .map(|key| {
+                let mut database = original.clone();
+                database["key"] = json!(key);
+                database["database"] = json!(format!("fixture_{}", key.replace('-', "_")));
+                database
+            })
+            .collect::<Vec<_>>()
+    );
+    let transport = DumpTransport {
+        calls: AtomicUsize::new(0),
+    };
+    let models = database::Models {
+        control: Default::default(),
+        tenant: catalog::Catalog::from([(
+            "biz_order".into(),
+            catalog::Columns::from([("id".into(), "BIGINT".into())]),
+        )]),
+        full_control: Default::default(),
+        full_tenant: Default::default(),
+    };
+    let dumps = native::export::capture::capture_dumps(&context, &transport, &models).unwrap();
+    assert_eq!(dumps.len(), 4);
+    for (index, dump) in dumps.iter().enumerate() {
+        let path = context
+            .output()
+            .join(dump["artifact"]["file"].as_str().unwrap());
+        let content = fs::read(&path).unwrap();
+        assert_eq!(dump["tables"]["biz_order"], 1);
+        assert_eq!(dump["artifact"]["sha256"], sha(&content));
+        assert_eq!(dump["artifact"]["bytes"], content.len() as u64);
+        assert_eq!(
+            String::from_utf8(content).unwrap(),
+            format!(
+                "-- ryframe-reference-data-v1\nINSERT INTO `biz_order` (`id`) VALUES ({});\n",
+                index + 1
+            )
+        );
+        assert!(!path.with_extension("raw.sql").exists());
+    }
+    let before = snapshot(&context.output());
+    let error = native::export::capture::capture_dumps(&context, &transport, &models)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("无法独占创建本次数据库转储目录"));
+    assert!(error.contains("不覆盖或重放"));
+    assert_eq!(transport.calls.load(Ordering::Relaxed), 4);
+    assert_eq!(snapshot(&context.output()), before);
+}

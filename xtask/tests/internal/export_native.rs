@@ -28,6 +28,8 @@ use crate::{
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 
+#[path = "export_native/inventory.rs"]
+mod inventory_tests;
 #[path = "export_native/recovery.rs"]
 mod recovery_tests;
 #[path = "export_native/schema.rs"]

@@ -20,7 +20,7 @@ use super::{
     database::{self, Models},
     input::Context,
     inventory, object, proof, recovery,
-    transport::SystemTransport,
+    transport::{SystemTransport, Transport},
     verify,
 };
 use crate::{Result, cli::CloneSide};
@@ -138,11 +138,18 @@ fn capture_before(context: &Context, transport: &SystemTransport) -> Result<Capt
     })
 }
 
-fn capture_dumps(
+pub(crate) fn capture_dumps<T: Transport>(
     context: &Context,
-    transport: &SystemTransport,
+    transport: &T,
     models: &Models,
 ) -> Result<Vec<Value>> {
+    let directory = context.output().join("databases");
+    fs::create_dir(&directory).map_err(|error| {
+        format!(
+            "无法独占创建本次数据库转储目录 {}：{error}；保留现场，不覆盖或重放",
+            directory.display()
+        )
+    })?;
     let mut dumps = Vec::new();
     for database in context.databases()? {
         let (counts, artifact) = database::dump(context, transport, &database, models)?;

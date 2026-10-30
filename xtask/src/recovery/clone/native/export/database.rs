@@ -148,7 +148,6 @@ pub(crate) fn dump<T: Transport>(
     let combined = database["kind"].as_str() == Some("combined");
     let catalog = sql::all_columns(&models.control, &models.tenant, combined);
     let directory = context.output().join("databases");
-    fs::create_dir(&directory).map_err(|error| format!("无法创建数据库转储目录：{error}"))?;
     let raw = directory.join(format!("{key}.raw.sql"));
     let output = directory.join(format!("{key}.sql"));
     let defaults = validate_defaults(Path::new(

@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::lifecycle::{manifest, stage::StageRequest};
 use crate::Result;
 
-mod capture;
+pub(crate) mod capture;
 pub(crate) mod database;
 mod evidence;
 pub(crate) mod input;

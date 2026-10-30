@@ -216,9 +216,10 @@ pub(crate) fn complete_selected(
         "objects",
     ];
     let runtime = json_io::exact(runtime, &fields, "常规库存")?;
-    let by_key = collect_targets(runtime, targets, &declared)?;
+    let mut by_key = collect_targets(runtime, &targets, &declared)?;
     let mut seen = BTreeSet::new();
     check_runtime_databases(runtime, &by_key, &mut seen)?;
+    include_projections(&targets, &mut by_key)?;
     check_empty_targets(&declared, &by_key, &seen)?;
     let mut value = json!({
         "scope_id": runtime["scope_id"],
@@ -235,13 +236,13 @@ pub(crate) fn complete_selected(
 
 fn collect_targets(
     runtime: &serde_json::Map<String, Value>,
-    targets: Vec<Value>,
+    targets: &[Value],
     declared: &BTreeSet<String>,
 ) -> Result<BTreeMap<String, Value>> {
     let mut by_key = BTreeMap::new();
     for target in targets {
         let target = exact(
-            &target,
+            target,
             &[
                 "scope_id",
                 "control_schema_fingerprint",
@@ -280,6 +281,36 @@ fn collect_targets(
         return Err("逐目标库存未覆盖全部登记目标".into());
     }
     Ok(by_key)
+}
+
+fn include_projections(targets: &[Value], by_key: &mut BTreeMap<String, Value>) -> Result<()> {
+    for target in targets {
+        let root = &target["target"];
+        let key = root["database"]["key"].as_str().ok_or("库存目标缺少 key")?;
+        let preserved = json_io::array(&root["preserved_tables"], "逐目标保留表")?;
+        let tables = by_key
+            .get_mut(key)
+            .and_then(|database| database.get_mut("tables"))
+            .and_then(Value::as_array_mut)
+            .ok_or("逐目标库存缺少表")?;
+        // 先核对原业务像，再纳入需要随业务恢复的授权投影；账本与归属仍保留原职责。
+        tables.extend(
+            preserved
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        row["table"].as_str(),
+                        Some(
+                            "biz_data_scope_owner"
+                                | "biz_data_scope_dept"
+                                | "biz_data_scope_projection"
+                        )
+                    )
+                })
+                .cloned(),
+        );
+    }
+    Ok(())
 }
 
 fn check_runtime_databases(
