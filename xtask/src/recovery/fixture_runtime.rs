@@ -17,8 +17,14 @@ mod binding;
 mod browser;
 #[path = "fixture_runtime/build.rs"]
 mod build;
+#[path = "fixture_runtime/dataset.rs"]
+mod dataset;
 #[path = "fixture_runtime/dependency.rs"]
 mod dependency;
+
+pub(in crate::recovery) fn dataset(root: &Path, operation: &str, args: &Value) -> Result<Value> {
+    dataset::run(root, operation, args)
+}
 #[path = "fixture_runtime/execution.rs"]
 mod execution;
 #[path = "fixture_runtime/frontend.rs"]

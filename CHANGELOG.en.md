@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Move the fixture dataset plan/prepare factory to Rust, reusing native runtime provenance and held input protection instead of recomputing path strings across languages. Preserve the existing data preparation responsibility, explicit target side, full scale and 43200-second budget. Capture managed child diagnostics with redaction and retain unknown-write evidence without automatic replay. Remove the replaced Python factory, its private protocol and obsolete tests while retaining other current shared consumers.
+
 - Fix API/Worker startup handoff using the business readiness timeout as the total result collection window. Result collection now uses the remaining budget of the same 300-second controller deadline; the 120-second preparation and 60-second business readiness limits remain unchanged. Timeouts preserve original receipts without replay and direct operators to read-only status or explicit reconcile.
 
 - Fix services lifecycle rejection of different Windows separator spellings for the same input file. After controlled-file location checks, retain the registered descriptor path and strict byte/hash binding. Owner remains limited to the current run state.json; existing receipts are not re-signed and identical-content copies are rejected.

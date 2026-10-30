@@ -45,6 +45,25 @@ pub(super) struct Runtime {
 }
 
 impl Runtime {
+    pub(super) fn protect(
+        &self,
+    ) -> Result<Vec<crate::recovery::clone::native::target_verify::guard::Inputs>> {
+        use crate::recovery::clone::native::target_verify::guard::Inputs;
+        let mut protected = self
+            .sources
+            .iter()
+            .map(plan::SourceGuard::protect)
+            .collect::<Result<Vec<_>>>()?;
+        let paths = self
+            .guards
+            .iter()
+            .chain(std::iter::once(&self.environment_guard))
+            .map(|guard| path(&guard["descriptor"]["path"]))
+            .collect::<Result<Vec<_>>>()?;
+        protected.push(Inputs::open(paths)?);
+        self.verify()?;
+        Ok(protected)
+    }
     pub(super) fn load(backend: &Path, environment: &Path, output: &Path) -> Result<Self> {
         let boot = bootstrap(backend, environment)?;
         let execution = path(&boot["execution"])?;
@@ -139,14 +158,20 @@ impl Runtime {
         unchanged(&self.environment_guard)?;
         let mut command =
             full_stack::worker::control_command(role, &self.execution, &self.output, action, 60.0)?;
+        self.configure_environment(&mut command)?;
+        Ok(command)
+    }
+
+    /// 只叠加已绑定的应用环境与可选临时目录，操作系统环境由调用方保留。
+    pub(super) fn configure_environment(&self, command: &mut std::process::Command) -> Result<()> {
+        unchanged(&self.environment_guard)?;
         command.env("APP_ENV", text(&self.private["APP_ENV"])?);
         for key in ["TEMP", "TMP"] {
             if let Some(value) = self.private[key].as_str() {
                 command.env(key, value);
             }
         }
-        unchanged(&self.environment_guard)?;
-        Ok(command)
+        unchanged(&self.environment_guard)
     }
 
     pub(super) fn summary(&self) -> Result<Value> {
