@@ -233,7 +233,7 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     let temporary = tempfile::tempdir_in(&parent).unwrap();
     let root = super::super::super::portable_path(temporary.path());
     let review = ready(review(&root));
-    let execution = root.join("fixture/backend");
+    let execution = root.join("business-backend");
     let reference = execution.join(".local-tests").join("reference-fixture");
     std::fs::create_dir_all(&reference).unwrap();
     let fixture = json!({"format_version":1,"fixture":"business","status":"ready","sources":{"backend":{"head":"abc"}},
@@ -257,13 +257,7 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     unsigned.as_object_mut().unwrap().remove("sha256");
     assert_eq!(plan["sha256"], digest::plan_hash(&unsigned).unwrap());
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
-    let output = reference.join("environment-seed-r1");
-    let (code, allowed) = request(
-        "prepare-output",
-        json!({"backend":backend,"plan":plan,"output":output}),
-    );
-    assert_eq!(code, 0, "{allowed}");
-    assert!(!output.exists());
+    assert_reviewed_output_layout(&backend, &reference, &plan);
     let wrong = root.join("coordinator-only-environment");
     let (code, denied) = request(
         "prepare-output",
@@ -300,6 +294,55 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     )
     .unwrap();
     assert_ne!(request("plan", args).0, 0);
+}
+
+fn assert_reviewed_output_layout(
+    backend: &std::path::Path,
+    reference: &std::path::Path,
+    plan: &Value,
+) {
+    let future = reference.join("run-r1");
+    let mut forbidden = vec![future.clone(), future.join("private-credential-marker")];
+    #[cfg(windows)]
+    {
+        forbidden.push(std::path::PathBuf::from(
+            future
+                .to_str()
+                .unwrap()
+                .to_ascii_uppercase()
+                .replace('\\', "/"),
+        ));
+        forbidden.push(std::path::PathBuf::from(format!(
+            "{}/RUN-R1\\config",
+            reference.to_str().unwrap().replace('\\', "/")
+        )));
+    }
+    for output in forbidden.drain(..) {
+        let (code, denied) = request(
+            "prepare-output",
+            json!({"backend":backend,"plan":plan,"output":output}),
+        );
+        assert_ne!(code, 0, "{denied}");
+        let message = denied["error"]["message"].as_str().unwrap();
+        assert!(message.contains("保留服务根"), "{denied}");
+        assert!(message.contains("未写入") && message.contains("同级独立新目录"));
+        assert!(!denied.to_string().contains("private-credential-marker"));
+        assert_eq!(denied["error"]["remote_write_may_have_occurred"], false);
+        assert!(!output.exists());
+        assert!(!future.exists());
+        assert!(std::fs::read_dir(reference).unwrap().next().is_none());
+    }
+    for name in ["environment-seed-r1", "run-r1-extra", "runtime-r1"] {
+        let output = reference.join(name);
+        let (code, allowed) = request(
+            "prepare-output",
+            json!({"backend":backend,"plan":plan,"output":output}),
+        );
+        assert_eq!(code, 0, "{allowed}");
+        assert_eq!(allowed["result"]["output"], json!(output));
+        assert!(!output.exists());
+        assert!(std::fs::read_dir(reference).unwrap().next().is_none());
+    }
 }
 
 #[test]

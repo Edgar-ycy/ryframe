@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Before creating configuration, environment preparation rejects output equal to or inside the reviewed reserved service root, explains that nothing was written, and recommends an independent directory; valid sibling and similarly prefixed directories remain allowed.
+
 - Fix complete evidence binding for ordinary source-export reconcile/resume: verify the original output, manifest, controller, request, source and storage provenance; bind the adopting execution source and complete generation/proof-file digests. Recovery publishes only its own receipt without re-exporting or rewriting original evidence.
 
 - Move the fixture dataset plan/prepare factory to Rust, reusing native runtime provenance and held input protection instead of recomputing path strings across languages. Preserve the existing data preparation responsibility, explicit target side, full scale and 43200-second budget. Capture managed child diagnostics with redaction and retain unknown-write evidence without automatic replay. Remove the replaced Python factory, its private protocol and obsolete tests while retaining other current shared consumers.
