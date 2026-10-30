@@ -9,6 +9,8 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::mysql;
 
+#[path = "cli/adoption_flow.rs"]
+mod adoption_flow;
 #[path = "cli/configuration.rs"]
 mod configuration;
 use configuration::{CapturedConfiguration, PreparedConfiguration};
