@@ -1,9 +1,10 @@
 use std::{
     collections::BTreeMap,
+    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{Read, Seek, Write},
     path::{Path, PathBuf},
-    process::ExitStatus,
+    process::{Command, ExitStatus},
     thread,
     time::{Duration, Instant},
 };
@@ -90,6 +91,8 @@ impl Transport for SystemTransport {
         super::super::s3::execute(request)
     }
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
+        let mut command = child_command(&spec.program);
+        configure_environment(&mut command, &spec.environment, std::env::vars_os())?;
         fs::create_dir_all(&spec.work_dir).map_err(|error| {
             format!(
                 "无法创建 {} 的临时证据目录 {}：{error}",
@@ -118,12 +121,9 @@ impl Transport for SystemTransport {
         let stderr = create_file(&stderr_path, "stderr")?;
         let stdin = create_stdin(&stdin_path, spec.stdin.as_deref())?;
 
-        let mut command = child_command(&spec.program);
         command
             .args(&spec.args)
             .current_dir(&spec.cwd)
-            .env_clear()
-            .envs(&spec.environment)
             .stdin(match stdin {
                 Some(file) => std::process::Stdio::from(file),
                 None => std::process::Stdio::null(),
@@ -164,6 +164,39 @@ impl Transport for SystemTransport {
             stderr: stderr_bytes,
         })
     }
+}
+
+/// 显式字段保持优先；仅 Windows 系统 DLL/Socket 所需的 SystemRoot 可来自 OS。
+pub(crate) fn configure_environment(
+    command: &mut Command,
+    environment: &BTreeMap<String, String>,
+    operating_system: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Result<()> {
+    command.env_clear().envs(environment);
+    #[cfg(windows)]
+    {
+        const MISSING_ROOT: &str =
+            "Windows 子进程缺少非空 OS SystemRoot；请修复控制器的 Windows 系统环境后再执行显式操作";
+        if let Some((_, value)) = environment
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("SystemRoot"))
+        {
+            if value.is_empty() {
+                return Err(MISSING_ROOT.into());
+            }
+        } else {
+            let value = operating_system
+                .into_iter()
+                .find(|(name, _)| name.as_encoded_bytes().eq_ignore_ascii_case(b"SystemRoot"))
+                .map(|(_, value)| value)
+                .filter(|value| !value.is_empty())
+                .ok_or(MISSING_ROOT)?;
+            command.env("SystemRoot", value);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = operating_system;
+    Ok(())
 }
 
 fn wait_status(child: &mut ManagedChild, spec: &CommandSpec, stderr: &Path) -> Result<ExitStatus> {

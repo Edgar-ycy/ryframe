@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 修复 Windows 原生复制/导出受管子进程遗漏 SystemRoot 导致 MySQL 无法创建 TCP/IP socket 的问题。仅在未显式绑定同名系统字段时继承 OS SystemRoot，大小写等价的显式值优先；不继承 PATH、凭据或应用配置覆盖。缺失或空值在创建证据及启动前拒绝，保留原期限和来源核验。
+
 - 修复源导出停止证明对 Worker `/readyz` 地址的端口误解析；在验证登记地址后核验相同监听端口，API 或 Worker 端口仍占用时继续拒绝，不放宽资源根地址约束。
 
 - 修正复制源的 generation 与对象观察适配，使用已核验 runtime 登记的 API 配置目录，冻结原 runtime 描述及 API/Worker 配置并在读取前后复核；支持受管非默认目录，配置或收据漂移继续失败关闭。

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix native managed copy/export subprocesses on Windows omitting SystemRoot, preventing MySQL from creating TCP/IP sockets. Inherit only OS SystemRoot when no case-insensitive explicit declaration exists, with explicit values taking precedence; do not inherit PATH, credentials, or application configuration overrides. Reject missing or empty values before creating evidence or starting a subprocess, preserving existing deadlines and source verification.
+
 - Fix the source-export stop proof incorrectly parsing the Worker `/readyz` path as part of its port. After validating the registered address, check the same listening port and continue to reject occupied API or Worker ports without relaxing resource-root address constraints.
 
 - Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.

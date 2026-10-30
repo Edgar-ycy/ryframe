@@ -31,6 +31,70 @@ const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 #[path = "export_native/recovery.rs"]
 mod recovery_tests;
 
+#[test]
+fn system_transport_environment_keeps_only_declared_fields_and_required_os_root() {
+    use std::{collections::BTreeMap, ffi::OsString};
+
+    use crate::recovery::clone::native::export::transport::configure_environment;
+
+    let ambient = [
+        ("sYsTeMrOoT", r"D:\Windows"),
+        ("PATH", "ambient-path"),
+        ("AWS_SECRET_ACCESS_KEY", "ambient-secret"),
+        ("MYSQL_PWD", "ambient-password"),
+        ("APP_ENV", "prod"),
+        ("APP_CONFIG_DIR", "ambient-configuration"),
+    ]
+    .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+    for root_name in [None, Some("sYsTeMrOoT")] {
+        let mut declared = BTreeMap::from([("APP_ENV".to_owned(), "test".to_owned())]);
+        if let Some(name) = root_name {
+            declared.insert(name.to_owned(), r"D:\BoundWindows".to_owned());
+        }
+        let mut command = Command::new("unused");
+        command.env("UNDECLARED", "previous-command-value");
+        configure_environment(&mut command, &declared, ambient.clone()).unwrap();
+        let actual = command
+            .get_envs()
+            .map(|(name, value)| (name.to_os_string(), value.unwrap().to_os_string()))
+            .collect::<BTreeMap<_, _>>();
+        let expected = declared
+            .into_iter()
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+            .collect::<BTreeMap<_, _>>();
+        #[cfg(windows)]
+        let expected = {
+            let mut expected = expected;
+            if root_name.is_none() {
+                expected.insert("SystemRoot".into(), r"D:\Windows".into());
+            }
+            expected
+        };
+        assert_eq!(actual, expected);
+    }
+    #[cfg(windows)]
+    for (declared, operating_system) in [
+        (BTreeMap::new(), Vec::new()),
+        (
+            BTreeMap::from([("systemroot".to_owned(), String::new())]),
+            ambient.to_vec(),
+        ),
+        (
+            BTreeMap::new(),
+            vec![(OsString::from("SystemRoot"), OsString::new())],
+        ),
+    ] {
+        let mut command = Command::new("unused");
+        let error = configure_environment(&mut command, &declared, operating_system)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "Windows 子进程缺少非空 OS SystemRoot；请修复控制器的 Windows 系统环境后再执行显式操作"
+        );
+    }
+}
+
 struct Fixture {
     backend: PathBuf,
     local: PathBuf,
