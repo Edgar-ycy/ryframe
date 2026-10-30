@@ -145,7 +145,9 @@ fn read_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<Inputs> {
         .clone();
     let initialized_path =
         manifest::bound_file(backend, &initialized_binding, "目标初始化收据", true)?;
-    let target_dir = initialized_path
+    let (registered_path, registration) =
+        super::published::tree::registered(backend, &initialized_path)?;
+    let target_dir = registered_path
         .parent()
         .ok_or("初始化收据缺少父目录")?
         .to_path_buf();
@@ -193,6 +195,7 @@ fn read_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<Inputs> {
     if manifest::load(backend, &stage.run_dir.join("manifest.json"))?.digest != loaded.digest {
         return Err("目标输入核验期间复制运行清单变化".into());
     }
+    registration.check()?;
     Ok(Inputs {
         manifest: loaded.value,
         target_dir,

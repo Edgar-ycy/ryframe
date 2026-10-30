@@ -253,6 +253,25 @@ fn observed_authority(
 #[test]
 fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonly() {
     let fixture = crate::target_verify_published_tests::complete();
+    let manifest_path = fixture.run.join("manifest.json");
+    #[cfg(windows)]
+    {
+        let mut manifest = json_io::read(&manifest_path).unwrap();
+        manifest["initialized"]["path"] = json!(
+            fixture
+                .target
+                .join("initialized.json")
+                .to_str()
+                .unwrap()
+                .replace('\\', "/")
+        );
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    let manifest = json_io::read(&manifest_path).unwrap();
     let before = tree::snapshot(&fixture.backend, &fixture.local, false).unwrap();
     let mut ports = Vec::new();
     let value = observed_authority(&fixture, &mut |url| {
@@ -268,10 +287,7 @@ fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonl
             "http://127.0.0.1:28082"
         ]
     );
-    assert_eq!(
-        value["initialized"],
-        bound(&fixture.target.join("initialized.json"))
-    );
+    assert_eq!(value["initialized"], manifest["initialized"]);
     assert_eq!(value["request"], bound(&fixture.local.join("request.json")));
     let mut expected =
         json_io::read(&fixture.target.join("initialized.json")).unwrap()["generation"].clone();

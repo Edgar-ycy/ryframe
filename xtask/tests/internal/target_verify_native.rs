@@ -9,6 +9,25 @@ use fixture::{Fixture, database::FakeTransport, snapshot};
 #[test]
 fn target_verify_success_publishes_create_only_evidence() {
     let fixture = Fixture::new();
+    let manifest_path = fixture.run.join("manifest.json");
+    #[cfg(windows)]
+    {
+        let mut manifest = json_io::read(&manifest_path).unwrap();
+        manifest["initialized"]["path"] = serde_json::json!(
+            fixture
+                .target
+                .join("initialized.json")
+                .to_str()
+                .unwrap()
+                .replace('\\', "/")
+        );
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    let manifest = json_io::read(&manifest_path).unwrap();
     let before = snapshot(&fixture.target);
     let run_before = snapshot(&fixture.run);
     let transport = FakeTransport::new(&fixture, false, false);
@@ -27,10 +46,7 @@ fn target_verify_success_publishes_create_only_evidence() {
     for field in ["target_ready", "clone_verified", "restore_qualified"] {
         assert_eq!(result[field], false);
     }
-    assert_eq!(
-        result["initialized"],
-        fixture::bound(&fixture.target.join("initialized.json"))
-    );
+    assert_eq!(result["initialized"], manifest["initialized"]);
     assert_eq!(snapshot(&fixture.target), before);
     let run_after = snapshot(&fixture.run);
     for (name, digest) in run_before {

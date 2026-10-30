@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::super::{super::json as json_io, evidence_model::*, resume_baseline};
 use crate::Result;
 
-pub(super) fn registered(
+pub(in super::super) fn registered(
     backend: &Path,
     selected: &Path,
 ) -> Result<(PathBuf, super::guard::Inputs)> {

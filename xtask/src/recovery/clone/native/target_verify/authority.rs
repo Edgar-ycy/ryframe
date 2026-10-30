@@ -66,7 +66,8 @@ pub(crate) fn observe_with(
     }
     let filename =
         manifest::bound_file(backend, &original.value["initialized"], "目标初始化", true)?;
-    let target = filename.parent().ok_or("目标初始化缺少目录")?;
+    let (registered_path, registration) = published::tree::registered(backend, &filename)?;
+    let target = registered_path.parent().ok_or("目标初始化缺少目录")?;
     let scope = Scope::load(
         backend,
         json_io::array(&original.value["build_bridges"], "构建桥接")?,
@@ -100,6 +101,7 @@ pub(crate) fn observe_with(
         return Err("目标只读权威核验期间输入或完整历史变化".into());
     }
     scope.assert_unchanged()?;
+    registration.check()?;
     validate(backend, request.run_dir, &value)?;
     Ok(value)
 }
