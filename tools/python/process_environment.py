@@ -99,16 +99,21 @@ class Environments:
             original = dict(os.environ)
             installed = False
             try:
+                effective = configured(self.values[side], inherited=original)
                 os.environ.clear()
-                os.environ.update(self.values[side])
+                os.environ.update(effective)
+                # Windows 环境键会规范大小写，以实际安装的映射核对漂移。
+                effective = dict(os.environ)
                 installed = True
                 yield self.values[side]
             finally:
-                changed = installed and (
-                    dict(os.environ) != self.values[side]
-                    or _binding(self.values[side]) != self.bindings[side]
-                )
-                os.environ.clear()
-                os.environ.update(original)
+                try:
+                    changed = installed and (
+                        dict(os.environ) != effective
+                        or _binding(self.values[side]) != self.bindings[side]
+                    )
+                finally:
+                    os.environ.clear()
+                    os.environ.update(original)
                 if changed:
                     raise ValueError("进程命令期间环境发生漂移，已恢复调用方环境")

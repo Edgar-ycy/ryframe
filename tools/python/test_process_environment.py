@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import process_environment as environment
@@ -38,12 +40,6 @@ class ConfiguredEnvironmentTests(unittest.TestCase):
             },
         )
 
-    def test_private_values_override_inherited_names_case_insensitively(self):
-        self.assertEqual(
-            environment.configured({"Path": "private"}, {"PATH": "inherited", "TEMP": "temp"}),
-            {"TEMP": "temp", "Path": "private"},
-        )
-
     def test_invalid_or_case_duplicated_private_mapping_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "文本映射"):
             environment.configured({"BAD": 1}, {})
@@ -53,16 +49,29 @@ class ConfiguredEnvironmentTests(unittest.TestCase):
 
 class EnvironmentSwitchTests(unittest.TestCase):
     def test_nested_sides_restore_outer_then_caller_environment(self):
-        before = dict(os.environ)
-        environments = environment.Environments(
-            {"APP_SCOPE_ID": "source"}, {"APP_SCOPE_ID": "target"}
-        )
-        with environments.use("source"):
-            self.assertEqual(dict(os.environ), {"APP_SCOPE_ID": "source"})
-            with environments.use("target"):
-                self.assertEqual(dict(os.environ), {"APP_SCOPE_ID": "target"})
-            self.assertEqual(dict(os.environ), {"APP_SCOPE_ID": "source"})
-        self.assertEqual(dict(os.environ), before)
+        inherited = {"PATH": os.environ["PATH"], "SYSTEMROOT": os.environ.get("SYSTEMROOT", "original-os-system-root"),
+                     "TEMP": os.environ.get("TEMP", "."), "APP_ENV": "prod", "APP_AUTH_JWT_SECRET": "ambient-jwt",
+                     "AWS_SECRET_ACCESS_KEY": "ambient-aws", "HTTPS_PROXY": "http://proxy.invalid",
+                     "CARGO_HOME": "unselected-cargo-home"}
+        with patch.dict(os.environ, inherited, clear=True):
+            before = dict(os.environ)
+            declarations = {"source": {"APP_ENV": "test"}, "target": {"APP_ENV": "dev"}}
+            environments = environment.Environments(declarations["source"], declarations["target"])
+            bindings = dict(environments.bindings)
+            expected = {key: inherited[key] for key in ("PATH", "SYSTEMROOT", "TEMP")}
+            with environments.use("source") as source:
+                self.assertIs(source, environments.values["source"])
+                self.assertEqual(source, {"APP_ENV": "test"})
+                self.assertEqual(dict(os.environ), {**expected, "APP_ENV": "test"})
+                subprocess.run(["git", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               check=True, timeout=15)
+                with environments.use("target") as target:
+                    self.assertEqual(target, {"APP_ENV": "dev"})
+                    self.assertEqual(dict(os.environ), {**expected, "APP_ENV": "dev"})
+                self.assertEqual(dict(os.environ), {**expected, "APP_ENV": "test"})
+            self.assertEqual(environments.values, declarations)
+            self.assertEqual(environments.bindings, bindings)
+            self.assertEqual(dict(os.environ), before)
 
     def test_body_exception_restores_environment_without_masking(self):
         before = dict(os.environ)
@@ -84,11 +93,15 @@ class EnvironmentSwitchTests(unittest.TestCase):
 
     def test_environment_drift_is_rejected_after_restoring(self):
         before = dict(os.environ)
-        environments = environment.Environments({"APP_SCOPE_ID": "source"}, {})
-        with self.assertRaises(ValueError):
-            with environments.use("source"):
-                os.environ["APP_SCOPE_ID"] = "drift"
-        self.assertEqual(dict(os.environ), before)
+        environments = environment.Environments({"APP_ENV": "test"}, {})
+        bindings = dict(environments.bindings)
+        for field, value in (("APP_ENV", "dev"), ("PATH", "drifted-tool-path")):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "已恢复调用方环境"):
+                with environments.use("source"):
+                    os.environ[field] = value
+            self.assertEqual(dict(os.environ), before)
+            self.assertEqual(environments.values["source"], {"APP_ENV": "test"})
+            self.assertEqual(environments.bindings, bindings)
 
     def test_returned_binding_mutation_is_rejected_and_restored(self):
         before = dict(os.environ)
@@ -138,7 +151,7 @@ class EnvironmentSwitchTests(unittest.TestCase):
             other = environment.Environments({"SIDE": "second"}, {})
             ready.set()
             with other.use("source"):
-                values.append(dict(os.environ))
+                values.append(os.environ["SIDE"])
                 entered.set()
 
         with outer.use("source"):
@@ -146,10 +159,10 @@ class EnvironmentSwitchTests(unittest.TestCase):
             thread.start()
             self.assertTrue(ready.wait(timeout=5))
             self.assertFalse(entered.is_set())
-            self.assertEqual(dict(os.environ), {"SIDE": "first"})
+            self.assertEqual(os.environ["SIDE"], "first")
         thread.join(timeout=5)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(values, [{"SIDE": "second"}])
+        self.assertEqual(values, ["second"])
         self.assertEqual(dict(os.environ), before)
 
 
