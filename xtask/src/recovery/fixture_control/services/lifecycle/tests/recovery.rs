@@ -342,12 +342,20 @@ fn legacy_close(runtime: &mut FakeRuntime, variant: usize) -> Value {
         "{{\"format_version\":1,\"manifest\":{},\"attempts\":[{attempts}]}}",
         saved["manifest"]
     );
-    let bytes = history::prefix::serializations(&ordered).remove(variant);
+    let bytes = state::prefix::serializations(&ordered).remove(variant);
     assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), saved);
     fs::write(run.join("state.json"), bytes).unwrap();
     let prefix = binding(&run.join("state.json")).unwrap();
     runtime.execute("close", None).unwrap();
     assert!(runtime.fixture.history()["closed"].as_bool().unwrap());
+    let current = fs::read(runtime.fixture.run.join("state.json")).unwrap();
+    let historical = state::historical(&runtime.fixture.run, &prefix, true)
+        .expect("通用fresh历史必须消费原初代写入器到原生close的精确前像");
+    assert_eq!(historical["historical_attempts"], 3);
+    assert_eq!(
+        fs::read(runtime.fixture.run.join("state.json")).unwrap(),
+        current
+    );
     prefix
 }
 

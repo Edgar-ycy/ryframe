@@ -189,8 +189,8 @@ def _run_private_protocol(protocol, actual_argv, decoder, protocol_error, label,
 
 def main(argv=None) -> int:
     from devex_clone_run_cli import (
-        FRESH_TARGET_PROTOCOL_KIND, SEED_SOURCE_PROTOCOL_KIND, STAGE_PROTOCOL_KIND,
-        decode_clone_stage_protocol, decode_fresh_target_protocol,
+        SEED_SOURCE_PROTOCOL_KIND, STAGE_PROTOCOL_KIND,
+        decode_clone_stage_protocol,
         decode_seed_source_protocol, dispatch, dispatch_stage_operation,
     )
     from devex_clone_protocol import (
@@ -203,7 +203,6 @@ def main(argv=None) -> int:
     try:
         kind, source = read_private_stdin(sys.stdin.buffer)
         handlers = {
-            FRESH_TARGET_PROTOCOL_KIND: (decode_fresh_target_protocol, dispatch),
             SEED_SOURCE_PROTOCOL_KIND: (decode_seed_source_protocol, dispatch),
             STAGE_PROTOCOL_KIND: (decode_clone_stage_protocol, dispatch_stage_operation),
         }

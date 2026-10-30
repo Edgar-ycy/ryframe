@@ -9,8 +9,6 @@ from devex_clone_capture import read_json
 from devex_clone_model import local_path
 from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
 
-FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
-FRESH_TARGET_OPERATIONS = {"reconcile-preflight"}
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
@@ -32,89 +30,12 @@ SEED_SOURCE_REQUEST_OPERATIONS = {
 }
 
 
-class FreshTargetProtocolError(ValueError):
-    """表示 xtask 与私有 Python 阶段之间的协议输入无效。"""
-
-
 class SeedSourceProtocolError(ValueError):
     """表示 xtask 与 seed 来源阶段之间的协议输入无效。"""
 
 
 class StageProtocolError(ValueError):
     """表示 xtask 与阶段资源执行子进程之间的协议输入无效。"""
-
-
-def _strict_object(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise FreshTargetProtocolError(f"fresh-target 私有协议字段重复：{key}")
-        value[key] = item
-    return value
-
-
-def _exact_keys(value, expected, label):
-    if not isinstance(value, dict) or set(value) != set(expected):
-        raise FreshTargetProtocolError(f"fresh-target 私有协议 {label} 字段不匹配")
-
-
-def _protocol_path(value, name, *, optional=False):
-    if optional and value is None:
-        return None
-    if (not isinstance(value, str) or not value.strip()
-            or any(character in value for character in ("\r", "\n", "\0"))):
-        raise FreshTargetProtocolError(f"fresh-target 私有协议 {name} 必须是有效路径")
-    path = Path(value)
-    if not path.is_absolute():
-        raise FreshTargetProtocolError(f"fresh-target 私有协议 {name} 必须是绝对路径")
-    return path
-
-
-def decode_fresh_target_protocol(source: str):
-    """严格解码由 xtask 生成的单一版本化请求，不接收公开 argv。"""
-    if not isinstance(source, str) or not source or "\0" in source:
-        raise FreshTargetProtocolError("fresh-target 私有协议为空或包含 NUL")
-    try:
-        value = json.loads(source, object_pairs_hook=_strict_object)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise FreshTargetProtocolError("fresh-target 私有协议不是有效 JSON") from error
-    _exact_keys(value, {"format_version", "kind", "native_tool", "request"}, "根")
-    if (type(value["format_version"]) is not int or value["format_version"] != 1
-            or not isinstance(value["kind"], str)
-            or value["kind"] != FRESH_TARGET_PROTOCOL_KIND):
-        raise FreshTargetProtocolError("fresh-target 私有协议版本或类型不受支持")
-    try:
-        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
-    except (ValueError, TypeError):
-        raise FreshTargetProtocolError("fresh-target 私有协议 native_tool 无效") from None
-    request = value["request"]
-    fields = {
-        "backend_dir", "operation", "workspace", "request", "environment",
-        "storage_run", "observation_dir", "write",
-    }
-    _exact_keys(request, fields, "request")
-    operation = request["operation"]
-    if not isinstance(operation, str) or operation not in FRESH_TARGET_OPERATIONS:
-        raise FreshTargetProtocolError("fresh-target 私有协议 operation 无效")
-    if not isinstance(request["write"], bool):
-        raise FreshTargetProtocolError("fresh-target 私有协议 write 必须是布尔值")
-    if not request["write"] or any(request[field] is not None for field in (
-            "request", "environment", "storage_run", "observation_dir")):
-        raise FreshTargetProtocolError("fresh-target 清理协议需要 write=true，且不能附带阶段参数")
-    backend = _protocol_path(request["backend_dir"], "backend_dir")
-    arguments = SimpleNamespace(
-        command="fresh-target",
-        native_tool=native_tool,
-        operation=operation,
-        workspace=_protocol_path(request["workspace"], "workspace"),
-        request=_protocol_path(request["request"], "request", optional=True),
-        environment=_protocol_path(request["environment"], "environment", optional=True),
-        storage_run=_protocol_path(request["storage_run"], "storage_run", optional=True),
-        observation_dir=_protocol_path(
-            request["observation_dir"], "observation_dir", optional=True),
-        write=request["write"],
-    )
-    return backend, arguments
 
 
 def _seed_strict_object(pairs):
@@ -276,17 +197,6 @@ def dispatch(args, backend: Path) -> dict:
         raise ValueError("Python 阶段入口仅接受 copy")
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记与重绑定必须使用原生 Rust 入口")
-    if args.command == "fresh-target":
-        from devex_clone_target_cli import reconcile_preflight
-
-        if args.operation not in FRESH_TARGET_OPERATIONS:
-            raise ValueError("Python fresh-target 仅接受 reconcile-preflight；其他操作请使用正式 cargo xtask 入口")
-
-        workspace = evidence_path(backend, args.workspace)
-        from devex_clone_target_cli import validate_dispatch
-
-        validate_dispatch(backend, workspace, args)
-        return reconcile_preflight(backend, workspace)
     directory = evidence_path(backend, args.run_dir)
     if args.command == "storage":
         if args.request is not None and args.operation != "restart":

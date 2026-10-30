@@ -37,8 +37,15 @@ impl InputFixture {
             &json!({"environment":{"APP_ENV":"test"}}),
         )
         .unwrap();
+        let manifest_review = binding(&review).unwrap();
+        #[cfg(windows)]
+        let manifest_review = {
+            let mut value = manifest_review;
+            value["path"] = json!(review.to_str().unwrap().replace('\\', "/"));
+            value
+        };
         json_io::write_new(&run.join("manifest.json"),&json!({"format_version":1,"kind":"reference-fixture-service-run",
-            "review":binding(&review).unwrap(),"bootstrap":binding(&bootstrap).unwrap(),"execution_backend":execution,
+            "review":manifest_review,"bootstrap":binding(&bootstrap).unwrap(),"execution_backend":execution,
             "scope_id":"context-test","data_directory_was_empty":true})).unwrap();
         state::initialize(&run).unwrap();
         Self {
@@ -54,6 +61,34 @@ impl InputFixture {
     }
 }
 
+fn input_spellings(path: &Path) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut spellings = vec![
+            path.to_path_buf(),
+            PathBuf::from(path.to_str().unwrap().replace('\\', "/")),
+            PathBuf::from(format!(
+                "{}/{}",
+                path.parent().unwrap().display(),
+                path.file_name().unwrap().to_str().unwrap()
+            )),
+        ];
+        let text = path.to_str().unwrap();
+        if text.as_bytes().get(1) == Some(&b':') && text.as_bytes()[0].is_ascii_alphabetic() {
+            spellings.push(PathBuf::from(format!(
+                "{}{}",
+                text[..1].to_ascii_lowercase(),
+                &text[1..]
+            )));
+        }
+        spellings
+    }
+    #[cfg(not(windows))]
+    {
+        vec![path.to_path_buf()]
+    }
+}
+
 #[test]
 fn context_loading_and_guard_are_read_only_and_bind_every_document() {
     let input = InputFixture::new();
@@ -61,6 +96,48 @@ fn context_loading_and_guard_are_read_only_and_bind_every_document() {
     let state_before = fs::read(input.run.join("state.json")).unwrap();
     let value = input.load(&mut runtime).unwrap();
     assert!(runtime.events.is_empty());
+    let documents = [
+        &input.review,
+        &input.bootstrap,
+        &input.run.join("manifest.json"),
+    ]
+    .into_iter()
+    .map(|path| (path.to_path_buf(), fs::read(path).unwrap()))
+    .collect::<Vec<_>>();
+    let context = Context::load(&input.backend, value.clone()).unwrap();
+    for (review, bootstrap) in input_spellings(&input.review)
+        .into_iter()
+        .zip(input_spellings(&input.bootstrap))
+    {
+        let aliased = context::load(&mut runtime, &input.backend, &review, &bootstrap).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&aliased["sources"]).unwrap(),
+            serde_json::to_vec(&value["sources"]).unwrap()
+        );
+        for owner in input_spellings(&input.run.join("state.json")) {
+            context.require_current_owner(&owner).unwrap();
+        }
+    }
+    let owner_copy = input.review.parent().unwrap().join("state-copy.json");
+    fs::copy(input.run.join("state.json"), &owner_copy).unwrap();
+    assert!(context.require_current_owner(&owner_copy).is_err());
+    assert!(
+        context
+            .require_current_owner(&input.backend.join("Cargo.toml"))
+            .is_err()
+    );
+    let mut changed_state = state_before.clone();
+    changed_state.push(b' ');
+    fs::write(input.run.join("state.json"), changed_state).unwrap();
+    assert!(
+        context
+            .require_current_owner(&input.run.join("state.json"))
+            .is_err()
+    );
+    fs::write(input.run.join("state.json"), &state_before).unwrap();
+    for (path, bytes) in documents {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
     let native = query::dispatch(
         &input.backend,
         "service-context",
@@ -76,6 +153,9 @@ fn context_loading_and_guard_are_read_only_and_bind_every_document() {
         state_before
     );
     assert!(!input.run.join("run-control.guard").exists());
+    assert!(!input.run.join("run.lock").exists());
+    assert_eq!(fs::read_dir(input.run.join("results")).unwrap().count(), 0);
+    assert!(runtime.events.is_empty());
     for key in ["review", "bootstrap", "manifest", "environment"] {
         let path = Path::new(text(&value["sources"][key], "path").unwrap());
         let before = fs::read(path).unwrap();
@@ -98,7 +178,13 @@ fn context_rejects_unbound_review_and_accepts_only_verified_successor() {
         if !accepted {
             runtime.fail = Some("review-successor".into());
         }
-        assert_eq!(input.load(&mut runtime).is_ok(), accepted);
+        for selected in input_spellings(&input.review) {
+            let loaded = context::load(&mut runtime, &input.backend, &selected, &input.bootstrap);
+            assert_eq!(loaded.is_ok(), accepted);
+            if let Ok(value) = loaded {
+                assert_eq!(value["sources"]["review"], binding(&input.review).unwrap());
+            }
+        }
         assert!(
             runtime
                 .events
@@ -111,6 +197,66 @@ fn context_rejects_unbound_review_and_accepts_only_verified_successor() {
     review["unreviewed"] = json!(true);
     json_io::write_replace(&input.review, &review).unwrap();
     assert!(input.load(&mut FakeRuntime::new()).is_err());
+
+    for (failed, _case_alias) in [(false, false), (true, false), (false, true)] {
+        let mut input = InputFixture::new();
+        let mut review = read(&input.review).unwrap();
+        review["preflight"] = json!({"supersedes":binding(&input.review).unwrap()});
+        input.review = input
+            .review
+            .parent()
+            .unwrap()
+            .join("registered-successor.json");
+        json_io::write_new(&input.review, &review).unwrap();
+        let registered = binding(&input.review).unwrap();
+        #[cfg(windows)]
+        let registered = {
+            let mut registered = registered;
+            registered["path"] = if _case_alias {
+                json!(input.review.with_file_name("REGISTERED-SUCCESSOR.JSON"))
+            } else {
+                json!(input.review.to_str().unwrap().replace('\\', "/"))
+            };
+            registered
+        };
+        let (number, _) = state::begin(
+            &input.run,
+            "storage-target",
+            "initial",
+            &json!({"review":registered}),
+        )
+        .unwrap();
+        if failed {
+            state::finish(&input.run, number, None, Some("FixtureFailure")).unwrap();
+        } else {
+            state::finish(&input.run, number, Some(&json!({"fixture":true})), None).unwrap();
+        }
+        let before = fs::read(input.run.join("state.json")).unwrap();
+        for selected in input_spellings(&input.review) {
+            let loaded = context::load(
+                &mut FakeRuntime::new(),
+                &input.backend,
+                &selected,
+                &input.bootstrap,
+            );
+            match loaded {
+                Ok(value) => assert_eq!(value["sources"]["review"], registered),
+                // 通用binding的既有规范限制可以拒绝，不能跳过历史绑定后静默重签。
+                #[cfg(windows)]
+                Err(error) if _case_alias => assert!(
+                    error.to_string().contains("必须使用规范绝对路径")
+                        || !Path::new(text(&registered, "path").unwrap())
+                            .try_exists()
+                            .unwrap()
+                ),
+                Err(error) => panic!("登记审阅未被保留：{error}"),
+            }
+        }
+        let mut rejected = FakeRuntime::new();
+        rejected.fail = Some("review-successor".into());
+        assert!(input.load(&mut rejected).is_err());
+        assert_eq!(fs::read(input.run.join("state.json")).unwrap(), before);
+    }
 }
 
 #[test]
@@ -264,6 +410,89 @@ fn service_run_and_documents_reject_escape_and_unknown_protocol_fields() {
         )
         .is_err()
     );
+    let input = InputFixture::new();
+    let copied_review = input.review.parent().unwrap().join("copied-review.json");
+    let state_before = fs::read(input.run.join("state.json")).unwrap();
+    let copied_bootstrap = input
+        .bootstrap
+        .parent()
+        .unwrap()
+        .join("copied-bootstrap.json");
+    fs::copy(&input.review, &copied_review).unwrap();
+    fs::copy(&input.bootstrap, &copied_bootstrap).unwrap();
+    for (review, bootstrap) in [
+        (&copied_review, &input.bootstrap),
+        (&input.review, &copied_bootstrap),
+    ] {
+        assert!(context::load(&mut FakeRuntime::new(), &input.backend, review, bootstrap).is_err());
+    }
+    let alias_root = tempfile::tempdir_in(input.backend.join(".local-tests")).unwrap();
+    let linked = alias_root.path().join("linked");
+    create_directory_link(input.review.parent().unwrap(), &linked);
+    assert!(
+        context::load(
+            &mut FakeRuntime::new(),
+            &input.backend,
+            &linked.join("review.json"),
+            &input.bootstrap
+        )
+        .is_err()
+    );
+    assert!(
+        context::load(
+            &mut FakeRuntime::new(),
+            &input.backend,
+            &input.review,
+            &linked.join("bootstrap.json")
+        )
+        .is_err()
+    );
+    let value = input.load(&mut FakeRuntime::new()).unwrap();
+    let context = Context::load(&input.backend, value.clone()).unwrap();
+    let linked_owner = linked
+        .join(
+            input
+                .run
+                .strip_prefix(input.review.parent().unwrap())
+                .unwrap(),
+        )
+        .join("state.json");
+    assert!(context.require_current_owner(&linked_owner).is_err());
+    let mut changed = value;
+    changed["sources"]["state_before"]["path"] = json!(linked_owner);
+    assert!(
+        Context {
+            backend: input.backend.clone(),
+            run: input.run.clone(),
+            value: changed
+        }
+        .require_current_owner(&input.run.join("state.json"))
+        .is_err()
+    );
+    #[cfg(windows)]
+    fs::remove_dir(&linked).unwrap();
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    assert_eq!(
+        fs::read(input.run.join("state.json")).unwrap(),
+        state_before
+    );
+}
+
+#[cfg(unix)]
+fn create_directory_link(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+#[cfg(windows)]
+fn create_directory_link(target: &Path, link: &Path) {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()
+        .unwrap();
+    assert!(status.success());
 }
 
 fn use_active_services(runtime: &mut FakeRuntime) -> Value {

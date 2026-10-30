@@ -1,5 +1,4 @@
 //! 登记首代、正常关闭和完整restart结果；只准备本地历史，不启动服务。
-use super::*;
 use crate::recovery::{
     clone::native::{
         lifecycle::{lock::RunLock, state},
@@ -7,16 +6,23 @@ use crate::recovery::{
     },
     fixture_control::services::history,
 };
-use std::path::Path;
+use crate::target_verify_fixture::{Fixture, SCOPE};
+use serde_json::{Value, json};
+use std::{fs, path::Path};
 
-pub(super) struct Restart {
-    pub(super) storage: Value,
-    pub(super) cache: Value,
+pub(crate) struct Restart {
+    pub(crate) storage: Value,
+    pub(crate) cache: Value,
 }
 
-pub(super) fn register(f: &Fixture) -> Restart {
+pub(crate) fn register(f: &Fixture) -> Restart {
     let run = f.local.join("registered-restart");
-    fs::create_dir(&run).unwrap();
+    initial(f, &run);
+    restart(f, &run)
+}
+
+pub(crate) fn initial(f: &Fixture, run: &Path) {
+    fs::create_dir(run).unwrap();
     let mut review = f.request["review"].clone();
     review.as_object_mut().unwrap().remove("canonical_sha256");
     save(
@@ -29,7 +35,7 @@ pub(super) fn register(f: &Fixture) -> Restart {
         "review":review,"bootstrap":common::binding(&run.join("bootstrap.json")).unwrap(),
         "execution_backend":f.backend,"scope_id":SCOPE,"data_directory_was_empty":true}),
     );
-    state::initialize(&run).unwrap();
+    state::initialize(run).unwrap();
     for (stage, mode, value) in [
         (
             "storage-target",
@@ -47,8 +53,8 @@ pub(super) fn register(f: &Fixture) -> Restart {
             json!({"status":"buckets_ready"}),
         ),
     ] {
-        let (number, _) = state::begin(&run, stage, mode, &json!({})).unwrap();
-        state::finish(&run, number, Some(&value), None).unwrap();
+        let (number, _) = state::begin(run, stage, mode, &json!({})).unwrap();
+        state::finish(run, number, Some(&value), None).unwrap();
     }
     let storage_request = json!({"data_directory":directory(f),
         "api_url":"http://127.0.0.1:29000","console_url":"http://127.0.0.1:29001"});
@@ -56,13 +62,23 @@ pub(super) fn register(f: &Fixture) -> Restart {
     let redis_request = json!({"scope_id":SCOPE,"configuration":f.request["storage"]["redis"]["configuration"],
         "previous_identity":null,"previous_boot_id":null,"previous_run_id":null});
     save(&run.join("redis/request.json"), &redis_request);
-    let previous = close(&run);
+}
+
+pub(crate) fn restart(f: &Fixture, run: &Path) -> Restart {
+    let storage_request =
+        crate::recovery::clone::native::json::read(&run.join("rustfs/request.json")).unwrap();
+    let redis_request =
+        crate::recovery::clone::native::json::read(&run.join("redis/request.json")).unwrap();
+    let review =
+        crate::recovery::clone::native::json::read(&run.join("manifest.json")).unwrap()["review"]
+            .clone();
+    let previous = close(run);
     let sources = json!({"manifest":common::binding(&run.join("manifest.json")).unwrap(),
         "state_before":common::binding(&run.join("state.json")).unwrap(),"restart_predecessor":previous,"review":review});
-    let owner = RunLock::claim(&run).unwrap();
-    let (number, attempt) = state::begin(&run, "fixture-services", "restart", &sources).unwrap();
-    state::bind_controller(&run, number, &owner.owner, &attempt).unwrap();
-    let controller = common::binding(&state::controller_path(&run, number)).unwrap();
+    let owner = RunLock::claim(run).unwrap();
+    let (number, attempt) = state::begin(run, "fixture-services", "restart", &sources).unwrap();
+    state::bind_controller(run, number, &owner.owner, &attempt).unwrap();
+    let controller = common::binding(&state::controller_path(run, number)).unwrap();
     let root = run.join(format!("lifecycle-{number:04}"));
     let (storage, redis) = running(f, &root, &storage_request, &redis_request);
     let proof = json!({"format_version":1,"kind":"reference-fixture-service-generation","run":run,
@@ -75,13 +91,13 @@ pub(super) fn register(f: &Fixture) -> Restart {
     let result = json!({"kind":"reference-fixture-service-lifecycle","operation":"restart","run":run,
         "status":"services_restarted","services":{"redis":"running","rustfs":"running"},
         "generation":generation,"controller":controller,"remote_writes":0,"resources_deleted":false});
-    state::finish(&run, number, Some(&result), None).unwrap();
+    state::finish(run, number, Some(&result), None).unwrap();
     owner.release().unwrap();
-    let actual = history::validate(&run, &state::load(&run, true).unwrap(), true, true).unwrap();
+    let actual = history::validate(run, &state::load(run, true).unwrap(), true, true).unwrap();
     let bound = actual["active_generation"].clone();
     assert_eq!(
         bound,
-        common::binding(&state::result_path(&run, number)).unwrap()
+        common::binding(&state::result_path(run, number)).unwrap()
     );
     let mut projection = storage["storage"].clone();
     projection.as_object_mut().unwrap().remove("tree");
@@ -104,7 +120,7 @@ fn save(path: &Path, value: &Value) -> Value {
     common::binding(path).unwrap()
 }
 
-fn close(run: &Path) -> Value {
+pub(crate) fn close(run: &Path) -> Value {
     let sources = json!({"manifest":common::binding(&run.join("manifest.json")).unwrap(),
         "state_before":common::binding(&run.join("state.json")).unwrap()});
     let (number, _) = state::begin(run, "fixture-services", "close", &sources).unwrap();

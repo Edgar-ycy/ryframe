@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- 修复 services 生命周期对同一 Windows 输入文件不同分隔符拼写的误拒绝：受控文件位置匹配后保留登记 descriptor 的原路径及严格 bytes/SHA；owner 仍仅允许当前 run 的 state.json，不重签旧收据或接受同内容异文件。
+
+- 退休正式 fresh-target 已替代的 Python CLI、解码／收尾分派和 Rust 回退协议；保留共享资源与来源调用，合并环境过滤用例，并用原生登记窗口覆盖初代、已发布重启及关闭后的业务拒绝。通用与服务历史共用有序前缀编码和唯一精确字节／摘要匹配，保留当前初代写入器、Unicode、LF／CRLF及完整数值表示。
+
 - 清理已退休 source verify Python CLI 的专属失效测试及其唯一导入；保留现有 runtime、producer、recovery 和工具绑定回归，正式来源验证继续由 Rust 入口及同代 lineage/显式写入约束验证。
 
 - 补齐服务关闭阶段的脱敏诊断与原期限内 Windows 独占端口释放等待；显式 reconcile 可在严格绑定原失败、正常退出与完整进程树后，于新阶段收尾原 RustFS 树并发布独立恢复证据，不重发 Redis stop、不改旧失败或补造旧停止收据。

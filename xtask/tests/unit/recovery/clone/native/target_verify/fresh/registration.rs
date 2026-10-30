@@ -3,7 +3,10 @@ use crate::recovery::clone::native::{
     resources::common,
     target_verify::fresh::registration::{Registration, Workspace},
 };
-use crate::target_verify_fixture::Fixture;
+use crate::{
+    target_initialize_restart_fixture as services,
+    target_verify_fixture::{Fixture, snapshot},
+};
 use serde_json::Value;
 use serde_json::json;
 use std::fs;
@@ -11,6 +14,7 @@ use std::path::PathBuf;
 
 #[test]
 fn registered_window_holds_the_real_run_owner_and_rejects_input_drift_without_replay() {
+    service_windows();
     let fixture = Fixture::for_status();
     let registration = Registration::load(&fixture.backend, &fixture.local).unwrap();
     let registered = document::read(&fixture.local.join("registration.json")).unwrap();
@@ -44,6 +48,63 @@ fn registered_window_holds_the_real_run_owner_and_rejects_input_drift_without_re
         common::binding(&storage.join("state.json")).unwrap(),
         before
     );
+}
+
+fn service_windows() {
+    let fixture = Fixture::for_status();
+    for phase in ["initial", "restart", "closed", "unpublished-restart"] {
+        let storage = fixture
+            .backend
+            .join(format!(".local-tests/registration-services-{phase}"));
+        services::initial(&fixture, &storage);
+        let path = fixture.local.join("registration.json");
+        let mut registered = document::read(&path).unwrap();
+        registered["storage_run"] = json!({"path":storage,
+            "manifest":common::binding(&storage.join("manifest.json")).unwrap(),
+            "state":common::binding(&storage.join("state.json")).unwrap()});
+        fs::write(&path, serde_json::to_vec(&registered).unwrap()).unwrap();
+        match phase {
+            "initial" => (),
+            "closed" => {
+                services::close(&storage);
+            }
+            _ => {
+                services::restart(&fixture, &storage);
+                if phase == "unpublished-restart" {
+                    fs::remove_file(storage.join("lifecycle-0005/restart.json")).unwrap();
+                }
+            }
+        }
+        let before = common::binding(&storage.join("state.json")).unwrap();
+        let target_before = snapshot(&fixture.target);
+        let mut called = false;
+        let result =
+            Registration::load(&fixture.backend, &fixture.local).and_then(|registration| {
+                registration.execute(|active| {
+                    called = true;
+                    assert_eq!(
+                        active,
+                        if phase == "initial" {
+                            None
+                        } else {
+                            Some(storage.as_path())
+                        }
+                    );
+                    let owner = document::read(&storage.join("run.lock/owner.json"))?;
+                    assert_eq!(owner["identity"]["pid"], std::process::id());
+                    Ok(json!({"remote_writes":0}))
+                })
+            });
+        let available = matches!(phase, "initial" | "restart");
+        assert_eq!(result.is_ok(), available, "{phase}: {result:?}");
+        assert_eq!(called, available, "{phase}");
+        assert!(!storage.join("run.lock").exists());
+        assert_eq!(
+            common::binding(&storage.join("state.json")).unwrap(),
+            before
+        );
+        assert_eq!(snapshot(&fixture.target), target_before);
+    }
 }
 
 #[test]

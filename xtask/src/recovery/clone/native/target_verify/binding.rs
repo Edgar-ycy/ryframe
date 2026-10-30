@@ -85,17 +85,6 @@ fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
             json_io::exact(args, &["request"], "目标二进制绑定")?;
             binding_request::binaries(backend, &args["request"])
         }
-        "private-environment" => {
-            json_io::exact(args, &["descriptor"], "目标私有环境绑定")?;
-            private_environment(backend, &args["descriptor"])
-        }
-        "preflight-reconciliation" => {
-            json_io::exact(args, &["target"], "目标收尾绑定")?;
-            reconciliation(
-                backend,
-                Path::new(json_io::text(&args["target"], "目标收尾路径")?),
-            )
-        }
         "config-directory" => {
             json_io::exact(args, &["request"], "目标配置目录绑定")?;
             super::input::request::config_directory(backend, &args["request"])
@@ -104,20 +93,6 @@ fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
             json_io::exact(args, &["selected"], "目标运行历史绑定")?;
             never_started(backend, &args["selected"])?;
             Ok(json!({"status":"never_started_verified"}))
-        }
-        "reset-manifest" => {
-            json_io::exact(
-                args,
-                &["manifest", "request", "original"],
-                "目标 reset 清单绑定",
-            )?;
-            super::evidence_reset::validate_manifest(
-                backend,
-                &args["manifest"],
-                &args["request"],
-                &args["original"],
-            )?;
-            Ok(json!({"status":"reset_manifest_verified"}))
         }
         _ => Err("未知目标绑定操作；请使用当前受管工具和协议".into()),
     }
@@ -260,3 +235,7 @@ pub(super) fn reconciliation(backend: &Path, target: &Path) -> Result<Value> {
     check(binding(backend, &completed)? == descriptor, DIAGNOSTICS[4])?;
     Ok(json!({"binding":descriptor}))
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/binding.rs"]
+mod tests;

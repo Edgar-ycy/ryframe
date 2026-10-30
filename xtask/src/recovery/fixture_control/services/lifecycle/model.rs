@@ -136,9 +136,11 @@ impl Context {
     }
     pub(super) fn require_current_owner(&self, selected: &Path) -> Result<()> {
         let path = self.owner(selected)?;
+        let recorded = Path::new(text(&self.value["sources"]["state_before"], "path")?);
         check(
-            path == self.run.join("state.json")
-                && binding(&path)? == self.value["sources"]["state_before"],
+            super::context::same_file(&self.backend, recorded, &self.run.join("state.json"))?
+                && super::context::same_file(&self.backend, &path, recorded)?
+                && binding(recorded)? == self.value["sources"]["state_before"],
             "生命周期操作必须精确绑定 status 返回的当前 state 文件",
         )
     }

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Fix services lifecycle rejection of different Windows separator spellings for the same input file. After controlled-file location checks, retain the registered descriptor path and strict byte/hash binding. Owner remains limited to the current run state.json; existing receipts are not re-signed and identical-content copies are rejected.
+
+- Retire the Python CLI, decoding/cleanup dispatch and Rust fallback protocol replaced by formal native fresh-target operations. Preserve shared resource and source callers, merge environment-filtering coverage, and exercise initial, published-restart and closed-service rejection through native registration windows. Generic and service histories share ordered-prefix encoding and unique exact byte/digest matching, retaining current initial writers, Unicode, LF/CRLF and complete numeric representations.
+
 - Remove the obsolete test and sole import for the retired Python source verify CLI. Preserve current runtime, producer, recovery and tool-binding regressions; formal source verification remains covered by Rust entry points and generation-lineage and explicit-write constraints.
 
 - Complete redacted service-close diagnostics and Windows exclusive-port release waiting within the original deadline. Explicit reconcile can finish the original RustFS tree in a new stage after strictly binding the failed close, normal Redis exit and complete process identities, publishing independent recovery evidence without resending Redis stop, changing the old failure or fabricating an old stop receipt.

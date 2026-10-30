@@ -19,8 +19,7 @@ use std::{
     fs,
 };
 
-#[path = "target_initialize_restart_fixture.rs"]
-mod restart;
+use crate::target_initialize_restart_fixture as restart;
 
 pub(super) struct Resources<'a> {
     pub(super) fixture: &'a Fixture,

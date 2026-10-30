@@ -5,8 +5,7 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        CloneCommand, FreshTargetCommand, FreshTargetOptions, RecoveryCommand, SeedSourceOperation,
-        SeedSourceOptions,
+        CloneCommand, FreshTargetCommand, RecoveryCommand, SeedSourceOperation, SeedSourceOptions,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     process::{protocol_stdin, run_with_stdin},
@@ -183,60 +182,9 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         println!("{}", serde_json::to_string(&value)?);
         return Ok(());
     }
-    if matches!(
-        options.operation.as_str(),
-        "prepare"
-            | "resume-prepare"
-            | "initialize"
-            | "resume-initialize"
-            | "verify"
-            | "reconcile-preflight"
-    ) {
-        let value = clone::native::target_verify::fresh::dispatch(&root_dir(), options)?;
-        println!("{}", serde_json::to_string(&value)?);
-        return Ok(());
-    }
-    let payload = fresh_target_protocol(options)?;
-    run_with_stdin(
-        &root_dir(),
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        clone_stdin(&payload)?,
-    )
-}
-
-pub(crate) fn fresh_target_protocol(options: &FreshTargetOptions) -> Result<String> {
-    if options.operation != crate::cli::FreshTargetOperation::ReconcilePreflight
-        || !options.write
-        || options.request.is_some()
-        || options.environment.is_some()
-        || options.storage_run.is_some()
-        || options.observation_dir.is_some()
-    {
-        return Err(
-            "Python fresh-target 协议仅接受显式写入的 reconcile-preflight，且不能附带阶段参数"
-                .into(),
-        );
-    }
-    let path = |value: &Path| path_argument(value, "fresh-target 路径");
-    let optional_path = |value: &Option<std::path::PathBuf>| -> Result<Option<String>> {
-        value.as_deref().map(path).transpose()
-    };
-    Ok(serde_json::to_string(&serde_json::json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-fresh-target",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
-        "request": {
-            "backend_dir": path(&root_dir())?,
-            "operation": options.operation.as_str(),
-            "workspace": path(&options.workspace)?,
-            "request": optional_path(&options.request)?,
-            "environment": optional_path(&options.environment)?,
-            "storage_run": optional_path(&options.storage_run)?,
-            "observation_dir": optional_path(&options.observation_dir)?,
-            "write": options.write,
-        }
-    }))?)
+    let value = clone::native::target_verify::fresh::dispatch(&root_dir(), options)?;
+    println!("{}", serde_json::to_string(&value)?);
+    Ok(())
 }
 
 fn path_argument(path: &Path, label: &str) -> Result<String> {

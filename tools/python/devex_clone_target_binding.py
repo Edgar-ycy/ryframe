@@ -562,8 +562,3 @@ def generation(backend: Path, request: dict, run) -> dict:
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),
             "review_sha256": request["review"]["sha256"], "selected": selected,
             "operator_declared_controlled_generation_only": True, "external_writers_discovered": False}
-
-
-def validate_reset_manifest(manifest: dict, request: dict, original: dict) -> None:
-    _native("reset-manifest", Path(original["maintenance"]["backend_root"]),
-            manifest=manifest, request=request, original=original)
