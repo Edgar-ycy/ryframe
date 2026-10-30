@@ -253,7 +253,18 @@ fn finalize(run_dir: &Path, stage: &str, mode: &str, outcome: LockedOutcome) -> 
             .diagnostic
             .map(|value| format!("；{value}"))
             .unwrap_or_default();
-        return Err(format!("阶段 {stage} 未完成：{failure}{diagnostic}").into());
+        let guidance = if stage == "copy" {
+            format!(
+                "；请核对 {} 及 {} 中 copy_directory 指向目录的 failure.json；保留现场，先核对完整前后像，不自动重试",
+                run_dir
+                    .join(format!("failure-{:04}.json", outcome.number))
+                    .display(),
+                run_dir.join("manifest.json").display(),
+            )
+        } else {
+            String::new()
+        };
+        return Err(format!("阶段 {stage} 未完成：{failure}{diagnostic}{guidance}").into());
     }
     let result = outcome.result.ok_or("成功阶段必须发布实际结果")?;
     Ok(json!({
