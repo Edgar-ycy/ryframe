@@ -8,6 +8,7 @@ fn authorization_stage_rejections_are_exact_and_keep_exit_code() {
             "监督候选登记超过120秒期限",
             "候选与实际监督进程不匹配",
             "成员监督器启动未确认",
+            "后台启动结果未知；使用status或reconcile核对，不自动重放",
         ] {
             let mut response = json!({"ok":false,"error":if role == Role::Worker {"WorkerRejected"} else {"ProcessRejected"},
                 "message":format!("{}{suffix}", role.label())});

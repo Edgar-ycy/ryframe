@@ -89,7 +89,7 @@ fn exchange(mut command: std::process::Command, role: Role) -> Result<Vec<u8>> {
             break status;
         }
         check(
-            started.elapsed() < Duration::from_secs(300),
+            started.elapsed() < crate::recovery::full_stack::worker::CONTROL_TIMEOUT,
             &format!(
                 "{}交接控制器超时；核对已登记owner与结果，不自动重放",
                 role.name()
@@ -177,6 +177,10 @@ fn safe_rejection(role: Role, bytes: &[u8]) -> Option<String> {
         ("监督候选登记超过120秒期限", "监督候选登记超过120秒期限"),
         ("候选与实际监督进程不匹配", "候选与实际监督进程不匹配"),
         ("成员监督器启动未确认", "成员监督器启动未确认"),
+        (
+            "后台启动结果未知；使用status或reconcile核对，不自动重放",
+            "后台启动结果未知；使用status或reconcile核对，不自动重放；status使用正式只读入口，reconcile须显式调用",
+        ),
         (
             "启动授权未确认；保留候选、成员关闭证明和控制锁",
             "启动授权未确认；保留候选、成员关闭证明和控制锁",

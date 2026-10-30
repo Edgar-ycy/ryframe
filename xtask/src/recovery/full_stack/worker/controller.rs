@@ -15,6 +15,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "controller/result.rs"]
+mod result;
+use result::finish;
+
 #[derive(Debug)]
 struct Pending(Role);
 impl std::fmt::Display for Pending {
@@ -83,6 +87,7 @@ pub(crate) fn control(
     directory: &Path,
     timeout: f64,
 ) -> Result<Value> {
+    let started = Instant::now();
     if role == Role::Frontend {
         return Err("前端有限命令不能使用长期服务控制入口".into());
     }
@@ -102,9 +107,13 @@ pub(crate) fn control(
     }
     let backend = operation::canonical(backend)?;
     let directory = operation::canonical(directory)?;
-    let deadline = Instant::now() + Duration::from_secs_f64(timeout + 10.0);
+    let deadline = if action == "start" {
+        started + super::CONTROL_TIMEOUT
+    } else {
+        Instant::now() + Duration::from_secs_f64(timeout + 10.0)
+    };
     loop {
-        match once(role, action, &backend, &directory, timeout) {
+        match once(role, action, &backend, &directory, timeout, deadline) {
             Err(error) if error.is::<Pending>() && Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(50))
             }
@@ -202,9 +211,22 @@ fn inputs(role: Role, action: &str, backend: &Path, directory: &Path) -> Result<
     }
     Ok((runtime, source))
 }
-fn once(role: Role, action: &str, backend: &Path, directory: &Path, timeout: f64) -> Result<Value> {
+fn once(
+    role: Role,
+    action: &str,
+    backend: &Path,
+    directory: &Path,
+    timeout: f64,
+    deadline: Instant,
+) -> Result<Value> {
+    if action == "start" {
+        super::check_result_deadline(role, deadline)?;
+    }
     let guard = guard(role, directory, Duration::ZERO)?;
     let (runtime, source) = inputs(role, action, backend, directory)?;
+    if action == "start" {
+        super::check_result_deadline(role, deadline)?;
+    }
     let op =
         Operation::claim(role, action, backend, directory, &runtime, timeout).map_err(|_| {
             super::Rejection(format!(
@@ -238,12 +260,13 @@ fn once(role: Role, action: &str, backend: &Path, directory: &Path, timeout: f64
         guard.check()?;
         return op.archive();
     }
-    start(backend, &runtime, &source, &op, guard, timeout)
+    start(backend, &runtime, &source, &op, guard, deadline)
 }
 pub(super) fn reserved_start(
     reservation: &super::start::Reservation,
     timeout: f64,
 ) -> Result<Value> {
+    let deadline = Instant::now() + super::CONTROL_TIMEOUT;
     let guard = guard(reservation.role, &reservation.directory, Duration::ZERO)?;
     reservation.verify()?;
     let (runtime, source) = inputs(
@@ -252,10 +275,18 @@ pub(super) fn reserved_start(
         &reservation.backend,
         &reservation.directory,
     )?;
+    super::check_result_deadline(reservation.role, deadline)?;
     let op = Operation::claim_reserved(reservation, &runtime, timeout)?;
     guard.check()?;
     reservation.verify()?;
-    start(&reservation.backend, &runtime, &source, &op, guard, timeout)
+    start(
+        &reservation.backend,
+        &runtime,
+        &source,
+        &op,
+        guard,
+        deadline,
+    )
 }
 
 fn start(
@@ -264,8 +295,9 @@ fn start(
     source: &str,
     op: &Operation,
     guard: super::guard::Guard,
-    timeout: f64,
+    deadline: Instant,
 ) -> Result<Value> {
+    super::check_result_deadline(op.role, deadline)?;
     let args = launch::request(op.role, backend, op.directory(), op.id()?);
     let monitor = launch::detached("monitor", &args, op.directory());
     if monitor.is_err() {
@@ -299,7 +331,7 @@ fn start(
     }
     guard.check()?;
     drop(guard);
-    finish(backend, op.directory(), runtime, source, op, timeout)
+    finish(backend, op.directory(), runtime, source, op, deadline)
 }
 pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
     let role = op.role;
@@ -336,64 +368,6 @@ pub(super) fn authorize(op: &Operation, monitor: &Value) -> Result<()> {
         }
         super::check_preparation(role, deadline)?;
         thread::sleep(Duration::from_millis(20));
-    }
-}
-fn finish(
-    backend: &Path,
-    directory: &Path,
-    runtime: &Value,
-    source: &str,
-    op: &Operation,
-    timeout: f64,
-) -> Result<Value> {
-    let role = op.role;
-    let deadline = Instant::now() + Duration::from_secs_f64(timeout + 10.0);
-    loop {
-        if op.path.join("result.json").exists() {
-            let guard = guard(role, directory, Duration::from_secs(10))?;
-            super::runtime::load(role, backend, directory)?;
-            if operation::source(directory)? != source {
-                return Err(
-                    super::Rejection(format!("{}等待期间来源发生变化", role.label())).into(),
-                );
-            }
-            let current = Operation::read(role, directory, source)?;
-            if current.id()? != op.id()? {
-                return Err(
-                    super::Rejection(format!("{}等待期间操作发生变化", role.label())).into(),
-                );
-            }
-            let value = match archive_completed(&current) {
-                Err(error) if error.is::<Pending>() => {
-                    drop(guard);
-                    thread::sleep(Duration::from_millis(20));
-                    continue;
-                }
-                result => result?,
-            };
-            guard.check()?;
-            if value["outcome"] != "succeeded" {
-                return Err(super::Rejection(format!(
-                    "{}启动失败；已保留原始失败收据和完整成员关闭证明",
-                    role.label()
-                ))
-                .into());
-            }
-            tree::running(directory, runtime, role, &value["identity"])?;
-            process::listener(
-                &value["identity"],
-                runtime[role.ready()].as_str().ok_or("端点无效")?,
-            )?;
-            return Ok(value);
-        }
-        if Instant::now() >= deadline {
-            return Err(super::Rejection(format!(
-                "{}后台启动结果未知；使用status或reconcile核对，不自动重放",
-                role.label()
-            ))
-            .into());
-        }
-        thread::sleep(Duration::from_millis(50));
     }
 }
 fn simple(op: &Operation, runtime: &Value, action: &str) -> Result<Value> {

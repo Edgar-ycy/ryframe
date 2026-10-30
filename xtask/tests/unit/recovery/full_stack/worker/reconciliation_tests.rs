@@ -111,6 +111,28 @@ fn failed_result_waits_for_live_supervisor_without_releasing_lock() {
     fixture.result(false);
     assert!(archive_completed(&fixture.op).unwrap_err().is::<Pending>());
     assert!(fixture.op.path.exists());
+    let directory = fixture.op.directory();
+    let runtime = operation::read(&directory.join("runtime.json")).unwrap();
+    let held = guard(fixture.op.role, directory, Duration::ZERO).unwrap();
+    let before = fs::read(fixture.op.path.join("result.json")).unwrap();
+    let deadline = Instant::now() + Duration::from_millis(40);
+    let error = finish(
+        directory,
+        directory,
+        &runtime,
+        fixture.op.owner["source_sha256"].as_str().unwrap(),
+        &fixture.op,
+        deadline,
+    )
+    .unwrap_err();
+    assert!(Instant::now() >= deadline);
+    assert!(deadline.elapsed() < Duration::from_secs(2));
+    assert!(error.to_string().contains("后台启动结果未知"));
+    held.check().unwrap();
+    assert_eq!(
+        fs::read(fixture.op.path.join("result.json")).unwrap(),
+        before
+    );
 }
 #[test]
 fn failed_result_archives_only_after_complete_member_cleanup_preserving_original_failure() {
@@ -191,9 +213,62 @@ fn malformed_result_or_authorization_never_releases_control_lock() {
 }
 #[test]
 fn successful_start_keeps_live_supervisor_and_requires_matching_ready_progress() {
-    let fixture = Fixture::new("start");
+    let mut fixture = Fixture::new("start");
+    fixture.op.request["timeout_seconds"] = json!(0.001);
+    json::write_replace(&fixture.op.path.join("request.json"), &fixture.op.request).unwrap();
+    let owner = fs::read(fixture.op.path.join("owner.json")).unwrap();
+    let request = fs::read(fixture.op.path.join("request.json")).unwrap();
+    let directory = fixture.op.directory();
+    let runtime = operation::read(&directory.join("runtime.json")).unwrap();
+    // 业务就绪期限短于结果收取预算，不能把前者当作收取截止时间。
+    let entered = Instant::now();
+    let business_deadline =
+        entered + Duration::from_secs_f64(fixture.op.request["timeout_seconds"].as_f64().unwrap());
+    let deadline = entered + Duration::from_millis(40);
+    let error = finish(
+        directory,
+        directory,
+        &runtime,
+        fixture.op.owner["source_sha256"].as_str().unwrap(),
+        &fixture.op,
+        deadline,
+    )
+    .unwrap_err();
+    assert!(business_deadline < deadline && Instant::now() >= deadline);
+    assert!(deadline.elapsed() < Duration::from_secs(2));
+    assert!(error.to_string().contains("后台启动结果未知"));
+    assert_eq!(fs::read(fixture.op.path.join("owner.json")).unwrap(), owner);
+    assert_eq!(
+        fs::read(fixture.op.path.join("request.json")).unwrap(),
+        request
+    );
+    assert_eq!(fs::read_dir(&fixture.op.path).unwrap().count(), 2);
     fixture.children(process::current().unwrap(), true);
     fixture.result(true);
+    let late_result = fs::read(fixture.op.path.join("result.json")).unwrap();
+    // 同一已耗尽预算不能因结果晚到而续时、归档或重放；原成功结果留待显式核对。
+    assert!(
+        finish(
+            directory,
+            directory,
+            &runtime,
+            fixture.op.owner["source_sha256"].as_str().unwrap(),
+            &fixture.op,
+            deadline,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("后台启动结果未知")
+    );
+    assert_eq!(
+        fs::read(fixture.op.path.join("result.json")).unwrap(),
+        late_result
+    );
+    assert_eq!(fs::read(fixture.op.path.join("owner.json")).unwrap(), owner);
+    assert_eq!(
+        fs::read(fixture.op.path.join("request.json")).unwrap(),
+        request
+    );
     assert!(archive_completed(&fixture.op).is_err());
     let mut progress = fixture
         .op

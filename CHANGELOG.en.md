@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix API/Worker startup handoff using the business readiness timeout as the total result collection window. Result collection now uses the remaining budget of the same 300-second controller deadline; the 120-second preparation and 60-second business readiness limits remain unchanged. Timeouts preserve original receipts without replay and direct operators to read-only status or explicit reconcile.
+
 - Fix services lifecycle rejection of different Windows separator spellings for the same input file. After controlled-file location checks, retain the registered descriptor path and strict byte/hash binding. Owner remains limited to the current run state.json; existing receipts are not re-signed and identical-content copies are rejected.
 
 - Retire the Python CLI, decoding/cleanup dispatch and Rust fallback protocol replaced by formal native fresh-target operations. Preserve shared resource and source callers, merge environment-filtering coverage, and exercise initial, published-restart and closed-service rejection through native registration windows. Generic and service histories share ordered-prefix encoding and unique exact byte/digest matching, retaining current initial writers, Unicode, LF/CRLF and complete numeric representations.

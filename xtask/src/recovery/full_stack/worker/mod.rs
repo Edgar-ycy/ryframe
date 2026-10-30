@@ -45,6 +45,19 @@ pub(crate) fn control_command(
 }
 
 const LIMIT: usize = 1024 * 1024;
+pub(in crate::recovery) const CONTROL_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(300);
+
+fn check_result_deadline(role: role::Role, deadline: std::time::Instant) -> Result<()> {
+    if std::time::Instant::now() >= deadline {
+        return Err(Rejection(format!(
+            "{}后台启动结果未知；使用status或reconcile核对，不自动重放",
+            role.label()
+        ))
+        .into());
+    }
+    Ok(())
+}
 // 候选准备包含完整来源核验；不占用产品启动后的就绪预算。
 fn preparation_timeout(role: role::Role) -> std::time::Duration {
     std::time::Duration::from_secs(if role == role::Role::Frontend {
