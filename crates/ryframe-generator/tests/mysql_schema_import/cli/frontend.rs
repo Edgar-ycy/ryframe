@@ -5,9 +5,9 @@ use std::{
 };
 
 pub(super) struct Candidate {
-    path: PathBuf,
+    pub(super) path: PathBuf,
     original: SourceSnapshot,
-    _directory: tempfile::TempDir,
+    _directory: Option<tempfile::TempDir>,
 }
 
 impl Candidate {
@@ -27,8 +27,15 @@ impl Candidate {
         Ok(Some(Self {
             path,
             original,
-            _directory: directory,
+            _directory: Some(directory),
         }))
+    }
+
+    pub(super) fn keep(mut self) -> Self {
+        if let Some(directory) = self._directory.take() {
+            let _ = directory.keep();
+        }
+        self
     }
 
     pub(super) fn configure(&self, backend: &Path) -> Result<(), String> {

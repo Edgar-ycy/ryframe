@@ -13,6 +13,8 @@ use super::mysql;
 mod configuration;
 use configuration::{CapturedConfiguration, PreparedConfiguration};
 
+#[path = "cli/entry_parity.rs"]
+mod entry_parity;
 #[path = "cli/frontend.rs"]
 mod frontend;
 #[path = "../../src/command/staging/snapshot.rs"]
