@@ -220,7 +220,7 @@ cache 两项生命周期原语保留独立进程的整次 180 秒边界和原 4 
 
 新 Redis 启动须使用经当前预检的 v2 native_tool 审阅与绑定 Linux xtask，不再依赖 WSL Python 或冻结脚本。公开生命周期命令和资源隔离要求不变；已有 v1 收据只读核验，不转换、重签或据此回退旧执行。启动授权、Linux 创建身份、AUTH/INFO/CONFIG、accepted 与 outer ready 必须属于同一代次。`timeout_seconds` 是认证就绪预算（当前正式场景为60秒）：Windows 在 `authorize` 完成后建立一次截止时间，覆盖进程收据读取、完整认证观察、guard 和 ack 发布完成；随后从 ack 发布完成起独立计接受确认15秒，覆盖 accepted 等待与内容比对、runtime 发布及其前后的两次 finish 与文件复核。Linux 从进程收据发布后有界等待 ack，上限为 `timeout_seconds`，收到并验证 ack 后另计15秒，覆盖完整输入/来源、进程身份核验及 accepted 发布。轮询不重置期限，成功返回和发布后仍检查对应截止点；accepted 或 runtime 已存在不代表启动成功，后置复核超时仍执行原精确清理。两端各用本地单调时钟，Linux 等待起点晚于 Windows 授权完成，不声称时刻同步；Windows 就绪期限仍是前段兜底。预检、失败清理和清理后来源复核不计入接受确认15秒，但完整实际耗时仍计入恢复验收，RTO 指标不变。配置或来源漂移、父监督器授权不符、UID 错误、pidfd 不支持/权限错误和等待超时返回固定脱敏诊断；就绪超时为 `ReadinessTimeout`（`readiness` / `timeout_seconds`），Linux 等待 ack 为 `AcknowledgementTimeout`，接受确认为 `AcceptanceTimeout`。按阶段、类别和字段核查绑定文件、内核能力及失败收据；未确认回收时保留完整目录与 unknown，不自动重试或重放。停止失败仅允许一次只读核对，不重新发送停止。
 
-死亡控制器通过同一入口的 `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。
+死亡控制器通过同一入口的 `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。隔离参考夹具的 Redis 禁用持久化；服务重启成功不能证明已初始化的目标前像仍成立。若 owner 或 sentinel 已丢失，保留原初始化和失败证据，严格关闭原服务树后新建隔离目标；不得补写标记、忽略进程代次或重放旧初始化。此限制针对验收夹具，不要求应用 Redis 服务采用同一持久化策略。
 
 记录时间线、影响租户、请求或任务 ID、根因、处置和验证结果。配置字段以配置结构为准，指标和告警以部署资产为准，不在本文维护重复清单。
 

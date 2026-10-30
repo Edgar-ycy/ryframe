@@ -7,6 +7,43 @@ const PROJECTIONS: [&str; 3] = [
     "biz_data_scope_projection",
 ];
 
+#[test]
+fn logical_digest_uses_canonical_database_bucket_and_nested_order_without_mutating_input() {
+    let databases = ["dedicated-a", "dedicated-b", "shared", "shared-control"].map(|key| {
+        json!({"key":key,"tables":[{"table":"a","rows":1},{"table":"z","rows":2}],
+            "placements":[{"tenant_id":"1"},{"tenant_id":"2"}]})
+    });
+    let objects = ["avatar", "config-packages", "exports", "imports", "uploads"].map(
+        |bucket| json!({"bucket":bucket,"entries":[{"key":"a","bytes":4},{"key":"z","bytes":5}]}),
+    );
+    // 顺序来自公开逻辑摘要契约；采集顺序和 captured_at 不改变业务含义。
+    let canonical = json!({"scope_id":"source","quiesced_at":"2026-01-01T00:00:00Z",
+        "databases":databases,"objects":objects});
+    let expected = native::digest::plan_hash(&canonical).unwrap();
+    let mut observed = canonical.clone();
+    observed["captured_at"] = json!("2026-01-01T00:00:01Z");
+    observed["databases"].as_array_mut().unwrap().reverse();
+    observed["objects"].as_array_mut().unwrap().rotate_left(2);
+    for database in observed["databases"].as_array_mut().unwrap() {
+        database["tables"].as_array_mut().unwrap().reverse();
+        database["placements"].as_array_mut().unwrap().reverse();
+    }
+    for bucket in observed["objects"].as_array_mut().unwrap() {
+        bucket["entries"].as_array_mut().unwrap().reverse();
+    }
+    let before = observed.clone();
+    let actual = inventory::logical(&observed).unwrap();
+    assert_eq!(actual, canonical);
+    assert_eq!(native::digest::plan_hash(&actual).unwrap(), expected);
+    assert_eq!(observed, before);
+    observed["databases"][0]["tables"][0]["rows"] = json!(3);
+    assert_ne!(
+        native::digest::plan_hash(&inventory::logical(&observed).unwrap()).unwrap(),
+        expected,
+        "实际行像变化必须改变摘要，不能只对表名或文件数量做摘要"
+    );
+}
+
 fn inputs(rows: u64, in_runtime: bool) -> (Value, Value, Value, Models) {
     let database = json!({
         "key":"dedicated-a", "kind":"tenant", "server_uuid":UUID,

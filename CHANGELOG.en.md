@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix native source-export logical digests omitting outer database and object-bucket ordering, matching the existing complete consumer contract. Canonicalize databases, tables, tenant placements, buckets and entries in a digest copy, excluding only capture time while preserving raw inventory and all business content. Do not re-sign or accept an alternate old digest; create a new formal export.
+
 - Use the registered target's path spelling consistently in target-verification context and read-only authority, preventing later reset configuration checks from deriving a nonexistent directory. Preserve the outer initialization-file binding without recreating configuration snapshots or repairing original receipts.
 
 - Fix rejection of initialized-target history when Windows path separators differ. Read the complete chain using the registered target's original spelling, verify that the selected and registered files occupy the same location, and protect the registration and initialized file during reading. Preserve the original byte counts, SHA digests and predecessor checks without rewriting receipts or accepting another file with identical content. Service lifecycle checks share the existing controlled-file matching rule.

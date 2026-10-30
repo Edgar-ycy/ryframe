@@ -96,7 +96,7 @@ pub(crate) fn capture<T: Transport>(
 }
 
 pub(crate) fn logical(value: &Value) -> Result<Value> {
-    let databases = value
+    let mut databases = value
         .get("databases")
         .and_then(Value::as_array)
         .ok_or("库存缺少数据库")?
@@ -122,7 +122,8 @@ pub(crate) fn logical(value: &Value) -> Result<Value> {
             database
         })
         .collect::<Vec<_>>();
-    let objects = value
+    databases.sort_by_key(|database| database["key"].as_str().unwrap_or_default().to_owned());
+    let mut objects = value
         .get("objects")
         .and_then(Value::as_array)
         .ok_or("库存缺少对象")?
@@ -140,6 +141,7 @@ pub(crate) fn logical(value: &Value) -> Result<Value> {
             bucket
         })
         .collect::<Vec<_>>();
+    objects.sort_by_key(|bucket| bucket["bucket"].as_str().unwrap_or_default().to_owned());
     let mut result = value.as_object().cloned().ok_or("库存必须为对象")?;
     result.remove("captured_at");
     result.insert("databases".into(), Value::Array(databases));
