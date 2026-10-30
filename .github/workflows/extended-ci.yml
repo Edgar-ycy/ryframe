@@ -224,11 +224,9 @@ jobs:
         with:
           working-directory: frontend
 
-      - name: 安装前端与 Chromium
+      - name: 安装前端依赖
         working-directory: frontend
-        run: |
-          corepack pnpm install --frozen-lockfile
-          corepack pnpm exec playwright install --with-deps chromium
+        run: corepack pnpm install --frozen-lockfile
 
       - name: 在隔离工作树生成业务 crate 并校验幂等性
         if: ${{ matrix.fixture == 'business' }}
@@ -331,38 +329,6 @@ jobs:
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
         run: cargo xtask check recovery full-stack prepare
-
-      - name: 从当前隔离配置导出登录预算
-        working-directory: ${{ matrix.backend }}
-        run: >-
-          cargo xtask check recovery full-stack rate-limit
-          --tool-config-file "$RUNNER_TEMP/ryframe-full-stack/login-budget-config.json"
-
-      - name: 写入前端受管浏览器配置
-        working-directory: ${{ matrix.frontend }}
-        shell: bash
-        run: |
-          umask 077
-          python - <<'PY'
-          import json, os, pathlib, sys
-          runtime = pathlib.Path(os.environ["RUNNER_TEMP"]) / "ryframe-full-stack"
-          budget = json.loads((runtime / "login-budget-config.json").read_text(encoding="utf-8"))
-          frontend = pathlib.Path.cwd()
-          backend = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "${{ matrix.backend }}"
-          tools = frontend / ".local-tests/frontend-tools.json"
-          tools.parent.mkdir(parents=True, exist_ok=True)
-          browser = {"scopeId": f"ci-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",
-                     "tenantId": "system", "username": "admin", "password": "Valid!Admin123",
-                     "backendDir": str(backend), "runtimeDir": str(runtime), "python": sys.executable,
-                     "requestCapacity": 100, "requestWindowSeconds": 60,
-                     "port": 4174, "serverMode": "preview", "fixture": "${{ matrix.fixture }}",
-                     "runId": f"ci-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}", **budget}
-          configuration = {"real_browser": browser}
-          with tools.open("x", encoding="utf-8") as output:
-              json.dump(configuration, output, ensure_ascii=False, indent=2)
-              output.write("\n")
-          tools.chmod(0o600)
-          PY
 
       - name: 启动真实 API、Worker 并等待就绪
         working-directory: ${{ matrix.backend }}

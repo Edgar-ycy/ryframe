@@ -90,17 +90,10 @@ fn full_stack_native_stages_keep_failure_collection_and_required_artifacts() {
         Some("$RUNNER_TEMP/ryframe-full-stack/reset-state")
     );
     let (prepare, _) = command(job, "cargo xtask check recovery full-stack prepare");
-    let (budget, _) = command(job, "cargo xtask check recovery full-stack rate-limit");
     let (start, _) = command(job, "cargo xtask check recovery full-stack start");
     let (build, _) = command(job, "corepack pnpm build");
     let (collect, collector) = command(job, "cargo xtask check recovery full-stack collect");
-    assert!(
-        configured < prepare
-            && prepare < budget
-            && budget < start
-            && start < build
-            && build < collect
-    );
+    assert!(configured < prepare && prepare < start && start < build && build < collect);
     assert_eq!(text(collector, "if"), "${{ always() }}");
     let upload = steps(job)[collect + 1..]
         .iter()
