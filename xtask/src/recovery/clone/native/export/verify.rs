@@ -31,10 +31,13 @@ pub(crate) fn binding(context: &Context, descriptor: &Value) -> Result<Value> {
     }
     let value = json_io::read(&path)?;
     validate_export(context, &value, &path)?;
+    let root = path.parent().ok_or("源导出缺少证据目录")?;
     Ok(json!({
         "export": value,
         "binding": descriptor,
         "logical_inventory_sha256": value["logical_inventory_sha256"],
+        "generation": json_io::read(&root.join("generation-before.json"))?,
+        "proof_files": super::evidence::files(context, &value, root)?,
     }))
 }
 

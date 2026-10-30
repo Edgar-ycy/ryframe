@@ -7,6 +7,7 @@ use crate::Result;
 
 mod capture;
 pub(crate) mod database;
+mod evidence;
 pub(crate) mod input;
 pub(crate) mod inventory;
 mod inventory_validate;

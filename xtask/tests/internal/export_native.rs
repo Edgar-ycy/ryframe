@@ -28,6 +28,9 @@ use crate::{
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 
+#[path = "export_native/recovery.rs"]
+mod recovery_tests;
+
 struct Fixture {
     backend: PathBuf,
     local: PathBuf,
@@ -277,7 +280,7 @@ impl Transport for FakeS3 {
                     request.bucket
                 )
             } else if self.wrong_body {
-                "wrong".into()
+                "evil".into()
             } else {
                 "data".into()
             };
@@ -288,7 +291,7 @@ impl Transport for FakeS3 {
                 "ContentType": "text/plain",
                 "Metadata": {},
                 "ETag": "\"fixture-etag\"",
-                "ContentLength": if self.wrong_body { 5 } else { 4 },
+                "ContentLength": 4,
                 "LastModified": "2026-09-04T00:00:00+00:00",
                 "AcceptRanges": "bytes",
                 "StorageClass": "STANDARD",
@@ -351,15 +354,15 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
 
     let failed = Fixture::new();
     let failed_context = object_capture_context(&failed);
-    assert!(
-        object::capture(
-            &failed_context,
-            &FakeS3 { wrong_body: true },
-            &inventory,
-            1024
-        )
-        .is_err()
-    );
+    let error = object::capture(
+        &failed_context,
+        &FakeS3 { wrong_body: true },
+        &inventory,
+        1024,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("SHA"), "{error}");
 }
 
 fn object_capture_context(fixture: &Fixture) -> Context {

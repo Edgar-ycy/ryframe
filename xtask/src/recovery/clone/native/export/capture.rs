@@ -204,7 +204,7 @@ fn publish_export(context: &Context, frame: CaptureFrame) -> Result<Value> {
     let request_digest = digest::file(&context.request_path)?;
     let export = build_export(context, &frame, request_digest)?;
     json_io::write_new(&output.join("export.json"), &export)?;
-    let binding = verify::binding(
+    let verified = verify::binding(
         context,
         &json!({
             "path": output.join("export.json").display().to_string(),
@@ -212,16 +212,6 @@ fn publish_export(context: &Context, frame: CaptureFrame) -> Result<Value> {
             "sha256": digest::file(&output.join("export.json"))?.sha256,
         }),
     )?;
-    let verified = json!({
-        "export": export,
-        "binding": binding,
-        "summary": {
-            "export_sha256": digest::plan_hash(&export)?,
-            "logical_inventory_sha256": export["logical_inventory_sha256"],
-            "databases": export["databases"].as_array().map(Vec::len).unwrap_or(0),
-            "objects": export["objects"].as_array().map(|items| items.iter().map(|bucket| bucket["entries"].as_array().map(Vec::len).unwrap_or(0)).sum::<usize>()).unwrap_or(0),
-        },
-    });
     recovery::record_verified(context, &verified)?;
     Ok(json!({
         "status": "export_verified",

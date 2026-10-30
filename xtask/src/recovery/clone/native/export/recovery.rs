@@ -92,7 +92,7 @@ pub(crate) fn record_verified(context: &Context, verified: &Value) -> Result<()>
             "intent": intent_binding(context)?,
             "export": verified["binding"],
             "source_storage": intent["source_storage"],
-            "summary": verified["summary"],
+            "summary": summary(verified)?,
             "remote_writes": 0,
         }),
     )?;
@@ -100,58 +100,54 @@ pub(crate) fn record_verified(context: &Context, verified: &Value) -> Result<()>
 }
 
 pub(crate) fn reconcile(context: &Context) -> Result<Value> {
-    let attempt = candidates(context, "export")?
-        .into_iter()
-        .next()
-        .ok_or("export reconcile 必须恰有一个由原 failed attempt 推导的完整候选")?;
-    if candidates(context, "export")?.len() != 1 || attempt["status"].as_str() != Some("failed") {
-        return Err("export reconcile 必须恰有一个由原 failed attempt 推导的完整候选".into());
+    let current = current_attempt(context)?;
+    let (attempt, intent, verified) = verify_candidate(context, &current["sources"])?;
+    let result = reconciled(context, &attempt, &intent, &verified, &current["sources"])?;
+    for (_, previous) in adoptions(context)? {
+        if previous != result {
+            return Err("本次 export 采用结果与同一 run 的既有结果不同".into());
+        }
     }
-    let number = attempt["number"].as_u64().unwrap_or_default();
-    let intent = intent(context, number)?;
-    let export = binding_for(context, number)?;
-    let verified = verify::binding(context, &export)?;
-    let summary = summary(&verified)?;
-    record_candidate_verified(context, number, &verified)?;
-    if verified["export"]["request"] != context.manifest["source_request"] {
-        return Err("候选 export 的请求与固定运行清单不同".into());
-    }
+    Ok(result)
+}
+
+fn reconciled(
+    context: &Context,
+    attempt: &Value,
+    intent: &Value,
+    verified: &Value,
+    sources: &Value,
+) -> Result<Value> {
+    let number = attempt["number"].as_u64().ok_or("原 export 序号无效")?;
     Ok(json!({
         "status": "export_reconciled",
         "origin_attempt": number,
         "origin_controller": intent["controller"],
         "origin_intent": binding(context, &context.run_dir.join(format!("export-{number:04}.intent.json")))?,
-        "export": export,
+        "export": verified["binding"],
         "source_request": context.manifest["source_request"],
         "source_storage": intent["source_storage"],
-        "summary": summary,
+        "summary": summary(verified)?,
         "origin_execution_source": attempt["sources"],
-        "reconciled_execution_source": attempt["sources"],
+        "reconciled_execution_source": sources,
         "remote_writes": 0,
         "restore_qualified": false,
     }))
 }
 
 pub(crate) fn resume(context: &Context) -> Result<Value> {
-    let adopted = state::attempts(&state::load(&context.run_dir, true)?)?
-        .iter()
-        .rfind(|attempt| {
-            attempt["number"].as_u64().unwrap_or_default() < context.attempt
-                && attempt["stage"].as_str() == Some("export")
-                && attempt["mode"].as_str() == Some("reconcile")
-                && attempt["status"].as_str() == Some("passed")
-        })
-        .cloned()
+    let current = current_attempt(context)?;
+    let (adopted, receipt) = adoptions(context)?
+        .into_iter()
+        .rfind(|(attempt, _)| attempt["status"] == "passed")
         .ok_or("export resume 前必须先完成显式只读 reconcile")?;
+    let (attempt, intent, verified) = verify_candidate(context, &current["sources"])?;
+    if receipt != reconciled(context, &attempt, &intent, &verified, &adopted["sources"])? {
+        return Err("export resume 的已发布 reconcile 收据与当前固定候选矛盾".into());
+    }
     let result = adopted
         .get("result")
         .ok_or("reconcile attempt 缺少结果绑定")?;
-    let path = manifest::bound_file(&context.backend, result, "reconcile 结果", true)?;
-    let receipt = json_io::read(&path)?;
-    let verified = verify::binding(
-        context,
-        receipt.get("export").ok_or("reconcile 收据缺少 export")?,
-    )?;
     Ok(json!({
         "status": "export_verified",
         "export": verified["binding"],
@@ -162,25 +158,33 @@ pub(crate) fn resume(context: &Context) -> Result<Value> {
     }))
 }
 
-fn candidates(context: &Context, mode: &str) -> Result<Vec<Value>> {
+fn candidates(context: &Context) -> Result<Vec<Value>> {
     let value = state::load(&context.run_dir, true)?;
-    Ok(state::attempts(&value)?
-        .iter()
-        .filter(|attempt| {
-            attempt["number"].as_u64().unwrap_or_default() < context.attempt
-                && attempt["stage"].as_str() == Some("export")
-                && attempt["mode"].as_str() == Some(mode)
-                && attempt["status"].as_str() == Some("failed")
-        })
-        .filter(|attempt| {
-            let number = attempt["number"].as_u64().unwrap_or_default();
-            context
-                .run_dir
-                .join(format!("e{number:04}/export.json"))
-                .exists()
-        })
-        .cloned()
-        .collect())
+    let mut candidates = Vec::new();
+    for attempt in state::attempts(&value)? {
+        if attempt["number"].as_u64().unwrap_or_default() >= context.attempt
+            || attempt["stage"] != "export"
+            || attempt["mode"] != "run"
+        {
+            continue;
+        }
+        let number = attempt["number"].as_u64().ok_or("原 export 序号无效")?;
+        let directory = context.run_dir.join(format!("e{number:04}"));
+        match std::fs::symlink_metadata(&directory) {
+            Ok(metadata) if !metadata.is_dir() || digest::linked(&metadata) => {
+                return Err("源导出 attempt 输出不是固定普通目录".into());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+            _ => {}
+        }
+        match std::fs::symlink_metadata(directory.join("export.json")) {
+            Ok(_) => candidates.push(attempt.clone()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(candidates)
 }
 
 fn intent(context: &Context, number: u64) -> Result<Value> {
@@ -204,10 +208,20 @@ fn intent(context: &Context, number: u64) -> Result<Value> {
         ],
         "源导出 intent",
     )?;
+    let state = state::load(&context.run_dir, true)?;
+    let attempt = state::attempts(&state)?
+        .iter()
+        .find(|attempt| attempt["number"].as_u64() == Some(number))
+        .ok_or("源导出 intent 缺少原 attempt")?;
+    let controller = original_controller(context, attempt)?;
     if root.get("format_version").and_then(Value::as_u64) != Some(1)
         || root.get("kind").and_then(Value::as_str) != Some("devex-clone-export-attempt")
         || root.get("attempt").and_then(Value::as_u64) != Some(number)
         || root.get("source_request") != context.manifest.get("source_request")
+        || root.get("output") != Some(&json!(context.run_dir.join(format!("e{number:04}"))))
+        || root.get("manifest") != Some(&state::manifest_binding(&context.run_dir)?)
+        || root.get("controller") != Some(&controller)
+        || root.get("execution_source") != attempt.get("sources")
         || root.get("remote_operations").and_then(Value::as_str) != Some("read_only")
     {
         return Err("源导出 intent 与固定 manifest 或原执行源码不符".into());
@@ -221,10 +235,152 @@ fn binding_for(context: &Context, number: u64) -> Result<Value> {
     manifest::binding(&path, &digest)
 }
 
+fn current_attempt(context: &Context) -> Result<Value> {
+    let value = state::load(&context.run_dir, true)?;
+    let attempt = state::attempts(&value)?
+        .last()
+        .ok_or("缺少当前 export attempt")?;
+    if attempt["number"].as_u64() != Some(context.attempt)
+        || attempt["stage"] != "export"
+        || attempt["mode"] != context.mode
+        || attempt["status"] != "running"
+    {
+        return Err("源导出恢复不是当前已登记阶段".into());
+    }
+    Ok(attempt.clone())
+}
+
+fn original_controller(context: &Context, attempt: &Value) -> Result<Value> {
+    let number = attempt["number"].as_u64().ok_or("原 export 序号无效")?;
+    let mut initial = attempt.clone();
+    initial["status"] = json!("running");
+    initial["finished_at"] = Value::Null;
+    initial["result"] = Value::Null;
+    initial["error_type"] = Value::Null;
+    let (binding, owner) = state::controller_record(&context.run_dir, number, &initial)?;
+    super::super::lifecycle::identity::validate(&owner, &context.run_dir)?;
+    if owner["manifest_sha256"] != state::manifest_binding(&context.run_dir)?["sha256"] {
+        return Err("源导出控制器未绑定原运行清单".into());
+    }
+    Ok(binding)
+}
+
+fn product(sources: &Value) -> Result<&Value> {
+    let value = sources
+        .pointer("/fingerprints/product")
+        .ok_or("export 恢复缺少产品源码指纹")?;
+    let root = json_io::exact(value, &["sha256", "files"], "产品源码指纹")?;
+    let sha = root["sha256"].as_str().ok_or("产品源码摘要无效")?;
+    if sha.len() != 64
+        || !sha
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || root["files"].as_u64().is_none()
+    {
+        return Err("产品源码指纹无效".into());
+    }
+    Ok(value)
+}
+
+fn verify_candidate(context: &Context, sources: &Value) -> Result<(Value, Value, Value)> {
+    let candidates = candidates(context)?;
+    if candidates.len() != 1 || candidates[0]["status"] != "failed" {
+        return Err("export reconcile 必须恰有一个由原 failed attempt 推导的完整候选".into());
+    }
+    let attempt = &candidates[0];
+    let number = attempt["number"].as_u64().ok_or("原 export 序号无效")?;
+    let intent = intent(context, number)?;
+    let intent_path = context
+        .run_dir
+        .join(format!("export-{number:04}.intent.json"));
+    let intent_before = binding(context, &intent_path)?;
+    if product(&intent["execution_source"])? != product(sources)? {
+        return Err("原 export attempt 与当前恢复执行的产品源码指纹不同".into());
+    }
+    let storage = super::super::resources::storage::registered::current(
+        &context.backend,
+        &context.run_dir,
+        crate::cli::CloneSide::Source,
+    )?;
+    if json!(storage) != intent["source_storage"] {
+        return Err("源 storage provenance 与原 export attempt 不同".into());
+    }
+    let export = binding_for(context, number)?;
+    let verified = verify::binding(context, &export)?;
+    if verified["export"]["request"] != context.manifest["source_request"]
+        || binding(context, &intent_path)? != intent_before
+        || self::intent(context, number)? != intent
+        || binding_for(context, number)? != export
+        || super::super::resources::storage::registered::current(
+            &context.backend,
+            &context.run_dir,
+            crate::cli::CloneSide::Source,
+        )? != storage
+    {
+        return Err("候选 export 的请求或 storage 前后复核不一致".into());
+    }
+    record_candidate_verified(context, number, &verified)?;
+    Ok((attempt.clone(), intent, verified))
+}
+
+fn adoptions(context: &Context) -> Result<Vec<(Value, Value)>> {
+    let value = state::load(&context.run_dir, true)?;
+    let mut results: Vec<(Value, Value)> = Vec::new();
+    for attempt in state::attempts(&value)? {
+        if attempt["number"].as_u64().unwrap_or_default() >= context.attempt
+            || attempt["stage"] != "export"
+            || attempt["result"].is_null()
+        {
+            continue;
+        }
+        let path = manifest::bound_file(
+            &context.backend,
+            &attempt["result"],
+            "export 采用结果",
+            true,
+        )?;
+        let receipt = json_io::read(&path)?;
+        if receipt["status"] != "export_reconciled" {
+            continue;
+        }
+        json_io::exact(
+            &receipt,
+            &[
+                "status",
+                "origin_attempt",
+                "origin_controller",
+                "origin_intent",
+                "export",
+                "source_request",
+                "source_storage",
+                "summary",
+                "origin_execution_source",
+                "reconciled_execution_source",
+                "remote_writes",
+                "restore_qualified",
+            ],
+            "export 采用结果",
+        )?;
+        if attempt["mode"] != "reconcile"
+            || !matches!(attempt["status"].as_str(), Some("passed" | "failed"))
+            || receipt["reconciled_execution_source"] != attempt["sources"]
+            || results
+                .first()
+                .is_some_and(|(_, previous)| *previous != receipt)
+        {
+            return Err("export 采用结果不属于同一已收尾 reconcile 或存在矛盾结果".into());
+        }
+        results.push((attempt.clone(), receipt));
+    }
+    Ok(results)
+}
+
 fn summary(verified: &Value) -> Result<Value> {
     let export = verified.get("export").ok_or("已复核导出缺少 export")?;
     Ok(json!({
         "export_sha256": digest::plan_hash(export)?,
+        "generation_sha256": digest::plan_hash(verified.get("generation").ok_or("已复核导出缺少 generation")?)?,
+        "proof_files_sha256": digest::plan_hash(verified.get("proof_files").ok_or("已复核导出缺少 proof_files")?)?,
         "logical_inventory_sha256": export["logical_inventory_sha256"],
         "databases": export["databases"].as_array().map(Vec::len).unwrap_or(0),
         "objects": export["objects"].as_array().map(|items| items.iter().map(|bucket| bucket["entries"].as_array().map(Vec::len).unwrap_or(0)).sum::<usize>()).unwrap_or(0),
@@ -249,13 +405,13 @@ fn record_candidate_verified(context: &Context, number: u64, verified: &Value) -
     let path = context
         .run_dir
         .join(format!("export-{number:04}.verified.json"));
-    if path.exists() {
-        if json_io::read(&path)? != value {
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) if json_io::read(&path)? != value => {
             return Err("源导出完整复核摘要与既有候选矛盾".into());
         }
-        return Ok(());
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+        _ => {}
     }
-    json_io::write_new(&path, &value)?;
     Ok(())
 }
 
