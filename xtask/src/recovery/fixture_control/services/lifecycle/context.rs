@@ -1,6 +1,6 @@
 //! 服务上下文只读装载；凭据只返回私有调用方，不写日志或公开状态。
 use super::*;
-use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
+use crate::local_test_path::{LocalTestPathKind, same_local_test_file, validate_local_test_path};
 
 pub(super) fn document(backend: &Path, selected: &Path) -> Result<(PathBuf, Value)> {
     let path = if selected.is_absolute() {
@@ -15,23 +15,9 @@ pub(super) fn document(backend: &Path, selected: &Path) -> Result<(PathBuf, Valu
     Ok((path, value))
 }
 
-pub(super) fn same_file(backend: &Path, selected: &Path, recorded: &Path) -> Result<bool> {
-    let selected = if selected.is_absolute() {
-        selected.to_path_buf()
-    } else {
-        backend.join(selected)
-    };
-    validate_local_test_path(&selected, backend, LocalTestPathKind::ExistingFile)?;
-    validate_local_test_path(recorded, backend, LocalTestPathKind::ExistingFile)?;
-    let same = std::fs::canonicalize(&selected)? == std::fs::canonicalize(recorded)?;
-    validate_local_test_path(&selected, backend, LocalTestPathKind::ExistingFile)?;
-    validate_local_test_path(recorded, backend, LocalTestPathKind::ExistingFile)?;
-    Ok(same)
-}
-
 fn recorded_path(backend: &Path, selected: &Path, recorded: &Value) -> Result<Option<PathBuf>> {
     let expected = Path::new(text(recorded, "path")?);
-    if !same_file(backend, selected, expected)? {
+    if !same_local_test_file(backend, selected, expected)? {
         return Ok(None);
     }
     let (path, _) = document(backend, expected)?;

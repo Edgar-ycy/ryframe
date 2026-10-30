@@ -52,10 +52,13 @@ pub(crate) fn evidence_history(
         "初始化历史路径无效",
     )?;
     protection(target, owner)?;
+    let (filename, registration) = tree::registered(backend, filename)?;
+    let target = filename.parent().ok_or("登记初始化历史缺少目标目录")?;
+    protection(target, owner)?;
     let before = super::tree::snapshot(backend, target, owner.is_some())?;
     let inputs = guard::Inputs::open(super::tree::files(target, &before)?)?;
     let resolved = failure::resolved(backend, target, owner)?;
-    let initialized = read(backend, filename)?;
+    let initialized = read(backend, &filename)?;
     let prepared = read(backend, &target.join("prepare.json"))?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;
     initialization(backend, target, &initialized, &prepared, &request, resolved)?;
@@ -63,6 +66,7 @@ pub(crate) fn evidence_history(
         return Err("已发布 seed 初始化内容或当前文件树在核验期间变化".into());
     }
     inputs.check()?;
+    registration.check()?;
     protection(target, owner)?;
     Ok((initialized, request))
 }
@@ -90,17 +94,21 @@ fn history(
         "初始化历史必须读取固定 initialized.json",
     )?;
     protection(target, owner)?;
+    let (filename, registration) = tree::registered(backend, filename)?;
+    let target = filename.parent().ok_or("登记初始化历史缺少目标目录")?;
+    protection(target, owner)?;
     let locked = owner.is_some();
     let before = tree::initialized(backend, target, locked)?;
     let files = super::tree::snapshot(backend, target, locked)?;
     let inputs = guard::Inputs::open(super::tree::files(target, &files)?)?;
     let resumed = failure::resolved(backend, target, owner)?;
-    let initialized = read(backend, filename)?;
+    let initialized = read(backend, &filename)?;
     let prepared = read(backend, &target.join("prepare.json"))?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;
     request_binding(backend, &request)?;
     initialization(backend, target, &initialized, &prepared, &request, resumed)?;
     inputs.check()?;
+    registration.check()?;
     protection(target, owner)?;
     check(
         tree::initialized(backend, target, locked)? == before

@@ -103,6 +103,58 @@ fn published_unlocked_history_requires_complete_double_tree_and_original_request
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn published_history_preserves_registered_spelling_for_windows_file_aliases() {
+    let fixture = complete();
+    let filename = fixture.target.join("initialized.json");
+    let expected = unlocked_history(&fixture.backend, &filename).unwrap();
+    let before = fixture::snapshot(&fixture.local);
+    let slash = filename.to_str().unwrap().replace('\\', "/");
+    let mixed = slash.replacen("/target/", "\\target/", 1);
+    for selected in [
+        std::path::PathBuf::from(slash),
+        std::path::PathBuf::from(mixed),
+    ] {
+        assert_eq!(
+            unlocked_history(&fixture.backend, &selected).unwrap(),
+            expected
+        );
+        assert_eq!(
+            crate::recovery::clone::native::target_verify::published::evidence_history(
+                &fixture.backend,
+                &selected,
+                None,
+            )
+            .unwrap(),
+            expected
+        );
+        let owner =
+            guard::Generation::acquire(&fixture.backend, selected.parent().unwrap()).unwrap();
+        let observed = owned_history(&fixture.backend, &selected, &owner);
+        assert_eq!(owner.finish(observed).unwrap(), expected);
+        assert_eq!(fixture::snapshot(&fixture.local), before);
+    }
+}
+
+#[test]
+fn published_history_rejects_same_content_in_another_directory_without_changing_receipts() {
+    let fixture = complete();
+    let decoy = fixture.local.join("same-content");
+    fs::create_dir(&decoy).unwrap();
+    fs::copy(
+        fixture.target.join("initialized.json"),
+        decoy.join("initialized.json"),
+    )
+    .unwrap();
+    let before = fixture::snapshot(&fixture.local);
+    let error = unlocked_history(&fixture.backend, &decoy.join("initialized.json"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("不是登记目标的原文件"), "{error}");
+    assert_eq!(fixture::snapshot(&fixture.local), before);
+}
+
 #[test]
 fn published_new_reset_rejects_missing_binding_removed_markers_and_mixed_commands() {
     for mode in ["missing", "removed-markers", "mixed", "projection"] {

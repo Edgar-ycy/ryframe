@@ -1,10 +1,32 @@
 //! initialized → prepared → registration 双树谱系与完整 prepare 观察。
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 use super::super::{super::json as json_io, evidence_model::*, resume_baseline};
 use crate::Result;
+
+pub(super) fn registered(
+    backend: &Path,
+    selected: &Path,
+) -> Result<(PathBuf, super::guard::Inputs)> {
+    let target = selected.parent().ok_or("初始化历史缺少目标目录")?;
+    let workspace = target.parent().ok_or("初始化目标缺少登记目录")?;
+    let registration_path = workspace.join("registration.json");
+    let inputs = super::guard::Inputs::open([selected.to_path_buf(), registration_path.clone()])?;
+    let registration = read(backend, &registration_path)?;
+    let recorded = Path::new(json_io::text(
+        &registration["target_directory"],
+        "登记目标目录",
+    )?)
+    .join("initialized.json");
+    check(
+        crate::local_test_path::same_local_test_file(backend, selected, &recorded)?,
+        "所选初始化历史不是登记目标的原文件；保留原收据并选择 registration 中的目标目录",
+    )?;
+    inputs.check()?;
+    Ok((recorded, inputs))
+}
 
 pub(in super::super) fn initialized(backend: &Path, target: &Path, locked: bool) -> Result<Value> {
     let workspace = target.parent().ok_or("初始化目标缺少登记目录")?;

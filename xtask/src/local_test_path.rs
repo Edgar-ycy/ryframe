@@ -42,6 +42,25 @@ pub(crate) fn validate_local_test_path(
     Ok(value.to_path_buf())
 }
 
+/// 比较受控普通文件的位置；保留登记路径写法，不以内容相同代替文件身份。
+pub(crate) fn same_local_test_file(
+    backend: &Path,
+    selected: &Path,
+    recorded: &Path,
+) -> crate::Result<bool> {
+    let selected = if selected.is_absolute() {
+        selected.to_path_buf()
+    } else {
+        backend.join(selected)
+    };
+    validate_local_test_path(&selected, backend, LocalTestPathKind::ExistingFile)?;
+    validate_local_test_path(recorded, backend, LocalTestPathKind::ExistingFile)?;
+    let same = fs::canonicalize(&selected)? == fs::canonicalize(recorded)?;
+    validate_local_test_path(&selected, backend, LocalTestPathKind::ExistingFile)?;
+    validate_local_test_path(recorded, backend, LocalTestPathKind::ExistingFile)?;
+    Ok(same)
+}
+
 /// 核验一个登记的外部工具是绝对普通文件，且路径各段不经过链接或 reparse point。
 pub(crate) fn validate_external_existing_file(value: &Path) -> Result<PathBuf, String> {
     validate_lexical_path(value)?;

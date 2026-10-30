@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix rejection of initialized-target history when Windows path separators differ. Read the complete chain using the registered target's original spelling, verify that the selected and registered files occupy the same location, and protect the registration and initialized file during reading. Preserve the original byte counts, SHA digests and predecessor checks without rewriting receipts or accepting another file with identical content. Service lifecycle checks share the existing controlled-file matching rule.
+
 - Correct the copy/recovery mapping for data-retention cleanup to the registered product type `system.data_retention.cleanup`, preventing rejection of valid global scheduled parent jobs. Preserve checks for the system tenant, global parent, related IDs, trigger type and payload timestamps without accepting misspelled aliases.
 
 - Reuse four fixed regular expressions in the copy tool's SQL parser instead of recompiling them per row and numeric literal. Preserve grammar, exact numeric text, JSON and escape handling, complete-column and multiple-statement rejection, without reducing full scans or validation.
