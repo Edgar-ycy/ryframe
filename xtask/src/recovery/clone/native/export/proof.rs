@@ -66,8 +66,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         .ok_or("源 runtime 缺少 Worker 就绪地址")?;
     verify_api_address(api, &api_configuration)?;
     verify_worker_address(worker, &worker_configuration)?;
-    common::require_closed_port(api)?;
-    common::require_closed_port(worker)?;
+    require_closed_runtime_ports(api, worker)?;
     if runtime_configuration(context, &runtime, "api")?.1 != api_files
         || runtime_configuration(context, &runtime, "worker")?.1 != worker_files
     {
@@ -89,6 +88,14 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
     });
     scope.assert_unchanged()?;
     Ok(proof)
+}
+
+fn require_closed_runtime_ports(api: &str, worker: &str) -> Result<()> {
+    common::require_closed_port(api)?;
+    let worker = worker
+        .strip_suffix("/readyz")
+        .ok_or("Worker 就绪地址必须以 /readyz 结尾")?;
+    common::require_closed_port(worker)
 }
 
 fn verify_runtime_contract(context: &Context, path: &Path, expected: &Value) -> Result<()> {

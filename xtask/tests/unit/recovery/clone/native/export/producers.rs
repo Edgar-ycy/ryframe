@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn runtime_stop_proof_accepts_ready_path_only_after_both_ports_are_released() {
+    let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let worker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let api_url = format!("http://{}", api.local_addr().unwrap());
+    let worker_url = format!("http://{}/readyz", worker.local_addr().unwrap());
+    assert!(require_closed_runtime_ports(&api_url, &worker_url).is_err());
+    drop(api);
+    assert!(require_closed_runtime_ports(&api_url, &worker_url).is_err());
+    drop(worker);
+    require_closed_runtime_ports(&api_url, &worker_url).unwrap();
+    for suffix in ["/readyz?token=hidden", "/other", ""] {
+        let invalid = worker_url.replace("/readyz", suffix);
+        assert!(require_closed_runtime_ports(&api_url, &invalid).is_err());
+    }
+}
+
 fn input() -> (Value, BTreeMap<String, Value>) {
     let identity = |pid, started| {
         json!({"pid":pid,"started":started,

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the source-export stop proof incorrectly parsing the Worker `/readyz` path as part of its port. After validating the registered address, check the same listening port and continue to reject occupied API or Worker ports without relaxing resource-root address constraints.
+
 - Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.
 
 - Audit copy/recovery tests, merge duplicate missing-object coverage, and remove obsolete AWS CLI simulation and unintroduced-secret assertions while preserving conditional writes, unknown outcomes, concurrent completion, and real credential isolation. Correct file-binding assertions and case names. Two current test modules reuse workspace temporary directories to avoid Windows system-temp ACL failures during creation and cleanup.
