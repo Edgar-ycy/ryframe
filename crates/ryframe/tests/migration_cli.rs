@@ -141,6 +141,88 @@ fn sql_export_refuses_escape_from_private_directory() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn sql_export_accepts_verbatim_private_paths_and_preserves_namespace_guards() {
+    use std::path::{Component, PathBuf, Prefix};
+
+    let directory = directory();
+    let verbatim = fs::canonicalize(directory.path()).unwrap();
+    assert!(
+        matches!(verbatim.components().next(), Some(Component::Prefix(prefix))
+        if matches!(prefix.kind(), Prefix::VerbatimDisk(_) | Prefix::VerbatimUNC(..)))
+    );
+    let spelling = verbatim.to_str().unwrap();
+    let ordinary = if let Some(unc) = spelling.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc}"))
+    } else {
+        PathBuf::from(spelling.strip_prefix(r"\\?\").unwrap())
+    };
+    assert!(
+        matches!(ordinary.components().next(), Some(Component::Prefix(prefix))
+        if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::UNC(..)))
+    );
+    let output = verbatim.join("init.sql");
+    let result = run(&output, "--write", Some("VerbatimExport-Test-Admin42!"));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let original = fs::read(&output).unwrap();
+    assert!(!original.is_empty());
+    let repeated = run(
+        &ordinary.join("init.sql"),
+        "--write",
+        Some("AnotherAdmin123!"),
+    );
+    assert!(!repeated.status.success());
+    assert_eq!(fs::read(&output).unwrap(), original);
+
+    let unique = directory.path().file_name().unwrap().to_str().unwrap();
+    // 直接构造原始拼写，避免 PathBuf::push 在 verbatim 路径上消去父级组件。
+    let parent_escape = PathBuf::from(format!(
+        r"{}\..\{unique}-parent-init.sql",
+        verbatim.display()
+    ));
+    assert!(
+        parent_escape
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    );
+    let escaped_target = directory
+        .path()
+        .parent()
+        .unwrap()
+        .join(format!("{unique}-parent-init.sql"));
+    assert!(!escaped_target.exists());
+    let result = run(
+        &parent_escape,
+        "--write",
+        Some("VerbatimExport-Test-Admin42!"),
+    );
+    assert!(!result.status.success());
+    assert!(!escaped_target.exists());
+
+    let outside_parent = verbatim
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(format!("{unique}-outside-private"));
+    let outside = outside_parent.join("init.sql");
+    assert!(
+        !outside
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    );
+    assert!(!outside_parent.exists());
+    let result = run(&outside, "--write", Some("VerbatimExport-Test-Admin42!"));
+    assert!(!result.status.success());
+    assert!(!outside_parent.exists());
+    assert_eq!(fs::read(&output).unwrap(), original);
+}
+
 fn adoption(args: &[&str]) -> Output {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

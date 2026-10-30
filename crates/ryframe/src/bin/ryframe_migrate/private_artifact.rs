@@ -38,15 +38,17 @@ fn resolve(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     } else {
         root.join(path)
     };
+    let relative = strip_workspace_prefix(&path, &private);
     if path
         .components()
         .any(|part| matches!(part, Component::ParentDir))
-        || !path.starts_with(&private)
-        || path == private
+        || relative.is_none_or(|tail| tail.as_os_str().is_empty())
     {
         return Err("私有凭据或计划仅允许位于当前后端 .local-tests 下，且路径不能包含 ..".into());
     }
-    for ancestor in path.ancestors().take_while(|path| *path != root) {
+    for ancestor in path.ancestors().take_while(|path| {
+        !strip_workspace_prefix(path, root).is_some_and(|tail| tail.as_os_str().is_empty())
+    }) {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() {
@@ -65,6 +67,36 @@ fn resolve(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
         }
     }
     Ok(path)
+}
+
+fn strip_workspace_prefix<'a>(path: &'a Path, base: &Path) -> Option<&'a Path> {
+    let mut actual = path.components();
+    for expected in base.components() {
+        if !same_component(actual.next()?, expected) {
+            return None;
+        }
+    }
+    Some(actual.as_path())
+}
+
+fn same_component(left: Component<'_>, right: Component<'_>) -> bool {
+    #[cfg(windows)]
+    if let (Component::Prefix(left), Component::Prefix(right)) = (left, right) {
+        use std::path::Prefix;
+        return match (left.kind(), right.kind()) {
+            (
+                Prefix::Disk(left) | Prefix::VerbatimDisk(left),
+                Prefix::Disk(right) | Prefix::VerbatimDisk(right),
+            ) => left == right,
+            (
+                Prefix::UNC(left_server, left_share) | Prefix::VerbatimUNC(left_server, left_share),
+                Prefix::UNC(right_server, right_share)
+                | Prefix::VerbatimUNC(right_server, right_share),
+            ) => left_server == right_server && left_share == right_share,
+            _ => left == right,
+        };
+    }
+    left == right
 }
 
 pub(super) fn publish(output: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
