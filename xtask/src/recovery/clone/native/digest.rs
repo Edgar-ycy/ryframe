@@ -63,6 +63,10 @@ pub(crate) fn linked_path(path: &Path) -> Result<Vec<bool>> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
+        // Windows 前缀本身是卷标；追加根分隔符后再核验真实根目录。
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(metadata) => result.push(linked(&metadata)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

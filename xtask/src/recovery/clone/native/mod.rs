@@ -31,6 +31,7 @@ pub(crate) mod seed;
 pub(crate) mod session;
 pub(crate) mod source;
 pub(crate) mod sql;
+pub(crate) mod sql_stream;
 mod state;
 pub(crate) mod target_verify;
 

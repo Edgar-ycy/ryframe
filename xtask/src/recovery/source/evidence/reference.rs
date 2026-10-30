@@ -3,6 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use regex::Regex;
@@ -35,7 +36,9 @@ pub(super) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-inventory-validate" => validate_inventory(args),
         "reference-artifacts-verify" => verify_artifacts(args),
         "reference-copy-metadata" => copy_metadata(args),
-        "reference-sql-line" => sql_line(args),
+        operation @ ("reference-sql-stream-create"
+        | "reference-sql-stream-read"
+        | "reference-sql-stream-close") => native::sql_stream::request(operation, args),
         "reference-sql-normalize" => normalize_dump(args),
         "reference-sql-dump" => validate_dump(args),
         "reference-object-index" => object_index(args),
@@ -206,8 +209,11 @@ fn validate_sql_line(line: &str, tables: &BTreeSet<String>) -> Result<()> {
     if line.len() > 16 * 1024 * 1024 {
         return Err("单行导出超过受限检查大小".into());
     }
-    let structure =
-        Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((?:`[a-z0-9_]+`(?:, )?)+\) VALUES \((.*)\);$")?;
+    static STRUCTURE: OnceLock<Regex> = OnceLock::new();
+    let structure = STRUCTURE.get_or_init(|| {
+        Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((?:`[a-z0-9_]+`(?:, )?)+\) VALUES \((.*)\);$")
+            .expect("固定 SQL 结构正则必须有效")
+    });
     let captures = structure
         .captures(line)
         .filter(|value| tables.contains(&value[1]))
@@ -230,17 +236,15 @@ fn validate_sql_line(line: &str, tables: &BTreeSet<String>) -> Result<()> {
             plain.push(character);
         }
     }
-    let literals = Regex::new(r"(?:NULL|_binary|0x[0-9A-Fa-f]*|[0-9eE+.,\s-])+")?;
+    static LITERALS: OnceLock<Regex> = OnceLock::new();
+    let literals = LITERALS.get_or_init(|| {
+        Regex::new(r"(?:NULL|_binary|0x[0-9A-Fa-f]*|[0-9eE+.,\s-])+")
+            .expect("固定 SQL 字面量正则必须有效")
+    });
     if quoted || !literals.replace_all(&plain, "").is_empty() {
         return Err("备份 SQL 包含表达式、多语句或无效字符串".into());
     }
     Ok(())
-}
-
-fn sql_line(args: &Value) -> Result<Value> {
-    exact(args, &["line", "tables"])?;
-    validate_sql_line(text(&args["line"], "SQL行")?, &tables(&args["tables"])?)?;
-    Ok(Value::Bool(true))
 }
 
 fn dump_lines(path: &Path, tables: &BTreeSet<String>, normalized: bool) -> Result<Vec<String>> {
@@ -387,37 +391,29 @@ mod tests {
     }
 
     #[test]
-    fn sql_validation_accepts_literals_and_rejects_expressions() {
-        let tables = json!(["sys_post"]);
-        let valid =
-            "INSERT INTO `sys_post` (`id`, `name`, `raw`) VALUES (1,'引号\\\'文本',0x4142);";
-        assert!(request("reference-sql-line", &json!({"line":valid,"tables":tables})).is_ok());
-        assert!(
-            request(
-                "reference-sql-line",
-                &json!({"line":"INSERT INTO `sys_post` (`id`) VALUES (SLEEP(1));","tables":["sys_post"]})
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
     fn sql_normalization_is_create_only_and_validated() {
         let directory = tempfile::tempdir().unwrap();
         let raw = directory.path().join("raw.sql");
         let output = directory.path().join("data.sql");
         fs::write(
             &raw,
-            "/*!40101 SET @OLD=1 */;\nINSERT INTO `sys_post` (`id`) VALUES (1);\n",
+            "/*!40101 SET @OLD=1 */;\nINSERT INTO `sys_post` (`id`, `name`, `raw`) VALUES (1,'引号\\\'文本',0x4142);\n",
         )
         .unwrap();
         let args = json!({"raw":raw,"output":output,"tables":["sys_post"]});
         assert_eq!(normalize_dump(&args).unwrap(), Value::Bool(true));
         assert_eq!(
             fs::read_to_string(&output).unwrap(),
-            "-- ryframe-reference-data-v1\nINSERT INTO `sys_post` (`id`) VALUES (1);\n"
+            "-- ryframe-reference-data-v1\nINSERT INTO `sys_post` (`id`, `name`, `raw`) VALUES (1,'引号\\\'文本',0x4142);\n"
         );
         assert!(normalize_dump(&args).is_err());
         assert!(validate_dump(&json!({"path":output,"tables":["sys_post"]})).is_ok());
+        fs::write(&raw, "INSERT INTO `sys_post` (`id`) VALUES (SLEEP(1));\n").unwrap();
+        let invalid_output = directory.path().join("invalid.sql");
+        assert!(
+            normalize_dump(&json!({"raw":raw,"output":invalid_output,"tables":["sys_post"]}))
+                .is_err()
+        );
+        assert!(!invalid_output.exists());
     }
 }

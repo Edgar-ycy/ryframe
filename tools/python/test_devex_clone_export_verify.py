@@ -163,11 +163,8 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertFalse(any(Path(name).suffix == ".sql" or Path(name).name == "object.bin" for name in result["proof_files"]))
 
     def test_full_export_parses_each_dump_once_and_keeps_narrow_tenant_preread(self):
-        expected = sum(sum(dump["tables"].values()) for dump in self.export["databases"])
-        tenants = sum(dump["tables"].get("sys_tenant", 0) for dump in self.export["databases"])
         with patch.object(export, "rows", wraps=export.rows) as full, \
-                patch.object(model, "rows", wraps=model.rows) as narrow, \
-                patch.object(sql_rows, "parse_row", wraps=sql_rows.parse_row) as parsed:
+                patch.object(model, "rows", wraps=model.rows) as narrow:
             self.load()
         self.assertEqual(full.call_count, len(self.export["databases"]))
         self.assertEqual({call.args[0].name for call in full.call_args_list},
@@ -175,7 +172,7 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertTrue(all(not call.kwargs for call in full.call_args_list))
         self.assertEqual(narrow.call_count, 1)
         self.assertEqual(narrow.call_args.kwargs, {"only_table": "sys_tenant"})
-        self.assertEqual(parsed.call_count, expected + tenants)
+        self.assertEqual(set(narrow.call_args.args[1]), set(self.fixture.case.control) | set(self.fixture.case.tenant))
 
     def test_full_export_keeps_real_object_relationship_validation_after_counting(self):
         capture = verify.verify_captures
@@ -333,7 +330,9 @@ class ExportVerificationTests(unittest.TestCase):
         loaded = self.load()
         for selection in ("all", "global", ("uploads", self.fixture.scope + "/system/file.txt")):
             with self.subTest(selection=selection), patch.object(verify, "schema_models", side_effect=AssertionError("unused full models")), \
-                    patch.object(sql_rows, "_native", wraps=sql_rows._native) as catalog:
+                    patch.object(sql_rows, "_native", wraps=sql_rows._native) as catalog, \
+                    patch.object(export, "rows", side_effect=AssertionError("binding must not read SQL")), \
+                    patch.object(model, "rows", side_effect=AssertionError("binding must not preread tenants")):
                 verify.verify_export_bindings(self.fixture.backend, loaded, selection=selection)
                 catalog.assert_called_once_with("copy-schema-catalog", {
                     "backend": str(self.fixture.backend), "include_full": False})

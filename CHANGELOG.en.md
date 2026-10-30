@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Move complete SQL reading and precise row decoding for copy/recovery into Rust, removing the Python SQL decoder and per-row native process interface. Managed chunks bind source and result digests, file identities and complete counts; unselected tables and invalid trailing rows remain validated, and failures preserve the scene. Fix volume-prefix checks for canonical Windows paths while retaining actual-root and link validation.
+
 - Synchronize the committed, verified copy-tool consumer closure, retaining authorization projections in complete inventory and using explicitly bound native tools for target and fixture adapters. Remove replaced Python execution and dedicated tests. After tool-source changes, recheck the registered product root, complete bridge inputs and current tool source. Retain existing bridges when their registered product tree is unchanged, and record coordinator tools in a new run manifest. Preserve original product builds, initialization, exports and failure receipts.
 
 - Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.

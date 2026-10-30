@@ -1,14 +1,20 @@
-"""开发复制的完整列、受限 SQL 字面量与可执行状态检查；不运行 SQL。"""
+"""消费 Rust 受管 typed NDJSON 行流及执行状态；不在 Python 解码 SQL。"""
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
+import copy
+import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
+import sys
 
-from restore_reference_io import DATA_HEADER, validate_insert
-from restore_reference_plan import EXCLUDED_TABLES, _native
+import native_s3_client as native
+from artifact_digests import filesystem_path
+from restore_build import file_digest
+from restore_reference_plan import EXCLUDED_TABLES, _native, plan_hash
 
 EXCLUDED = EXCLUDED_TABLES | {"sys_tenant_data_backup_point", "seaql_migrations"}
 EMPTY = {"sys_tenant_operation_lease", "sys_tenant_data_migration", "sys_tenant_data_migration_item"}
@@ -27,83 +33,17 @@ def schema_catalog(backend: Path) -> tuple[dict, dict]:
                  for name in ("control", "tenant"))
 
 
-def quoted(value: str, position: int) -> tuple[str, int]:
-    output, index = [], position + 1
-    escapes = {"0": "\0", "b": "\b", "n": "\n", "r": "\r", "t": "\t", "Z": "\x1a",
-               "\\": "\\", "'": "'", '"': '"', "%": "\\%", "_": "\\_"}
-    while index < len(value):
-        char = value[index]
-        if char == "'":
-            return "".join(output), index + 1
-        if char == "\\":
-            index += 1
-            if index >= len(value) or value[index] not in escapes:
-                raise ValueError("SQL 字符串包含未支持转义")
-            char = escapes[value[index]]
-        output.append(char)
-        index += 1
-    raise ValueError("SQL 字符串未结束")
-
-
-def literals(value: str) -> list:
-    result, index = [], 0
-    while index < len(value):
-        while index < len(value) and value[index].isspace():
-            index += 1
-        if value.startswith("_binary", index):
-            index += len("_binary")
-            while index < len(value) and value[index].isspace():
-                index += 1
-        if index >= len(value):
-            raise ValueError("SQL 值缺失")
-        if value[index] == "'":
-            item, index = quoted(value, index)
-        else:
-            match = re.match(r"NULL|0x[0-9a-fA-F]+|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", value[index:])
-            if not match:
-                raise ValueError("SQL 不是受限字面量")
-            token = match[0]
-            item = None if token == "NULL" else bytes.fromhex(token[2:]) if token.startswith("0x") else Decimal(token)
-            index += len(token)
-        result.append(item)
-        while index < len(value) and value[index].isspace():
-            index += 1
-        if index == len(value):
-            break
-        if value[index] != "," or index + 1 == len(value):
-            raise ValueError("SQL 列值分隔无效")
-        index += 1
-    return result
-
-
-def parse_row(line: str, catalog: dict) -> tuple[str, dict]:
-    validate_insert(line, set(catalog))
-    match = re.fullmatch(r"INSERT INTO `([a-z0-9_]+)` \((.*?)\) VALUES \((.*)\);", line)
-    if not match:
-        raise ValueError("SQL 行结构无效")
-    columns = re.findall(r"`([a-z0-9_]+)`", match[2])
-    values = literals(match[3])
-    if len(columns) != len(values) or len(columns) != len(set(columns)) or set(columns) != set(catalog[match[1]]):
-        raise ValueError("SQL 必须完整且恰好包含当前表的全部列")
-    row = dict(zip(columns, values, strict=True))
-    for name, kind in catalog[match[1]].items():
-        if kind == "JSON" and row[name] is not None:
-            row[name] = json.loads(row[name], object_pairs_hook=unique_json, parse_int=Decimal, parse_float=Decimal,
-                                   parse_constant=invalid_json_number)
-    return match[1], row
-
-
 def unique_json(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("SQL JSON 包含重复字段")
+            raise ValueError("行流 JSON 包含重复字段")
         result[key] = value
     return result
 
 
 def invalid_json_number(_value):
-    raise ValueError("SQL JSON 包含非有限数字")
+    raise ValueError("行流 JSON 包含非有限数字")
 
 
 @lru_cache(maxsize=128)
@@ -172,13 +112,188 @@ def validate_state(table: str, row: dict) -> None:
         raise ValueError("来源租户仍在开通或失败维护状态")
 
 
+def _request(operation: str, arguments: dict, *, write=False):
+    response, _ = native._read_response(*native._invoke(
+        "__source-evidence", {"operation": operation, "write": write, "arguments": arguments},
+        subprocess.run, may_write=False))
+    if set(response) != {"value"}:
+        raise ValueError("行流响应包络无效")
+    return response["value"]
+
+
+def _exact(value, fields):
+    if not isinstance(value, dict) or set(value) != set(fields):
+        raise ValueError("行流字段缺失或未知")
+
+
+def _uint(value):
+    if type(value) is not int or not 0 <= value <= 2**64 - 1:
+        raise ValueError("行流必须使用 u64 整数")
+    return value
+
+
+def _sha(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError("行流 SHA256 无效")
+    return value
+
+
+def _resolved(path):
+    # 复用既有系统路径转换，统一 resolve 后 Windows 普通与 verbatim 的命名空间。
+    return Path(filesystem_path(Path(path).resolve()))
+
+
+def _descriptor(stream, filename, expected, catalog, catalog_sha, only_table):
+    _exact(stream, {"format_version", "kind", "backend", "root", "source", "catalog_sha256",
+                    "only_table", "tables", "source_rows", "rows", "artifact", "manifest"})
+    if type(stream["format_version"]) is not int or stream["format_version"] != 1 or stream["kind"] != "ryframe-sql-row-stream-v1":
+        raise ValueError("行流版本无效")
+    for field in ("backend", "root"):
+        if not isinstance(stream[field], str) or not Path(stream[field]).is_absolute():
+            raise ValueError("行流目录必须是绝对路径")
+    backend, root = Path(stream["backend"]), Path(stream["root"])
+    if (_resolved(backend) != _resolved(native.ROOT)
+            or _resolved(root.parent) != _resolved(backend) / ".local-tests/sql-row-streams"
+            or not root.name.startswith("sql-rows-") or root.name == "sql-rows-"
+            or any(part in {".", ".."} for part in root.parts)):
+        raise ValueError("行流越过固定受管目录")
+    source = stream["source"]
+    _exact(source, {"path", "bytes", "sha256", "device", "inode"})
+    if (not isinstance(source["path"], str) or not Path(source["path"]).is_absolute()
+            or _resolved(source["path"]) != _resolved(filename)
+            or {key: source[key] for key in expected} != expected):
+        raise ValueError("行流未绑定本次原始来源")
+    for value in (source, stream["artifact"], stream["manifest"]):
+        for key in ("bytes", "device", "inode"):
+            _uint(value[key])
+        _sha(value["sha256"])
+    for field, name in (("artifact", "rows.jsonl"), ("manifest", "manifest.json")):
+        _exact(stream[field], {"file", "bytes", "sha256", "device", "inode"})
+        if stream[field]["file"] != name:
+            raise ValueError("行流产物名称无效")
+    if not source["bytes"] or not stream["manifest"]["bytes"]:
+        raise ValueError("来源与行流清单不能为空")
+    _sha(stream["catalog_sha256"])
+    if stream["catalog_sha256"] != catalog_sha or stream["only_table"] != only_table:
+        raise ValueError("行流目录或选择范围漂移")
+    _exact(stream["tables"], catalog)
+    total = sum(_uint(value) for value in stream["tables"].values())
+    selected = total if only_table is None else stream["tables"][only_table]
+    if _uint(stream["source_rows"]) != total or _uint(stream["rows"]) != selected:
+        raise ValueError("行流完整表计数不符")
+
+
+def _cell(cell):
+    if not isinstance(cell, dict):
+        raise ValueError("行流单元无效")
+    kind = cell.get("kind")
+    _exact(cell, {"kind"} if kind == "null" else {"kind", "value"})
+    if kind == "null":
+        return None
+    value = cell["value"]
+    if kind == "json":
+        return value
+    if not isinstance(value, str):
+        raise ValueError("行流标量必须为精确文本")
+    if kind == "text":
+        return value
+    if kind == "bytes" and re.fullmatch(r"(?:[0-9a-f]{2})*", value) is not None:
+        return bytes.fromhex(value)
+    if kind == "number":
+        try:
+            number = Decimal(value)
+        except InvalidOperation:
+            raise ValueError("行流数值无效") from None
+        if number.is_finite():
+            return number
+    raise ValueError("行流单元类型或数值无效")
+
+
+def _wire_row(line, catalog, only_table):
+    if not line or len(line.encode("utf-8")) > 128 * 1024 * 1024:
+        raise ValueError("行流编码行为空或超过 128MiB")
+    value = json.loads(line, object_pairs_hook=unique_json, parse_int=Decimal,
+                       parse_float=Decimal, parse_constant=invalid_json_number)
+    _exact(value, {"table", "row"})
+    table = value["table"]
+    if not isinstance(table, str) or table not in catalog or only_table is not None and table != only_table:
+        raise ValueError("行流返回未知或未选择的表")
+    _exact(value["row"], catalog[table])
+    row = {}
+    for column, cell in value["row"].items():
+        item = _cell(cell)
+        if (cell["kind"] == "json" and catalog[table][column] != "JSON"
+                or catalog[table][column] == "JSON" and cell["kind"] not in {"json", "null"}):
+            raise ValueError("行流 JSON 列类型不符")
+        row[column] = item
+    return table, row
+
+
+def _chunks(stream):
+    offset, size, whole = 0, stream["artifact"]["bytes"], hashlib.sha256()
+    while True:
+        value = _request("reference-sql-stream-read", {"stream": stream, "offset": offset})
+        _exact(value, {"offset", "next_offset", "eof", "text", "chunk_sha256"})
+        if not isinstance(value["text"], str) or type(value["eof"]) is not bool:
+            raise ValueError("行流分块类型无效")
+        data = value["text"].encode("utf-8")
+        next_offset = _uint(value["next_offset"])
+        if (_uint(value["offset"]) != offset or len(data) > 4 * 1024 * 1024
+                or next_offset != offset + len(data) or next_offset > size
+                or value["eof"] != (next_offset == size) or not value["eof"] and next_offset == offset
+                or _sha(value["chunk_sha256"]) != hashlib.sha256(data).hexdigest()):
+            raise ValueError("行流分块游标、边界或摘要无效")
+        whole.update(data)
+        yield value["text"]
+        offset = next_offset
+        if value["eof"]:
+            if whole.hexdigest() != stream["artifact"]["sha256"]:
+                raise ValueError("行流完整产物摘要不符")
+            return
+
+
 def rows(filename: Path, catalog: dict, *, only_table: str | None = None):
-    with filename.open(encoding="utf-8") as stream:
-        if stream.readline() != DATA_HEADER:
-            raise ValueError("只接受现有工具规范化的数据转储")
-        for line in stream:
-            if len(line) > 16 * 1024 * 1024:
-                raise ValueError("单行导出超过受限检查大小")
-            if only_table is not None and not line.startswith(f"INSERT INTO `{only_table}` "):
-                continue
-            yield parse_row(line.rstrip("\r\n"), catalog)
+    filename, snapshot = Path(filename), copy.deepcopy(catalog)
+    if only_table is not None and only_table not in snapshot:
+        raise ValueError("选择表不在完整目录中")
+    expected, catalog_sha = file_digest(filename), plan_hash(snapshot)
+    stream, root = None, "尚未收到 ready descriptor"
+    try:
+        stream = _request("reference-sql-stream-create", {
+            "backend": str(native.ROOT.resolve()), "path": str(filename.absolute()),
+            "expected": expected, "catalog": snapshot, "only_table": only_table}, write=True)
+        if isinstance(stream, dict):
+            root = stream.get("root", root)
+        _descriptor(stream, filename, expected, snapshot, catalog_sha, only_table)
+        stream = copy.deepcopy(stream)
+        counts, pending = dict.fromkeys(snapshot, 0), ""
+        for text in _chunks(stream):
+            lines = (pending + text).split("\n")
+            pending = lines.pop()
+            if len(pending.encode("utf-8")) > 128 * 1024 * 1024:
+                raise ValueError("行流编码行超过 128MiB")
+            for line in lines:
+                table, row = _wire_row(line, snapshot, only_table)
+                counts[table] += 1
+                if counts[table] > stream["tables"][table]:
+                    raise ValueError("行流实际行数超过完整清单")
+                yield table, row
+        selected = stream["tables"] if only_table is None else {
+            table: count if table == only_table else 0 for table, count in stream["tables"].items()}
+        if pending or counts != selected or sum(counts.values()) != stream["rows"] or catalog != snapshot:
+            raise ValueError("行流 EOF、目录快照或实际行数不符")
+        if file_digest(filename) != expected:
+            raise ValueError("行流结束后原来源摘要变化")
+        if _request("reference-sql-stream-close", {"stream": stream}, write=True) is not True:
+            raise ValueError("行流本地清理未确认")
+    except GeneratorExit:
+        print(f"SQL 行流消费者未完成；保留来源与受管现场：{root}", file=sys.stderr)
+        raise
+    except Exception as error:
+        if type(error) is ValueError:
+            reason = str(error)
+        elif isinstance(error, json.JSONDecodeError):
+            reason = f"行流 JSON 解析失败：第 {error.lineno} 行第 {error.colno} 列"
+        else:
+            reason = type(error).__name__
+        raise ValueError(f"SQL 行流未完成；保留来源与受管现场：{root}；原因={reason}；不自动重试") from error

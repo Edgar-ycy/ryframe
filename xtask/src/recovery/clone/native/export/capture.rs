@@ -377,7 +377,8 @@ fn dump_scope(context: &Context, models: &Models, dumps: &[Value]) -> Result<Dum
     );
     let mut tenants = BTreeSet::new();
     let tenant_name = Regex::new(r"^[A-Za-z0-9_-]{1,64}$")?;
-    sql::for_each_row(&artifact, &models.control, Some("sys_tenant"), |_, row| {
+    let catalog = sql::all_columns(&models.control, &models.tenant, true);
+    sql::for_each_row(&artifact, &catalog, Some("sys_tenant"), |_, row| {
         let value = row
             .get("tenant_id")
             .and_then(sql::SqlValue::text)

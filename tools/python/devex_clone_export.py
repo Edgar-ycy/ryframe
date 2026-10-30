@@ -205,7 +205,7 @@ def validate_dump_state(tools: ExternalTools, models: tuple, dumps: list, object
     source, observed = tools.plan["source"], state()
     control, tenant, _, _ = models
     indexed = {db["key"]: db for db in source["databases"]}
-    logical_tenants = declared_tenants({"source": source, "databases": dumps}, tools.work, indexed, control)
+    logical_tenants = declared_tenants({"source": source, "databases": dumps}, tools.work, indexed, control | tenant)
     forbidden = (source["scope_id"], object_configuration(source["s3"]["configuration"])["endpoint"], *[db["database"] for db in source["databases"]])
     schedules = []
     for dump in dumps:
