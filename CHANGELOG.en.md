@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.
+
 - Audit copy/recovery tests, merge duplicate missing-object coverage, and remove obsolete AWS CLI simulation and unintroduced-secret assertions while preserving conditional writes, unknown outcomes, concurrent completion, and real credential isolation. Correct file-binding assertions and case names. Two current test modules reuse workspace temporary directories to avoid Windows system-temp ACL failures during creation and cleanup.
 
 - Before creating configuration, environment preparation rejects output equal to or inside the reviewed reserved service root, explains that nothing was written, and recommends an independent directory; valid sibling and similarly prefixed directories remain allowed.

@@ -24,11 +24,12 @@ class CompleteOwnerBoundaryTests(unittest.TestCase):
         def read(command, **kwargs):
             nonlocal calls
             result = original(command, **kwargs)
-            key, bucket = command[command.index("--key") + 1] if "--key" in command else "", command[command.index("--bucket") + 1]
-            if key.endswith("/.ryframe-owner") and bucket == bad_bucket:
+            request = json.loads(kwargs["input"])
+            if (request["operation"] == "get-object"
+                    and request["key"].endswith("/.ryframe-owner") and request["bucket"] == bad_bucket):
                 calls += 1
                 if calls == (1 if phase == "before" else 2):
-                    Path(command[-1]).write_bytes(b"changed-other-bucket-owner")
+                    Path(request["destination"]).write_bytes(b"changed-other-bucket-owner")
             return result
 
         case.tools.run = read

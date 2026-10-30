@@ -67,9 +67,16 @@ class SourceFixture:
             identities[role] = {"pid": number, "started": "12345", "executable": str(path)}
         with patch.dict(os.environ, {"APP_ENV": "test"}):
             api_configuration = configuration_digest(self.backend, self.backend / "config")
+            worker_config = self.backend / "worker-config"
+            worker_config.mkdir()
+            for config_file in (self.backend / "config").glob("*.toml"):
+                (worker_config / config_file.name).write_bytes(config_file.read_bytes())
+            worker_configuration = configuration_digest(self.backend, worker_config)
         self.runtime = {"backend_root": str(self.backend), "scope_id": self.scope, "worker_ready_url": "http://127.0.0.1:19210/readyz",
                         "api_config_dir": str(self.backend / "config"),
                         "api_configuration_sha256": api_configuration,
+                        "worker_config_dir": str(worker_config),
+                        "worker_configuration_sha256": worker_configuration,
                         "artifacts": {role: {"path": item["executable"], "sha256": item["sha256"]} for role, item in self.build["artifacts"].items()}}
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build",
                             "source": {"snapshot": self.snapshot, "worktree_fingerprint": self.fingerprint}, "artifacts": {}}
@@ -123,6 +130,22 @@ class SourceFixture:
 
     def save_request(self):
         self.request_path.write_text(json.dumps(self.request), encoding="utf-8")
+
+    def relocate_configuration(self):
+        """沿正式 runtime 文件绑定迁至非默认目录，移走默认目录防止测试静默回退。"""
+        parent = self.local / "runtime-configuration"
+        parent.mkdir()
+        for role, name in (("api", "config"), ("worker", "worker-config")):
+            directory = parent / name
+            Path(self.runtime[f"{role}_config_dir"]).rename(directory)
+            self.runtime[f"{role}_config_dir"] = str(directory)
+            self.runtime[f"{role}_configuration_sha256"] = configuration_digest(self.backend, directory)
+        self.object_configuration = configuration_binding(self.backend, parent / "config")
+        self.request["source"]["s3"] = {"configuration": self.object_configuration}
+        self.request["runtime"] = self.bind(self.runtime_dir / "runtime.json", self.runtime)
+        self.registry["runtime_sha256"] = self.request["runtime"]["sha256"]
+        self.request["producers_registry"] = self.bind(self.local / "producers.json", self.registry)
+        self.save_request()
 
     def write_config(self, source):
         config = self.backend / "config"

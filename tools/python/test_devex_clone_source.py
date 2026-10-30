@@ -47,6 +47,38 @@ class SourceFileConfigurationTests(unittest.TestCase):
         with self.assertRaises((FileNotFoundError, ValueError)):
             load_app_table(self.fixture.backend, self.fixture.environment)
 
+    def test_generation_uses_registered_external_configuration_and_rejects_directory_or_runtime_drift(self):
+        item = self.fixture
+        item.relocate_configuration()
+        directory = Path(item.runtime["api_config_dir"])
+        self.assertFalse((item.backend / "config").exists())
+        with patch.object(proof, "load_app_table", wraps=proof.load_app_table) as loads, \
+                patch.object(proof, "native_invoke", wraps=proof.native_invoke) as native:
+            observed = proof.verify_generation(item.backend, item.request, item)
+        self.assertEqual(observed["runtime"], item.runtime)
+        self.assertTrue(loads.call_args_list)
+        self.assertTrue(all(call.kwargs["config_dir"] == directory for call in loads.call_args_list))
+        physical = [call.args[1] for call in native.call_args_list
+                    if call.args[1].get("operation") == "physical-binding"]
+        self.assertEqual([call["arguments"]["config_dir"] for call in physical], [str(directory)])
+        original = copy.deepcopy(item.request["source"]["s3"])
+        wrong = item.local / "same-bytes-wrong-config"
+        wrong.mkdir()
+        for path in directory.glob("*.toml"):
+            (wrong / path.name).write_bytes(path.read_bytes())
+        item.request["source"]["s3"] = {"configuration": configuration_binding(item.backend, wrong)}
+        with self.assertRaisesRegex(ValueError, "已登记的 API runtime 配置"):
+            proof.verify_generation(item.backend, item.request, item)
+        item.request["source"]["s3"] = original
+        path = item.runtime_dir / "runtime.json"
+        before = path.read_bytes()
+        def changed(_url):
+            path.write_bytes(before + b"\n")
+        with patch.object(proof, "require_closed_port", side_effect=changed), self.assertRaises(ValueError):
+            proof.verify_generation(item.backend, item.request, item)
+        path.write_bytes(before)
+        self.assertEqual(item.calls, [])
+
     def test_plaintext_password_change_is_read_from_the_selected_file(self):
         path = self.fixture.backend / "config/app.test.toml"
         path.write_text(path.read_text(encoding="utf-8").replace(
@@ -103,8 +135,9 @@ class SourceExportTests(unittest.TestCase):
                 self.assertEqual(dict(os.environ), service)
                 self.assertEqual(exported["status"], "source_export_captured")
                 self.assertEqual(exported["remote_writes"], 0)
-        self.assertEqual(phases[::2], ["tools"] * (len(phases) // 2))
-        self.assertEqual(phases[1::2], ["runtime"] * (len(phases) // 2))
+        self.assertEqual(len(phases) % 3, 0)
+        self.assertEqual([phases[index:index + 3] for index in range(0, len(phases), 3)],
+                         [["tools", "runtime", "runtime"]] * (len(phases) // 3))
 
     def failed(self, stage=None):
         with self.assertRaises(Exception):
