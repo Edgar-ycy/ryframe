@@ -274,10 +274,54 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(self.case.writes(), [])
 
     def test_failed_initial_source_validation_has_failure_evidence(self):
-        self.mocks[0].side_effect = ValueError("export damaged")
-        with self.assertRaises(ValueError):
+        secret = "private-copy-password-must-not-be-recorded"
+        for label, errno, winerror in (("unsafe-attributes", secret, True), ("integer-attributes", 13, 5)):
+            with self.subTest(label=label):
+                self.output = self.local / ("prepare-failure-" + label)
+                error = ValueError(secret)
+                error.errno, error.winerror = errno, winerror
+                def reject_export(*_args):
+                    raise error
+                self.mocks[0].side_effect = reject_export
+                with self.assertRaises(ValueError) as failed:
+                    self.execute()
+                self.assertIs(failed.exception, error)
+                raw = (self.output / "failure.json").read_text(encoding="utf-8")
+                failure = json.loads(raw)
+                self.assertEqual(set(failure), {"format_version", "kind", "phase", "status", "error_type", "frames",
+                                               "errno", "winerror", "automatic_retry", "automatic_resource_cleanup",
+                                               "target_ready", "restore_success"})
+                self.assertEqual((failure["format_version"], failure["kind"], failure["phase"]),
+                                 (1, "devex-copy-failure", "prepare"))
+                self.assertEqual((failure["status"], failure["error_type"]), ("needs_reconciliation", "ValueError"))
+                self.assertEqual((failure["errno"], failure["winerror"]),
+                                 (13, 5) if label == "integer-attributes" else (None, None))
+                functions = [frame["function"] for frame in failure["frames"]]
+                self.assertIn("copy_to_fresh_target", functions)
+                self.assertIn("prepare", functions)
+                self.assertEqual(failure["frames"][-1], {"file": Path(__file__).name, "function": "reject_export",
+                                                       "line": reject_export.__code__.co_firstlineno + 1})
+                for frame in failure["frames"]:
+                    self.assertEqual(set(frame), {"file", "function", "line"})
+                    self.assertFalse(Path(frame["file"]).is_absolute())
+                    self.assertIs(type(frame["line"]), int)
+                    self.assertGreater(frame["line"], 0)
+                for field in ("automatic_retry", "automatic_resource_cleanup", "target_ready", "restore_success"):
+                    self.assertIs(failure[field], False)
+                self.assertNotIn(secret, raw)
+                for name in ("plan.json", "session.json", "ledger", "result.json"):
+                    self.assertFalse((self.output / name).exists())
+        self.assertEqual(self.case.writes(), [])
+
+    def test_prepare_failure_record_error_does_not_replace_original_exception(self):
+        error = ValueError("private-copy-password-must-not-be-recorded")
+        self.mocks[0].side_effect = error
+        with patch.object(factory, "write_json", side_effect=OSError("private-diagnostic-password")), \
+                self.assertRaises(ValueError) as failed:
             self.execute()
-        self.assertTrue((self.output / "failure.json").exists())
+        self.assertIs(failed.exception, error)
+        self.assertEqual(error.__notes__, ["复制失败位置证据保存失败：OSError"])
+        self.assertFalse((self.output / "result.json").exists())
         self.assertEqual(self.case.writes(), [])
 
     def test_command_failure_saves_redacted_diagnostic_without_sql_stdin(self):

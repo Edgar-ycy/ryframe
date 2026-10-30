@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Preserve redacted phases, complete call locations and system codes for formal copy failures, and identify the stage record and copy failure file in command diagnostics. Diagnostic-write failures do not replace the original error; no automatic retry or scene cleanup occurs.
+
 - Move complete SQL reading and precise row decoding for copy/recovery into Rust, removing the Python SQL decoder and per-row native process interface. Managed chunks bind source and result digests, file identities and complete counts; unselected tables and invalid trailing rows remain validated, and failures preserve the scene. Fix volume-prefix checks for canonical Windows paths while retaining actual-root and link validation.
 
 - Fix rejection of canonical Windows paths for private plans and SQL output, preserving path-boundary, reparse-point and overwrite protections.

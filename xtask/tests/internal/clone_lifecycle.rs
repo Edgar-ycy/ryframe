@@ -528,8 +528,8 @@ fn failed_stage_exposes_typed_repair_guidance_without_echoing_arbitrary_errors()
         let error = stage::run_named(
             &fixture.backend,
             &fixture.run,
-            "seed-runtime",
-            "source-register",
+            "copy",
+            "run",
             &DiagnosticFailure(typed),
         )
         .unwrap_err()
@@ -537,6 +537,9 @@ fn failed_stage_exposes_typed_repair_guidance_without_echoing_arbitrary_errors()
         assert_eq!(error.contains("0x80070005"), typed, "{error}");
         assert_eq!(error.contains("Winmgmt"), typed, "{error}");
         assert!(!error.contains("fixture-private-content"));
+        assert!(error.contains(&fixture.run.join("failure-0001.json").display().to_string()));
+        assert!(error.contains(&fixture.run.join("manifest.json").display().to_string()));
+        assert!(error.contains("先核对完整前后像，不自动重试"));
         let state = fixture.state();
         assert_eq!(state["attempts"][0]["status"], "failed");
         assert_eq!(state["attempts"][0]["result"], Value::Null);

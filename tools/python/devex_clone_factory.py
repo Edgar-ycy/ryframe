@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import uuid
 
+from artifact_digests import filesystem_path
 from devex_clone import write_plan_result
 from devex_clone_capture import read_json, write_json
 from devex_clone_export_verify import (observe_source_object, observe_source_objects, verify_export_bindings,
@@ -383,40 +384,68 @@ class CloneSession:
         self._source_generation()
 
 
+def _copy_failure(backend: Path, phase: str, error: BaseException) -> dict:
+    """只保留完整调用位置；异常正文、源码行、参数和局部变量均不进入记录。"""
+    root = Path(filesystem_path(backend.resolve()))
+    frames = []
+    trace = error.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        filename = Path(filesystem_path(Path(code.co_filename).resolve()))
+        frames.append({"file": filename.relative_to(root).as_posix() if filename.is_relative_to(root) else filename.name,
+                       "function": code.co_name, "line": trace.tb_lineno})
+        trace = trace.tb_next
+    errno, winerror = getattr(error, "errno", None), getattr(error, "winerror", None)
+    return {"format_version": 1, "kind": "devex-copy-failure", "phase": phase,
+            "status": "needs_reconciliation", "error_type": type(error).__name__, "frames": frames,
+            "errno": errno if type(errno) is int else None, "winerror": winerror if type(winerror) is int else None,
+            "automatic_retry": False, "automatic_resource_cleanup": False, "target_ready": False, "restore_success": False}
+
+
 def copy_to_fresh_target(backend: Path, source_export: dict, initialized: dict, source_environment: dict,
                          target_environment: dict, output: Path, *, copy_id: str, stage: str, run=subprocess.run,
                          source_storage_run: Path | None = None,
                          target_storage_run: Path | None = None) -> dict:
     """首次显式复制；失败保留账本与资源，不自动清理、重试或接管已有目标。"""
     session = None
+    phase = "construct"
     try:
         session = CloneSession(
             backend, source_export, initialized, source_environment, target_environment, output, run,
             source_storage_run=source_storage_run, target_storage_run=target_storage_run,
         )
+        phase = "prepare"
         session.prepare(copy_id, stage)
+        phase = "register-owner"
         owner = register_copy_owner(session.backend, session.output)
         session.copy_owner = owner
+        phase = "verify-target"
         with session.environment.use("target"), generation_lock(session.target_directory, copy_owner=owner):
             session.owned_lock_identity = (session.target_directory / "initialize.lock").stat().st_ino
             session.verify_target_owners()
+            phase = "open-ledger"
             ledger = CloneLedger(session.backend, session.output / "ledger", session.plan["plan_sha256"],
                                  session.generation_sha256, create=True, copy_owner=owner)
+            phase = "transfer"
             with ledger:
                 steps = TransferSteps(session.backend, session.plan_file, session.tools, ledger, session, verified_plan=session.verified_plan)
                 for item in session.plan["databases"]:
                     steps.apply_database(item["key"])
                 for item in session.plan["objects"]:
                     steps.apply_object(item["bucket"], item["target_key"])
+                phase = "finalize"
                 steps.finish()
             result = steps.result()
         session.owned_lock_identity = None
         # 仅数据步骤已复核；调度处置、业务消费者和性能来源证明仍由后续显式流程完成。
+        phase = "publish-result"
         write_json(session.output / "result.json", result)
         return result
     except BaseException as error:
         if session is not None:
             session.owned_lock_identity = None
-            write_json(session.output / "failure.json", {"status": "needs_reconciliation", "error_type": type(error).__name__,
-                       "automatic_retry": False, "automatic_resource_cleanup": False, "target_ready": False, "restore_success": False})
+            try:
+                write_json(session.output / "failure.json", _copy_failure(session.backend, phase, error))
+            except BaseException as diagnostic_error:
+                error.add_note(f"复制失败位置证据保存失败：{type(diagnostic_error).__name__}")
         raise
