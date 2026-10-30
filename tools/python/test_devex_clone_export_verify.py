@@ -48,6 +48,7 @@ class ObjectRequestConfigurationTests(unittest.TestCase):
 class ExportVerificationTests(unittest.TestCase):
     def setUp(self):
         self.fixture = SourceFixture(self)
+        self.fixture.relocate_configuration()
         item = self.fixture
         self.export = export_source(item.backend, item.request_path, item.output, item)
         self.binding = {"path": str(item.output / "export.json"), **file_digest(item.output / "export.json")}
@@ -373,6 +374,7 @@ class ExportVerificationTests(unittest.TestCase):
             self.load()
 
     def test_whole_listing_and_heads_use_no_business_get_or_ambient_credentials(self):
+        self.assertFalse((self.fixture.backend / "config").exists())
         with patch.dict(os.environ, {"TEST_SECRET": "ambient-wrong", "AWS_SECRET_ACCESS_KEY": "implicit-wrong"}):
             result = self.observe()
         self.assertTrue(result["whole_source"])
@@ -383,6 +385,31 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertEqual(operations.count("get-object"), 10)
         self.assertEqual(operations.count("head-object"), 1)
         self.assertEqual(operations.count("list-objects-v2"), 10)
+
+    def test_original_runtime_and_both_registered_configurations_stay_bound_during_head(self):
+        loaded = self.load()
+        paths = [self.fixture.runtime_dir / "runtime.json",
+                 Path(self.fixture.runtime["api_config_dir"]) / "app.test.toml",
+                 Path(self.fixture.runtime["worker_config_dir"]) / "app.test.toml"]
+        for index, path in enumerate(paths):
+            with self.subTest(path=path.name, role=index):
+                self.observation = self.fixture.local / f"runtime-drift-{index}"
+                self.calls = []
+                original = path.read_bytes()
+                self.effect = lambda: path.write_bytes(original + b"\n")
+                try:
+                    self.failed_observation(loaded, single=True)
+                    operations = [json.loads(options["input"])["operation"] for _, options in self.calls]
+                    self.assertEqual(operations.count("head-object"), 1)
+                    self.assertEqual(operations.count("list-objects-v2"), 0)
+                finally:
+                    path.write_bytes(original)
+        self.effect = None
+        loaded["request"]["runtime"]["sha256"] = "0" * 64
+        self.observation = self.fixture.local / "forged-runtime-descriptor"
+        self.calls = []
+        self.failed_observation(loaded, single=True)
+        self.assertEqual(self.calls, [])
 
     def test_single_head_only_does_not_download_or_list_whole_dataset(self):
         result = self.observe(single=True)

@@ -21,7 +21,7 @@ from devex_clone_inventory_complete import inventory_proofs
 from devex_clone_model import bound_file, digest, exact, linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_rows import schema_catalog
-from devex_clone_source_proof import bound_file as request_file, execution_backend, public_request, validate_request
+from devex_clone_source_proof import bound_file as request_file, execution_backend, public_request, registered_runtime, validate_request
 from native_s3_client import NativeS3InvocationError, inspect as native_s3_inspect
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
@@ -294,19 +294,27 @@ class _Observation:
         self.execution = execution_backend(backend, verified["request"])
         self.original_environment, self.environment = environment, dict(environment)
         self.plan = copy.deepcopy(tools.plan)
-        request = verified["request"]
+        self.request = request = copy.deepcopy(verified["request"])
         source = request["source"]
         if (self.plan.get("source") != source or set(self.environment) != {"APP_ENV"}
                 or self.environment.get("APP_ENV") != "test"):
             raise ValueError("源对象配置、scope 或显式环境不同")
+        self.runtime = registered_runtime(backend, request)
+        self.config_dirs = {role: Path(self.runtime[f"{role}_config_dir"]) for role in ("api", "worker")}
+        self.configurations = {role: configuration(self.execution, self.environment, source,
+            evidence_root=self.backend, config_dir=directory) for role, directory in self.config_dirs.items()}
+        if registered_runtime(backend, request) != self.runtime:
+            raise ValueError("源观察登记 runtime 或配置在冻结期间变化")
         self.initial = self.binding()
         self.reader = _SourceReader(self)
 
     def binding(self):
-        if self.original.plan != self.plan or dict(self.original_environment) != self.environment:
+        if (self.original.plan != self.plan or dict(self.original_environment) != self.environment
+                or self.verified["request"] != self.request):
             raise ValueError("源计划或显式环境在请求期间变化")
+        configurations = self.runtime_unchanged()
         source = self.plan["source"]
-        return {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.environment),
+        value = {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.environment),
                 "transport": "rust-s3-sigv4", "configuration_sha256": plan_hash(source["s3"]),
                 "physical": native_response(*native_invoke(
                     "__source-evidence", {"operation": "physical-binding", "write": False,
@@ -315,11 +323,23 @@ class _Observation:
                             'evidence_root': str(self.backend),
                             'source': source,
                             'app_env': self.environment.get("APP_ENV"),
-                            'config_dir': None,
+                            'config_dir': str(self.config_dirs["api"]),
                         },
                     }, subprocess.run, may_write=False,
                 ))[0]["value"],
-                "configuration": configuration(self.execution, self.environment, source, evidence_root=self.backend)}
+                "configuration": configurations["api"]}
+        self.runtime_unchanged()
+        return value
+
+    def runtime_unchanged(self):
+        if read_json(request_file(self.backend, self.request["runtime"])) != self.runtime:
+            raise ValueError("源观察原 runtime descriptor 或收据已变化")
+        source = self.plan["source"]
+        current = {role: configuration(self.execution, self.environment, source,
+            evidence_root=self.backend, config_dir=directory) for role, directory in self.config_dirs.items()}
+        if current != self.configurations:
+            raise ValueError("源观察绑定的 API/Worker 配置已变化")
+        return current
 
     def run(self, command, **kwargs):
         if self.binding() != self.initial:

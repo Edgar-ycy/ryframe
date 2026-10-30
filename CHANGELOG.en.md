@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.
+
 - Fix recovery acceptance rejecting current version-five rebuild ledgers while retaining exact-plan, complete-phase and release-predecessor checks. Bind report and ledger bytes before and after reading; failures do not trigger conversion or replay.
 
 - Fix nonproduction rebuild verification rejecting canonical bootstrap authorization-projection events as runtime residue. Strictly verify one event per tenant, its version, payload and undelivered state, while continuing to reject nonempty runtime tables and extra or malformed events.

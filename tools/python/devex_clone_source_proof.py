@@ -176,8 +176,26 @@ def producer_identities(request: dict, registry: dict, processes: dict, *, run) 
     return sorted(registry["processes"], key=lambda item: item["name"])
 
 
+def registered_runtime(backend: Path, request: dict) -> dict:
+    """复核原 descriptor 对应的完整 runtime；不从默认配置推导后继来源。"""
+    directory = Path(request["source"]["runtime_dir"])
+    descriptor = copy.deepcopy(request["runtime"])
+    path = bound_file(backend, descriptor)
+    if path != directory / "runtime.json":
+        raise ValueError("运行收据不属于源明确运行目录")
+    runtime = verify_runtime(execution_backend(backend, request), directory)
+    if (request["runtime"] != descriptor or runtime != read_json(bound_file(backend, descriptor))
+            or runtime["scope_id"] != request["source"]["scope_id"]):
+        raise ValueError("源运行配置或 runtime 代次已变化")
+    if (Path(runtime["api_config_dir"]).resolve(strict=True)
+            != Path(request["source"]["s3"]["configuration"]["directory"]).resolve(strict=True)):
+        raise ValueError("源对象配置目录不属于已登记的 API runtime 配置")
+    return runtime
+
+
 def verify_generation(backend: Path, request: dict, run, *, control_environment=None) -> dict:
     validate_request(backend, request)
+    runtime_descriptor = copy.deepcopy(request["runtime"])
     execution = execution_backend(backend, request)
     build = read_json(bound_file(backend, request["backend_build"]))
     with control_environment() if control_environment is not None else nullcontext():
@@ -188,9 +206,8 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
             or maintenance["source"]["worktree_fingerprint"] != request["worktree_fingerprint"]):
         raise ValueError("维护工具与源实际后端构建不属于同一完整源码")
     source, directory = request["source"], Path(request["source"]["runtime_dir"])
-    runtime = verify_runtime(execution, directory)
-    if runtime != read_json(bound_file(backend, request["runtime"])) or runtime["scope_id"] != source["scope_id"]:
-        raise ValueError("源运行配置或 runtime 代次已变化")
+    runtime = registered_runtime(backend, request)
+    config_dir = Path(runtime["api_config_dir"])
     app_env = os.environ.get("APP_ENV")
     file_environment = {"APP_ENV": app_env} if isinstance(app_env, str) else {}
     physical = native_response(*native_invoke(
@@ -200,11 +217,11 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
                 'evidence_root': str(backend),
                 'source': source,
                 'app_env': (file_environment).get("APP_ENV"),
-                'config_dir': None,
+                'config_dir': str(config_dir),
             },
         }, subprocess.run, may_write=False,
     ))[0]["value"]
-    if load_app_table(execution, file_environment)["jobs"]["mode"] != "external":
+    if load_app_table(execution, file_environment, config_dir=config_dir)["jobs"]["mode"] != "external":
         raise ValueError("源必须明确使用 external Worker，scheduler/consumer 由 Worker 承载")
     processes = {}
     for role in ("api", "worker"):
@@ -215,9 +232,11 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
             raise ValueError("源登记进程实际二进制与本侧构建不一致")
         processes[role] = identity
     producers = producer_identities(request, read_json(bound_file(backend, request["producers_registry"])), processes, run=run)
-    verify_api_address_environment(execution, source["api_url"], file_environment)
+    verify_api_address_environment(execution, source["api_url"], file_environment, config_dir=config_dir)
     require_closed_port(source["api_url"])
     require_closed_port(runtime["worker_ready_url"])
+    if request["runtime"] != runtime_descriptor or registered_runtime(backend, request) != runtime:
+        raise ValueError("源 runtime 或绑定配置在 generation 复核期间变化")
     return {"source": snapshot, "worktree_fingerprint": request["worktree_fingerprint"], "runtime": runtime,
             "processes": processes, "operator_declared_producers": producers, "physical_binding": physical,
             "maintenance": maintenance, "request_sha256": plan_hash(request),
