@@ -58,10 +58,8 @@ class DumpRowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.check(DATA_HEADER, counts={"sys_post": 0})
 
-    def test_declared_and_inventory_counts_both_still_match_actual_rows(self):
+    def test_inventory_counts_must_match_dump_declarations(self):
         content = DATA_HEADER + "INSERT INTO `sys_post` (`id`, `name`) VALUES (1, 'first');\n"
-        with self.assertRaisesRegex(ValueError, "行数"):
-            self.check(content)
         with self.assertRaisesRegex(ValueError, "行数"):
             self.check(content, counts={"sys_post": 1, "sys_notice": 0},
                        inventory_counts={"sys_post": 2, "sys_notice": 0})

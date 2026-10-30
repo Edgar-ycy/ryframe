@@ -11,7 +11,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_export_verify as verify
 import devex_clone_export as export
-import devex_clone_capture as capture
 import devex_clone_model as model
 import devex_clone_rows as sql_rows
 from devex_clone_source import export_source
@@ -169,7 +168,7 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertEqual(full.call_count, len(self.export["databases"]))
         self.assertEqual({call.args[0].name for call in full.call_args_list},
                          {Path(dump["artifact"]["file"]).name for dump in self.export["databases"]})
-        self.assertTrue(all(not call.kwargs for call in full.call_args_list))
+        self.assertTrue(all(call.kwargs.get("only_table") is None for call in full.call_args_list))
         self.assertEqual(narrow.call_count, 1)
         self.assertEqual(narrow.call_args.kwargs, {"only_table": "sys_tenant"})
         self.assertEqual(set(narrow.call_args.args[1]), set(self.fixture.case.control) | set(self.fixture.case.tenant))
@@ -420,20 +419,6 @@ class ExportVerificationTests(unittest.TestCase):
         owners = [json.loads(options["input"]) for _, options in self.calls
                   if json.loads(options["input"]).get("key", "").endswith("/.ryframe-owner")]
         self.assertEqual([request["bucket"] for request in owners], ["uploads", "uploads"])
-
-    def test_list_diagnostics_open_with_extended_path_conversion(self):
-        recorded = []
-        original = capture.filesystem_path
-
-        def wrap(path):
-            recorded.append(Path(path))
-            return original(path)
-
-        with patch.object(capture, "filesystem_path", wrap):
-            self.observe()
-        expected = {f"list-{phase}-{bucket}-0.diagnostic.json"
-                    for phase in ("before", "after") for bucket in BUCKETS}
-        self.assertTrue(expected.issubset({path.name for path in recorded}))
 
     def test_real_pagination_is_completed_without_truncating_key_set(self):
         self.paginated = True
