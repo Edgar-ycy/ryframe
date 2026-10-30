@@ -339,6 +339,9 @@ pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<St
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some((category, _)) = super::super::target_verify::diagnostic(error) {
+        return category;
+    }
     if let Some((category, _)) = super::super::seed::rebind::diagnostic(error) {
         return category;
     }
@@ -364,6 +367,9 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
 }
 
 fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some((_, diagnostic)) = super::super::target_verify::diagnostic(error) {
+        return Some(diagnostic);
+    }
     if let Some((_, diagnostic)) = super::super::seed::rebind::diagnostic(error) {
         return Some(diagnostic);
     }

@@ -13,6 +13,7 @@ pub(crate) mod binding_request;
 mod cli;
 mod creation_plan;
 pub(crate) mod database;
+mod diagnostic;
 pub(crate) mod evidence_creation;
 mod evidence_model;
 pub(crate) mod evidence_prepare;
@@ -45,6 +46,8 @@ mod resume_state;
 mod resume_tests;
 pub(crate) mod storage;
 pub(crate) mod tree;
+
+pub(crate) use diagnostic::diagnostic;
 
 pub(crate) fn preflight(backend: &Path, request: &StageRequest<'_>) -> Result<()> {
     preflight_with(backend, request, &authority::SystemObserver)
@@ -109,18 +112,7 @@ pub(crate) fn execute_with<T: super::export::transport::Transport>(
 }
 
 fn fail(context: &input::TargetContext, error: Box<dyn std::error::Error>) -> Result<Value> {
-    let secrets = context
-        .environment
-        .iter()
-        .filter(|(key, value)| {
-            !value.is_empty()
-                && ["KEY", "PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL"]
-                    .iter()
-                    .any(|part| key.contains(part))
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    let reason = super::export::transport::redact(&error.to_string(), &secrets);
+    let reason = diagnostic::reason(error.as_ref());
     let path = context.observation_dir.join("failure.json");
     if !context.observation_dir.is_dir() {
         return Err(format!(
@@ -133,12 +125,8 @@ fn fail(context: &input::TargetContext, error: Box<dyn std::error::Error>) -> Re
         "at": chrono::Utc::now().to_rfc3339(), "error_type": "TargetVerifyError", "reason": reason,
         "automatic_retry": false, "automatic_resource_cleanup": false,
         "fresh_target_initialized": false, "clone_verified": false, "restore_qualified": false,
-    })).map_err(|write| format!("目标复核未完成：{reason}；失败收据保存同时失败：{write}；保留现场，不自动重放或清理"))?;
-    Err(format!(
-        "目标复核未完成：{reason}；诊断保留在 {}；核对原证据后显式选择后续操作，不自动重放或清理",
-        path.display()
-    )
-    .into())
+    })).map_err(|_| format!("目标复核未完成：{reason}；失败收据保存同时失败；保留现场并核对运行 attempt 证据，不自动重放或清理"))?;
+    Err(diagnostic::saved(error, &path, &context.run_dir))
 }
 
 pub(crate) struct TargetVerifyRunner {

@@ -642,13 +642,13 @@ fn native_status_preserves_the_registered_attempt_projection() {
 }
 
 #[test]
-fn stage_python_preflight_uses_the_typed_resource_protocol() {
+fn stage_python_copy_preflight_uses_the_typed_resource_protocol() {
     let fixture = Fixture::new();
     fixture.init().unwrap();
     let request = stage::StageRequest {
         backend: &fixture.backend,
         run_dir: &fixture.run,
-        stage: "export",
+        stage: "copy",
         mode: "run",
         attempt: None,
     };
@@ -668,7 +668,7 @@ fn stage_python_preflight_uses_the_typed_resource_protocol() {
     .unwrap();
     let value: Value = serde_json::from_str(output.trim()).unwrap();
     assert_eq!(value["status"], "stage_operation_preflight_ready");
-    assert_eq!(value["stage"], "export");
+    assert_eq!(value["stage"], "copy");
     assert_eq!(value["mode"], "run");
     assert!(!fixture.run.join("run.lock").exists());
     assert_eq!(fixture.state()["attempts"], json!([]));

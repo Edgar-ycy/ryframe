@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- After native target-verify saves a failure receipt, the formal clone stage reports the verify_existing phase, safe reason, original failure.json location and unaccepted status. Known reasons use exact static messages; unknown reasons expose no passwords, tokens or arbitrary underlying text. Redis initialization-state mismatches preserve the scene and direct further work to a new isolated target without automatic replay or repair of old evidence.
+
 - Fix native source-export logical digests omitting outer database and object-bucket ordering, matching the existing complete consumer contract. Canonicalize databases, tables, tenant placements, buckets and entries in a digest copy, excluding only capture time while preserving raw inventory and all business content. Do not re-sign or accept an alternate old digest; create a new formal export.
 
 - Use the registered target's path spelling consistently in target-verification context and read-only authority, preventing later reset configuration checks from deriving a nonexistent directory. Preserve the outer initialization-file binding without recreating configuration snapshots or repairing original receipts.
