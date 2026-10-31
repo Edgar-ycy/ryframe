@@ -2,7 +2,7 @@ use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{num::IntErrorKind, sync::Arc};
 
 /// JWT 签名与有效期设置。
 ///
@@ -19,10 +19,15 @@ impl TokenSettings {
         access_token_expire: &str,
         refresh_token_expire: &str,
     ) -> AppResult<Self> {
+        let now = current_timestamp();
+        let access_token_ttl_seconds =
+            configured_ttl(access_token_expire, "auth.access_token_expire", now)?;
+        let refresh_token_ttl_seconds =
+            configured_ttl(refresh_token_expire, "auth.refresh_token_expire", now)?;
         Ok(Self {
             secret: secret.into(),
-            access_token_ttl_seconds: parse_duration(access_token_expire)?,
-            refresh_token_ttl_seconds: parse_duration(refresh_token_expire)?,
+            access_token_ttl_seconds,
+            refresh_token_ttl_seconds,
         })
     }
 
@@ -91,6 +96,7 @@ pub fn encode_access_for_session(
 ) -> AppResult<(String, String)> {
     let ttl = settings.access_token_ttl_seconds();
     let now = current_timestamp();
+    let exp = expiration_at(now, ttl, "auth.access_token_expire")?;
     let jti = new_jti();
     let claims = Claims {
         sub: identity.user_id.to_string(),
@@ -102,7 +108,7 @@ pub fn encode_access_for_session(
         sid: sid.to_owned(),
         jti: jti.clone(),
         iat: now,
-        exp: now + ttl,
+        exp,
     };
     let token = encode_claims(&claims, settings)?;
     Ok((token, jti))
@@ -114,8 +120,9 @@ pub fn encode_access_for_session(
 pub fn encode_refresh(identity: &TokenIdentity<'_>, settings: &TokenSettings) -> AppResult<String> {
     let ttl = settings.refresh_token_ttl_seconds();
     let now = current_timestamp();
+    let exp = expiration_at(now, ttl, "auth.refresh_token_expire")?;
     let sid = new_sid();
-    encode_refresh_for_session(identity, &sid, new_jti(), now + ttl, settings)
+    encode_refresh_for_session(identity, &sid, new_jti(), exp, settings)
 }
 
 pub fn encode_refresh_for_session(
@@ -158,6 +165,21 @@ pub fn encode_refresh_for_session_at(
     encode_claims(&claims, settings)
 }
 
+fn configured_ttl(raw: &str, field: &str, now: usize) -> AppResult<usize> {
+    let ttl =
+        parse_duration(raw).map_err(|error| AppError::Config(format!("{field} 无效：{error}")))?;
+    expiration_at(now, ttl, field)?;
+    Ok(ttl)
+}
+
+fn expiration_at(now: usize, ttl: usize, source: &str) -> AppResult<usize> {
+    now.checked_add(ttl).ok_or_else(|| {
+        AppError::Config(format!(
+            "{source} 与当前时间相加超出平台可表示范围；请减小有效期后重试"
+        ))
+    })
+}
+
 fn current_timestamp() -> usize {
     Utc::now().timestamp() as usize
 }
@@ -189,12 +211,13 @@ pub fn encode_csrf(
     ttl_seconds: usize,
 ) -> AppResult<String> {
     let now = current_timestamp();
+    let exp = expiration_at(now, ttl_seconds, "CSRF ttl_seconds")?;
     let claims = CsrfClaims {
         token_type: "csrf".into(),
         sid: sid.map(str::to_owned),
         jti: new_jti(),
         iat: now,
-        exp: now + ttl_seconds,
+        exp,
     };
     encode(
         &Header::default(),
@@ -244,23 +267,31 @@ pub fn decode_token(token: &str, settings: &TokenSettings) -> AppResult<Claims> 
 
 /// 解析 duration 字符串为秒数
 ///
-/// 支持格式：`1h`（小时）、`30m`（分钟）、`3600`（纯数字秒）
+/// 支持小写单位：`1h`（小时）、`30m`（分钟）、`45s`（秒）或 `3600`（纯数字秒）。
 pub fn parse_duration(s: &str) -> AppResult<usize> {
     let s = s.trim();
-    if let Some(hours) = s.strip_suffix('h') {
-        hours
-            .trim()
-            .parse::<usize>()
-            .map(|v| v * 3600)
-            .map_err(|_| AppError::Config(format!("无效的 duration: {}", s)))
+    let (number, multiplier) = if let Some(hours) = s.strip_suffix('h') {
+        (hours.trim(), 3600)
     } else if let Some(minutes) = s.strip_suffix('m') {
-        minutes
-            .trim()
-            .parse::<usize>()
-            .map(|v| v * 60)
-            .map_err(|_| AppError::Config(format!("无效的 duration: {}", s)))
+        (minutes.trim(), 60)
+    } else if let Some(seconds) = s.strip_suffix('s') {
+        (seconds.trim(), 1)
     } else {
-        s.parse::<usize>()
-            .map_err(|_| AppError::Config(format!("无效的 duration: {}", s)))
-    }
+        (s, 1)
+    };
+    let invalid = |reason: &str| {
+        AppError::Config(format!(
+            "{reason}；支持小写 h/m/s 或纯数字秒（如 1h、30m、45s、3600）；请修正有效期格式或减小数值"
+        ))
+    };
+    let value = number.parse::<usize>().map_err(|error| {
+        let reason = match error.kind() {
+            IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => "有效期数值超出平台可表示范围",
+            _ => "有效期格式无效",
+        };
+        invalid(reason)
+    })?;
+    value
+        .checked_mul(multiplier)
+        .ok_or_else(|| invalid("有效期换算为秒时溢出"))
 }
