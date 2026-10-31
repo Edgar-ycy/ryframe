@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Route integer path IDs, reset requests, department filters and plan-version parsing in handwritten API handlers through the existing ID helpers. Preserve the signed i64 range, optional-value handling and validation messages. Invalid path IDs return standard JSON validation errors; internal uploaded-file ID failures remain internal errors, and the OpenAPI string contract is unchanged.
+
 - Remove reviewed tautological, private-layout and redundant source checks from composition-root tests while preserving read-only probe, cryptographic initialization and feature-isolation constraints. Correct the configuration-archive rejection case to verify the actual validation reasons for excess entry counts and unknown entry names separately, and remove a redundant string clone when constructing validation SQL.
 
 - Fix native copy sessions authorizing the base registration after an environment amendment. Initialization, producer authorization and administrator credential loading now share the active published whole request and recheck its lineage and file binding before returning; stale generations, unpublished or failed amendments and drift during verification are rejected. Merge the old check, which stopped early on missing authorization fields, into the actually authorized fixture to verify rejection of ungranted requests, stale attempts and incorrect artifact directories.

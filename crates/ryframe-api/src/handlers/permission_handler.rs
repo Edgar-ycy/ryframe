@@ -65,8 +65,9 @@ pub async fn tree(
 pub async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<PermissionVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     let item = state
         .services
         .identity
@@ -119,9 +120,10 @@ pub async fn create(
 pub async fn update(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdatePermissionDto>,
 ) -> HttpResult<Json<ApiResponse<PermissionVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let item = state
@@ -153,8 +155,9 @@ pub async fn update(
 pub async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     state
         .services
         .identity

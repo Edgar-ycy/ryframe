@@ -82,8 +82,9 @@ pub(crate) async fn options(
 pub(crate) async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<UserDetailVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     let user = state
         .services
         .identity
@@ -138,9 +139,10 @@ pub(crate) async fn create(
 pub(crate) async fn update(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdateUserDto>,
 ) -> HttpResult<Json<ApiResponse<UserVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     let dept_id = parse_optional_i64(dto.dept_id)?;
     state
@@ -172,9 +174,10 @@ pub(crate) async fn update(
 pub(crate) async fn replace_roles(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<ReplaceUserRolesDto>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     let role_ids = parse_i64_strings(&dto.role_ids)?;
     if id == current_user.user_id {
@@ -203,8 +206,9 @@ pub(crate) async fn replace_roles(
 pub(crate) async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     state
         .services
         .identity
@@ -248,9 +252,10 @@ pub(crate) async fn batch_remove(
 pub(crate) async fn update_status(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdateUserStatusDto>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     state
         .services

@@ -75,10 +75,9 @@ async fn create(
         .upload_source(&current_user, file_name.clone(), bytes)
         .await
         .map_err(crate::http::HttpAppError::from)?;
-    let source_file_id = uploaded
-        .file_id
-        .parse::<i64>()
-        .map_err(|_| AppError::Internal("用户导入源文件标识无效".into()))?;
+    let source_file_id =
+        crate::handler_utils::parse_id(&uploaded.file_id, "用户导入源文件标识无效")
+            .map_err(|_| AppError::Internal("用户导入源文件标识无效".into()))?;
     let outcome = match state
         .services
         .identity

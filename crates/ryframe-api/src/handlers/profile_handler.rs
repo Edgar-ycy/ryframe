@@ -154,9 +154,7 @@ pub async fn update_avatar(
     let avatar_upload =
         avatar_upload.ok_or_else(|| AppError::Validation("未找到上传的头像文件".into()))?;
     let avatar_upload = UploadResponse::from(avatar_upload);
-    let avatar_file_id = avatar_upload
-        .file_id
-        .parse::<i64>()
+    let avatar_file_id = crate::handler_utils::parse_id(&avatar_upload.file_id, "头像文件标识无效")
         .map_err(|_| AppError::Internal("头像文件标识无效".into()))?;
     let avatar_url = avatar_upload.file_url;
 

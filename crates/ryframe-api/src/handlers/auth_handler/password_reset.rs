@@ -21,10 +21,7 @@ pub async fn complete_password_reset(
     Json(req): Json<CompletePasswordResetRequest>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     req.validate()?;
-    let request_id = req
-        .request_id
-        .parse::<i64>()
-        .map_err(|_| AppError::Validation("无效的重置请求ID".into()))?;
+    let request_id = crate::handler_utils::parse_id(&req.request_id, "无效的重置请求ID")?;
     let tenant_id = match state.settings.multi_tenancy.fixed_tenant_id() {
         Some(fixed_tenant_id) => match req.tenant_id.as_deref() {
             None => fixed_tenant_id,

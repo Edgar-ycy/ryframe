@@ -72,6 +72,19 @@ async fn exercise(database: &DatabaseConnection, state: &AppState) -> Result<(),
         .login("system", "admin", ADMIN_PASSWORD)
         .await
         .map_err(message)?;
+    for path in [
+        "/api/v1/system/users/not-an-id",
+        "/api/v1/system/users/9223372036854775808",
+    ] {
+        let response = server.get(path, &admin.access_token).await?;
+        assert_eq!(response.status, 400, "{path}");
+        assert_eq!(response.body["code"], 400, "{path}");
+        assert_eq!(response.body["error_key"], "validation", "{path}");
+        assert_eq!(
+            response.body["details"]["reason"], "invalid_parameters",
+            "{path}"
+        );
+    }
     let bytes = workbook(database).await?;
     let submitted = server.upload(&admin.access_token, bytes).await?;
     assert_eq!(submitted.status, 202);

@@ -27,9 +27,10 @@ pub(crate) async fn request_password_reset(
     current_user: RequestPrincipal,
     client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<PasswordResetRequestDto>,
 ) -> HttpResult<Json<ApiResponse<PasswordResetRequestResponse>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     let outcome = state
         .services

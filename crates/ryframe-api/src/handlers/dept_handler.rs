@@ -127,9 +127,10 @@ async fn create(
 async fn update(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdateDeptDto>,
 ) -> HttpResult<Json<ApiResponse<DeptVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     state
@@ -161,8 +162,9 @@ async fn update(
 async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<DeptVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     let value = state
         .services
         .identity
@@ -181,7 +183,8 @@ async fn detail(
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     remove_body!(state, current_user, id, identity.dept)
 }
