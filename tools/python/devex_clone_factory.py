@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import copy
-from native_s3_client import configuration as object_configuration
+from native_s3_client import (configuration as object_configuration,
+                             _invoke as native_invoke, _read_response as native_response)
 from dataclasses import replace
 import json
 import hashlib
@@ -155,8 +156,11 @@ class CloneSession:
 
             execution, _ = execution_backend(self.backend, request)
             return execution
-        recorded = read_json(bound_file(self.backend, request["maintenance_build"])).get("backend_root")
-        return Path(recorded) if isinstance(recorded, str) and Path(recorded).is_dir() else self.backend
+        return Path(native_response(*native_invoke(
+            "__source-evidence", {"operation": "copy-maintenance-root", "write": False,
+                "arguments": {"backend": str(self.backend), "maintenance_build": request["maintenance_build"]}},
+            subprocess.run, may_write=False,
+        ))[0]["value"]["path"])
 
     def _source_inventory(self) -> dict:
         observed = self._inventory("source")

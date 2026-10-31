@@ -172,6 +172,10 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("copy-pacing-binding") => {
             crate::recovery::clone::native::session::pacing_binding::request(args)
         }
+        Some("copy-maintenance-root") => {
+            crate::recovery::clone::native::maintenance_root::request(args)
+        }
+        Some("copy-api-environment") => environment::copy_api(args),
         Some("frontend-build-validation") => {
             let authority =
                 crate::check::consumer_context::existing_origin(&crate::workspace::root_dir())?;

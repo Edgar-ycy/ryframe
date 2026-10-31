@@ -48,7 +48,8 @@ class FactoryTests(unittest.TestCase):
                              worktree_fingerprint="sha256:" + "b" * 64, enabled_system_schedule_rows=[],
                              evidence={"generation-after": value["evidence"]["source_stopped"]})
         self.export_binding = self.bind(self.local / "source-export.json", {"fixture": "verified by isolated source adapter"})
-        maintenance = self.bind(self.local / "maintenance.json", {"fixture": "maintenance"})
+        maintenance = self.bind(self.local / "maintenance.json", {
+            "fixture": "maintenance", "backend_root": str(self.backend)})
         self.source_request = {"maintenance_build": maintenance, "source": self.case.tools.plan["source"],
                                "tools": {name: copy.deepcopy(self.case.tools.plan["tools"]["mysql"])
                                          for name in ("mysql", "mysqldump", "node")}}

@@ -63,8 +63,11 @@ def inspect_disabled(backend: Path, action: dict, before: dict, observed: dict,
 
 def environment_delta(initial: dict, api: dict, frontend_url: str) -> None:
     endpoint(frontend_url)
-    if initial != {"APP_ENV": "test"} or api != {"APP_ENV": "test"}:
-        raise ValueError("复制后 API 环境只能显式选择 APP_ENV=test；其他配置使用绑定 TOML")
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-api-environment", "write": False,
+            "arguments": {"initial": initial, "api": api}},
+        subprocess.run, may_write=False,
+    ))
 
 
 def administrator(value: dict, backend: Path, credentials: dict) -> None:

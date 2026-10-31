@@ -57,8 +57,8 @@ class PostContractTests(unittest.TestCase):
         self.assertNotIn('password', json.dumps(payload))
 
     def test_environment_selector_rejects_overrides_on_both_sides(self):
-        valid = {'APP_ENV': 'test'}
-        environment_delta(valid, valid, 'http://127.0.0.1:4190')
+        for valid in ({'APP_ENV': 'test'}, {'APP_ENV': 'test', 'TEMP': 'D:/frozen-temp', 'TMP': 'D:/frozen-temp'}):
+            environment_delta(valid, valid, 'http://127.0.0.1:4190')
         for field in ('APP_REDIS_PASSWORD', 'APP_APP_PORT', 'APP_JOBS_MODE',
                       'SNOWFLAKE_WORKER_ID', 'RYFRAME_ADMIN'):
             invalid = {**valid, field: 'private-sentinel'}

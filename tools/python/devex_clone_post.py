@@ -212,8 +212,11 @@ def amend(backend: Path, directory: Path, value: dict, filename: Path, number: i
         raise ValueError("post-copy amendment 只能修正 API 环境绑定")
     old = read_json(bound_file(backend, active.request["api_environment"]))["environment"]
     new = read_json(bound_file(backend, candidate["api_environment"]))["environment"]
-    if old != {"APP_ENV": "test"} or new != {"APP_ENV": "test"}:
-        raise ValueError("amendment API 选择文件只能包含 APP_ENV=test；不能覆盖项目配置")
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-api-environment", "write": False,
+            "arguments": {"initial": old, "api": new}},
+        subprocess.run, may_write=False,
+    ))
     if candidate["api_environment"] == active.request["api_environment"]:
         raise ValueError("amendment 必须明确重新绑定 API 选择文件")
     state = load_state(directory)

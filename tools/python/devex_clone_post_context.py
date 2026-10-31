@@ -50,10 +50,11 @@ def execution_root(backend: Path, request: dict) -> Path:
         from devex_clone_target_binding import execution_backend
 
         return execution_backend(backend, request)[0]
-    recorded = read_json(bound_file(backend, request["maintenance_build"])).get("backend_root")
-    if not isinstance(recorded, str):
-        raise ValueError("维护构建收据缺少执行后端根")
-    return local_path(backend, recorded)
+    return Path(native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-maintenance-root", "write": False,
+            "arguments": {"backend": str(backend), "maintenance_build": request["maintenance_build"]}},
+        subprocess.run, may_write=False,
+    ))[0]["value"]["path"])
 
 
 class Context:
