@@ -20,9 +20,8 @@ pub(crate) fn validate_local_test_path(
 ) -> Result<PathBuf, String> {
     validate_lexical_path(value)?;
     let boundary = root.join(".local-tests");
-    let relative = value
-        .strip_prefix(&boundary)
-        .map_err(|_| "路径必须位于当前后端 .local-tests 的子目录".to_owned())?;
+    let relative = strip_local_test_prefix(value, &boundary)
+        .ok_or_else(|| "路径必须位于当前后端 .local-tests 的子目录".to_owned())?;
     if relative.as_os_str().is_empty() {
         return Err("路径不能是 .local-tests 根目录".to_owned());
     }
@@ -122,14 +121,44 @@ fn validate_lexical_path(value: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 按组件比较同一所有者边界，保留原始路径片段。
+pub(crate) fn strip_local_test_prefix<'a>(value: &'a Path, boundary: &Path) -> Option<&'a Path> {
+    let mut actual = value.components();
+    for expected in boundary.components() {
+        if !same_component(actual.next()?, expected) {
+            return None;
+        }
+    }
+    Some(actual.as_path())
+}
+
+fn same_component(left: Component<'_>, right: Component<'_>) -> bool {
+    #[cfg(windows)]
+    if let (Component::Prefix(left), Component::Prefix(right)) = (left, right) {
+        use std::path::Prefix;
+        return match (left.kind(), right.kind()) {
+            (
+                Prefix::Disk(left) | Prefix::VerbatimDisk(left),
+                Prefix::Disk(right) | Prefix::VerbatimDisk(right),
+            ) => left == right,
+            (
+                Prefix::UNC(left_server, left_share) | Prefix::VerbatimUNC(left_server, left_share),
+                Prefix::UNC(right_server, right_share)
+                | Prefix::VerbatimUNC(right_server, right_share),
+            ) => left_server == right_server && left_share == right_share,
+            _ => left == right,
+        };
+    }
+    left == right
+}
+
 fn validate_existing_components(
     value: &Path,
     boundary: &Path,
     canonical_boundary: &Path,
 ) -> Result<(), String> {
-    let relative = value
-        .strip_prefix(boundary)
-        .map_err(|_| "路径必须位于当前后端 .local-tests 的子目录".to_owned())?;
+    let relative = strip_local_test_prefix(value, boundary)
+        .ok_or_else(|| "路径必须位于当前后端 .local-tests 的子目录".to_owned())?;
     let mut current = boundary.to_path_buf();
     let mut missing_parent = false;
     let mut components = relative.components().peekable();
