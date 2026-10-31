@@ -200,7 +200,7 @@ fn maintenance_equivalence_normalizes_only_receipt_directory_and_log_content() {
     let mut changed = current.clone();
     changed["artifacts"]["reset"]["executable"] = json!(old_dir.join("ryframe-reset.exe"));
     assert!(check(&changed).is_err());
-    changed = current.clone();
+    changed = current;
     changed["artifacts"]["reset"]["cargo_log"]["extra"] = true.into();
     assert!(check(&changed).is_err());
 }

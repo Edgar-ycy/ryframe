@@ -176,7 +176,7 @@ fn recover_legacy_ledger(variant: usize) {
     .unwrap();
     let mut sources = context.sources();
     sources["restart_predecessor"] = history["restart_predecessor"].clone();
-    let mut dead = lock.owner.clone();
+    let mut dead = lock.owner;
     dead["identity"]["pid"] = json!(2147481000u32);
     assert!(
         crate::recovery::clone::native::lifecycle::identity::process(2147481000)
@@ -285,7 +285,7 @@ fn assert_recovery_publication(
     );
     assert_eq!(saved["attempts"][4]["status"], "failed");
     assert_eq!(saved["attempts"][4]["error_type"], "ControllerInterrupted");
-    let mut interrupted = saved.clone();
+    let mut interrupted = saved;
     interrupted["attempts"].as_array_mut().unwrap().truncate(5);
     assert_eq!(
         crate::recovery::clone::native::digest::plan_hash(&interrupted).unwrap(),

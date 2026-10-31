@@ -326,7 +326,7 @@ fn v2_independent_shape_rejects_private_overrides_paths_incomplete_owner_and_bad
         *wrong.pointer_mut(path).unwrap() = value;
         assert!(model::shape(&wrong).is_err(), "{path}");
     }
-    let mut unknown = request.clone();
+    let mut unknown = request;
     unknown["password_env"] = json!("private-marker");
     assert!(model::shape(&unknown).is_err());
     let mut old_execution = super::tests::request();

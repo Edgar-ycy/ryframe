@@ -130,7 +130,7 @@ impl ManagedRestart {
             "baseline":before,"running":running,"declared_deltas":{"sys_login_info":11,"sys_oper_log":0,"sys_outbox_event":0},
             "verification_qualified":false,"replay_allowed":false,"remote_writes":0,"restore_qualified":false});
         document::write_new(&directory.join("closure.json"), &receipt).unwrap();
-        let mut result = receipt.clone();
+        let mut result = receipt;
         for key in [
             "format_version",
             "kind",

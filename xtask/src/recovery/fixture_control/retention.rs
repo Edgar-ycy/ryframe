@@ -57,11 +57,7 @@ pub(super) fn run(command: &FixtureRetentionCommand, root: &Path) -> Result<()> 
         return gate::run(root, options, &binding);
     }
     let [control, source, mut target] = database::bindings(root, &binding.table, &binding.scope)?;
-    let schemas = [
-        control.schema.clone(),
-        source.schema.clone(),
-        target.schema.clone(),
-    ];
+    let schemas = [control.schema.clone(), source.schema, target.schema.clone()];
     let mut session = control.open()?;
     let result = (|| {
         let server = database::ownership(&mut session, &schemas[0], &binding.scope, "control")?;

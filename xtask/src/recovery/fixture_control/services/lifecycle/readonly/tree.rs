@@ -190,7 +190,7 @@ mod tests {
         );
         assert!(read(&backend, directory.path(), "foreign-scope").is_err());
         assert_eq!(std::fs::read(&filename).unwrap(), before);
-        let mut forged = original.clone();
+        let mut forged = original;
         forged["monitor"] = forged["process"].clone();
         std::fs::write(&filename, serde_json::to_vec(&forged).unwrap()).unwrap();
         assert!(read(&backend, directory.path(), "tree-scope").is_err());

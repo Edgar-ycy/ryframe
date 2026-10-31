@@ -419,7 +419,7 @@ fn native_identity_ledger_requires_all_six_hundred_twenty_two_confirmed_writes()
     let mut incomplete = state.clone();
     incomplete["entries"].as_array_mut().unwrap().pop();
     assert!(native_state::validate(&plan, &incomplete, true).is_err());
-    let mut missing = state.clone();
+    let mut missing = state;
     missing["users"]
         .as_object_mut()
         .unwrap()

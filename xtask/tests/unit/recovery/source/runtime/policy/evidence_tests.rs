@@ -178,7 +178,7 @@ fn snapshot_identity_rejects_subject_version_and_duplicate_field_changes() {
     invalid = args.clone();
     invalid["payload"] = json!(legacy.to_string());
     assert!(model::snapshot(&invalid).is_err());
-    let mut secret = payload.clone();
+    let mut secret = payload;
     secret["secret"] = json!("private-source-v4-secret");
     invalid = args.clone();
     invalid["payload"] = json!(secret.to_string());

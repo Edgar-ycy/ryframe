@@ -18,7 +18,7 @@ pub(super) fn verify(runtime: &Path, role: &str, id: &str) -> Result<()> {
     }
     let mut selected = None;
     if lock.try_exists()? {
-        selected = Some((lock.clone(), false));
+        selected = Some((lock, false));
     }
     if archives.try_exists()? {
         plain(&archives, true)?;

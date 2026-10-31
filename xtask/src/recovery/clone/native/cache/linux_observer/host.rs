@@ -369,7 +369,7 @@ mod tests {
             changed["result"].as_object_mut().unwrap().remove(field);
             assert!(decode(&settings, &identity, &changed).is_err());
         }
-        let mut changed = value.clone();
+        let mut changed = value;
         changed["result"]["identity"]["started"] = json!("61");
         assert!(decode(&settings, &identity, &changed).is_err());
         changed["ok"] = json!(false);

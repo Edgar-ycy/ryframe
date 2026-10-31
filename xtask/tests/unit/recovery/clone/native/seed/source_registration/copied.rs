@@ -45,7 +45,7 @@ fn completed_copy_requires_matching_outer_result_and_preserves_pending_api_only_
         changed[index][field] = value;
         assert!(check(&changed).is_err());
     }
-    let mut changed = values.clone();
+    let mut changed = values;
     changed[1]["pending_target_actions"] = json!([]);
     changed[2]["pending_target_actions"] = json!([]);
     assert!(check(&changed).is_err());

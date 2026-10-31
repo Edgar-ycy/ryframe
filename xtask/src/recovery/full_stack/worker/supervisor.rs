@@ -285,7 +285,7 @@ fn run_product(backend: &Path, op: &Operation, supervisor: &Value, monitor: &Val
             super::runtime::load(op.role, backend, op.directory())?;
             op.publish(
                 "result.json",
-                &op.result("running", product.clone(), None, false)?,
+                &op.result("running", product, None, false)?,
                 false,
             )?;
             guard.check()?;

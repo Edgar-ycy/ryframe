@@ -39,7 +39,7 @@ fn resume_protocol_requires_exact_fields_and_boolean_owned_lock() {
         value["owned_lock"] = changed;
         assert!(evidence_protocol::execute(&serde_json::to_vec(&value).unwrap()).is_err());
     }
-    let mut value = request.clone();
+    let mut value = request;
     value["unregistered"] = json!(true);
     assert!(evidence_protocol::execute(&serde_json::to_vec(&value).unwrap()).is_err());
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);

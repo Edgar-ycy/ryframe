@@ -152,7 +152,7 @@ fn interrupted_or_racing_creation_is_preserved_and_never_replayed() {
         b"preserve me"
     );
     let fixture = Fixture::new();
-    let first = fixture.args.clone();
+    let first = fixture.args;
     let second = first.clone();
     let one = std::thread::spawn(move || staging::create(&first).is_ok());
     let two = std::thread::spawn(move || staging::create(&second).is_ok());

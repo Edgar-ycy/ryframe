@@ -80,7 +80,7 @@ fn import_manifest_rejects_duplicate_escaped_foreign_and_changed_samples() {
     let mut invalid = manifest.clone();
     invalid.files[0].filename = "../outside.xlsx".into();
     assert!(imports::Samples::verify(temp.path(), &invalid, &request).is_err());
-    let mut invalid = manifest.clone();
+    let mut invalid = manifest;
     invalid.files.push(invalid.files[0].clone());
     assert!(imports::Samples::verify(temp.path(), &invalid, &request).is_err());
     fs::write(temp.path().join("0-0.xlsx"), b"changed").unwrap();

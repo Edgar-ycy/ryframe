@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove unnecessary clones at final use sites in development and acceptance tools and tests while preserving resource-guard lifetimes, existing assertions, fail-closed behavior and strict Clippy checks.
+
 - Clarify the tool-level read-only boundary of `--plan`: no task execution, business-descriptor compilation, database connections, generation caches or reports. Retain existing Cargo aliases, explain possible Cargo bootstrap build writes, and document running the prebuilt executable directly.
 
 - Complete precise cleanup in the real MySQL/Redis authorization-cache test: register each subject ID after successful creation, remove the tenant epoch and all registered subjects’ version/snapshot keys, and verify the test scope is empty before returning success. Preserve and report unknown residual keys without deleting scan results.

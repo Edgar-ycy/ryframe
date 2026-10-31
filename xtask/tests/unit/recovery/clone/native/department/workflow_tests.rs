@@ -215,7 +215,7 @@ fn unknown_files_noncontiguous_paths_and_cross_slot_attempts_fail_closed() {
         )
         .is_err()
     );
-    let mut cross = step.clone();
+    let mut cross = step;
     cross["attempt"] = json!(
         attempt
             .parent()

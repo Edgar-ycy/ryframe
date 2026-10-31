@@ -106,7 +106,7 @@ fn batch_distribution_preserves_all_rows_sort_and_i64_ids() {
         batch::resolve_samples(&samples, &result).unwrap()[0]["id"],
         "9007199254740995"
     );
-    let mut invalid = result.clone();
+    let mut invalid = result;
     invalid["last_id"] = json!("1");
     for invalid in [invalid, Value::Null] {
         assert!(batch::resolve_samples(&samples, &invalid).is_err());
@@ -127,7 +127,7 @@ fn existing_dataset_rejects_repeated_tenants_invalid_ids_and_files() {
     invalid = valid.clone();
     invalid["tenants"][0]["posts"][0]["id"] = json!("9223372036854775808");
     assert!(model::validate_dataset(&plan, &invalid).is_err());
-    invalid = valid.clone();
+    invalid = valid;
     invalid["tenants"][0]["files"] =
         json!([{"file_path":"file","bytes":4194305,"sha256":"a".repeat(64)}]);
     assert!(model::validate_dataset(&plan, &invalid).is_err());

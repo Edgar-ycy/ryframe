@@ -78,7 +78,7 @@ fn audited_resume_requires_complete_resources_exact_request_and_unique_rebind() 
             "{pointer}"
         );
     }
-    let mut changed = valid.clone();
+    let mut changed = valid;
     changed["attempts"]
         .as_array_mut()
         .unwrap()
@@ -157,7 +157,7 @@ fn running_receipt_freezes_history_tools_request_and_strict_zero_write_fields() 
     let mut changed = valid.clone();
     changed["receipt"]["remote_writes"] = json!(false);
     assert_eq!(call("running", changed).unwrap(), reject("running"));
-    let mut changed = valid.clone();
+    let mut changed = valid;
     changed["receipt"]["extra"] = json!(true);
     assert!(call("running", changed).is_err());
 }
@@ -345,7 +345,7 @@ fn generation_proof_preserves_exact_artifacts_physical_binding_and_sorted_produc
             "{field}"
         );
     }
-    let mut changed = args.clone();
+    let mut changed = args;
     changed["runtime_physical"] = json!({"same":false});
     assert_eq!(call("generation-proof", changed).unwrap(), reject("proof"));
 }

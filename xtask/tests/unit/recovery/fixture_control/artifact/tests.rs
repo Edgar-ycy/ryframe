@@ -310,7 +310,7 @@ fn configuration_only_contract_keeps_both_directories_worker_drift_and_artifact_
     for name in ["config", "worker-config"] {
         fs::rename(root.path().join(name), alternate.join(name)).unwrap();
     }
-    let mut receipt = original.clone();
+    let mut receipt = original;
     receipt["api_config_dir"] = json!(alternate.join("config"));
     receipt["worker_config_dir"] = json!(alternate.join("worker-config"));
     let path = directory.join("runtime.json");

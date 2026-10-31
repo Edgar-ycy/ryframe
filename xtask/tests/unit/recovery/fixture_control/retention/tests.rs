@@ -146,7 +146,7 @@ fn complete_shift_preserves_state_policy_and_unknown_finish() {
         .as_str()
         .unwrap()
         .to_owned();
-    let mut db = Database::rows(vec![vec![row.clone()], vec![], vec![after.clone()], vec![]]);
+    let mut db = Database::rows(vec![vec![row.clone()], vec![], vec![after], vec![]]);
     let result = engine::apply(
         &mut db,
         "control_test",

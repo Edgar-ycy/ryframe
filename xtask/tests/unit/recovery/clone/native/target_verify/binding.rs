@@ -63,7 +63,7 @@ fn private_environment_rejects_outside_missing_mismatched_and_file_temp() {
     let temporary = backend.join(".local-tests/temp");
     fs::create_dir(&temporary).unwrap();
     for (temp, tmp) in [
-        (temporary.clone(), backend.join(".local-tests/missing")),
+        (temporary, backend.join(".local-tests/missing")),
         (
             backend.parent().unwrap().to_path_buf(),
             backend.parent().unwrap().to_path_buf(),

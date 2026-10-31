@@ -87,7 +87,7 @@ pub(super) fn reregistration(
         &owner["identity"],
         &tool,
     )?;
-    if read_controller(run, attempt)? != (controller.clone(), owner) {
+    if read_controller(run, attempt)? != (controller, owner) {
         return Err("历史收据重登记失败的控制器在复核期间变化".into());
     }
     common::bound_file(backend, &failure, "收据重登记原失败")?;

@@ -338,7 +338,7 @@ fn formal_dataset_requires_counts_sums_pacing_current_fields_and_unique_objects(
     assert!(
         dataset::load(
             &mut Context {
-                root: f.root.clone(),
+                root: f.root,
                 snapshots: Vec::new()
             },
             &request
@@ -452,7 +452,7 @@ fn revalidation_reconstructs_exact_lineage_and_late_ancestor_changes_fail_closed
     let mut overflow = value.clone();
     overflow["tenants"][0]["records"] = json!(u64::MAX);
     assert!(validate_lineage(&overflow).is_err());
-    let mut changed = value.clone();
+    let mut changed = value;
     changed["scale"]["records"] = json!(33);
     args["lineage_descriptor"] = write(&f.root, "lineage-changed.json", &changed);
     assert!(verify_with(&args, &|_, _, _| Ok(())).is_err());
@@ -514,7 +514,7 @@ fn same_database_names_on_different_servers_are_distinct_and_aliases_cannot_dupl
     assert!(
         dataset::load(
             &mut Context {
-                root: f.root.clone(),
+                root: f.root,
                 snapshots: Vec::new()
             },
             &request

@@ -175,7 +175,7 @@ fn authorization_keeps_registered_system_admin_and_required_permissions() {
         let error = authorization(&post, &invalid).unwrap_err().to_string();
         assert!(!error.contains("private-admin"));
     }
-    let mut wildcard = auth.clone();
+    let mut wildcard = auth;
     wildcard["permissions"] = json!(["*"]);
     assert!(authorization(&post, &wildcard).is_ok());
     wildcard["is_super_admin"] = json!(true);

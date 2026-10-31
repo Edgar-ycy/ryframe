@@ -104,7 +104,7 @@ fn backend_roles_and_tools_preserve_independent_api_worker_inputs() {
         assert!(paths.contains(&json!("unknown/input.dat")));
         assert!(paths.contains(&json!("crates/ryframe/src/boot.rs")));
     }
-    let mut changed = value.clone();
+    let mut changed = value;
     for item in changed["files"].as_array_mut().unwrap() {
         if item["path"] == "tools/python/source_inventory.py" {
             item["sha256"] = json!("1".repeat(64));

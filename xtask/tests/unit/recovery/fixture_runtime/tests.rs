@@ -107,7 +107,7 @@ fn exact_four_runs_and_five_scenarios_reject_retries_duplicates_and_prefixes() {
     let mut c = v.clone();
     c["runs"][0]["status"] = json!("skipped");
     cases.push(c);
-    let mut c = v.clone();
+    let mut c = v;
     c["run_id"] = json!("other");
     cases.push(c);
     for c in cases {

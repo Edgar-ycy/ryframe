@@ -74,7 +74,7 @@ fn begin<T: Transport>(
     if allowed != current {
         return Err("迁移续作配置、源码或非存储代次变化".into());
     }
-    let storage = candidate.runtime.clone().unwrap_or(Value::Null);
+    let storage = candidate.runtime.unwrap_or(Value::Null);
     let cache = cache.unwrap_or(Value::Null);
     let restart = resume_runtime::fixture(&storage, &cache)?;
     if successor && restart != a.state["restart_generation"] {

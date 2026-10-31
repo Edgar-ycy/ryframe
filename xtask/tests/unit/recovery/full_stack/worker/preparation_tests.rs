@@ -124,7 +124,7 @@ fn missing_changed_or_foreign_diagnostic_keeps_original_closed_failure() {
             original
         );
     }
-    let mut changed = value.clone();
+    let mut changed = value;
     changed["detail"]["raw_error"] = json!("private-marker");
     std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
     assert!(failure(&op, &monitor).is_none());

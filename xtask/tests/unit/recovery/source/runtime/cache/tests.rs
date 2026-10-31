@@ -78,7 +78,7 @@ fn unknown_result_preserves_null_count_and_never_allows_mixed_state_replay() {
     args["attempt"]["status"] = json!("confirmed");
     assert_eq!(resume(&args).unwrap()["action"], "publish");
     args["types"][0] = json!("string");
-    args["observed"] = observation.clone();
+    args["observed"] = observation;
     for status in [
         "confirmed",
         "unknown_exec",

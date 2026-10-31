@@ -160,7 +160,7 @@ mod tests {
         validate(run, 3, &binding(&path).unwrap(), &candidate).unwrap();
         assert!(validate(run, 4, &binding(&path).unwrap(), &candidate).is_err());
         let descriptor = binding(&path).unwrap();
-        let mut changed = value.clone();
+        let mut changed = value;
         changed["candidate"]["runtime"]["linux_identity"]["started"] = json!("different");
         json_io::write_replace(&path, &changed).unwrap();
         assert!(validate(run, 3, &descriptor, &candidate).is_err());

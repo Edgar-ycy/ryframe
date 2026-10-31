@@ -180,7 +180,7 @@ fn close_result_binds_handoff_types_and_reconciliation_reason() {
     let runtime = Path::new("fixture");
     assert!(result::validate(&original, runtime, &handoff, &json!({}), true).is_ok());
     assert!(result::validate(&original, runtime, &handoff, &json!({}), false).is_err());
-    let mut value = original.clone();
+    let mut value = original;
     value["reason"] = json!("api_stop_failed");
     assert!(result::validate(&value, runtime, &handoff, &json!({}), false).is_ok());
     for (field, changed) in [
@@ -293,7 +293,7 @@ fn rebind_receipt_binds_full_prefix_and_zero_write_semantics() {
         bad["value"][field] = changed;
         assert!(rebind_receipt(&bad).is_err());
     }
-    let mut bad = input.clone();
+    let mut bad = input;
     bad["prefix"][0]["status"] = json!("failed");
     assert!(rebind_receipt(&bad).is_err());
 }

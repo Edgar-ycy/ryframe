@@ -260,7 +260,7 @@ fn generation_v2_consumes_bound_sidecar_configuration_and_freezes_absent_common_
     let expected = physical(&args).unwrap();
     args["backend"] = request["execution_backend"].clone();
     args["config_dir"] = json!(directory);
-    args["source"]["s3"]["configuration"] = frozen.clone();
+    args["source"]["s3"]["configuration"] = frozen;
     assert_eq!(physical(&args).unwrap(), expected);
     fs::write(directory.join("app.toml"), "scope_id='source-fixture'\n").unwrap();
     assert!(configuration::verify(&f.root, &request).is_err());
