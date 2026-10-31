@@ -200,7 +200,8 @@ class Context:
         if (process_identity(identity["pid"]) != identity
                 or identity["executable"] != self.build["artifacts"]["api"]["executable"]
                 or evidence("process-argv", self.backend, self.runtime,
-                            receipt=binding(self.runtime / "api.json"), identity=identity)["actual_arguments_sha256"] != plan_hash([identity["executable"]])):
+                            receipt=binding(self.runtime / "api.json"), identity=identity)["actual_arguments_sha256"] != plan_hash(
+                                [identity["executable"], "--config-dir", contract["api_config_dir"]])):
             raise ValueError("API 内核身份、产物或实际命令发生变化")
         for role in ("api", "worker"):
             artifact = self.build["artifacts"][role]

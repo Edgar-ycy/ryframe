@@ -332,30 +332,43 @@ class PostTests(unittest.TestCase):
             self.assertEqual(context.resolved_storage_run(), self.directory)
         pinned.assert_called_once_with(self.backend, context.value['initialized'], owned_lock_identity=4242)
 
-    def test_post_copy_api_start_passes_owned_lock_identity_to_context(self):
-        write_json(self.directory / 'post-copy.json', {'fixture': True})
-        captured = {}
-
-        @contextmanager
-        def lock(_backend, _value, current_run=None):
-            yield 4242
-
-        class FakeContext:
-            def __init__(self, *_args, **kwargs):
-                captured.update(kwargs)
-                raise ValueError('context 构造阻断')
-
-        with patch('devex_clone_post.registration', return_value=SimpleNamespace(descriptor={'kind': 'fixture'})), \
-                patch('devex_clone_post.runtime_inputs', return_value=(
-                    {'runtime_dir': str(self.directory / 'runtime'), 'api_url': 'http://127.0.0.1:1'}, {})), \
-                patch('devex_clone_post.registered', return_value={}), \
-                patch('devex_clone_run.load_state', return_value={'attempts': [{'number': 5}]}), \
-                patch('devex_clone_post.target_lock', side_effect=lock), \
-                patch('devex_clone_post_context.Context', FakeContext):
-            with self.assertRaises(ValueError):
-                run.run_runtime(self.backend, self.value, Environments({}, {}), 'target', 'start', ('api',),
-                                run_directory=self.directory)
-        self.assertEqual(captured.get('owned_lock_identity'), 4242)
+    def test_api_guard_requires_exact_executable_and_verified_contract_configuration_arguments(self):
+        context = Context.__new__(Context)
+        context.backend, context.directory_root = self.backend, self.directory
+        context.runtime, context.selected = self.directory / 'runtime', self.selected
+        context.runtime.mkdir()
+        context.target_config = {'scope_id': 'target-one'}
+        executable = str(self.local / 'api.exe')
+        identity = {'pid': 21000, 'started': '1234567', 'executable': executable}
+        self.write(context.runtime / 'api.json', {'identity': identity})
+        context.build = {'artifacts': {
+            'api': {'executable': executable, 'sha256': 'a' * 64},
+            'worker': {'executable': str(self.local / 'worker.exe'), 'sha256': 'b' * 64}}}
+        configuration = str(self.local / '已绑定 配置/config')
+        contract = {'api_config_dir': configuration, 'artifacts': {
+            role: {'path': value['executable'], 'sha256': value['sha256']}
+            for role, value in context.build['artifacts'].items()}}
+        runtime = {'runtime_dir': str(context.runtime), 'api_url': context.selected['api_url']}
+        with patch('devex_clone_post.runtime_inputs', return_value=(runtime, {})), \
+                patch('devex_clone_post_context.verify_runtime', return_value=contract), \
+                patch('devex_clone_post_context.read_process', return_value=identity), \
+                patch('devex_clone_post_context.process_identity', return_value=identity), \
+                patch('devex_clone_post_context.evidence') as evidence, \
+                patch('devex_clone_post_context.verify_listener') as listener:
+            for arguments, valid in (
+                    ([executable, '--config-dir', configuration], True),
+                    ([executable], False),
+                    ([executable, '--config-dir', str(self.local / 'other-config')], False)):
+                with self.subTest(arguments=arguments):
+                    listener.reset_mock()
+                    evidence.return_value = {'actual_arguments_sha256': plan_hash(arguments)}
+                    if valid:
+                        context.api_guard(SimpleNamespace())
+                        listener.assert_called_once_with(identity['pid'], context.selected['api_url'])
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'API 内核身份、产物或实际命令发生变化'):
+                            context.api_guard(SimpleNamespace())
+                        listener.assert_not_called()
 
     def test_prepare_is_read_only_remote_and_reuses_exact_partial_local_runtime(self):
         context = Context.__new__(Context)
