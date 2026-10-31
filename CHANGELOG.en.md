@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove reviewed duplicate resource-order and menu page-key tests whose checks are fully covered by stronger OpenAPI cases. Preserve framework-path snapshot coverage, generated/manual API composition and menu-extension consistency safeguards.
+
 - Fix the product S3 and default OTLP HTTP clients implicitly reading host proxy configuration. Use file-configured endpoints and connection/export settings directly; isolated-process real HTTP regressions verify that configured endpoints receive requests and host proxies are not contacted. The existing OTLP test now exercises the product's default entry point.
 
 - After reviewing existing database tests, remove SQL-formatting-only checks, duplicate baseline-field assertions, and a fixed-seed validation wrapper and its dedicated test with no production caller. Preserve complete SQL snapshots, seed parsing, specific DDL contracts and initialization-equivalence safeguards.
