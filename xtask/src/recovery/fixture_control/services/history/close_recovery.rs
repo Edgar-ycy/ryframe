@@ -62,21 +62,76 @@ pub(crate) fn candidate(
         tree == services["tree"] && services["evidence"]["rustfs_tree"] == binding(&tree_path)?,
         "关闭恢复的原RustFS完整树变化",
     )?;
-    for suffix in ["control", "result"].into_iter().filter(|_| !closed) {
-        check(
-            !rustfs
-                .join(format!(
-                    "rustfs-tree-{}-{suffix}.json",
-                    text(&tree, "operation_id")?
-                ))
-                .try_exists()?,
-            "原RustFS树存在未确认关闭请求或结果",
-        )?;
+    if !closed {
+        completed_records(run, &rustfs, &tree)?;
     }
     Ok(
         json!({"failed_attempt":number,"failed_controller":controller(run,failed)?,"failed_sources":failed["sources"],
         "request":binding(&request_path)?,"runtime":binding(&runtime_path)?,"exit":binding(&exit_path)?,
         "exit_modified_unix_ns":modified.duration_since(UNIX_EPOCH)?.as_nanos().to_string(),"rustfs_tree":binding(&tree_path)?,"redis_files":redis_files(&redis)?}),
+    )
+}
+
+fn completed_records(run: &Path, directory: &Path, tree: &Value) -> Result<()> {
+    let operation = text(tree, "operation_id")?;
+    let control = directory.join(format!("rustfs-tree-{operation}-control.json"));
+    let result = directory.join(format!("rustfs-tree-{operation}-result.json"));
+    if !control.try_exists()? && !result.try_exists()? {
+        return Ok(());
+    }
+    if result.try_exists()? {
+        let value = read(&result)?;
+        exact(
+            &value,
+            &[
+                "format_version",
+                "kind",
+                "operation_id",
+                "process",
+                "exit_code",
+                "termination",
+            ],
+        )?;
+        check(
+            value["format_version"] == 1
+                && value["kind"] == "full-stack-process-tree-result"
+                && value["operation_id"] == tree["operation_id"]
+                && value["process"] == tree["process"]
+                && (value["exit_code"].is_i64() || value["exit_code"].is_u64())
+                && ["natural", "normal", "forced"]
+                    .iter()
+                    .any(|mode| value["termination"] == *mode),
+            "原RustFS完成结果不属于登记树",
+        )?;
+    }
+    if control.try_exists()? {
+        let request = read(&control)?;
+        exact(
+            &request,
+            &[
+                "format_version",
+                "kind",
+                "operation_id",
+                "mode",
+                "requested_at_ns",
+            ],
+        )?;
+        check(
+            request["format_version"] == 1
+                && request["kind"] == "full-stack-process-tree-control"
+                && request["operation_id"] == tree["operation_id"]
+                && request["requested_at_ns"]
+                    .as_u64()
+                    .is_some_and(|time| time > 0)
+                && ["normal", "crash"]
+                    .iter()
+                    .any(|mode| request["mode"] == *mode),
+            "原RustFS控制请求不属于登记树",
+        )?;
+    }
+    members(
+        &json!({"state":"stopped","tree":tree,"completion":binding(&directory.join(format!("rustfs-members-{operation}-stopped.json")))?}),
+        run,
     )
 }
 

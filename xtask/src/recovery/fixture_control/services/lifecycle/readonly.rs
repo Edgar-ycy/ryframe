@@ -21,6 +21,7 @@ pub(super) fn handles(operation: &str) -> bool {
         "review-successor"
             | "cache-status"
             | "storage-running"
+            | "storage-closed"
             | "members-wait"
             | "controller"
             | "identity"
@@ -117,6 +118,10 @@ impl NativeRuntime {
             "completion" => tree::members(&self.backend, &args["tree"], Duration::from_secs(10)),
             "controller" => self.controller(&args),
             "storage-running" => self.storage(&args),
+            "storage-closed" => {
+                super::observation::closed(&args["request"])?;
+                Ok(json!(true))
+            }
             _ => Err(model::error(
                 "只读服务观察不接受资源控制操作；请使用正式生命周期入口",
             )),

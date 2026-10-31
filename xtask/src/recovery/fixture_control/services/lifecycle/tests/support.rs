@@ -229,6 +229,7 @@ impl Runtime for FakeRuntime {
             }
             "completion" => Ok(self.stopped_members(&args["tree"])),
             "tree-read" => read(&Path::new(text(&args, "output")?).join("rustfs-tree.json")),
+            "storage-closed" => Ok(json!(self.observation["rustfs"] == "stopped")),
             "storage-start" => start_storage(self, &args),
             "cache-start" => start_cache(&args),
             "recover-controller" => recover_controller(self, &args),

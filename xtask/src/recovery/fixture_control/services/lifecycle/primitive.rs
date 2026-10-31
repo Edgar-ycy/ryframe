@@ -7,6 +7,7 @@ pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<
         "review-successor" => &["previous", "review"],
         "cache-status" => &["request", "runtime", "effective"],
         "storage-running" => &["identity", "request"],
+        "storage-closed" => &["request"],
         "members-wait" => &["tree"],
         "controller" => &["run"],
         "identity" => &["pid"],
@@ -85,6 +86,8 @@ fn unknown_fields_escaped_paths_and_invalid_pid_fail_before_process_launch() {
         ("identity", json!({"pid":true})),
         ("identity", json!({"pid":0})),
         ("identity", json!({"pid":12,"secret":"private-marker"})),
+        ("storage-closed", json!({})),
+        ("storage-closed", json!({"request":{},"unexpected":true})),
         ("controller", json!({"run":backend})),
     ] {
         assert!(validate(&backend, operation, &args).is_err());

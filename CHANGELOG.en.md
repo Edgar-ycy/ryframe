@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix explicit reconciliation of failed isolated-fixture shutdowns to accept an original RustFS tree already fully stopped before the first observation, without repeating stop operations, while preserving Redis causal-exit, complete-member, port and source-drift checks. Fix mirrored-port waiting during isolated-fixture shutdown recovery by avoiding repeated Linux binds in the loop while retaining complete stage-boundary observations, Windows exclusive-binding proofs, and existing timeout and drift protections.
+
 - Remove unnecessary clones at final use sites in development and acceptance tools and tests while preserving resource-guard lifetimes, existing assertions, fail-closed behavior and strict Clippy checks.
 
 - Clarify the tool-level read-only boundary of `--plan`: no task execution, business-descriptor compilation, database connections, generation caches or reports. Retain existing Cargo aliases, explain possible Cargo bootstrap build writes, and document running the prebuilt executable directly.

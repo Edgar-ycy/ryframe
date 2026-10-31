@@ -117,19 +117,8 @@ fn reconcilable(runtime: &mut dyn Runtime, context: &Context, history: &Value) -
             ))
             .try_exists()?
         {
-            history::evidence::close_candidate(
-                &context.run,
-                failed,
-                &history["active_generation"],
-                &context.sources(),
-                &services,
-                false,
-            )?;
-            check(
-                observe(runtime, &services)?
-                    == json!({"redis":"stopped","rustfs":"running","termination":null}),
-                "关闭恢复资格要求原Redis停止和原RustFS完整身份仍在",
-            )?;
+            let _proof =
+                super::reconcile_close::qualify(runtime, context, history, failed, &services)?;
             return Ok((Value::Null, Value::Null));
         }
         history::evidence::close_evidence(

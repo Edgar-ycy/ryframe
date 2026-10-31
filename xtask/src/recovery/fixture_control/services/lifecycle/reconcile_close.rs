@@ -2,6 +2,90 @@
 use super::*;
 use crate::recovery::clone::native::cache::host_control::recovery_port_error;
 
+pub(super) struct TreeProof {
+    members: PathBuf,
+    files: Vec<TreeFile>,
+}
+struct TreeFile {
+    path: PathBuf,
+    identity: same_file::Handle,
+    binding: Value,
+    modified: std::time::SystemTime,
+}
+impl TreeProof {
+    fn capture(services: &Value) -> Result<Self> {
+        let tree = &services["tree"];
+        let root = Path::new(text(tree, "runtime_directory")?);
+        let operation = text(tree, "operation_id")?;
+        let members = root.join(format!("rustfs-members-{operation}-stopped.json"));
+        let paths = [
+            root.join("rustfs-tree.json"),
+            members.clone(),
+            root.join(format!("rustfs-tree-{operation}-control.json")),
+            root.join(format!("rustfs-tree-{operation}-result.json")),
+        ];
+        for entry in std::fs::read_dir(root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or("原RustFS记录名不是UTF-8")?;
+            if name.starts_with("rustfs-tree-")
+                && (name.ends_with("-control.json") || name.ends_with("-result.json"))
+            {
+                check(
+                    paths.contains(&entry.path()),
+                    "原RustFS目录存在无法归属的控制或完成记录",
+                )?;
+            }
+        }
+        let mut files = Vec::new();
+        for path in paths {
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && path != root.join("rustfs-tree.json") =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            check(metadata.is_file(), "关闭恢复原树证据不是普通文件")?;
+            let identity = same_file::Handle::from_path(&path)?;
+            let descriptor = binding(&path)?;
+            check(
+                identity == same_file::Handle::from_path(&path)?
+                    && metadata.modified()? == std::fs::metadata(&path)?.modified()?,
+                "关闭恢复原树证据在冻结期间变化",
+            )?;
+            files.push(TreeFile {
+                path,
+                identity,
+                binding: descriptor,
+                modified: metadata.modified()?,
+            });
+        }
+        Ok(Self { members, files })
+    }
+
+    fn verify(&self, services: &Value) -> Result<()> {
+        let current = Self::capture(services)?;
+        check(
+            self.files.len() == current.files.len()
+                && self
+                    .files
+                    .iter()
+                    .zip(&current.files)
+                    .all(|(before, after)| {
+                        before.path == after.path
+                            && before.identity == after.identity
+                            && before.binding == after.binding
+                            && before.modified == after.modified
+                    }),
+            "关闭恢复原树证据新增、替换或漂移",
+        )
+    }
+}
+
 pub(super) fn run(
     runtime: &mut dyn Runtime,
     context: &Context,
@@ -11,8 +95,8 @@ pub(super) fn run(
 ) -> Result<Value> {
     let started = runtime.now();
     let original = candidate(context, history, failed, services)?;
+    let stopped = qualify(runtime, context, history, failed, services)?;
     let observed = cache_observation(runtime, services)?;
-    require_tree(runtime, services, true)?;
     let _guard = ProcessGuard::acquire(&context.run)?;
     owned(context, |owner| {
         context.guard(None)?;
@@ -35,7 +119,15 @@ pub(super) fn run(
                     failed,
                     services,
                     &original,
-                    (number, controller, running, output, started, observed),
+                    (
+                        number,
+                        controller,
+                        running,
+                        output,
+                        started,
+                        observed,
+                        stopped.as_ref(),
+                    ),
                 )
             },
         )
@@ -49,9 +141,17 @@ fn finish(
     failed: &Value,
     services: &Value,
     original: &Value,
-    stage: (u64, &Value, &Value, &Path, Duration, Value),
+    stage: (
+        u64,
+        &Value,
+        &Value,
+        &Path,
+        Duration,
+        Value,
+        Option<&TreeProof>,
+    ),
 ) -> Result<Value> {
-    let (number, controller, running, output, started, observed) = stage;
+    let (number, controller, running, output, started, observed, stopped) = stage;
     let deadline = started + Duration::from_secs(180);
     wait_port(
         runtime,
@@ -60,7 +160,7 @@ fn finish(
         failed,
         services,
         original,
-        (running, deadline, true),
+        (running, deadline, stopped.is_none(), stopped),
     )?;
     stable(
         runtime,
@@ -69,13 +169,15 @@ fn finish(
         failed,
         services,
         original,
-        (running, true),
+        (running, stopped.is_none(), stopped),
     )?;
     check(
         runtime.now() < deadline,
         "关闭恢复绑定与观察完成时已过原期限",
     )?;
-    runtime.call("tree-stop", json!({"tree":services["tree"],"crash":false}))?;
+    if stopped.is_none() {
+        runtime.call("tree-stop", json!({"tree":services["tree"],"crash":false}))?;
+    }
     let completion = runtime.call("completion", json!({"tree":services["tree"]}))?;
     check(
         observe(runtime, services)? == expected_stopped(),
@@ -88,7 +190,7 @@ fn finish(
         failed,
         services,
         original,
-        (running, deadline, false),
+        (running, deadline, false, stopped),
     )?;
     context.guard(Some(running))?;
     context.no_unknown()?;
@@ -102,7 +204,7 @@ fn finish(
         history,
         failed,
         services,
-        (original, observed, completion),
+        (original, observed, completion, stopped),
         (number, controller, running, output, started),
     )
 }
@@ -114,9 +216,9 @@ fn wait_port(
     failed: &Value,
     services: &Value,
     original: &Value,
-    stage: (&Value, Duration, bool),
+    stage: (&Value, Duration, bool, Option<&TreeProof>),
 ) -> Result<()> {
-    let (running, deadline, tree_running) = stage;
+    let (running, deadline, tree_running, stopped) = stage;
     let mut last = None;
     loop {
         if runtime.now() >= deadline {
@@ -131,7 +233,7 @@ fn wait_port(
             failed,
             services,
             original,
-            (running, tree_running),
+            (running, tree_running, stopped),
         )?;
         if runtime.now() >= deadline {
             return Err(recovery_port_error(last.unwrap_or_else(|| {
@@ -172,10 +274,10 @@ fn publish(
     history: &Value,
     failed: &Value,
     services: &Value,
-    evidence: (&Value, Value, Value),
+    evidence: (&Value, Value, Value, Option<&TreeProof>),
     stage: (u64, &Value, &Value, &Path, Duration),
 ) -> Result<Value> {
-    let (original, observed, completion) = evidence;
+    let (original, observed, completion, stopped) = evidence;
     let (number, controller, running, output, started) = stage;
     let deadline = started + Duration::from_secs(180);
     let recovery_file = output.join("close-recovery.json");
@@ -201,6 +303,9 @@ fn publish(
     json_io::write_new(&file, &document)?;
     context.guard(Some(running))?;
     require_tree(runtime, services, false)?;
+    if let Some(proof) = stopped {
+        stopped_tree(runtime, context, services, proof)?;
+    }
     runtime.call(
         "cache-closed-port",
         json!({"request":services["requests"]["redis"],"runtime":services["runtime"]}),
@@ -221,6 +326,13 @@ fn publish(
         runtime.now() < deadline,
         "关闭恢复证据核验后已超过本次原期限",
     )?;
+    if let Some(proof) = stopped {
+        stopped_tree(runtime, context, services, proof)?;
+        check(
+            runtime.now() < deadline,
+            "关闭恢复完整证明复核超过本次原期限",
+        )?;
+    }
     result(
         context,
         "reconcile",
@@ -253,9 +365,9 @@ fn stable(
     failed: &Value,
     services: &Value,
     original: &Value,
-    stage: (&Value, bool),
+    stage: (&Value, bool, Option<&TreeProof>),
 ) -> Result<()> {
-    let (running, tree_running) = stage;
+    let (running, tree_running, stopped) = stage;
     context.guard(Some(running))?;
     context.no_unknown()?;
     check(
@@ -269,7 +381,88 @@ fn stable(
         )? == *original,
         "关闭恢复原失败前后像、退出时间或请求变化",
     )?;
-    require_tree(runtime, services, tree_running)
+    require_tree(runtime, services, tree_running)?;
+    if let Some(proof) = stopped {
+        stopped_tree(runtime, context, services, proof)?;
+    }
+    Ok(())
+}
+
+pub(super) fn qualify(
+    runtime: &mut dyn Runtime,
+    context: &Context,
+    history: &Value,
+    failed: &Value,
+    services: &Value,
+) -> Result<Option<TreeProof>> {
+    // 首轮进程观察前冻结有无事实及文件身份，不能接纳观察期间补出的关闭证明。
+    let proof = TreeProof::capture(services)?;
+    candidate(context, history, failed, services)?;
+    cache_observation(runtime, services)?;
+    let mut alive = 0;
+    for role in ["supervisor", "monitor", "process"] {
+        let expected = &services["tree"][role];
+        let actual = runtime.call("identity", json!({"pid":expected["pid"]}))?;
+        check(
+            actual.is_null() || actual == *expected,
+            "关闭恢复原RustFS成员PID复用或身份未知",
+        )?;
+        alive += usize::from(!actual.is_null());
+    }
+    check(alive == 0 || alive == 3, "关闭恢复原RustFS树仅部分退出")?;
+    if alive == 3 {
+        check(
+            proof.files.len() == 1,
+            "存活RustFS树含未确认关闭请求或完成证明",
+        )?;
+        require_tree(runtime, services, true)?;
+        check(
+            observe(runtime, services)?
+                == json!({"redis":"stopped","rustfs":"running","termination":null}),
+            "关闭恢复资格要求原Redis停止和原RustFS完整身份仍在",
+        )?;
+        proof.verify(services)?;
+        Ok(None)
+    } else {
+        stopped_tree(runtime, context, services, &proof)?;
+        Ok(Some(proof))
+    }
+}
+
+fn stopped_tree(
+    runtime: &mut dyn Runtime,
+    context: &Context,
+    services: &Value,
+    proof: &TreeProof,
+) -> Result<()> {
+    proof.verify(services)?;
+    let expected = proof
+        .files
+        .iter()
+        .find(|file| file.path == proof.members)
+        .ok_or("关闭恢复缺少首轮观察前已有的完整成员证明")?;
+    require_tree(runtime, services, false)?;
+    let completion = runtime.call("completion", json!({"tree":services["tree"]}))?;
+    check(
+        completion["bytes"] == expected.binding["bytes"]
+            && completion["sha256"] == expected.binding["sha256"]
+            && same_file::Handle::from_path(Path::new(text(&completion, "path")?))?
+                == expected.identity,
+        "关闭恢复完整成员证明与首轮冻结不符",
+    )?;
+    history::evidence::members(
+        &json!({"state":"stopped","tree":services["tree"],"completion":completion}),
+        &context.run,
+    )?;
+    check(
+        runtime.call(
+            "storage-closed",
+            json!({"request":services["requests"]["rustfs"]}),
+        )? == true,
+        "关闭恢复原RustFS端口未明确关闭",
+    )?;
+    require_tree(runtime, services, false)?;
+    proof.verify(services)
 }
 
 fn require_tree(runtime: &mut dyn Runtime, services: &Value, running: bool) -> Result<()> {
@@ -286,6 +479,22 @@ fn require_tree(runtime: &mut dyn Runtime, services: &Value, running: bool) -> R
         )?;
     }
     if running {
+        let root = Path::new(text(&services["tree"], "runtime_directory")?);
+        let operation = text(&services["tree"], "operation_id")?;
+        check(
+            !root
+                .join(format!("rustfs-members-{operation}-stopped.json"))
+                .try_exists()?,
+            "存活RustFS树已有完整关闭证明，拒绝推断当前代次",
+        )?;
+        for suffix in ["control", "result"] {
+            check(
+                !root
+                    .join(format!("rustfs-tree-{operation}-{suffix}.json"))
+                    .try_exists()?,
+                "原RustFS树存在未确认关闭请求或结果",
+            )?;
+        }
         check(runtime.call("storage-running",json!({"identity":services["tree"]["process"],"request":services["requests"]["rustfs"]}))? == true,"关闭恢复原RustFS命令、来源或监听归属变化")?;
     }
     Ok(())
