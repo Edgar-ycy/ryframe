@@ -7,10 +7,7 @@ use crate::Result;
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
 
-pub(super) fn observe(backend: &Path, review: &Value) -> Result<Value> {
-    if review["ready_for_execution"].as_bool().is_none() {
-        return Err("夹具预检状态无效".into());
-    }
+pub(super) fn local_tools(review: &Value) -> Result<Value> {
     let mut result = json!({});
     for role in ["mysql", "mysqldump", "rustfs"] {
         let value = &review["tools"][role];
@@ -20,6 +17,14 @@ pub(super) fn observe(backend: &Path, review: &Value) -> Result<Value> {
         }
         result[role] = json!({"path":path,"sha256":value["sha256"]});
     }
+    Ok(result)
+}
+
+pub(super) fn observe(backend: &Path, review: &Value) -> Result<Value> {
+    if review["ready_for_execution"].as_bool().is_none() {
+        return Err("夹具预检状态无效".into());
+    }
+    let mut result = local_tools(review)?;
     let path = native_tool::wsl_program()?;
     let wsl = json!({"path":path,"sha256":digest::file(&path)?.sha256});
     let tool = NativeTool::capture(backend)?;

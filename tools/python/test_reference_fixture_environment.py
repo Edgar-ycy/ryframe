@@ -39,11 +39,17 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
 
     def observed_tools(self) -> dict:
         observed = {name: copy.deepcopy(self.review["tools"][name]) for name in environment.REVIEW_FILE_TOOLS}
+        # 与 Rust native_lifecycle 的工具夹具同形；只替代系统观察，收据守卫真实执行。
+        sources = [{"path": "xtask/source-inventory.json", "sha256": "a" * 64}]
         observed.update({
-            "redis_server": {**self.review["tools"]["redis_server"], "version": "Redis server v=7.0.15"},
+            "redis_server": {**self.review["tools"]["redis_server"], "path": "/usr/bin/redis-server",
+                             "version": "Redis server v=7.0.15"},
             "wsl": {"path": str(self.wsl.resolve()), "sha256": file_digest(self.wsl)["sha256"]},
-            "redis_python": {"distribution": "Ubuntu", "path": "/usr/bin/python3",
-                             "resolved_path": "/usr/bin/python3.12", "sha256": "d" * 64},
+            "native_tool": {"distribution": "Ubuntu", "user": "fixture", "uid": 1000,
+                            "program": "D:/fixture/xtask", "linux_program": "/mnt/d/fixture/xtask",
+                            "source_root": "D:/fixture/source", "linux_source_root": "/mnt/d/fixture/source",
+                            "source_commit": "b" * 40, "sha256": "c" * 64,
+                            "source_sha256": environment.plan_hash(sources), "sources": sources},
         })
         return observed
 
@@ -123,65 +129,46 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         result = environment.plan(self.backend, review.relative_to(self.backend), fixture.relative_to(self.backend), maintenance.relative_to(self.backend))
         self.assertEqual(result["scope_id"], "fixture-seed")
 
-    def test_revalidate_binds_redis_server_and_its_supervisor_tools(self):
+    def test_revalidate_publishes_current_native_preflight_and_rejects_tool_drift(self):
+        self.review["ready_for_execution"] = False
         review = self.write("review.json", self.review)
         output = self.root / "review-r1.json"
+        observed = self.observed_tools()
+        with patch.object(environment, "_preflight", return_value=observed):
+            result = environment.revalidate(self.backend, review, output)
 
-        def run(arguments, **_):
-            self.assertEqual(arguments[:4], [str(self.wsl.resolve()), "--distribution", "Ubuntu", "--exec"])
-            command = arguments[4:]
-            if command == ["/usr/bin/readlink", "-f", "/usr/bin/redis-server"]:
-                value = "/usr/bin/redis-server"
-            elif command == ["/usr/bin/sha256sum", "/usr/bin/redis-server"]:
-                value = "c" * 64 + "  /usr/bin/redis-server"
-            elif command == ["/usr/bin/redis-server", "--version"]:
-                value = "Redis server v=7.0.15"
-            elif command == ["/usr/bin/readlink", "-f", "/usr/bin/python3"]:
-                value = "/usr/bin/python3.12"
-            else:
-                self.assertEqual(command, ["/usr/bin/sha256sum", "/usr/bin/python3.12"])
-                value = "d" * 64 + "  /usr/bin/python3.12"
-            return type("Completed", (), {"stdout": value.encode()})()
-
-        with patch.object(environment.shutil, "which", return_value=str(self.wsl)):
-            result = environment.revalidate(self.backend, review, output, run)
-
-        self.assertEqual(result["tools"]["redis_server"]["resolved_path"], "/usr/bin/redis-server")
-        self.assertEqual(result["tools"]["wsl"], {"path": str(self.wsl.resolve()), "sha256": file_digest(self.wsl)["sha256"]})
-        self.assertEqual(result["tools"]["redis_python"]["resolved_path"], "/usr/bin/python3.12")
+        self.assertTrue(result["ready_for_execution"])
+        self.assertEqual(result["tools"]["native_tool"], observed["native_tool"])
+        self.assertNotIn("redis_python", result["tools"])
+        self.assertEqual(result["tools"]["redis_server"]["version"], "Redis server v=7.0.15")
+        self.assertEqual(result["preflight"]["tools"], observed)
+        self.assertEqual(result["preflight"]["supersedes"], environment.bound(review))
         self.assertEqual(result["services"]["rustfs"]["scope_id"], "services-fixture-seed")
-        self.assertEqual(
-            result["services"]["rustfs"]["process_receipt"],
-            str(Path(result["future_root"]) / "service-run/rustfs/process.json"),
-        )
-        self.assertEqual(result["preflight"]["status"], "verified")
-        self.assertEqual(set(result["preflight"]["tools"]), set(environment.REVIEW_TOOLS))
+        self.assertEqual(result["services"]["rustfs"]["process_receipt"],
+                         str(Path(result["future_root"]) / "service-run/rustfs/process.json"))
         environment._preflight_binding(result)
-        with patch.object(environment, "_preflight", return_value=result["preflight"]["tools"]):
-            self.assertEqual(environment.validate_current_review_tools(result), result["preflight"]["tools"])
-        with patch.object(environment, "_preflight", side_effect=AssertionError("不得观察当前工具")):
-            self.assertEqual(environment.validated_recorded_review_tools(result), result["preflight"]["tools"])
-        drifted_tools = copy.deepcopy(result["preflight"]["tools"])
-        drifted_tools["rustfs"]["sha256"] = "f" * 64
-        with (
-            patch.object(environment, "_preflight", return_value=drifted_tools),
-            self.assertRaisesRegex(ValueError, "当前工具"),
-        ):
-            environment.validate_current_review_tools(result)
+        with patch.object(environment, "_preflight", return_value=observed):
+            self.assertEqual(environment.validate_current_review_tools(result), observed)
+        with patch.object(environment, "_preflight", side_effect=AssertionError("冻结消费者不得重探本机工具")):
+            self.assertEqual(environment.validated_recorded_review_tools(result), observed)
+        for role, field, changed in (("rustfs", "sha256", "f" * 64),
+                                      ("redis_server", "version", "Redis server v=7.2.0")):
+            with self.subTest(role=role, field=field):
+                drifted = copy.deepcopy(observed)
+                drifted[role][field] = changed
+                with (patch.object(environment, "_preflight", return_value=drifted),
+                      self.assertRaisesRegex(ValueError, "当前工具")):
+                    environment.validate_current_review_tools(result)
         missing_dump = copy.deepcopy(result)
         del missing_dump["preflight"]["tools"]["mysqldump"]
         with self.assertRaisesRegex(ValueError, "预检"):
             environment._preflight_binding(missing_dump)
+        bad_sources = copy.deepcopy(result)
+        bad_sources["tools"]["native_tool"]["source_sha256"] = "f" * 64
+        bad_sources["preflight"]["tools"]["native_tool"] = copy.deepcopy(bad_sources["tools"]["native_tool"])
+        with self.assertRaises(ValueError):
+            environment._preflight_binding(bad_sources)
         self.assertNotIn("preflight", self.review)
-
-    def test_revalidate_rejects_mysqldump_drift_before_publishing(self):
-        review = self.write("drift-review.json", self.review)
-        output = self.root / "drift-ready.json"
-        self.tools["mysqldump"].write_bytes(b"changed")
-        with patch.object(environment.shutil, "which") as which, self.assertRaisesRegex(ValueError, "mysqldump"):
-            environment.revalidate(self.backend, review, output)
-        which.assert_not_called()
-        self.assertFalse(output.exists())
 
     def test_revalidate_rejects_predecessor_or_terminal_tool_drift(self):
         self.review["ready_for_execution"] = False
@@ -189,34 +176,32 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         predecessor = self.write("mutable-pending.json", self.review)
         predecessor_output = self.root / "mutable-ready.json"
 
-        calls = 0
-
-        def run(arguments, **_):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                changed = copy.deepcopy(self.review)
-                changed["future_root"] += "-changed"
-                predecessor.write_text(json.dumps(changed), encoding="utf-8")
-            return type("Completed", (), {"stdout": b"unused"})()
+        def changed_predecessor(_review, _run):
+            changed = copy.deepcopy(self.review)
+            changed["future_root"] += "-changed"
+            predecessor.write_text(json.dumps(changed), encoding="utf-8")
+            return observed
 
         with (
-            patch.object(environment, "_preflight", side_effect=lambda review, _run: (run([], stdout=None), observed)[1]),
+            patch.object(environment, "_preflight", side_effect=changed_predecessor),
             self.assertRaisesRegex(ValueError, "predecessor"),
         ):
-            environment.revalidate(self.backend, predecessor, predecessor_output, run)
+            environment.revalidate(self.backend, predecessor, predecessor_output)
         self.assertFalse(predecessor_output.exists())
 
         stable = self.write("stable-pending.json", self.review)
-        terminal_output = self.root / "terminal-ready.json"
-        drifted = copy.deepcopy(observed)
-        drifted["mysqldump"]["sha256"] = "f" * 64
-        with (
-            patch.object(environment, "_preflight", side_effect=[observed, drifted]),
-            self.assertRaisesRegex(ValueError, "当前工具"),
-        ):
-            environment.revalidate(self.backend, stable, terminal_output)
-        self.assertFalse(terminal_output.exists())
+        for role, field, changed in (("mysqldump", "sha256", "f" * 64),
+                                      ("redis_server", "version", "Redis server v=7.2.0")):
+            with self.subTest(role=role, field=field):
+                terminal_output = self.root / ("terminal-ready-" + field + ".json")
+                drifted = copy.deepcopy(observed)
+                drifted[role][field] = changed
+                with (
+                    patch.object(environment, "_preflight", side_effect=[observed, drifted]),
+                    self.assertRaisesRegex(ValueError, "当前工具"),
+                ):
+                    environment.revalidate(self.backend, stable, terminal_output)
+                self.assertFalse(terminal_output.exists())
 
     def assert_service_environment_accepts_successor(self, predecessor, selected, review):
         directory = self.root / ("service-environment-" + str(len(list(self.root.glob("service-environment-*")))))
@@ -239,17 +224,11 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         })
         pending = self.write("historical-pending.json", self.review)
         output = self.root / "historical-ready.json"
-        observed = {name: copy.deepcopy(self.review["tools"][name]) for name in environment.REVIEW_FILE_TOOLS}
-        observed.update({
-            "redis_server": copy.deepcopy(self.review["tools"]["redis_server"]),
-            "wsl": {"path": str(self.wsl), "sha256": file_digest(self.wsl)["sha256"]},
-            "redis_python": {"distribution": "Ubuntu", "path": "/usr/bin/python3",
-                             "resolved_path": "/usr/bin/python3.12", "sha256": "b" * 64},
-        })
+        observed = self.observed_tools()
         with patch.object(environment, "_preflight", return_value=observed):
             ready = environment.revalidate(self.backend, pending, output)
-        self.assertEqual(set(ready["tools"]), {*environment.REVIEW_TOOLS, "node", "mysqld_exporter"})
-        self.assertEqual(set(ready["preflight"]["tools"]), set(environment.REVIEW_TOOLS))
+        self.assertEqual(set(ready["tools"]), {*observed, "node", "mysqld_exporter"})
+        self.assertEqual(set(ready["preflight"]["tools"]), set(observed))
         environment._preflight_binding(ready)
         observed_ready, _ = successor._ready_review(self.backend, output)
         self.assertEqual(observed_ready, ready)
@@ -257,13 +236,13 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
 
         successor_path = self.root / "historical-ready-successor.json"
         next_observed = copy.deepcopy(observed)
-        next_observed["redis_python"]["sha256"] = "c" * 64
+        next_observed["native_tool"]["sha256"] = "e" * 64
         with patch.object(environment, "_preflight", return_value=next_observed):
             renewed = environment.revalidate(self.backend, output, successor_path)
         environment.validate_preflight_successor(ready, renewed)
         self.assert_service_environment_accepts_successor(output, successor_path, renewed)
         self.assertEqual(renewed["preflight"]["supersedes"], environment.bound(output))
-        self.assertEqual(renewed["tools"]["redis_python"], next_observed["redis_python"])
+        self.assertEqual(renewed["tools"]["native_tool"], next_observed["native_tool"])
         expanded_preflight = copy.deepcopy(ready)
         expanded_preflight["preflight"]["tools"]["node"] = ready["tools"]["node"]
         with self.assertRaisesRegex(ValueError, "预检"):
@@ -314,32 +293,22 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         extra["tools"]["legacy-wrapper"] = {"path": "unused", "sha256": "f" * 64}
         environment.validate_review(extra)
 
-    def test_revalidate_can_promote_a_structurally_valid_pending_plan(self):
-        self.review["ready_for_execution"] = False
-        review = self.write("pending-review.json", self.review)
-        output = self.root / "review-r2.json"
-
-        def run(arguments, **_):
-            command = arguments[4:]
-            values = {
-                ("/usr/bin/readlink", "-f", "/usr/bin/redis-server"): "/usr/bin/redis-server",
-                ("/usr/bin/sha256sum", "/usr/bin/redis-server"): "c" * 64 + "  /usr/bin/redis-server",
-                ("/usr/bin/redis-server", "--version"): "Redis server v=7.0.15",
-                ("/usr/bin/readlink", "-f", "/usr/bin/python3"): "/usr/bin/python3.12",
-                ("/usr/bin/sha256sum", "/usr/bin/python3.12"): "d" * 64 + "  /usr/bin/python3.12",
-            }
-            return type("Completed", (), {"stdout": values[tuple(command)].encode()})()
-
-        with patch.object(environment.shutil, "which", return_value=str(self.wsl)):
-            result = environment.revalidate(self.backend, review, output, run)
-        self.assertTrue(result["ready_for_execution"])
-        self.assertEqual(result["preflight"]["status"], "verified")
-
-    def test_preflight_binding_rejects_the_unreviewed_plan(self):
+    def test_prepare_rejects_unreviewed_tools_without_writing(self):
+        review = self.write("unreviewed.json", self.review)
+        fixture = self.write("unreviewed-fixture.json", self.fixture)
+        maintenance = self.write("unreviewed-build.json", self.maintenance)
+        reference = Path(self.fixture["paths"]["backend"]) / ".local-tests/reference-fixture"
+        reference.mkdir(parents=True)
+        output = reference / "environment-unreviewed"
+        before = {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
+                  for path in self.root.rglob("*")}
         with self.assertRaisesRegex(ValueError, "预检"):
-            environment._preflight_binding(self.review)
+            environment.prepare(self.backend, review, fixture, maintenance, output)
+        self.assertFalse(output.exists())
+        self.assertEqual(before, {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
+                                  for path in self.root.rglob("*")})
 
-    def test_prepare_rechecks_all_documents_from_the_original_plan(self):
+    def test_prepare_rechecks_fixture_binding_before_bootstrap_publication(self):
         self.review["ready_for_execution"] = False
         pending = self.write("prepare-pending.json", self.review)
         ready = self.root / "prepare-ready.json"
@@ -384,15 +353,15 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
     def test_prepare_rejects_coordinator_only_output_before_any_file_or_configuration_write(self):
         ready, fixture, maintenance, execution, reference = self._prepared_path_inputs()
         wrong = self.root / "coordinator-only-environment"
-        before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
-        with patch.object(environment, "_environment") as configuration:
-            with self.assertRaises(ValueError) as raised:
-                environment.prepare(self.backend, ready, fixture, maintenance, wrong)
-            configuration.assert_not_called()
+        before = {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
+                  for path in self.root.rglob("*")}
+        with self.assertRaises(ValueError) as raised:
+            environment.prepare(self.backend, ready, fixture, maintenance, wrong)
         self.assertIn(str(reference / "environment-seed-r1"), str(raised.exception))
         self.assertNotEqual(self.backend, execution)
         self.assertFalse(wrong.exists())
-        self.assertEqual(sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*")), before)
+        self.assertEqual(before, {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
+                                  for path in self.root.rglob("*")})
 
     def test_prepare_publishes_config_and_current_credentials_inside_distinct_execution_root(self):
         ready, fixture, maintenance, execution, reference = self._prepared_path_inputs()
@@ -497,17 +466,6 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertNotEqual(current["password"], settings["bootstrap"]["admin_password"])
         environment._validate_reset_password({"admin_password": current["password"]})
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
-
-        # 目标代次、运行登记与复制运行环境必须来自同一份 APP_* 配置；只有非 APP_ 的
-        # 运行标记允许由运行环境补充。
-        import reference_fixture_runtime as runtime
-
-        runtime_values = runtime._runtime_environment(
-            values, {"sources": {"backend": {"head": fixture["sources"]["backend"]["head"]}}})
-        self.assertEqual(
-            {key: value for key, value in runtime_values.items() if key.startswith("APP_")},
-            {key: value for key, value in values.items() if key.startswith("APP_")},
-        )
 
         secret_set = secrets.parent / "secrets-r10"
         fixture_file = self.write("business-fixture.json", fixture)

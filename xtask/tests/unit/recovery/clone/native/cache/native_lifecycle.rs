@@ -52,6 +52,53 @@ fn initialize_capture_source(root: &std::path::Path) {
 }
 
 #[test]
+fn local_review_preflight_rejects_real_tool_byte_drift_and_preserves_files() {
+    use super::review_tools;
+    use std::{collections::BTreeMap, fs};
+
+    let parent = crate::workspace::root_dir().join(".local-tests");
+    fs::create_dir_all(&parent).unwrap();
+    let temporary = tempfile::tempdir_in(parent).unwrap();
+    let root = temporary.path();
+    let mut tools = serde_json::Map::new();
+    for role in ["mysql", "mysqldump", "rustfs"] {
+        let path = root.join(role);
+        fs::write(&path, role).unwrap();
+        tools.insert(
+            role.into(),
+            json!({"path":path,"sha256":digest::file(&path).unwrap().sha256}),
+        );
+    }
+    let review = json!({"ready_for_execution":false,"tools":tools});
+    let snapshot = || {
+        fs::read_dir(root)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let healthy = snapshot();
+    let observed = review_tools::local_tools(&review).unwrap();
+    assert_eq!(observed, review["tools"]);
+    assert_eq!(snapshot(), healthy);
+
+    // 保持长度、路径和冻结描述不变，只改变实际内容，避免以文件大小代替摘要。
+    let dump = root.join("mysqldump");
+    fs::write(&dump, b"tampered!").unwrap();
+    let changed = snapshot();
+    let error = review_tools::local_tools(&review).unwrap_err();
+    assert_eq!(error.to_string(), "夹具本机工具字节变化");
+    assert_eq!(snapshot(), changed);
+
+    fs::write(&dump, b"mysqldump").unwrap();
+    assert_eq!(snapshot(), healthy);
+    assert_eq!(review_tools::local_tools(&review).unwrap(), observed);
+    assert_eq!(snapshot(), healthy);
+}
+
+#[test]
 fn native_capture_binds_complete_sources_and_preserves_failure_order_and_io_category() {
     use crate::frontend_origin::manifest;
     use native_tool::NativeTool;
