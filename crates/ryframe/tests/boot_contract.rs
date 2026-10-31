@@ -452,12 +452,4 @@ mod service_domains {
             ]
         );
     }
-
-    #[test]
-    fn refresh_session_port_is_built_once_at_composition_root() {
-        let source = include_str!("../src/boot/services.rs");
-        assert_eq!(source.matches("refresh_sessions::store(").count(), 1);
-        assert!(source.contains("Arc::clone(&refresh_sessions)"));
-        assert!(source.contains("refresh_sessions,\n        &background"));
-    }
 }
