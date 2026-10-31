@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse the existing Rust source-fact computation for full-stack consumers and remove duplicate Python core/business source reconstruction, avoiding false drift from Windows model-path separators. Preserve original receipts, complete source/model validation and explicitly transmitted CI run/attempt checks.
+
 - Fix source/target application-environment switching removing OS variables required to discover Git on Windows. Preserve allowlisted system variables while excluding inherited application configuration, credentials and proxies, and retain declaration bindings, drift checks and caller-environment restoration.
 
 - Preserve redacted phases, complete call locations and system codes for formal copy failures, and identify the stage record and copy failure file in command diagnostics. Diagnostic-write failures do not replace the original error; no automatic retry or scene cleanup occurs.

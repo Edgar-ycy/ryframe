@@ -177,6 +177,7 @@ fn dispatch(request: &Value) -> Result<Value> {
             result
         }
         Some("source-inventory") => super::super::clone::native::source::protocol::request(args),
+        Some("full-stack-source-evidence") => full_stack_source(args),
         Some("physical-binding") => binding::physical(args),
         Some("lineage-derive") => lineage::derive(args),
         Some("lineage-verify") => lineage::verify(args),
@@ -212,6 +213,28 @@ fn dispatch(request: &Value) -> Result<Value> {
         }
         _ => Err("来源证据操作无效".into()),
     }
+}
+
+fn full_stack_source(args: &Value) -> Result<Value> {
+    documents::exact(args, &["backend", "directory", "ci"], "全栈来源事实参数")?;
+    documents::exact(&args["ci"], &["run_id", "attempt"], "全栈来源CI身份")?;
+    for field in ["run_id", "attempt"] {
+        if !args["ci"][field].is_null() && !args["ci"][field].is_string() {
+            return Err("全栈来源CI身份必须为文本或空值".into());
+        }
+    }
+    let backend = binding::path(&args["backend"])?;
+    let directory = binding::path(&args["directory"])?;
+    let current = crate::recovery::full_stack::provenance::current(&backend, &directory)?;
+    if !current.is_null() && current["source_pair"]["kind"] != "reference-fixture-source-pair" {
+        let expected =
+            ["run_id", "attempt"].map(|field| args["ci"][field].as_str().map(std::ffi::OsStr::new));
+        crate::recovery::full_stack::provenance::validate_ci_identity(
+            &current["source_pair"],
+            expected,
+        )?;
+    }
+    Ok(current)
 }
 
 fn generation_configuration(args: &Value) -> Result<Value> {
