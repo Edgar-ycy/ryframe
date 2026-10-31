@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Clarify the tool-level read-only boundary of `--plan`: no task execution, business-descriptor compilation, database connections, generation caches or reports. Retain existing Cargo aliases, explain possible Cargo bootstrap build writes, and document running the prebuilt executable directly.
+
 - Complete precise cleanup in the real MySQL/Redis authorization-cache test: register each subject ID after successful creation, remove the tenant epoch and all registered subjects’ version/snapshot keys, and verify the test scope is empty before returning success. Preserve and report unknown residual keys without deleting scan results.
 
 - Route integer path IDs, reset requests, department filters and plan-version parsing in handwritten API handlers through the existing ID helpers. Preserve the signed i64 range, optional-value handling and validation messages. Invalid path IDs return standard JSON validation errors; internal uploaded-file ID failures remain internal errors, and the OpenAPI string contract is unchanged.

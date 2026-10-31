@@ -105,6 +105,8 @@ cargo xtask build
 
 Contract synchronization exports the current backend candidate OpenAPI and atomically updates frontend derivatives. Formal source binding has additional verification requirements. Builds compare source fingerprints before and after execution; `--plan` does not execute tasks. Recovery, browser and performance acceptance still require evidence for the current source. Historical measurements do not establish readiness of the modified version, and this candidate has not been declared ready for a stable release.
 
+The read-only `--plan` guarantee applies to tasks after the tool starts: no task execution, business-descriptor compilation, database connections, locks, generation caches or reports. `cargo generate` and `cargo xtask` use existing Cargo aliases, so first use or tool source changes may first compile the tool and write to its build directory. To avoid bootstrap build writes, build explicitly first and then run the same executable reported by Cargo with `--plan`.
+
 ## Documentation
 
 - [Architecture and extension points](docs/architecture.en.md): module boundaries, SDK and assembly.
