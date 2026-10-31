@@ -261,6 +261,7 @@ fn generation_matches(current: &Value, recorded: &Value) -> bool {
         "worktree_fingerprint",
         "runtime",
         "processes",
+        "physical_binding",
         "maintenance",
         "request_sha256",
     ]
@@ -360,4 +361,46 @@ fn validate_object_entry(entry: &Value, artifact_root: &Path) -> Result<()> {
         return Err("源对象 capture 摘要变化".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+
+    #[test]
+    fn bound_source_cannot_accept_a_reduced_or_changed_physical_identity() {
+        let current = json!({
+            "source":{"head":"a".repeat(40)}, "worktree_fingerprint":"fixture",
+            "runtime":{"scope_id":"fixture"}, "processes":{}, "maintenance":{},
+            "request_sha256":"b".repeat(64),
+            "physical_binding":{"format_version":1,"scope_id":"fixture",
+                "databases":[{"key":"shared-control","kind":"combined","mode":"shared",
+                    "server_uuid":"server-a","host":"127.0.0.1","port":3306,
+                    "database":"fixture","tls_mode":"required"}],
+                "s3":{"endpoint":"http://127.0.0.1:29000","region":"us-east-1"},
+                "sha256":"c".repeat(64)}
+        });
+        assert!(generation_matches(&current, &current));
+        let mut reduced = current.clone();
+        reduced["physical_binding"] = json!({"scope_id":"fixture",
+            "object_endpoint":"http://127.0.0.1:29000",
+            "databases":[{"key":"shared-control","kind":"combined",
+                "server_uuid":"server-a","database":"fixture"}]});
+        assert!(!generation_matches(&current, &reduced));
+        for pointer in [
+            "/physical_binding/databases/0/server_uuid",
+            "/physical_binding/databases/0/host",
+            "/physical_binding/databases/0/mode",
+            "/physical_binding/databases/0/tls_mode",
+            "/physical_binding/s3/endpoint",
+            "/physical_binding/sha256",
+        ] {
+            let mut changed = current.clone();
+            *changed.pointer_mut(pointer).unwrap() = json!("changed");
+            assert!(!generation_matches(&current, &changed), "{pointer}");
+        }
+        let mut missing = current.clone();
+        missing.as_object_mut().unwrap().remove("physical_binding");
+        assert!(!generation_matches(&current, &missing));
+    }
 }
