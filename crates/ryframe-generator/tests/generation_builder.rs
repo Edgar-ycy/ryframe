@@ -184,12 +184,8 @@ fn import_uses_all_tables_and_validates_before_any_side_effect() {
     assert!(plan.models.is_empty());
     assert_eq!(plan.tables, ["table1", "table2"]);
     let tasks = plan.tasks();
-    let validation = tasks
-        .iter()
-        .position(|task| *task == "校验候选前端类型")
-        .unwrap();
+    assert!(tasks.contains(&"校验候选前端类型"));
     assert_eq!(tasks.last(), Some(&"事务写入文件"));
-    assert!(validation < tasks.len() - 1);
     assert!(
         GenerationBuilder::new(root.path())
             .include_models(["Old"])

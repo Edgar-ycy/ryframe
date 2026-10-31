@@ -133,7 +133,6 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("order_by_asc(entity::Column::Sort)"));
     assert!(repository.contains("order_by_asc(entity::Column::Id)"));
     assert!(repository.contains("(\"uk_tenant_code\", \"岗位编码已存在\")"));
-    assert!(repository.contains("岗位编码已存在"));
     assert!(repository.contains("entity::Column::Name.contains(value)"));
     assert!(repository.contains("filter.status.filter(|value| !value.is_empty())"));
     assert!(repository.contains("entity::Column::Status.eq(value)"));
@@ -148,7 +147,6 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("use crate::DbResultExt;"));
     assert!(repository.contains(".await\n            .db()?"));
     assert!(repository.contains(".db_conflicts("));
-    assert!(repository.contains("(\"uk_tenant_code\", \"岗位编码已存在\")"));
     assert!(!repository.contains("fn database_error("));
     let entity = content("post/entity.rs");
     assert!(entity.contains("pub const SOFT_DELETE_ACTIVE: &str = \"0\";"));
@@ -312,7 +310,6 @@ fn assert_order_backend_contracts(assets: &[GeneratedAsset]) {
             .content
             .contains("(\"uk_order_tenant_name\", \"设备名称已存在\")")
     );
-    assert!(repository.content.contains("设备名称已存在"));
     assert!(
         repository
             .content
