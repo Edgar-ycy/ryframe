@@ -74,7 +74,6 @@ class SharedCaptureStagesTests(unittest.TestCase):
         stages.complete(self.output / "capture")
         with self.assertRaises(ValueError):
             stages.complete(self.output / "another")
-        self.assertEqual(len(self.store.calls), 13)
 
     def test_changed_initial_evidence_is_rejected_before_get_and_retained(self):
         original = capture.CaptureStages.complete

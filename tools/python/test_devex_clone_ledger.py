@@ -232,9 +232,12 @@ class CloneLedgerTests(unittest.TestCase):
         self.interrupted()
         path = self.root / "events.ndjson"
         original = path.read_bytes()
-        variants = [original[:-1], b"\n".join(original.splitlines()[:-1]) + b"\n", original.replace(b'"unknown"', b'"changed"')]
         # 有效字段字节被替换后摘要链仍应拒绝。
-        variants[-1] = original.replace(self.after["tables_sha256"].encode(), sha("tampered").encode())
+        variants = [
+            original[:-1],
+            b"\n".join(original.splitlines()[:-1]) + b"\n",
+            original.replace(self.after["tables_sha256"].encode(), sha("tampered").encode()),
+        ]
         for raw in variants:
             with self.subTest():
                 path.write_bytes(raw)

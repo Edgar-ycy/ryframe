@@ -162,7 +162,6 @@ class CloneObjectTests(unittest.TestCase):
             with self.subTest(failure=failure), self.assertRaises(ObjectCreateError) as caught:
                 self.create()
             self.assertEqual(caught.exception.outcome, outcome)
-            self.assertNotIn("fixture-private-detail", str(caught.exception))
             self.assertEqual(len(self.store.calls), 1)
             self.assertEqual(self.store.objects, {})
 

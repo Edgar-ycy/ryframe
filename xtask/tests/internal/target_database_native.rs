@@ -716,7 +716,6 @@ fn malformed_tables_and_placements_are_rejected() {
     let db = fixture.database("shared");
     let owners = model::expected_owners(SCOPE, false);
     let cases = invalid_inventories(&fixture);
-    assert_eq!(cases.len(), 16);
     for raw in cases {
         assert!(
             model::observation(

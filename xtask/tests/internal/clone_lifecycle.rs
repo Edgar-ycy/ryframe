@@ -556,7 +556,7 @@ fn failed_stage_exposes_typed_repair_guidance_without_echoing_arbitrary_errors()
 }
 
 #[test]
-fn status_is_read_only_and_reports_source_drift_without_controller_writes() {
+fn status_preserves_registered_projection_and_is_read_only_with_matching_source() {
     let fixture = Fixture::new();
     fixture.init().unwrap();
     stage::run(
@@ -571,6 +571,13 @@ fn status_is_read_only_and_reports_source_drift_without_controller_writes() {
     assert_eq!(snapshot(&fixture.run), before);
     assert_eq!(status["attempts"][0]["execution_source_matches"], true);
     assert_eq!(status["controller"], Value::Null);
+    assert_eq!(status["status"], "run_status");
+    assert_eq!(status["id"], "clone-case");
+    assert_eq!(status["attempts"][0]["status"], "passed");
+    assert_eq!(
+        status["attempts"][0]["result"],
+        fixture.state()["attempts"][0]["result"]
+    );
 }
 
 #[cfg(unix)]
@@ -620,28 +627,6 @@ fn linked_manifest_is_rejected() {
         .is_err()
     );
     assert!(!run.exists());
-}
-
-#[test]
-fn native_status_preserves_the_registered_attempt_projection() {
-    let fixture = Fixture::new();
-    fixture.init().unwrap();
-    stage::run(
-        &fixture.backend,
-        &fixture.run,
-        super::cli::CloneStage::Export(super::cli::CloneStageMode::Run),
-        &Success,
-    )
-    .unwrap();
-    let native = fixture.status().unwrap();
-    assert_eq!(native["attempts"][0]["execution_source_matches"], true);
-    assert_eq!(native["status"], "run_status");
-    assert_eq!(native["id"], "clone-case");
-    assert_eq!(native["attempts"][0]["status"], "passed");
-    assert_eq!(
-        native["attempts"][0]["result"],
-        fixture.state()["attempts"][0]["result"]
-    );
 }
 
 #[test]

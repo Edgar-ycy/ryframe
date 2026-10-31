@@ -165,6 +165,7 @@ class FactoryTests(unittest.TestCase):
         result = self.execute()
         self.assertEqual(result["status"], "data_steps_verified")
         self.assertEqual(result["written_steps"], 3)
+        self.assertTrue(any("__s3-put-if-absent" in args for args, _ in self.case.writes()))
         self.assertFalse(result["target_ready"])
         self.assertFalse(result["restore_success"])
         self.assertEqual(self.mocks[6].call_count, 2)
@@ -193,7 +194,7 @@ class FactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "对象原始证明"):
             self.execute()
         self.assertEqual(len(self.case.writes()), len(self.exported["databases"]))
-        self.assertFalse(any("put-object" in args for args, _ in self.case.writes()))
+        self.assertFalse(any("__s3-put-if-absent" in args for args, _ in self.case.writes()))
 
     def test_registered_source_storage_failure_prevents_copy_writes(self):
         directory = self.local / "run"

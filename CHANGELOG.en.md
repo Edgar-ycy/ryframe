@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove reviewed internal-count, duplicate status-projection and untriggered assertions from copy-recovery tests while preserving SQL, inventory boundaries and complete before/after images. Correct conditional-write interception and check the native PUT entry in both existing success and failure scenarios.
+
 - Fix explicit reconciliation of failed isolated-fixture shutdowns to accept an original RustFS tree already fully stopped before the first observation, without repeating stop operations, while preserving Redis causal-exit, complete-member, port and source-drift checks. Fix mirrored-port waiting during isolated-fixture shutdown recovery by avoiding repeated Linux binds in the loop while retaining complete stage-boundary observations, Windows exclusive-binding proofs, and existing timeout and drift protections.
 
 - Remove unnecessary clones at final use sites in development and acceptance tools and tests while preserving resource-guard lifetimes, existing assertions, fail-closed behavior and strict Clippy checks.
