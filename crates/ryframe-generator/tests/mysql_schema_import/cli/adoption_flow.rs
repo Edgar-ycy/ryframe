@@ -8,6 +8,8 @@ use super::{GenerationBuilder, GenerationOperation, message, mysql, snapshot};
 mod commands;
 #[path = "adoption_flow/evidence.rs"]
 mod evidence;
+#[path = "adoption_flow/external_source_control.rs"]
+mod external_source_control;
 #[path = "adoption_flow/workspace.rs"]
 mod workspace;
 
