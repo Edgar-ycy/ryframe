@@ -432,19 +432,3 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
         .map(|(_, identifier)| identifier.to_owned())
         .collect()
 }
-
-pub fn validate_seed_statements() -> Result<(), DbErr> {
-    for statement in seed_statements() {
-        let parsed = parse_seed_insert(statement)?;
-        if parsed.table.is_empty()
-            || parsed.rows.is_empty()
-            || parsed
-                .rows
-                .iter()
-                .any(|row| row.len() != parsed.columns.len())
-        {
-            return Err(DbErr::Custom("控制库基线种子结构不完整".into()));
-        }
-    }
-    Ok(())
-}

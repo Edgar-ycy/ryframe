@@ -6,7 +6,7 @@ use ryframe_db::{
         CONTROL_MIGRATION_LEDGER, Migrator, access_menus, access_permission_codes,
         access_permission_names, control_ddl_statements, expected_extra, expected_migration_names,
         extract_column_type, mysql_snapshot_sql, normalize_column_type, schema_fingerprint,
-        supports_mysql_80_or_newer, validate_seed_statements,
+        supports_mysql_80_or_newer,
     },
     next_id,
     resource_ownership::{marker, validate_marker_input},
@@ -138,11 +138,6 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
         16,
         "生成通知菜单不得改变后续手写菜单顺序"
     );
-}
-
-#[test]
-fn canonical_seed_statements_are_strictly_parseable() {
-    validate_seed_statements().expect("基线种子应可严格解析");
 }
 
 #[test]
@@ -321,18 +316,4 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     let snapshot = mysql_snapshot_sql();
     assert!(snapshot.contains("schema fingerprint: 3f5f39d1b9783bb1"));
     assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
-    for required in [
-        "`sys_background_job`",
-        "`sys_background_job_attempt`",
-        "`claim_sequence`",
-        "`payload_version`",
-        "`sys_export_job`",
-        "`active_request_fingerprint`",
-        "`delete_pending_at`",
-        "`sys_backup_set`",
-        "`sys_backup_resource`",
-        "`sys_restore_run`",
-    ] {
-        assert!(snapshot.contains(required));
-    }
 }

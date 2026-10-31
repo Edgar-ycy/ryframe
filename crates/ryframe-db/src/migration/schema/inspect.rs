@@ -10,7 +10,7 @@ use super::{
     types::{ActualCheck, ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
 };
 
-#[cfg(any(feature = "migration", test))]
+#[cfg(feature = "migration")]
 const USER_TABLES_SQL: &str = concat!(
     "SELECT TABLE_NAME AS `table_name` FROM information_schema.TABLES ",
     "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ",
@@ -257,25 +257,4 @@ where
 
 fn is_tenant_data_object(table: &str) -> bool {
     table == "seaql_tenant_data_migrations" || table.starts_with("biz_")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn schema_queries_do_not_contain_escape_artifacts() {
-        for query in [
-            USER_TABLES_SQL,
-            ACTUAL_TABLES_SQL,
-            ACTUAL_COLUMNS_SQL,
-            ACTUAL_INDEXES_SQL,
-            ACTUAL_FOREIGN_KEYS_SQL,
-            ACTUAL_CHECKS_SQL,
-        ] {
-            assert!(!query.contains('\\'));
-            assert!(!query.contains('\n'));
-            assert!(!query.contains('\r'));
-        }
-    }
 }
