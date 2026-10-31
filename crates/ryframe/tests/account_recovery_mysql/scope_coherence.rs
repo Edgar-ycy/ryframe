@@ -10,6 +10,7 @@ pub(super) async fn verify(
     cache: &AuthorizationCache,
     auth: &AuthService,
     claims: &Claims,
+    subjects: &mut Vec<i64>,
 ) -> Result<(), String> {
     let (users, _) = services_with_cache(database.clone(), cache.clone())?;
     let actor = administrator();
@@ -36,8 +37,9 @@ pub(super) async fn verify(
         )
         .await
         .map_err(message)?;
-    principal = advanced(database, cache, auth, claims, &principal, 1).await?;
     let id = created.id.parse::<i64>().map_err(message)?;
+    subjects.push(id);
+    principal = advanced(database, cache, auth, claims, &principal, 1).await?;
     users
         .update(
             &actor,

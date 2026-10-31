@@ -66,13 +66,31 @@ async fn initial_user_real_redis_repairs_lagging_authorization_after_password_ch
         configuration,
     };
     mysql::run_mysql_test("account-redis", |database| async {
-        // 无论断言失败或返回错误，都先清理明确的三个键，再交回 MySQL fixture 保留证据。
-        let result = std::panic::AssertUnwindSafe(real_redis_password_change(database, &redis))
-            .catch_unwind()
-            .await;
-        cleanup_authorization_keys(&redis).await?;
+        let mut subjects = vec![2];
+        // 无论断言失败或返回错误，都先精确清理已登记主体的授权键，再交回 MySQL fixture 保留证据。
+        let result = std::panic::AssertUnwindSafe(real_redis_password_change(
+            database,
+            &redis,
+            &mut subjects,
+        ))
+        .catch_unwind()
+        .await;
+        cleanup_authorization_keys(&redis, &subjects).await?;
         match result {
-            Ok(result) => result,
+            Ok(Ok(())) => {
+                let remaining = redis
+                    .scan_keys("*")
+                    .await
+                    .map_err(|_| "复核本次授权缓存测试 scope 清理失败；保留现场，禁止自动重放")?;
+                if !remaining.is_empty() {
+                    return Err(format!(
+                        "授权缓存测试清理失败：本次 scope 仍残留 {} 个键；保留现场，禁止自动重放",
+                        remaining.len()
+                    ));
+                }
+                Ok(())
+            }
+            Ok(Err(error)) => Err(error),
             Err(payload) => std::panic::resume_unwind(payload),
         }
     })
@@ -82,6 +100,7 @@ async fn initial_user_real_redis_repairs_lagging_authorization_after_password_ch
 async fn real_redis_password_change(
     database: DatabaseConnection,
     redis: &redis_configuration::ScopedClient<RedisClient>,
+    subjects: &mut Vec<i64>,
 ) -> Result<(), String> {
     let hashes = migration::BootstrapHashes::new(
         password::hash("ExplicitAdmin123!").map_err(message)?,
@@ -137,7 +156,7 @@ async fn real_redis_password_change(
     assert_lagging_cache_repaired(redis, &cache, &auth, &claims).await?;
     assert_session_rejected(&auth, &initial).await;
     cache_faults::verify(&database, redis, &cache, auth.clone(), &changed).await?;
-    scope_coherence::verify(&database, &cache, &auth, &claims).await?;
+    scope_coherence::verify(&database, &cache, &auth, &claims, subjects).await?;
     Ok(())
 }
 
@@ -200,16 +219,20 @@ async fn assert_lagging_cache_repaired(
     Ok(())
 }
 
-async fn cleanup_authorization_keys(redis: &RedisClient) -> Result<(), String> {
+async fn cleanup_authorization_keys(redis: &RedisClient, subjects: &[i64]) -> Result<(), String> {
     use ryframe::boot::authorization_cache_keyspace::{
         snapshot_hash_key, tenant_epoch_key, user_version_key,
     };
-    let keys = [
-        tenant_epoch_key("system"),
-        user_version_key("system", 2),
-        snapshot_hash_key("system", 2),
-    ]
-    .map(|key| redis.scoped_key(&key));
+    let mut keys = vec![redis.scoped_key(&tenant_epoch_key("system"))];
+    for &subject in subjects {
+        keys.extend(
+            [
+                user_version_key("system", subject),
+                snapshot_hash_key("system", subject),
+            ]
+            .map(|key| redis.scoped_key(&key)),
+        );
+    }
     let mut connection = redis.conn().clone();
     let _: usize = connection
         .del(&keys)
@@ -219,7 +242,7 @@ async fn cleanup_authorization_keys(redis: &RedisClient) -> Result<(), String> {
         .exists(&keys)
         .await
         .map_err(|_| "复核授权键清理失败；保留现场，不自动重放")?;
-    assert_eq!(remaining, 0, "本次 scope 的三个已知授权键必须全部清理");
+    assert_eq!(remaining, 0, "本次 scope 已登记主体的授权键必须全部清理");
     Ok(())
 }
 

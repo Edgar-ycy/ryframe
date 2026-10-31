@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Complete precise cleanup in the real MySQL/Redis authorization-cache test: register each subject ID after successful creation, remove the tenant epoch and all registered subjects’ version/snapshot keys, and verify the test scope is empty before returning success. Preserve and report unknown residual keys without deleting scan results.
+
 - Route integer path IDs, reset requests, department filters and plan-version parsing in handwritten API handlers through the existing ID helpers. Preserve the signed i64 range, optional-value handling and validation messages. Invalid path IDs return standard JSON validation errors; internal uploaded-file ID failures remain internal errors, and the OpenAPI string contract is unchanged.
 
 - Remove reviewed tautological, private-layout and redundant source checks from composition-root tests while preserving read-only probe, cryptographic initialization and feature-isolation constraints. Correct the configuration-archive rejection case to verify the actual validation reasons for excess entry counts and unknown entry names separately, and remove a redundant string clone when constructing validation SQL.

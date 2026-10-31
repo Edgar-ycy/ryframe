@@ -84,7 +84,7 @@ async fn missing_and_ahead(
     server: &Server,
     expected: &RequestPrincipal,
 ) -> Result<(), String> {
-    cleanup_authorization_keys(redis).await?;
+    cleanup_authorization_keys(redis, &[2]).await?;
     let missing = cache
         .inspect_snapshot("system", 2)
         .await
@@ -126,8 +126,8 @@ async fn missing_and_ahead(
     ));
     require_profile(server, token, 401).await?;
 
-    // 仅删除本用例三键，再从主库恢复；不写低版本镜像冒充修复。
-    cleanup_authorization_keys(redis).await?;
+    // 仅删除本用例已登记主体的授权键，再从主库恢复；不写低版本镜像冒充修复。
+    cleanup_authorization_keys(redis, &[2]).await?;
     require_profile(server, token, 200).await?;
     same_principal(
         &auth.resolve_principal(claims).await.map_err(message)?,
