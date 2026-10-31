@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the product S3 and default OTLP HTTP clients implicitly reading host proxy configuration. Use file-configured endpoints and connection/export settings directly; isolated-process real HTTP regressions verify that configured endpoints receive requests and host proxies are not contacted. The existing OTLP test now exercises the product's default entry point.
+
 - After reviewing existing database tests, remove SQL-formatting-only checks, duplicate baseline-field assertions, and a fixed-seed validation wrapper and its dedicated test with no production caller. Preserve complete SQL snapshots, seed parsing, specific DDL contracts and initialization-equivalence safeguards.
 
 - Fix database connection diagnostics leaking password content when whitespace was normalized before redaction. Merge secret and connection-address ranges in the original message before normalizing display; cover overlapping credentials and private-key markers, preserve safe error codes, and leave actual connection passwords unchanged.

@@ -9,6 +9,8 @@ mod excel_and_i18n;
 #[cfg(feature = "redis-api")]
 #[path = "adapter_contracts/redis_protocol.rs"]
 mod redis_protocol;
+#[path = "adapter_contracts/storage_file_configuration.rs"]
+mod storage_file_configuration;
 #[path = "adapter_contracts/storage_local.rs"]
 mod storage_local;
 #[path = "adapter_contracts/storage_s3.rs"]

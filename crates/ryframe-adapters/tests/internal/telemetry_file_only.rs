@@ -35,6 +35,8 @@ const SERVER_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[test]
 fn telemetry_uses_only_file_configuration_for_real_http_export() {
+    let proxy = TcpListener::bind("127.0.0.1:0").expect("绑定宿主代理观察端口");
+    proxy.set_nonblocking(true).unwrap();
     let executable =
         std::env::current_exe().unwrap_or_else(|_| panic!("无法定位 telemetry 回归测试程序"));
     let mut command = Command::new(executable);
@@ -50,6 +52,20 @@ fn telemetry_uses_only_file_configuration_for_real_http_export() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     negative_environment(&mut command);
+    command
+        .env("NO_PROXY", "")
+        .env("no_proxy", "")
+        .env_remove("REQUEST_METHOD");
+    for key in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        command.env(key, format!("http://{}", proxy.local_addr().unwrap()));
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -86,6 +102,10 @@ fn telemetry_uses_only_file_configuration_for_real_http_export() {
     let completed = stdout
         .as_ref()
         .is_ok_and(|bytes| contains(bytes, SUCCESS.as_bytes()));
+    assert!(
+        matches!(proxy.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "产品默认 OTLP 客户端不应访问宿主代理"
+    );
     assert!(
         reaped && status.is_ok_and(|status| status.success()) && clean && completed,
         "telemetry 文件配置子进程回归失败、超时或输出不安全；捕获内容不回显"
@@ -221,12 +241,7 @@ async fn environment_probe() {
         },
         ..TelemetryConfig::default()
     };
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .unwrap_or_else(|_| panic!("无法构造显式回环 HTTP 客户端"));
-    let guard = init_tracer_provider_with_http_client(&config, Some(client));
+    let guard = init_tracer_provider(&config);
     let tracer = guard
         .tracer
         .as_ref()
