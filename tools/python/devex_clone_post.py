@@ -1,11 +1,12 @@
 """同一复制 run 的固定后续登记：API 准备、调度核对和既有数据读取。"""
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
+import subprocess
 
 from devex_clone_capture import read_json, write_json
 from devex_clone_copy_locks import GUARDS
 from devex_clone_model import exact, linked, local_path
-from devex_clone_post_model import administrator, environment_delta, exact_directory
+from devex_clone_post_model import administrator, environment_delta, exact_directory, native_invoke, native_response
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file, require_closed_port
 from devex_clone_target_binding import external_file
@@ -104,10 +105,6 @@ def validate_registration(backend: Path, directory: Path, value: dict, request: 
     old = read_json(bound_file(backend, value["target_environment"]))["environment"]
     environment_delta(old, api, selected["frontend_url"])
     administrator(request["source_admin"], backend, request["administrator_credentials"])
-    frontend = Path(request["frontend_root"])
-    exact_directory(frontend)
-    if frontend != backend.parent / "ryframe-vue3" or not frontend.is_dir():
-        raise ValueError("pacing 只允许读取明确的当前前端项目")
     pacing_binding(backend, directory, request)
     _validate_business_lineage(backend, value, request, verified.plan)
     administrator(request["source_admin"], backend, request["administrator_credentials"])
@@ -115,15 +112,12 @@ def validate_registration(backend: Path, directory: Path, value: dict, request: 
 
 
 def pacing_binding(backend, directory, request):
-    pacing = request["pacing"]
-    exact(pacing, {"contract", "bindings", "python_sha256", "login_budget_module_sha256"})
-    exact(pacing["bindings"], {"python", "login_budget_state"})
-    state = local_path(backend, pacing["bindings"]["login_budget_state"])
-    if state != directory / "post-copy/login-budget.json":
-        raise ValueError("登录预算写入必须限定当前 run 的明确文件")
-    external_file({"path": pacing["bindings"]["python"], "sha256": pacing["python_sha256"]})
-    external_file({"path": str(Path(request["frontend_root"]) / "scripts/browser-login-budget.mjs"),
-                   "sha256": pacing["login_budget_module_sha256"]})
+    native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-pacing-binding", "write": False,
+            "arguments": {"backend": str(backend), "directory": str(directory),
+                          "frontend_root": request["frontend_root"], "pacing": request["pacing"]}},
+        subprocess.run, may_write=False,
+    ))
 
 
 def register(backend: Path, directory: Path, value: dict, filename: Path,

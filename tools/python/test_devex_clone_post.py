@@ -20,6 +20,26 @@ from restore_reference_plan import plan_hash
 
 
 class PostContractTests(unittest.TestCase):
+    def test_pacing_forwards_explicit_frontend_and_complete_binding_without_write_authority(self):
+        backend = Path('D:/backend')
+        directory = backend / '.local-tests/run'
+        request = {'frontend_root': 'D:/other/独立 前端', 'pacing': {
+            'contract': {}, 'bindings': {'python': 'D:/tools/python.exe',
+                'login_budget_state': str(directory / 'post-copy/login-budget.json')},
+            'python_sha256': 'a' * 64, 'login_budget_module_sha256': 'b' * 64}}
+        response = (SimpleNamespace(returncode=0), {"ok": True, "result": {"value": None}})
+        with patch.object(post, 'native_invoke', return_value=response) as invoked:
+            post.pacing_binding(backend, directory, request)
+        self.assertEqual(invoked.call_args.args[0], '__source-evidence')
+        self.assertEqual(invoked.call_args.args[1], {
+            'operation': 'copy-pacing-binding', 'write': False, 'arguments': {
+                'backend': str(backend), 'directory': str(directory),
+                'frontend_root': request['frontend_root'], 'pacing': request['pacing']}})
+        self.assertFalse(invoked.call_args.kwargs['may_write'])
+        with patch.object(post, 'native_invoke', side_effect=ValueError('native rejected')):
+            with self.assertRaisesRegex(ValueError, 'native rejected'):
+                post.pacing_binding(backend, directory, request)
+
     def test_administrator_forwards_only_metadata_and_file_binding(self):
         admin = dict(subject_id='9', tenant_id='system', username='admin',
                      client_address='198.19.20.1')
@@ -96,6 +116,9 @@ class PostTests(unittest.TestCase):
             'dataset': self.file('dataset', {'plan_sha256': plan_hash(reference), 'source_scope_id': 'source-one'})}
         self.selected = {'api_url': 'http://127.0.0.1:18210', 'frontend_url': 'http://127.0.0.1:4190'}
         self.addCleanup(patch.stopall)
+        # 文件绑定的正负路径由 Rust 行为测试核验；本宿主保留登记/代次/Context 保障。
+        patch.object(post, 'native_invoke', return_value=(
+            SimpleNamespace(returncode=0), {"ok": True, "result": {"value": None}})).start()
         patch('devex_clone_run.require_target_copy', return_value=SimpleNamespace(plan={
             'copy_stage': 'source_to_seed', 'source_scope': 'source-one'})).start()
         patch('devex_clone_factory_context.initialization_history', return_value=({'generation': {'selected': self.selected}}, {})).start()
@@ -200,13 +223,6 @@ class PostTests(unittest.TestCase):
         for admin in ({**self.admin, 'subject_id': '0'}, {**self.admin, 'password_env': 'RYFRAME_MISSING_PASSWORD'},
                       {**self.admin, 'tenant_id': 'other'}, {**self.admin, 'password': 'unit-only'}):
             with self.assertRaises(ValueError): administrator(admin, self.backend, self.credentials)
-
-    def test_budget_cannot_write_outside_fixed_run_or_use_unbound_module(self):
-        request = {**self.request, 'pacing': {**self.request['pacing'], 'bindings': {
-            **self.request['pacing']['bindings'], 'login_budget_state': str(self.local / 'other.json')}}}
-        with self.assertRaises(ValueError): post.pacing_binding(self.backend, self.directory, request)
-        request = {**self.request, 'pacing': {**self.request['pacing'], 'login_budget_module_sha256': '0' * 64}}
-        with self.assertRaises(ValueError): post.pacing_binding(self.backend, self.directory, request)
 
     def test_unchanged_registration_retry_can_publish_but_other_content_never_overwrites(self):
         filename = self.file('request', self.request)

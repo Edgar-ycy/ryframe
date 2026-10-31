@@ -169,6 +169,9 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("copy-administrator-credentials") => {
             crate::recovery::clone::native::session::credentials::validate_request(args)
         }
+        Some("copy-pacing-binding") => {
+            crate::recovery::clone::native::session::pacing_binding::request(args)
+        }
         Some("frontend-build-validation") => {
             let authority =
                 crate::check::consumer_context::existing_origin(&crate::workspace::root_dir())?;
