@@ -149,24 +149,9 @@ fn pair(
                 return Err("全栈源码组合提交与实际工作树不匹配".into());
             }
         }
-        for (environment, field) in [
-            ("GITHUB_RUN_ID", "run_id"),
-            ("GITHUB_RUN_ATTEMPT", "attempt"),
-        ] {
-            let recorded = value[field]
-                .as_u64()
-                .filter(|v| *v > 0)
-                .ok_or("源码组合运行身份无效")?;
-            if let Some(actual) = std::env::var_os(environment)
-                && actual
-                    .to_str()
-                    .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-                    .and_then(|v| v.parse::<u64>().ok())
-                    != Some(recorded)
-            {
-                return Err("全栈源码组合不属于当前 CI attempt".into());
-            }
-        }
+        let run_id = std::env::var_os("GITHUB_RUN_ID");
+        let attempt = std::env::var_os("GITHUB_RUN_ATTEMPT");
+        validate_ci_identity(&value, [run_id.as_deref(), attempt.as_deref()])?;
     }
     if value["format_version"].as_u64() != Some(1) {
         return Err("全栈源码组合版本无效".into());
@@ -188,6 +173,28 @@ fn pair(
     }
     value["receipt"] = file_binding(&path, "源码组合")?;
     Ok(value)
+}
+
+pub(in crate::recovery) fn validate_ci_identity(
+    pair: &Value,
+    expected: [Option<&std::ffi::OsStr>; 2],
+) -> Result<()> {
+    for (field, actual) in ["run_id", "attempt"].into_iter().zip(expected) {
+        let recorded = pair[field]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or("源码组合运行身份无效")?;
+        if let Some(actual) = actual
+            && actual
+                .to_str()
+                .filter(|value| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|value| value.parse::<u64>().ok())
+                != Some(recorded)
+        {
+            return Err("全栈源码组合不属于当前 CI attempt".into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_snapshot(value: &Value, clean: bool) -> Result<()> {

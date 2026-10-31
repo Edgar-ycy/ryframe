@@ -3,6 +3,36 @@ use serde_json::{Value, json};
 use super::{execute, model};
 
 #[test]
+fn full_stack_source_facts_are_read_only_and_reject_undeclared_inputs() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let marker = directory.path().join("original");
+    std::fs::write(&marker, b"unchanged").unwrap();
+    let request = json!({"operation":"full-stack-source-evidence","write":false,
+        "arguments":{"backend":backend,"directory":directory.path(),"ci":{"run_id":null,"attempt":null}}});
+    assert_eq!(
+        execute(&serde_json::to_vec(&request).unwrap()).unwrap(),
+        Value::Null
+    );
+    let mut changed = request.clone();
+    changed["write"] = json!(true);
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    let mut changed = request.clone();
+    changed["arguments"]["source"] = json!({"forged":true});
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    let mut changed = request.clone();
+    changed["arguments"]["ci"]["run_id"] = json!(1);
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    let mut changed = request;
+    changed["arguments"]["backend"] = json!("relative-backend");
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    assert_eq!(std::fs::read(marker).unwrap(), b"unchanged");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn reboot_observation_protocol_rejects_write_authorization_and_caller_supplied_facts() {
     let mut request = json!({"operation":"source-generation-reboot-observation","write":true,
         "arguments":{"backend":"missing","directory":"missing"}});
