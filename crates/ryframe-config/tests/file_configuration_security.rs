@@ -129,7 +129,11 @@ fn bootstrap_password_is_optional_for_runtime_and_always_redacted_in_debug() {
         let config = fixture.load(Environment::Dev);
         assert_eq!(config.bootstrap.admin_password.as_deref(), Some(password));
         assert!(!format!("{config:?}").contains("private-initial-admin-password"));
-        assert!(format!("{:?}", config.bootstrap).contains("<redacted>"));
+        let bootstrap_debug = format!("{:?}", config.bootstrap);
+        assert!(bootstrap_debug.contains("<redacted>"));
+        if !password.is_empty() {
+            assert!(!bootstrap_debug.contains(password));
+        }
     }
     let absent = BootstrapConfig::default();
     assert!(absent.admin_password.is_none());

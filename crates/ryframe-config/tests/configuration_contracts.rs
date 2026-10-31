@@ -1,6 +1,7 @@
 use ryframe_config::{
-    Environment, JobConfig, MAX_EXPORT_ROWS, MAX_XLSX_DATA_ROWS, MigrationMode,
-    ObjectStorageConfig, RedisConfig, ResetConfig, ResourceScopeId,
+    AuthConfig, DatabaseConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection,
+    DbTlsMode, Environment, JobConfig, MAX_EXPORT_ROWS, MAX_XLSX_DATA_ROWS, MigrationMode,
+    MonitorConfig, ObjectStorageConfig, RedisConfig, ResetConfig, ResourceScopeId,
 };
 
 const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
@@ -142,4 +143,110 @@ fn connector_debug_output_redacts_credentials() {
     assert!(!storage_debug.contains("storage-access-must-not-leak"));
     assert!(!storage_debug.contains("storage-secret-must-not-leak"));
     assert!(storage_debug.contains("<redacted>"));
+
+    let auth = AuthConfig {
+        jwt_secret: "jwt-secret-must-not-leak".into(),
+        access_token_expire: "30s".into(),
+        refresh_token_expire: "90s".into(),
+        ..AuthConfig::default()
+    };
+    for debug in [format!("{auth:?}"), format!("{auth:#?}")] {
+        assert!(!debug.contains("jwt-secret-must-not-leak"));
+        for diagnostic in [
+            "jwt_secret",
+            "<redacted>",
+            "30s",
+            "90s",
+            "max_login_attempts",
+            "lockout_duration_minutes",
+        ] {
+            assert!(debug.contains(diagnostic));
+        }
+    }
+    let monitor = MonitorConfig {
+        metrics_bearer_token: "metrics-token-must-not-leak".into(),
+    };
+    for debug in [format!("{monitor:?}"), format!("{monitor:#?}")] {
+        assert!(!debug.contains("metrics-token-must-not-leak"));
+        assert!(debug.contains("metrics_bearer_token"));
+        assert!(debug.contains("<redacted>"));
+    }
+}
+
+#[test]
+fn database_debug_redacts_direct_and_nested_credentials_without_losing_topology() {
+    let connection = DbConnection {
+        host: "db-debug-host".into(),
+        port: 3399,
+        database: "debug_database".into(),
+        username: "debug_user".into(),
+        password: "primary-password-must-not-leak".into(),
+        tls_mode: DbTlsMode::VerifyIdentity,
+        tls_ca: Some("public-db-ca.pem".into()),
+        tls_client_cert: Some("public-db-cert.pem".into()),
+        tls_client_key: Some("primary-client-key-must-not-leak".into()),
+        ..DbConnection::default()
+    };
+    let database = DatabaseConfig {
+        primary: connection.clone(),
+        replicas: vec![DatabaseReplicaConfig {
+            name: "debug-replica".into(),
+            connection: DbConnection {
+                password: "replica-password-must-not-leak".into(),
+                tls_client_key: Some("replica-client-key-must-not-leak".into()),
+                ..connection.clone()
+            },
+        }],
+        sources: vec![DatabaseSourceConfig {
+            name: "debug-source".into(),
+            connection: DbConnection {
+                password: "source-password-must-not-leak".into(),
+                tls_client_key: Some("source-client-key-must-not-leak".into()),
+                ..connection.clone()
+            },
+        }],
+        ..DatabaseConfig::default()
+    };
+    for debug in [
+        format!("{connection:?}"),
+        format!("{connection:#?}"),
+        format!("{database:?}"),
+        format!("{database:#?}"),
+    ] {
+        for secret in [
+            "primary-password-must-not-leak",
+            "primary-client-key-must-not-leak",
+            "replica-password-must-not-leak",
+            "replica-client-key-must-not-leak",
+            "source-password-must-not-leak",
+            "source-client-key-must-not-leak",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        for diagnostic in [
+            "db-debug-host",
+            "3399",
+            "debug_database",
+            "debug_user",
+            "VerifyIdentity",
+            "public-db-ca.pem",
+            "public-db-cert.pem",
+            "password",
+            "tls_client_key",
+            "<redacted>",
+        ] {
+            assert!(debug.contains(diagnostic));
+        }
+    }
+    for debug in [format!("{database:?}"), format!("{database:#?}")] {
+        for diagnostic in [
+            "primary",
+            "replicas",
+            "sources",
+            "debug-replica",
+            "debug-source",
+        ] {
+            assert!(debug.contains(diagnostic));
+        }
+    }
 }

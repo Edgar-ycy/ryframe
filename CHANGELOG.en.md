@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Redact JWT secrets, database passwords, TLS client private keys and metric tokens from direct or nested `Debug` output of authentication, database connection and monitoring configuration while preserving nonsecret diagnostics. Merge duplicate configuration-argument parsing in tests and accurately describe tool-configuration test coverage.
+
 - Fix authentication settings rejecting the lowercase `s` lifetime suffix already accepted by configuration validation. Access and refresh tokens use the same duration formats, and invalid formats or numeric overflow report the relevant configuration field, cause and remedy. Check time addition during construction and issuance; excessive CSRF lifetimes return an error instead of panicking or wrapping.
 
 - Reuse the existing Rust source-fact computation for full-stack consumers and remove duplicate Python core/business source reconstruction, avoiding false drift from Windows model-path separators. Preserve original receipts, complete source/model validation and explicitly transmitted CI run/attempt checks.

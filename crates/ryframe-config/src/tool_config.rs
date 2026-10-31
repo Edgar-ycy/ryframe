@@ -271,7 +271,7 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     }
 
     #[test]
-    fn verification_python_uses_local_file_precedence_and_no_environment_override() {
+    fn verification_program_files_apply_local_precedence_and_default_to_none() {
         let root = crate::test_directory("tool-config-");
         fs::create_dir(root.path().join("config")).unwrap();
         fs::create_dir(root.path().join(".local-tests")).unwrap();
