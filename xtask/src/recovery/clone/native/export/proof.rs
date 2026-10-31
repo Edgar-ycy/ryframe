@@ -306,19 +306,12 @@ fn physical_binding(context: &Context, runtime: &Value) -> Result<Value> {
     if context.source()["s3"]["configuration"] != configuration {
         return Err("源对象绑定不属于实际API运行配置；请重新登记来源".into());
     }
-    let mut databases = Vec::new();
-    for database in context.databases()? {
-        databases.push(json!({
-            "key": database["key"],
-            "kind": database["kind"],
-            "server_uuid": database["server_uuid"],
-            "database": database["database"],
-        }));
-    }
-    Ok(json!({
-        "scope_id": context.source()["scope_id"],
-        "object_endpoint": context.object_identity["endpoint"],
-        "databases": databases,
+    crate::recovery::source::evidence::binding::physical(&json!({
+        "backend": context.execution_backend,
+        "evidence_root": context.backend,
+        "source": context.source(),
+        "app_env": "test",
+        "config_dir": runtime["api_config_dir"],
     }))
 }
 
