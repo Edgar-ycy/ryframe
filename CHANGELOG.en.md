@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove reviewed tautological, private-layout and redundant source checks from composition-root tests while preserving read-only probe, cryptographic initialization and feature-isolation constraints. Correct the configuration-archive rejection case to verify the actual validation reasons for excess entry counts and unknown entry names separately, and remove a redundant string clone when constructing validation SQL.
+
 - Fix native copy sessions authorizing the base registration after an environment amendment. Initialization, producer authorization and administrator credential loading now share the active published whole request and recheck its lineage and file binding before returning; stale generations, unpublished or failed amendments and drift during verification are rejected. Merge the old check, which stopped early on missing authorization fields, into the actually authorized fixture to verify rejection of ungranted requests, stale attempts and incorrect artifact directories.
 
 - Remove reviewed duplicate resource-order and menu page-key tests whose checks are fully covered by stronger OpenAPI cases. Preserve framework-path snapshot coverage, generated/manual API composition and menu-extension consistency safeguards.

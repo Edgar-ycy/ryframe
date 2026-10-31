@@ -166,12 +166,5 @@ mod tests {
     #[test]
     fn runtime_migration_modes_are_read_only() {
         assert_eq!(MigrationMode::default(), MigrationMode::Verify);
-        assert_ne!(MigrationMode::Off, MigrationMode::Verify);
-    }
-
-    #[test]
-    fn fixed_tenant_branch_only_validates_configured_tenant() {
-        assert_eq!(fixed_tenant_to_verify(None), None);
-        assert_eq!(fixed_tenant_to_verify(Some("system")), Some("system"));
     }
 }

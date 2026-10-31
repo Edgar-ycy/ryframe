@@ -163,51 +163,6 @@ fn api_and_worker_share_control_plane_preparation() {
 }
 
 #[test]
-fn api_and_worker_share_background_service_builder() {
-    let api_services = include_str!("../../src/boot/services.rs");
-    let shared_services = include_str!("../../src/boot/background_services.rs");
-    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
-
-    assert!(api_services.contains("build_background_services("));
-    assert!(worker_main.contains("build_background_services("));
-    for constructor in [
-        "UserService::new",
-        "ExportService::new",
-        "TenantConfigTransferService::new",
-        "TenantDataMigrationService::new",
-    ] {
-        assert!(shared_services.contains(constructor));
-        assert!(!worker_main.contains(constructor));
-    }
-}
-
-#[test]
-fn background_job_handlers_are_grouped_by_domain() {
-    let jobs = include_str!("../../src/boot/jobs.rs");
-    let groups = include_str!("../../src/boot/jobs/handlers/mod.rs");
-    let api_main = include_str!("../../src/main.rs");
-    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
-
-    assert!(jobs.contains("handlers::built_in(&dependencies)"));
-    assert!(jobs.contains("with_handlers(built_in_handlers)"));
-    for concrete_handler in [
-        "ExportJobHandler::new",
-        "DataRetentionJobHandler::new",
-        "TenantConfigExportJobHandler::new",
-        "MessageDispatchJobHandler::new",
-    ] {
-        assert!(!jobs.contains(concrete_handler));
-    }
-    for domain in ["exports", "messages", "retention", "tenant", "users"] {
-        assert!(groups.contains(&format!("handlers.extend({domain}::handlers")));
-    }
-    assert!(api_main.contains("JobWorkerDependencies::from_api_services("));
-    assert!(worker_main.contains("JobWorkerDependencies::from_background_services("));
-    assert!(!api_main.contains("JobWorkerDependencies {"));
-    assert!(!worker_main.contains("JobWorkerDependencies {"));
-}
-
-#[test]
 fn continuous_worker_publishes_backup_health_metrics() {
     let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
     let continuous = worker_main

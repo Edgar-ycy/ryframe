@@ -127,7 +127,7 @@ fn seek() -> Vec<(String, String)> {
             set(&[
                 ("m", "'a'".into()),
                 ("o", open.clone()),
-                ("c", p.clone()),
+                ("c", p),
                 ("p", format!("{open}+1")),
                 ("d", "0".into()),
                 ("b", "0".into()),
