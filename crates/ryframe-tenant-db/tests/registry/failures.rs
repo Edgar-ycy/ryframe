@@ -123,7 +123,16 @@ fn failure_tracing_uses_only_the_sanitized_cause() {
     });
     let output = captured.lock().unwrap();
     assert!(output.contains("1045"));
-    for secret in [PASSWORD, "private-user", "mysql://", "secret@host"] {
+    let password_body = PASSWORD.trim();
+    let escaped_body = format!("{password_body:?}");
+    for secret in [
+        PASSWORD,
+        password_body,
+        &escaped_body[1..escaped_body.len() - 1],
+        "private-user",
+        "mysql://",
+        "secret@host",
+    ] {
         assert!(!output.contains(secret));
     }
 }

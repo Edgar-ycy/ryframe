@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix database connection diagnostics leaking password content when whitespace was normalized before redaction. Merge secret and connection-address ranges in the original message before normalizing display; cover overlapping credentials and private-key markers, preserve safe error codes, and leave actual connection passwords unchanged.
+
 - Fix post-copy API verification omitting `--config-dir` and the bound configuration directory, which incorrectly rejected valid launch arguments as drift. Continue rejecting missing or different configuration directories and preserve process identity, artifact, scope and listener-ownership checks.
 
 - Redact JWT secrets, database passwords, TLS client private keys and metric tokens from direct or nested `Debug` output of authentication, database connection and monitoring configuration while preserving nonsecret diagnostics. Merge duplicate configuration-argument parsing in tests and accurately describe tool-configuration test coverage.
