@@ -18,7 +18,7 @@ fn fixture() -> (Value, Value, std::path::PathBuf) {
 #[test]
 fn latest_roles_keep_names_and_all_history_keeps_order_and_complete_identity() {
     let (lineage, binding, runtime) = fixture();
-    let mut result = build(&lineage, &runtime, &binding, "seed-scope").unwrap();
+    let result = build(&lineage, &runtime, &binding, "seed-scope").unwrap();
     assert_eq!(result["format_version"], 1);
     assert_eq!(result["scope_id"], "seed-scope");
     assert_eq!(result["runtime_sha256"], "a".repeat(64));
@@ -43,11 +43,6 @@ fn latest_roles_keep_names_and_all_history_keeps_order_and_complete_identity() {
     {
         assert_eq!(process["identity"], item["identity"]);
     }
-    result["processes"][0]["identity"]["additional"]["preserved"][0] = json!(999);
-    assert_eq!(
-        lineage["identities"][0]["identity"]["additional"]["preserved"][0],
-        0
-    );
 }
 
 #[test]

@@ -141,27 +141,6 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
 }
 
 #[test]
-fn review_snapshot_matches_the_fresh_schema() {
-    let snapshot = mysql_snapshot_sql();
-    assert!(snapshot.contains("schema fingerprint: 3f5f39d1b9783bb1"));
-    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
-    for required in [
-        "`sys_background_job`",
-        "`sys_background_job_attempt`",
-        "`claim_sequence`",
-        "`payload_version`",
-        "`sys_export_job`",
-        "`active_request_fingerprint`",
-        "`delete_pending_at`",
-        "`sys_backup_set`",
-        "`sys_backup_resource`",
-        "`sys_restore_run`",
-    ] {
-        assert!(snapshot.contains(required));
-    }
-}
-
-#[test]
 fn canonical_seed_statements_are_strictly_parseable() {
     validate_seed_statements().expect("基线种子应可严格解析");
 }
@@ -339,4 +318,21 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     assert_eq!(tables.len(), count);
     assert_eq!(count, 49);
     assert_eq!(schema_fingerprint(), "3f5f39d1b9783bb1");
+    let snapshot = mysql_snapshot_sql();
+    assert!(snapshot.contains("schema fingerprint: 3f5f39d1b9783bb1"));
+    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
+    for required in [
+        "`sys_background_job`",
+        "`sys_background_job_attempt`",
+        "`claim_sequence`",
+        "`payload_version`",
+        "`sys_export_job`",
+        "`active_request_fingerprint`",
+        "`delete_pending_at`",
+        "`sys_backup_set`",
+        "`sys_backup_resource`",
+        "`sys_restore_run`",
+    ] {
+        assert!(snapshot.contains(required));
+    }
 }

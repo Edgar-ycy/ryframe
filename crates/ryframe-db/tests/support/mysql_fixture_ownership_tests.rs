@@ -652,45 +652,29 @@ fn evidence_parent_path_replacement_is_blocked_or_detected_before_further_creati
 }
 
 #[test]
-fn business_connection_matching_server_uuid_and_schema_is_accepted() {
+fn business_connection_requires_matching_server_uuid_and_selected_schema() {
     let expected = plan();
-    assert!(business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        &expected.identity.server_uuid,
-        Some(&expected.schema),
-    ));
-}
-
-#[test]
-fn business_connection_different_server_uuid_is_rejected_with_the_same_schema() {
-    let expected = plan();
-    assert!(!business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        "20000000-0000-4000-8000-000000000002",
-        Some(&expected.schema),
-    ));
-}
-
-#[test]
-fn business_connection_different_schema_is_rejected_on_the_same_server() {
-    let expected = plan();
-    assert!(!business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        &expected.identity.server_uuid,
-        Some("ryframe_it_another_schema"),
-    ));
-}
-
-#[test]
-fn business_connection_null_database_is_rejected_on_the_same_server() {
-    let expected = plan();
-    assert!(!business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        &expected.identity.server_uuid,
-        None,
-    ));
+    let expected_uuid = expected.identity.server_uuid.as_str();
+    let expected_schema = expected.schema.as_str();
+    for (observed_uuid, observed_schema, accepted) in [
+        (expected_uuid, Some(expected_schema), true),
+        (
+            "20000000-0000-4000-8000-000000000002",
+            Some(expected_schema),
+            false,
+        ),
+        (expected_uuid, Some("ryframe_it_another_schema"), false),
+        (expected_uuid, None, false),
+    ] {
+        assert_eq!(
+            business_identity_matches(
+                expected_uuid,
+                expected_schema,
+                observed_uuid,
+                observed_schema,
+            ),
+            accepted,
+            "观察UUID={observed_uuid}，数据库={observed_schema:?}"
+        );
+    }
 }

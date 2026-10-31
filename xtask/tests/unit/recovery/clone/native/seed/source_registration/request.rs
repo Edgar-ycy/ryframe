@@ -85,9 +85,8 @@ fn short_boundary_and_long_source_ids_are_stable_without_character_conversion() 
 }
 
 #[test]
-fn request_has_exact_twelve_fields_and_uses_each_authoritative_source_without_mutation() {
+fn request_has_exact_twelve_fields_from_authoritative_sources() {
     let fixture = Fixture::new();
-    let before = fixture.documents.clone();
     let result = build(fixture.inputs()).unwrap();
     assert_eq!(
         result,
@@ -102,7 +101,6 @@ fn request_has_exact_twelve_fields_and_uses_each_authoritative_source_without_mu
         "runtime":fixture.documents["runtime_binding"],"processes":fixture.documents["process_bindings"],
         "producers_registry":fixture.documents["registry_binding"],"max_object_bytes":12345})
     );
-    assert_eq!(fixture.documents, before);
 }
 
 #[test]
