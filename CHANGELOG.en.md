@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Clarify that database examples are topology fragments to merge into application configuration, and document timeout units, defaults and scope for primary, replica and named-source pools in both languages.
+
 - Move formal fixture `rotate-secrets` and `bootstrap-secrets` execution into Rust and remove their Python writers and private dispatch. Preserve seven-file bindings, non-overwrite behavior and failure evidence; recheck source and raw bytes before publication, report stages and safe causes, and reject failed sources in the remaining environment preparation flow.
 
 - Fix backend-only checks still querying the frontend Git repository during metric collection. The default scope no longer passes a frontend directory, while explicit cross-repository checks retain frontend state metrics; verify Chinese characters, spaces and renamed directories through the actual command entry.
