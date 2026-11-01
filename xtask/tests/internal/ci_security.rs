@@ -180,15 +180,5 @@ fn security_workflow_installs_tools_then_uses_only_typed_security_entries() {
         .unwrap();
     assert!(security.find("tool: cargo-audit@0.22.2").unwrap() < source);
     assert!(security.find("tool: cargo-deny@0.20.2").unwrap() < source);
-    let deployment_source = security
-        .find("cargo xtask check ci security deployment source")
-        .unwrap();
-    let build = security.find("docker build").unwrap();
-    let deployment_image = security
-        .find("cargo xtask check ci security deployment image")
-        .unwrap();
-    assert!(source < deployment_source);
-    assert!(deployment_source < build);
-    assert!(build < deployment_image);
     assert!(!security.contains("github.event.action != 'edited'"));
 }

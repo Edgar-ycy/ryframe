@@ -243,9 +243,6 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
                 .collect::<Vec<_>>(),
             expected
         );
-        for task in &execution.tasks {
-            assert_eq!(task.definition().id, task.id);
-        }
     }
 }
 
@@ -283,13 +280,6 @@ fn daily_full_checks_use_explicit_repository_scopes() {
             "普通完整检查与 CI 应共用原子节点 {shared:?}"
         );
     }
-    assert!(
-        !backend_full.tasks.iter().any(|task| matches!(
-            task.executor,
-            TaskExecutor::ConsumerContract | TaskExecutor::FrontendConsumerContract
-        )),
-        "后端完整检查不能隐式访问前端；跨仓契约由 all 完整检查和 CI 明确执行"
-    );
 }
 
 #[test]

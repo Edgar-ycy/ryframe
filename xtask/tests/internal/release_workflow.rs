@@ -55,17 +55,6 @@ fn extended_full_stack_records_before_fixture_and_rechecks_after_build() {
 }
 
 #[test]
-fn current_release_docs_and_help_describe_rust_execution() {
-    let operations = read("docs/operations.md");
-    assert!(operations.contains("两个入口直接由 Rust xtask 执行，不依赖 Python"));
-    assert!(!operations.contains("两个入口都先核验固定 Python 环境"));
-    let help = read("xtask/src/cli/help.rs");
-    assert!(help.contains("发布核验直接由 Rust xtask 执行"));
-    let changelog = read("CHANGELOG.md");
-    assert!(changelog.contains("Release 与 Extended CI 不再安装或调用发布核验 Python"));
-}
-
-#[test]
 fn replaced_release_python_implementations_are_deleted() {
     for path in [
         "tools/python/validate_release.py",

@@ -196,7 +196,7 @@ API 与 Worker 的备份采集器每 60 秒读取控制库汇总，整次采集�
 
 ## 发布门禁排障
 
-协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与业务 crate 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；业务 crate 产物另附从干净源码生成隔离工作树的收据。Release 通过 `cargo xtask check release source` 核对双端 tag、版本与契约来源，通过 `cargo xtask check release ci` 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。两个入口直接由 Rust xtask 执行，不依赖 Python，并支持 `--plan` 只查看实际任务图。
+协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与业务 crate 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；业务 crate 产物另附从干净源码生成隔离工作树的收据。Release 通过 `cargo xtask check release source` 核对双端 tag、版本与契约来源，通过 `cargo xtask check release ci` 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。全栈产物按声明身份唯一选择 `extended-ci.yml`，使用对应源码 SHA、run ID 和 attempt，缺失或重复声明时拒绝，不依赖证据顺序或工作流数量。两个入口直接由 Rust xtask 执行，不依赖 Python，并支持 `--plan` 只查看实际任务图。
 
 Release 在检出配套前端前通过 Rust `frontend-source` 从工具文件或标准 GitHub owner 身份选择仓库，配置方式见[开发指南](development.md)。校验阶段冻结该仓库、双方精确提交及 tag 对象，发布阶段复用冻结结果，不重新读取仓库选择。前端仍按显式发布 tag 检出，仓库配置不会改变双方 tag 必须匹配及精确来源核验。
 

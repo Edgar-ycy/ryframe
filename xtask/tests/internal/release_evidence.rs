@@ -89,6 +89,7 @@ fn success_keeps_run_attempt_and_job_identity() {
     let receipt = validate_run(&run(), &[job()], &requirement(), 2)
         .unwrap()
         .unwrap();
+    assert_eq!(receipt["repository"], "owner/backend");
     assert_eq!(receipt["run_id"], 123);
     assert_eq!(receipt["attempt"], 2);
     assert_eq!(receipt["jobs"][0]["id"], 42);
