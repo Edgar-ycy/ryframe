@@ -237,14 +237,14 @@ fn reconcilable_restart_requires_only_one_last_failed_restart_and_external_owner
     let value = json!({"attempts":[{"number":1,"stage":STAGE,"mode":"restart","status":"failed"}]});
     let history = json!({"closed":false,"external_recovery":{"path":"recovery"},"unsettled":[1]});
     assert!(reconcilable(&value, &history, "restart").is_some());
-    for (key, value) in [
+    for (key, replacement) in [
         ("closed", json!(true)),
         ("external_recovery", Value::Null),
         ("unsettled", json!([1, 2])),
     ] {
         let mut invalid = history.clone();
-        invalid[key] = value;
-        assert!(reconcilable(&json!({"attempts":[]}), &invalid, "restart").is_none());
+        invalid[key] = replacement;
+        assert!(reconcilable(&value, &invalid, "restart").is_none());
     }
 }
 

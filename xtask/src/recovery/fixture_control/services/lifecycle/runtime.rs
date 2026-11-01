@@ -318,6 +318,8 @@ mod tests {
         std::fs::write(&module, b"original").unwrap();
         std::fs::write(directory.path().join("extra.py"), b"extra").unwrap();
         assert_ne!(source_snapshot(directory.path()).unwrap(), before);
+        std::fs::remove_file(directory.path().join("extra.py")).unwrap();
+        assert_eq!(source_snapshot(directory.path()).unwrap(), before);
         std::fs::remove_file(&module).unwrap();
         assert_ne!(source_snapshot(directory.path()).unwrap(), before);
     }

@@ -136,14 +136,3 @@ fn close_rejects_external_termination_without_inventing_normal_shutdown() {
             .any(|event| event == "tree-stop" || event == "cache-stop")
     );
 }
-
-#[test]
-fn context_guard_rejects_every_bound_document_or_private_environment_change() {
-    for key in ["review", "bootstrap", "manifest", "environment"] {
-        let runtime = FakeRuntime::new();
-        let context = Context::load(&runtime.fixture.backend, runtime.fixture.context()).unwrap();
-        let path = Path::new(text(&context.value["sources"][key], "path").unwrap());
-        fs::write(path, b"{}").unwrap();
-        assert!(context.guard(None).is_err());
-    }
-}

@@ -214,15 +214,30 @@ mod tests {
             "backend":backend,"native_tool":tool,"operation":"cache-start","arguments":{}});
         let mut wrong = envelope.clone();
         wrong["operation"] = json!("tree-stop");
-        assert!(dispatch(&serde_json::to_vec(&wrong).unwrap()).is_err());
+        assert_eq!(
+            dispatch(&serde_json::to_vec(&wrong).unwrap())
+                .unwrap_err()
+                .to_string(),
+            "原生cache原语仅接受明确cache启动或停止"
+        );
         wrong = envelope.clone();
         wrong["native_tool"]["sha256"] = json!("0".repeat(64));
-        assert!(dispatch(&serde_json::to_vec(&wrong).unwrap()).is_err());
+        assert_eq!(
+            dispatch(&serde_json::to_vec(&wrong).unwrap())
+                .unwrap_err()
+                .to_string(),
+            "原生cache原语native_tool与当前执行文件不同"
+        );
         std::fs::create_dir_all(backend.join(".local-tests")).unwrap();
         let directory = tempfile::tempdir_in(backend.join(".local-tests")).unwrap();
         wrong = envelope;
         wrong["backend"] = json!(directory.path());
-        assert!(dispatch(&serde_json::to_vec(&wrong).unwrap()).is_err());
+        assert_eq!(
+            dispatch(&serde_json::to_vec(&wrong).unwrap())
+                .unwrap_err()
+                .to_string(),
+            "原生cache原语backend与实际编译根不同"
+        );
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
         assert!(dispatch(&vec![b'x'; super::super::runtime::LIMIT + 1]).is_err());
     }
