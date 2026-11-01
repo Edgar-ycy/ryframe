@@ -106,7 +106,7 @@ fn validate_binding(backend: &Path, tool: &Value) -> Result<()> {
         !digest::linked_path(backend)?.contains(&true)
             && std::fs::canonicalize(backend)?
                 == std::fs::canonicalize(crate::workspace::root_dir())?,
-        "原生cache原语backend与实际编译根不同",
+        "原生cache原语backend与当前操作工作区不同",
     )?;
     check(
         *tool == crate::check::python_suite::native_tool_binding()?,
@@ -236,7 +236,7 @@ mod tests {
             dispatch(&serde_json::to_vec(&wrong).unwrap())
                 .unwrap_err()
                 .to_string(),
-            "原生cache原语backend与实际编译根不同"
+            "原生cache原语backend与当前操作工作区不同"
         );
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
         assert!(dispatch(&vec![b'x'; super::super::runtime::LIMIT + 1]).is_err());

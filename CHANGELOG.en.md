@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove Python status, close, reconcile, recover and restart dispatch already replaced by native service lifecycles, together with obsolete tree-control and cache primitives. Retain the active initial-service and storage-start paths, real recovery coverage, explicit write authorization and tool verification before dispatch. Correct the backend rejection reason to identify a mismatch with the current operation workspace.
+
 - Review existing isolated-service tests and remove the duplicate drift case covered by the real Context and obsolete Python tree-stop/cache-start forwarding assertions. Preserve storage-start supervision and its actual guard callback, and strengthen module-removal, restart-eligibility and native-cache tool-binding negative cases so unrelated invalid inputs cannot mask the intended validation.
 
 - Remove reviewed internal-count, duplicate status-projection and untriggered assertions from copy-recovery tests while preserving SQL, inventory boundaries and complete before/after images. Correct conditional-write interception and check the native PUT entry in both existing success and failure scenarios.

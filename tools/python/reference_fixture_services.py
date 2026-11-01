@@ -294,48 +294,26 @@ PROTOCOL_SCHEMAS = {
     "rustfs": (("review", "environment", "native_tool"), (), True),
     "redis": (("review", "environment", "native_tool"), (), True),
     "buckets": (("review", "environment", "native_tool"), (), True),
-    "status": (("review", "environment", "native_tool"), (), False),
-    "close": (("review", "environment", "native_tool"), (), True),
-    "reconcile": (("review", "environment", "owner_binding", "native_tool"), (), True),
-    "recover": (("review", "environment", "owner_binding", "native_tool"), (), True),
-    "restart": (("review", "environment", "owner_binding", "native_tool"), (), True),
 }
 
 
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "reconcile", "recover", "restart"))
+    parser.add_argument("operation", choices=("rustfs", "redis", "buckets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--native-tool", required=True)
-    parser.add_argument("--owner-binding", type=Path,
-                        help="reconcile/recover/restart 时传 status 返回的当前 state 文件")
     options = [value.partition("=")[0] for value in argv if value.startswith("--")]
     if len(options) != len(set(options)):
         parser.error("服务控制选项不能重复")
     args = parser.parse_args(argv)
-    if args.operation == "status" and (args.write or args.owner_binding is not None):
-        parser.error("status 只读，不接受 --write 或 --owner-binding")
-    if args.operation != "status" and not args.write:
+    if not args.write:
         parser.error("服务操作必须显式指定 --write")
-    if (args.operation in {"reconcile", "recover", "restart"}) != (args.owner_binding is not None):
-        parser.error("reconcile、recover 和 restart 必须指定 --owner-binding，其他操作不接受")
     from rate_limit_tool import install_verified_binding
     install_verified_binding(args.native_tool)
     backend = args.backend_dir.resolve(strict=True)
-    if args.operation in {"status", "close", "reconcile", "recover", "restart"}:
-        from reference_fixture_service_context import status
-
-        if args.operation == "status":
-            result = status(backend, args.review, args.environment)
-        else:
-            from fixture_service_client import lifecycle
-            result = lifecycle(backend, args.operation, args.review, args.environment,
-                               args.owner_binding, write=args.write)
-        print(json.dumps(result, ensure_ascii=False))
-        return
     action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]
     result = action(backend, args.review, args.environment, write=args.write)
     summary = {"status": result["status"], "remote_writes": result["remote_writes"]}

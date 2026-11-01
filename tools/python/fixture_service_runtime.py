@@ -1,4 +1,4 @@
-"""Rust 生命周期使用的有界私有上下文与 OS 原语；不决定阶段、恢复或重试。"""
+"""Rust 生命周期使用的有界私有 storage-start 原语；不决定阶段、恢复或重试。"""
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -28,33 +28,17 @@ def _context(value, backend):
 
 def dispatch(backend, operation, args):
     from reference_fixture_service_context import guard
-    from devex_clone_run_state import recover_run_lock
     from process_environment import configured
-    from full_stack_process_tree import terminate_owned_process_tree
-    from devex_clone_cache_process import start, stop
     schemas = {
-        "tree-stop": {"tree", "crash"}, "recover-controller": {"run", "owner"},
-        "cache-stop": {"request", "private", "runtime", "output"},
-        "cache-start": {"request", "private", "output", "context", "running"},
         "storage-start": {"request", "private", "output", "manifest", "controller", "number", "context", "running"},
     }
     if operation not in schemas or not isinstance(args, dict) or set(args) != schemas[operation]:
         raise ValueError("服务原语字段或操作无效")
     from devex_clone_model import local_path
-    for key in ("output", "run"):
-        if key in args:
-            local_path(backend, args[key])
-    if operation == "tree-stop":
-        return terminate_owned_process_tree(args["tree"], crash=args["crash"])
-    if operation == "recover-controller":
-        return recover_run_lock(backend, Path(args["run"]), args["owner"], verify_results=True)
-    if operation == "cache-stop":
-        return stop(backend, args["request"], configured(args["private"]), args["runtime"], Path(args["output"]))
+    local_path(backend, args["output"])
     value = _context(args["context"], backend)
     def checked():
         guard(value, args["running"])
-    if operation == "cache-start":
-        return start(backend, args["request"], args["private"], Path(args["output"]), checked)
     from devex_clone_storage_process import start as storage_start
     return storage_start(backend, args["request"], configured(args["private"]), Path(args["output"]),
                          args["manifest"], args["controller"], args["number"], checked, supervised=True)

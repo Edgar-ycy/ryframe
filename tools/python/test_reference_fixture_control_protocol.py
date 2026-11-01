@@ -92,7 +92,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
     def test_stdin_protocol_is_bounded_and_strict_utf8(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         raw = self.protocol(
-            "services", "status", False, review=path, environment=path
+            "services", "rustfs", True, review=path, environment=path
         )
         with mock.patch.object(sys, "stdin", self.BinaryInput(raw.encode("utf-8"))):
             arguments = private_arguments(
@@ -101,7 +101,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 positional_operation=True,
                 argv=[],
             )
-        self.assertEqual(arguments[0], "status")
+        self.assertEqual(arguments[0], "rustfs")
         for payload, reason in [
             (b"", "缺失"),
             (b"\xff", "UTF-8"),
@@ -171,11 +171,11 @@ class FixtureControlProtocolTests(unittest.TestCase):
             ["--backend-dir", self.root, "--output", input_path, "--write"],
         )
         services = self.protocol(
-            "services", "status", False, review=input_path, environment=input_path
+            "services", "buckets", True, review=input_path, environment=input_path
         )
         self.assertEqual(
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, services, positional=True)[0],
-            "status",
+            "buckets",
         )
         successor = self.protocol(
             "successor", "arm-request", False,
@@ -190,15 +190,17 @@ class FixtureControlProtocolTests(unittest.TestCase):
     def test_rejects_duplicate_unknown_wrong_domain_and_ambiguous_write(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         valid = self.protocol(
-            "services", "status", False, review=path, environment=path
+            "services", "rustfs", True, review=path, environment=path
         )
         cases = [
             valid[:-1] + ',"review":"' + path.replace("\\", "\\\\") + '"}',
-            self.protocol("services", "status", False, review=path, environment=path, unknown="x"),
-            self.protocol("request", "status", False, review=path, environment=path),
-            self.protocol("services", "status", True, review=path, environment=path),
+            self.protocol("services", "rustfs", True, review=path, environment=path, unknown="x"),
+            self.protocol("request", "rustfs", True, review=path, environment=path),
+            self.protocol("services", "rustfs", False, review=path, environment=path),
             valid.replace('"format_version":1', '"format_version":true'),
         ]
+        cases.extend(self.protocol("services", operation, operation != "status", review=path, environment=path)
+                     for operation in ("status", "close", "reconcile", "recover", "restart"))
         non_text_operation = json.loads(valid)
         non_text_operation["operation"] = []
         cases.append(json.dumps(non_text_operation, separators=(",", ":")))
@@ -218,12 +220,12 @@ class FixtureControlProtocolTests(unittest.TestCase):
     def test_rejects_public_argv_related_environment_and_non_absolute_paths(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         raw = self.protocol(
-            "services", "status", False, review=path, environment=path
+            "services", "redis", True, review=path, environment=path
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
             private_arguments(
                 "services", fixture_services.PROTOCOL_SCHEMAS,
-                positional_operation=True, argv=["status"],
+                positional_operation=True, argv=["redis"],
             )
         with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
             private_arguments(
@@ -231,7 +233,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 argv=["unexpected", raw],
             )
         relative = self.protocol(
-            "services", "status", False, review="relative.json", environment=path
+            "services", "redis", True, review="relative.json", environment=path
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "绝对路径"):
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, relative, positional=True)

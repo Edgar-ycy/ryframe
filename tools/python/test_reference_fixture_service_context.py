@@ -43,7 +43,7 @@ class ServiceContextTests(unittest.TestCase):
         from fixture_service_client import lifecycle
         for mode in ("partial", "interrupted-close", "complete"):
             with self.subTest(mode=mode):
-                # 每个场景由独立夹具提供，原生控制器和 Python 底层恢复共同验证文件证据。
+                # 每个场景由独立夹具提供，Python 写入历史与原生控制器恢复共同验证文件证据。
                 fixture = ServiceContextTests()
                 fixture.setUp()
                 self.addCleanup(fixture.doCleanups)
@@ -86,7 +86,8 @@ class ServiceContextTests(unittest.TestCase):
                     self.assertEqual(load_state(fixture.run)["attempts"][3]["error_type"], "ControllerInterrupted")
                 if mode == "partial":
                     before = fixture.snapshot()
-                    self.assertEqual(context.status(fixture.backend, fixture.review, fixture.bootstrap)["next_operation"],
+                    self.assertEqual(lifecycle(fixture.backend, "status", fixture.review, fixture.bootstrap,
+                                               None, write=False)["next_operation"],
                                      "reconcile-evidence")
                     self.assertEqual(before, fixture.snapshot())
 
@@ -133,11 +134,6 @@ class ServiceContextTests(unittest.TestCase):
         self.assertEqual(result, ({"generation": "bound"}, None))
         invoke.assert_called_once_with("service-transition", {"run": self.run, "expected": {"storage": "expected"}}, backend=self.backend)
 
-    def test_status_bridge_uses_read_only_native_execution(self):
-        with patch.object(context, "lifecycle", return_value={"status": "service_status"}) as invoke:
-            self.assertEqual(context.status(self.backend, self.review, self.bootstrap), {"status": "service_status"})
-        invoke.assert_called_once_with(self.backend, "status", self.review, self.bootstrap, None, write=False)
-
     def test_legacy_receipts_do_not_gain_invented_tree_ownership(self):
         value = context.context(self.backend, self.review, self.bootstrap)
         before = self.snapshot()
@@ -157,37 +153,23 @@ class ServiceContextTests(unittest.TestCase):
         invoke.assert_called_once_with("service-observe", {"services": {"frozen": True}})
 
 
-    def test_cli_rejects_ambiguous_or_write_status_arguments_with_usage_exit(self):
+    def test_cli_requires_explicit_write_for_first_generation(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
                   "--native-tool", json.dumps(tool_binding())]
-        for args in (("status", "--write"), ("close",), ("reconcile", "--write"),
-                     ("recover", "--write"), ("close", "--write", "--owner-binding", "owner.json")):
+        for args in (("rustfs",), ("redis",), ("buckets",),
+                     ("rustfs", "--write", "--owner-binding", "owner.json")):
             with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
                     self.assertRaises(SystemExit) as error:
                 cli.main([*args, *common])
             self.assertEqual(error.exception.code, 2)
 
 
-    def test_cli_dispatches_reconcile_with_explicit_owner_binding(self):
-        expected = {"status": "failed_close_reconciled", "remote_writes": 0}
-        arguments = ["reconcile", "--backend-dir", str(self.backend),
-                     "--review", str(self.review), "--environment", str(self.bootstrap),
-                     "--owner-binding", str(self.run / "state.json"), "--write",
-                     "--native-tool", json.dumps(tool_binding())]
-        with patch("fixture_service_client.lifecycle", return_value=expected) as reconcile, \
-                patch("builtins.print") as output:
-            cli.main(arguments)
-        reconcile.assert_called_once_with(self.backend.resolve(), "reconcile", self.review, self.bootstrap,
-                                          self.run / "state.json", write=True)
-        output.assert_called_once_with(json.dumps(expected, ensure_ascii=False))
-
-
     def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
                   "--native-tool", json.dumps(tool_binding())]
         before = self.snapshot()
-        invalid = [("status", "--review", "other"), ("status", "--environment=other"),
-                   ("close", "--write", "--write"), ("status", "--rev", "other")]
+        invalid = [("rustfs", "--write", "--review", "other"), ("redis", "--write", "--environment=other"),
+                   ("buckets", "--write", "--write"), ("rustfs", "--write", "--rev", "other")]
         for args in invalid:
             with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
                     patch.object(cli, "document") as read, \

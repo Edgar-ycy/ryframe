@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rate_limit_client import load_app_table
-from fixture_service_client import _invoke, lifecycle
+from fixture_service_client import _invoke
 
 
 def service_run(review: dict) -> Path:
@@ -41,7 +41,3 @@ def observe_services(services: dict) -> dict:
 
 def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict | None, dict | None]:
     return tuple(_invoke("service-transition", {"run": run, "expected": expected}, backend=backend))
-
-
-def status(backend: Path, review: Path, bootstrap: Path) -> dict:
-    return lifecycle(backend, "status", review, bootstrap, None, write=False)
