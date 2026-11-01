@@ -142,8 +142,10 @@ pub(crate) fn verify_configuration(root: &Path, directory: &Path) -> Result<Bind
         ],
         "全栈运行收据",
     )?;
-    if receipt["format_version"] != 1 || receipt["backend_root"] != root.to_string_lossy().as_ref()
-    {
+    let declared = PathBuf::from(text_field(&receipt, "backend_root", "运行收据")?);
+    validate_absolute_path(&declared, LocalTestPathKind::ExistingDirectory)?;
+    let canonical = crate::recovery::fixture_control::portable_path(&declared.canonicalize()?);
+    if receipt["format_version"] != 1 || declared != canonical || declared != root {
         return Err("全栈运行收据版本或后端目录不匹配".into());
     }
     let api = PathBuf::from(text_field(&receipt, "api_config_dir", "运行收据")?);

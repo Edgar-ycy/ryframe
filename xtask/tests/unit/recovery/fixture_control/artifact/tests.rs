@@ -250,8 +250,11 @@ fn runtime_fixture(root: &Path) -> (std::path::PathBuf, Value) {
 fn artifact_runtime_binds_files_scope_instances_and_all_binaries() {
     let root = tempfile::tempdir().unwrap();
     let (directory, receipt) = runtime_fixture(root.path());
+    let equivalent_root = root.path().to_string_lossy().replace('\\', "/");
     assert_eq!(
-        runtime::verify(root.path(), &directory).unwrap().receipt,
+        runtime::verify(Path::new(&equivalent_root), &directory)
+            .unwrap()
+            .receipt,
         receipt
     );
     let config = root.path().join("config/app.test.toml");

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix rejection of the same Windows runtime root when standard path separators differ. Runtime contracts compare canonical paths without links while retaining original configuration, artifact and source digest checks; frozen receipts are not rewritten.
+
 - Remove the unused Python maintenance build producer, standalone command entry and last dedicated Cargo-event parser file. Maintenance builds continue through Rust; retain actual consumers' read-only source and artifact verification, merge duplicate tests, and preserve evidence safeguards for source and toolchain drift during builds in the native failure scenarios.
 
 - Remove the unused Python full-stack CI build producer, its dedicated role mappings and obsolete tests. Formal builds continue through Rust; retain active runtime-manifest reading and recovery Cargo-event parsing, and merge post-mutation read-only verification safeguards into the existing consumer matrix.
