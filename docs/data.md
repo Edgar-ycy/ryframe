@@ -180,7 +180,7 @@ tls_mode = "verify_identity"
 tls_ca = "/run/secrets/mysql-ca.pem"
 ```
 
-primary、replicas、sources 和 MySQL 租户目标均直接使用 `password` 字段；租户目标允许空密码，但字段必须存在，不接受 DSN。连接名称必须唯一，source 不能使用 `primary`，租户目标必须与其他控制库、来源和目标使用不同 schema。远程生产连接和租户目标必须 `verify_identity` 并配置 CA；`verify_ca` 也要求 CA，mTLS 证书与私钥必须成对配置。
+primary、replicas、sources 和 MySQL 租户目标均直接使用 `password` 字段；租户目标允许空密码，但字段必须存在，不接受 DSN。连接名称必须唯一，source 不能使用 `primary`，租户目标必须与其他控制库、来源和目标使用不同 schema。远程生产连接和租户目标必须 `verify_identity` 并配置 CA；`verify_ca` 也要求 CA，mTLS 证书与私钥必须成对配置。控制库主库、副本和命名来源分别配置连接池。`acquire_timeout_secs` 和 `connect_timeout_secs` 默认均为 10 秒，且必须大于 0。`idle_timeout_secs` 默认 600 秒，`max_lifetime_secs` 默认 1800 秒。这四项适用于单个控制库连接池。租户目标使用 `tenant_data.targets` 中定义的字段。
 
 replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询，全部不可用时回退 primary；`Strong`、写后读、授权、任务、导出和状态转换使用 primary。RyFrame 不建立 MySQL 主从复制或等待追平，延迟监控和故障切换由运维负责。`database.sources` 通过 `control_database.source("<name>")` 获取并返回 `Option`；每个来源有独立连接池和事务，不自动分库，也没有跨库分布式事务。生成器的结构来源不自动成为运行目标。
 
