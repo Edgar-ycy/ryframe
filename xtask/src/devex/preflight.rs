@@ -54,12 +54,13 @@ pub(super) fn check_paired(
     if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
         && options.suite == DevexSuite::FrontendFast
     {
-        verify_frontend_fast_contract(frontend_root, options, arm)?;
+        verify_frontend_fast_contract(backend_root, frontend_root, options, arm)?;
     }
     Ok(())
 }
 
 fn verify_frontend_fast_contract(
+    backend_root: &Path,
     frontend_root: &Path,
     options: &DevexRunOptions,
     arm: PairedArm,
@@ -81,8 +82,13 @@ fn verify_frontend_fast_contract(
             }
         }
         PairedArm::Candidate => {
-            let output = Command::new(corepack_executable())
-                .args(["pnpm", "check", "--plan"])
+            let mut command = Command::new(corepack_executable());
+            command.arg("pnpm");
+            if let Some(cache) = crate::process::pnpm_cache_argument(backend_root)? {
+                command.arg(cache);
+            }
+            let output = command
+                .args(["check", "--plan"])
                 .current_dir(frontend_root)
                 .output()?;
             if !output.status.success() {

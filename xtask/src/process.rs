@@ -31,7 +31,7 @@ use cache::configure_cargo_cache;
 #[allow(unused_imports)]
 pub(crate) use cache::rustc_cache_label;
 #[path = "process/exit_status.rs"]
-mod exit_status;
+pub(crate) mod exit_status;
 use exit_status::CommandFailure;
 #[allow(unused_imports)]
 pub(crate) use exit_status::PreservedFailure;
@@ -404,6 +404,12 @@ pub(crate) fn pnpm_version_output(dir: &Path) -> Result<String> {
         .map_err(|error| format!("pnpm --version 输出不是 UTF-8：{error}").into())
 }
 
+pub(crate) fn pnpm_cache_argument(root: &Path) -> Result<Option<String>> {
+    Ok(ryframe_config::ToolSettings::load(root)?
+        .pnpm_cache_dir(root)?
+        .map(|path| format!("--config.cache-dir={}", path.display())))
+}
+
 fn pnpm_command(dir: &Path) -> Result<Command> {
     let executable = pnpm_executable(dir)?;
     let shim_dir = executable
@@ -417,6 +423,9 @@ fn pnpm_command(dir: &Path) -> Result<Command> {
 
     let mut command = Command::new(executable);
     command.current_dir(dir).env("PATH", path);
+    if let Some(cache) = pnpm_cache_argument(&root_dir())? {
+        command.arg(cache);
+    }
     Ok(command)
 }
 

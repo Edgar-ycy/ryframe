@@ -100,6 +100,61 @@ fn captures_private_stdin_without_putting_values_in_arguments_or_errors() {
     }
     gone(root.path());
 }
+
+#[test]
+fn native_pnpm_failure_logs_only_known_codes_with_exit_cwd_and_no_replay() {
+    let root = directory();
+    let context = Context {
+        root: root.path().into(),
+        output: root.path().into(),
+        control: Value::Null,
+        run: String::new(),
+        attempt: String::new(),
+    };
+    let mut native = Native {
+        context: &context,
+        cancel: Arc::new(AtomicBool::new(false)),
+        api: None,
+    };
+    for (mode, offline, fetch) in [
+        ("pnpm-offline-fail", true, true),
+        ("pnpm-fetch-fail", false, true),
+        ("pnpm-unknown-fail", false, false),
+    ] {
+        let log = root.path().join(format!("{mode}.log"));
+        let error = native
+            .command_at(
+                root.path(),
+                fixture().to_str().unwrap(),
+                &[mode.into(), root.path().to_str().unwrap().into()],
+                Some(&log),
+            )
+            .unwrap_err()
+            .to_string();
+        let logged = fs::read_to_string(log).unwrap();
+        assert!(error.contains("17"));
+        assert!(error.contains(root.path().to_str().unwrap()));
+        assert_eq!(logged.trim(), error);
+        assert_eq!(error.contains("ERR_PNPM_NO_OFFLINE_META"), offline);
+        assert_eq!(error.contains("ERR_PNPM_META_FETCH_FAIL"), fetch);
+        assert_eq!(
+            error.contains("verification.pnpm_cache_dir"),
+            offline || fetch
+        );
+        if offline {
+            assert!(error.contains("所需缓存/元数据和冻结依赖"));
+            assert!(error.contains("新输出目录"));
+        }
+        assert!(!error.contains("private-password"));
+        assert!(!error.contains("example.invalid"));
+        assert!(!error.contains("ERR_PNPM_UNKNOWN"));
+    }
+    assert_eq!(
+        fs::read_to_string(root.path().join("pnpm-invocations")).unwrap(),
+        "pnpm-offline-fail\npnpm-fetch-fail\npnpm-unknown-fail\n"
+    );
+    gone(root.path());
+}
 #[test]
 fn cancellation_timeout_and_successful_orphan_exit_reclaim_complete_managed_tree() {
     for mode in ["cancel", "timeout", "orphan"] {

@@ -268,9 +268,12 @@ fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationPr
             .join("catalog/resources/notice.toml"),
     )
     .expect("临时 Workspace 中既有的 Notice 清单应有效");
-    let catalog =
-        render_resources_with_frontend(&[order, notice, post], &workspace.frontend_source)
-            .expect("Order 与既有资源应能共同生成");
+    let catalog = render_resources_with_frontend(
+        &workspace.backend_source,
+        &[order, notice, post],
+        &workspace.frontend_source,
+    )
+    .expect("Order 与既有资源应能共同生成");
     let initial_resources: &[&str] = if profile == VerificationProfile::Targeted {
         &["notice", "post", "order"]
     } else {

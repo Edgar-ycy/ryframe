@@ -23,6 +23,8 @@ pub struct VerificationSettings {
     pub python_program: Option<PathBuf>,
     /// 检查工具的 Node 入口；相对路径以后端工作区为基准，不得包含父跳转或控制字符。
     pub node_program: Option<PathBuf>,
+    /// pnpm 元数据缓存目录；缺省保留 pnpm 标准行为，不创建目录。
+    pub pnpm_cache_dir: Option<PathBuf>,
 }
 
 /// Linux 夹具工具的显式双端路径与冻结来源；观察与写入口分别授权，不读取环境覆盖。
@@ -109,30 +111,15 @@ impl ToolSettings {
             .target_dir
             .as_deref()
             .unwrap_or(Path::new("target"));
-        if !selected.is_absolute()
-            && selected.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::Prefix(_) | std::path::Component::RootDir
-                )
-            })
-        {
-            return Err(AppError::Config("generator.target_dir 不接受驱动器相对路径或缺少驱动器的根路径；使用完整绝对路径或以后端根目录为基准的普通相对路径".into()));
-        }
-        if selected
-            .to_str()
-            .is_none_or(|value| value.trim().is_empty() || value.chars().any(char::is_control))
-            || selected
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(AppError::Config("generator.target_dir 必须是非空 UTF-8 路径，不得包含控制字符或父跳转；核对工具配置".into()));
-        }
-        Ok(if selected.is_absolute() {
-            selected.to_owned()
-        } else {
-            root.join(selected)
-        })
+        resolve_tool_path(root, selected, "generator.target_dir")
+    }
+
+    pub fn pnpm_cache_dir(&self, root: &Path) -> AppResult<Option<PathBuf>> {
+        self.verification
+            .pnpm_cache_dir
+            .as_deref()
+            .map(|path| resolve_tool_path(root, path, "verification.pnpm_cache_dir"))
+            .transpose()
     }
 
     pub fn frontend_dir(&self, root: &Path) -> PathBuf {
@@ -142,6 +129,37 @@ impl ToolSettings {
             None => root.parent().unwrap_or(root).join("ryframe-vue3"),
         }
     }
+}
+
+fn resolve_tool_path(root: &Path, selected: &Path, field: &str) -> AppResult<PathBuf> {
+    if !selected.is_absolute()
+        && selected.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+    {
+        return Err(AppError::Config(format!(
+            "{field} 不接受驱动器相对路径或缺少驱动器的根路径；使用完整绝对路径或以后端根目录为基准的普通相对路径"
+        )));
+    }
+    if selected
+        .to_str()
+        .is_none_or(|value| value.trim().is_empty() || value.chars().any(char::is_control))
+        || selected
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(AppError::Config(format!(
+            "{field} 必须是非空 UTF-8 路径，不得包含控制字符或父跳转；核对工具配置"
+        )));
+    }
+    Ok(if selected.is_absolute() {
+        selected.to_owned()
+    } else {
+        root.join(selected)
+    })
 }
 
 fn merge(base: &mut toml::Value, overlay: toml::Value) {
@@ -271,13 +289,13 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     }
 
     #[test]
-    fn verification_program_files_apply_local_precedence_and_default_to_none() {
+    fn verification_files_apply_local_precedence_and_default_to_standard_tools() {
         let root = crate::test_directory("tool-config-");
         fs::create_dir(root.path().join("config")).unwrap();
         fs::create_dir(root.path().join(".local-tests")).unwrap();
         fs::write(
             root.path().join("config/tools.toml"),
-            "[verification]\npython_program='public/python.exe'\nnode_program='public/node.exe'\n",
+            "[verification]\npython_program='public/python.exe'\nnode_program='public/node.exe'\npnpm_cache_dir='public/cache'\n",
         )
         .unwrap();
         assert_eq!(
@@ -294,9 +312,16 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
                 .node_program,
             Some("public/node.exe".into())
         );
+        assert_eq!(
+            ToolSettings::load(root.path())
+                .unwrap()
+                .pnpm_cache_dir(root.path())
+                .unwrap(),
+            Some(root.path().join("public/cache"))
+        );
         fs::write(
             root.path().join(".local-tests/tools.toml"),
-            "[verification]\npython_program='本机/python.exe'\nnode_program='本机/node.exe'\n",
+            "[verification]\npython_program='本机/python.exe'\nnode_program='本机/node.exe'\npnpm_cache_dir='本机/cache with spaces'\n",
         )
         .unwrap();
         assert_eq!(
@@ -322,6 +347,42 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
         let settings: ToolSettings = toml::from_str("").unwrap();
         assert!(settings.verification.python_program.is_none());
         assert!(settings.verification.node_program.is_none());
+        assert!(settings.pnpm_cache_dir(root.path()).unwrap().is_none());
+        assert_eq!(
+            ToolSettings::load(root.path())
+                .unwrap()
+                .pnpm_cache_dir(root.path())
+                .unwrap(),
+            Some(root.path().join("本机/cache with spaces"))
+        );
+        assert!(!root.path().join("本机").exists());
+    }
+
+    #[test]
+    fn pnpm_cache_paths_use_target_safety_rules_without_creating_directories() {
+        let root = crate::test_directory("tool-cache-");
+        let absolute = fs::canonicalize(root.path()).unwrap().join("未创建 缓存");
+        let mut settings = ToolSettings::default();
+        settings.verification.pnpm_cache_dir = Some(absolute.clone());
+        assert_eq!(
+            settings.pnpm_cache_dir(root.path()).unwrap(),
+            Some(absolute.clone())
+        );
+        for invalid in ["", "  ", "cache/../outside", "cache\nSECRET_SENTINEL"] {
+            settings.verification.pnpm_cache_dir = Some(invalid.into());
+            let error = settings
+                .pnpm_cache_dir(root.path())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("verification.pnpm_cache_dir"));
+            assert!(!error.contains("SECRET_SENTINEL"));
+        }
+        #[cfg(windows)]
+        for invalid in ["D:cache", "\\cache"] {
+            settings.verification.pnpm_cache_dir = Some(invalid.into());
+            assert!(settings.pnpm_cache_dir(root.path()).is_err());
+        }
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -331,6 +392,7 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
         for document in [
             "[verification]\npython_program={password='SECRET_SENTINEL'}\n",
             "[verification]\nnode_program={password='SECRET_SENTINEL'}\n",
+            "[verification]\npnpm_cache_dir={password='SECRET_SENTINEL'}\n",
             "[verification]\nSECRET_SENTINEL='unknown'\n",
             "[verification]\npython_program='SECRET_SENTINEL\n",
         ] {

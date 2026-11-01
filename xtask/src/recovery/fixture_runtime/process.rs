@@ -27,6 +27,10 @@ pub(super) fn command(binding: &Value, arguments: &Value, windows: bool) -> Resu
             "pnpm".into(),
         ]
     };
+    let backend = path(&binding["backend"]["path"])?;
+    if let Some(cache) = crate::process::pnpm_cache_argument(&backend)? {
+        command.push(cache);
+    }
     for arg in args {
         command.push(text(arg)?.into());
     }
@@ -325,18 +329,39 @@ mod tests {
         );
     }
     #[test]
-    fn windows_command_uses_bound_node_and_literal_arguments() {
-        let binding = json!({"tools":{"corepack":{"path":"corepack.cmd"},"node":{"path":"node.exe"},"corepack_entry":{"path":"a b/corepack.js"}}});
-        assert_eq!(
-            command(&binding, &json!(["check", "a&b", "中文"]), true).unwrap(),
-            [
-                "node.exe",
-                "a b/corepack.js",
-                "pnpm",
-                "check",
-                "a&b",
-                "中文"
-            ]
-        );
+    fn frontend_commands_preserve_bound_tools_literal_arguments_and_optional_cache() {
+        let local = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let root = tempfile::tempdir_in(local).unwrap();
+        let binding = json!({"backend":{"path":root.path()},"tools":{"corepack":{"path":"corepack.cmd"},"node":{"path":"node.exe"},"corepack_entry":{"path":"a b/corepack.js"}}});
+        for configured in [false, true] {
+            if configured {
+                fs::create_dir(root.path().join(".local-tests")).unwrap();
+                fs::write(
+                    root.path().join(".local-tests/tools.toml"),
+                    "[verification]\npnpm_cache_dir='缓存 with spaces'\n",
+                )
+                .unwrap();
+            }
+            for windows in [false, true] {
+                let mut expected: Vec<String> = if windows {
+                    vec!["node.exe".into(), "a b/corepack.js".into(), "pnpm".into()]
+                } else {
+                    vec!["corepack.cmd".into(), "pnpm".into()]
+                };
+                if configured {
+                    expected.push(format!(
+                        "--config.cache-dir={}",
+                        root.path().join("缓存 with spaces").display()
+                    ));
+                }
+                expected.extend(["check", "a&b", "中文"].map(String::from));
+                assert_eq!(
+                    command(&binding, &json!(["check", "a&b", "中文"]), windows).unwrap(),
+                    expected
+                );
+            }
+        }
+        assert!(!root.path().join("缓存 with spaces").exists());
     }
 }

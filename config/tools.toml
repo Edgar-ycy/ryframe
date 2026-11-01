@@ -15,6 +15,8 @@ frontend_dir = "../ryframe-vue3"
 # python_program = ".local-tests/python/Scripts/python.exe"
 # Node 检查入口；相同路径规则，缺省从操作系统 PATH 选择 node。
 # node_program = ".local-tests/node/node.exe"
+# 可选 pnpm 元数据缓存目录；相对后端根解析，缺省保留 pnpm 标准行为，不创建目录。
+# pnpm_cache_dir = ".local-tests/pnpm-cache"
 
 # 缓存 WSL 观察和独立授权写入口复用；从明确 SHA 的无 alternates 普通 clone 构建同一 xtask。
 # 两端路径必须显式填写，不推断挂载映射；摘要必须来自完整编译来源与实际 ELF。

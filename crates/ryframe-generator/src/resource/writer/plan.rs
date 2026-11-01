@@ -27,7 +27,7 @@ pub fn plan_resource_assets(
     verify_owned_files(&manifest, workspace)?;
     verify_unselected_resource_sources(catalog, resource, &manifest)?;
     schema::validate_evolution(catalog, &manifest, workspace)?;
-    let assets = selected_assets(catalog, resource, &manifest)?;
+    let assets = selected_assets(catalog, resource, &manifest, workspace.backend_root)?;
     schema::preserve_initial_migrations(assets, &manifest, workspace, false)
 }
 
@@ -297,6 +297,7 @@ pub(super) fn selected_assets(
     catalog: &GeneratedCatalog,
     resource: &str,
     manifest: &OwnershipManifest,
+    backend: &std::path::Path,
 ) -> Result<Vec<GeneratedAsset>, ResourceError> {
     if catalog.includes_frontend() && catalog.frontend_renderer.is_none() {
         return Err(ResourceError::new(
@@ -334,7 +335,9 @@ pub(super) fn selected_assets(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let managed = match &catalog.frontend_renderer {
-        Some(frontend) => super::super::render_resources_with_frontend(&resources, frontend)?,
+        Some(frontend) => {
+            super::super::render_resources_with_frontend(backend, &resources, frontend)?
+        }
         None => super::super::render_resources(&resources)?,
     };
     Ok(managed

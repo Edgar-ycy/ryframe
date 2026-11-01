@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add optional file setting `verification.pnpm_cache_dir` to backend pnpm calls across fixtures, generation candidates and frontend execution, preserving standard cache selection when omitted. Offline metadata failures publish only known safe error codes, exit status and the operation directory, with advice to prepare required caches and policy checks while preserving the failure scene without automatic replay.
+
 - Connect published independent clean fixture sources to review, environment preparation and runtime builds through explicit execution-source and configuration bindings, preserving original credential sources, complete dual-repository provenance and no-replay failure protections. Use Rust for browser runtime dispatch and dependency reads, independently verifying the tool compilation root, fixed binding and complete sources while keeping the registered business runtime source. Remove the old Python runtime, browser dependency adapter, review-renewal executor and obsolete dedicated tests, preserving drift rejection, failure evidence and non-publication safeguards in the existing Rust host.
 
 - List the existing `control export-sql` operation in top-level migration usage and clarify that the Worker exposes only health and metrics HTTP endpoints, without business APIs. Command execution and build boundaries remain unchanged.

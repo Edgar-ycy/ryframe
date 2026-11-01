@@ -87,6 +87,9 @@ fn prepare(
         .generator_target_dir(root)
         .map_err(|error| error.message().to_owned())?;
     validate_absolute_path(&target, LocalTestPathKind::StateDirectory)?;
+    let cache = settings
+        .pnpm_cache_dir(root)
+        .map_err(|error| error.message().to_owned())?;
     let sources = [snapshot::capture(root)?, snapshot::capture(frontend)?];
     if let Some(expected) = &options.expected_sources {
         snapshot::formal(&sources[0], &expected.backend_sha)?;
@@ -109,9 +112,12 @@ fn prepare(
     fs::write(
         backend.join(".local-tests/tools.toml"),
         format!(
-            "[workspace]\nfrontend_dir = {}\n[generator]\ntarget_dir = {}\n",
+            "[workspace]\nfrontend_dir = {}\n[generator]\ntarget_dir = {}\n{}",
             json!(generated_frontend),
-            json!(target)
+            json!(target),
+            cache
+                .map(|path| format!("[verification]\npnpm_cache_dir = {}\n", json!(path)))
+                .unwrap_or_default()
         ),
     )?;
     let log = options.output_dir.join("prepare.log");

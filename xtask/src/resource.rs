@@ -33,7 +33,7 @@ pub(crate) fn run(command: &ResourceCommand, frontend_dir: &Path) -> Result<()> 
     let catalog = if command.action == ResourceAction::Explain {
         render_resources(&resources)?
     } else {
-        render_resources_with_frontend(&resources, frontend_dir)?
+        render_resources_with_frontend(&root, &resources, frontend_dir)?
     };
 
     match (&command.target, command.action) {

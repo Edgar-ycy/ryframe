@@ -52,7 +52,7 @@ docker compose --project-directory . -f deploy/compose.prod.yml up -d
 | 定时调度 | 核对表达式、时区、misfire 策略和下一次运行时间。避免同一业务任务由多个 scheduler 重复创建。 |
 | 消息中心投递 | 检查 outbox、分发任务、目标受众和多语言参数。先恢复幂等消费，再处理积压；不要跳过租户或权限过滤。 |
 | OpenTelemetry 导出器 | 导出失败不应阻断业务请求。检查 endpoint、TLS、超时和队列丢弃指标，恢复后确认 traceparent 继续传播。 |
-| 磁盘容量 | 检查 `target`、日志、临时 XLSX、上传暂存和本地对象目录。只删除已确认的构建缓存或已过期产物，保留最新调试符号和 reset ledger。 |
+| 磁盘容量与离线缓存 | 检查 `target`、日志、临时 XLSX、上传暂存和本地对象目录。只删除已确认的构建缓存或已过期产物，保留最新调试符号和 reset ledger。pnpm 离线失败出现 `ERR_PNPM_NO_OFFLINE_META` 或 `ERR_PNPM_META_FETCH_FAIL` 时，核对工具文件的 `verification.pnpm_cache_dir`；在独立目录使用同一 registry 联网准备所需缓存/元数据和冻结依赖，并确认策略检查及真实 `--offline --frozen-lockfile` 安装通过。保留失败夹具，修复后使用新输出目录；不关闭供应链校验、不改锁文件或自动重放。原生全栈失败日志保留退出状态和操作目录，只提取已知错误码，不回显任意子进程原文。 |
 
 ## 备份失败或过期
 

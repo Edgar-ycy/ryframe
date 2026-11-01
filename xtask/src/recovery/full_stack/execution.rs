@@ -224,7 +224,16 @@ impl Port for Native<'_> {
             program
         };
         let mut command = Command::new(actual);
-        command.args(args).current_dir(cwd);
+        if program == "corepack" && args.first().is_some_and(|arg| arg == "pnpm") {
+            command.arg("pnpm");
+            if let Some(cache) = crate::process::pnpm_cache_argument(&self.context.root)? {
+                command.arg(cache);
+            }
+            command.args(&args[1..]);
+        } else {
+            command.args(args);
+        }
+        command.current_dir(cwd);
         self.environment(&mut command);
         if Path::new(program).is_absolute() {
             command.env("APP_ENV", "test");
@@ -460,7 +469,7 @@ pub(in crate::recovery) fn capture(
     let mut bytes = output.join().map_err(|_| "全栈输出线程失败")??;
     let errors = errors.join().map_err(|_| "全栈错误输出线程失败")??;
     if let Err(error) = result {
-        let reason = compiler_path_diagnostic(&bytes, &errors);
+        let reason = crate::process::exit_status::command_output_diagnostic(&bytes, &errors);
         return Err(format!("{error}{reason}").into());
     }
     if merge_stderr {
@@ -470,17 +479,6 @@ pub(in crate::recovery) fn capture(
         return Err("全栈命令输出超过16MiB".into());
     }
     String::from_utf8(bytes).map_err(|_| "全栈输出不是UTF-8".into())
-}
-
-fn compiler_path_diagnostic(stdout: &[u8], stderr: &[u8]) -> &'static str {
-    if [stdout, stderr].iter().any(|bytes| {
-        let text = String::from_utf8_lossy(bytes);
-        text.contains("fatal error C1083") && text.contains("Invalid argument")
-    }) {
-        "；已确认 MSVC C1083 报告无效输出路径；检查路径长度和访问权限，在工具文件中为 generator.target_dir 配置较短的固定目录，修复后先预览；未回显子进程原文"
-    } else {
-        ""
-    }
 }
 
 enum Child {

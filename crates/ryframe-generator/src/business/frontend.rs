@@ -28,7 +28,7 @@ pub(crate) fn generate_business_frontend(
             resources.push(descriptor_to_ir(&package, &descriptor)?);
         }
     }
-    let assets = render_frontend_assets(&resources, frontend, false)?
+    let assets = render_frontend_assets(workspace, &resources, frontend, false)?
         .into_iter()
         .map(|asset| BusinessAsset::new(asset.resource, asset.path, asset.content))
         .collect();

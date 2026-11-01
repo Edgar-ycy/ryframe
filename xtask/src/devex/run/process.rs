@@ -106,7 +106,16 @@ fn step_command(
         super::super::runtime_native::entry::command(&input)?
     } else {
         let mut command = Command::new(program);
-        command.args(&args).stdin(Stdio::null());
+        if step.program == "corepack" && args.first().is_some_and(|arg| arg == "pnpm") {
+            command.arg("pnpm");
+            if let Some(cache) = crate::process::pnpm_cache_argument(roots.backend)? {
+                command.arg(cache);
+            }
+            command.args(&args[1..]);
+        } else {
+            command.args(&args);
+        }
+        command.stdin(Stdio::null());
         command
     };
     command

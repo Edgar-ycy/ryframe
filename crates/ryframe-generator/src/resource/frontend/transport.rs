@@ -12,7 +12,11 @@ const COREPACK: &str = "corepack.cmd";
 #[cfg(not(windows))]
 const COREPACK: &str = "corepack";
 
-pub(super) fn invoke(frontend: &Path, input: &[u8]) -> Result<Vec<u8>, ResourceError> {
+pub(super) fn invoke(
+    backend: &Path,
+    frontend: &Path,
+    input: &[u8],
+) -> Result<Vec<u8>, ResourceError> {
     let frontend = std::path::absolute(frontend)
         .map_err(|error| failure(format!("无法解析前端路径：{error}；本批未安装")))?;
     let script = frontend.join("scripts/resource-render/cli.mjs");
@@ -23,8 +27,16 @@ pub(super) fn invoke(frontend: &Path, input: &[u8]) -> Result<Vec<u8>, ResourceE
         );
     }
     let runtime = runtime_root(&frontend)?;
-    let mut child = Command::new(COREPACK)
-        .args(["pnpm", "--config.verifyDepsBeforeRun=error", "exec", "node"])
+    let cache = ryframe_config::ToolSettings::load(backend)
+        .and_then(|settings| settings.pnpm_cache_dir(backend))
+        .map_err(|error| failure(error.message()))?;
+    let mut command = Command::new(COREPACK);
+    command.arg("pnpm");
+    if let Some(cache) = cache {
+        command.arg(format!("--config.cache-dir={}", cache.display()));
+    }
+    let mut child = command
+        .args(["--config.verifyDepsBeforeRun=error", "exec", "node"])
         .arg(&script)
         .current_dir(runtime)
         .env("COREPACK_ENABLE_NETWORK", "0")

@@ -19,6 +19,7 @@ struct RenderRequest<'a> {
 
 /// 调用前端仓库的纯渲染器；返回完整候选资产，不安装文件或修改 ownership。
 pub fn render_frontend_assets(
+    backend: &Path,
     resources: &[ResourceIr],
     frontend: &Path,
     aggregate: bool,
@@ -34,7 +35,7 @@ pub fn render_frontend_assets(
     if input.len() > MAX_INPUT_BYTES {
         return Err(failure("前端资源请求超过 16 MiB；本批未安装"));
     }
-    let output = transport::invoke(frontend, &input)?;
+    let output = transport::invoke(backend, frontend, &input)?;
     codec::decode_assets(&output, resources, aggregate)
 }
 

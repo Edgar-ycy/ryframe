@@ -116,6 +116,9 @@ impl Port for GitPort {
         _log: Option<&Path>,
     ) -> Result<String> {
         self.events.push(args.join(" "));
+        if args.iter().any(|arg| arg == "new-business") {
+            fs::create_dir_all(cwd.join("crates/order-business/src/resources"))?;
+        }
         if self.change_during_check {
             fs::write(cwd.join("drift.txt"), "漂移")?;
         }
@@ -191,12 +194,65 @@ fn formal_rejection_has_no_writes_and_copy_ack_loss_keeps_preparing_evidence() {
     assert!(prepare(&options, backend.path(), frontend.path(), &mut port).is_err());
     assert!(!output.exists());
     assert!(port.events.is_empty());
+    fs::write(
+        &tool_config,
+        "[generator]\ntarget_dir='target'\n[verification]\npnpm_cache_dir='../outside'\n",
+    )
+    .unwrap();
+    assert!(prepare(&options, backend.path(), frontend.path(), &mut port).is_err());
+    assert!(!output.exists());
+    assert!(port.events.is_empty());
     fs::write(&tool_config, "[generator]\ntarget_dir='target'\n").unwrap();
     port.fail_after_copy = true;
     assert!(prepare(&options, backend.path(), frontend.path(), &mut port).is_err());
     let receipt = documents::read(&output.join("fixture.json")).unwrap();
     assert_eq!(receipt["status"], "preparing");
     assert!(validate(&options, backend.path(), frontend.path()).is_err());
+}
+
+#[test]
+fn fixture_propagates_resolved_cache_to_generator_without_creating_or_changing_source_cache() {
+    let backend = repository();
+    let frontend = repository();
+    let source_model = backend
+        .path()
+        .join("tools/python/fixtures/order-business/src/resources/mod.rs");
+    fs::create_dir_all(source_model.parent().unwrap()).unwrap();
+    fs::write(source_model, "// 本例只验证配置传播\n").unwrap();
+    let settings_path = backend.path().join(".local-tests/tools.toml");
+    let source_settings =
+        "[generator]\ntarget_dir='target'\n[verification]\npnpm_cache_dir='缓存 with spaces'\n";
+    fs::write(&settings_path, source_settings).unwrap();
+    let options = FixturePrepareOptions {
+        output_dir: backend.path().join(".local-tests/business-cache"),
+        expected_sources: None,
+    };
+    let mut port = GitPort {
+        events: vec![],
+        fail_after_copy: false,
+        change_during_check: false,
+    };
+    prepare(&options, backend.path(), frontend.path(), &mut port).unwrap();
+    let generated = options.output_dir.join("backend");
+    let selected = ryframe_config::ToolSettings::load(&generated).unwrap();
+    let cache = backend.path().join("缓存 with spaces");
+    assert_eq!(selected.verification.pnpm_cache_dir, Some(cache.clone()));
+    assert_eq!(
+        selected.pnpm_cache_dir(&generated).unwrap(),
+        Some(cache.clone())
+    );
+    assert_eq!(fs::read_to_string(settings_path).unwrap(), source_settings);
+    assert!(!cache.exists());
+    assert!(!generated.join("缓存 with spaces").exists());
+    assert!(
+        port.events
+            .iter()
+            .any(|event| event == "pnpm install --offline --frozen-lockfile")
+    );
+    assert_eq!(
+        documents::read(&options.output_dir.join("fixture.json")).unwrap()["status"],
+        "ready"
+    );
 }
 
 #[test]

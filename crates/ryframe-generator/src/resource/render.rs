@@ -138,6 +138,7 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
 
 /// 显式跨仓生成，前端模板只从指定前端仓库调用。
 pub fn render_resources_with_frontend(
+    backend: &Path,
     resources: &[ResourceIr],
     frontend: &Path,
 ) -> Result<GeneratedCatalog, ResourceError> {
@@ -149,9 +150,9 @@ pub fn render_resources_with_frontend(
             "核对前端目录配置",
         )
     })?;
-    catalog
-        .assets
-        .extend(super::render_frontend_assets(resources, &frontend, true)?);
+    catalog.assets.extend(super::render_frontend_assets(
+        backend, resources, &frontend, true,
+    )?);
     validate_assets(&catalog.assets)?;
     catalog
         .assets

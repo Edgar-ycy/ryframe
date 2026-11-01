@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use super::environment::ProcessEnvironment;
 
 pub(crate) fn install_frontend_dependencies(
+    backend: &Path,
     frontend: &Path,
     corepack: &Path,
     environment: &ProcessEnvironment,
@@ -23,8 +24,15 @@ pub(crate) fn install_frontend_dependencies(
     {
         return Ok(());
     }
-    let output = Command::new(corepack)
-        .args(["pnpm", "install", "--offline", "--frozen-lockfile"])
+    let mut command = Command::new(corepack);
+    command.arg("pnpm");
+    if let Some(cache) =
+        crate::process::pnpm_cache_argument(backend).map_err(|error| error.to_string())?
+    {
+        command.arg(cache);
+    }
+    let output = command
+        .args(["install", "--offline", "--frozen-lockfile"])
         .current_dir(frontend)
         .env_clear()
         .envs(environment)
