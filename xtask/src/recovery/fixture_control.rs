@@ -64,6 +64,9 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         return Ok(());
     }
     match command {
+        FixtureControlCommand::Environment(command) if environment::secrets::handles(command) => {
+            return print_json(&environment::secrets::run(root, command)?);
+        }
         FixtureControlCommand::Successor(
             crate::cli::FixtureSuccessorCommand::GenerationRequest(options),
         ) => {
@@ -123,6 +126,11 @@ pub(crate) fn private_invocation_at(
 ) -> Result<PrivateFixtureControlInvocation> {
     if command.is_help() {
         return Err("fixture 控制帮助不启动私有阶段程序".into());
+    }
+    if matches!(command, FixtureControlCommand::Environment(command)
+        if environment::secrets::handles(command))
+    {
+        return Err("秘密文件操作由 Rust 原生执行，不生成 Python 请求".into());
     }
     if matches!(
         command,

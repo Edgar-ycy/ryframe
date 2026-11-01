@@ -21,6 +21,9 @@ pub(in crate::recovery) mod plan;
 #[path = "environment/protocol.rs"]
 pub(crate) mod protocol;
 
+#[path = "environment/secrets.rs"]
+pub(crate) mod secrets;
+
 pub(super) fn fields(
     command: &FixtureEnvironmentCommand,
     root: &Path,
@@ -77,50 +80,9 @@ pub(super) fn fields(
                 output_value(&output.output, root, "审阅输出文件")?,
             );
         }
-        FixtureEnvironmentCommand::RotateSecrets { fixture, output } => {
-            insert_path(
-                &mut fields,
-                "fixture",
-                fixture,
-                root,
-                LocalTestPathKind::ExistingFile,
-            )?;
-            fields.insert(
-                "output".to_owned(),
-                path_value(
-                    output,
-                    root,
-                    LocalTestPathKind::NewDirectory,
-                    "secret set 输出目录",
-                )?,
-            );
-        }
-        FixtureEnvironmentCommand::BootstrapSecrets {
-            source_fixture,
-            source_secrets,
-            fixture,
-        } => {
-            insert_path(
-                &mut fields,
-                "source_fixture",
-                source_fixture,
-                root,
-                LocalTestPathKind::ExistingFile,
-            )?;
-            insert_path(
-                &mut fields,
-                "source_secrets",
-                source_secrets,
-                root,
-                LocalTestPathKind::ExistingDirectory,
-            )?;
-            insert_path(
-                &mut fields,
-                "fixture",
-                fixture,
-                root,
-                LocalTestPathKind::ExistingFile,
-            )?;
+        FixtureEnvironmentCommand::RotateSecrets { .. }
+        | FixtureEnvironmentCommand::BootstrapSecrets { .. } => {
+            return Err("秘密文件操作由 Rust 原生执行".into());
         }
     }
     Ok(fields)
