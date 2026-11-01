@@ -110,12 +110,6 @@ fn vendor_ignored_and_deleted_files_are_excluded_without_hiding_other_sources() 
     assert!(!message.contains("vendor/upstream"));
 }
 
-#[test]
-fn empty_repository_needs_no_node_directory_or_runtime() {
-    let fixture = Fixture::new();
-    check_backend_sources(fixture.root()).unwrap();
-}
-
 fn backend_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
 }

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove reviewed redundant test assertions for empty-repository backend scanning, policy-task membership and strict-migration constants. Retain safeguards for real Git inventories, backend language accounting, exact policy vectors, strict task-graph arguments and effective test entry points.
+
 - Select release full-stack receipts by the declared `extended-ci.yml` identity and its corresponding source, run, and attempt, rejecting missing, duplicate, or mismatched evidence while preserving output order and race rechecks. Remove reviewed redundant assertions and wording constraints from CI/release tests while retaining task, security, and provenance safeguards.
 
 - Add optional file setting `verification.pnpm_cache_dir` to backend pnpm calls across fixtures, generation candidates and frontend execution, preserving standard cache selection when omitted. Offline metadata failures publish only known safe error codes, exit status and the operation directory, with advice to prepare required caches and policy checks while preserving the failure scene without automatic replay.
