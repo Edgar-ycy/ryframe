@@ -6,9 +6,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-use std::io::Read;
-
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
 
 /// replay 驱动通过独立 stdin 接收上下文，不向外部命令追加门禁参数。
@@ -49,22 +46,6 @@ impl ReplayCommandRequest {
             .map_err(|error| format!("无法写入或复位 replay stdin 请求：{error}"))?;
         Ok(file)
     }
-
-    #[cfg(test)]
-    pub(crate) fn read(reader: impl std::io::Read) -> Result<Self, String> {
-        let mut bytes = Vec::new();
-        reader
-            .take(MAX_REQUEST_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("无法读取 replay stdin 请求：{error}"))?;
-        if bytes.len() as u64 > MAX_REQUEST_BYTES {
-            return Err("replay JSON 请求超过 16 KiB".to_owned());
-        }
-        let request: Self = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("replay stdin 不是合法 JSON 请求：{error}"))?;
-        request.validate()?;
-        Ok(request)
-    }
 }
 
 #[cfg(test)]
@@ -78,34 +59,25 @@ mod tests {
         let input = ReplayCommandRequest::new(target.clone())
             .input_file(directory.path())
             .unwrap();
-        assert_eq!(
-            ReplayCommandRequest::read(input).unwrap().target_root,
-            target
-        );
+        let request: ReplayCommandRequest = serde_json::from_reader(input).unwrap();
+        assert_eq!(request.target_root, target);
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn request_rejects_missing_unknown_invalid_and_oversized_input() {
-        for input in [
-            "",
-            "null",
-            "{}",
-            "{",
-            r#"{"format_version":2,"target_root":"/tmp"}"#,
-            r#"{"format_version":1,"target_root":"relative"}"#,
-            r#"{"format_version":1,"target_root":"/tmp","extra":true}"#,
-            r#"{"format_version":1,"target_root":"/tmp"} {}"#,
+        for (target, reason) in [
+            (PathBuf::from("relative"), "target_root 须为绝对路径"),
+            (
+                directory
+                    .path()
+                    .join("x".repeat(MAX_REQUEST_BYTES as usize + 1)),
+                "16 KiB",
+            ),
         ] {
             assert!(
-                ReplayCommandRequest::read(input.as_bytes()).is_err(),
-                "{input}"
+                ReplayCommandRequest::new(target)
+                    .input_file(directory.path())
+                    .unwrap_err()
+                    .contains(reason)
             );
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
         }
-        assert!(
-            ReplayCommandRequest::read(&vec![b' '; MAX_REQUEST_BYTES as usize + 1][..])
-                .unwrap_err()
-                .contains("16 KiB")
-        );
     }
 }

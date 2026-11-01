@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the replay request's test-only mirror reader while preserving actual receiver rejection checks and production writer path, size and anonymous-file cleanup safeguards. Correct CI unknown-field and activation test prerequisites so earlier failures cannot masquerade as coverage of the intended checks.
+
 - Review artifact-digest and Windows file-protection tests, removing constraints on duplicate binding counts and private function call counts/order while retaining digest/race rejection, actual write/replacement blocking, identity-drift detection, nested concurrency, exception cleanup and long-path safeguards.
 
 - Unify isolated full-stack CI configuration and Worker health-port preparation in the formal Rust entry point, reusing paired-source receipts and application validation. Remove inline Python port selection and shell configuration writers, and check source ordering through actual YAML commands.
