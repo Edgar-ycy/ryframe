@@ -97,6 +97,95 @@ fn write(path: &Path, value: &Value) {
 }
 
 #[test]
+fn published_auxiliary_paths_protect_the_real_manifest_and_original_fixture() {
+    use crate::recovery::{
+        clone::native::{
+            bridge::scope::Scope,
+            target_verify::{guard, input::TargetContext},
+        },
+        fixture_control::source_pair::execution::tests::Fixture as Published,
+    };
+    let published = Published::new();
+    let publication = published.publication();
+    let backend = published.output.join("backend");
+    let workspace = backend.join(".local-tests/authority-inputs");
+    let target = workspace.join("target");
+    fs::create_dir_all(&target).unwrap();
+    let receipt = workspace.join("receipt.json");
+    write(&receipt, &json!({}));
+    for name in [
+        "initialized-files.json",
+        "prepared-files.json",
+        "registration.json",
+    ] {
+        write(&workspace.join(name), &json!({}));
+    }
+    let build = workspace.join("build.json");
+    write(&build, &json!({"artifacts":{}}));
+    let launch = workspace.join("launch.json");
+    write(
+        &launch,
+        &json!({"credential_files":{"access_key":bound(&receipt),"secret_key":bound(&receipt)}}),
+    );
+    let tool = published.backend.join(".local-tests/mysql-tool.bin");
+    fs::write(&tool, b"external tool fixture").unwrap();
+    let mut review = bound(&receipt);
+    review["canonical_sha256"] = json!("0".repeat(64));
+    let request = json!({"execution_backend":{"path":backend,"execution_source":published.binding()},
+        "review":review,"maintenance_build":bound(&build),"tools":{"mysql":{"path":tool,"sha256":digest::file(&tool).unwrap().sha256}},
+        "target":{"databases":[{"defaults_file":receipt}]},
+        "storage":{"rustfs":{"identity":{"executable":tool},"process_receipt":bound(&receipt),"launch_receipt":bound(&launch)},
+            "redis":{"wsl":{"path":tool},"configuration":bound(&receipt)}}});
+    let manifest = json!({"build_bridges":[],
+        "source_environment":bound(&receipt),"target_environment":bound(&receipt)});
+    write(&workspace.join("manifest.json"), &manifest);
+    let mut context = TargetContext {
+        backend: backend.clone(),
+        run_dir: workspace.clone(),
+        manifest,
+        target_dir: target,
+        initialized_path: receipt.clone(),
+        initialized_binding: json!({}),
+        initialized: json!({}),
+        request_path: receipt.clone(),
+        request,
+        environment: Default::default(),
+        observation_dir: workspace.clone(),
+    };
+    // 这里只核验路径收集和文件保护，不把结构夹具声称为真实服务或维护证明。
+    let authority =
+        json!({"files":[],"generation":{"configuration":{"directory":workspace,"files":{}}}});
+    let paths = authority::protected_paths(&context, &authority).unwrap();
+    let original = PathBuf::from(
+        publication["original"]["fixture_receipt"]["path"]
+            .as_str()
+            .unwrap(),
+    );
+    let manifest = published.output.join("execution-source.json");
+    for expected in [&original, &manifest, &tool] {
+        assert!(
+            paths
+                .iter()
+                .any(|p| fs::canonicalize(p).unwrap() == fs::canonicalize(expected).unwrap())
+        );
+    }
+    let scope = Scope::load(&backend, &[], &[]).unwrap();
+    let protected = guard::Inputs::open(paths).unwrap();
+    protected.check().unwrap();
+    scope.assert_unchanged().unwrap();
+    let bytes = fs::read(&original).unwrap();
+    if fs::write(&original, b"drift original receipt").is_ok() {
+        assert!(protected.check().is_err());
+    } else {
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+    }
+    drop(protected);
+    fs::write(&original, bytes).unwrap();
+    context.request["execution_backend"]["fixture"] = json!({});
+    assert!(authority::protected_paths(&context, &authority).is_err());
+}
+
+#[test]
 fn authority_checks_actual_files_and_preserves_empty_directories_without_writes() {
     let fixture = Fixture::new();
     let before = tree::snapshot(&fixture.backend, fixture._directory.path(), false).unwrap();

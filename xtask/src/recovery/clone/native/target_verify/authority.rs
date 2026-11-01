@@ -259,6 +259,25 @@ fn auxiliary_inputs(context: &TargetContext) -> Result<Vec<PathBuf>> {
         paths.push(path);
     }
     if let Some(execution) = context.request.get("execution_backend") {
+        if execution.get("execution_source").is_some() {
+            let (_, verified) =
+                crate::recovery::fixture_control::source_pair::execution::target_binding(
+                    &context.backend,
+                    execution,
+                )?;
+            for descriptor in [&verified["execution_source"], &verified["fixture"]] {
+                let path = PathBuf::from(json_io::text(&descriptor["path"], "发布执行辅助输入")?);
+                crate::local_test_path::validate_absolute_path(
+                    &path,
+                    crate::local_test_path::LocalTestPathKind::ExistingFile,
+                )?;
+                if common::binding(&path)? != *descriptor {
+                    return Err("发布执行辅助输入在完整核验后变化".into());
+                }
+                paths.push(path);
+            }
+            return Ok(paths);
+        }
         paths.push(manifest::bound_file(
             &context.backend,
             &execution["fixture"],

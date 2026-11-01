@@ -281,6 +281,22 @@ pub(crate) fn execution_backend(
     declared: Option<&Value>,
     observer: &dyn SourceObserver,
 ) -> Result<(PathBuf, Value)> {
+    if let Some(declared) = declared.filter(|v| v.get("execution_source").is_some()) {
+        let (root, binding) =
+            crate::recovery::fixture_control::source_pair::execution::target_binding(
+                backend, declared,
+            )?;
+        if observer.snapshot(&root)? != binding["source"] {
+            return Err("发布执行源码实际观察与发布绑定不同".into());
+        }
+        let (_, after) = crate::recovery::fixture_control::source_pair::execution::target_binding(
+            backend, declared,
+        )?;
+        if binding != after {
+            return Err("发布执行绑定在来源观察期间漂移".into());
+        }
+        return Ok((root, binding));
+    }
     let Some(declared) = declared.filter(|value| !value.is_null()) else {
         validate_absolute_path(backend, LocalTestPathKind::ExistingDirectory)
             .map_err(|_| "后端根目录无效")?;

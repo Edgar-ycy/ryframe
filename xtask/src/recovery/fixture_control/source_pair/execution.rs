@@ -183,6 +183,37 @@ pub(in crate::recovery) fn verify_for_root(root: &Path, descriptor: &Value) -> R
     Ok(publication)
 }
 
+/// fresh 请求明确绑定发布源码，原 fixture 只从完整发布证明派生。
+pub(in crate::recovery) fn target_binding(
+    coordinator: &Path,
+    declared: &Value,
+) -> Result<(std::path::PathBuf, Value)> {
+    exact(declared, &["path", "execution_source"], "发布执行工作树")?;
+    let requested = Path::new(declared["path"].as_str().ok_or("发布执行根缺失")?);
+    validate_absolute_path(coordinator, LocalTestPathKind::ExistingDirectory)?;
+    validate_absolute_path(requested, LocalTestPathKind::ExistingDirectory)?;
+    let root = super::super::portable_path(&fs::canonicalize(requested)?);
+    let coordinator = super::super::portable_path(&fs::canonicalize(coordinator)?);
+    if root != coordinator {
+        validate_local_test_path(&root, &coordinator, LocalTestPathKind::ExistingDirectory)?;
+    }
+    let publication = verify_for_root(&root, &declared["execution_source"])?;
+    let mut snapshot =
+        publication["published"]["backend"]["inventory"]["source"]["snapshot"].clone();
+    snapshot
+        .as_object_mut()
+        .ok_or("发布源码快照无效")?
+        .remove("clean");
+    exact(
+        &snapshot,
+        &["files", "head", "patch_sha256"],
+        "发布源码快照",
+    )?;
+    let binding = json!({"kind":"published-business-fixture","path":root,
+        "execution_source":declared["execution_source"],"fixture":publication["original"]["fixture_receipt"],"source":snapshot});
+    Ok((root, binding))
+}
+
 fn verify_bound(descriptor: &Value, path: &Path) -> Result<Value> {
     if file_binding(path, "执行源码清单")? != *descriptor {
         return Err("执行源码清单绑定漂移；重新核对来源，禁止改写旧绑定".into());

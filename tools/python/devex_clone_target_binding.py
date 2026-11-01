@@ -23,7 +23,6 @@ from full_stack_runtime import configuration_digest, worker_ready_url
 from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
-from source_inventory import snapshot
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
@@ -469,26 +468,9 @@ def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> 
 
 
 def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
-    """解析可选的冻结 业务 crate 执行工作树，默认继续使用当前后端。"""
-    declared = request.get("execution_backend")
-    if declared is None:
-        return backend.resolve(strict=True), {"kind": "current-backend", "path": str(backend.resolve(strict=True))}
-    exact(declared, {"fixture", "path"})
-    fixture_path = bound_file(backend, declared["fixture"])
-    fixture = read_json(fixture_path)
-    if (fixture.get("format_version") != 1 or fixture.get("fixture") != "business"
-            or fixture.get("status") != "ready" or not isinstance(fixture.get("paths"), dict)
-            or not isinstance(fixture.get("generated"), dict)):
-        raise ValueError("冻结 业务 crate 工作树收据无效")
-    root = local_path(backend, declared["path"])
-    expected = Path(fixture["paths"].get("backend", ""))
-    generated = fixture["generated"].get("backend")
-    if (root != expected or not (root / "Cargo.toml").is_file() or not (root / ".git").exists()
-            # 业务 crate 收据绑定的是生成内容快照；忽略运行目录不应让冻结执行树失效。
-            or not isinstance(generated, dict) or snapshot(root)[0] != generated):
-        raise ValueError("冻结 业务 crate 后端工作树或生成来源已变化")
-    return root, {"kind": "business-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
-
+    """由同一原生权威核验当前、生成或独立发布执行来源。"""
+    result = _native("execution-backend", backend, request=request)
+    return Path(result["path"]), result["binding"]
 
 def application_config_directory(backend: Path, request: dict) -> Path:
     return Path(_native("config-directory", backend, request=request)["path"])

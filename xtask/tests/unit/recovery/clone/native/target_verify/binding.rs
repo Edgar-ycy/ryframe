@@ -7,6 +7,50 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[test]
+fn execution_selector_uses_the_same_verified_published_source_as_target_observation() {
+    use crate::recovery::{
+        clone::native::target_verify::input::request,
+        fixture_control::source_pair::execution::tests::Fixture,
+    };
+    let fixture = Fixture::new();
+    fixture.publication();
+    let backend = fixture.output.join("backend");
+    let declared = json!({"path":backend,"execution_source":fixture.binding()});
+    let raw = serde_json::to_vec(&json!({"format_version":1,"operation":"execution-backend",
+        "backend":backend,"arguments":{"request":{"execution_backend":declared}}}))
+    .unwrap();
+    let selected = super::execute(&raw).unwrap();
+    let (root, binding) =
+        request::execution_backend(&backend, Some(&declared), &request::SystemSourceObserver)
+            .unwrap();
+    assert_eq!(selected, json!({"path":root,"binding":binding}));
+    let current = serde_json::to_vec(&json!({"format_version":1,"operation":"execution-backend",
+        "backend":backend,"arguments":{"request":{}}}))
+    .unwrap();
+    assert_eq!(
+        super::execute(&current).unwrap()["binding"]["kind"],
+        "current-backend"
+    );
+    let mut invalid: Value = serde_json::from_slice(&raw).unwrap();
+    invalid["arguments"]["write"] = json!(true);
+    assert!(super::execute(&serde_json::to_vec(&invalid).unwrap()).is_err());
+    let coordinator = crate::workspace::root_dir();
+    let fixture_receipt =
+        crate::recovery::fixture_control::file_binding(&fixture.receipt, "原始fixture").unwrap();
+    let direct = json!({"path":fixture.backend,"fixture":fixture_receipt});
+    let raw = serde_json::to_vec(&json!({"format_version":1,"operation":"execution-backend",
+        "backend":coordinator,"arguments":{"request":{"execution_backend":direct}}}))
+    .unwrap();
+    let result = super::execute(&raw).unwrap();
+    assert_eq!(result["binding"]["kind"], "business-fixture");
+    assert_eq!(
+        result["binding"]["source"],
+        serde_json::from_slice::<Value>(&fs::read(&fixture.receipt).unwrap()).unwrap()["generated"]
+            ["backend"]
+    );
+}
+
 fn workspace() -> tempfile::TempDir {
     let parent = crate::workspace::root_dir().join(".local-tests/target-binding-unit");
     fs::create_dir_all(&parent).unwrap();

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add complete G/P provenance verification and actual observation to fresh-target execution bindings for independently published sources, distinguishing the current backend, original generated sources and published sources. Delegate Python execution-root selection to the same Rust readonly authority, rejecting mixed bindings and drift without rewriting original receipts.
+
 - Remove reviewed redundant test assertions for empty-repository backend scanning, policy-task membership and strict-migration constants. Retain safeguards for real Git inventories, backend language accounting, exact policy vectors, strict task-graph arguments and effective test entry points.
 
 - Select release full-stack receipts by the declared `extended-ci.yml` identity and its corresponding source, run, and attempt, rejecting missing, duplicate, or mismatched evidence while preserving output order and race rechecks. Remove reviewed redundant assertions and wording constraints from CI/release tests while retaining task, security, and provenance safeguards.

@@ -61,6 +61,15 @@ pub(super) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     match operation {
+        "execution-backend" => {
+            json_io::exact(args, &["request"], "执行后端选择")?;
+            let (path, binding) = super::input::request::execution_backend(
+                backend,
+                args["request"].get("execution_backend"),
+                &super::input::request::SystemSourceObserver,
+            )?;
+            Ok(json!({"path":path,"binding":binding}))
+        }
         "fresh-verify-target" => super::fresh::verify::binding(backend, args),
         "reset-configuration" | "redis-configuration" => super::binding_configuration::validate(
             backend,

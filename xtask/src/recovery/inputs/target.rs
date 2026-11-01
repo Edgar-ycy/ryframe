@@ -408,6 +408,11 @@ fn validate_tools(value: &Value, review: &Value) -> Result<()> {
 }
 
 fn execution_backend(backend: &Path, value: Option<&Value>) -> Result<(PathBuf, Value)> {
+    if let Some(declared) = value.filter(|v| v.get("execution_source").is_some()) {
+        return crate::recovery::fixture_control::source_pair::execution::target_binding(
+            backend, declared,
+        );
+    }
     let Some(value) = value else {
         let root = backend.to_path_buf();
         return Ok((
@@ -465,3 +470,7 @@ pub(crate) fn clone_name(value: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/recovery/inputs/published_target.rs"]
+mod published_tests;

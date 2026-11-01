@@ -20,6 +20,63 @@ from reference_fixture_service_context import service_run
 from restore_build import file_digest
 
 
+def publish_execution_fixture(case):
+    original = case.root / "original"
+    backend, frontend = original / "backend", original / "frontend"
+    contract = (json.dumps({"info": {"title": "RyFrame API", "version": "0.0.1"},
+                           "openapi": "3.1.0", "paths": {}}, ensure_ascii=False,
+                          sort_keys=True, indent=2) + "\n").encode()
+    sources = {}
+    for name, root in (("backend", backend), ("frontend", frontend)):
+        (root / "openapi").mkdir(parents=True)
+        (root / "src").mkdir()
+        (root / ".gitignore").write_text(".local-tests/\ntarget/\nnode_modules/\ndist/\n", encoding="utf-8")
+        (root / "src/lib.rs").write_text("// original\n", encoding="utf-8")
+        (root / "openapi/openapi.json").write_bytes(contract)
+        if name == "backend":
+            (root / "xtask").mkdir()
+            (root / "xtask/fixture.txt").write_text("fixture\n", encoding="utf-8")
+            (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        else:
+            (root / "openapi/source.json").write_text(json.dumps({"schema_version": 1,
+                "backend_repository": "fixture/backend", "backend_commit": sources["backend"]["head"],
+                "openapi_path": "openapi/openapi.json", "openapi_version": "3.1.0",
+                "sha256": hashlib.sha256(contract).hexdigest()}, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        for args in (("init", "--quiet", "--template="), ("add", "."),
+                     ("-c", "user.name=Fixture", "-c", "user.email=fixture@ryframe.invalid",
+                      "-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + str(case.root / "no-hooks"),
+                      "commit", "--quiet", "-m", "test(fixtures): 初始化发布来源夹具")):
+            subprocess.run(["git", "-C", str(root), "-c", "core.autocrlf=false", *args],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        sources[name] = environment.snapshot(root)[0]
+    (backend / "src/lib.rs").write_text("// generated\n", encoding="utf-8")
+    model = backend / "crates/order-business/src/resources/mod.rs"
+    model.parent.mkdir(parents=True)
+    model.write_text("// Order\n", encoding="utf-8")
+    case.fixture = {"format_version": 1, "fixture": "business", "status": "ready",
+        "fixture_sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
+        "sources": sources, "paths": {"backend": str(backend), "frontend": str(frontend)},
+        "generated": {name: environment.snapshot(root)[0] for name, root in (("backend", backend), ("frontend", frontend))}}
+    case.original_fixture = original / "fixture.json"
+    case.original_fixture.write_text(json.dumps(case.fixture), encoding="utf-8")
+    (backend / ".local-tests").mkdir()
+    output = backend / ".local-tests/published"
+    from rate_limit_tool import tool_binding, verified_tool
+    with verified_tool(tool_binding()) as executable:
+        subprocess.run([executable, "check", "recovery", "fixture", "source-pair", "publish-execution",
+            "--output-dir", str(output), "--write"], cwd=backend, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+    case.execution_source = output / "execution-source.json"
+    case.publication = json.loads(case.execution_source.read_text(encoding="utf-8"))
+    execution = case.publication["published"]["backend"]["path"]
+    case.review["execution_source"] = environment.bound(case.execution_source)
+    case.review["sources"] = {name + "_head": sources[name]["head"] for name in ("backend", "frontend")}
+    for scope in case.review["scopes"].values():
+        scope["backend_dir"] = execution
+    case.review["future_root"] = str(Path(execution) / ".local-tests/reference-fixture/run-r1")
+    (Path(execution) / ".local-tests/reference-fixture").mkdir(parents=True)
+
+
 class ReferenceFixtureEnvironmentTests(unittest.TestCase):
     def test_reset_requires_only_an_explicit_complex_administrator_password(self):
         self.assertEqual(
@@ -93,64 +150,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build", "resources_modified": False, "artifacts":
                             {key: {"executable": str(self.tools["mysql"])} for key in ("reset", "migrate", "tenant-data")}}
 
-    def publish_execution(self):
-        original = self.root / "original"
-        backend, frontend = original / "backend", original / "frontend"
-        contract = (json.dumps({"info": {"title": "RyFrame API", "version": "0.0.1"},
-                               "openapi": "3.1.0", "paths": {}}, ensure_ascii=False,
-                              sort_keys=True, indent=2) + "\n").encode()
-        sources = {}
-        for name, root in (("backend", backend), ("frontend", frontend)):
-            (root / "openapi").mkdir(parents=True)
-            (root / "src").mkdir()
-            (root / ".gitignore").write_text(".local-tests/\ntarget/\nnode_modules/\ndist/\n", encoding="utf-8")
-            (root / "src/lib.rs").write_text("// original\n", encoding="utf-8")
-            (root / "openapi/openapi.json").write_bytes(contract)
-            if name == "backend":
-                (root / "xtask").mkdir()
-                (root / "xtask/fixture.txt").write_text("fixture\n", encoding="utf-8")
-                (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
-            else:
-                (root / "openapi/source.json").write_text(json.dumps({"schema_version": 1,
-                    "backend_repository": "fixture/backend", "backend_commit": sources["backend"]["head"],
-                    "openapi_path": "openapi/openapi.json", "openapi_version": "3.1.0",
-                    "sha256": hashlib.sha256(contract).hexdigest()}, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-            for args in (("init", "--quiet", "--template="), ("add", "."),
-                         ("-c", "user.name=Fixture", "-c", "user.email=fixture@ryframe.invalid",
-                          "-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + str(self.root / "no-hooks"),
-                          "commit", "--quiet", "-m", "fixture")):
-                subprocess.run(["git", "-C", str(root), "-c", "core.autocrlf=false", *args],
-                               check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-            sources[name] = environment.snapshot(root)[0]
-        (backend / "src/lib.rs").write_text("// generated\n", encoding="utf-8")
-        model = backend / "crates/order-business/src/resources/mod.rs"
-        model.parent.mkdir(parents=True)
-        model.write_text("// Order\n", encoding="utf-8")
-        self.fixture = {"format_version": 1, "fixture": "business", "status": "ready",
-            "fixture_sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
-            "sources": sources, "paths": {"backend": str(backend), "frontend": str(frontend)},
-            "generated": {name: environment.snapshot(root)[0] for name, root in (("backend", backend), ("frontend", frontend))}}
-        self.original_fixture = original / "fixture.json"
-        self.original_fixture.write_text(json.dumps(self.fixture), encoding="utf-8")
-        (backend / ".local-tests").mkdir()
-        output = backend / ".local-tests/published"
-        from rate_limit_tool import tool_binding, verified_tool
-        with verified_tool(tool_binding()) as executable:
-            subprocess.run([executable, "check", "recovery", "fixture", "source-pair", "publish-execution",
-                "--output-dir", str(output), "--write"], cwd=backend, check=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-        self.execution_source = output / "execution-source.json"
-        self.publication = json.loads(self.execution_source.read_text(encoding="utf-8"))
-        execution = self.publication["published"]["backend"]["path"]
-        self.review["execution_source"] = environment.bound(self.execution_source)
-        self.review["sources"] = {name + "_head": sources[name]["head"] for name in ("backend", "frontend")}
-        for scope in self.review["scopes"].values():
-            scope["backend_dir"] = execution
-        self.review["future_root"] = str(Path(execution) / ".local-tests/reference-fixture/run-r1")
-        (Path(execution) / ".local-tests/reference-fixture").mkdir(parents=True)
-
     def test_plan_is_read_only_and_excludes_historical_data(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         result = environment.plan(self.backend, self.write("review.json", self.review), self.execution_source, self.write("build.json", self.maintenance))
         self.assertFalse(result["historical_data_used"])
         self.assertEqual(result["remote_writes"], 0)
@@ -160,7 +161,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual((base["side"], base["scope_id"]), ("base", "fixture-base"))
 
     def test_public_plan_receives_the_exact_native_binding_and_writes_nothing(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         from rate_limit_tool import tool_binding, verified_tool
         import subprocess
         review = self.write("cli-review.json", self.review)
@@ -178,13 +179,13 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(before, {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
 
     def test_plan_rejects_historical_source_database(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         self.review["reference"]["source"]["databases"] = [{"database": "old"}]
         with self.assertRaisesRegex(ValueError, "历史来源"):
             environment.plan(self.backend, self.write("review.json", self.review), self.execution_source, self.write("build.json", self.maintenance))
 
     def test_plan_accepts_project_relative_evidence_paths(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         review = self.write("review.json", self.review)
         fixture = self.execution_source
         maintenance = self.write("build.json", self.maintenance)
@@ -356,7 +357,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         environment.validate_review(extra)
 
     def test_prepare_rejects_unreviewed_tools_without_writing(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         review = self.write("unreviewed.json", self.review)
         fixture = self.execution_source
         maintenance = self.write("unreviewed-build.json", self.maintenance)
@@ -372,7 +373,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                                   for path in self.root.rglob("*")})
 
     def test_prepare_rechecks_publication_binding_before_bootstrap_publication(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         self.review["ready_for_execution"] = False
         pending = self.write("prepare-pending.json", self.review)
         ready = self.root / "prepare-ready.json"
@@ -406,7 +407,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertFalse((output / "bootstrap.json").exists())
 
     def _prepared_path_inputs(self):
-        self.publish_execution()
+        publish_execution_fixture(self)
         self.review["ready_for_execution"] = False
         pending = self.write("output-pending.json", self.review)
         ready = self.root / "output-ready.json"

@@ -164,38 +164,6 @@ class TargetTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(Path(temporary.name), self)
 
-    def prepare(self):
-        f = self.f
-        result = f.prepared()
-        f.publish_prepared_files()
-        return result
-
-
-    def test_business_fixture_execution_root_is_bound_to_its_generated_snapshot(self):
-        f = self.f
-        execution = f.local / "business-backend"
-        execution.mkdir()
-        (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
-        (execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
-        generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
-        fixture = {
-            "format_version": 1,
-            "fixture": "business",
-            "status": "ready",
-            "paths": {"backend": str(execution), "frontend": str(f.local / "business-frontend")},
-            "generated": {"backend": generated},
-        }
-        receipt = f.bound(f.local / "business-fixture.json", fixture)
-        f.request["execution_backend"] = {"fixture": receipt, "path": str(execution)}
-
-        with patch.object(binding, "snapshot", return_value=(generated, b"")):
-            root, evidence = binding.execution_backend(f.root, f.request)
-
-        self.assertEqual(root, execution)
-        self.assertEqual(evidence["kind"], "business-fixture")
-        self.assertEqual(evidence["source"], generated)
-
-
     def test_scope_or_missing_target_rejected_before_resource_call(self):
         for field in ("scope", "database"):
             with self.subTest(field=field):
