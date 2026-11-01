@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python full-stack CI build producer, its dedicated role mappings and obsolete tests. Formal builds continue through Rust; retain active runtime-manifest reading and recovery Cargo-event parsing, and merge post-mutation read-only verification safeguards into the existing consumer matrix.
+
 - Remove the replay request's test-only mirror reader while preserving actual receiver rejection checks and production writer path, size and anonymous-file cleanup safeguards. Correct CI unknown-field and activation test prerequisites so earlier failures cannot masquerade as coverage of the intended checks.
 
 - Review artifact-digest and Windows file-protection tests, removing constraints on duplicate binding counts and private function call counts/order while retaining digest/race rejection, actual write/replacement blocking, identity-drift detection, nested concurrency, exception cleanup and long-path safeguards.

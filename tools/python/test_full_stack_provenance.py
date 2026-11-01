@@ -217,7 +217,9 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
         _, binaries, build, runtime, _ = self.frozen_receipts()
         artifact = Path(binaries["ryframe"])
         build_path = self.directory / provenance.BUILD_EVIDENCE
-        paths = (self.fixture_path, artifact, runtime, build_path)
+        paths = (self.fixture_path, self.pair_path, self.model, runtime, build_path,
+                 self.directory / "binaries.json", self.directory / provenance.RUNTIME_EVIDENCE,
+                 *(Path(value) for value in binaries.values()))
         original = {path: path.read_bytes() for path in paths}
         forged = copy.deepcopy(build)
         forged["source"]["fixture_definition"]["model"]["path"] += ".wrong"
@@ -231,13 +233,17 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
                 for item, raw in original.items():
                     item.write_bytes(raw)
                 path.write_bytes(content)
+                before = {item: item.read_bytes() for item in paths}
                 if reject_build:
                     with self.assertRaises(ValueError):
                         provenance.verify_build_evidence(self.backend, self.directory)
                 else:
                     self.assertEqual(provenance.verify_build_evidence(self.backend, self.directory), build)
+                self.assertEqual(before, {item: item.read_bytes() for item in paths})
+                before = {item: item.read_bytes() for item in paths}
                 with self.assertRaises(ValueError):
                     provenance.verify_runtime_evidence(self.backend, self.directory, runtime)
+                self.assertEqual(before, {item: item.read_bytes() for item in paths})
 
 
 if __name__ == "__main__":
