@@ -1,5 +1,8 @@
 //! 通过实际二进制验证公开入口，避免解析测试遗漏 main 的退出码。
 
+#[path = "cli_process/check_scope.rs"]
+mod check_scope;
+
 #[path = "cli_process/security_reports.rs"]
 mod security_reports;
 

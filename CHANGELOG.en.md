@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix backend-only checks still querying the frontend Git repository during metric collection. The default scope no longer passes a frontend directory, while explicit cross-repository checks retain frontend state metrics; verify Chinese characters, spaces and renamed directories through the actual command entry.
+
 - Fix rejection of the same Windows runtime root when standard path separators differ. Runtime contracts compare canonical paths without links while retaining original configuration, artifact and source digest checks; frozen receipts are not rewritten.
 
 - Remove the unused Python maintenance build producer, standalone command entry and last dedicated Cargo-event parser file. Maintenance builds continue through Rust; retain actual consumers' read-only source and artifact verification, merge duplicate tests, and preserve evidence safeguards for source and toolchain drift during builds in the native failure scenarios.

@@ -59,7 +59,9 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
     context.include_frontend = scope != CheckScope::Backend;
     metrics::begin(
         &context.root,
-        &context.frontend_dir,
+        context
+            .include_frontend
+            .then_some(context.frontend_dir.as_path()),
         scope_label(scope),
         mode,
         context.targets.backend.as_str(),
