@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python maintenance build producer, standalone command entry and last dedicated Cargo-event parser file. Maintenance builds continue through Rust; retain actual consumers' read-only source and artifact verification, merge duplicate tests, and preserve evidence safeguards for source and toolchain drift during builds in the native failure scenarios.
+
 - Remove the unused Python full-stack CI build producer, its dedicated role mappings and obsolete tests. Formal builds continue through Rust; retain active runtime-manifest reading and recovery Cargo-event parsing, and merge post-mutation read-only verification safeguards into the existing consumer matrix.
 
 - Remove the replay request's test-only mirror reader while preserving actual receiver rejection checks and production writer path, size and anonymous-file cleanup safeguards. Correct CI unknown-field and activation test prerequisites so earlier failures cannot masquerade as coverage of the intended checks.

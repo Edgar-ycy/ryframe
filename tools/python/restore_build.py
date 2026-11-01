@@ -7,8 +7,6 @@ import subprocess
 
 from artifact_digests import file_digest
 from build_source import build_process_environment
-# 维护工具仍直接消费Cargo事件；其原生迁移不属于普通runtime职责。
-from full_stack_build import cargo_artifact
 from source_inventory import git, source_snapshot
 
 ROLES = {"api": ("bin-api", "ryframe"), "worker": ("bin-worker", "ryframe-worker")}

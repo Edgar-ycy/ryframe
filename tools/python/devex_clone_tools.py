@@ -1,20 +1,16 @@
-"""显式构建开发复制使用的维护 CLI；不连接服务、不初始化或复制资源。"""
+"""只读核验开发复制维护工具的来源、Cargo 事件与冻结产物。"""
 from __future__ import annotations
 
-import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
-from build_source import bound_source, build_process_environment
 from devex_clone import read_json
-from devex_clone_model import exact, linked, local_path
+from devex_clone_model import exact, local_path
 from devex_provenance import worktree_fingerprint
-from restore_build import cargo_artifact, file_digest, source_snapshot
-from restore_reference_io import redact_object_diagnostic
-from source_fingerprints import capture_inventory, checked_source, reusable_artifact_source
+from restore_build import file_digest, source_snapshot
+from source_fingerprints import checked_source, reusable_artifact_source
 from source_inventory import _native as native_source
 
 TOOLS = {"reset": ("bin-reset", "ryframe-reset"), "migrate": ("bin-migrate", "ryframe-migrate"),
@@ -44,14 +40,6 @@ def toolchain(backend: Path, run=subprocess.run) -> dict:
     return result
 
 
-def write_new(path: Path, value: dict) -> None:
-    with path.open("x", encoding="utf-8", newline="\n") as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-
-
 def target_directory(backend: Path) -> Path:
     return Path(native_source("maintenance-target-directory", root=str(backend)))
 
@@ -73,61 +61,6 @@ def recorded_cargo_path(backend: Path, name: str, content: str) -> Path:
     if len(found) != 1:
         raise ValueError("维护工具必须恰好绑定一个当前 Workspace 的 Cargo 产物事件")
     return found[0]
-
-
-def build(backend: Path, directory: Path, run=subprocess.run) -> dict:
-    """Cargo JSON 决定实际产物；复制为本轮独立文件，后续其他构建不改变证据。"""
-    directory = local_path(backend, str(directory), new=True)
-    if not directory.parent.is_dir():
-        raise ValueError("先明确创建构建证据父目录")
-    target = target_directory(backend)
-    directory.mkdir()
-    artifacts, before, stage = {}, None, "source_binding"
-    try:
-        before = source_binding(backend)
-        inventory = capture_inventory(backend, before["snapshot"])
-        stage = "toolchain"
-        versions = toolchain(backend, run)
-        with bound_source(backend, before["snapshot"]["head"]):
-            for role, (_, name) in TOOLS.items():
-                stage = "build_" + role
-                args = command(role, target)
-                output, errors = directory / f"{role}.cargo.jsonl", directory / f"{role}.cargo.log"
-                with output.open("xb") as stdout, errors.open("xb") as stderr:
-                    run(args, cwd=backend, stdout=stdout, stderr=stderr, check=True,
-                        env=build_process_environment(),
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-                executable = cargo_artifact(backend, name, output.read_text(encoding="utf-8"))
-                if not executable.is_relative_to(target.resolve()) or any(linked(p) for p in (executable, *executable.parents)):
-                    raise ValueError("Cargo 维护工具产物不属于本次固定 target")
-                digest = file_digest(executable)
-                saved = directory / (name + executable.suffix)
-                with executable.open("rb") as source, saved.open("xb") as copy:
-                    shutil.copyfileobj(source, copy)
-                    copy.flush()
-                    os.fsync(copy.fileno())
-                if file_digest(executable) != digest or file_digest(saved) != digest:
-                    raise ValueError("复制维护工具时二进制发生变化")
-                if os.name != "nt":
-                    saved.chmod(0o700)
-                artifacts[role] = {"executable": str(saved), "cargo_executable": str(executable), "command": args,
-                                   "cargo_output": {"file": output.name, **file_digest(output)},
-                                   "cargo_log": {"file": errors.name, **file_digest(errors)}, **digest}
-        stage = "verify_source_and_toolchain"
-        if source_binding(backend) != before or toolchain(backend, run) != versions:
-            raise ValueError("维护工具构建期间源码或工具链变化")
-        receipt = {"format_version": 1, "kind": "devex-clone-tool-build", "backend_root": str(backend),
-                   "source": before, "source_inventory": inventory, "toolchain": versions, "target_directory": str(target),
-                   "artifacts": artifacts, "restore_qualified": False, "resources_modified": False}
-        stage = "publish_receipt"
-        write_new(directory / "build.json", receipt)
-        return receipt
-    except Exception as error:
-        write_new(directory / "failed.json", {"status": "failed", "error_type": type(error).__name__,
-                                              "stage": stage, "source": before, "resources_modified": False,
-                                              "stdout": redact_object_diagnostic(getattr(error, "stdout", b""), os.environ),
-                                              "stderr": redact_object_diagnostic(getattr(error, "stderr", b""), os.environ)})
-        raise
 
 
 def verify_evidence(backend: Path, filename: Path, receipt: dict | None = None) -> dict:
@@ -187,32 +120,3 @@ def verify(backend: Path, filename: Path, run=subprocess.run) -> dict:
     if file_digest(filename) != before or source_binding(backend) != current:
         raise ValueError("校验维护工具期间源码或收据变化")
     return receipt
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    build_command = commands.add_parser("build", help="定向构建并保存本轮维护 CLI，不调用服务")
-    build_command.add_argument("--output-dir", required=True, type=Path)
-    build_command.add_argument("--write", required=True, action="store_true")
-    check = commands.add_parser("verify", help="只读验证本轮维护 CLI 与当前源码")
-    check.add_argument("--receipt", required=True, type=Path)
-    for child in (build_command, check):
-        child.add_argument("--backend-dir", required=True, type=Path)
-    args = parser.parse_args()
-    try:
-        backend = args.backend_dir.resolve(strict=True)
-        receipt = build(backend, args.output_dir) if args.command == "build" else verify(backend, args.receipt)
-        source = receipt["source"]
-        print(json.dumps({"status": "built" if args.command == "build" else "verified",
-                          "head": source["snapshot"]["head"], "clean": source["snapshot"]["clean"],
-                          "worktree_fingerprint": source["worktree_fingerprint"],
-                          "tools": list(receipt["artifacts"]), "restore_qualified": False, "resources_modified": False}))
-        return 0
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        print(json.dumps({"status": "failed", "error_type": type(error).__name__}))
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

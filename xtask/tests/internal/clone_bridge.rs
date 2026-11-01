@@ -134,6 +134,8 @@ struct FakeRunner {
     built: RefCell<Vec<String>>,
     fail_name: Option<String>,
     diagnostic: Option<String>,
+    source_drift: bool,
+    toolchain_drift: bool,
 }
 
 impl maintenance::Runner for FakeRunner {
@@ -143,6 +145,9 @@ impl maintenance::Runner for FakeRunner {
         executable: &str,
         _arguments: &[&str],
     ) -> Result<String, Box<dyn std::error::Error>> {
+        if self.toolchain_drift && self.calls.get() > 0 {
+            return Ok(format!("{executable} changed fixture"));
+        }
         Ok(format!("{executable} fixture"))
     }
 
@@ -194,6 +199,9 @@ impl maintenance::Runner for FakeRunner {
         .unwrap();
         if self.fail_name.as_deref() == Some(name) {
             return Err("fixture build failed".into());
+        }
+        if self.source_drift && self.calls.get() == 1 {
+            fs::write(root.join("product/input.txt"), "changed during build\n")?;
         }
         Ok(())
     }
@@ -633,6 +641,47 @@ fn maintenance_failure_preserves_stage_and_redacts_diagnostics() {
     let redacted =
         maintenance::redact_with("secret value=fixture secret", ["fixture secret".to_owned()]);
     assert_eq!(redacted, "secret value=[REDACTED]");
+
+    for drift in ["SourceDrift", "ToolchainDrift"] {
+        let fixture = Fixture::new();
+        let runner = FakeRunner {
+            source_drift: drift == "SourceDrift",
+            toolchain_drift: drift == "ToolchainDrift",
+            ..FakeRunner::default()
+        };
+        let output = fixture.local.join(drift);
+        let error = maintenance::build_with(&fixture.root, &output, &runner).unwrap_err();
+        assert!(
+            error.to_string().contains("verify_source_and_toolchain"),
+            "{drift}: {error}"
+        );
+        let failure = read_json(&output.join("failed.json"));
+        assert_eq!(failure["status"], "failed", "{drift}");
+        assert_eq!(failure["stage"], "verify_source_and_toolchain", "{drift}");
+        assert_eq!(failure["resources_modified"], false, "{drift}");
+        assert!(failure["source"].is_object(), "{drift}");
+        assert!(!output.join("build.json").exists(), "{drift}");
+        for (role, name) in [
+            ("reset", "ryframe-reset"),
+            ("migrate", "ryframe-migrate"),
+            ("tenant-data", "ryframe-tenant-data"),
+        ] {
+            assert!(
+                output
+                    .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+                    .is_file(),
+                "{drift}"
+            );
+            assert!(
+                output.join(format!("{role}.cargo.jsonl")).is_file(),
+                "{drift}"
+            );
+            assert!(
+                output.join(format!("{role}.cargo.log")).is_file(),
+                "{drift}"
+            );
+        }
+    }
 }
 
 #[test]
