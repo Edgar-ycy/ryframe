@@ -23,6 +23,8 @@ pub(crate) mod databases;
 
 #[path = "ci/frontend_source.rs"]
 pub(crate) mod frontend_source;
+#[path = "ci/full_stack_config.rs"]
+pub(crate) mod full_stack_config;
 #[path = "ci/integration_configuration.rs"]
 pub(crate) mod integration_configuration;
 #[path = "ci/integration_inputs.rs"]
@@ -64,6 +66,15 @@ const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan(base) => plan(base.as_deref()),
+        CiCommand::FullStackConfig(options) => {
+            let plan = full_stack_config::plan(&options)?;
+            if options.plan {
+                crate::check::render_task_plan(&plan);
+                Ok(())
+            } else {
+                full_stack_config::run(&root_dir(), &options, &plan)
+            }
+        }
         CiCommand::ResourceGateReplay(options) => {
             resource_gate::replay::run(&options, frontend_dir)
         }

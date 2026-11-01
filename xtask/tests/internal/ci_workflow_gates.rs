@@ -81,13 +81,38 @@ fn full_stack_native_stages_keep_failure_collection_and_required_artifacts() {
         configuration["reset"]["legacy_mysql_exclusive"].as_bool(),
         Some(true)
     );
+    let (_, configuration_step) = command(job, "cargo xtask check ci full-stack-config");
     assert_eq!(
-        configuration["object_storage"]["local_base_dir"].as_str(),
-        Some("$RUNNER_TEMP/ryframe-full-stack/storage")
+        argument(configuration_step, "--runtime-dir"),
+        "$RUNNER_TEMP/ryframe-full-stack"
     );
     assert_eq!(
-        configuration["reset"]["state_directory"].as_str(),
-        Some("$RUNNER_TEMP/ryframe-full-stack/reset-state")
+        argument(configuration_step, "--source-backend"),
+        "$GITHUB_WORKSPACE/backend"
+    );
+    assert_eq!(
+        argument(configuration_step, "--source-frontend"),
+        "$GITHUB_WORKSPACE/frontend"
+    );
+    for (flag, expected) in [
+        ("--run-id", "${{github.run_id}}"),
+        ("--attempt", "${{github.run_attempt}}"),
+        ("--source-sha", "${{github.sha}}"),
+        ("--mysql-container", "${{job.services.mysql.id}}"),
+        ("--redis-container", "${{job.services.redis.id}}"),
+        ("--s3-container", "${{job.services.rustfs.id}}"),
+    ] {
+        assert_eq!(
+            argument(configuration_step, flag)
+                .split_whitespace()
+                .collect::<String>(),
+            expected
+        );
+    }
+    assert!(
+        text(configuration_step, "run")
+            .split_whitespace()
+            .any(|v| v == "--write")
     );
     let (prepare, _) = command(job, "cargo xtask check recovery full-stack prepare");
     let (start, _) = command(job, "cargo xtask check recovery full-stack start");

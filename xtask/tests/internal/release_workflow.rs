@@ -39,19 +39,63 @@ fn release_workflows_use_rust_release_commands_without_python_setup() {
 
 #[test]
 fn extended_full_stack_records_before_fixture_and_rechecks_after_build() {
-    let extended = read(".github/workflows/extended-ci.yml");
-    assert!(extended.contains("fixture: core"));
-    assert!(extended.contains("fixture: business"));
-    assert!(extended.contains("Linux DevEx Cgroup Memory"));
-    let record = extended.find("记录本次全栈源码组合").unwrap();
-    let fixture = extended
-        .find("在隔离工作树生成业务 crate 并校验幂等性")
+    use super::ci_workflow_tests::{argument, command, job, text, workflow};
+    let extended = workflow("extended-ci.yml");
+    assert!(extended.get("jobs").unwrap().get("devex-cgroup").is_some());
+    let full_stack = job(&extended, "full-stack-e2e");
+    let matrix = full_stack
+        .get("strategy")
+        .unwrap()
+        .get("matrix")
+        .unwrap()
+        .get("include")
+        .unwrap()
+        .as_sequence()
         .unwrap();
-    let build = extended.find("构建前端生产产物").unwrap();
-    let verify = extended.find("复核全栈源码组合未变化").unwrap();
-    assert!(record < fixture);
-    assert!(fixture < build);
-    assert!(build < verify);
+    for required in ["core", "business"] {
+        assert!(matrix.iter().any(|row| text(row, "fixture") == required));
+    }
+    let (record, record_step) = command(full_stack, "cargo xtask check release ci record-pair");
+    let (fixture, fixture_step) = command(full_stack, "cargo xtask check recovery fixture");
+    let (config, config_step) = command(full_stack, "cargo xtask check ci full-stack-config");
+    let (build, build_step) = command(full_stack, "corepack pnpm build");
+    let (verify, verify_step) = command(full_stack, "cargo xtask check release ci verify-pair");
+    assert!(record < fixture && fixture < config && config < build && build < verify);
+    for (step, directory) in [
+        (record_step, "backend"),
+        (fixture_step, "backend"),
+        (config_step, "${{ matrix.backend }}"),
+        (build_step, "${{ matrix.frontend }}"),
+        (verify_step, "backend"),
+    ] {
+        assert_eq!(text(step, "working-directory"), directory);
+    }
+    assert_eq!(
+        argument(record_step, "--output"),
+        "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
+    );
+    assert_eq!(
+        argument(verify_step, "--input"),
+        argument(record_step, "--output")
+    );
+    for step in [record_step, fixture_step, verify_step] {
+        assert_eq!(
+            argument(step, "--frontend-dir"),
+            "$GITHUB_WORKSPACE/frontend"
+        );
+    }
+    assert_eq!(
+        text(fixture_step, "if"),
+        "${{ matrix.fixture == 'business' }}"
+    );
+    assert_eq!(
+        argument(fixture_step, "--output-dir"),
+        "$GITHUB_WORKSPACE/backend/.local-tests/business-fixture"
+    );
+    assert_eq!(
+        argument(build_step, "--source-commit"),
+        "$(git rev-parse HEAD)"
+    );
 }
 
 #[test]

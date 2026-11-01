@@ -8,24 +8,37 @@ mod artifacts;
 mod gates;
 
 fn fixture_configuration(job: &YamlValue) -> (usize, toml::Value) {
-    let (index, step) = steps(job)
-        .iter()
-        .enumerate()
-        .find(|(_, step)| {
-            step.get("name").and_then(YamlValue::as_str)
-                == Some("写入当前 Job 的隔离数据库文件配置")
-        })
-        .unwrap();
-    // 只读取 TOML 数据；端口是既有控制器输出，不解释或执行 Shell。
-    let data = regex::Regex::new(r#"(?ms)<<['"]?EOF['"]?\r?\n(.*?)^\s*EOF\s*$"#).unwrap();
-    let document = data.captures(text(step, "run")).unwrap()[1].replace(
-        "$(cat \"$RUNNER_TEMP/ryframe-full-stack/worker-health-port\")",
-        "19210",
-    );
-    (index, toml::from_str(&document).unwrap())
+    let (index, step) = command(job, "cargo xtask check ci full-stack-config");
+    let selected = argument(step, "--template");
+    let relative = selected.strip_prefix("$GITHUB_WORKSPACE/backend/").unwrap();
+    let bytes = fs::read_to_string(crate::workspace::root_dir().join(relative)).unwrap();
+    (index, toml::from_str(&bytes).unwrap())
 }
 
-fn workflow(name: &str) -> YamlValue {
+// 提取声明的命令参数；不解释 Shell 或执行 GitHub 表达式。
+pub(super) fn argument(step: &YamlValue, flag: &str) -> String {
+    let pattern = format!(
+        r#"(?:^|\s){}(?:\s+|=)(?:"([^"]+)"|'([^']+)'|(\S+))"#,
+        regex::escape(flag)
+    );
+    let re = regex::Regex::new(&pattern).unwrap();
+    let direct = text(step, "run")
+        .lines()
+        .filter(|line| matches!(line.split_whitespace().next(), Some("cargo" | "corepack")))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        direct.len(),
+        1,
+        "目标步骤必须是唯一直接 cargo/corepack 调用"
+    );
+    let matched = re.captures(direct[0]).unwrap();
+    (1..=3)
+        .find_map(|i| matched.get(i))
+        .unwrap()
+        .as_str()
+        .to_owned()
+}
+pub(super) fn workflow(name: &str) -> YamlValue {
     yaml::parse(
         &fs::read_to_string(
             crate::workspace::root_dir()
@@ -37,7 +50,7 @@ fn workflow(name: &str) -> YamlValue {
     .unwrap()
 }
 
-fn job<'a>(workflow: &'a YamlValue, name: &str) -> &'a YamlValue {
+pub(super) fn job<'a>(workflow: &'a YamlValue, name: &str) -> &'a YamlValue {
     workflow.get("jobs").unwrap().get(name).unwrap()
 }
 
@@ -45,7 +58,7 @@ fn steps(job: &YamlValue) -> &[YamlValue] {
     job.get("steps").unwrap().as_sequence().unwrap()
 }
 
-fn text<'a>(value: &'a YamlValue, key: &str) -> &'a str {
+pub(super) fn text<'a>(value: &'a YamlValue, key: &str) -> &'a str {
     value.get(key).unwrap().as_str().unwrap()
 }
 
@@ -55,7 +68,7 @@ fn uses(step: &YamlValue, action: &str) -> bool {
         .is_some_and(|value| value.starts_with(action))
 }
 
-fn command<'a>(job: &'a YamlValue, prefix: &str) -> (usize, &'a YamlValue) {
+pub(super) fn command<'a>(job: &'a YamlValue, prefix: &str) -> (usize, &'a YamlValue) {
     steps(job)
         .iter()
         .enumerate()

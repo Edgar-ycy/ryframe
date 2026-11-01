@@ -11,6 +11,8 @@ use super::super::model::{
 
 #[path = "ci/frontend_source.rs"]
 mod frontend_source;
+#[path = "ci/full_stack_config.rs"]
+mod full_stack_config;
 use frontend_source::parse_frontend_source;
 #[path = "ci/required.rs"]
 mod required;
@@ -19,6 +21,9 @@ mod resource_gate;
 
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
     match args {
+        [command, rest @ ..] if command == "full-stack-config" => {
+            full_stack_config::parse(rest).map(CiCommand::FullStackConfig)
+        }
         [command, rest @ ..] if command == "plan" => parse_base_sha(rest).map(CiCommand::Plan),
         [command, rest @ ..] if command == "preflight" => {
             parse_base_sha(rest).map(CiCommand::Preflight)

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Unify isolated full-stack CI configuration and Worker health-port preparation in the formal Rust entry point, reusing paired-source receipts and application validation. Remove inline Python port selection and shell configuration writers, and check source ordering through actual YAML commands.
+
 - Add complete G/P provenance verification and actual observation to fresh-target execution bindings for independently published sources, distinguishing the current backend, original generated sources and published sources. Delegate Python execution-root selection to the same Rust readonly authority, rejecting mixed bindings and drift without rewriting original receipts.
 
 - Remove reviewed redundant test assertions for empty-repository backend scanning, policy-task membership and strict-migration constants. Retain safeguards for real Git inventories, backend language accounting, exact policy vectors, strict task-graph arguments and effective test entry points.

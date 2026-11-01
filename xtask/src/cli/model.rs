@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 use crate::{check::language::LanguageOptions, devex};
+#[path = "model/full_stack_config.rs"]
+mod full_stack_config;
+pub(crate) use full_stack_config::*;
 
 #[path = "model/release.rs"]
 mod release;
@@ -253,6 +256,7 @@ pub(crate) enum CiCommand {
     Integration,
     ConsumerContract(ConsumerContractOptions),
     FrontendSource(FrontendSourceOptions),
+    FullStackConfig(FullStackConfigOptions),
     Required(RequiredOptions),
     Security(SecurityCommand),
 }

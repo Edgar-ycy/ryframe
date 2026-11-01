@@ -139,12 +139,6 @@ jobs:
           --health-timeout=3s
           --health-retries=20
     steps:
-      - name: 配置全栈临时目录
-        shell: bash
-        run: |
-          umask 077
-          mkdir -p "$RUNNER_TEMP/ryframe-full-stack"
-
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -158,13 +152,6 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
-
-      - name: 选择空闲 Worker 健康端口
-        shell: bash
-        run: |
-          set -euo pipefail
-          port="$(python -c 'import socket; sock=socket.socket(); sock.bind(("127.0.0.1", 0)); print(sock.getsockname()[1]); sock.close()')"
-          printf "%s\n" "$port" > "$RUNNER_TEMP/ryframe-full-stack/worker-health-port"
 
       - name: 安装固定并校验哈希的 CI Python 依赖
         working-directory: backend
@@ -253,78 +240,17 @@ jobs:
 
       - name: 写入当前 Job 的隔离数据库文件配置
         working-directory: ${{ matrix.backend }}
-        shell: bash
-        run: |
-          umask 077
-          mkdir -p .local-tests/full-stack-config
-          cp config/app.toml .local-tests/full-stack-config/app.toml
-          cat > .local-tests/full-stack-config/app.test.toml <<EOF
-          scope_id = "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          snowflake_worker_id = 3
-
-          [bootstrap]
-          admin_password = "Valid!Admin123"
-          [app]
-          host = "127.0.0.1"
-          port = 8080
-          [multi_tenancy]
-          enabled = true
-          [api_docs]
-          enabled = false
-          [monitor]
-          metrics_bearer_token = "ryframe-ci-isolated-metrics-token-more-than-thirty-two-bytes"
-          [database.primary]
-          host = "127.0.0.1"
-          port = 3306
-          database = "ryframe_e2e_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-          username = "root"
-          password = "ryframe-ci-password"
-          tls_mode = "disabled"
-          [redis]
-          mode = "required"
-          host = "127.0.0.1"
-          port = 6379
-          password = ""
-          database = 14
-          tls = false
-          [object_storage]
-          backend = "s3"
-          endpoint = "http://127.0.0.1:9000"
-          region = "us-east-1"
-          access_key = "ryframe-ci-access"
-          secret_key = "ryframe-ci-isolated-storage-secret"
-          use_ssl = false
-          local_base_dir = "$RUNNER_TEMP/ryframe-full-stack/storage"
-          [auth]
-          jwt_secret = "ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes"
-          [cors]
-          allow_origins = ["http://127.0.0.1:4174"]
-          [jobs]
-          mode = "external"
-          health_host = "127.0.0.1"
-          health_port = $(cat "$RUNNER_TEMP/ryframe-full-stack/worker-health-port")
-          [rate_limit]
-          enabled = true
-          capacity = 100
-          window_secs = 60
-          api_window_secs = 60
-          [rate_limit.api_limits]
-          "POST /api/v1/auth/login" = 5
-          "POST /api/v1/auth/password-reset/complete" = 3
-          "GET /api/v1/auth/csrf" = 30
-          [reset]
-          credential_version = "ci-v1"
-          legacy_mysql_exclusive = true
-          legacy_redis_exclusive = true
-          legacy_object_storage_exclusive = true
-          redis_outside_sentinel_key = "ryframe-ci-outside-sentinel"
-          services_stopped = true
-          source_sha = "$GITHUB_SHA"
-          state_directory = "$RUNNER_TEMP/ryframe-full-stack/reset-state"
-          EOF
-          cat > .local-tests/full-stack-control.json <<EOF
-          {"format_version":1,"runtime_dir":"$RUNNER_TEMP/ryframe-full-stack","mysql_container_id":"${{ job.services.mysql.id }}","redis_container_id":"${{ job.services.redis.id }}","s3_container_id":"${{ job.services.rustfs.id }}"}
-          EOF
+        run: >-
+          cargo xtask check ci full-stack-config
+          --template "$GITHUB_WORKSPACE/backend/config/ci-full-stack.toml"
+          --runtime-dir "$RUNNER_TEMP/ryframe-full-stack"
+          --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          --source-sha "${{ github.sha }}"
+          --source-backend "$GITHUB_WORKSPACE/backend"
+          --source-frontend "$GITHUB_WORKSPACE/frontend"
+          --mysql-container "${{ job.services.mysql.id }}"
+          --redis-container "${{ job.services.redis.id }}"
+          --s3-container "${{ job.services.rustfs.id }}" --write
 
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}

@@ -110,7 +110,8 @@ pub(crate) fn execute_registered_task(
         | TaskExecutor::SmartPolicyChecks
         | TaskExecutor::BackendSmartPolicyChecks
         | TaskExecutor::SmartFrontend => execute_smart_task(executor, mode, context, state),
-        TaskExecutor::CiFrontendSource
+        TaskExecutor::CiFullStackConfig
+        | TaskExecutor::CiFrontendSource
         | TaskExecutor::CiFrontendCandidateSource
         | TaskExecutor::CiFrontendCheckout
         | TaskExecutor::CiContractSource
