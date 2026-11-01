@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Review artifact-digest and Windows file-protection tests, removing constraints on duplicate binding counts and private function call counts/order while retaining digest/race rejection, actual write/replacement blocking, identity-drift detection, nested concurrency, exception cleanup and long-path safeguards.
+
 - Unify isolated full-stack CI configuration and Worker health-port preparation in the formal Rust entry point, reusing paired-source receipts and application validation. Remove inline Python port selection and shell configuration writers, and check source ordering through actual YAML commands.
 
 - Add complete G/P provenance verification and actual observation to fresh-target execution bindings for independently published sources, distinguishing the current backend, original generated sources and published sources. Delegate Python execution-root selection to the same Rust readonly authority, rejecting mixed bindings and drift without rewriting original receipts.

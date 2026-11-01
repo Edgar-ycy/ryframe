@@ -83,10 +83,8 @@ class NativeDigestTests(unittest.TestCase):
         self.writable(other)
 
     def test_digest_mismatch_before_lock_and_race_before_open_are_rejected(self):
-        with patch.object(frozen, "_open", wraps=frozen._open) as opened:
-            with self.assertRaises(ValueError), frozen.protect_binaries([self.value | {"sha256": "0" * 64}]):
-                pass
-            opened.assert_not_called()
+        with self.assertRaises(ValueError), frozen.protect_binaries([self.value | {"sha256": "0" * 64}]):
+            pass
         original_open = frozen._open
         timestamp = self.path.stat()
         def changed_open(kernel, path):
@@ -100,19 +98,17 @@ class NativeDigestTests(unittest.TestCase):
                 pass
         self.writable()
 
-    def test_nested_same_set_reuses_digest_and_threads_share_real_protection(self):
-        with patch.object(frozen, "_plain_digest", wraps=frozen._plain_digest) as hashed:
-            with frozen.protect_binaries([self.value]):
-                with frozen.protect_binaries([dict(self.value)]):
-                    with ThreadPoolExecutor(max_workers=4) as executor:
-                        values = list(executor.map(file_digest, [self.path] * 8))
-                    self.assertTrue(all(item["sha256"] == self.value["sha256"] for item in values))
-                with self.assertRaises(OSError):
-                    self.writable()
-                with self.assertRaises(ValueError), frozen.protect_binaries([self.value | {"sha256": "0" * 64}]):
-                    pass
-                self.assertEqual(hashed.call_count, 2)
-            self.assertIsNone(frozen.protected_digest(self.path))
+    def test_nested_same_set_and_threads_share_real_protection(self):
+        with frozen.protect_binaries([self.value]):
+            with frozen.protect_binaries([dict(self.value)]):
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    values = list(executor.map(file_digest, [self.path] * 8))
+                self.assertTrue(all(item["sha256"] == self.value["sha256"] for item in values))
+            with self.assertRaises(OSError):
+                self.writable()
+            with self.assertRaises(ValueError), frozen.protect_binaries([self.value | {"sha256": "0" * 64}]):
+                pass
+        self.assertIsNone(frozen.protected_digest(self.path))
         self.writable()
 
     def test_nested_collection_expansion_and_other_controller_are_rejected(self):

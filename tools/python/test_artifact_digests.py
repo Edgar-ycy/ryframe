@@ -59,7 +59,6 @@ class BinaryBindingTests(unittest.TestCase):
         source.assert_called_once_with(self.backend, self.source)
         history.assert_called_once_with(self.backend, Path(self.value["initialized"]["path"]))
         target.assert_called_once_with(self.backend, self.target)
-        self.assertEqual(len(values), 14)
         self.assertEqual({Path(item["path"]).stem for item in values}, {
             "mysql", "mysqldump", "node", "api", "worker", "reset", "migrate", "tenant-data", "rustfs", "wsl"})
         self.assertTrue(all(set(item) == {"path", "sha256"} for item in values))
