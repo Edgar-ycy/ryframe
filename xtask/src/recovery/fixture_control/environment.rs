@@ -17,7 +17,7 @@ mod guards;
 #[path = "environment/output.rs"]
 mod output;
 #[path = "environment/plan.rs"]
-mod plan;
+pub(in crate::recovery) mod plan;
 #[path = "environment/protocol.rs"]
 pub(crate) mod protocol;
 
@@ -35,9 +35,15 @@ pub(super) fn fields(
             secrets_dir,
         } => {
             insert_inputs(&mut fields, inputs, root)?;
-            let fixture = crate::recovery::clone::native::json::read(Path::new(
-                fields["fixture"].as_str().ok_or("夹具输入路径缺失")?,
-            ))?;
+            let publication_path = Path::new(
+                fields["execution_source"]
+                    .as_str()
+                    .ok_or("执行来源路径缺失")?,
+            );
+            let publication = super::source_pair::execution::verify(
+                root,
+                &super::file_binding(publication_path, "执行来源")?,
+            )?;
             let output = path_value(
                 output,
                 root,
@@ -46,7 +52,7 @@ pub(super) fn fields(
             )?;
             output::validate(
                 root,
-                &fixture,
+                &publication,
                 Path::new(output.as_str().ok_or("环境输出路径缺失")?),
             )?;
             fields.insert("output".to_owned(), output);
@@ -127,7 +133,7 @@ fn insert_inputs(
 ) -> Result<()> {
     for (name, value) in [
         ("review", inputs.review.as_path()),
-        ("fixture", inputs.fixture.as_path()),
+        ("execution_source", inputs.execution_source.as_path()),
         ("maintenance_build", inputs.maintenance_build.as_path()),
     ] {
         insert_path(fields, name, value, root, LocalTestPathKind::ExistingFile)?;

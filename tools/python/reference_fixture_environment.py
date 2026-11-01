@@ -372,17 +372,16 @@ def _validate_reset_password(values: dict) -> None:
     environment_native("reset-password", {"admin_password": values.get("admin_password")})
 
 
-def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed",
+def _environment(backend: Path, review: dict, publication: dict, output: Path, side: str = "seed",
                  secret_directory: Path | None = None) -> tuple[dict, dict]:
     if side not in review["scopes"]:
         raise ValueError("夹具环境必须选择已审阅侧")
     selected = review["scopes"][side]
-    execution = Path(fixture["paths"]["backend"])
-    # 业务 crate 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
-    if execution != Path(selected["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
-        raise ValueError("所选侧 业务 crate 工作树与审阅计划或生成快照不一致")
-    source_secrets = _secret_directory(backend, execution)
-    secrets = _secret_directory(backend, execution, secret_directory)
+    # 完整发布来源与所选侧已由原生 plan/planned-inputs 前后核验。
+    execution = Path(publication["published"]["backend"]["path"])
+    source_backend = Path(publication["original"]["paths"]["backend"])
+    source_secrets = _secret_directory(backend, source_backend)
+    secrets = _secret_directory(backend, source_backend, secret_directory)
     source_mysql = source_secrets / "mysql-client.cnf"
     if source_mysql != source_secrets / "mysql-client.cnf" or linked(source_mysql) or not source_mysql.is_file():
         raise ValueError("业务 crate MySQL 凭据路径不属于冻结工作树")
@@ -427,9 +426,9 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     return environment, files
 
 
-def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, side: str = "seed") -> dict:
+def plan(backend: Path, review_path: Path, execution_source_path: Path, maintenance_path: Path, side: str = "seed") -> dict:
     return environment_native("plan", {"backend": str(backend.resolve(strict=True)),
-        "review": str(review_path), "fixture": str(fixture_path),
+        "review": str(review_path), "execution_source": str(execution_source_path),
         "maintenance_build": str(maintenance_path), "side": side})
 
 
@@ -438,19 +437,19 @@ def _planned_inputs(backend: Path, result: dict) -> tuple[Path, dict, Path, dict
     return tuple(Path(value) if index % 2 == 0 else value for index, value in enumerate(values))
 
 
-def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path,
+def prepare(backend: Path, review_path: Path, execution_source_path: Path, maintenance_path: Path, output: Path,
             side: str = "seed", secret_directory: Path | None = None) -> dict:
     """显式准备冻结环境；只写本地私有环境和收据，绝不创建服务或业务资源。"""
     backend = backend.resolve(strict=True)
-    result = plan(backend, review_path, fixture_path, maintenance_path, side)
+    result = plan(backend, review_path, execution_source_path, maintenance_path, side)
     output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
     if not output.parent.is_dir():
         raise ValueError("夹具环境输出父目录不存在")
     inputs = _planned_inputs(backend, result)
-    _, review, _, fixture, maintenance_file, _ = inputs
-    execution = Path(fixture["paths"]["backend"])
+    _, review, _, publication, maintenance_file, _ = inputs
+    execution = Path(publication["published"]["backend"]["path"])
     output = Path(environment_native("prepare-output", {"backend": str(backend), "plan": result, "output": str(output)})["output"])
-    environment, secrets = _environment(backend, review, fixture, output, side, secret_directory)
+    environment, secrets = _environment(backend, review, publication, output, side, secret_directory)
     # 测试配置目录随环境一起生成，因此输出目录可能已经存在。
     output.mkdir(exist_ok=True)
     (output / "tmp").mkdir()
@@ -481,8 +480,8 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
 
 
 PROTOCOL_SCHEMAS = {
-    "plan": (("review", "fixture", "maintenance_build", "side", "native_tool"), (), False),
-    "prepare": (("review", "fixture", "maintenance_build", "side", "output", "native_tool"), ("secrets_dir",), True),
+    "plan": (("review", "execution_source", "maintenance_build", "side", "native_tool"), (), False),
+    "prepare": (("review", "execution_source", "maintenance_build", "side", "output", "native_tool"), ("secrets_dir",), True),
     "review": (("review", "output", "native_tool"), (), True),
     "rotate-secrets": (("fixture", "output", "native_tool"), (), True),
     "bootstrap-secrets": (("source_fixture", "source_secrets", "fixture", "native_tool"), (), True),
@@ -497,6 +496,7 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--source-secrets", type=Path)
     parser.add_argument("--review", type=Path)
     parser.add_argument("--fixture", type=Path)
+    parser.add_argument("--execution-source", type=Path)
     parser.add_argument("--maintenance-build", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--secrets-dir", type=Path)
@@ -506,16 +506,19 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
     from rate_limit_tool import install_verified_binding
     install_verified_binding(args.native_tool)
-    if args.operation in ("plan", "prepare") and (args.review is None or args.fixture is None or args.maintenance_build is None):
-        parser.error(f"{args.operation} 需要 --review、--fixture 与 --maintenance-build")
+    if args.operation in ("plan", "prepare"):
+        if args.fixture is not None or args.review is None or args.execution_source is None or args.maintenance_build is None:
+            parser.error(f"{args.operation} 需要 --review、--execution-source 与 --maintenance-build，拒绝 --fixture")
+    elif args.execution_source is not None:
+        parser.error("--execution-source 只用于 plan/prepare")
     if args.operation == "plan":
         if args.output is not None or args.write or args.secrets_dir is not None:
             parser.error("plan 不接受 --output、--write 或 --secrets-dir")
-        result = plan(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.side)
+        result = plan(args.backend_dir, args.review, args.execution_source, args.maintenance_build, args.side)
     elif args.operation == "prepare":
         if args.output is None or not args.write:
             parser.error("prepare 需要 --output 与 --write")
-        result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output, args.side,
+        result = prepare(args.backend_dir, args.review, args.execution_source, args.maintenance_build, args.output, args.side,
                          args.secrets_dir)
     elif args.operation == "rotate-secrets":
         if args.fixture is None or args.output is None or not args.write:

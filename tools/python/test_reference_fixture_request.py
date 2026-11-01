@@ -162,6 +162,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "status": "prepared",
                 "plan": plan,
                 "execution_backend": str(self.execution),
+                "config_dir": str(config),
                 "configuration_sha256": "b" * 64,
                 "services_started": False,
                 "remote_writes": 0,

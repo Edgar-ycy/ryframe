@@ -1,5 +1,5 @@
 use super::{
-    dependency::{Dependencies, FrontendCommand, Python, failure},
+    dependency::{Dependencies, FrontendCommand, Native, failure},
     model::*,
 };
 use crate::{Result, process::ChildGroup, recovery::clone::native::json as strict};
@@ -32,7 +32,7 @@ pub(super) fn command(binding: &Value, arguments: &Value, windows: bool) -> Resu
     }
     Ok(command)
 }
-pub(super) fn run(api: &mut Python, invocation: FrontendCommand<'_>) -> Result<Value> {
+pub(super) fn run(api: &mut Native, invocation: FrontendCommand<'_>) -> Result<Value> {
     let (handoff, _request_file) = super::frontend::publish(&api.root, &invocation)?;
     let FrontendCommand {
         binding,

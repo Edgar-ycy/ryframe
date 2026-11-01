@@ -254,6 +254,8 @@ fn private_protocol_rejects_duplicate_fields_wrong_write_and_unknown_operation()
         r#"{"operation":"manifest","operation":"terminal","arguments":{},"write":false}"#,
         r#"{"operation":"terminal","arguments":{},"write":false}"#,
         r#"{"operation":"other","arguments":{},"write":false}"#,
+        r#"{"operation":"worker-origin","arguments":{},"write":true}"#,
+        r#"{"operation":"worker-origin","arguments":{"root":"private-sentinel"},"write":false}"#,
     ] {
         assert!(protocol::execute(raw.as_bytes()).is_err());
     }

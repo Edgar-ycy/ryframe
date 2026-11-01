@@ -83,8 +83,8 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
     if output.exists() or not manifest.is_file():
         raise ValueError("对象桶初始化必须复用首代服务账本且不能覆盖已有证据")
     _initial_services(load_state(run))
-    configuration = _bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))
-    object_configuration = configuration_binding(backend, bootstrap_file.parent / "config")
+    configuration = _bucket_configuration(review, application_settings(bootstrap, Path(bootstrap["execution_backend"])))
+    object_configuration = configuration_binding(backend, Path(bootstrap["config_dir"]))
     if configuration != bound_object_configuration(object_configuration, backend):
         raise ValueError("对象桶连接身份与绑定配置文件不同；请复核审阅和环境准备结果")
     scope_id = review["scopes"]["seed"]["scope_id"]
@@ -102,7 +102,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
         if (bound(manifest) != sources["manifest"]
                 or bound(environment_file) != sources["environment"]
                 or read_json(environment_file) != {"environment": private}
-                or plan_hash(_bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))) != sources["configuration_sha256"]):
+                or plan_hash(_bucket_configuration(review, application_settings(bootstrap, Path(bootstrap["execution_backend"])))) != sources["configuration_sha256"]):
             raise ValueError("对象桶初始化期间服务账本清单发生变化")
         validate_current_review_tools(review)
 
@@ -238,7 +238,7 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
     port = urlsplit("redis://" + service["endpoint"]).port
     if port is None:
         raise ValueError("Redis 审阅端点无端口")
-    password = application_settings(bootstrap_file, Path(bootstrap["execution_backend"])).get("redis", {}).get("password")
+    password = application_settings(bootstrap, Path(bootstrap["execution_backend"])).get("redis", {}).get("password")
     if not isinstance(password, str) or not password:
         raise ValueError("Redis 首代缺少私有认证")
     tools = review["tools"]

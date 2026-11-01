@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Connect published independent clean fixture sources to review, environment preparation and runtime builds through explicit execution-source and configuration bindings, preserving original credential sources, complete dual-repository provenance and no-replay failure protections. Use Rust for browser runtime dispatch and dependency reads, independently verifying the tool compilation root, fixed binding and complete sources while keeping the registered business runtime source. Remove the old Python runtime, browser dependency adapter, review-renewal executor and obsolete dedicated tests, preserving drift rejection, failure evidence and non-publication safeguards in the existing Rust host.
+
 - List the existing `control export-sql` operation in top-level migration usage and clarify that the Worker exposes only health and metrics HTTP endpoints, without business APIs. Command execution and build boundaries remain unchanged.
 
 - Remove Python status, close, reconcile, recover and restart dispatch already replaced by native service lifecycles, together with obsolete tree-control and cache primitives. Retain the active initial-service and storage-start paths, real recovery coverage, explicit write authorization and tool verification before dispatch. Correct the backend rejection reason to identify a mismatch with the current operation workspace.

@@ -9,9 +9,13 @@ use std::{
 
 pub(super) struct Inputs {
     pub root: PathBuf,
+    pub coordinator: PathBuf,
+    pub execution_source: Value,
+    bootstrap: PathBuf,
     pub configuration: PathBuf,
     pub environment: BTreeMap<String, String>,
     guards: Vec<Value>,
+    configuration_identity: (u64, u64),
 }
 
 impl Inputs {
@@ -19,6 +23,8 @@ impl Inputs {
         let boot = runtime::bootstrap(backend, environment)?;
         let bootstrap = path(&boot["bootstrap"])?;
         let parent = bootstrap.parent().ok_or("夹具环境收据缺少父目录")?;
+        let configuration = path(&boot["config_dir"])?;
+        let configuration_identity = runtime::configuration_identity(&configuration)?;
         let (receipt, guard) = document(&bootstrap)?;
         let (values, environment_guard) = document(&parent.join("environment.json"))?;
         crate::recovery::clone::native::json::exact(&values, &["environment"], "夹具私有环境")?;
@@ -29,7 +35,7 @@ impl Inputs {
         let mut guards = plan::input_guards(&receipt)?;
         guards.extend([guard, environment_guard]);
         for name in ["app.toml", "app.test.toml"] {
-            guards.push(snapshot(&parent.join("config").join(name), MAX_BYTES)?);
+            guards.push(snapshot(&configuration.join(name), MAX_BYTES)?);
         }
         check(
             runtime::bootstrap(backend, environment)? == boot,
@@ -37,7 +43,11 @@ impl Inputs {
         )?;
         let value = Self {
             root: path(&boot["execution"])?,
-            configuration: parent.join("config"),
+            coordinator: backend.to_owned(),
+            execution_source: receipt["plan"]["execution_source"].clone(),
+            bootstrap,
+            configuration,
+            configuration_identity,
             environment: configured(&boot["private"], std::env::vars_os())?,
             guards,
         };
@@ -46,6 +56,16 @@ impl Inputs {
     }
 
     pub fn verify(&self) -> Result<()> {
+        runtime::bootstrap(&self.coordinator, &self.bootstrap)?;
+        crate::recovery::fixture_control::source_pair::execution::pair(
+            &self.coordinator,
+            &self.root,
+            &self.execution_source,
+        )?;
+        check(
+            runtime::configuration_identity(&self.configuration)? == self.configuration_identity,
+            "夹具构建配置目录身份变化",
+        )?;
         for guard in &self.guards {
             unchanged(guard)?;
         }

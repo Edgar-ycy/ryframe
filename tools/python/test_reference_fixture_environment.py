@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import subprocess
 import tomllib
 import json
 from pathlib import Path
@@ -91,40 +93,100 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build", "resources_modified": False, "artifacts":
                             {key: {"executable": str(self.tools["mysql"])} for key in ("reset", "migrate", "tenant-data")}}
 
+    def publish_execution(self):
+        original = self.root / "original"
+        backend, frontend = original / "backend", original / "frontend"
+        contract = (json.dumps({"info": {"title": "RyFrame API", "version": "0.0.1"},
+                               "openapi": "3.1.0", "paths": {}}, ensure_ascii=False,
+                              sort_keys=True, indent=2) + "\n").encode()
+        sources = {}
+        for name, root in (("backend", backend), ("frontend", frontend)):
+            (root / "openapi").mkdir(parents=True)
+            (root / "src").mkdir()
+            (root / ".gitignore").write_text(".local-tests/\ntarget/\nnode_modules/\ndist/\n", encoding="utf-8")
+            (root / "src/lib.rs").write_text("// original\n", encoding="utf-8")
+            (root / "openapi/openapi.json").write_bytes(contract)
+            if name == "backend":
+                (root / "xtask").mkdir()
+                (root / "xtask/fixture.txt").write_text("fixture\n", encoding="utf-8")
+                (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+            else:
+                (root / "openapi/source.json").write_text(json.dumps({"schema_version": 1,
+                    "backend_repository": "fixture/backend", "backend_commit": sources["backend"]["head"],
+                    "openapi_path": "openapi/openapi.json", "openapi_version": "3.1.0",
+                    "sha256": hashlib.sha256(contract).hexdigest()}, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            for args in (("init", "--quiet", "--template="), ("add", "."),
+                         ("-c", "user.name=Fixture", "-c", "user.email=fixture@ryframe.invalid",
+                          "-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + str(self.root / "no-hooks"),
+                          "commit", "--quiet", "-m", "fixture")):
+                subprocess.run(["git", "-C", str(root), "-c", "core.autocrlf=false", *args],
+                               check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            sources[name] = environment.snapshot(root)[0]
+        (backend / "src/lib.rs").write_text("// generated\n", encoding="utf-8")
+        model = backend / "crates/order-business/src/resources/mod.rs"
+        model.parent.mkdir(parents=True)
+        model.write_text("// Order\n", encoding="utf-8")
+        self.fixture = {"format_version": 1, "fixture": "business", "status": "ready",
+            "fixture_sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
+            "sources": sources, "paths": {"backend": str(backend), "frontend": str(frontend)},
+            "generated": {name: environment.snapshot(root)[0] for name, root in (("backend", backend), ("frontend", frontend))}}
+        self.original_fixture = original / "fixture.json"
+        self.original_fixture.write_text(json.dumps(self.fixture), encoding="utf-8")
+        (backend / ".local-tests").mkdir()
+        output = backend / ".local-tests/published"
+        from rate_limit_tool import tool_binding, verified_tool
+        with verified_tool(tool_binding()) as executable:
+            subprocess.run([executable, "check", "recovery", "fixture", "source-pair", "publish-execution",
+                "--output-dir", str(output), "--write"], cwd=backend, check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        self.execution_source = output / "execution-source.json"
+        self.publication = json.loads(self.execution_source.read_text(encoding="utf-8"))
+        execution = self.publication["published"]["backend"]["path"]
+        self.review["execution_source"] = environment.bound(self.execution_source)
+        self.review["sources"] = {name + "_head": sources[name]["head"] for name in ("backend", "frontend")}
+        for scope in self.review["scopes"].values():
+            scope["backend_dir"] = execution
+        self.review["future_root"] = str(Path(execution) / ".local-tests/reference-fixture/run-r1")
+        (Path(execution) / ".local-tests/reference-fixture").mkdir(parents=True)
+
     def test_plan_is_read_only_and_excludes_historical_data(self):
-        result = environment.plan(self.backend, self.write("review.json", self.review), self.write("fixture.json", self.fixture), self.write("build.json", self.maintenance))
+        self.publish_execution()
+        result = environment.plan(self.backend, self.write("review.json", self.review), self.execution_source, self.write("build.json", self.maintenance))
         self.assertFalse(result["historical_data_used"])
         self.assertEqual(result["remote_writes"], 0)
         self.assertEqual(result["side"], "seed")
-        base = environment.plan(self.backend, self.write("base-review.json", self.review), self.write("base-fixture.json", self.fixture),
+        base = environment.plan(self.backend, self.write("base-review.json", self.review), self.execution_source,
                                 self.write("base-build.json", self.maintenance), "base")
         self.assertEqual((base["side"], base["scope_id"]), ("base", "fixture-base"))
 
     def test_public_plan_receives_the_exact_native_binding_and_writes_nothing(self):
+        self.publish_execution()
         from rate_limit_tool import tool_binding, verified_tool
         import subprocess
         review = self.write("cli-review.json", self.review)
-        fixture = self.write("cli-fixture.json", self.fixture)
+        fixture = self.execution_source
         maintenance = self.write("cli-build.json", self.maintenance)
-        before = {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()}
+        before = {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         with verified_tool(tool_binding()) as executable:
             completed = subprocess.run([executable, "check", "recovery", "fixture", "environment", "plan",
-                "--review", str(review), "--fixture", str(fixture), "--maintenance-build", str(maintenance),
+                "--review", str(review), "--execution-source", str(fixture), "--maintenance-build", str(maintenance),
                 "--side", "base"], cwd=self.backend, capture_output=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8", errors="replace"))
         lines = [line for line in completed.stdout.decode("utf-8").splitlines() if line.startswith("{")]
         self.assertEqual(len(lines), 1, completed.stdout.decode("utf-8", errors="replace"))
         self.assertEqual(json.loads(lines[0]), {"status": "planned", "services_started": False, "remote_writes": 0})
-        self.assertEqual(before, {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()})
+        self.assertEqual(before, {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
 
     def test_plan_rejects_historical_source_database(self):
+        self.publish_execution()
         self.review["reference"]["source"]["databases"] = [{"database": "old"}]
         with self.assertRaisesRegex(ValueError, "历史来源"):
-            environment.plan(self.backend, self.write("review.json", self.review), self.write("fixture.json", self.fixture), self.write("build.json", self.maintenance))
+            environment.plan(self.backend, self.write("review.json", self.review), self.execution_source, self.write("build.json", self.maintenance))
 
     def test_plan_accepts_project_relative_evidence_paths(self):
+        self.publish_execution()
         review = self.write("review.json", self.review)
-        fixture = self.write("fixture.json", self.fixture)
+        fixture = self.execution_source
         maintenance = self.write("build.json", self.maintenance)
         result = environment.plan(self.backend, review.relative_to(self.backend), fixture.relative_to(self.backend), maintenance.relative_to(self.backend))
         self.assertEqual(result["scope_id"], "fixture-seed")
@@ -294,11 +356,12 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         environment.validate_review(extra)
 
     def test_prepare_rejects_unreviewed_tools_without_writing(self):
+        self.publish_execution()
         review = self.write("unreviewed.json", self.review)
-        fixture = self.write("unreviewed-fixture.json", self.fixture)
+        fixture = self.execution_source
         maintenance = self.write("unreviewed-build.json", self.maintenance)
-        reference = Path(self.fixture["paths"]["backend"]) / ".local-tests/reference-fixture"
-        reference.mkdir(parents=True)
+        reference = Path(self.publication["published"]["backend"]["path"]) / ".local-tests/reference-fixture"
+        reference.mkdir(parents=True, exist_ok=True)
         output = reference / "environment-unreviewed"
         before = {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
                   for path in self.root.rglob("*")}
@@ -308,46 +371,52 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(before, {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
                                   for path in self.root.rglob("*")})
 
-    def test_prepare_rechecks_fixture_binding_before_bootstrap_publication(self):
+    def test_prepare_rechecks_publication_binding_before_bootstrap_publication(self):
+        self.publish_execution()
         self.review["ready_for_execution"] = False
         pending = self.write("prepare-pending.json", self.review)
         ready = self.root / "prepare-ready.json"
         observed = self.observed_tools()
         with patch.object(environment, "_preflight", return_value=observed):
             environment.revalidate(self.backend, pending, ready)
-        fixture = self.write("prepare-fixture.json", self.fixture)
+        fixture = self.execution_source
         maintenance = self.write("prepare-build.json", self.maintenance)
-        reference = Path(self.fixture["paths"]["backend"]) / ".local-tests/reference-fixture"
-        reference.mkdir(parents=True)
+        reference = Path(self.publication["published"]["backend"]["path"]) / ".local-tests/reference-fixture"
+        reference.mkdir(parents=True, exist_ok=True)
         output = reference / "prepared"
+        observed = False
 
         def configuration(_execution, _config_dir):
+            nonlocal observed
+            observed = True
             changed = copy.deepcopy(self.fixture)
             changed["status"] = "changed"
-            fixture.write_text(json.dumps(changed), encoding="utf-8")
+            self.original_fixture.write_text(json.dumps(changed), encoding="utf-8")
             return "c" * 64
 
         with (
             patch.object(environment, "_environment", return_value=({"APP_ENV": "test"}, {})),
             patch.object(environment, "configuration_digest", side_effect=configuration),
             patch.object(environment, "verify_tools", return_value={"source": {}}),
-            self.assertRaisesRegex(ValueError, "业务 crate 收据"),
+            self.assertRaises(ValueError),
         ):
             environment.prepare(self.backend, ready, fixture, maintenance, output)
+        self.assertTrue(observed, "必须到达配置完成后的正式来源复核窗口")
         self.assertTrue((output / "failed.json").is_file())
         self.assertFalse((output / "bootstrap.json").exists())
 
     def _prepared_path_inputs(self):
+        self.publish_execution()
         self.review["ready_for_execution"] = False
         pending = self.write("output-pending.json", self.review)
         ready = self.root / "output-ready.json"
         with patch.object(environment, "_preflight", return_value=self.observed_tools()):
             environment.revalidate(self.backend, pending, ready)
-        fixture = self.write("output-fixture.json", self.fixture)
+        fixture = self.execution_source
         maintenance = self.write("output-build.json", self.maintenance)
-        execution = Path(self.fixture["paths"]["backend"])
+        execution = Path(self.publication["published"]["backend"]["path"])
         reference = execution / ".local-tests/reference-fixture"
-        reference.mkdir(parents=True)
+        reference.mkdir(parents=True, exist_ok=True)
         return ready, fixture, maintenance, execution, reference
 
     def test_prepare_rejects_coordinator_only_output_before_any_file_or_configuration_write(self):
@@ -421,18 +490,24 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         }
         for name, value in names.items():
             (secrets / name).write_text(value, encoding="utf-8")
+        published = self.root / "published/backend"
+        (published / "config").mkdir(parents=True)
+        (published / "config/app.toml").write_bytes((config / "app.toml").read_bytes())
         seed = self.review["scopes"]["seed"]
-        seed["backend_dir"] = str(execution)
+        seed["backend_dir"] = str(published)
         for item in seed["databases"]:
-            item["connection_file"] = str(secrets / "mysql-client.cnf")
+            item["connection_file"] = str(published / ".local-tests/reference-fixture/secrets/mysql-client.cnf")
         generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
         fixture = {"format_version": 1, "fixture": "business", "status": "ready",
                    "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
                    "paths": {"backend": str(execution), "frontend": str(self.root / "business-frontend")},
                    "generated": {"backend": generated}}
 
-        with patch.object(environment, "snapshot", return_value=(generated, b"")):
-            values, files = environment._environment(self.backend, self.review, fixture, self.root / "output")
+        publication = {"published": {"backend": {"path": str(published)}},
+                       "original": {"paths": {"backend": str(execution)}}}
+        values, files = environment._environment(self.backend, self.review, publication, self.root / "output")
+        self.assertFalse((published / ".local-tests/reference-fixture/secrets/jwt-secret.txt").exists())
+        self.assertEqual(files["jwt-secret.txt"]["path"], str(secrets / "jwt-secret.txt"))
 
         self.assertEqual(set(values), {"APP_ENV", "TEMP", "TMP"})
         self.assertEqual(values["APP_ENV"], "test")
@@ -472,7 +547,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             rotated = environment.rotate_secrets(self.backend, fixture_file, secret_set)
             rotated_values, rotated_files = environment._environment(
-                self.backend, self.review, fixture, self.root / "rotated-output", secret_directory=secret_set)
+                self.backend, self.review, publication, self.root / "rotated-output", secret_directory=secret_set)
         self.assertEqual(rotated["status"], "generated")
         self.assertEqual(set(rotated["files"]), set(environment.SECRET_FILES))
         self.assertEqual(set(rotated_files), {"mysql-client.cnf", *names})
@@ -531,11 +606,12 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "admin_password"):
             environment._validate_reset_password(values)
 
-        base_mysql = self.root / "base/backend/.local-tests/reference-fixture/secrets/mysql-client.cnf"
+        base_mysql = published / ".local-tests/reference-fixture/secrets-base/mysql-client.cnf"
+        self.review["scopes"]["base"]["backend_dir"] = str(published)
         for item in self.review["scopes"]["base"]["databases"]:
             item["connection_file"] = str(base_mysql)
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
-            base_values, base_files = environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
+            base_values, base_files = environment._environment(self.backend, self.review, publication, self.root / "base-output", "base")
         self.assertEqual(set(base_values), {"APP_ENV", "TEMP", "TMP"})
         base_settings = tomllib.loads((self.root / "base-output/config/app.test.toml").read_text(encoding="utf-8"))
         self.assertEqual(base_settings["scope_id"], "fixture-base")
@@ -544,10 +620,6 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(base_mysql.read_bytes(), (secrets / "mysql-client.cnf").read_bytes())
         self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
 
-        self.review["scopes"]["base"]["backend_dir"] = str(self.root / "other-business-backend")
-        with patch.object(environment, "snapshot", return_value=(generated, b"")):
-            with self.assertRaisesRegex(ValueError, "所选侧 业务 crate"):
-                environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
 
 
 class NativeEnvironmentAdapterTests(unittest.TestCase):

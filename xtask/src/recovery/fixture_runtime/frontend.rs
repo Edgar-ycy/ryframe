@@ -92,10 +92,13 @@ pub(super) fn contract(backend: &Path, output: &Path) -> Result<Value> {
     )?;
     let mut guards = plan::input_guards(binding)?;
     guards.push(guard);
-    let sources = [
+    let mut sources = vec![
         plan::SourceGuard::capture(&path(&boot["execution"])?, &binding["backend"]["source"])?,
         plan::SourceGuard::capture(&frontend, &binding["frontend"]["source"]["generated"])?,
     ];
+    sources.push(super::worker_origin::verify(
+        &binding["tools"]["worker_origin"],
+    )?);
     validate_environment(&value["environment"], &boot["private"], binding)?;
     let command = process::command(binding, &value["arguments"], cfg!(windows))?;
     let executable = path(&json!(command.first().ok_or("前端命令为空")?))?;
@@ -106,13 +109,13 @@ pub(super) fn contract(backend: &Path, output: &Path) -> Result<Value> {
             .is_some_and(|v| v > 0 && v <= 7200),
         "前端命令超时无效",
     )?;
+    verified.verify()?;
     for source in sources {
         source.unchanged()?;
     }
     for guard in guards {
         unchanged(&guard)?;
     }
-    verified.verify()?;
     Ok(
         json!({"scope_id":binding["scope_id"],"artifacts":{"frontend":artifact},
         "frontend_completion":"exit-and-members","command":command,"cwd":frontend,

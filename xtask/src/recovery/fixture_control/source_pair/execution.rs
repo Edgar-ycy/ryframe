@@ -19,7 +19,7 @@ mod input;
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/fixture_control/source_pair/execution.rs"]
-mod tests;
+pub(crate) mod tests;
 
 /// 将已冻结的业务源码发布为独立仓库；失败保留部分输出，禁止覆盖重试。
 pub(crate) fn publish(backend: &Path, output: &Path) -> Result<Value> {
@@ -74,6 +74,9 @@ fn root_receipt(
     initial: bool,
 ) -> Result<Value> {
     validate_absolute_path(root, LocalTestPathKind::ExistingDirectory)?;
+    // 先拒绝链接，再统一实际路径拼写，避免 Windows 分隔符导致同一根的收据不同。
+    let canonical = super::super::portable_path(&fs::canonicalize(root)?);
+    let root = canonical.as_path();
     if root
         .parent()
         .ok_or("执行源码根缺少父目录")?
@@ -153,6 +156,34 @@ pub(crate) fn verify(coordinator: &Path, descriptor: &Value) -> Result<Value> {
     exact(descriptor, &["path", "bytes", "sha256"], "执行源码清单绑定")?;
     let path = Path::new(descriptor["path"].as_str().ok_or("执行源码绑定路径缺失")?);
     validate_local_test_path(path, coordinator, LocalTestPathKind::ExistingFile)?;
+    verify_bound(descriptor, path)
+}
+
+/// 运行来源只持有 P 时，清单必须在 P 同级固定位置，仍执行同一完整来源核验。
+pub(in crate::recovery) fn verify_for_root(root: &Path, descriptor: &Value) -> Result<Value> {
+    exact(descriptor, &["path", "bytes", "sha256"], "执行源码清单绑定")?;
+    validate_absolute_path(root, LocalTestPathKind::ExistingDirectory)?;
+    let path = Path::new(descriptor["path"].as_str().ok_or("执行源码绑定路径缺失")?);
+    validate_absolute_path(path, LocalTestPathKind::ExistingFile)?;
+    let expected = root
+        .parent()
+        .ok_or("执行源码根缺少父目录")?
+        .join("execution-source.json");
+    if super::super::portable_path(&fs::canonicalize(path)?)
+        != super::super::portable_path(&expected)
+    {
+        return Err("执行源码清单必须位于运行后端同级固定位置".into());
+    }
+    let publication = verify_bound(descriptor, path)?;
+    if publication["published"]["backend"]["path"]
+        != super::super::path_text_canonical(root, "执行后端")?
+    {
+        return Err("执行来源未绑定当前运行后端".into());
+    }
+    Ok(publication)
+}
+
+fn verify_bound(descriptor: &Value, path: &Path) -> Result<Value> {
     if file_binding(path, "执行源码清单")? != *descriptor {
         return Err("执行源码清单绑定漂移；重新核对来源，禁止改写旧绑定".into());
     }
@@ -161,6 +192,42 @@ pub(crate) fn verify(coordinator: &Path, descriptor: &Value) -> Result<Value> {
         return Err("执行源码清单在来源复核期间发生变化".into());
     }
     Ok(document)
+}
+
+pub(in crate::recovery) const PAIR_KIND: &str = "reference-fixture-execution-source-pair";
+
+/// 仅从显式发布收据签发执行组合，不要求生成后的提交等于原始提交。
+pub(in crate::recovery) fn pair(
+    coordinator: &Path,
+    root: &Path,
+    descriptor: &Value,
+) -> Result<Value> {
+    let publication = verify(coordinator, descriptor)?;
+    if publication["published"]["backend"]["path"]
+        != super::super::path_text_canonical(root, "执行后端")?
+    {
+        return Err("执行来源与构建后端不同".into());
+    }
+    Ok(
+        json!({"format_version":1,"kind":PAIR_KIND,"execution_source":descriptor,
+        "sources":publication["original"]["source_pair"]["sources"]}),
+    )
+}
+
+pub(in crate::recovery) fn verify_pair(root: &Path, pair: &Value) -> Result<Value> {
+    exact(
+        pair,
+        &["format_version", "kind", "execution_source", "sources"],
+        "执行来源组合",
+    )?;
+    if pair["format_version"] != 1 || pair["kind"] != PAIR_KIND {
+        return Err("执行来源组合类型或版本无效".into());
+    }
+    let publication = verify_for_root(root, &pair["execution_source"])?;
+    if pair["sources"] != publication["original"]["source_pair"]["sources"] {
+        return Err("执行来源组合的原始来源不匹配".into());
+    }
+    Ok(publication)
 }
 
 fn verify_file(path: &Path) -> Result<Value> {
@@ -190,8 +257,22 @@ fn verify_file(path: &Path) -> Result<Value> {
     )?;
     for (name, side) in &before.sides {
         let root = path.parent().ok_or("执行源码清单缺少父目录")?.join(name);
-        if document["published"][*name] != root_receipt(&root, &side.files, name, false)? {
-            return Err("发布源码 HEAD、tree、完整清单或来源指纹发生变化".into());
+        let actual = root_receipt(&root, &side.files, name, false)?;
+        let expected = &document["published"][*name];
+        if expected != &actual {
+            let changed = ["path", "head", "tree", "inventory", "fingerprints"]
+                .into_iter()
+                .filter(|field| expected[*field] != actual[*field])
+                .collect::<Vec<_>>();
+            let changed = if changed.is_empty() {
+                "结构".into()
+            } else {
+                changed.join("、")
+            };
+            return Err(format!(
+                "发布源码 HEAD、tree、完整清单或来源指纹发生变化；{name} 变化字段：{changed}"
+            )
+            .into());
         }
     }
     if input::load(Path::new(backend))?.receipt != before.receipt

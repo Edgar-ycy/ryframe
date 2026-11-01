@@ -60,6 +60,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
         self.review_file = self.write(self.root / "review.json", self.review)
         self.bootstrap = {
             "execution_backend": str(self.execution),
+            "config_dir": str(config),
             "secret_files": {
                 "rustfs-access-key.txt": self.credentials["rustfs-access-key.txt"],
                 "rustfs-secret-key.txt": self.credentials["rustfs-secret-key.txt"],

@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reference_fixture_environment as fixture_environment
 import reference_fixture_request as fixture_request
-import reference_fixture_review as fixture_review
 import reference_fixture_services as fixture_services
 import reference_fixture_source_pair as fixture_source_pair
 import reference_fixture_successor as fixture_successor
@@ -33,18 +32,11 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_domain_failure_reports_validation_reason_without_credentials(self):
         raw = self.protocol(
-            "review", "renew", True,
-            template=self.root + "/.local-tests/template.json",
-            fixture=self.root + "/.local-tests/fixture.json",
-            future_root=self.root + "/.local-tests/future",
-            id="review-test",
-            api_port=18000,
-            worker_port=18003,
-            frontend_port=18006,
-            rustfs_api_port=19000,
-            rustfs_console_port=19001,
-            redis_port=16000,
-            output=self.root + "/.local-tests/output.json",
+            "environment", "plan", False,
+            review=self.root + "/.local-tests/review.json",
+            execution_source=self.root + "/.local-tests/execution-source.json",
+            maintenance_build=self.root + "/.local-tests/build.json",
+            side="seed",
         )
         output = io.StringIO()
 
@@ -52,12 +44,12 @@ class FixtureControlProtocolTests(unittest.TestCase):
             raise ValueError("计划来源错误：secret-for-test")
         with (
             mock.patch.dict(os.environ, {"APP_PASSWORD": "secret-for-test"}),
-            mock.patch.object(sys, "argv", ["review.py"]),
+            mock.patch.object(sys, "argv", ["environment.py"]),
             mock.patch.object(sys, "stderr", output),
         ):
             result = run_private(
-                "review", fixture_review.PROTOCOL_SCHEMAS, fail,
-                positional_operation=False, raw=raw,
+                "environment", fixture_environment.PROTOCOL_SCHEMAS, fail,
+                positional_operation=True, raw=raw,
             )
         self.assertEqual(result, 1)
         self.assertIn("计划来源错误", output.getvalue())
@@ -133,23 +125,16 @@ class FixtureControlProtocolTests(unittest.TestCase):
         directory = str(Path(self.root) / ".local-tests" / "run")
         environment = self.protocol(
             "environment", "plan", False,
-            review=input_path, fixture=input_path, maintenance_build=input_path, side="seed",
+            review=input_path, execution_source=input_path, maintenance_build=input_path, side="seed",
         )
         self.assertEqual(
             self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, environment, positional=True)[0],
             "plan",
         )
-        review = self.protocol(
-            "review", "renew", True,
-            template=input_path, fixture=input_path, future_root=directory, id="r24-current",
-            api_port=18230, worker_port=19230, frontend_port=4200, rustfs_api_port=29210,
-            rustfs_console_port=29211, redis_port=16391, output=input_path,
-        )
-        review_args = self.arguments(
-            "review", fixture_review.PROTOCOL_SCHEMAS, review, positional=False
-        )
-        self.assertEqual(review_args[:2], ["--backend-dir", self.root])
-        self.assertNotIn("renew", review_args)
+        old = json.loads(environment)
+        old["fixture"] = old.pop("execution_source")
+        with self.assertRaises(FixtureControlProtocolError):
+            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, json.dumps(old), positional=True)
         request = self.protocol(
             "request", "publish", True,
             environment=input_path, service_run=directory, id="fresh-base", side="base", output=input_path,
@@ -243,7 +228,6 @@ class FixtureControlProtocolTests(unittest.TestCase):
         scripts = [
             "full_stack_ci_support.py",
             "reference_fixture_environment.py",
-            "reference_fixture_review.py",
             "reference_fixture_request.py",
             "reference_fixture_successor.py",
             "reference_fixture_services.py",

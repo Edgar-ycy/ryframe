@@ -17,6 +17,7 @@ struct Fixture {
     bootstrap: PathBuf,
     review: PathBuf,
     tool: PathBuf,
+    worker_origin: Value,
     source: Value,
     server: String,
     frontend_url: String,
@@ -62,9 +63,23 @@ fn repo(root: &Path, name: &str) {
         ],
     );
 }
+fn worker_origin(root: &Path) -> Value {
+    repo(root, "Cargo.toml");
+    fs::create_dir(root.join(".local-tests")).unwrap();
+    let executable = root.join(".local-tests/worker.exe");
+    fs::write(&executable, b"worker executable").unwrap();
+    let binding = root.join(".local-tests/frontend-origin-tool.json");
+    // 注入依赖的单元事实；不冒充当前编译程序实际发布的 origin。
+    put(&binding, &json!({"unit_worker_origin":true}));
+    let mut source =
+        source::binding_value(&source::capture(root).unwrap().source)["snapshot"].clone();
+    source.as_object_mut().unwrap().remove("clean");
+    json!({"root":root,"binding":bound(&binding).unwrap(),"source":source,"executable":bound(&executable).unwrap()})
+}
 impl Fixture {
     fn new(server: &str) -> Self {
         let temp = super::tests::temporary();
+        let worker_origin = worker_origin(&temp.path().join("独立 工具编译根"));
         let backend = temp.path().join("backend");
         let frontend = temp.path().join("frontend");
         repo(&backend, "Cargo.toml");
@@ -122,6 +137,7 @@ impl Fixture {
             bootstrap,
             review,
             tool,
+            worker_origin,
             source,
             server: server.into(),
             frontend_url,
@@ -200,6 +216,7 @@ impl Dependencies for Fixture {
     fn call(&mut self, op: &str, args: Value) -> Result<Value> {
         self.calls.push(op.into());
         match op {
+            "worker-origin" => Ok(self.worker_origin.clone()),
             "bootstrap" => Ok(
                 json!({"bootstrap":self.bootstrap,"execution":self.backend,"private":{"APP_ENV":"test","APP_PASSWORD":"PrivateIgnoredSecret"},"python":self.tool}),
             ),
@@ -321,6 +338,13 @@ fn preview_build_browser_verify_close_preserve_order_and_bound_origin() {
     let tools = document(&f.frontend.join(".local-tests/frontend-tools.json"))
         .unwrap()
         .0;
+    assert_eq!(tools["real_browser"]["backendDir"], json!(f.backend));
+    assert_eq!(tools["real_browser"]["runtimeDir"], json!(f.runtime));
+    assert_eq!(
+        tools["real_browser"]["workerTool"],
+        json!({
+        "root":f.worker_origin["root"],"binding":f.worker_origin["binding"]})
+    );
     assert_eq!(
         tools["real_browser"]["port"],
         url::Url::parse(&f.frontend_url).unwrap().port().unwrap()
@@ -395,9 +419,50 @@ fn binding_rejects_unregistered_outputs_review_drift_and_occupied_frontend_port(
         std::net::TcpListener::bind(f.frontend_url.strip_prefix("http://").unwrap()).unwrap();
     assert!(f.execute("bind").is_err());
     drop(listener);
+
+    for endpoint in [
+        None,
+        Some("http://example.invalid:49152/v1/credentials"),
+        Some("http://127.0.0.1:49152/other"),
+    ] {
+        let mut f = Fixture::new("dev");
+        f.execute("bind").unwrap();
+        let mut request = f.request("browser");
+        request
+            .as_object_mut()
+            .unwrap()
+            .remove("credential_endpoint");
+        if let Some(endpoint) = endpoint {
+            request["credential_endpoint"] = json!(endpoint);
+        }
+        let error = execution::execute(&mut f, &request).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            if endpoint.is_some() {
+                "浏览器凭据端点必须是本机受管HTTP地址"
+            } else {
+                "浏览器执行协议字段缺失或包含未知字段"
+            }
+        );
+        let outputs = f.outputs();
+        assert!(!f.frontend.join(".local-tests/frontend-tools.json").exists());
+        assert!(!f.calls.iter().any(|call| call.starts_with("frontend:")));
+        assert!(!outputs["result"].exists());
+        if endpoint.is_some() {
+            let failure = document(&outputs["failure"]).unwrap().0;
+            assert_eq!(failure["stage"], "tool_configuration");
+            assert_eq!(failure["unknown_business_writes"], false);
+            let mut intent = bound(&outputs["intent"]).unwrap();
+            intent["status"] = json!("published");
+            assert_eq!(failure["intent"], intent);
+        } else {
+            assert!(!outputs["intent"].exists());
+            assert!(!outputs["failure"].exists());
+        }
+    }
 }
 #[test]
-fn source_guard_tolerates_identical_touch_but_detects_content_and_identity_change() {
+fn source_guard_tolerates_identical_touch_but_rejects_content_change() {
     let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let f = Fixture::new("dev");
     let root = &f.backend;
@@ -543,3 +608,6 @@ fn worker_recovery_keeps_running_worker_and_rejects_unknown_or_missing_api() {
     f.process_state = json!({"api":"stopped","worker":"stopped"});
     assert!(execution::ensure_worker(&mut f, &paths).is_err());
 }
+
+#[path = "worker_origin_tests.rs"]
+mod worker_origin_tests;

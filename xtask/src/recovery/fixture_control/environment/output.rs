@@ -15,10 +15,9 @@ impl std::fmt::Display for OutputError {
 }
 impl std::error::Error for OutputError {}
 
-pub(super) fn validate(root: &Path, fixture: &Value, output: &Path) -> Result<PathBuf> {
-    super::guards::fixture(fixture)?;
+pub(super) fn validate(root: &Path, publication: &Value, output: &Path) -> Result<PathBuf> {
     let execution = Path::new(
-        fixture["paths"]["backend"]
+        publication["published"]["backend"]["path"]
             .as_str()
             .ok_or("夹具执行目录缺失")?,
     );

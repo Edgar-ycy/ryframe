@@ -5,7 +5,12 @@ use crate::{
 
 use super::{ParsedOptions, new_directory, parse_side, reject_write, require_write};
 
-const INPUTS: &[&str] = &["--review", "--fixture", "--maintenance-build", "--side"];
+const INPUTS: &[&str] = &[
+    "--review",
+    "--execution-source",
+    "--maintenance-build",
+    "--side",
+];
 
 pub(super) fn parse(args: &[String]) -> Result<FixtureEnvironmentCommand, CliError> {
     let Some((operation, values)) = args.split_first() else {
@@ -40,7 +45,7 @@ fn parse_prepare(args: &[String]) -> Result<FixtureEnvironmentCommand, CliError>
         args,
         &[
             "--review",
-            "--fixture",
+            "--execution-source",
             "--maintenance-build",
             "--side",
             "--output",
@@ -93,7 +98,7 @@ fn parse_bootstrap(args: &[String]) -> Result<FixtureEnvironmentCommand, CliErro
 fn environment_inputs(options: &ParsedOptions) -> Result<FixtureEnvironmentInputs, CliError> {
     Ok(FixtureEnvironmentInputs {
         review: options.path("--review", LocalTestPathKind::ExistingFile)?,
-        fixture: options.path("--fixture", LocalTestPathKind::ExistingFile)?,
+        execution_source: options.path("--execution-source", LocalTestPathKind::ExistingFile)?,
         maintenance_build: options.path("--maintenance-build", LocalTestPathKind::ExistingFile)?,
         side: parse_side(options.optional("--side").unwrap_or("seed"), true)?,
     })

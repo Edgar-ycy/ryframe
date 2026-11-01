@@ -22,6 +22,14 @@ pub(in crate::recovery) fn current(root: &Path, directory: &Path) -> Result<Valu
         return Ok(Value::Null);
     }
     let root = portable_path(&fs::canonicalize(root)?);
+    let source_pair = read_json(
+        &directory.join("source-pair.json"),
+        "全栈源码组合",
+        4 * 1024 * 1024,
+    )?;
+    if source_pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
+        return published(&root, directory, &source_pair);
+    }
     let fixture = root.parent().ok_or("后端缺少父目录")?.join("fixture.json");
     if fixture.is_file() {
         return business(&root, directory, &fixture);
@@ -34,6 +42,46 @@ pub(in crate::recovery) fn current(root: &Path, directory: &Path) -> Result<Valu
     Ok(
         json!({"format_version":1,"fixture":"core","backend_root":root,
         "source_pair":pair,"original":{"backend":observed}}),
+    )
+}
+
+fn published(root: &Path, directory: &Path, pair: &Value) -> Result<Value> {
+    use crate::recovery::fixture_control::source_pair::execution;
+    let publication = execution::verify_pair(root, pair)?;
+    let fixture_binding = &publication["original"]["fixture_receipt"];
+    let fixture_path = Path::new(text_field(fixture_binding, "path", "原始 fixture")?);
+    let fixture = read_json(fixture_path, "原始 fixture", 4 * 1024 * 1024)?;
+    let model = file_binding(&root.join(MODEL), "发布业务模型")?;
+    if file_binding(fixture_path, "原始 fixture")? != *fixture_binding
+        || model["sha256"] != fixture["fixture_sha256"]
+    {
+        return Err("发布业务模型与原始 fixture 摘要不匹配".into());
+    }
+    let mut roots = serde_json::Map::new();
+    let mut generated = serde_json::Map::new();
+    for side in SIDES {
+        let value = &publication["published"][side];
+        roots.insert((*side).into(), value["path"].clone());
+        let mut snapshot = value["inventory"]["source"]["snapshot"].clone();
+        snapshot
+            .as_object_mut()
+            .ok_or("发布来源快照无效")?
+            .remove("clean");
+        validate_snapshot(&snapshot, false)?;
+        generated.insert((*side).into(), snapshot);
+    }
+    let pair_path = portable_path(&fs::canonicalize(directory)?).join("source-pair.json");
+    let mut bound = pair.clone();
+    bound["receipt"] = file_binding(&pair_path, "执行来源组合")?;
+    if read_json(&pair_path, "执行来源组合", 4 * 1024 * 1024)? != *pair
+        || execution::verify_pair(root, pair)? != publication
+    {
+        return Err("发布业务来源在核验期间变化".into());
+    }
+    Ok(
+        json!({"format_version":1,"fixture":"business","fixture_receipt":fixture_binding,
+        "fixture_definition":{"model":model},"roots":roots,"source_pair":bound,
+        "original":publication["original"]["source_pair"]["sources"],"generated":generated}),
     )
 }
 

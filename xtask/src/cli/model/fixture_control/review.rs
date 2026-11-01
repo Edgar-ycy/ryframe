@@ -9,7 +9,7 @@ pub(crate) enum FixtureReviewCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FixtureReviewOptions {
     pub(crate) template: PathBuf,
-    pub(crate) fixture: PathBuf,
+    pub(crate) execution_source: PathBuf,
     pub(crate) future_root: PathBuf,
     pub(crate) id: String,
     pub(crate) api_port: u16,

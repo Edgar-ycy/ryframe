@@ -4,12 +4,9 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    cli::{FIXTURE_RUNTIME_USAGE, FixtureRuntimeCommand, FixtureServer},
+    cli::{FIXTURE_RUNTIME_USAGE, FixtureRuntimeCommand},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_env_removed,
 };
-
-const SCRIPT: &str = "tools/python/reference_fixture_runtime.py";
 
 #[path = "fixture_runtime/binding.rs"]
 mod binding;
@@ -70,145 +67,91 @@ mod scenario_tests;
 mod tests;
 #[path = "fixture_runtime/worker_handoff.rs"]
 mod worker_handoff;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PrivateFixtureRuntimeInvocation {
-    pub(crate) script: &'static str,
-    pub(crate) protocol: String,
-}
+#[path = "fixture_runtime/worker_origin.rs"]
+mod worker_origin;
 
 pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
     if matches!(command, FixtureRuntimeCommand::Help) {
         println!("{FIXTURE_RUNTIME_USAGE}");
         return Ok(());
     }
-    if let FixtureRuntimeCommand::Build(runtime) = command {
-        validate_runtime(command, root)?;
-        println!(
-            "{}",
-            build::run(root, &runtime.environment, &runtime.output)?
-        );
-        return Ok(());
-    }
-    run_runtime(command, root)
+    validate_runtime(command, root)?;
+    let value = match command {
+        FixtureRuntimeCommand::Build(paths) => build::run(root, &paths.environment, &paths.output)?,
+        FixtureRuntimeCommand::Verify(paths) => runtime::verify(
+            &json!({"backend":root,"environment":paths.environment,"output":paths.output}),
+        )?,
+        FixtureRuntimeCommand::Start(paths)
+        | FixtureRuntimeCommand::Stop(paths)
+        | FixtureRuntimeCommand::Status(paths) => runtime::control(
+            &json!({"backend":root,"environment":paths.environment,"output":paths.output,
+                "action":command.operation()}),
+            false,
+            false,
+        )?,
+        FixtureRuntimeCommand::Bind { .. }
+        | FixtureRuntimeCommand::Browser(_)
+        | FixtureRuntimeCommand::BrowserVerify(_)
+        | FixtureRuntimeCommand::BrowserClose(_) => return run_browser(command, root),
+        FixtureRuntimeCommand::Help => return Err("帮助不执行夹具运行阶段".into()),
+    };
+    println!("{value}");
+    Ok(())
 }
 
-fn run_runtime(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
-    let _native_tool = crate::check::python_suite::native_tool_binding()?;
+fn run_browser(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
     let credentials = if matches!(command, FixtureRuntimeCommand::Browser(_)) {
         Some(browser::CredentialBroker::start(
             &command
                 .runtime()
-                .ok_or("fixture runtime 浏览器操作缺少运行路径")?
+                .ok_or("浏览器操作缺少运行路径")?
                 .environment,
         )?)
     } else {
         None
     };
-    let endpoint = credentials
-        .as_ref()
-        .map(browser::CredentialBroker::endpoint);
-    let invocation = match endpoint {
-        Some(endpoint) => private_invocation_with_endpoint(command, root, Some(endpoint))?,
-        None => private_invocation_at(command, root)?,
-    };
-    if ["verify", "start", "stop", "status"].contains(&command.operation()) {
-        let request: Value = serde_json::from_str(&invocation.protocol)?;
-        let mut args =
-            json!({"backend":root,"environment":request["environment"],"output":request["output"]});
-        let value = if command.operation() == "verify" {
-            runtime::verify(&args)?
-        } else {
-            args["action"] = json!(command.operation());
-            runtime::control(&args, false, false)?
-        };
-        println!("{value}");
-        return Ok(());
-    }
-    if ["bind", "browser", "browser-verify", "browser-close"].contains(&command.operation()) {
-        let mut request: Value = serde_json::from_str(&invocation.protocol)?;
-        // 工具绑定只属于 Python 传输协议；原生浏览器协议保持原有字段。
-        request
-            .as_object_mut()
-            .ok_or("夹具运行时请求必须是对象")?
-            .remove("native_tool");
-        let mut api = dependency::Python::new(root)?;
-        let result = execution::execute(&mut api, &request);
-        if let Some(credentials) = credentials {
-            let broker = credentials.finish(result.is_ok());
-            if result.is_ok() {
-                broker?;
-            }
-        }
-        println!("{}", result?);
-        return Ok(());
-    }
-    let result = run_with_env_removed(
+    let request = browser_request(
+        command,
         root,
-        "python",
-        &[
-            "-B",
-            invocation.script,
-            "--protocol-json",
-            invocation.protocol.as_str(),
-        ],
-        &[],
-        &[],
-    );
+        credentials
+            .as_ref()
+            .map(browser::CredentialBroker::endpoint),
+    )?;
+    let mut api = dependency::Native::new(root)?;
+    let result = execution::execute(&mut api, &request);
     if let Some(credentials) = credentials {
         let broker = credentials.finish(result.is_ok());
         if result.is_ok() {
             broker?;
         }
     }
-    result
+    println!("{}", result?);
+    Ok(())
 }
 
-pub(crate) fn private_invocation_at(
-    command: &FixtureRuntimeCommand,
-    root: &Path,
-) -> Result<PrivateFixtureRuntimeInvocation> {
-    private_invocation_with_endpoint(command, root, None)
-}
-
-fn private_invocation_with_endpoint(
+fn browser_request(
     command: &FixtureRuntimeCommand,
     root: &Path,
     credential_endpoint: Option<&str>,
-) -> Result<PrivateFixtureRuntimeInvocation> {
-    if matches!(command, FixtureRuntimeCommand::Build(_)) {
-        return Err("fixture runtime build 已由原生构建入口独占，禁止生成 Python 请求".into());
-    }
-    let runtime = command
-        .runtime()
-        .ok_or("fixture runtime 帮助不启动私有阶段程序")?;
-    validate_runtime(command, root)?;
-    let mut protocol = json!({
+) -> Result<Value> {
+    let runtime = command.runtime().ok_or("浏览器操作缺少运行路径")?;
+    let mut request = json!({
         "backend_dir": path_text(root, "后端目录")?,
         "environment": path_text(&runtime.environment, "环境收据")?,
         "format_version": 1,
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
         "operation": command.operation(),
         "output": path_text(&runtime.output, "运行目录")?,
         "write": command.writes(),
+        "browser_binding": path_text(command.browser_binding().ok_or("浏览器操作缺少绑定")?, "浏览器绑定")?,
     });
-    if let Some(binding) = command.browser_binding() {
-        protocol["browser_binding"] = json!(path_text(binding, "浏览器绑定")?);
-    }
     if let Some(endpoint) = credential_endpoint {
-        if !matches!(command, FixtureRuntimeCommand::Browser(_)) {
-            return Err("浏览器凭据端点只允许用于 browser 操作".into());
-        }
-        protocol["credential_endpoint"] = json!(endpoint);
+        request["credential_endpoint"] = json!(endpoint);
     }
     if let FixtureRuntimeCommand::Bind { run_id, server, .. } = command {
-        protocol["run_id"] = json!(run_id);
-        protocol["server"] = json!(server_text(*server));
+        request["run_id"] = json!(run_id);
+        request["server"] = json!(server.as_str());
     }
-    Ok(PrivateFixtureRuntimeInvocation {
-        script: SCRIPT,
-        protocol: serialize_protocol(protocol)?,
-    })
+    Ok(request)
 }
 
 fn validate_runtime(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
@@ -246,16 +189,4 @@ fn path_text<'a>(value: &'a Path, label: &str) -> Result<&'a str> {
     value
         .to_str()
         .ok_or_else(|| format!("{label}必须能表示为 UTF-8").into())
-}
-
-const fn server_text(server: FixtureServer) -> &'static str {
-    server.as_str()
-}
-
-fn serialize_protocol(protocol: Value) -> Result<String> {
-    let serialized = serde_json::to_string(&protocol)?;
-    if serialized.contains(['\n', '\r', '\0']) {
-        return Err("fixture runtime 私有协议不能包含换行符或 NUL".into());
-    }
-    Ok(serialized)
 }

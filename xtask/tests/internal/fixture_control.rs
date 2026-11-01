@@ -56,7 +56,7 @@ impl Fixture {
         vec![
             "--review".to_owned(),
             text(&self.input),
-            "--fixture".to_owned(),
+            "--execution-source".to_owned(),
             text(&self.input_two),
             "--maintenance-build".to_owned(),
             text(&self.input),
@@ -359,6 +359,9 @@ fn parses_every_environment_operation_into_typed_requests() {
         plan,
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Plan(_))
     ));
+    let mut retired = fixture.input_options();
+    retired[2] = "--fixture".to_owned();
+    assert!(parse_control(command("environment", Some("plan"), retired)).is_err());
 
     let mut prepare = fixture.input_options();
     prepare.extend([
@@ -421,7 +424,7 @@ fn parses_review_request_and_all_service_operations() {
     let review = vec![
         "--template".to_owned(),
         text(&fixture.input),
-        "--fixture".to_owned(),
+        "--execution-source".to_owned(),
         text(&fixture.input_two),
         "--future-root".to_owned(),
         text(&fixture.path("future root")),

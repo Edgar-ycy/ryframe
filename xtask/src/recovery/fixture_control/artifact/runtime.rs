@@ -273,7 +273,7 @@ fn verify_binaries(directory: &Path, receipt: &Value) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn configuration_digest(path: &Path) -> Result<String> {
+pub(in crate::recovery) fn configuration_digest(path: &Path) -> Result<String> {
     let mut files = serde_json::Map::new();
     for name in ["app.toml", "app.test.toml"] {
         let file = path.join(name);

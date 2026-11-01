@@ -256,7 +256,6 @@ fn native_and_python_callers_share_the_rust_configuration_authority() {
     for caller in [
         "devex_clone_target_binding.py",
         "devex_clone_source_proof.py",
-        "fixture_browser_dependencies.py",
     ] {
         let source = fs::read_to_string(root.join("tools/python").join(caller)).unwrap();
         assert!(

@@ -11,9 +11,9 @@ def service_run(review: dict) -> Path:
     return Path(_invoke("service-run", {"review": review}))
 
 
-def application_settings(bootstrap_file: Path, execution: Path) -> dict:
-    """从已绑定 bootstrap 相邻的唯一明文配置目录读取应用值。"""
-    return load_app_table(execution, {"APP_ENV": "test"}, config_dir=bootstrap_file.parent / "config")
+def application_settings(bootstrap: dict, execution: Path) -> dict:
+    """从原生已核验收据明确绑定的配置目录读取应用值。"""
+    return load_app_table(execution, {"APP_ENV": "test"}, config_dir=Path(bootstrap["config_dir"]))
 
 
 def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[str, ...]) -> tuple[Path, Path, dict, dict]:

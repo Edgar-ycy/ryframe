@@ -14,16 +14,12 @@ PROTOCOL_KIND = "ryframe-reference-fixture-control"
 BASE_FIELDS = {"backend_dir", "domain", "format_version", "kind", "operation", "write"}
 PATH_FIELDS = {
     "backend_dir", "frontend_dir", "output_dir", "review", "fixture", "maintenance_build", "output", "secrets_dir",
-    "source_fixture", "source_secrets", "template", "future_root", "environment",
+    "source_fixture", "source_secrets", "environment", "execution_source",
     "service_run", "source_result", "predecessor_review", "predecessor_request",
     "successor_review", "seed_request", "base_request", "candidate_request", "successor",
     "source_backend", "backend_build", "source_environment", "product_backend",
     "source_export_result", "workspace", "copy_directory", "owner_binding", "runtime_dir",
     "receipt",
-}
-INTEGER_FIELDS = {
-    "api_port", "worker_port", "frontend_port", "rustfs_api_port", "rustfs_console_port",
-    "redis_port",
 }
 POSITIVE_I64_TEXT_FIELDS = {"job_id", "migration"}
 TENANT_FIELDS = {"tenant"}
@@ -118,10 +114,6 @@ def private_arguments(
         value = protocol[name]
         if name in PATH_FIELDS:
             value = _path(value, name)
-        elif name in INTEGER_FIELDS:
-            if type(value) is not int:
-                raise FixtureControlProtocolError(f"{name} 必须是整数")
-            value = str(value)
         elif name in POSITIVE_I64_TEXT_FIELDS:
             if (
                 not isinstance(value, str)

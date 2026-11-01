@@ -40,9 +40,11 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
     let source = &build["source"];
     if source["fixture"] == "business" {
         for path in [
-            root.parent()
-                .ok_or("业务后端缺少父目录")?
-                .join("fixture.json"),
+            PathBuf::from(text_field(
+                &source["fixture_receipt"],
+                "path",
+                "业务来源收据",
+            )?),
             root.join("tools/python/fixtures/order-business/src/resources/mod.rs"),
         ] {
             bindings.push((path.clone(), evidence_binding(&path)?));
@@ -130,6 +132,13 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
     let path =
         super::super::portable_path(&std::fs::canonicalize(directory)?).join("source-pair.json");
     let pair = read_json(&path, "全栈源码组合", 16 * 1024)?;
+    if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
+        let current = crate::recovery::full_stack::provenance::current(root, directory)?;
+        if current != *evidence {
+            return Err("已发布业务来源与完整当前来源不一致".into());
+        }
+        return Ok(());
+    }
     let reference = pair["kind"] == "reference-fixture-source-pair";
     if reference {
         exact_object(

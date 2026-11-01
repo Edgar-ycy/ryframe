@@ -30,7 +30,18 @@ pub(super) fn bootstrap(backend: &Path, environment: &Path) -> Result<Value> {
         value.as_array().is_some_and(|items| items.len() == 4),
         "冻结环境核验返回值不完整",
     )?;
-    Ok(json!({"bootstrap":value[0],"execution":value[1],"private":value[2]}))
+    Ok(
+        json!({"bootstrap":value[0],"execution":value[1],"private":value[2],
+        "config_dir":value[3]["config_dir"],"receipt":value[3]}),
+    )
+}
+
+pub(super) fn configuration_identity(config: &Path) -> Result<(u64, u64)> {
+    directory(config)?;
+    crate::recovery::clone::native::resources::common::device_inode_for(
+        config,
+        &std::fs::symlink_metadata(config)?,
+    )
 }
 
 pub(super) struct Runtime {
@@ -42,6 +53,8 @@ pub(super) struct Runtime {
     sources: Vec<plan::SourceGuard>,
     private: Value,
     environment_guard: Value,
+    configuration: PathBuf,
+    configuration_identity: (u64, u64),
 }
 
 impl Runtime {
@@ -67,6 +80,8 @@ impl Runtime {
     pub(super) fn load(backend: &Path, environment: &Path, output: &Path) -> Result<Self> {
         let boot = bootstrap(backend, environment)?;
         let execution = path(&boot["execution"])?;
+        let configuration = path(&boot["config_dir"])?;
+        let configuration_identity = configuration_identity(&configuration)?;
         let allowed = execution.join(".local-tests/reference-fixture");
         directory(output)?;
         check(
@@ -101,6 +116,9 @@ impl Runtime {
             "环境文件与 prepared 核验结果不一致",
         )?;
         guards.extend(plan::input_guards(&bootstrap_value)?);
+        for name in ["app.toml", "app.test.toml"] {
+            guards.push(snapshot(&configuration.join(name), MAX_BYTES)?);
+        }
         for name in [
             "source-pair.json",
             "build-evidence.json",
@@ -128,12 +146,18 @@ impl Runtime {
             sources,
             private: boot["private"].clone(),
             environment_guard,
+            configuration,
+            configuration_identity,
         };
         value.verify()?;
         Ok(value)
     }
 
     pub(super) fn verify(&self) -> Result<()> {
+        check(
+            configuration_identity(&self.configuration)? == self.configuration_identity,
+            "夹具配置目录身份变化",
+        )?;
         unchanged(&self.environment_guard)?;
         for guard in &self.guards {
             unchanged(guard)?;

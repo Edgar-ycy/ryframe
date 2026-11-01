@@ -1,13 +1,12 @@
 use super::model::*;
 use crate::{
     Result,
-    process::{ChildGroup, PreservedFailure, child_command, resolved_executable},
+    process::{PreservedFailure, resolved_executable},
 };
 use serde_json::{Value, json};
 use std::{
-    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 pub(super) struct FrontendCommand<'a> {
@@ -23,26 +22,67 @@ pub(super) trait Dependencies {
     fn call(&mut self, operation: &str, args: Value) -> Result<Value>;
     fn frontend(&mut self, command: FrontendCommand<'_>) -> Result<Value>;
 }
-pub(super) struct Python {
+pub(super) struct Native {
     pub root: PathBuf,
-    pub executable: PathBuf,
 }
-impl Python {
+impl Native {
     pub(super) fn new(root: &Path) -> Result<Self> {
+        directory(root)?;
         Ok(Self {
             root: root.to_owned(),
-            executable: PathBuf::from(resolved_executable(root, "python")?),
         })
     }
-    pub(super) fn command(&self) -> Command {
-        let mut command = child_command(&self.executable);
-        command.args(["-B", "-X", "utf8"]).arg(
-            self.root
-                .join("tools/python/fixture_browser_dependencies.py"),
-        );
-        command.current_dir(&self.root);
-        clean_environment(&mut command);
-        command
+
+    fn program(&self, name: &str) -> Result<PathBuf> {
+        let requested = PathBuf::from(resolved_executable(&self.root, name)?);
+        let names = if cfg!(windows) && requested.extension().is_none() {
+            std::env::var("PATHEXT")
+                .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+                .split(';')
+                .map(|extension| requested.with_extension(extension.trim_start_matches('.')))
+                .collect::<Vec<_>>()
+        } else {
+            vec![requested.clone()]
+        };
+        let directories = if requested.is_absolute() {
+            vec![PathBuf::new()]
+        } else {
+            std::env::split_paths(&std::env::var_os("PATH").ok_or("浏览器工具缺少 PATH")?)
+                .map(|path| self.root.join(path))
+                .collect()
+        };
+        for directory in directories {
+            for name in &names {
+                let candidate = directory.join(name);
+                let Ok(metadata) = candidate.metadata() else {
+                    continue;
+                };
+                if !metadata.is_file() {
+                    continue;
+                }
+                #[cfg(unix)]
+                if nix::unistd::access(candidate.as_path(), nix::unistd::AccessFlags::X_OK).is_err()
+                {
+                    continue;
+                }
+                return Ok(candidate.canonicalize()?);
+            }
+        }
+        Err(format!("浏览器依赖缺少可执行文件 {name}；请核对工具文件和操作系统 PATH").into())
+    }
+
+    fn tools(&self, frontend: &Path) -> Result<Value> {
+        let corepack = self.program("corepack")?;
+        let node = if cfg!(windows) {
+            Some(self.program("node")?)
+        } else {
+            None
+        };
+        let home = std::env::var_os("COREPACK_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| frontend.join(".local-tests/corepack"));
+        let home = self.root.join(home).canonicalize()?;
+        Ok(json!({"corepack":corepack,"node":node,"corepack_home":home}))
     }
 }
 pub(super) fn clean_environment(command: &mut Command) {
@@ -69,8 +109,52 @@ pub(super) fn clean_environment(command: &mut Command) {
         }
     }
 }
-impl Dependencies for Python {
+impl Dependencies for Native {
     fn call(&mut self, operation: &str, args: Value) -> Result<Value> {
+        if operation == "worker-origin" {
+            crate::recovery::clone::native::json::exact(&args, &[], "Worker 来源只读请求")?;
+            return super::worker_origin::capture();
+        }
+        if operation == "bootstrap" {
+            let mut boot =
+                super::runtime::bootstrap(&path(&args["backend"])?, &path(&args["environment"])?)?;
+            // 当前前端仍消费该字段；这里只解析受配置约束的程序路径，不启动解释器。
+            boot["python"] = json!(self.program("python")?);
+            return Ok(boot);
+        }
+        if matches!(operation, "settings" | "limits") {
+            let bootstrap = path(&args["bootstrap"])?;
+            let execution = path(&args["execution"])?;
+            let boot = super::runtime::bootstrap(&self.root, &bootstrap)?;
+            check(
+                boot["execution"] == args["execution"],
+                "浏览器配置执行根与冻结环境不符",
+            )?;
+            let config = path(&boot["config_dir"])?;
+            let table = if operation == "settings" {
+                crate::rate_limit::load_app_table(&execution, Some(&config), "test")
+            } else {
+                crate::rate_limit::settings(&execution, Some(&config), text(&args["app_env"])?)
+            }
+            .map_err(|error| {
+                format!(
+                    "浏览器配置读取失败（{}）：{}；请核对 {} 的环境文件与限流字段",
+                    error.code(),
+                    error.message(),
+                    config.display()
+                )
+            })?;
+            return Ok(serde_json::to_value(table)?);
+        }
+        if operation == "tools" {
+            return self.tools(&path(&args["frontend"])?);
+        }
+        if operation == "frontend-build" {
+            let root = path(&args["frontend"])?;
+            let proof = crate::recovery::frontend_build::validate(&root, None, None)?;
+            proof.verify()?;
+            return Ok(json!({"path":root.join("dist/.vite/restore-build.json")}));
+        }
         if operation == "verify" {
             return super::runtime::verify(&args);
         }
@@ -89,40 +173,7 @@ impl Dependencies for Python {
                 operation == "terminate",
             );
         }
-        let mut input = tempfile::tempfile_in(self.root.join(".local-tests"))?;
-        let mut native_tool = bound(&std::env::current_exe()?)?;
-        native_tool["format_version"] = json!(1);
-        native_tool["kind"] = json!("ryframe-native-rate-limit-tool");
-        input.write_all(&serde_json::to_vec(
-            &json!({"operation":operation,"arguments":args,"native_tool":native_tool}),
-        )?)?;
-        use std::io::{Seek, SeekFrom};
-        input.seek(SeekFrom::Start(0))?;
-        let mut command = self.command();
-        command
-            .stdin(input)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = ChildGroup::new()?.spawn(command)?;
-        // 依赖适配器输入只含当前调用值；输出不进入日志，凭据仅驻留内存。
-        let stdout = child.take_stdout_reader()?.ok_or("浏览器依赖缺少输出")?;
-        let read = std::thread::spawn(move || {
-            use std::io::Read;
-            let mut bytes = Vec::new();
-            stdout
-                .take(16 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .map(|_| bytes)
-        });
-        let status = child.wait()?;
-        let bytes = read.join().map_err(|_| "浏览器依赖读取失败")??;
-        check(
-            status.success() && bytes.len() <= 16 * 1024 * 1024,
-            "浏览器依赖调用失败；核对原运行收据",
-        )?;
-        let value: Value = serde_json::from_slice(&bytes).map_err(|_| "浏览器依赖返回无效JSON")?;
-        check(value["ok"] == true, "浏览器依赖拒绝当前输入")?;
-        Ok(value["value"].clone())
+        Err("未知浏览器依赖操作".into())
     }
     fn frontend(&mut self, command: FrontendCommand<'_>) -> Result<Value> {
         super::process::run(self, command)

@@ -179,9 +179,18 @@ pub(crate) fn verify_compiled_sources(
 #[serde(deny_unknown_fields)]
 struct CompiledSources {
     // 根身份必须参与编译输入，即使两棵树的文件字节完全相同。
-    #[serde(rename = "root")]
-    _root: std::path::PathBuf,
+    root: std::path::PathBuf,
     files: Vec<Value>,
+}
+
+/// 只读取当前程序嵌入的真实编译根，不从运行目录推导工具来源。
+pub(crate) fn compiled_root() -> Result<std::path::PathBuf, &'static str> {
+    let snapshot: CompiledSources = serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/frontend-origin-sources.json"
+    )))
+    .map_err(|_| EXECUTABLE_READ)?;
+    Ok(snapshot.root)
 }
 
 pub(crate) fn describe() -> Result<Value, &'static str> {

@@ -233,7 +233,12 @@ fn full_stack_source(args: &Value) -> Result<Value> {
     let backend = binding::path(&args["backend"])?;
     let directory = binding::path(&args["directory"])?;
     let current = crate::recovery::full_stack::provenance::current(&backend, &directory)?;
-    if !current.is_null() && current["source_pair"]["kind"] != "reference-fixture-source-pair" {
+    if !current.is_null()
+        && !matches!(
+            current["source_pair"]["kind"].as_str(),
+            Some("reference-fixture-source-pair" | "reference-fixture-execution-source-pair")
+        )
+    {
         let expected =
             ["run_id", "attempt"].map(|field| args["ci"][field].as_str().map(std::ffi::OsStr::new));
         crate::recovery::full_stack::provenance::validate_ci_identity(

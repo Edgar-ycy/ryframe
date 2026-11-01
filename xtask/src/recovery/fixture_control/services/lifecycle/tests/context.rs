@@ -2,6 +2,7 @@ use super::*;
 
 struct InputFixture {
     _temporary: tempfile::TempDir,
+    _publication: crate::recovery::fixture_control::source_pair::execution::tests::Fixture,
     backend: PathBuf,
     review: PathBuf,
     bootstrap: PathBuf,
@@ -14,29 +15,49 @@ impl InputFixture {
         let root = crate::recovery::fixture_control::portable_path(
             &fs::canonicalize(temporary.path()).unwrap(),
         );
-        let execution = root.join("business");
-        let future = execution
-            .join(".local-tests")
-            .join("reference-fixture")
-            .join("run");
-        let run = future.join("service-run");
+        let publication =
+            crate::recovery::fixture_control::source_pair::execution::tests::Fixture::new_in(&root);
+        let (inputs, _) =
+            crate::recovery::fixture_control::environment::protocol::tests::published_plan(
+                &publication,
+            );
+        let review_value = read(&inputs.join("review.json")).unwrap();
+        let execution =
+            PathBuf::from(text(&review_value["scopes"]["seed"], "backend_dir").unwrap());
+        let run = context::service_run(&review_value).unwrap();
         fs::create_dir_all(&run).unwrap();
         let review = root.join("review.json");
         let bootstrap = root.join("bootstrap.json");
-        json_io::write_new(&execution.join("Cargo.toml"), &json!({"fixture":true})).unwrap();
-        json_io::write_new(
-            &review,
-            &json!({"future_root":future,"scopes":{"seed":{"backend_dir":execution}},
-            "services":{"rustfs":{"scope_id":"context-test"}}}),
+        json_io::write_new(&review, &review_value).unwrap();
+        let (code, planned) = crate::recovery::fixture_control::environment::protocol::execute(
+            &serde_json::to_vec(&json!({"format_version":1,"operation":"plan","write":false,
+                "arguments":{"backend":backend,"review":review,
+                    "execution_source":publication.output.join("execution-source.json"),
+                    "maintenance_build":inputs.join("maintenance_build.json"),"side":"seed"}}))
+            .unwrap(),
+        );
+        assert_eq!(code, 0, "{planned}");
+        let configuration = execution.join(".local-tests/context-configuration");
+        fs::create_dir_all(&configuration).unwrap();
+        fs::write(configuration.join("app.toml"), "# shared\n").unwrap();
+        fs::write(
+            configuration.join("app.test.toml"),
+            "scope_id='prepared-test'\n",
         )
         .unwrap();
-        json_io::write_new(&bootstrap,&json!({"kind":"reference-fixture-environment","status":"prepared","services_started":false,
-            "remote_writes":0,"execution_backend":execution,"plan":{"review":binding(&review).unwrap()}})).unwrap();
+        let private = json!({"APP_ENV":"test"});
         json_io::write_new(
             &root.join("environment.json"),
-            &json!({"environment":{"APP_ENV":"test"}}),
+            &json!({"environment":private}),
         )
         .unwrap();
+        json_io::write_new(&bootstrap,&json!({
+            "format_version":1,"kind":"reference-fixture-environment","status":"prepared","services_started":false,
+            "remote_writes":0,"historical_data_used":false,"secret_files":{},
+            "execution_backend":execution,"plan":planned["result"],"config_dir":configuration,
+            "configuration_sha256":crate::recovery::fixture_control::artifact::runtime::configuration_digest(&configuration).unwrap(),
+            "environment_sha256":crate::recovery::clone::native::digest::plan_hash(&private).unwrap()
+        })).unwrap();
         let manifest_review = binding(&review).unwrap();
         #[cfg(windows)]
         let manifest_review = {
@@ -46,10 +67,11 @@ impl InputFixture {
         };
         json_io::write_new(&run.join("manifest.json"),&json!({"format_version":1,"kind":"reference-fixture-service-run",
             "review":manifest_review,"bootstrap":binding(&bootstrap).unwrap(),"execution_backend":execution,
-            "scope_id":"context-test","data_directory_was_empty":true})).unwrap();
+            "scope_id":review_value["services"]["rustfs"]["scope_id"],"data_directory_was_empty":true})).unwrap();
         state::initialize(&run).unwrap();
         Self {
             _temporary: temporary,
+            _publication: publication,
             backend,
             review,
             bootstrap,
@@ -346,13 +368,6 @@ fn preparation_projection_requires_exact_prefix_and_direct_credentials() {
 fn prepared_environment_requires_exact_digest_credentials_and_no_service_side_effects() {
     let input = InputFixture::new();
     let mut receipt = read(&input.bootstrap).unwrap();
-    receipt["format_version"] = json!(1);
-    receipt["historical_data_used"] = json!(false);
-    receipt["secret_files"] = json!({});
-    receipt["environment_sha256"] = json!(
-        crate::recovery::clone::native::digest::plan_hash(&json!({"APP_ENV":"test"})).unwrap()
-    );
-    json_io::write_replace(&input.bootstrap, &receipt).unwrap();
     let before = fs::read(&input.bootstrap).unwrap();
     assert!(prepared::load(&input.backend, &input.bootstrap, &json!([])).is_ok());
     assert_eq!(fs::read(&input.bootstrap).unwrap(), before);
@@ -363,14 +378,16 @@ fn prepared_environment_requires_exact_digest_credentials_and_no_service_side_ef
         ("historical_data_used", json!(true)),
         ("environment_sha256", json!("0".repeat(64))),
         ("secret_files", json!({"foreign.txt":{}})),
+        ("plan", json!({"review": receipt["plan"]["review"]})),
+        ("config_dir", json!(input.bootstrap.parent().unwrap())),
     ] {
         let mut changed = receipt.clone();
         changed[key] = invalid;
         json_io::write_replace(&input.bootstrap, &changed).unwrap();
-        assert!(
-            prepared::load(&input.backend, &input.bootstrap, &json!([])).is_err(),
-            "{key}"
-        );
+        let error = prepared::load(&input.backend, &input.bootstrap, &json!([])).unwrap_err();
+        if key == "plan" {
+            assert!(error.to_string().contains("缺少执行源码发布绑定"));
+        }
     }
     json_io::write_replace(&input.bootstrap, &receipt).unwrap();
     let secret = input.bootstrap.parent().unwrap().join("secret.txt");

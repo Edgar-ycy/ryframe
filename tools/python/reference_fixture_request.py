@@ -222,7 +222,7 @@ def build(
     )
     environment_binding = _bound(environment_file)
     values = private.get("environment")
-    settings = application_settings(bootstrap_file, execution)
+    settings = application_settings(bootstrap, execution)
     if (not isinstance(values, dict) or values.get("APP_ENV") != "test"
             or settings.get("scope_id") != selected["scope_id"]):
         raise ValueError("fresh-target 私有环境未绑定当前 scope")
@@ -253,7 +253,7 @@ def build(
         },
         "maintenance_build": plan["maintenance_build"],
         "configuration_sha256": bootstrap["configuration_sha256"],
-        "config_dir": str(bootstrap_file.parent / "config"),
+        "config_dir": bootstrap["config_dir"],
         "tools": {
             name: {key: review["tools"][name][key] for key in ("path", "sha256")}
             for name in ("mysql",)

@@ -7,18 +7,22 @@ use serde_json::{Value, json};
 
 use super::{assets::MARKER, git, publish, source, verify};
 
-struct Fixture {
+pub(crate) struct Fixture {
     _directory: tempfile::TempDir,
-    backend: PathBuf,
-    frontend: PathBuf,
-    receipt: PathBuf,
-    output: PathBuf,
+    pub(crate) backend: PathBuf,
+    pub(crate) frontend: PathBuf,
+    pub(crate) receipt: PathBuf,
+    pub(crate) output: PathBuf,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let base = crate::workspace::root_dir().join(".local-tests");
-        fs::create_dir_all(&base).unwrap();
+        Self::new_in(&base)
+    }
+
+    pub(crate) fn new_in(base: &Path) -> Self {
+        fs::create_dir_all(base).unwrap();
         let directory = tempfile::tempdir_in(base).unwrap();
         let backend = directory.path().join("backend");
         let frontend = directory.path().join("frontend");
@@ -59,6 +63,22 @@ impl Fixture {
             "执行源码清单",
         )?;
         verify(&self.backend, &descriptor)
+    }
+
+    pub(crate) fn publication(&self) -> Value {
+        publish(&self.backend, &self.output).unwrap()
+    }
+
+    pub(crate) fn binding(&self) -> Value {
+        crate::recovery::fixture_control::file_binding(
+            &self
+                .output
+                .join("execution-source.json")
+                .canonicalize()
+                .unwrap(),
+            "执行源码",
+        )
+        .unwrap()
     }
 
     fn marker(&self) -> Vec<u8> {
@@ -132,6 +152,15 @@ fn initialize(root: &Path, backend: &Path) {
     )
     .unwrap();
     fs::write(root.join("src/lib.rs"), "// 原始干净源码\n").unwrap();
+    if root == backend {
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(root.join("README.md"), "fixture\n").unwrap();
+        fs::create_dir_all(root.join("crates/ryframe")).unwrap();
+        fs::write(root.join("crates/ryframe/Cargo.toml"), "fixture\n").unwrap();
+        let model = root.join("tools/python/fixtures/order-business/src/resources/mod.rs");
+        fs::create_dir_all(model.parent().unwrap()).unwrap();
+        fs::write(model, "// Order 完整模型夹具\n").unwrap();
+    }
     let bytes = canonical(
         &json!({"info":{"title":"RyFrame API","version":"0.0.1"},"openapi":"3.1.0","paths":{}}),
     );

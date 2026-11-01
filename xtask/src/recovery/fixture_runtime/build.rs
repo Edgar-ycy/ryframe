@@ -55,7 +55,12 @@ fn execute(
     command: &mut impl FnMut(&str, &[String]) -> Result<String>,
 ) -> Result<Value> {
     inputs.verify()?;
-    fixture_control::source_pair::publish(&inputs.root, &output.join("source-pair.json"))?;
+    let pair = fixture_control::source_pair::execution::pair(
+        &inputs.coordinator,
+        &inputs.root,
+        &inputs.execution_source,
+    )?;
+    write_new(&output.join("source-pair.json"), &pair)?;
     let original = full_stack::provenance::current(&inputs.root, output)?;
     let inventory = source::capture(&inputs.root)?;
     let context = context(inputs, command)?;
