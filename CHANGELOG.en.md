@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- List the existing `control export-sql` operation in top-level migration usage and clarify that the Worker exposes only health and metrics HTTP endpoints, without business APIs. Command execution and build boundaries remain unchanged.
+
 - Remove Python status, close, reconcile, recover and restart dispatch already replaced by native service lifecycles, together with obsolete tree-control and cache primitives. Retain the active initial-service and storage-start paths, real recovery coverage, explicit write authorization and tool verification before dispatch. Correct the backend rejection reason to identify a mismatch with the current operation workspace.
 
 - Review existing isolated-service tests and remove the duplicate drift case covered by the real Context and obsolete Python tree-stop/cache-start forwarding assertions. Preserve storage-start supervision and its actual guard callback, and strengthen module-removal, restart-eligibility and native-cache tool-binding negative cases so unrelated invalid inputs cannot mask the intended validation.

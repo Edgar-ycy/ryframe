@@ -1,7 +1,7 @@
 //! 独立后台任务 Worker。
 //!
 //! 生产环境以 `ryframe-worker` 作为单独进程运行；它只验证数据库迁移状态，
-//! 不执行 HTTP 服务，也不自动执行生产 DDL。
+//! 仅提供健康检查与指标 HTTP 端点，不承载业务 API，也不自动执行生产 DDL。
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 

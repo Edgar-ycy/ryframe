@@ -22,7 +22,7 @@ mod sql_export;
 #[path = "ryframe_migrate/targets.rs"]
 mod targets;
 
-const USAGE: &str = "用法：\n  cargo migrate -- control <up|verify|status>\n  cargo migrate -- tenant-data <up|verify|status> (--target <key>|--all)\n  cargo migrate -- <control|tenant-data> adopt --module <模块> [--target <键>] [--output .local-tests/adopt.json --write]\n  cargo migrate -- <control|tenant-data> adopt <--inspect|--apply> .local-tests/adopt.json [--target <键>] [--write]\n  cargo migrate -- control ownership-adopt [--output .local-tests/ownership.json --write]\n  cargo migrate -- tenant-data ownership-adopt --target <键> [--output .local-tests/ownership.json --write]\n  cargo migrate -- <control|tenant-data> ownership-adopt <--inspect|--apply> .local-tests/ownership.json [--target <键>] [--write]\n  接管支持 --plan：只显示任务图，不读配置、文件或数据库。";
+const USAGE: &str = "用法：\n  cargo migrate -- control <up|verify|status>\n  cargo migrate -- control export-sql --output <新路径> [--plan|--write]\n  cargo migrate -- tenant-data <up|verify|status> (--target <key>|--all)\n  cargo migrate -- <control|tenant-data> adopt --module <模块> [--target <键>] [--output .local-tests/adopt.json --write]\n  cargo migrate -- <control|tenant-data> adopt <--inspect|--apply> .local-tests/adopt.json [--target <键>] [--write]\n  cargo migrate -- control ownership-adopt [--output .local-tests/ownership.json --write]\n  cargo migrate -- tenant-data ownership-adopt --target <键> [--output .local-tests/ownership.json --write]\n  cargo migrate -- <control|tenant-data> ownership-adopt <--inspect|--apply> .local-tests/ownership.json [--target <键>] [--write]\n  接管支持 --plan：只显示任务图，不读配置、文件或数据库。";
 
 #[derive(Clone, Copy)]
 enum Operation {
