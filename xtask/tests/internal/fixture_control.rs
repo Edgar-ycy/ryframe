@@ -362,6 +362,9 @@ fn parses_every_environment_operation_into_typed_requests() {
         plan,
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Plan(_))
     ));
+    assert!(!plan.writes());
+    let error = private_invocation_at(&plan, &root_dir()).unwrap_err();
+    assert!(error.to_string().contains("环境计划由 Rust 原生执行"));
     let mut retired = fixture.input_options();
     retired[2] = "--fixture".to_owned();
     assert!(parse_control(command("environment", Some("plan"), retired)).is_err());

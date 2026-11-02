@@ -32,16 +32,14 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_domain_failure_reports_validation_reason_without_credentials(self):
         raw = self.protocol(
-            "environment", "plan", False,
+            "environment", "review", True,
             review=self.root + "/.local-tests/review.json",
-            execution_source=self.root + "/.local-tests/execution-source.json",
-            maintenance_build=self.root + "/.local-tests/build.json",
-            side="seed",
+            output=self.root + "/.local-tests/ready-review.json",
         )
         output = io.StringIO()
 
         def fail(_args):
-            raise ValueError("计划来源错误：secret-for-test")
+            raise ValueError("审阅来源错误：secret-for-test")
         with (
             mock.patch.dict(os.environ, {"APP_PASSWORD": "secret-for-test"}),
             mock.patch.object(sys, "argv", ["environment.py"]),
@@ -52,7 +50,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 positional_operation=True, raw=raw,
             )
         self.assertEqual(result, 1)
-        self.assertIn("计划来源错误", output.getvalue())
+        self.assertIn("审阅来源错误", output.getvalue())
         self.assertIn("[REDACTED]", output.getvalue())
         self.assertNotIn("secret-for-test", output.getvalue())
 
@@ -124,17 +122,29 @@ class FixtureControlProtocolTests(unittest.TestCase):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
         directory = str(Path(self.root) / ".local-tests" / "run")
         environment = self.protocol(
-            "environment", "plan", False,
+            "environment", "prepare", True,
             review=input_path, execution_source=input_path, maintenance_build=input_path, side="seed",
+            output=directory,
         )
         self.assertEqual(
             self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, environment, positional=True)[0],
-            "plan",
+            "prepare",
         )
         old = json.loads(environment)
         old["fixture"] = old.pop("execution_source")
         with self.assertRaises(FixtureControlProtocolError):
             self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, json.dumps(old), positional=True)
+        review = self.protocol("environment", "review", True, review=input_path, output=input_path)
+        self.assertEqual(
+            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, review, positional=True)[0],
+            "review",
+        )
+        retired_plan = self.protocol(
+            "environment", "plan", False,
+            review=input_path, execution_source=input_path, maintenance_build=input_path, side="seed",
+        )
+        with self.assertRaises(FixtureControlProtocolError):
+            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, retired_plan, positional=True)
         request = self.protocol(
             "request", "publish", True,
             environment=input_path, service_run=directory, id="fresh-base", side="base", output=input_path,

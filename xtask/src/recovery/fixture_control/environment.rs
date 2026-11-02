@@ -8,7 +8,7 @@ use crate::{
     local_test_path::LocalTestPathKind,
 };
 
-use super::{insert_optional_path, insert_path, output_value, path_value};
+use super::{insert_optional_path, insert_path, output_value, path_text, path_value};
 
 #[path = "environment/configuration.rs"]
 mod configuration;
@@ -24,6 +24,21 @@ pub(crate) mod protocol;
 #[path = "environment/secrets.rs"]
 pub(crate) mod secrets;
 
+pub(super) fn run_plan(root: &Path, inputs: &FixtureEnvironmentInputs) -> Result<Value> {
+    let mut fields = Map::new();
+    insert_inputs(&mut fields, inputs, root)?;
+    fields.insert(
+        "backend".to_owned(),
+        Value::String(path_text(root, "后端目录")?.to_owned()),
+    );
+    plan::create(&Value::Object(fields))?;
+    Ok(serde_json::json!({
+        "status": "planned",
+        "services_started": false,
+        "remote_writes": 0,
+    }))
+}
+
 pub(super) fn fields(
     command: &FixtureEnvironmentCommand,
     root: &Path,
@@ -31,7 +46,9 @@ pub(super) fn fields(
     let mut fields = Map::new();
     match command {
         FixtureEnvironmentCommand::Help => return Err("environment 帮助没有私有请求".into()),
-        FixtureEnvironmentCommand::Plan(inputs) => insert_inputs(&mut fields, inputs, root)?,
+        FixtureEnvironmentCommand::Plan(_) => {
+            return Err("环境计划由 Rust 原生执行，不生成 Python 请求".into());
+        }
         FixtureEnvironmentCommand::Prepare {
             inputs,
             output,

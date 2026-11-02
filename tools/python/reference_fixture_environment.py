@@ -359,7 +359,6 @@ def prepare(backend: Path, review_path: Path, execution_source_path: Path, maint
 
 
 PROTOCOL_SCHEMAS = {
-    "plan": (("review", "execution_source", "maintenance_build", "side", "native_tool"), (), False),
     "prepare": (("review", "execution_source", "maintenance_build", "side", "output", "native_tool"), ("secrets_dir",), True),
     "review": (("review", "output", "native_tool"), (), True),
 }
@@ -367,7 +366,7 @@ PROTOCOL_SCHEMAS = {
 
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("plan", "prepare", "review"))
+    parser.add_argument("operation", choices=("prepare", "review"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path)
     parser.add_argument("--execution-source", type=Path)
@@ -380,16 +379,12 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
     from rate_limit_tool import install_verified_binding
     install_verified_binding(args.native_tool)
-    if args.operation in ("plan", "prepare"):
+    if args.operation == "prepare":
         if args.review is None or args.execution_source is None or args.maintenance_build is None:
             parser.error(f"{args.operation} 需要 --review、--execution-source 与 --maintenance-build")
     elif args.execution_source is not None:
-        parser.error("--execution-source 只用于 plan/prepare")
-    if args.operation == "plan":
-        if args.output is not None or args.write or args.secrets_dir is not None:
-            parser.error("plan 不接受 --output、--write 或 --secrets-dir")
-        result = plan(args.backend_dir, args.review, args.execution_source, args.maintenance_build, args.side)
-    elif args.operation == "prepare":
+        parser.error("--execution-source 只用于 prepare")
+    if args.operation == "prepare":
         if args.output is None or not args.write:
             parser.error("prepare 需要 --output 与 --write")
         result = prepare(args.backend_dir, args.review, args.execution_source, args.maintenance_build, args.output, args.side,

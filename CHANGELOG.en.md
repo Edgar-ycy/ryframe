@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Run the formal fixture-environment plan entry directly through existing Rust planning and source verification, removing its public Python dispatch while preserving arguments, read-only behavior, output and the shared adapter still used by environment preparation.
+
 - Remove obsolete Python object-storage lifecycle dispatch, private parameters and execution functions already replaced by formal Rust entry points; retire their protocol cases, tests and fixtures while preserving shared readers used by copying, service startup and history validation.
 
 - Clarify that database examples are topology fragments to merge into application configuration, and document timeout units, defaults and scope for primary, replica and named-source pools in both languages.

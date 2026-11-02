@@ -64,6 +64,9 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         return Ok(());
     }
     match command {
+        FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Plan(inputs)) => {
+            return print_json(&environment::run_plan(root, inputs)?);
+        }
         FixtureControlCommand::Environment(command) if environment::secrets::handles(command) => {
             return print_json(&environment::secrets::run(root, command)?);
         }
