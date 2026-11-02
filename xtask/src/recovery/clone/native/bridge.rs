@@ -18,6 +18,8 @@ const ROLES: [&str; 2] = ["api", "worker"];
 
 #[path = "bridge/build_context.rs"]
 pub(crate) mod build_context;
+#[path = "bridge/cargo_environment.rs"]
+pub(in crate::recovery) mod cargo_environment;
 #[path = "bridge/scope.rs"]
 pub(crate) mod scope;
 

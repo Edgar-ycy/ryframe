@@ -106,6 +106,7 @@ pub(crate) fn current(root: &Path) -> Result<Value> {
             return Err("构建工具环境包含重复名称".into());
         }
     }
+    super::cargo_environment::apply(root, &mut environment)?;
     let rustc = version(root, "rustc", "-vV")?;
     let cargo = version(root, "cargo", "-V")?;
     from_inputs(&cargo, &rustc, &environment, super::build_jobs(root)?)

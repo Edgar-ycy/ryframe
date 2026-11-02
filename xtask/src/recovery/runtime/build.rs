@@ -46,6 +46,9 @@ impl Port for Native {
                 command.env_remove(name);
             }
         }
+        if program == "cargo" {
+            bridge::cargo_environment::configure_command(root, &mut command)?;
+        }
         if program == "node" {
             command.stdout(std::process::Stdio::inherit());
         }

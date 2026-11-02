@@ -14,6 +14,7 @@ pub(super) struct Inputs {
     bootstrap: PathBuf,
     pub configuration: PathBuf,
     pub environment: BTreeMap<String, String>,
+    cargo_target: Option<String>,
     guards: Vec<Value>,
     configuration_identity: (u64, u64),
 }
@@ -41,14 +42,21 @@ impl Inputs {
             runtime::bootstrap(backend, environment)? == boot,
             "夹具 prepared 输入在冻结期间变化",
         )?;
+        let root = path(&boot["execution"])?;
+        let mut environment = configured(&boot["private"], std::env::vars_os())?;
+        let cargo_target = crate::recovery::clone::native::bridge::cargo_environment::apply(
+            &root,
+            &mut environment,
+        )?;
         let value = Self {
-            root: path(&boot["execution"])?,
+            root,
             coordinator: backend.to_owned(),
             execution_source: receipt["plan"]["execution_source"].clone(),
             bootstrap,
             configuration,
             configuration_identity,
-            environment: configured(&boot["private"], std::env::vars_os())?,
+            environment,
+            cargo_target,
             guards,
         };
         value.verify()?;
@@ -56,6 +64,12 @@ impl Inputs {
     }
 
     pub fn verify(&self) -> Result<()> {
+        check(
+            crate::recovery::clone::native::bridge::cargo_environment::configured_target(
+                &self.root,
+            )? == self.cargo_target,
+            "构建期间工具文件 generator.target_dir 变化；保留原目录和证据，在新目录显式构建，不自动重放",
+        )?;
         runtime::bootstrap(&self.coordinator, &self.bootstrap)?;
         crate::recovery::fixture_control::source_pair::execution::pair(
             &self.coordinator,

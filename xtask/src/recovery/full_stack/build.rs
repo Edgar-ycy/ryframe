@@ -22,6 +22,8 @@ pub(in crate::recovery) fn run(
         }
     }
     let jobs = crate::recovery::clone::native::bridge::build_jobs(root)?;
+    let cargo_target =
+        crate::recovery::clone::native::bridge::cargo_environment::configured_target(root)?;
     let source = provenance::current(root, directory)?;
     let artifacts = directory.join("artifacts");
     validate_absolute_path(&artifacts, LocalTestPathKind::NewDirectory)?;
@@ -59,9 +61,23 @@ pub(in crate::recovery) fn run(
     if crate::recovery::clone::native::bridge::build_jobs(root)? != jobs {
         return Err("构建期间 verification.build_jobs 变化；保留产物和原收据，不自动重放".into());
     }
+    if crate::recovery::clone::native::bridge::cargo_environment::configured_target(root)?
+        != cargo_target
+    {
+        return Err(
+            "构建期间工具文件 generator.target_dir 变化；保留产物和证据，不自动重放".into(),
+        );
+    }
     let evidence = provenance::build(root, directory, &binaries, &source, jobs)?;
     if crate::recovery::clone::native::bridge::build_jobs(root)? != jobs {
         return Err("发布构建收据前 verification.build_jobs 变化；保留产物，不自动重放".into());
+    }
+    if crate::recovery::clone::native::bridge::cargo_environment::configured_target(root)?
+        != cargo_target
+    {
+        return Err(
+            "发布构建收据前 generator.target_dir 变化；保留原目录和产物，不自动重放".into(),
+        );
     }
     documents::write_new(&directory.join("binaries.json"), &binaries)?;
     documents::write_new(&directory.join("build-evidence.json"), &evidence)?;

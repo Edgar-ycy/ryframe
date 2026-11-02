@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix ordinary runtime, reference-fixture and full-stack Cargo builds ignoring the shared target directory selected in tool files. Derive the Cargo standard child environment from the explicit file value and include it in existing build-context digests. Preserve receipt schemas, reject mixed publication after configuration drift, and retain failed evidence.
+
 - Configure acceptance-build concurrency for maintenance tools, API and Worker through one tool-file setting, defaulting to 4 with a local option of 1; actual commands and source receipts agree, current configuration drift rejects reuse, and historical command verification and failed evidence are preserved. Shared Python readers for maintenance receipts, Cargo events and commands now use the existing Rust core, removing duplicate parsing and hardcoded concurrency.
 
 - Fix ordinary runtime observation using the repository default configuration for its final API-address check; consistently use the receipt-bound configuration directory. Extend the existing no-write observation case to cover different default and runtime-snapshot ports, and remove obsolete application environment variables from the fixture.

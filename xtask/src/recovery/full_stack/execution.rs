@@ -235,6 +235,12 @@ impl Port for Native<'_> {
         }
         command.current_dir(cwd);
         self.environment(&mut command);
+        if program == "cargo" {
+            crate::recovery::clone::native::bridge::cargo_environment::configure_command(
+                &self.context.root,
+                &mut command,
+            )?;
+        }
         if Path::new(program).is_absolute() {
             command.env("APP_ENV", "test");
         }

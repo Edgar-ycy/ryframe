@@ -235,30 +235,30 @@ fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindin
 }
 
 #[test]
-fn changed_build_jobs_preserve_artifacts_without_publishing_mixed_receipts() {
-    let fixture = Fixture::new();
-    let context = &fixture.context;
-    fs::create_dir(context.root.join(".local-tests")).unwrap();
-    let mut port = cargo(context);
-    let result = run(&context.root, &context.output, &mut |program, args| {
-        let output = port.command(program, args, None)?;
-        if port.calls.len() == 1 {
-            fs::write(
-                context.root.join(".local-tests/tools.toml"),
-                "[verification]\nbuild_jobs=1\n",
-            )?;
-        }
-        Ok(output)
-    });
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("verification.build_jobs")
-    );
-    assert!(!context.output.join("binaries.json").exists());
-    assert!(!context.output.join("build-evidence.json").exists());
-    assert!(context.output.join("artifacts/ryframe.exe").exists());
+fn changed_tool_settings_preserve_artifacts_without_publishing_mixed_receipts() {
+    for (overlay, field) in [
+        ("[verification]\nbuild_jobs=1\n", "verification.build_jobs"),
+        (
+            "[generator]\ntarget_dir='other-target'\n",
+            "generator.target_dir",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let context = &fixture.context;
+        fs::create_dir(context.root.join(".local-tests")).unwrap();
+        let mut port = cargo(context);
+        let result = run(&context.root, &context.output, &mut |program, args| {
+            let output = port.command(program, args, None)?;
+            if port.calls.len() == 1 {
+                fs::write(context.root.join(".local-tests/tools.toml"), overlay)?;
+            }
+            Ok(output)
+        });
+        assert!(result.unwrap_err().to_string().contains(field));
+        assert!(!context.output.join("binaries.json").exists());
+        assert!(!context.output.join("build-evidence.json").exists());
+        assert!(context.output.join("artifacts/ryframe.exe").exists());
+    }
 }
 
 #[test]

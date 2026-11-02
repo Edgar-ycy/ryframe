@@ -35,9 +35,14 @@ impl Context {
         if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
             return Err("CI prepare 只接受当前 GitHub Job".into());
         }
-        let target = std::env::var_os("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .ok_or("缺少 CARGO_TARGET_DIR")?;
+        let target = crate::recovery::clone::native::bridge::cargo_environment::configured_target(
+            &self.root,
+        )?
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
+        .ok_or(
+            "缺少 Cargo 目标目录；在工具文件配置 generator.target_dir，或核对 CI 的 Cargo 标准环境",
+        )?;
         validate_absolute_path(&target, LocalTestPathKind::StateDirectory)?;
         Frozen::capture(
             &self.root,
