@@ -593,7 +593,7 @@ def require_target_copy(backend: Path, directory: Path, value: dict, roles: tupl
 
 def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple = ("api", "worker"),
             *, post_copy_request: Path | None = None, producer_binding: dict | None = None,
-            seed_request: Path | None = None, storage_request: Path | None = None,
+            seed_request: Path | None = None,
             cache_request: Path | None = None) -> dict:
     from source_fingerprints import artifact_sources, current_execution_source
 
@@ -603,8 +603,8 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
     seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover", "source-generation-recover"}
-    storage_cleanup = (stage.startswith("storage-") or stage == "cache-target") and mode in {"stop", "recover"}
-    cleanup = session_cleanup or seed_cleanup or storage_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
+    cache_cleanup = (stage == "cache-target") and mode in {"stop", "recover"}
+    cleanup = session_cleanup or seed_cleanup or cache_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
     evidence_handoff = stage == "seed-runtime" and mode in {
         "arm-input", "source-generation-start", "source-generation-stop", "source-generation-recover",
         "source-generation-reboot-close",
@@ -616,13 +616,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
 
         cache_handoff = preflight_successor(backend, directory, registered_manifest(backend, directory), cache_request, mode=mode)
         evidence_handoff = cache_handoff is not None
-    published_storage = stage == "storage-target" and mode == "restart" and (directory / "seed-runtime.json").exists()
-    if published_storage:
-        from devex_clone_seed_rebind import published_restart_guard
-
-        published_restart_guard(backend, directory, None)
-        evidence_handoff = True
-    if session_cleanup or seed_cleanup or storage_cleanup or evidence_handoff:
+    if session_cleanup or seed_cleanup or cache_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
     elif cleanup:
         value, environment = cleanup_inputs(backend, directory, stage.removeprefix("runtime-"))
@@ -631,10 +625,6 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         environment = environments(backend, value)
     source_context = (nullcontext() if cleanup or evidence_handoff else
                       artifact_sources(backend, value["build_bridges"], inherited_build_bridges(backend, value)))
-    if stage in {"storage-source", "storage-target"} and mode == "restart":
-        from devex_clone_storage import preflight_restart
-
-        preflight_restart(backend, directory, value, stage.removeprefix("storage-"), storage_request)
     number, result = None, None
     with process_guard(directory, "run-control.guard"):
         try:
@@ -642,8 +632,6 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                 if cache_handoff is not None:
                     if preflight_successor(backend, directory, value, cache_request, mode=mode) != cache_handoff:
                         raise ValueError("缓存工具后继在登记阶段前变化")
-                if published_storage:
-                    published_restart_guard(backend, directory, None)
                 if stage == "seed-runtime" and mode == "source-generation-start":
                     from devex_clone_seed_generation import preflight as generation_preflight
 
@@ -672,11 +660,6 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                 bind_controller_attempt(directory, number, owner, verify_results=not cleanup)
                 if stage == "copy":
                     result = run_copy(backend, directory, value, environment, mode)
-                elif stage in {"storage-source", "storage-target"}:
-                    from devex_clone_storage import execute_storage
-
-                    result = execute_storage(backend, directory, value, mode, number,
-                                             stage.removeprefix("storage-"), storage_request)
                 elif stage == "cache-target":
                     from devex_clone_cache import execute_cache
 

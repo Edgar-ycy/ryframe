@@ -16,7 +16,6 @@ class RequestTests(unittest.TestCase):
     setUp = fixtures.StorageTests.setUp
     file = fixtures.StorageTests.file
     json = fixtures.StorageTests.json
-    popen = fixtures.StorageTests.popen
 
     def target_request(self):
         request = copy.deepcopy(self.request)

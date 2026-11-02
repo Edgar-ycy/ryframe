@@ -110,23 +110,6 @@ class RunTests(unittest.TestCase):
         operation.assert_not_called()
         self.assertEqual(state.load_state(self.directory)["attempts"], [])
 
-    def test_storage_restart_preflight_failure_does_not_create_attempt_or_lock(self):
-        request = self.local / "storage-request.json"
-        before = {str(path.relative_to(self.directory)): path.read_bytes()
-                  for path in self.directory.rglob("*") if path.is_file()}
-        with patch("devex_clone_storage.preflight_restart", side_effect=PermissionError("protected successor")) as preflight, \
-                patch("devex_clone_storage.execute_storage") as execute, \
-                self.assertRaisesRegex(PermissionError, "protected successor"):
-            run.execute(self.backend, self.directory, "storage-target", "restart",
-                        storage_request=request)
-        preflight.assert_called_once_with(self.backend, self.directory, self.value, "target", request)
-        execute.assert_not_called()
-        self.assertEqual(state.load_state(self.directory)["attempts"], [])
-        self.assertFalse((self.directory / "run.lock").exists())
-        self.assertFalse(any(self.directory.glob("controller-*.json")))
-        self.assertEqual(before, {str(path.relative_to(self.directory)): path.read_bytes()
-                                  for path in self.directory.rglob("*") if path.is_file()})
-
     def test_generation_request_is_rejected_before_attempt_or_controller_is_created(self):
         request = self.local / "generation-request.json"
         write_json(request, {"kind": "wrong-generation-request"})
@@ -248,26 +231,6 @@ class RunTests(unittest.TestCase):
             run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=self.local / "successor.json")
         execute.assert_not_called()
         self.assertEqual(before, {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()})
-        self.assertFalse((self.directory / "run.lock").exists())
-
-    def test_published_storage_checks_quiet_source_before_skipping_old_product_bridge(self):
-        write_json(self.directory / "seed-runtime.json", {"historical": True})
-        with patch("devex_clone_seed_rebind.published_restart_guard") as published, \
-                patch("devex_clone_storage.preflight_restart") as preflight, \
-                patch("source_fingerprints.artifact_sources", side_effect=AssertionError("old product bridge")), \
-                patch("devex_clone_storage.execute_storage", return_value={"status": "storage_ready"}):
-            run.execute(self.backend, self.directory, "storage-target", "restart")
-        self.assertEqual(published.call_count, 2)
-        preflight.assert_called_once()
-
-    def test_unpublished_or_unknown_storage_cannot_bypass_before_begin(self):
-        write_json(self.directory / "seed-runtime.json", {"historical": True})
-        before = state.binding(self.directory / "state.json")
-        with patch("devex_clone_seed_rebind.published_restart_guard", side_effect=ValueError("unknown write")), \
-                patch("devex_clone_storage.execute_storage") as execute, self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "storage-target", "restart")
-        execute.assert_not_called()
-        self.assertEqual(before, state.binding(self.directory / "state.json"))
         self.assertFalse((self.directory / "run.lock").exists())
 
     def test_cache_cli_status_is_readonly_and_mutations_require_explicit_write(self):

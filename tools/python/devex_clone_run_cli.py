@@ -198,19 +198,6 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记与重绑定必须使用原生 Rust 入口")
     directory = evidence_path(backend, args.run_dir)
-    if args.command == "storage":
-        if args.request is not None and args.operation != "restart":
-            raise ValueError("仅 storage restart 可提供 --request")
-        if args.operation == "status":
-            if args.write:
-                raise ValueError("storage status 是只读操作，不接受 --write")
-            from devex_clone_storage import storage_status
-
-            return storage_status(backend, directory, args.side)
-        if not args.write:
-            raise ValueError("存储启停和恢复需要显式 --write")
-        result = execute(backend, directory, "storage-" + args.side, args.operation, storage_request=args.request)
-        return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "cache":
         if args.request is not None and args.operation != "restart":
             raise ValueError("仅 cache restart 可提供 --request")

@@ -91,21 +91,6 @@ def inspect_attempt(backend: Path, output: Path, registration: dict, controller:
             "launch_receipt": binding(launch_path) if launch_path.exists() else None, "intent": binding(path)}
 
 
-def stop_record(backend: Path, request: dict, observed: dict, output: Path) -> dict:
-    if observed["state"] == "not_started":
-        return {"state": "stopped", "identity": None, "terminated": False, "process_receipt": None}
-    expected = observed["identity"]
-    urls = request["api_url"], request["console_url"]
-    alive = running(backend, observed["process_receipt"], expected, arguments(request), urls, listeners=False)
-    terminated = terminate_owned_process(expected) if alive else False
-    if process_identity(expected["pid"]) is not None:
-        raise ValueError("存储回收后仍存在进程或 PID 已被复用")
-    result = {"state": "stopped", "identity": expected, "terminated": terminated,
-              "process_receipt": observed["process_receipt"]}
-    write_json(output / "stopped.json", result)
-    return result
-
-
 def wait_ready(child, expected: dict, request: dict) -> None:
     deadline = time.monotonic() + request["timeout_seconds"]
     while time.monotonic() < deadline:

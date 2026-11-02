@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove obsolete Python object-storage lifecycle dispatch, private parameters and execution functions already replaced by formal Rust entry points; retire their protocol cases, tests and fixtures while preserving shared readers used by copying, service startup and history validation.
+
 - Clarify that database examples are topology fragments to merge into application configuration, and document timeout units, defaults and scope for primary, replica and named-source pools in both languages.
 
 - Move formal fixture `rotate-secrets` and `bootstrap-secrets` execution into Rust and remove their Python writers and private dispatch. Preserve seven-file bindings, non-overwrite behavior and failure evidence; recheck source and raw bytes before publication, report stages and safe causes, and reject failed sources in the remaining environment preparation flow.

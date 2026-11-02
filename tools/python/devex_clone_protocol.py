@@ -11,7 +11,7 @@ from types import SimpleNamespace
 PROTOCOL_KIND = "ryframe-xtask-recovery-clone"
 COMMANDS = {
     "plan", "verify", "init", "status", "stage", "runtime", "recover",
-    "recover-copy", "post-copy", "seed-runtime", "storage", "cache",
+    "recover-copy", "post-copy", "seed-runtime", "cache",
 }
 
 
@@ -131,7 +131,6 @@ def _validate_paths(backend, command, options):
                       ("producer_binding", "existing-file")),
         "seed-runtime": (("run_dir", "existing-directory"), ("request", "existing-file"),
                          ("producer_binding", "existing-file")),
-        "storage": (("run_dir", "existing-directory"), ("request", "existing-file")),
         "cache": (("run_dir", "existing-directory"), ("request", "existing-file")),
     }
     for name, kind in mappings[command]:
@@ -184,8 +183,6 @@ def effect(command, options):
         }:
             return "evidence-write"
         return "business-write"
-    if command == "storage":
-        return "read-only" if options["operation"] == "status" else "business-write"
     if command == "cache":
         if options["operation"] == "status":
             return "read-only"
@@ -271,17 +268,6 @@ def _seed_runtime(options):
             "request": request, "producer_binding": producer}
 
 
-def _storage(options):
-    _exact(options, {"run_dir", "side", "operation", "request"}, "storage options")
-    operation = _enum(options["operation"], {"restart", "status", "stop", "recover"}, "operation")
-    request = _path(options["request"], "request", optional=True)
-    if request is not None and operation != "restart":
-        raise CloneProtocolError("clone 私有协议仅 storage restart 接受 request")
-    return {"run_dir": _path(options["run_dir"], "run_dir"),
-            "side": _enum(options["side"], {"source", "target"}, "side"),
-            "operation": operation, "request": request}
-
-
 def _cache(options):
     _exact(options, {"run_dir", "operation", "request"}, "cache options")
     operation = _enum(options["operation"], {"restart", "status", "stop", "recover", "reconcile", "resume"}, "operation")
@@ -338,7 +324,6 @@ def decode(source: str):
             "runtime": _runtime,
             "post-copy": _post_copy,
             "seed-runtime": _seed_runtime,
-            "storage": _storage,
             "cache": _cache,
         }[command](options)
     expected_effect = effect(command, options)

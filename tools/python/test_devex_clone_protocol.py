@@ -74,7 +74,6 @@ class CloneProtocolTests(unittest.TestCase):
             ("recover-copy", {"run_dir": str(self.run), "owner_binding": str(self.file)}, True),
             ("post-copy", {"run_dir": str(self.run), "operation": "register", "request": str(self.file), "producer_binding": None}, True),
             ("seed-runtime", {"run_dir": str(self.run), "operation": "status", "request": None, "producer_binding": None}, False),
-            ("storage", {"run_dir": str(self.run), "side": "source", "operation": "restart", "request": None}, True),
             ("cache", {"run_dir": str(self.run), "operation": "status", "request": None}, False),
         ]
         for command, options, write in cases:
@@ -127,11 +126,6 @@ class CloneProtocolTests(unittest.TestCase):
                 "run_dir": str(self.run), "operation": operation,
                 "request": str(self.file) if operation in {"register", "arm-input"} else None,
                 "producer_binding": str(self.file) if operation == "recover-session" else None,
-            }, operation != "status"))
-        for operation in ("restart", "status", "stop", "recover"):
-            cases.append(("storage", {
-                "run_dir": str(self.run), "side": "target", "operation": operation,
-                "request": str(self.file) if operation == "restart" else None,
             }, operation != "status"))
         for operation in ("restart", "status", "stop", "recover", "reconcile", "resume"):
             cases.append(("cache", {
