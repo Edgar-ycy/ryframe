@@ -15,9 +15,11 @@ pub struct ToolSettings {
     pub verification: VerificationSettings,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct VerificationSettings {
+    /// 维护工具、API 和 Worker 的 Cargo 构建并发，范围为 1 到 64。
+    pub build_jobs: u8,
     pub linux_observer: Option<LinuxObserverSettings>,
     /// 检查工具的 Python 入口；相对路径以后端工作区为基准，不得包含父跳转或控制字符。
     pub python_program: Option<PathBuf>,
@@ -25,6 +27,18 @@ pub struct VerificationSettings {
     pub node_program: Option<PathBuf>,
     /// pnpm 元数据缓存目录；缺省保留 pnpm 标准行为，不创建目录。
     pub pnpm_cache_dir: Option<PathBuf>,
+}
+
+impl Default for VerificationSettings {
+    fn default() -> Self {
+        Self {
+            build_jobs: 4,
+            linux_observer: None,
+            python_program: None,
+            node_program: None,
+            pnpm_cache_dir: None,
+        }
+    }
 }
 
 /// Linux 夹具工具的显式双端路径与冻结来源；观察与写入口分别授权，不读取环境覆盖。
@@ -100,9 +114,17 @@ impl ToolSettings {
             })?;
             merge(&mut values, overlay);
         }
-        values.try_into().map_err(|_: toml::de::Error| AppError::Config(
+        if let Some(jobs) = values.get("verification").and_then(|v| v.get("build_jobs"))
+            && jobs.as_integer().is_none_or(|n| !(1..=64).contains(&n))
+        {
+            return Err(AppError::Config(
+                "工具配置 config/tools.toml 或 .local-tests/tools.toml 的 verification.build_jobs 必须是 1 到 64 的整数；内存不足时在本机工具文件中设为 1".into(),
+            ));
+        }
+        let settings: Self = values.try_into().map_err(|_: toml::de::Error| AppError::Config(
             "工具配置字段或类型错误：检查 config/tools.toml 和 .local-tests/tools.toml 的字段名与类型，路径以当前后端根目录解析".into()
-        ))
+        ))?;
+        Ok(settings)
     }
 
     pub fn generator_target_dir(&self, root: &Path) -> AppResult<PathBuf> {
@@ -180,6 +202,50 @@ fn merge(base: &mut toml::Value, overlay: toml::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_jobs_use_local_file_and_reject_invalid_values_with_actionable_diagnostics() {
+        let root = crate::test_directory("tool-build-jobs-");
+        fs::create_dir(root.path().join("config")).unwrap();
+        fs::create_dir(root.path().join(".local-tests")).unwrap();
+        assert_eq!(
+            ToolSettings::load(root.path())
+                .unwrap()
+                .verification
+                .build_jobs,
+            4
+        );
+        fs::write(
+            root.path().join("config/tools.toml"),
+            "[verification]\nbuild_jobs=8\n",
+        )
+        .unwrap();
+        let local = root.path().join(".local-tests/tools.toml");
+        fs::write(&local, "[verification]\nbuild_jobs=1\n").unwrap();
+        assert_eq!(
+            ToolSettings::load(root.path())
+                .unwrap()
+                .verification
+                .build_jobs,
+            1
+        );
+        for invalid in ["0", "65", "-1", "true", "'private-value'", "1.5"] {
+            fs::write(&local, format!("[verification]\nbuild_jobs={invalid}\n")).unwrap();
+            let error = ToolSettings::load(root.path()).unwrap_err().to_string();
+            assert!(error.contains("verification.build_jobs"));
+            assert!(error.contains(".local-tests/tools.toml"));
+            assert!(error.contains("1 到 64"));
+            assert!(!error.contains("private-value"));
+        }
+        fs::remove_file(local).unwrap();
+        assert_eq!(
+            ToolSettings::load(root.path())
+                .unwrap()
+                .verification
+                .build_jobs,
+            8
+        );
+    }
 
     #[test]
     fn linux_observer_is_optional_and_rejects_partial_unknown_or_mistyped_bindings() {

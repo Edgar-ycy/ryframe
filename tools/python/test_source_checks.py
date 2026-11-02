@@ -51,7 +51,7 @@ class SourceCheckTests(unittest.TestCase):
     def test_nested_checks_share_one_content_scan_and_consumers_use_current_complete_source(self):
         original = sources.capture_inventory(self.root)
         context = {"commands": {role: restore_build.build_command(role) for role in restore_build.ROLES},
-                   "profile": "dev", "target": "fixture", "jobs": "cargo-default",
+                   "profile": "dev", "target": "fixture", "jobs": "4",
                    "toolchain": {"cargo": "fixture", "rustc": "fixture"},
                    "environment": {"variables": [], "sha256": source_inventory.canonical_digest([])}}
         receipt = {"format_version": 2, "kind": "restore-backend-build",

@@ -11,6 +11,8 @@ frontend_dir = "../ryframe-vue3"
 # frontend_repository = "your-owner/ryframe-vue3"
 
 [verification]
+# 维护工具、API 和 Worker 共用的 Cargo 构建并发；范围 1..64，本机内存不足可覆盖为 1。
+build_jobs = 4
 # Python 检查入口；相对路径以后端根目录解析，缺省从操作系统 PATH 选择 python。
 # python_program = ".local-tests/python/Scripts/python.exe"
 # Node 检查入口；相同路径规则，缺省从操作系统 PATH 选择 node。

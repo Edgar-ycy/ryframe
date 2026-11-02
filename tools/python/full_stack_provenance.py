@@ -185,6 +185,8 @@ def build_evidence(
     binaries: dict[str, str],
     expected_source: dict | None,
 ) -> dict:
+    from restore_build import _native
+
     if set(binaries) != BINARY_ROLES:
         raise ValueError("全栈构建必须恰好包含 API、Worker、reset 和 migrate")
     source = full_stack_source_evidence(backend, directory)
@@ -199,18 +201,21 @@ def build_evidence(
         "backend_root": str(backend.resolve()),
         "source": source,
         "artifacts": artifacts,
+        "build_jobs": _native("jobs", backend),
     }
 
 
 def verify_build_evidence(backend: Path, directory: Path) -> dict:
     receipt, _ = _read_json(directory / BUILD_EVIDENCE, "全栈构建证据")
-    _exact(receipt, {"format_version", "kind", "backend_root", "source", "artifacts"}, "全栈构建证据")
+    _exact(receipt, {"format_version", "kind", "backend_root", "source", "artifacts", "build_jobs"}, "全栈构建证据")
     if (
         receipt["format_version"] != 1
         or receipt["kind"] != "full-stack-build"
         or receipt["backend_root"] != str(backend.resolve())
         or not isinstance(receipt["artifacts"], dict)
         or not receipt["artifacts"]
+        or type(receipt["build_jobs"]) is not int
+        or not 1 <= receipt["build_jobs"] <= 64
     ):
         raise ValueError("全栈构建证据格式或后端路径无效")
     binaries = {}

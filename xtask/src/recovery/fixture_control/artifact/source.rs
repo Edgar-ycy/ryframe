@@ -28,6 +28,7 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
             "backend_root",
             "source",
             "artifacts",
+            "build_jobs",
         ],
         "全栈构建证据",
     )?;
@@ -36,6 +37,13 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
         || build["backend_root"] != root.to_string_lossy().as_ref()
     {
         return Err("全栈构建证据格式或后端路径无效".into());
+    }
+    if build["build_jobs"].as_u64()
+        != Some(u64::from(
+            crate::recovery::clone::native::bridge::build_jobs(root)?,
+        ))
+    {
+        return Err("全栈构建证据的 build_jobs 与当前 verification.build_jobs 不同；核对工具配置并保留原证据，使用新目录显式构建，不能改写或自动重放".into());
     }
     let source = &build["source"];
     if source["fixture"] == "business" {
@@ -60,6 +68,13 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
     // 每次调用独立的观察点，不使用全局状态；随后必须重读同一来源和全部证据。
     observe();
     verify_source(root, directory, source)?;
+    if build["build_jobs"].as_u64()
+        != Some(u64::from(
+            crate::recovery::clone::native::bridge::build_jobs(root)?,
+        ))
+    {
+        return Err("全栈来源核验期间 verification.build_jobs 变化；保留现场，不自动重放".into());
+    }
     for (path, original) in bindings {
         if evidence_binding(&path)? != original {
             return Err("全栈来源证据在产物核验期间发生变化".into());

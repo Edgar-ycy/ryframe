@@ -80,7 +80,7 @@ impl Fixture {
                     "executable": executable,
                     "command": [
                         "cargo", "build", "--locked", "-p", "ryframe", "--no-default-features",
-                        "--features", feature, "--bin", name, "--message-format=json"
+                        "--features", feature, "--bin", name, "--jobs", "4", "--message-format=json"
                     ],
                     "bytes": file.bytes,
                     "sha256": file.sha256,
@@ -95,16 +95,16 @@ impl Fixture {
                 "commands": {
                     "api": [
                         "cargo", "build", "--locked", "-p", "ryframe", "--no-default-features",
-                        "--features", "bin-api", "--bin", "ryframe", "--message-format=json"
+                        "--features", "bin-api", "--bin", "ryframe", "--jobs", "4", "--message-format=json"
                     ],
                     "worker": [
                         "cargo", "build", "--locked", "-p", "ryframe", "--no-default-features",
-                        "--features", "bin-worker", "--bin", "ryframe-worker", "--message-format=json"
+                        "--features", "bin-worker", "--bin", "ryframe-worker", "--jobs", "4", "--message-format=json"
                     ],
                 },
                 "profile": "dev",
                 "target": "x86_64-test",
-                "jobs": "cargo-default",
+                "jobs": "4",
                 "toolchain": {"cargo": "cargo fixture", "rustc": "rustc fixture"},
                 "environment": {"variables": [], "sha256": "a".repeat(64)},
             },
@@ -395,7 +395,7 @@ fn bridge_rejects_wrong_source_and_linked_input() {
 }
 
 #[test]
-fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
+fn maintenance_build_records_file_jobs_and_verifies_frozen_artifacts_without_rebuild() {
     let fixture = Fixture::new();
     write(
         &fixture.root.join("config/tools.toml"),
@@ -403,11 +403,14 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
     );
     write(
         &fixture.local.join("tools.toml"),
-        "[generator]\ntarget_dir='target/shared-cache'\n",
+        "[generator]\ntarget_dir='target/shared-cache'\n[verification]\nbuild_jobs=1\n",
     );
     let runner = FakeRunner::default();
     let output = fixture.local.join("maintenance");
     let receipt = maintenance::build_with(&fixture.root, &output, &runner).unwrap();
+    for role in ["reset", "migrate", "tenant-data"] {
+        assert_eq!(receipt["artifacts"][role]["command"][11], "1");
+    }
     assert_eq!(
         receipt["target_directory"],
         json!(fixture.root.join("target").join("shared-cache"))
@@ -456,6 +459,22 @@ fn maintenance_build_receipt_verifies_read_only_and_matches_python() {
     let calls = runner.calls.get();
     let error = maintenance::build_with(&fixture.root, &output, &runner).unwrap_err();
     assert!(error.to_string().contains("已存在"), "{error}");
+    assert_eq!(runner.calls.get(), calls);
+
+    write(
+        &fixture.local.join("tools.toml"),
+        "[generator]\ntarget_dir='target/shared-cache'\n[verification]\nbuild_jobs=2\n",
+    );
+    maintenance::verify_evidence(&fixture.root, &build, Some(&receipt)).unwrap();
+    assert!(maintenance::verify_with(&fixture.root, &build, &runner).is_err());
+    assert_eq!(runner.calls.get(), calls);
+    write(
+        &fixture.local.join("tools.toml"),
+        "[generator]\ntarget_dir='target/shared-cache'\n[verification]\nbuild_jobs=0\n",
+    );
+    let invalid = fixture.local.join("invalid-jobs");
+    assert!(maintenance::build_with(&fixture.root, &invalid, &runner).is_err());
+    assert!(!invalid.exists());
     assert_eq!(runner.calls.get(), calls);
 }
 

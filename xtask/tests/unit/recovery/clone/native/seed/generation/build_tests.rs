@@ -110,6 +110,7 @@ impl Fixture {
             fs::write(&log, log_text).unwrap();
             let mut command = build_command(feature, binary);
             command.pop();
+            command.truncate(command.len() - 2);
             command.extend([
                 "--jobs".into(),
                 "4".into(),
@@ -157,6 +158,8 @@ fn build_command(feature: &str, name: &str) -> Vec<String> {
         feature,
         "--bin",
         name,
+        "--jobs",
+        "4",
         "--message-format=json",
     ]
     .into_iter()

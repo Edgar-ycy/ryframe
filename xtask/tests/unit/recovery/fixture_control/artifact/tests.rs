@@ -439,7 +439,7 @@ fn source_fixture(root: &Path) -> std::path::PathBuf {
         })
         .collect::<serde_json::Map<_, _>>();
     let build_path = directory.join("build-evidence.json");
-    let build = json!({"format_version":1,"kind":"full-stack-build","backend_root":root,"source":source,"artifacts":artifacts});
+    let build = json!({"format_version":1,"kind":"full-stack-build","backend_root":root,"source":source,"artifacts":artifacts,"build_jobs":4});
     fs::write(&build_path, serde_json::to_vec(&build).unwrap()).unwrap();
     let runtime_evidence = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":super::super::file_binding(&build_path,"build").unwrap(),"runtime":super::super::file_binding(&directory.join("runtime.json"),"runtime").unwrap()});
     fs::write(

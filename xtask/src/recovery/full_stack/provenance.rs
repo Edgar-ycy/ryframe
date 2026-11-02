@@ -296,6 +296,7 @@ pub(super) fn build(
     directory: &Path,
     binaries: &Value,
     expected: &Value,
+    jobs: u8,
 ) -> Result<Value> {
     let roles = [
         "ryframe",
@@ -317,5 +318,6 @@ pub(super) fn build(
         return Err("采集构建产物期间源码或 fixture 来源发生变化".into());
     }
     Ok(json!({"format_version":1,"kind":"full-stack-build",
-        "backend_root":portable_path(&fs::canonicalize(root)?),"source":source,"artifacts":artifacts}))
+        "backend_root":portable_path(&fs::canonicalize(root)?),"source":source,"artifacts":artifacts,
+        "build_jobs":jobs}))
 }

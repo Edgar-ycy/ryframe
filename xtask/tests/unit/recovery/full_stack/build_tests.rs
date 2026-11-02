@@ -171,6 +171,12 @@ fn cargo(context: &Context) -> Cargo<'_> {
 fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindings() {
     let fixture = Fixture::new();
     let context = &fixture.context;
+    fs::create_dir(context.root.join(".local-tests")).unwrap();
+    fs::write(
+        context.root.join(".local-tests/tools.toml"),
+        "[verification]\nbuild_jobs=1\n",
+    )
+    .unwrap();
     let mut port = cargo(context);
     let binaries = run(&context.root, &context.output, &mut |program, args| {
         port.command(program, args, None)
@@ -178,6 +184,11 @@ fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindin
     .unwrap();
     let evidence = documents::read(&context.output.join("build-evidence.json")).unwrap();
     assert_eq!(port.calls.len(), 4);
+    assert_eq!(evidence["build_jobs"], 1);
+    for args in &port.calls {
+        let jobs = args.iter().position(|s| s == "--jobs").unwrap();
+        assert_eq!(args[jobs + 1], "1");
+    }
     assert_eq!(
         documents::read(&context.output.join("binaries.json")).unwrap(),
         binaries
@@ -212,7 +223,7 @@ fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindin
         );
     }
     assert_eq!(
-        provenance::build(&context.root, &context.output, &binaries, &Value::Null).unwrap(),
+        provenance::build(&context.root, &context.output, &binaries, &Value::Null, 1).unwrap(),
         evidence
     );
     assert!(
@@ -221,6 +232,33 @@ fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindin
         .is_err()
     );
     assert_eq!(port.calls.len(), 4);
+}
+
+#[test]
+fn changed_build_jobs_preserve_artifacts_without_publishing_mixed_receipts() {
+    let fixture = Fixture::new();
+    let context = &fixture.context;
+    fs::create_dir(context.root.join(".local-tests")).unwrap();
+    let mut port = cargo(context);
+    let result = run(&context.root, &context.output, &mut |program, args| {
+        let output = port.command(program, args, None)?;
+        if port.calls.len() == 1 {
+            fs::write(
+                context.root.join(".local-tests/tools.toml"),
+                "[verification]\nbuild_jobs=1\n",
+            )?;
+        }
+        Ok(output)
+    });
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("verification.build_jobs")
+    );
+    assert!(!context.output.join("binaries.json").exists());
+    assert!(!context.output.join("build-evidence.json").exists());
+    assert!(context.output.join("artifacts/ryframe.exe").exists());
 }
 
 #[test]

@@ -123,7 +123,12 @@ fn context(
     let cargo = command("cargo", &["-V".into()])?;
     let rustc = command("rustc", &["-vV".into()])?;
     inputs.verify()?;
-    bridge::build_context::from_inputs(&cargo, &rustc, &inputs.environment)
+    bridge::build_context::from_inputs(
+        &cargo,
+        &rustc,
+        &inputs.environment,
+        bridge::build_jobs(&inputs.root)?,
+    )
 }
 
 fn command(inputs: &Inputs, program: &str, args: &[String]) -> Result<String> {

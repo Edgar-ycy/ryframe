@@ -144,6 +144,7 @@ impl Port for Commands {
             "cargo fixture",
             "rustc fixture\nhost: fixture-target",
             &environment,
+            4,
         )
     }
 }

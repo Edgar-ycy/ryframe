@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Configure acceptance-build concurrency for maintenance tools, API and Worker through one tool-file setting, defaulting to 4 with a local option of 1; actual commands and source receipts agree, current configuration drift rejects reuse, and historical command verification and failed evidence are preserved. Shared Python readers for maintenance receipts, Cargo events and commands now use the existing Rust core, removing duplicate parsing and hardcoded concurrency.
+
 - Fix ordinary runtime observation using the repository default configuration for its final API-address check; consistently use the receipt-bound configuration directory. Extend the existing no-write observation case to cover different default and runtime-snapshot ports, and remove obsolete application environment variables from the fixture.
 
 - Review quota-recovery tests and remove a simulated refresh-failure case and its fixture branch that duplicate the post-write unknown-response scenario, along with an assertion that only checks mock restoration. Preserve coverage for unknown writes, explicit reconciliation, identity and evidence binding, idempotency and failure cleanup.

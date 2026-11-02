@@ -518,6 +518,7 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
             "cargo synthetic",
             "rustc synthetic\nhost: synthetic-target",
             values,
+            1,
         )
         .unwrap()
     };
@@ -538,10 +539,7 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
         let mut changed = actual.clone();
         changed.insert(key.into(), replacement.into());
         let other = context(&changed);
-        assert_eq!(
-            other["jobs"],
-            if key == "CARGO_BUILD_JOBS" { "2" } else { "1" }
-        );
+        assert_eq!(other["jobs"], "1");
         assert_ne!(
             recorded["environment"]["sha256"],
             other["environment"]["sha256"]
@@ -553,7 +551,7 @@ fn native_fixture_build_environment_preserves_cargo_target_without_application_o
     assert!(!absent.contains_key("CARGO_HOME"));
     assert!(!absent.contains_key("RUSTUP_HOME"));
     let default = context(&absent);
-    assert_eq!(default["jobs"], "cargo-default");
+    assert_eq!(default["jobs"], "1");
     for invalid in ["", "0", "000", "-1", "+1", "1.5", "one", " 1 "] {
         let inherited = [("CARGO_BUILD_JOBS".into(), invalid.into())];
         assert!(environment::configured(&private, inherited).is_err());

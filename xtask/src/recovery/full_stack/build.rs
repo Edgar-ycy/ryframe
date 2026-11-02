@@ -21,6 +21,7 @@ pub(in crate::recovery) fn run(
             return Err("已有全栈构建收据；保留现场，禁止覆盖或自动重放".into());
         }
     }
+    let jobs = crate::recovery::clone::native::bridge::build_jobs(root)?;
     let source = provenance::current(root, directory)?;
     let artifacts = directory.join("artifacts");
     validate_absolute_path(&artifacts, LocalTestPathKind::NewDirectory)?;
@@ -32,6 +33,7 @@ pub(in crate::recovery) fn run(
         ("bin-api", "ryframe"),
         ("bin-worker", "ryframe-worker"),
     ] {
+        let jobs_text = jobs.to_string();
         let args = [
             "build",
             "--locked",
@@ -42,6 +44,8 @@ pub(in crate::recovery) fn run(
             feature,
             "--bin",
             name,
+            "--jobs",
+            &jobs_text,
             "--message-format=json",
         ]
         .into_iter()
@@ -52,7 +56,13 @@ pub(in crate::recovery) fn run(
         binaries.insert(name.into(), json!(freeze(&cargo, &artifacts)?));
     }
     let binaries = Value::Object(binaries);
-    let evidence = provenance::build(root, directory, &binaries, &source)?;
+    if crate::recovery::clone::native::bridge::build_jobs(root)? != jobs {
+        return Err("构建期间 verification.build_jobs 变化；保留产物和原收据，不自动重放".into());
+    }
+    let evidence = provenance::build(root, directory, &binaries, &source, jobs)?;
+    if crate::recovery::clone::native::bridge::build_jobs(root)? != jobs {
+        return Err("发布构建收据前 verification.build_jobs 变化；保留产物，不自动重放".into());
+    }
     documents::write_new(&directory.join("binaries.json"), &binaries)?;
     documents::write_new(&directory.join("build-evidence.json"), &evidence)?;
     Ok(binaries)

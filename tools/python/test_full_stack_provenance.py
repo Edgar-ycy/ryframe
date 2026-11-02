@@ -90,7 +90,7 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
             binaries[role] = str(path)
             artifacts[role] = {"path": str(path), **file_digest(path)}
         build = {"format_version": 1, "kind": "full-stack-build", "backend_root": str(self.backend),
-                 "source": source, "artifacts": artifacts}
+                 "source": source, "artifacts": artifacts, "build_jobs": 4}
         write_receipt(self.directory / "binaries.json", binaries)
         build_path = self.directory / provenance.BUILD_EVIDENCE
         write_receipt(build_path, build)

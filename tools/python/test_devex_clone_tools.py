@@ -89,7 +89,7 @@ class CloneToolsTests(unittest.TestCase):
             log.write_bytes(b"fixture build log\n")
             artifacts[role] = {
                 "executable": str(frozen), "cargo_executable": str(cache),
-                "command": tools.command(role, target),
+                "command": tools.command(self.backend, role, target),
                 "cargo_output": {"file": output.name, **tools.file_digest(output)},
                 "cargo_log": {"file": log.name, **tools.file_digest(log)},
                 **tools.file_digest(frozen),

@@ -52,7 +52,7 @@ class SourceFixture:
             "format_version": 2, "kind": "restore-backend-build",
             "sources": build_source_domains(source_inventory, "backend"),
             "build": {"commands": {role: build_command(role) for role in ROLES},
-                      "profile": "dev", "target": "fixture", "jobs": "cargo-default",
+                      "profile": "dev", "target": "fixture", "jobs": "4",
                       "toolchain": {"cargo": "fixture", "rustc": "fixture"},
                       "environment": {"variables": [], "sha256": canonical_digest([])}},
             "artifacts": {},

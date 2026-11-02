@@ -84,6 +84,7 @@ pub(crate) fn build_with(root: &Path, directory: &Path, runner: &dyn Runner) -> 
     validate_local_test_path(directory, root, LocalTestPathKind::NewDirectory)
         .map_err(|error| format!("维护构建目录无效：{error}"))?;
     let target = target_directory(root)?;
+    let jobs = super::bridge::build_jobs(root)?;
     fs::create_dir(directory)?;
     let mut stage = "source_binding";
     let mut source_binding = None;
@@ -102,7 +103,7 @@ pub(crate) fn build_with(root: &Path, directory: &Path, runner: &dyn Runner) -> 
                     "migrate" => "build_migrate",
                     _ => "build_tenant_data",
                 };
-                let arguments = command(role, &target)?;
+                let arguments = command(role, &target, jobs)?;
                 let output = directory.join(format!("{role}.cargo.jsonl"));
                 let log = directory.join(format!("{role}.cargo.log"));
                 stdout = Some(output.clone());
@@ -148,6 +149,7 @@ pub(crate) fn build_with(root: &Path, directory: &Path, runner: &dyn Runner) -> 
         let after = source::capture(root)?;
         if source::binding_value(&after.source) != source::binding_value(&inventory.source)
             || toolchain(root, runner)? != versions
+            || super::bridge::build_jobs(root)? != jobs
         {
             return Err("维护工具构建期间源码或工具链变化".into());
         }
@@ -228,10 +230,15 @@ pub(crate) fn verify_with(backend: &Path, filename: &Path, runner: &dyn Runner) 
         return Err("维护工具来源清单与当前完整开发源码不一致".into());
     }
     let versions = toolchain(backend, runner)?;
+    let jobs = super::bridge::build_jobs(backend)?;
     if receipt["toolchain"] != versions {
         return Err("维护工具未绑定当前完整开发源码和工具链".into());
     }
+    if receipt::jobs(&receipt)? != jobs {
+        return Err("维护构建的 verification.build_jobs 与当前 config/tools.toml 或 .local-tests/tools.toml 不同；保留原收据，在新输出目录显式重新构建，不能修改历史命令或自动重放".into());
+    }
     if digest::file(filename)? != before
+        || super::bridge::build_jobs(backend)? != jobs
         || source::binding_value(&source::capture(backend)?.source)
             != source::binding_value(&initial.source)
     {
@@ -240,7 +247,10 @@ pub(crate) fn verify_with(backend: &Path, filename: &Path, runner: &dyn Runner) 
     Ok(receipt)
 }
 
-pub(super) fn command(role: &str, target: &Path) -> Result<Vec<String>> {
+pub(in crate::recovery) fn command(role: &str, target: &Path, jobs: u8) -> Result<Vec<String>> {
+    if !(1..=64).contains(&jobs) {
+        return Err("verification.build_jobs 必须是 1 到 64 的整数；核对工具配置".into());
+    }
     let (_, feature, name) = TOOLS
         .iter()
         .find(|(candidate, _, _)| *candidate == role)
@@ -257,14 +267,18 @@ pub(super) fn command(role: &str, target: &Path) -> Result<Vec<String>> {
         "--bin".into(),
         (*name).into(),
         "--jobs".into(),
-        "4".into(),
+        jobs.to_string(),
         "--target-dir".into(),
         path_text(target, "维护构建 target")?,
         "--message-format=json".into(),
     ])
 }
 
-fn recorded_cargo_path(backend: &Path, name: &str, content: &str) -> Result<PathBuf> {
+pub(in crate::recovery) fn recorded_cargo_path(
+    backend: &Path,
+    name: &str,
+    content: &str,
+) -> Result<PathBuf> {
     let manifest = fs::canonicalize(backend.join("crates/ryframe/Cargo.toml"))?;
     let mut found = Vec::new();
     for line in content.lines() {

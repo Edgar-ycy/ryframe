@@ -2,7 +2,7 @@
 use super::{Native, source, verify};
 use crate::{
     Result,
-    recovery::clone::native::{bridge, json as document},
+    recovery::clone::native::{bridge, json as document, maintenance},
 };
 use serde_json::{Value, json};
 
@@ -20,10 +20,38 @@ pub(in crate::recovery) fn request(args: &Value) -> Result<Value> {
             bridge::validate_build_context(value)?;
             Ok(value.clone())
         }
-        "command" => Ok(json!(bridge::build_command(document::text(
-            value,
-            "构建角色"
-        )?)?)),
+        "command" => Ok(json!(bridge::build_command(
+            document::text(value, "构建角色")?,
+            bridge::build_jobs(root)?
+        )?)),
+        "jobs" => {
+            require_null(value)?;
+            Ok(json!(bridge::build_jobs(root)?))
+        }
+        "maintenance-command" => {
+            document::exact(value, &["role", "target"], "维护构建命令输入")?;
+            Ok(json!(maintenance::command(
+                document::text(&value["role"], "维护角色")?,
+                std::path::Path::new(document::text(&value["target"], "维护 target")?),
+                bridge::build_jobs(root)?,
+            )?))
+        }
+        "maintenance-evidence" => {
+            document::exact(value, &["filename", "receipt"], "维护构建核验输入")?;
+            maintenance::verify_evidence(
+                root,
+                source::path(&value["filename"])?,
+                (!value["receipt"].is_null()).then_some(&value["receipt"]),
+            )
+        }
+        "maintenance-artifact-path" => {
+            document::exact(value, &["name", "content"], "维护 Cargo 事件输入")?;
+            Ok(json!(maintenance::recorded_cargo_path(
+                root,
+                document::text(&value["name"], "维护产物名")?,
+                document::text(&value["content"], "Cargo 事件")?
+            )?))
+        }
         "artifacts" => {
             bridge::verify_restore_artifacts(value)?;
             Ok(json!({"verified":true}))
