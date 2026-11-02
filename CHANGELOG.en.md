@@ -8,6 +8,8 @@
 
 - Review quota-recovery tests and remove a simulated refresh-failure case and its fixture branch that duplicate the post-write unknown-response scenario, along with an assertion that only checks mock restoration. Preserve coverage for unknown writes, explicit reconciliation, identity and evidence binding, idempotency and failure cleanup.
 
+- Move fixture-environment review renewal to Rust with two actual tool observations, raw-input revalidation and new-receipt publication. Preserve ready resource fields and validate the successor contract; remove obsolete Python renewal and the unused WSL Python collector, and report stages, remedies and preservation requirements when publication is unconfirmed.
+
 - Run the formal fixture-environment plan entry directly through existing Rust planning and source verification, removing its public Python dispatch while preserving arguments, read-only behavior, output and the shared adapter still used by environment preparation.
 
 - Remove obsolete Python object-storage lifecycle dispatch, private parameters and execution functions already replaced by formal Rust entry points; retire their protocol cases, tests and fixtures while preserving shared readers used by copying, service startup and history validation.

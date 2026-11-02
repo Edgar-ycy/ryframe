@@ -18,7 +18,7 @@ mod linux_write;
 mod markers;
 mod model;
 mod native_tool;
-mod review_tools;
+pub(in crate::recovery) mod review_tools;
 pub(crate) use native_tool::review_value as validate_native_tool;
 pub(crate) use native_tool::successor as native_tool_successor;
 mod process;

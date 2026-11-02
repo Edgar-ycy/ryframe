@@ -134,7 +134,7 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     Ok(expected)
 }
 
-fn service_run(review: &Value) -> Result<std::path::PathBuf> {
+pub(super) fn service_run(review: &Value) -> Result<std::path::PathBuf> {
     let value = super::super::services::lifecycle::query::dispatch(
         Path::new("."),
         "service-run",

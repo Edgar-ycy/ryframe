@@ -32,9 +32,11 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_domain_failure_reports_validation_reason_without_credentials(self):
         raw = self.protocol(
-            "environment", "review", True,
+            "environment", "prepare", True,
             review=self.root + "/.local-tests/review.json",
-            output=self.root + "/.local-tests/ready-review.json",
+            execution_source=self.root + "/.local-tests/execution-source.json",
+            maintenance_build=self.root + "/.local-tests/build.json",
+            side="seed", output=self.root + "/.local-tests/prepared",
         )
         output = io.StringIO()
 
@@ -134,11 +136,6 @@ class FixtureControlProtocolTests(unittest.TestCase):
         old["fixture"] = old.pop("execution_source")
         with self.assertRaises(FixtureControlProtocolError):
             self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, json.dumps(old), positional=True)
-        review = self.protocol("environment", "review", True, review=input_path, output=input_path)
-        self.assertEqual(
-            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, review, positional=True)[0],
-            "review",
-        )
         retired_plan = self.protocol(
             "environment", "plan", False,
             review=input_path, execution_source=input_path, maintenance_build=input_path, side="seed",

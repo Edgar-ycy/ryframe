@@ -8,7 +8,7 @@ use crate::{
     local_test_path::LocalTestPathKind,
 };
 
-use super::{insert_optional_path, insert_path, output_value, path_text, path_value};
+use super::{insert_optional_path, insert_path, path_text, path_value};
 
 #[path = "environment/configuration.rs"]
 mod configuration;
@@ -20,6 +20,8 @@ mod output;
 pub(in crate::recovery) mod plan;
 #[path = "environment/protocol.rs"]
 pub(crate) mod protocol;
+#[path = "environment/review.rs"]
+pub(super) mod review;
 
 #[path = "environment/secrets.rs"]
 pub(crate) mod secrets;
@@ -84,18 +86,8 @@ pub(super) fn fields(
                 LocalTestPathKind::ExistingDirectory,
             )?;
         }
-        FixtureEnvironmentCommand::Review { review, output } => {
-            insert_path(
-                &mut fields,
-                "review",
-                review,
-                root,
-                LocalTestPathKind::ExistingFile,
-            )?;
-            fields.insert(
-                "output".to_owned(),
-                output_value(&output.output, root, "审阅输出文件")?,
-            );
+        FixtureEnvironmentCommand::Review { .. } => {
+            return Err("环境审阅由 Rust 原生执行，不生成 Python 请求".into());
         }
         FixtureEnvironmentCommand::RotateSecrets { .. }
         | FixtureEnvironmentCommand::BootstrapSecrets { .. } => {

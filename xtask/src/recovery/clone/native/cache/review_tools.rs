@@ -20,7 +20,7 @@ pub(super) fn local_tools(review: &Value) -> Result<Value> {
     Ok(result)
 }
 
-pub(super) fn observe(backend: &Path, review: &Value) -> Result<Value> {
+pub(in crate::recovery) fn observe(backend: &Path, review: &Value) -> Result<Value> {
     if review["ready_for_execution"].as_bool().is_none() {
         return Err("夹具预检状态无效".into());
     }

@@ -6,17 +6,15 @@ import copy
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 
 from devex_clone_capture import read_json, write_json
 from process_environment import Environments, configured
 from devex_clone_model import linked, local_path
-from devex_clone_target_binding import REVIEW_FILE_TOOLS, validate_review
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
-from reference_fixture_service_context import load_prepared_environment, service_run
+from reference_fixture_service_context import load_prepared_environment
 from reference_fixture_control_protocol import run_private
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -33,14 +31,6 @@ FIXTURE_REQUEST_RATE_LIMIT_CAPACITY = 1000
 
 def bound(path: Path) -> dict:
     return {"path": str(path), **file_digest(path)}
-
-
-def _read(backend: Path, value: Path) -> tuple[Path, dict]:
-    requested = value if value.is_absolute() else backend / value
-    path = local_path(backend, str(requested))
-    if linked(path) or not path.is_file():
-        raise ValueError("夹具输入必须是受控目录中的普通文件")
-    return path, read_json(path)
 
 
 def prepared_environment(backend: Path, value: Path) -> tuple[Path, Path, dict, dict]:
@@ -86,73 +76,19 @@ def _maintenance(value: dict) -> None:
     environment_native("maintenance", value)
 
 
-def _command(run, arguments: list[str]) -> str:
-    completed = run(arguments, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return completed.stdout.decode("utf-8").strip()
-
-
-def _preflight_python(review: dict, run=subprocess.run) -> dict:
-    """重新读取计划绑定的工具，不启动服务、不连接业务资源。"""
-    if type(review.get("ready_for_execution")) is not bool:
-        raise ValueError("夹具审阅计划就绪状态无效")
-    structural = copy.deepcopy(review)
-    structural["ready_for_execution"] = True
-    validate_review(structural)
-    tools = review["tools"]
-    observed = {}
-    for name in REVIEW_FILE_TOOLS:
-        item = tools[name]
-        path = Path(item["path"])
-        if not path.is_absolute() or linked(path) or not path.is_file() or file_digest(path)["sha256"] != item["sha256"]:
-            raise ValueError(f"审阅计划中的 {name} 工具已变化")
-        observed[name] = {"path": str(path), "sha256": item["sha256"]}
-    redis = tools["redis_server"]
-    distribution = redis["distribution"]
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", distribution):
-        raise ValueError("审阅计划中的 Redis 发行版无效")
-    launcher = "/usr/bin/redis-server"
-    wsl_value = shutil.which("wsl")
-    if wsl_value is None:
-        raise ValueError("本机缺少 WSL 启动器，无法预检 Redis 控制器")
-    wsl = Path(wsl_value).resolve(strict=True)
-    if linked(wsl) or not wsl.is_file():
-        raise ValueError("本机 WSL 启动器不是受控普通文件")
-    prefix = [str(wsl), "--distribution", distribution, "--exec"]
-    resolved = _command(run, [*prefix, "/usr/bin/readlink", "-f", launcher])
-    digest = _command(run, [*prefix, "/usr/bin/sha256sum", launcher]).split(maxsplit=1)[0]
-    version = _command(run, [*prefix, launcher, "--version"])
-    # Ubuntu 将 redis-server 链接到 multi-call 二进制时，内核实际路径可以是 redis-check-rdb；
-    # 启动入口始终固定为 redis-server，运行身份则绑定 readlink 的实际文件。
-    if (not re.fullmatch(r"/usr/bin/(?:redis-server|redis-check-rdb)", resolved) or not re.fullmatch(r"[a-f0-9]{64}", digest)
-            or not version.startswith("Redis server v=")):
-        raise ValueError("本机 WSL Redis 服务二进制未通过只读核验")
-    observed["redis_server"] = {"distribution": distribution, "resolved_path": resolved,
-                                "sha256": digest, "version": version}
-    python = "/usr/bin/python3"
-    python_resolved = _command(run, [*prefix, "/usr/bin/readlink", "-f", python])
-    python_digest = _command(run, [*prefix, "/usr/bin/sha256sum", python_resolved]).split(maxsplit=1)[0]
-    if (not re.fullmatch(r"/usr/bin/python3\.[0-9]+", python_resolved)
-            or not re.fullmatch(r"[a-f0-9]{64}", python_digest)):
-        raise ValueError("本机 WSL Python 未通过只读核验")
-    observed["wsl"] = {"path": str(wsl), "sha256": file_digest(wsl)["sha256"]}
-    observed["redis_python"] = {"distribution": distribution, "path": python,
-                                 "resolved_path": python_resolved, "sha256": python_digest}
-    return observed
-
-
 def _preflight_binding(review: dict) -> dict:
     return environment_native("preflight-binding", review)
 
 
-def _preflight(review: dict, run=subprocess.run) -> dict:
+def _preflight(review: dict) -> dict:
     from devex_clone_cache_native import invoke
     return invoke("preflight-tools", review=review)
 
 
-def validate_current_review_tools(review: dict, run=subprocess.run) -> dict:
+def validate_current_review_tools(review: dict) -> dict:
     """重新观察 ready 审阅绑定的工具，并拒绝本机工具代次漂移。"""
     expected = _preflight_binding(review)
-    observed = _preflight(review, run)
+    observed = _preflight(review)
     if observed != expected:
         raise ValueError("夹具审阅计划中的当前工具已经变化")
     return observed
@@ -165,35 +101,6 @@ def validated_recorded_review_tools(review: dict) -> dict:
 
 def validate_preflight_successor(previous: dict, review: dict) -> None:
     environment_native("preflight-successor", {"previous": previous, "review": review})
-
-
-def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.run) -> dict:
-    """为旧的只读计划创建一份新的、经本机工具复核的不可变审阅收据。"""
-    backend = backend.resolve(strict=True)
-    review_file, review = _read(backend, review_path)
-    predecessor = bound(review_file)
-    observed = _preflight(review, run)
-    output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
-    if not output.parent.is_dir():
-        raise ValueError("新审阅收据的父目录不存在")
-    current_file, current_review = _read(backend, review_file)
-    if current_file != review_file or current_review != review or bound(current_file) != predecessor:
-        raise ValueError("审阅 predecessor 在工具预检期间发生变化")
-    revised = copy.deepcopy(review)
-    revised["ready_for_execution"] = True
-    revised["tools"] = {**review["tools"], **observed}
-    revised["tools"].pop("redis_python", None)
-    seed = revised["scopes"]["seed"]
-    service_directory = service_run(revised)
-    revised["services"]["rustfs"].update(
-        scope_id="services-" + seed["scope_id"], process_receipt=str(service_directory / "rustfs/process.json"))
-    revised["preflight"] = {"format_version": 1, "kind": "reference-fixture-tool-preflight", "status": "verified",
-                            "supersedes": predecessor, "tools": copy.deepcopy(observed)}
-    terminal = _preflight(current_review, run)
-    if terminal != observed or bound(review_file) != predecessor or read_json(review_file) != review:
-        raise ValueError("审阅 predecessor 或当前工具在 ready 签发前发生变化")
-    write_json(output, revised)
-    return revised
 
 
 def _secret(directory: Path, name: str) -> tuple[str, dict]:
@@ -360,13 +267,12 @@ def prepare(backend: Path, review_path: Path, execution_source_path: Path, maint
 
 PROTOCOL_SCHEMAS = {
     "prepare": (("review", "execution_source", "maintenance_build", "side", "output", "native_tool"), ("secrets_dir",), True),
-    "review": (("review", "output", "native_tool"), (), True),
 }
 
 
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("prepare", "review"))
+    parser.add_argument("operation", choices=("prepare",))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path)
     parser.add_argument("--execution-source", type=Path)
@@ -379,20 +285,12 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
     from rate_limit_tool import install_verified_binding
     install_verified_binding(args.native_tool)
-    if args.operation == "prepare":
-        if args.review is None or args.execution_source is None or args.maintenance_build is None:
-            parser.error(f"{args.operation} 需要 --review、--execution-source 与 --maintenance-build")
-    elif args.execution_source is not None:
-        parser.error("--execution-source 只用于 prepare")
-    if args.operation == "prepare":
-        if args.output is None or not args.write:
-            parser.error("prepare 需要 --output 与 --write")
-        result = prepare(args.backend_dir, args.review, args.execution_source, args.maintenance_build, args.output, args.side,
-                         args.secrets_dir)
-    else:
-        if args.review is None or args.output is None or not args.write or args.secrets_dir is not None:
-            parser.error("review 需要 --review、--output 与 --write，且不接受 --secrets-dir")
-        result = revalidate(args.backend_dir, args.review, args.output)
+    if args.review is None or args.execution_source is None or args.maintenance_build is None:
+        parser.error("prepare 需要 --review、--execution-source 与 --maintenance-build")
+    if args.output is None or not args.write:
+        parser.error("prepare 需要 --output 与 --write")
+    result = prepare(args.backend_dir, args.review, args.execution_source, args.maintenance_build, args.output, args.side,
+                     args.secrets_dir)
     print(json.dumps({"status": result.get("status", "planned"), "services_started": result.get("services_started", False),
                       "remote_writes": result.get("remote_writes", 0)}, ensure_ascii=False))
 

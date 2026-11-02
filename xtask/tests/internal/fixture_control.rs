@@ -418,7 +418,7 @@ fn parses_every_environment_operation_into_typed_requests() {
     ];
     for (operation, values) in cases {
         let parsed = parse_control(command("environment", Some(operation), values)).unwrap();
-        if matches!(operation, "rotate-secrets" | "bootstrap-secrets") {
+        if matches!(operation, "review" | "rotate-secrets" | "bootstrap-secrets") {
             assert!(private_invocation_at(&parsed, &root_dir()).is_err());
         }
         assert!(matches!(parsed, FixtureControlCommand::Environment(_)));
