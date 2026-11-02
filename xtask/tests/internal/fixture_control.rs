@@ -363,8 +363,7 @@ fn parses_every_environment_operation_into_typed_requests() {
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Plan(_))
     ));
     assert!(!plan.writes());
-    let error = private_invocation_at(&plan, &root_dir()).unwrap_err();
-    assert!(error.to_string().contains("环境计划由 Rust 原生执行"));
+    assert!(private_invocation_at(&plan, &root_dir()).is_err());
     let mut retired = fixture.input_options();
     retired[2] = "--fixture".to_owned();
     assert!(parse_control(command("environment", Some("plan"), retired)).is_err());
@@ -377,10 +376,12 @@ fn parses_every_environment_operation_into_typed_requests() {
         text(&fixture.controlled_dir),
         "--write".to_owned(),
     ]);
+    let prepare = parse_control(command("environment", Some("prepare"), prepare)).unwrap();
     assert!(matches!(
-        parse_control(command("environment", Some("prepare"), prepare)).unwrap(),
+        prepare,
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Prepare { .. })
     ));
+    assert!(private_invocation_at(&prepare, &root_dir()).is_err());
 
     let cases = [
         (
@@ -418,9 +419,7 @@ fn parses_every_environment_operation_into_typed_requests() {
     ];
     for (operation, values) in cases {
         let parsed = parse_control(command("environment", Some(operation), values)).unwrap();
-        if matches!(operation, "review" | "rotate-secrets" | "bootstrap-secrets") {
-            assert!(private_invocation_at(&parsed, &root_dir()).is_err());
-        }
+        assert!(private_invocation_at(&parsed, &root_dir()).is_err());
         assert!(matches!(parsed, FixtureControlCommand::Environment(_)));
     }
 }

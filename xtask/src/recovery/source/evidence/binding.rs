@@ -159,7 +159,7 @@ pub(in crate::recovery) fn path(value: &Value) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub(super) fn summary(args: &Value) -> Result<Value> {
+pub(in crate::recovery) fn summary(args: &Value) -> Result<Value> {
     documents::exact(args, &["backend", "database"], "数据库公开连接参数")?;
     let mut value =
         request_physical::defaults_connection(&path(&args["backend"])?, &args["database"])?;
@@ -236,7 +236,7 @@ pub(super) fn redact(args: &Value) -> Result<Value> {
     Ok(json!(text))
 }
 
-pub(super) fn configuration(args: &Value) -> Result<Value> {
+pub(in crate::recovery) fn configuration(args: &Value) -> Result<Value> {
     documents::exact(
         args,
         &["backend", "database", "output", "text"],

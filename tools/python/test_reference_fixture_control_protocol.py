@@ -10,7 +10,6 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import reference_fixture_environment as fixture_environment
 import reference_fixture_request as fixture_request
 import reference_fixture_services as fixture_services
 import reference_fixture_source_pair as fixture_source_pair
@@ -32,11 +31,9 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_domain_failure_reports_validation_reason_without_credentials(self):
         raw = self.protocol(
-            "environment", "prepare", True,
+            "services", "rustfs", True,
             review=self.root + "/.local-tests/review.json",
-            execution_source=self.root + "/.local-tests/execution-source.json",
-            maintenance_build=self.root + "/.local-tests/build.json",
-            side="seed", output=self.root + "/.local-tests/prepared",
+            environment=self.root + "/.local-tests/environment.json",
         )
         output = io.StringIO()
 
@@ -44,11 +41,11 @@ class FixtureControlProtocolTests(unittest.TestCase):
             raise ValueError("审阅来源错误：secret-for-test")
         with (
             mock.patch.dict(os.environ, {"APP_PASSWORD": "secret-for-test"}),
-            mock.patch.object(sys, "argv", ["environment.py"]),
+            mock.patch.object(sys, "argv", ["services.py"]),
             mock.patch.object(sys, "stderr", output),
         ):
             result = run_private(
-                "environment", fixture_environment.PROTOCOL_SCHEMAS, fail,
+                "services", fixture_services.PROTOCOL_SCHEMAS, fail,
                 positional_operation=True, raw=raw,
             )
         self.assertEqual(result, 1)
@@ -60,7 +57,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
         self.root = str(Path(__file__).resolve().parents[2])
 
     def protocol(self, domain, operation, write, **fields):
-        if domain in {"environment", "request", "services", "successor"}:
+        if domain in {"request", "services", "successor"}:
             fields.setdefault("native_tool", json.dumps(tool_binding()))
         return json.dumps({
             "backend_dir": self.root,
@@ -123,25 +120,6 @@ class FixtureControlProtocolTests(unittest.TestCase):
     def test_reconstructs_exact_operations_for_control_domains(self):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
         directory = str(Path(self.root) / ".local-tests" / "run")
-        environment = self.protocol(
-            "environment", "prepare", True,
-            review=input_path, execution_source=input_path, maintenance_build=input_path, side="seed",
-            output=directory,
-        )
-        self.assertEqual(
-            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, environment, positional=True)[0],
-            "prepare",
-        )
-        old = json.loads(environment)
-        old["fixture"] = old.pop("execution_source")
-        with self.assertRaises(FixtureControlProtocolError):
-            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, json.dumps(old), positional=True)
-        retired_plan = self.protocol(
-            "environment", "plan", False,
-            review=input_path, execution_source=input_path, maintenance_build=input_path, side="seed",
-        )
-        with self.assertRaises(FixtureControlProtocolError):
-            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, retired_plan, positional=True)
         request = self.protocol(
             "request", "publish", True,
             environment=input_path, service_run=directory, id="fresh-base", side="base", output=input_path,
@@ -234,7 +212,6 @@ class FixtureControlProtocolTests(unittest.TestCase):
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
             "full_stack_ci_support.py",
-            "reference_fixture_environment.py",
             "reference_fixture_request.py",
             "reference_fixture_successor.py",
             "reference_fixture_services.py",

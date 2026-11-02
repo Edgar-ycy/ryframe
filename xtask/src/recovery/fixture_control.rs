@@ -73,6 +73,11 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Plan(inputs)) => {
             return print_json(&environment::run_plan(root, inputs)?);
         }
+        FixtureControlCommand::Environment(
+            command @ crate::cli::FixtureEnvironmentCommand::Prepare { .. },
+        ) => {
+            return print_json(&environment::prepare::run(root, command)?);
+        }
         FixtureControlCommand::Environment(command) if environment::secrets::handles(command) => {
             return print_json(&environment::secrets::run(root, command)?);
         }
@@ -133,6 +138,12 @@ pub(crate) fn private_invocation_at(
     command: &FixtureControlCommand,
     root: &Path,
 ) -> Result<PrivateFixtureControlInvocation> {
+    if matches!(
+        command,
+        FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Prepare { .. })
+    ) {
+        return Err("环境准备由 Rust 原生执行，不生成 Python 请求".into());
+    }
     if command.is_help() {
         return Err("fixture 控制帮助不启动私有阶段程序".into());
     }
@@ -162,10 +173,9 @@ pub(crate) fn private_invocation_at(
     let (script, fields) = match command {
         FixtureControlCommand::Artifact(_) => unreachable!("原生导出物理验收已提前返回"),
         FixtureControlCommand::Dataset(_) => unreachable!("原生数据工厂已提前返回"),
-        FixtureControlCommand::Environment(command) => (
-            "tools/python/reference_fixture_environment.py",
-            environment::fields(command, root)?,
-        ),
+        FixtureControlCommand::Environment(_) => {
+            return Err("环境操作由 Rust 原生执行，不生成 Python 请求".into());
+        }
         FixtureControlCommand::Retention(_) => unreachable!("原生保留期验收已提前返回"),
         FixtureControlCommand::Review(_) => unreachable!("原生审阅续签已提前返回"),
         FixtureControlCommand::Request(command) => (

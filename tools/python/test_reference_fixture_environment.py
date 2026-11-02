@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import subprocess
-import tomllib
 import json
 from pathlib import Path
 import sys
@@ -17,6 +16,7 @@ import reference_fixture_environment as environment
 from devex_clone_target_binding import REVIEW_FILE_TOOLS, validate_review
 from reference_fixture_service_context import service_run
 from restore_build import file_digest
+from restore_reference_plan import plan_hash
 from source_inventory import snapshot
 
 
@@ -78,26 +78,13 @@ def publish_execution_fixture(case):
 
 
 class ReferenceFixtureEnvironmentTests(unittest.TestCase):
-    def test_reset_requires_only_an_explicit_complex_administrator_password(self):
-        self.assertEqual(
-            {name for name in environment.SECRET_FILES if name.startswith("reset-")},
-            {"reset-admin-password.txt"},
-        )
-        environment._validate_reset_password({"admin_password": "Admin1!fixture"})
-        for value in (None, "", "123456", "Onlyletters"):
-            with self.subTest(value=value), self.assertRaisesRegex(
-                    ValueError, "admin_password") as raised:
-                environment._validate_reset_password({"admin_password": value})
-            if value:
-                self.assertNotIn(value, str(raised.exception))
-
     def write(self, name: str, value: dict) -> Path:
         path = self.root / name
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
     def static_ready(self, predecessor: Path, output: Path) -> dict:
-        """构造 prepare 测试数据，不执行生产续签或系统观察。"""
+        """构造冻结预检测试数据，不执行生产续签或系统观察。"""
         ready = copy.deepcopy(self.review)
         observed = self.observed_tools()
         ready["ready_for_execution"] = True
@@ -124,7 +111,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                             "program": "D:/fixture/xtask", "linux_program": "/mnt/d/fixture/xtask",
                             "source_root": "D:/fixture/source", "linux_source_root": "/mnt/d/fixture/source",
                             "source_commit": "b" * 40, "sha256": "c" * 64,
-                            "source_sha256": environment.plan_hash(sources), "sources": sources},
+                            "source_sha256": plan_hash(sources), "sources": sources},
         })
         return observed
 
@@ -247,104 +234,6 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         extra["tools"]["legacy-wrapper"] = {"path": "unused", "sha256": "f" * 64}
         validate_review(extra)
 
-    def test_prepare_rejects_unreviewed_tools_without_writing(self):
-        publish_execution_fixture(self)
-        review = self.write("unreviewed.json", self.review)
-        fixture = self.execution_source
-        maintenance = self.write("unreviewed-build.json", self.maintenance)
-        reference = Path(self.publication["published"]["backend"]["path"]) / ".local-tests/reference-fixture"
-        reference.mkdir(parents=True, exist_ok=True)
-        output = reference / "environment-unreviewed"
-        before = {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
-                  for path in self.root.rglob("*")}
-        with self.assertRaisesRegex(ValueError, "预检"):
-            environment.prepare(self.backend, review, fixture, maintenance, output)
-        self.assertFalse(output.exists())
-        self.assertEqual(before, {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
-                                  for path in self.root.rglob("*")})
-
-    def test_prepare_rechecks_publication_binding_before_bootstrap_publication(self):
-        publish_execution_fixture(self)
-        self.review["ready_for_execution"] = False
-        pending = self.write("prepare-pending.json", self.review)
-        ready = self.root / "prepare-ready.json"
-        self.static_ready(pending, ready)
-        fixture = self.execution_source
-        maintenance = self.write("prepare-build.json", self.maintenance)
-        reference = Path(self.publication["published"]["backend"]["path"]) / ".local-tests/reference-fixture"
-        reference.mkdir(parents=True, exist_ok=True)
-        output = reference / "prepared"
-        observed = False
-
-        def configuration(_execution, _config_dir):
-            nonlocal observed
-            observed = True
-            changed = copy.deepcopy(self.fixture)
-            changed["status"] = "changed"
-            self.original_fixture.write_text(json.dumps(changed), encoding="utf-8")
-            return "c" * 64
-
-        with (
-            patch.object(environment, "_environment", return_value=({"APP_ENV": "test"}, {})),
-            patch.object(environment, "configuration_digest", side_effect=configuration),
-            patch.object(environment, "verify_tools", return_value={"source": {}}),
-            self.assertRaises(ValueError),
-        ):
-            environment.prepare(self.backend, ready, fixture, maintenance, output)
-        self.assertTrue(observed, "必须到达配置完成后的正式来源复核窗口")
-        self.assertTrue((output / "failed.json").is_file())
-        self.assertFalse((output / "bootstrap.json").exists())
-
-    def _prepared_path_inputs(self):
-        publish_execution_fixture(self)
-        self.review["ready_for_execution"] = False
-        pending = self.write("output-pending.json", self.review)
-        ready = self.root / "output-ready.json"
-        self.static_ready(pending, ready)
-        fixture = self.execution_source
-        maintenance = self.write("output-build.json", self.maintenance)
-        execution = Path(self.publication["published"]["backend"]["path"])
-        reference = execution / ".local-tests/reference-fixture"
-        reference.mkdir(parents=True, exist_ok=True)
-        return ready, fixture, maintenance, execution, reference
-
-    def test_prepare_rejects_coordinator_only_output_before_any_file_or_configuration_write(self):
-        ready, fixture, maintenance, execution, reference = self._prepared_path_inputs()
-        wrong = self.root / "coordinator-only-environment"
-        before = {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
-                  for path in self.root.rglob("*")}
-        with self.assertRaises(ValueError) as raised:
-            environment.prepare(self.backend, ready, fixture, maintenance, wrong)
-        self.assertIn(str(reference / "environment-seed-r1"), str(raised.exception))
-        self.assertNotEqual(self.backend, execution)
-        self.assertFalse(wrong.exists())
-        self.assertEqual(before, {str(path.relative_to(self.root)): None if path.is_dir() else path.read_bytes()
-                                  for path in self.root.rglob("*")})
-
-    def test_prepare_publishes_config_and_current_credentials_inside_distinct_execution_root(self):
-        ready, fixture, maintenance, execution, reference = self._prepared_path_inputs()
-        output = reference / "environment-seed-r1"
-
-        def files(_backend, _review, _fixture, selected, _side, _secrets):
-            self.assertEqual(selected, output)
-            selected.mkdir()
-            (selected / "config").mkdir()
-            (selected / "config/app.test.toml").write_text("[bootstrap]\nadmin_password='Initial!Only123'\n", encoding="utf-8")
-            (selected / "administrator.toml").write_text("[administrator]\ntenant_id='system'\nusername='admin'\npassword='Current!Changed123'\n", encoding="utf-8")
-            return {"APP_ENV": "test"}, {}
-
-        with (patch.object(environment, "_environment", side_effect=files),
-              patch.object(environment, "configuration_digest", return_value="c" * 64),
-              patch.object(environment, "verify_tools", return_value={"source": {}})):
-            result = environment.prepare(self.backend, ready, fixture, maintenance, output)
-        self.assertNotEqual(self.backend, execution)
-        self.assertEqual(result["execution_backend"], str(execution))
-        self.assertEqual(result["config_dir"], str(output / "config"))
-        self.assertEqual(result["administrator_credentials"], environment.bound(output / "administrator.toml"))
-        self.assertTrue((output / "bootstrap.json").is_file())
-        self.assertNotIn("Initial!Only123", json.dumps(result))
-        self.assertNotIn("Current!Changed123", json.dumps(result))
-
     def test_service_run_rejects_roots_outside_the_business_fixture(self):
         self.assertEqual(
             service_run(self.review),
@@ -356,135 +245,6 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "future_root"):
                     service_run(invalid)
 
-    def test_environment_uses_the_frozen_business_tree_and_private_secret_files(self):
-        execution = self.root / "business-backend"
-        secrets = execution / ".local-tests/reference-fixture/secrets"
-        config = execution / "config"
-        secrets.mkdir(parents=True)
-        config.mkdir(parents=True)
-        (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
-        (execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
-        (config / "app.toml").write_text("[app]", encoding="utf-8")
-        (secrets / "mysql-client.cnf").write_text(
-            "[client]\nhost=127.0.0.1\nport=3306\nuser=root\npassword=db-secret\nssl-mode=DISABLED\n",
-            encoding="utf-8",
-        )
-        names = {
-            "rustfs-access-key.txt": "access",
-            "rustfs-secret-key.txt": "secret",
-            "redis-password.txt": "redis",
-            "reset-admin-password.txt": "Admin1!fixture",
-            "jwt-secret.txt": "jwt",
-            "metrics-token.txt": "metrics",
-        }
-        for name, value in names.items():
-            (secrets / name).write_text(value, encoding="utf-8")
-        published = self.root / "published/backend"
-        (published / "config").mkdir(parents=True)
-        (published / "config/app.toml").write_bytes((config / "app.toml").read_bytes())
-        seed = self.review["scopes"]["seed"]
-        seed["backend_dir"] = str(published)
-        for item in seed["databases"]:
-            item["connection_file"] = str(published / ".local-tests/reference-fixture/secrets/mysql-client.cnf")
-        publication = {"published": {"backend": {"path": str(published)}},
-                       "original": {"paths": {"backend": str(execution)}}}
-        values, files = environment._environment(self.backend, self.review, publication, self.root / "output")
-        self.assertFalse((published / ".local-tests/reference-fixture/secrets/jwt-secret.txt").exists())
-        self.assertEqual(files["jwt-secret.txt"]["path"], str(secrets / "jwt-secret.txt"))
-
-        self.assertEqual(set(values), {"APP_ENV", "TEMP", "TMP"})
-        self.assertEqual(values["APP_ENV"], "test")
-        test_config = self.root / "output" / environment.TEST_CONFIG_DIRECTORY
-        settings = tomllib.loads((test_config / "app.test.toml").read_text(encoding="utf-8"))
-        self.assertEqual(settings["scope_id"], "fixture-seed")
-        self.assertEqual(settings["database"]["primary"]["database"], "fixture_seed_shared_control")
-        self.assertEqual(settings["app"], {"host": "127.0.0.1", "port": 18210})
-        self.assertEqual(settings["cors"]["allow_origins"], ["http://127.0.0.1:4190"])
-        self.assertEqual(settings["jobs"]["health_port"], 19210)
-        self.assertTrue(settings["jobs"]["scheduler_enabled"])
-        self.assertEqual(settings["database"]["primary"]["tls_mode"], "disabled")
-        self.assertTrue(all(item["tls_mode"] == "disabled" for item in settings["tenant_data"]["targets"]))
-        self.assertTrue(settings["multi_tenancy"]["enabled"])
-        self.assertEqual(settings["object_storage"]["access_key"], "access")
-        self.assertEqual(settings["monitor"]["metrics_bearer_token"], "metrics")
-        self.assertFalse(settings["api_docs"]["enabled"])
-        self.assertEqual(test_config, self.root / "output" / environment.TEST_CONFIG_DIRECTORY)
-        self.assertEqual((test_config / "app.toml").read_bytes(), (config / "app.toml").read_bytes())
-        targets = (test_config / "app.test.toml").read_text(encoding="utf-8")
-        self.assertEqual(settings["rate_limit"]["capacity"], environment.FIXTURE_REQUEST_RATE_LIMIT_CAPACITY)
-        self.assertIn("[[tenant_data.targets]]", targets)
-        for item in self.review["scopes"]["seed"]["databases"]:
-            if item["key"] == "shared-control":
-                continue
-            self.assertIn(f'key = "{item["key"]}"', targets)
-            self.assertIn(f'database = "{item["database"]}"', targets)
-        current = tomllib.loads((self.root / "output/administrator.toml").read_text(encoding="utf-8"))["administrator"]
-        self.assertEqual(set(current), {"tenant_id", "username", "password"})
-        self.assertEqual((current["tenant_id"], current["username"]), ("system", "admin"))
-        self.assertTrue(current["password"] != settings["bootstrap"]["admin_password"],
-                        "当前管理员凭据必须不同于 bootstrap 密码")
-        environment._validate_reset_password({"admin_password": current["password"]})
-        self.assertEqual(set(files), {"mysql-client.cnf", *names})
-
-        (secrets / "failed.json").write_text('{"status":"failed"}', encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "失败标记"):
-            environment._secret_directory(self.backend, execution)
-        (secrets / "failed.json").unlink()
-
-        render_review = copy.deepcopy(self.review)
-        publish_execution_fixture(self)
-        self.review = render_review
-        raw_backend = Path(self.fixture["paths"]["backend"])
-        raw_secrets = raw_backend / ".local-tests/reference-fixture/secrets"
-        raw_secrets.mkdir(parents=True)
-        for name in environment.SECRET_FILES:
-            (raw_secrets / name).write_bytes((secrets / name).read_bytes())
-        secret_set = raw_secrets.parent / "secrets-native-rotated"
-        from rate_limit_tool import tool_binding, verified_tool
-        with verified_tool(tool_binding()) as executable:
-            completed = subprocess.run([
-                executable, "check", "recovery", "fixture", "environment", "rotate-secrets",
-                "--fixture", str(self.original_fixture), "--output", str(secret_set), "--write",
-            ], cwd=self.backend, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-        self.assertTrue(completed.returncode == 0, "正式原生 rotate-secrets 必须成功")
-        self.assertEqual(json.loads(completed.stdout),
-                         {"status": "generated", "services_started": False, "remote_writes": 0})
-        native_manifest = json.loads((secret_set / "secret-set.json").read_text(encoding="utf-8"))
-        consumer_publication = copy.deepcopy(publication)
-        consumer_publication["original"]["paths"]["backend"] = str(raw_backend)
-        rotated_values, rotated_files = environment._environment(
-            self.backend, self.review, consumer_publication, self.root / "rotated-output",
-            secret_directory=secret_set)
-        rotated_settings = tomllib.loads(
-            (self.root / "rotated-output/config/app.test.toml").read_text(encoding="utf-8"))
-        password = (secret_set / "reset-admin-password.txt").read_text(encoding="utf-8").strip()
-        self.assertTrue(rotated_settings["bootstrap"]["admin_password"] == password,
-                        "活跃 prepare 消费者必须使用原生生成集的重置密码")
-        self.assertTrue(password != settings["bootstrap"]["admin_password"],
-                        "原生生成密码必须不同于初始测试密码")
-        self.assertEqual(rotated_files["reset-admin-password.txt"],
-                         native_manifest["files"]["reset-admin-password.txt"])
-        self.assertEqual(set(rotated_files), set(environment.SECRET_FILES))
-        self.assertEqual(set(rotated_values), {"APP_ENV", "TEMP", "TMP"})
-        environment._validate_reset_password(rotated_settings["bootstrap"])
-
-        base_mysql = published / ".local-tests/reference-fixture/secrets-base/mysql-client.cnf"
-        self.review["scopes"]["base"]["backend_dir"] = str(published)
-        for item in self.review["scopes"]["base"]["databases"]:
-            item["connection_file"] = str(base_mysql)
-        base_values, base_files = environment._environment(self.backend, self.review, publication, self.root / "base-output", "base")
-        self.assertEqual(set(base_values), {"APP_ENV", "TEMP", "TMP"})
-        base_settings = tomllib.loads((self.root / "base-output/config/app.test.toml").read_text(encoding="utf-8"))
-        self.assertEqual(base_settings["scope_id"], "fixture-base")
-        self.assertEqual(base_settings["database"]["primary"]["database"], "fixture_base_shared_control")
-        self.assertFalse(base_settings["jobs"]["scheduler_enabled"])
-        self.assertTrue(base_mysql.read_bytes() == (secrets / "mysql-client.cnf").read_bytes(),
-                        "base MySQL 凭据必须保持源文件的完整原字节")
-        self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
-
-
-
-class NativeEnvironmentAdapterTests(unittest.TestCase):
     def test_missing_binding_fails_before_any_process(self):
         import reference_fixture_environment_native as native
         with patch.object(native, "tool_binding", return_value=None), patch.object(native.subprocess, "run") as run:

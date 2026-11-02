@@ -23,7 +23,7 @@ docker compose --project-directory . -f deploy/compose.prod.yml up -d
 
 ## 非生产重建
 
-重建仅用于非生产环境。完整配置、双阶段命令、账本及失败恢复规则见[架构说明：非生产重建](architecture.md#非生产重建)；生产环境永久拒绝该入口。重建核验保留每个当前租户唯一的规范数据范围投影 bootstrap outbox 种子，严格核对版本、载荷和未投递状态；其他运行时资源表仍须为空。种子不符时保留现场，不通过清空事件绕过核验。 参考夹具的 `environment prepare` 配置输出应选择保留服务根旁的独立新目录，例如服务根 `run-copy-<id>` 与配置目录 `env-copy-<id>`。配置输出不得等于 `review.future_root` 或位于其内部；工具在创建配置文件或输出目录前拒绝该布局，且不会启动服务。发生错误后保留已有环境和失败证据，通过正式审阅入口确定新布局，不覆盖或自动重放原现场。
+重建仅用于非生产环境。完整配置、双阶段命令、账本及失败恢复规则见[架构说明：非生产重建](architecture.md#非生产重建)；生产环境永久拒绝该入口。重建核验保留每个当前租户唯一的规范数据范围投影 bootstrap outbox 种子，严格核对版本、载荷和未投递状态；其他运行时资源表仍须为空。种子不符时保留现场，不通过清空事件绕过核验。 参考夹具的 `environment prepare` 配置输出应选择保留服务根旁的独立新目录，例如服务根 `run-copy-<id>` 与配置目录 `env-copy-<id>`。配置输出不得等于 `review.future_root` 或位于其内部；工具在创建配置文件或输出目录前拒绝该布局，且不会启动服务。发生错误后保留已有环境和失败证据，通过正式审阅入口确定新布局，不覆盖或自动重放原现场。 环境准备由原生入口直接生成本机文件，成功前重验来源、维护构建和秘密文件，最后发布 `bootstrap.json`；不启动服务或写入数据库。显式 `--secrets-dir` 必须属于 `execution-source.json` 中 `original.paths.backend` 指向的原生成业务树 G，而配置输出属于发布执行树 P。非默认秘密集需要完整的 `secret-set.json`；用 `cargo xtask check recovery fixture environment rotate-secrets --fixture <fixture.json> --output <new-secret-set> --write` 创建。
 
 ## HTTP 5xx 与高延迟
 

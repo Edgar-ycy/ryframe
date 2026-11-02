@@ -2,13 +2,9 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use crate::{
-    Result,
-    cli::{FixtureEnvironmentCommand, FixtureEnvironmentInputs},
-    local_test_path::LocalTestPathKind,
-};
+use crate::{Result, cli::FixtureEnvironmentInputs, local_test_path::LocalTestPathKind};
 
-use super::{insert_optional_path, insert_path, path_text, path_value};
+use super::{insert_path, path_text};
 
 #[path = "environment/configuration.rs"]
 mod configuration;
@@ -18,6 +14,8 @@ mod guards;
 mod output;
 #[path = "environment/plan.rs"]
 pub(in crate::recovery) mod plan;
+#[path = "environment/prepare.rs"]
+pub(super) mod prepare;
 #[path = "environment/protocol.rs"]
 pub(crate) mod protocol;
 #[path = "environment/review.rs"]
@@ -39,62 +37,6 @@ pub(super) fn run_plan(root: &Path, inputs: &FixtureEnvironmentInputs) -> Result
         "services_started": false,
         "remote_writes": 0,
     }))
-}
-
-pub(super) fn fields(
-    command: &FixtureEnvironmentCommand,
-    root: &Path,
-) -> Result<Map<String, Value>> {
-    let mut fields = Map::new();
-    match command {
-        FixtureEnvironmentCommand::Help => return Err("environment 帮助没有私有请求".into()),
-        FixtureEnvironmentCommand::Plan(_) => {
-            return Err("环境计划由 Rust 原生执行，不生成 Python 请求".into());
-        }
-        FixtureEnvironmentCommand::Prepare {
-            inputs,
-            output,
-            secrets_dir,
-        } => {
-            insert_inputs(&mut fields, inputs, root)?;
-            let publication_path = Path::new(
-                fields["execution_source"]
-                    .as_str()
-                    .ok_or("执行来源路径缺失")?,
-            );
-            let publication = super::source_pair::execution::verify(
-                root,
-                &super::file_binding(publication_path, "执行来源")?,
-            )?;
-            let output = path_value(
-                output,
-                root,
-                LocalTestPathKind::NewDirectory,
-                "环境输出目录",
-            )?;
-            output::validate(
-                root,
-                &publication,
-                Path::new(output.as_str().ok_or("环境输出路径缺失")?),
-            )?;
-            fields.insert("output".to_owned(), output);
-            insert_optional_path(
-                &mut fields,
-                "secrets_dir",
-                secrets_dir.as_ref(),
-                root,
-                LocalTestPathKind::ExistingDirectory,
-            )?;
-        }
-        FixtureEnvironmentCommand::Review { .. } => {
-            return Err("环境审阅由 Rust 原生执行，不生成 Python 请求".into());
-        }
-        FixtureEnvironmentCommand::RotateSecrets { .. }
-        | FixtureEnvironmentCommand::BootstrapSecrets { .. } => {
-            return Err("秘密文件操作由 Rust 原生执行".into());
-        }
-    }
-    Ok(fields)
 }
 
 fn insert_inputs(

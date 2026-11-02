@@ -57,6 +57,49 @@ impl Fixture {
         }
     }
 
+    /// 仅 Prepare 用例需要可发布的基础配置；其他 Fixture 初始化保持不变。
+    pub(crate) fn prepare_environment_configuration(&self) {
+        use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
+        let clean = self.backend.join(".local-tests/prepare-clean-baseline");
+        validate_local_test_path(&clean, &self.backend, LocalTestPathKind::NewDirectory).unwrap();
+        fs::write(self.backend.join("config/app.toml"), b"[app]\n").unwrap();
+        git::run(&self.backend, &["add", "--", "config/app.toml"]).unwrap();
+        git::run(
+            &self.backend,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@ryframe.invalid",
+                "commit",
+                "--quiet",
+                "--only",
+                "-m",
+                "test(recovery): 夹具基础配置",
+                "--",
+                "config/app.toml",
+            ],
+        )
+        .unwrap();
+        git::run(
+            &self.backend,
+            &[
+                "clone",
+                "--no-hardlinks",
+                "--",
+                self.backend.to_str().unwrap(),
+                clean.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(source::capture(&clean).unwrap().source.snapshot.clean);
+        let original = snapshot(&clean);
+        let generated = snapshot(&self.backend);
+        let mut receipt: Value = serde_json::from_slice(&fs::read(&self.receipt).unwrap()).unwrap();
+        receipt["sources"]["backend"] = original;
+        receipt["generated"]["backend"] = generated;
+        fs::write(&self.receipt, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    }
     fn verify(&self) -> crate::Result<Value> {
         let descriptor = crate::recovery::fixture_control::file_binding(
             &self.output.join("execution-source.json"),
