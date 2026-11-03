@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Observe all four execution-source roots completely in parallel when no static authority is active; an active authority still records actual inputs serially on its owner thread. Collect every observation thread and concurrent failure while preserving source, file-protection, receipt and deadline requirements.
+
 - Reuse the canonical root within each complete source observation, retaining per-file boundaries and complete Git, index, mode and digest checks. Success and failure both recheck the root path and directory state, without caching across requests or adding file-identity platform requirements.
 
 - Use one complete source-read window for fixture plans and prepared environments, independently verifying all four original generated and published source roots at both ends while reusing pure plan calculation. Preserve JSON, digests and input projections; protect bootstrap, configuration-directory and secret-file bytes and identities, and retain other postchecks and concurrent errors when reading or one root fails.

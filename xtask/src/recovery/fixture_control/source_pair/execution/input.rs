@@ -36,6 +36,12 @@ pub(super) struct Fixture {
     protection: guard::Inputs,
 }
 
+/// 观察线程只借用普通来源数据；文件保护句柄始终由窗口所有者持有。
+pub(super) struct Sources<'a> {
+    backend: &'a Path,
+    value: &'a Value,
+}
+
 pub(super) fn load(backend: &Path) -> Result<Input> {
     let fixture = Fixture::open(backend)?;
     let before = fixture.observe();
@@ -94,8 +100,21 @@ impl Fixture {
 
     /// 仅 execution 窗口及本模块双端包装使用，不向其他职责暴露单次核验。
     pub(super) fn observe(&self) -> Result<Input> {
-        let backend = self.side("backend");
-        let frontend = self.side("frontend");
+        let sources = self.sources();
+        let backend = sources.side("backend");
+        let frontend = sources.side("frontend");
+        self.combine(backend, frontend)
+    }
+
+    pub(super) fn sources(&self) -> Sources<'_> {
+        Sources {
+            backend: &self.backend,
+            value: &self.value,
+        }
+    }
+
+    /// 收集两根结果后在所有者线程核对契约资产并组合原收据。
+    pub(super) fn combine(&self, backend: Result<Side>, frontend: Result<Side>) -> Result<Input> {
         let assets = self.assets();
         let mut sides = Vec::new();
         let mut checks = Vec::new();
@@ -124,30 +143,6 @@ impl Fixture {
             super::window::check(value == self.value, "原 fixture JSON 在读取期间变化")
         });
         super::window::finish([self.protection.check(), binding, document])
-    }
-
-    fn side(&self, name: &'static str) -> Result<Side> {
-        let parent = self.backend.parent().ok_or("业务后端缺少 fixture 根")?;
-        let root = PathBuf::from(
-            self.value["paths"][name]
-                .as_str()
-                .ok_or("fixture 源码路径无效")?,
-        );
-        validate_absolute_path(&root, LocalTestPathKind::ExistingDirectory)?;
-        if name == "backend" {
-            validate_fixture_root(&root, parent, &self.backend)?;
-        } else if root.parent() != Some(parent)
-            || git_root(&root, "前端源码")? != root
-            || root == self.backend
-        {
-            return Err("fixture 前端必须是独立的同级 Git 根".into());
-        }
-        validate_clean_snapshot(&self.value["sources"][name], "fixture 原始来源")?;
-        let side = capture(&root, &self.value["generated"][name])?;
-        if self.value["sources"][name]["head"] != self.value["generated"][name]["head"] {
-            return Err("生成源码不是原 fixture 的同一 clean HEAD".into());
-        }
-        Ok(side)
     }
 
     fn assets(&self) -> Result<Value> {
@@ -200,6 +195,32 @@ impl Fixture {
             }),
             sides,
         })
+    }
+}
+
+impl Sources<'_> {
+    pub(super) fn side(&self, name: &'static str) -> Result<Side> {
+        let parent = self.backend.parent().ok_or("业务后端缺少 fixture 根")?;
+        let root = PathBuf::from(
+            self.value["paths"][name]
+                .as_str()
+                .ok_or("fixture 源码路径无效")?,
+        );
+        validate_absolute_path(&root, LocalTestPathKind::ExistingDirectory)?;
+        if name == "backend" {
+            validate_fixture_root(&root, parent, self.backend)?;
+        } else if root.parent() != Some(parent)
+            || git_root(&root, "前端源码")? != root
+            || root == self.backend
+        {
+            return Err("fixture 前端必须是独立的同级 Git 根".into());
+        }
+        validate_clean_snapshot(&self.value["sources"][name], "fixture 原始来源")?;
+        let side = capture(&root, &self.value["generated"][name])?;
+        if self.value["sources"][name]["head"] != self.value["generated"][name]["head"] {
+            return Err("生成源码不是原 fixture 的同一 clean HEAD".into());
+        }
+        Ok(side)
     }
 }
 

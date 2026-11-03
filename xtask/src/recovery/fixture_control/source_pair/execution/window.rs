@@ -1,14 +1,15 @@
-//! 具体执行来源读取窗口；四个根在同线程两端独立观察。
+//! 具体执行来源读取窗口；权威读取留在所有者线程，其余窗口并行观察四根。
 use super::{file_binding, input, read_json, root_receipt_observed, source};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::target_verify::guard,
+    recovery::{clone::native::target_verify::guard, runtime::dataset_authority::reads},
 };
 use serde_json::Value;
 use std::{
     error::Error,
     path::{Path, PathBuf},
+    thread::{self, ScopedJoinHandle},
 };
 
 struct Publication {
@@ -135,6 +136,9 @@ impl Window {
     }
 
     fn observe(&self) -> Result<()> {
+        if !reads::is_active() {
+            return self.observe_parallel();
+        }
         let original = self.fixture.observe().and_then(|value| {
             check(
                 value.receipt == self.publication.value["original"],
@@ -145,6 +149,73 @@ impl Window {
         let backend = self.roots[0].observe();
         let frontend = self.roots[1].observe();
         finish([original, backend, frontend])
+    }
+
+    fn observe_parallel(&self) -> Result<()> {
+        let sources = self.fixture.sources();
+        let generated = &sources;
+        let published_backend = &self.roots[0];
+        let published_frontend = &self.roots[1];
+        let (generated_backend, generated_frontend, backend, frontend) = thread::scope(|scope| {
+            let gb = thread::Builder::new()
+                .name("execution-generated-backend".into())
+                .spawn_scoped(scope, move || generated_observation(generated, "backend"));
+            let gf = thread::Builder::new()
+                .name("execution-generated-frontend".into())
+                .spawn_scoped(scope, move || generated_observation(generated, "frontend"));
+            let pb = thread::Builder::new()
+                .name("execution-published-backend".into())
+                .spawn_scoped(scope, move || published_observation(published_backend));
+            let pf = thread::Builder::new()
+                .name("execution-published-frontend".into())
+                .spawn_scoped(scope, move || published_observation(published_frontend));
+            // 创建或观察失败也逐一 join，不能让后续根丢失错误或越过保护窗口。
+            let gb = joined("生成来源 backend", gb);
+            let gf = joined("生成来源 frontend", gf);
+            let pb = joined("发布来源 backend", pb);
+            let pf = joined("发布来源 frontend", pf);
+            (gb, gf, pb, pf)
+        });
+        let original = self
+            .fixture
+            .combine(generated_backend, generated_frontend)
+            .and_then(|value| {
+                check(
+                    value.receipt == self.publication.value["original"],
+                    "原 fixture 绑定或生成源码已漂移；禁止沿用执行来源",
+                )
+            });
+        finish([original, backend, frontend])
+    }
+}
+
+fn generated_observation(
+    sources: &input::Sources<'_>,
+    name: &'static str,
+) -> std::result::Result<input::Side, String> {
+    match std::panic::catch_unwind(|| sources.side(name)) {
+        Ok(result) => result.map_err(|error| format!("生成来源 {name}：{error}")),
+        Err(_) => Err(format!("生成来源 {name}：来源观察线程发生 panic")),
+    }
+}
+
+fn published_observation(root: &PublishedRoot) -> std::result::Result<(), String> {
+    match std::panic::catch_unwind(|| root.observe()) {
+        Ok(result) => result.map_err(|error| format!("发布来源 {}：{error}", root.name)),
+        Err(_) => Err(format!("发布来源 {}：来源观察线程发生 panic", root.name)),
+    }
+}
+
+fn joined<T>(
+    label: &str,
+    handle: std::io::Result<ScopedJoinHandle<'_, std::result::Result<T, String>>>,
+) -> Result<T> {
+    match handle {
+        Ok(handle) => match handle.join() {
+            Ok(result) => result.map_err(Into::into),
+            Err(_) => Err(format!("{label}：来源观察线程异常结束").into()),
+        },
+        Err(error) => Err(format!("{label}：无法创建来源观察线程：{error}").into()),
     }
 }
 

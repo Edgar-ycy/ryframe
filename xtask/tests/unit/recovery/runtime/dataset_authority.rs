@@ -190,3 +190,51 @@ fn source_read_on_an_unbound_worker_thread_cannot_claim_complete_protection() {
     assert!(error.to_string().contains("并行来源读取"));
     assert!(window.finish::<()>(Err(error)).is_err());
 }
+
+#[test]
+fn execution_verification_retains_authority_protection_for_each_consumed_source_root() {
+    use crate::recovery::fixture_control::source_pair::execution::{self, tests::Fixture};
+    let fixture = Fixture::new();
+    let publication = fixture.publication();
+    let binding = fixture.binding();
+    // 这些源码仅由完整来源采集消费，不借助契约资产专读取得保护。
+    for file in [
+        fixture.backend.join("src/lib.rs"),
+        fixture.frontend.join("src/business.txt"),
+        fixture.output.join("backend/src/lib.rs"),
+        fixture.output.join("frontend/src/business.txt"),
+    ] {
+        let before = std::fs::read(&file).unwrap();
+        let window = reads::Window::begin().unwrap();
+        assert_eq!(
+            execution::verify(&fixture.backend, &binding).unwrap(),
+            publication
+        );
+        match std::fs::write(&file, "// 权威窗口内实际消费的来源漂移\n") {
+            Ok(()) => assert!(
+                window.finish(Ok(())).is_err(),
+                "执行核验遗漏已消费来源的后验保护：{}",
+                file.display()
+            ),
+            Err(error) => {
+                assert!(
+                    cfg!(windows)
+                        && (error.kind() == std::io::ErrorKind::PermissionDenied
+                            || matches!(error.raw_os_error(), Some(32 | 33))),
+                    "来源写入出现非预期错误：{error}; kind={:?}, raw_os_error={:?}",
+                    error.kind(),
+                    error.raw_os_error()
+                );
+                assert_eq!(std::fs::read(&file).unwrap(), before);
+                window.finish(Ok(())).unwrap();
+            }
+        }
+        drop(window);
+        std::fs::write(&file, &before).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+    assert_eq!(
+        execution::verify(&fixture.backend, &binding).unwrap(),
+        publication
+    );
+}
