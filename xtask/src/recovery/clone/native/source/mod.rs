@@ -14,6 +14,8 @@ use crate::Result;
 
 mod domains;
 pub(crate) mod protocol;
+mod root;
+use root::Root;
 
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/source/tests.rs"]
@@ -58,13 +60,17 @@ pub(crate) fn current(root: &Path) -> Result<Value> {
 }
 
 pub(crate) fn capture(root: &Path) -> Result<Inventory> {
-    let captured = capture_observed(
-        || snapshot(root),
-        |head| worktree_fingerprint(root, head),
-        || file_inventory(root),
-    )?;
-    crate::recovery::runtime::dataset_authority::reads::source(root, &captured)?;
-    Ok(captured)
+    let root = Root::open(root)?;
+    let captured: Result<Inventory> = (|| {
+        let captured = capture_observed(
+            || snapshot(&root),
+            |head| worktree_fingerprint(&root, head),
+            || file_inventory(&root),
+        )?;
+        crate::recovery::runtime::dataset_authority::reads::source(root.original(), &captured)?;
+        Ok(captured)
+    })();
+    root.finish(captured)
 }
 
 fn capture_observed(
@@ -230,15 +236,15 @@ pub(crate) fn validate_backend_domains(value: &Value, inventory: &Inventory) -> 
     Ok(())
 }
 
-fn snapshot(root: &Path) -> Result<SourceSnapshot> {
-    let head = text_output(git(root, &["rev-parse", "HEAD"])?)?;
+fn snapshot(root: &Root) -> Result<SourceSnapshot> {
+    let head = text_output(git(root.path(), &["rev-parse", "HEAD"])?)?;
     if !Regex::new(r"^[a-f0-9]{40}$")?.is_match(&head) {
         return Err("源码 HEAD 不是有效 SHA".into());
     }
-    let patch = git(root, &["diff", "--binary", "HEAD"])?;
+    let patch = git(root.path(), &["diff", "--binary", "HEAD"])?;
     let mut files = Vec::new();
     for raw in nul_paths(git(
-        root,
+        root.path(),
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )?)? {
         let path = String::from_utf8(raw).map_err(|_| "源码路径必须为 UTF-8")?;
@@ -249,7 +255,11 @@ fn snapshot(root: &Path) -> Result<SourceSnapshot> {
         });
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    let clean = git(root, &["status", "--porcelain", "--untracked-files=all"])?.is_empty();
+    let clean = git(
+        root.path(),
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?
+    .is_empty();
     Ok(SourceSnapshot {
         head,
         patch_sha256: hex::encode(Sha256::digest(&patch)),
@@ -258,18 +268,18 @@ fn snapshot(root: &Path) -> Result<SourceSnapshot> {
     })
 }
 
-fn worktree_fingerprint(root: &Path, commit: &str) -> Result<String> {
+fn worktree_fingerprint(root: &Root, commit: &str) -> Result<String> {
     let mut digest = Sha256::new();
     digest_bytes(&mut digest, commit.as_bytes());
     digest_bytes(
         &mut digest,
         &git(
-            root,
+            root.path(),
             &["diff", "--binary", "--no-ext-diff", "HEAD", "--", "."],
         )?,
     );
     for raw in nul_paths(git(
-        root,
+        root.path(),
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )?)? {
         let relative = String::from_utf8(raw.clone()).map_err(|_| "源码路径必须为 UTF-8")?;
@@ -281,9 +291,9 @@ fn worktree_fingerprint(root: &Path, commit: &str) -> Result<String> {
     Ok(format!("sha256:{}", hex::encode(digest.finalize())))
 }
 
-fn file_inventory(root: &Path) -> Result<(Vec<FileRecord>, SourceGuard)> {
+fn file_inventory(root: &Root) -> Result<(Vec<FileRecord>, SourceGuard)> {
     let mut paths = nul_paths(git(
-        root,
+        root.path(),
         &[
             "ls-files",
             "--cached",
@@ -316,10 +326,13 @@ fn file_inventory(root: &Path) -> Result<(Vec<FileRecord>, SourceGuard)> {
         files.push(file);
         modes.push(mode);
     }
-    let head = text_output(git(root, &["rev-parse", "HEAD"])?)?;
+    let head = text_output(git(root.path(), &["rev-parse", "HEAD"])?)?;
     let guard = SourceGuard {
         head,
-        index_sha256: hex::encode(Sha256::digest(git(root, &["ls-files", "--stage", "-z"])?)),
+        index_sha256: hex::encode(Sha256::digest(git(
+            root.path(),
+            &["ls-files", "--stage", "-z"],
+        )?)),
         modes_sha256: digest::plan_hash(&Value::Array(modes))?,
     };
     Ok((files, guard))
@@ -352,10 +365,10 @@ fn source_group(selected: &BTreeMap<String, FileRecord>, files: &[FileRecord]) -
     }))
 }
 
-fn source_file(root: &Path, relative: &str, allow_missing: bool) -> Result<Option<PathBuf>> {
+fn source_file(root: &Root, relative: &str, allow_missing: bool) -> Result<Option<PathBuf>> {
     domains::source_domain(relative)?;
     let path = Path::new(relative);
-    let mut current = root.to_path_buf();
+    let mut current = root.path().to_path_buf();
     let mut metadata = None;
     for component in path.components() {
         current.push(component.as_os_str());
@@ -377,9 +390,8 @@ fn source_file(root: &Path, relative: &str, allow_missing: bool) -> Result<Optio
     if metadata.is_none_or(|metadata| !metadata.is_file()) {
         return Err("源码清单只能绑定普通文件".into());
     }
-    let canonical_root = fs::canonicalize(root)?;
     let canonical = fs::canonicalize(&current)?;
-    if !canonical.starts_with(canonical_root) {
+    if !canonical.starts_with(root.canonical()) {
         return Err("源码文件越界".into());
     }
     Ok(Some(current))

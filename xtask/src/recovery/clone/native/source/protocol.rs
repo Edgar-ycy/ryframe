@@ -105,27 +105,6 @@ fn observation(args: &Value, action: &str) -> Result<Value> {
         "maintenance-target-directory" => {
             Ok(json!(super::super::maintenance::target_directory(root)?))
         }
-        "worktree-fingerprint" => Ok(json!(super::worktree_fingerprint(
-            root,
-            native_json::text(&args["commit"], "源码提交")?
-        )?)),
-        "source-snapshot" => Ok(super::snapshot_value(&super::snapshot(root)?)),
-        "snapshot" => {
-            let snapshot = super::snapshot(root)?;
-            let patch = super::git(root, &["diff", "--binary", "HEAD"])?;
-            use sha2::{Digest, Sha256};
-            if hex::encode(Sha256::digest(&patch)) != snapshot.patch_sha256 {
-                return Err("采集快照期间源码补丁发生变化".into());
-            }
-            let mut value = super::snapshot_value(&snapshot);
-            value.as_object_mut().expect("固定快照对象").remove("clean");
-            Ok(json!({"snapshot":value,"patch":patch}))
-        }
-        "file-inventory" => {
-            let (files, guard) = super::file_inventory(root)?;
-            Ok(json!({"files":super::files_value(&files),"head":guard.head,
-                "index_sha256":guard.index_sha256,"modes_sha256":guard.modes_sha256}))
-        }
         "capture" => {
             let inventory = super::capture(root)?;
             if !args["source"].is_null()
@@ -135,6 +114,33 @@ fn observation(args: &Value, action: &str) -> Result<Value> {
             }
             Ok(super::inventory_value(&inventory))
         }
-        _ => Err("Git 来源观察操作无效".into()),
+        _ => {
+            let root = super::Root::open(root)?;
+            let observed: Result<Value> = (|| match action {
+                "worktree-fingerprint" => Ok(json!(super::worktree_fingerprint(
+                    &root,
+                    native_json::text(&args["commit"], "源码提交")?
+                )?)),
+                "source-snapshot" => Ok(super::snapshot_value(&super::snapshot(&root)?)),
+                "snapshot" => {
+                    let snapshot = super::snapshot(&root)?;
+                    let patch = super::git(root.path(), &["diff", "--binary", "HEAD"])?;
+                    use sha2::{Digest, Sha256};
+                    if hex::encode(Sha256::digest(&patch)) != snapshot.patch_sha256 {
+                        return Err("采集快照期间源码补丁发生变化".into());
+                    }
+                    let mut value = super::snapshot_value(&snapshot);
+                    value.as_object_mut().expect("固定快照对象").remove("clean");
+                    Ok(json!({"snapshot":value,"patch":patch}))
+                }
+                "file-inventory" => {
+                    let (files, guard) = super::file_inventory(&root)?;
+                    Ok(json!({"files":super::files_value(&files),"head":guard.head,
+                        "index_sha256":guard.index_sha256,"modes_sha256":guard.modes_sha256}))
+                }
+                _ => Err("Git 来源观察操作无效".into()),
+            })();
+            root.finish(observed)
+        }
     }
 }

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse the canonical root within each complete source observation, retaining per-file boundaries and complete Git, index, mode and digest checks. Success and failure both recheck the root path and directory state, without caching across requests or adding file-identity platform requirements.
+
 - Use one complete source-read window for fixture plans and prepared environments, independently verifying all four original generated and published source roots at both ends while reusing pure plan calculation. Preserve JSON, digests and input projections; protect bootstrap, configuration-directory and secret-file bytes and identities, and retain other postchecks and concurrent errors when reading or one root fails.
 
 - Run reference-fixture environment preparation natively in Rust, including private configuration, administrator credentials, source and secret-file postchecks, and bootstrap-last publication. Cover coordinator-root refusal, Seed/Base data mappings and scheduling, refusal to replay successful output, and raw-byte drift before publication. Remove Python Prepare, obsolete private dispatch and dedicated tests replaced by effective native coverage, while preserving shared readers used by service and successor workflows.
