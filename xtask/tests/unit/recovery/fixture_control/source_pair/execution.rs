@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 
 use super::{assets::MARKER, git, publish, source, verify};
 
+#[path = "execution_window.rs"]
+mod window_tests;
+
 pub(crate) struct Fixture {
     _directory: tempfile::TempDir,
     pub(crate) backend: PathBuf,

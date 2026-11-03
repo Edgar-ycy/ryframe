@@ -1,4 +1,4 @@
-use super::super::{file_binding, portable_path, read_json, review, source_pair::execution};
+use super::super::{portable_path, review};
 use super::{guards, protocol::check};
 use crate::{
     Result,
@@ -12,6 +12,10 @@ use std::{
 };
 
 const LIMIT: u64 = 4 * 1024 * 1024;
+
+#[path = "plan/checked.rs"]
+mod checked;
+pub(in crate::recovery::fixture_control) use checked::CheckedPlan;
 const KEYS: &[(&str, &str)] = &[
     ("dedicated-a", "dedicated"),
     ("dedicated-b", "dedicated"),
@@ -34,12 +38,6 @@ fn input_path(root: &Path, value: &Value) -> Result<PathBuf> {
     validate_local_test_path(&path, root, LocalTestPathKind::ExistingFile)?;
     Ok(portable_path(&std::fs::canonicalize(path)?))
 }
-fn document(root: &Path, value: &Value) -> Result<(PathBuf, Value)> {
-    let path = input_path(root, value)?;
-    let value = read_json(&path, "夹具输入", LIMIT)?;
-    Ok((path, value))
-}
-
 pub(super) fn create(args: &Value) -> Result<Value> {
     native_json::exact(
         args,
@@ -53,19 +51,32 @@ pub(super) fn create(args: &Value) -> Result<Value> {
         "夹具环境计划请求",
     )?;
     let root = backend(&args["backend"])?;
-    let (review_file, review_value) = document(&root, &args["review"])?;
-    let publication_file = input_path(&root, &args["execution_source"])?;
-    let publication_binding = file_binding(&publication_file, "执行来源")?;
-    let publication = execution::verify(&root, &publication_binding)?;
-    let (maintenance_file, maintenance) = document(&root, &args["maintenance_build"])?;
-    review::validate_review(&review_value)?;
-    guards::maintenance(&maintenance)?;
-    let side = args["side"].as_str().ok_or("侧缺失")?;
-    let selected = selected(&review_value, side)?;
+    let inputs = checked::Inputs::load(&root, args)?;
+    let result = inputs.calculate();
+    let after = inputs.verify(result.as_ref().ok());
+    match (result, after) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(after)) => Err(format!("{error}；输入后验同时失败：{after}").into()),
+    }
+}
+
+fn calculate(
+    review_value: &Value,
+    publication: &Value,
+    maintenance: &Value,
+    review_binding: &Value,
+    publication_binding: &Value,
+    maintenance_binding: &Value,
+    side: &str,
+) -> Result<Value> {
+    review::validate_review(review_value)?;
+    guards::maintenance(maintenance)?;
+    let selected = selected(review_value, side)?;
     let original = &publication["original"]["source_pair"]["sources"];
     let execution_root = &publication["published"]["backend"]["path"];
     check(
-        review_value["execution_source"] == publication_binding
+        review_value["execution_source"] == *publication_binding
             && review_value["sources"]["backend_head"] == original["backend"]["head"]
             && review_value["sources"]["frontend_head"] == original["frontend"]["head"]
             && selected["backend_dir"] == *execution_root,
@@ -74,11 +85,11 @@ pub(super) fn create(args: &Value) -> Result<Value> {
     let databases = selected["databases"].as_array().ok_or("数据库列表缺失")?;
     let mut result = json!({
         "format_version":1, "kind":"reference-fixture-environment-plan",
-        "review":file_binding(&review_file, "审阅收据")?,
+        "review":review_binding,
         "execution_source":publication_binding,
         "fixture":publication["original"]["fixture_receipt"],
         "execution_backend":execution_root,
-        "maintenance_build":file_binding(&maintenance_file, "维护构建收据")?,
+        "maintenance_build":maintenance_binding,
         "side":side, "scope_id":selected["scope_id"],
         "databases":KEYS.iter().map(|(key, mode)| {
             let item = databases.iter().find(|item| item["key"] == *key).expect("已检查四库");
@@ -87,25 +98,7 @@ pub(super) fn create(args: &Value) -> Result<Value> {
         "object_endpoint":selected["objects"]["endpoint"], "redis_url":selected["redis"]["url"],
         "historical_data_used":false,"remote_writes":0,
     });
-    result["review"]["canonical_sha256"] = json!(digest::plan_hash(&review_value)?);
-    for (path, original, role) in [
-        (&review_file, &review_value, "review"),
-        (&maintenance_file, &maintenance, "maintenance_build"),
-    ] {
-        let current = read_json(path, "夹具输入", LIMIT)?;
-        let actual = file_binding(path, "夹具输入")?;
-        check(
-            current == *original
-                && ["path", "bytes", "sha256"]
-                    .iter()
-                    .all(|key| result[role][*key] == actual[*key]),
-            "夹具环境输入在计划期间发生变化",
-        )?;
-    }
-    check(
-        execution::verify(&root, &publication_binding)? == publication,
-        "夹具计划期间执行来源变化",
-    )?;
+    result["review"]["canonical_sha256"] = json!(digest::plan_hash(review_value)?);
     result["sha256"] = json!(digest::plan_hash(&result)?);
     Ok(result)
 }
@@ -151,21 +144,8 @@ fn selected(review: &Value, side: &str) -> Result<Value> {
 pub(in crate::recovery) fn inputs(args: &Value) -> Result<Value> {
     native_json::exact(args, &["backend", "plan"], "夹具环境输入复核")?;
     let root = backend(&args["backend"])?;
-    let plan = &args["plan"];
-    let expected = create(&json!({"backend":root,"review":plan["review"]["path"],
-        "execution_source":plan["execution_source"]["path"],
-        "maintenance_build":plan["maintenance_build"]["path"],"side":plan["side"]}))?;
-    check(expected == *plan, "夹具环境计划或完整输入绑定已变化")?;
-    let (review_path, review) = document(&root, &plan["review"]["path"])?;
-    guards::preflight_binding(&review)?;
-    let publication_path = input_path(&root, &plan["execution_source"]["path"])?;
-    let publication = execution::verify(&root, &plan["execution_source"])?;
-    let (maintenance_path, maintenance) = document(&root, &plan["maintenance_build"]["path"])?;
-    guards::maintenance(&maintenance)?;
-    let terminal = create(&json!({"backend":root,"review":review_path,
-        "execution_source":publication_path,"maintenance_build":maintenance_path,"side":plan["side"]}))?;
-    check(terminal == expected, "夹具环境输入复核期间变化")?;
-    Ok(
-        json!({"inputs":[review_path,review,publication_path,publication,maintenance_path,maintenance]}),
-    )
+    let checked = CheckedPlan::load(&root, &args["plan"])?;
+    let value = checked.projection();
+    checked.verify()?;
+    Ok(value)
 }

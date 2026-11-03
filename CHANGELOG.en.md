@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Use one complete source-read window for fixture plans and prepared environments, independently verifying all four original generated and published source roots at both ends while reusing pure plan calculation. Preserve JSON, digests and input projections; protect bootstrap, configuration-directory and secret-file bytes and identities, and retain other postchecks and concurrent errors when reading or one root fails.
+
 - Run reference-fixture environment preparation natively in Rust, including private configuration, administrator credentials, source and secret-file postchecks, and bootstrap-last publication. Cover coordinator-root refusal, Seed/Base data mappings and scheduling, refusal to replay successful output, and raw-byte drift before publication. Remove Python Prepare, obsolete private dispatch and dedicated tests replaced by effective native coverage, while preserving shared readers used by service and successor workflows.
 
 - Fix ordinary runtime, reference-fixture and full-stack Cargo builds ignoring the shared target directory selected in tool files. Derive the Cargo standard child environment from the explicit file value and include it in existing build-context digests. Preserve receipt schemas, reject mixed publication after configuration drift, and retain failed evidence.

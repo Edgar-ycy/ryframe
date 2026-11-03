@@ -16,6 +16,9 @@ mod assets;
 mod git;
 #[path = "execution/input.rs"]
 mod input;
+#[path = "execution/window.rs"]
+mod window;
+pub(in crate::recovery::fixture_control) use window::Window;
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/fixture_control/source_pair/execution.rs"]
@@ -73,6 +76,26 @@ fn root_receipt(
     side: &str,
     initial: bool,
 ) -> Result<Value> {
+    let before = root_receipt_observed(root, expected, side, initial);
+    let after = root_receipt_observed(root, expected, side, initial);
+    match before {
+        Ok(before) => {
+            let after = after.and_then(|after| {
+                window::check(after == before, "读取独立执行源码期间内容或索引漂移")
+            });
+            after?;
+            Ok(before)
+        }
+        Err(error) => Err(window::failure(error, after.map(|_| ()))),
+    }
+}
+
+fn root_receipt_observed(
+    root: &Path,
+    expected: &[source::FileRecord],
+    side: &str,
+    initial: bool,
+) -> Result<Value> {
     validate_absolute_path(root, LocalTestPathKind::ExistingDirectory)?;
     // 先拒绝链接，再统一实际路径拼写，避免 Windows 分隔符导致同一根的收据不同。
     let canonical = super::super::portable_path(&fs::canonicalize(root)?);
@@ -104,9 +127,6 @@ fn root_receipt(
         "inventory": source::inventory_value(&inventory),
         "fingerprints": source::fingerprints(&inventory.files)?,
     });
-    if source::capture(root)? != inventory {
-        return Err("读取独立执行源码期间内容或索引漂移".into());
-    }
     Ok(receipt)
 }
 
@@ -153,14 +173,28 @@ fn require_exact_files(
 
 /// 核验显式清单绑定并重读完整来源；调用方仍须匹配执行根与预期提交。
 pub(crate) fn verify(coordinator: &Path, descriptor: &Value) -> Result<Value> {
-    exact(descriptor, &["path", "bytes", "sha256"], "执行源码清单绑定")?;
-    let path = Path::new(descriptor["path"].as_str().ok_or("执行源码绑定路径缺失")?);
-    validate_local_test_path(path, coordinator, LocalTestPathKind::ExistingFile)?;
-    verify_bound(descriptor, path)
+    let window = local_window(coordinator, descriptor)?;
+    window.verify()?;
+    Ok(window.publication().clone())
 }
 
 /// 运行来源只持有 P 时，清单必须在 P 同级固定位置，仍执行同一完整来源核验。
 pub(in crate::recovery) fn verify_for_root(root: &Path, descriptor: &Value) -> Result<Value> {
+    let window = root_window(root, descriptor)?;
+    let selected = require_root(root, window.publication());
+    let after = window.verify();
+    window::finish([selected, after])?;
+    Ok(window.publication().clone())
+}
+
+fn local_window(coordinator: &Path, descriptor: &Value) -> Result<Window> {
+    exact(descriptor, &["path", "bytes", "sha256"], "执行源码清单绑定")?;
+    let path = Path::new(descriptor["path"].as_str().ok_or("执行源码绑定路径缺失")?);
+    validate_local_test_path(path, coordinator, LocalTestPathKind::ExistingFile)?;
+    Window::bound(path, Some(descriptor))
+}
+
+fn root_window(root: &Path, descriptor: &Value) -> Result<Window> {
     exact(descriptor, &["path", "bytes", "sha256"], "执行源码清单绑定")?;
     validate_absolute_path(root, LocalTestPathKind::ExistingDirectory)?;
     let path = Path::new(descriptor["path"].as_str().ok_or("执行源码绑定路径缺失")?);
@@ -174,13 +208,15 @@ pub(in crate::recovery) fn verify_for_root(root: &Path, descriptor: &Value) -> R
     {
         return Err("执行源码清单必须位于运行后端同级固定位置".into());
     }
-    let publication = verify_bound(descriptor, path)?;
-    if publication["published"]["backend"]["path"]
-        != super::super::path_text_canonical(root, "执行后端")?
-    {
-        return Err("执行来源未绑定当前运行后端".into());
-    }
-    Ok(publication)
+    Window::bound(path, Some(descriptor))
+}
+
+fn require_root(root: &Path, publication: &Value) -> Result<()> {
+    window::check(
+        publication["published"]["backend"]["path"]
+            == super::super::path_text_canonical(root, "执行后端")?,
+        "执行来源未绑定当前运行后端",
+    )
 }
 
 /// fresh 请求明确绑定发布源码，原 fixture 只从完整发布证明派生。
@@ -214,17 +250,6 @@ pub(in crate::recovery) fn target_binding(
     Ok((root, binding))
 }
 
-fn verify_bound(descriptor: &Value, path: &Path) -> Result<Value> {
-    if file_binding(path, "执行源码清单")? != *descriptor {
-        return Err("执行源码清单绑定漂移；重新核对来源，禁止改写旧绑定".into());
-    }
-    let document = verify_file(path)?;
-    if file_binding(path, "执行源码清单")? != *descriptor {
-        return Err("执行源码清单在来源复核期间发生变化".into());
-    }
-    Ok(document)
-}
-
 pub(in crate::recovery) const PAIR_KIND: &str = "reference-fixture-execution-source-pair";
 
 /// 仅从显式发布收据签发执行组合，不要求生成后的提交等于原始提交。
@@ -233,15 +258,19 @@ pub(in crate::recovery) fn pair(
     root: &Path,
     descriptor: &Value,
 ) -> Result<Value> {
-    let publication = verify(coordinator, descriptor)?;
-    if publication["published"]["backend"]["path"]
-        != super::super::path_text_canonical(root, "执行后端")?
-    {
-        return Err("执行来源与构建后端不同".into());
-    }
+    let window = local_window(coordinator, descriptor)?;
+    let selected = (|| {
+        window::check(
+            window.publication()["published"]["backend"]["path"]
+                == super::super::path_text_canonical(root, "执行后端")?,
+            "执行来源与构建后端不同",
+        )
+    })();
+    let after = window.verify();
+    window::finish([selected, after])?;
     Ok(
         json!({"format_version":1,"kind":PAIR_KIND,"execution_source":descriptor,
-        "sources":publication["original"]["source_pair"]["sources"]}),
+        "sources":window.publication()["original"]["source_pair"]["sources"]}),
     )
 }
 
@@ -254,62 +283,13 @@ pub(in crate::recovery) fn verify_pair(root: &Path, pair: &Value) -> Result<Valu
     if pair["format_version"] != 1 || pair["kind"] != PAIR_KIND {
         return Err("执行来源组合类型或版本无效".into());
     }
-    let publication = verify_for_root(root, &pair["execution_source"])?;
-    if pair["sources"] != publication["original"]["source_pair"]["sources"] {
-        return Err("执行来源组合的原始来源不匹配".into());
-    }
-    Ok(publication)
-}
-
-fn verify_file(path: &Path) -> Result<Value> {
-    if path.file_name().and_then(|v| v.to_str()) != Some("execution-source.json") {
-        return Err("执行源码清单必须命名为 execution-source.json".into());
-    }
-    let document = read_json(path, "执行源码清单", 16 * 1024 * 1024)?;
-    exact(
-        &document,
-        &["format_version", "kind", "original", "published"],
-        "执行源码清单",
-    )?;
-    if document["format_version"] != 1 || document["kind"] != "reference-fixture-execution-source" {
-        return Err("执行源码清单版本或类型无效".into());
-    }
-    let backend = document["original"]["paths"]["backend"]
-        .as_str()
-        .ok_or("原后端路径缺失")?;
-    let before = input::load(Path::new(backend))?;
-    if document["original"] != before.receipt {
-        return Err("原 fixture 绑定或生成源码已漂移；禁止沿用执行来源".into());
-    }
-    exact(
-        &document["published"],
-        &["backend", "frontend"],
-        "发布源码组合",
-    )?;
-    for (name, side) in &before.sides {
-        let root = path.parent().ok_or("执行源码清单缺少父目录")?.join(name);
-        let actual = root_receipt(&root, &side.files, name, false)?;
-        let expected = &document["published"][*name];
-        if expected != &actual {
-            let changed = ["path", "head", "tree", "inventory", "fingerprints"]
-                .into_iter()
-                .filter(|field| expected[*field] != actual[*field])
-                .collect::<Vec<_>>();
-            let changed = if changed.is_empty() {
-                "结构".into()
-            } else {
-                changed.join("、")
-            };
-            return Err(format!(
-                "发布源码 HEAD、tree、完整清单或来源指纹发生变化；{name} 变化字段：{changed}"
-            )
-            .into());
-        }
-    }
-    if input::load(Path::new(backend))?.receipt != before.receipt
-        || read_json(path, "执行源码清单", 16 * 1024 * 1024)? != document
-    {
-        return Err("执行来源复核期间原输入或清单变化".into());
-    }
-    Ok(document)
+    let window = root_window(root, &pair["execution_source"])?;
+    let selected = require_root(root, window.publication());
+    let sources = window::check(
+        pair["sources"] == window.publication()["original"]["source_pair"]["sources"],
+        "执行来源组合的原始来源不匹配",
+    );
+    let after = window.verify();
+    window::finish([selected, sources, after])?;
+    Ok(window.publication().clone())
 }

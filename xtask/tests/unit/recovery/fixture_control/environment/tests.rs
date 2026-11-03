@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "plan_window.rs"]
+mod plan_window;
+
 fn request(operation: &str, arguments: Value) -> (i32, Value) {
     execute(
         &serde_json::to_vec(
