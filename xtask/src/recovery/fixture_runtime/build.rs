@@ -3,7 +3,7 @@ use super::model::*;
 use crate::{
     Result,
     recovery::{
-        clone::native::{bridge, digest, source},
+        clone::native::{bridge, digest, lifecycle::lock::ProcessGuard, source},
         fixture_control, full_stack,
     },
 };
@@ -14,6 +14,8 @@ use std::{path::Path, time::Duration};
 mod configuration;
 #[path = "build/environment.rs"]
 mod environment;
+#[path = "build/resume.rs"]
+mod resume;
 use environment::Inputs;
 
 pub(super) fn run(backend: &Path, environment: &Path, output: &Path) -> Result<Value> {
@@ -23,20 +25,22 @@ pub(super) fn run(backend: &Path, environment: &Path, output: &Path) -> Result<V
     })
 }
 
+pub(super) fn resume_run(backend: &Path, environment: &Path, output: &Path) -> Result<Value> {
+    let inputs = Inputs::load(backend, environment)?;
+    resume::run(&inputs, output, &mut |program, args| {
+        command(&inputs, program, args)
+    })
+}
+
 fn build(
     inputs: &Inputs,
     output: &Path,
     command: &mut impl FnMut(&str, &[String]) -> Result<String>,
 ) -> Result<Value> {
-    safe(output)?;
-    let allowed = inputs.root.join(".local-tests/reference-fixture");
-    check(
-        output.starts_with(&allowed) && output != allowed,
-        "夹具构建目录越界",
-    )?;
-    directory(output.parent().ok_or("夹具构建目录缺少父目录")?)?;
+    let guard = registration_guard(inputs, output)?;
     std::fs::create_dir(output)?;
-    let result = execute(inputs, output, command);
+    let result = execute(inputs, output, command, &guard);
+    guard.check()?;
     if result.is_err() {
         // 不记录底层原文或配置；失败证据只新建，不能覆盖未知结果。
         write_new(
@@ -49,10 +53,29 @@ fn build(
     result
 }
 
+fn registration_guard(inputs: &Inputs, output: &Path) -> Result<ProcessGuard> {
+    safe(output)?;
+    let allowed = inputs.root.join(".local-tests/reference-fixture");
+    check(
+        output.starts_with(&allowed) && output != allowed,
+        "夹具构建目录越界",
+    )?;
+    directory(output.parent().ok_or("夹具构建目录缺少父目录")?)?;
+    let name = output
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("夹具构建目录名无效")?;
+    ProcessGuard::acquire_named(
+        output.parent().ok_or("夹具构建目录缺少父目录")?,
+        &format!("{name}-build-registration.guard"),
+    )
+}
+
 fn execute(
     inputs: &Inputs,
     output: &Path,
     command: &mut impl FnMut(&str, &[String]) -> Result<String>,
+    guard: &ProcessGuard,
 ) -> Result<Value> {
     inputs.verify()?;
     let pair = fixture_control::source_pair::execution::pair(
@@ -82,9 +105,11 @@ fn execute(
     write_new(&output.join("backend-build.json"), &backend)?;
     let (api, worker) = configuration::copy(&inputs.root, output, &inputs.configuration)?;
     inputs.verify()?;
+    guard.check()?;
     let receipt =
         fixture_control::artifact::runtime::register(&inputs.root, output, &api, &worker)?;
     inputs.verify()?;
+    guard.check()?;
     check(
         source::capture(&inputs.root)? == inventory,
         "夹具运行登记期间源码漂移",

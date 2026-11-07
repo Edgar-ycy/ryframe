@@ -5,6 +5,187 @@ use serde_json::json;
 use super::{command, inspection, lock, protocol};
 
 #[test]
+fn formal_fixed_request_modes_refuse_python_dispatch_and_bad_options_without_stage_writes() {
+    use crate::{
+        cli::{CloneCommand, PostCopyOperation, PostCopyOptions},
+        recovery::clone,
+    };
+    let (_temporary, backend, run) = formal_fixture();
+    let input = run.parent().unwrap().join("input.json");
+    let original = fs::read(run.join("state.json")).unwrap();
+    for operation in [
+        PostCopyOperation::Register,
+        PostCopyOperation::Prepare,
+        PostCopyOperation::Amend,
+    ] {
+        let options = PostCopyOptions {
+            run_dir: run.clone(),
+            operation,
+            request: if operation == PostCopyOperation::Prepare {
+                Some(input.clone())
+            } else {
+                None
+            },
+            producer_binding: None,
+        };
+        assert!(super::entry::selected(&options));
+        assert!(
+            clone::protocol(&CloneCommand::PostCopy(options.clone()), &backend)
+                .unwrap_err()
+                .to_string()
+                .contains("原生持锁正式入口")
+        );
+        let error = super::entry::run(&backend, &options)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(if operation == PostCopyOperation::Prepare {
+                "prepare不能替换登记请求"
+            } else {
+                "需要显式请求文件"
+            }),
+            "{error}"
+        );
+        assert_eq!(fs::read(run.join("state.json")).unwrap(), original);
+        for name in [
+            "run.lock",
+            "post-copy.json",
+            "post-copy",
+            "seed-runtime.json",
+        ] {
+            assert!(!run.join(name).exists());
+        }
+    }
+    let number = super::super::lifecycle::state::begin(&run, "post-copy", "register", &json!({}))
+        .unwrap()
+        .0;
+    super::super::lifecycle::state::finish(
+        &run,
+        number,
+        Some(&json!({"status":"post_copy_registered"})),
+        None,
+    )
+    .unwrap();
+    let before = fs::read(run.join("state.json")).unwrap();
+    let options = PostCopyOptions {
+        run_dir: run.clone(),
+        operation: PostCopyOperation::Register,
+        request: Some(input),
+        producer_binding: None,
+    };
+    assert!(
+        super::entry::run(&backend, &options)
+            .unwrap_err()
+            .to_string()
+            .contains("唯一成功结果")
+    );
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), before);
+}
+
+#[test]
+fn amendment_keeps_complete_request_and_frozen_os_environment_without_exposing_values() {
+    use super::super::resources::common;
+    let backend = crate::workspace::root_dir();
+    fs::create_dir_all(backend.join(".local-tests")).unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("post-amend-environment-")
+        .tempdir_in(backend.join(".local-tests"))
+        .unwrap();
+    let original = temporary.path().join("original.json");
+    let corrected = temporary.path().join("corrected.json");
+    let environment =
+        json!({"APP_ENV":"test","TEMP":"D:/PrivateSentinel","TMP":"D:/PrivateSentinel"});
+    super::super::json::write_new(&original, &json!({"environment":environment})).unwrap();
+    super::super::json::write_new(&corrected, &json!({"environment":environment})).unwrap();
+    let previous = json!({"api_environment":common::binding(&original).unwrap(),"source_admin":{"subject_id":"9"},"other":{"fixed":true}});
+    let mut next = previous.clone();
+    next["api_environment"] = common::binding(&corrected).unwrap();
+    super::amend::candidate(&backend, &previous, &next).unwrap();
+    let bytes = fs::read(&original).unwrap();
+    let mut changed = next.clone();
+    changed["source_admin"]["subject_id"] = json!("10");
+    assert!(
+        super::amend::candidate(&backend, &previous, &changed)
+            .unwrap_err()
+            .to_string()
+            .contains("其他请求字段")
+    );
+    assert!(
+        super::amend::candidate(&backend, &previous, &previous)
+            .unwrap_err()
+            .to_string()
+            .contains("明确重新绑定")
+    );
+    for mapping in [
+        json!({"APP_ENV":"test"}),
+        json!({"APP_ENV":"test","TEMP":"other-private","TMP":"D:/PrivateSentinel"}),
+        json!({"APP_ENV":"test","APP_CORS_ALLOW_ORIGINS":"PrivateSentinel"}),
+        json!({"APP_ENV":"test","TEMP":false}),
+    ] {
+        fs::write(
+            &corrected,
+            serde_json::to_vec(&json!({"environment":mapping})).unwrap(),
+        )
+        .unwrap();
+        next["api_environment"] = common::binding(&corrected).unwrap();
+        let error = super::amend::candidate(&backend, &previous, &next)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("PrivateSentinel") && !error.contains("other-private"));
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn fixed_request_stage_diagnostics_preserve_evidence_and_hide_unknown_private_causes() {
+    use crate::recovery::clone::native::lifecycle::stage::{self, StageRequest};
+    struct Rejected(&'static str);
+    impl stage::StageRunner for Rejected {
+        fn preflight(&self, _: &StageRequest<'_>) -> crate::Result<()> {
+            Ok(())
+        }
+        fn execute(&self, request: &StageRequest<'_>) -> crate::Result<serde_json::Value> {
+            super::diagnostic::context(
+                request,
+                super::diagnostic::Phase::Preparation,
+                Err(self.0.into()),
+            )
+        }
+    }
+    for cause in [
+        "准备API前目标完整复制后像变化",
+        "password=PrivateSentinel token=HiddenToken",
+    ] {
+        let (_temporary, backend, run) = formal_fixture();
+        let message = stage::run_named(&backend, &run, "post-copy", "prepare", &Rejected(cause))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("PostCopyPreparationRejected") && message.contains("preparation"));
+        assert!(message.contains("failure-0001.json") && message.contains("不自动重放"));
+        assert!(!message.contains("PrivateSentinel") && !message.contains("HiddenToken"));
+        let state = super::super::lifecycle::state::load(&run, true).unwrap();
+        assert_eq!(state["attempts"][0]["status"], "failed");
+        assert_eq!(
+            state["attempts"][0]["error_type"],
+            "PostCopyPreparationRejected"
+        );
+        let evidence = super::super::json::read(&run.join("failure-0001.json")).unwrap();
+        assert_eq!(evidence["kind"], "devex-stage-failure");
+        assert_eq!(evidence["mode"], "prepare");
+        assert_eq!(
+            evidence["controller"],
+            super::super::resources::common::binding(
+                &super::super::lifecycle::state::controller_path(&run, 1)
+            )
+            .unwrap()
+        );
+        if cause.starts_with("准备API") {
+            assert!(message.contains("完整数据库后像"));
+        }
+    }
+}
+
+#[test]
 fn producer_plan_keeps_credentials_out_of_argv() {
     let root = tempfile::tempdir().unwrap();
     let backend = root.path();
@@ -198,4 +379,30 @@ fn identity_release_resumes_after_pending_marker_interruption() {
     assert_eq!(resumed["idempotent"], false);
     assert!(marker.is_file());
     assert!(!pending.exists());
+}
+
+fn formal_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    use super::super::{json as document, lifecycle::state, resources::common};
+    let backend = crate::workspace::root_dir();
+    fs::create_dir_all(backend.join(".local-tests")).unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("post-copy-entry-")
+        .tempdir_in(backend.join(".local-tests"))
+        .unwrap();
+    let run = temporary.path().join("run");
+    fs::create_dir(&run).unwrap();
+    let input = temporary.path().join("input.json");
+    document::write_new(&input, &json!({"fixture":true})).unwrap();
+    let binding = common::binding(&input).unwrap();
+    document::write_new(
+        &run.join("manifest.json"),
+        &json!({"format_version":1,
+        "kind":"devex-clone-run","id":"post-native-unit","source_request":binding,
+        "source_export":null,"initialized":binding,"source_environment":binding,
+        "target_environment":binding,"copy_directory":temporary.path().join("copy"),
+        "copy_stage":"source_to_seed","build_bridges":[]}),
+    )
+    .unwrap();
+    state::initialize(&run).unwrap();
+    (temporary, backend, run)
 }

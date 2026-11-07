@@ -12,7 +12,8 @@ use crate::{
         s3::app_configuration,
         target_verify::{
             input::{request, request_physical},
-            storage::{StorageInputs, StorageObserver, SystemObserver},
+            redis::Client,
+            storage::StorageInputs,
         },
     },
 };
@@ -142,15 +143,34 @@ impl<T: Transport> Resources<'_, T> {
         Ok(json!(text))
     }
 
-    pub(super) fn redis(&self, parts: &[&str]) -> Result<Value> {
+    fn redis_window<R>(
+        &self,
+        generation: &Value,
+        read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<R>,
+    ) -> Result<R> {
+        let original = &self.request["storage"]["redis"];
+        let redis = if original["platform"] == "windows" {
+            if generation["platform"] != "windows" {
+                return Err("来源缓存读取缺少 START 绑定的 Windows Redis 代次".into());
+            }
+            generation
+        } else {
+            original
+        };
         (self.checkpoint)()?;
-        let result = SystemObserver::new(self.transport).redis(
-            &self.inputs(),
-            &self.request["storage"]["redis"],
-            parts,
-        );
-        (self.checkpoint)()?;
-        result
+        let result = Client::authenticated(&self.inputs(), redis).and_then(|mut client| {
+            let result = read(&mut |parts| {
+                (self.checkpoint)()?;
+                let result = client.command(parts);
+                checked_redis_read(result, (self.checkpoint)())
+            });
+            #[cfg(windows)]
+            if redis["platform"] == "windows" {
+                return checked_redis_read(result, client.recheck_windows_peer());
+            }
+            result
+        });
+        checked_redis_read(result, (self.checkpoint)())
     }
 
     pub(super) fn login_before(&self) -> Result<(Vec<u8>, u64)> {
@@ -234,5 +254,13 @@ fn terminated(text: &str) -> Vec<u8> {
         Vec::new()
     } else {
         format!("{text}\n").into_bytes()
+    }
+}
+
+fn checked_redis_read<R>(result: Result<R>, checked: Result<()>) -> Result<R> {
+    match (result, checked) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(after)) => Err(format!("{error}；来源缓存读取后验失败：{after}").into()),
     }
 }

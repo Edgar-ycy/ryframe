@@ -121,8 +121,8 @@ Recovery proceeds through start, data validation, and business and runtime valid
 ```powershell
 git rev-parse HEAD
 $env:APP_ENV = "test"
-cargo reset -- plan --config-dir .local-tests/reset-config
-cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
+cargo reset -- plan --config-dir ../ryframe-reset-config
+cargo reset -- execute --config-dir ../ryframe-reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```
 
 `reset plan` reads and validates application configuration and generates a manifest and hash binding source and resource scope, without executing the destructive rebuild or replacing the ownership preflight performed by `execute`. It differs from offline `control export-sql --plan` or `adopt --plan`, which do not read application configuration. Internal physical-alias deduplication in reset only avoids processing the same physical database twice; it does not relax restrictions on dedicated tenant targets sharing a database. The schema isolation constraints in the [Data Guide](data.en.md#tenant-routing) still apply. The execution order is fixed: object prefix, Redis namespace, physical databases, control baseline, tenant baseline, verification, then lock release. Manifests, ledgers, and reports contain no secrets. When an ordinary stage fails and lock release succeeds, resumption is only permitted with the same manifest and ledger. Production environments are permanently rejected before configuration is read or external resources are accessed. `cargo reset` is the direct user entry point; the framework maintenance tool `cargo xtask data reset` consumes the same task graph and requires explicit `--write`. During troubleshooting, do not mix state directories between these entry points or delete a ledger to start a new rebuild.

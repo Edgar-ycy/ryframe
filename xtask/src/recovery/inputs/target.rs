@@ -15,6 +15,7 @@ use super::{
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
+    recovery::clone::native::cache::windows_tool,
 };
 
 pub(crate) struct TargetRequest {
@@ -143,12 +144,20 @@ fn validate_review_tools(
         )?;
         text(tool.get("path").ok_or("审阅工具缺少路径")?, "审阅工具路径")?;
     }
-    let redis = object(
-        tools.get("redis_server").ok_or("缺少 Redis 工具")?,
-        "Redis 工具",
-    )?;
-    for field in ["distribution", "resolved_path", "sha256"] {
-        text(redis.get(field).ok_or("Redis 工具字段缺失")?, "Redis 工具")?;
+    let redis = tools.get("redis_server").ok_or("缺少 Redis 工具")?;
+    if redis["platform"] == "windows" {
+        if ["wsl", "native_tool", "redis_python"]
+            .iter()
+            .any(|key| tools.contains_key(*key))
+        {
+            return Err("Windows Redis 审阅不能混用 WSL 或 Linux Redis 工具绑定".into());
+        }
+        windows_tool::validate(redis)?;
+    } else {
+        let redis = object(redis, "Redis 工具")?;
+        for field in ["distribution", "resolved_path", "sha256"] {
+            text(redis.get(field).ok_or("Redis 工具字段缺失")?, "Redis 工具")?;
+        }
     }
     let rustfs = object(
         services.get("rustfs").ok_or("审阅 RustFS 服务缺失")?,

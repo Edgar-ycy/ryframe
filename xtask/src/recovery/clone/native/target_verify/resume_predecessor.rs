@@ -1,6 +1,6 @@
 //! 仅允许 marker 写入已确认、首个只读 verify 收据发布失败的一次前驱。
 use super::{
-    super::json as json_io, evidence_model::*, resume_model as model,
+    super::json as json_io, evidence_model::*, prepare_observations, resume_model as model,
     resume_observations as observations, resume_runtime,
 };
 use crate::Result;
@@ -395,6 +395,9 @@ fn redis_observations(
     started: &Value,
     selected: &mut BTreeSet<String>,
 ) -> Result<()> {
+    if context.request["storage"]["redis"]["platform"] == "windows" {
+        return windows_redis_observations(context, old, additions, started, selected);
+    }
     let baseline = observations::stage(old, "redis-kernel")?
         .iter()
         .map(|name| observations::receipt(context.backend, context.target, name))
@@ -459,5 +462,38 @@ fn redis_observations(
             selected.insert(name.clone());
         }
     }
+    Ok(())
+}
+
+fn windows_redis_observations(
+    context: &Context<'_>,
+    old: &BTreeSet<String>,
+    additions: &BTreeSet<String>,
+    started: &Value,
+    selected: &mut BTreeSet<String>,
+) -> Result<()> {
+    let baseline = observations::windows_redis_baseline(context.backend, context.target, old)?;
+    let current = &started["storage"]["redis"];
+    let cache = &started["cache_runtime"];
+    check(
+        cache.is_null() || cache["redis"] == *current,
+        "迁移前驱 Windows Redis 当前投影不同于已登记运行代次",
+    )?;
+    prepare_observations::windows_redis_transition(
+        &context.request["storage"]["redis"],
+        &baseline,
+    )?;
+    prepare_observations::windows_redis_transition(&baseline, current)?;
+    let mut matched = Vec::new();
+    for name in observations::windows_redis_names(additions)? {
+        if read(context.backend, &context.target.join(&name))? == *current {
+            matched.push(name);
+        }
+    }
+    check(
+        matched.len() >= 2,
+        "迁移后继缺少首次续作的两轮 Windows Redis 代次观察",
+    )?;
+    selected.extend(matched.into_iter().take(2));
     Ok(())
 }

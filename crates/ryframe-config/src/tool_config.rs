@@ -1,6 +1,7 @@
 use ryframe_kernel::{AppError, AppResult};
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -21,6 +22,7 @@ pub struct VerificationSettings {
     /// 维护工具、API 和 Worker 的 Cargo 构建并发，范围为 1 到 64。
     pub build_jobs: u8,
     pub linux_observer: Option<LinuxObserverSettings>,
+    pub windows_redis: Option<WindowsRedisSettings>,
     /// 检查工具的 Python 入口；相对路径以后端工作区为基准，不得包含父跳转或控制字符。
     pub python_program: Option<PathBuf>,
     /// 检查工具的 Node 入口；相对路径以后端工作区为基准，不得包含父跳转或控制字符。
@@ -34,6 +36,7 @@ impl Default for VerificationSettings {
         Self {
             build_jobs: 4,
             linux_observer: None,
+            windows_redis: None,
             python_program: None,
             node_program: None,
             pnpm_cache_dir: None,
@@ -55,6 +58,18 @@ pub struct LinuxObserverSettings {
     pub source_commit: String,
     pub sha256: String,
     pub source_sha256: String,
+}
+
+/// Windows Redis 的显式本机绑定。执行工具负责验证实际路径、文件摘要和依赖集合。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WindowsRedisSettings {
+    /// Windows redis-server.exe 的绝对路径。
+    pub program: PathBuf,
+    /// 程序文件的 64 位小写十六进制 SHA-256。
+    pub sha256: String,
+    /// 同目录 DLL 的文件名与 64 位小写十六进制 SHA-256。
+    pub dlls: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -361,7 +376,18 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
         fs::create_dir(root.path().join(".local-tests")).unwrap();
         fs::write(
             root.path().join("config/tools.toml"),
-            "[verification]\npython_program='public/python.exe'\nnode_program='public/node.exe'\npnpm_cache_dir='public/cache'\n",
+            r#"[verification]
+python_program='public/python.exe'
+node_program='public/node.exe'
+pnpm_cache_dir='public/cache'
+
+[verification.windows_redis]
+program='D:/fixture/public/redis-server.exe'
+sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+
+[verification.windows_redis.dlls]
+'fixture-runtime.dll'='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+"#,
         )
         .unwrap();
         assert_eq!(
@@ -387,9 +413,31 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
         );
         fs::write(
             root.path().join(".local-tests/tools.toml"),
-            "[verification]\npython_program='本机/python.exe'\nnode_program='本机/node.exe'\npnpm_cache_dir='本机/cache with spaces'\n",
+            r#"[verification]
+python_program='本机/python.exe'
+node_program='本机/node.exe'
+pnpm_cache_dir='本机/cache with spaces'
+
+[verification.windows_redis]
+program='D:/fixture/local/redis-server.exe'
+sha256='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+
+[verification.windows_redis.dlls]
+'fixture-runtime.dll'='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+"#,
         )
         .unwrap();
+        assert_eq!(
+            ToolSettings::load(root.path())
+                .unwrap()
+                .verification
+                .windows_redis,
+            Some(WindowsRedisSettings {
+                program: PathBuf::from("D:/fixture/local/redis-server.exe"),
+                sha256: "c".repeat(64),
+                dlls: BTreeMap::from([("fixture-runtime.dll".into(), "d".repeat(64))]),
+            }),
+        );
         assert_eq!(
             ToolSettings::load(root.path())
                 .unwrap()
@@ -413,6 +461,7 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
         let settings: ToolSettings = toml::from_str("").unwrap();
         assert!(settings.verification.python_program.is_none());
         assert!(settings.verification.node_program.is_none());
+        assert!(settings.verification.windows_redis.is_none());
         assert!(settings.pnpm_cache_dir(root.path()).unwrap().is_none());
         assert_eq!(
             ToolSettings::load(root.path())
@@ -460,6 +509,7 @@ source_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
             "[verification]\nnode_program={password='SECRET_SENTINEL'}\n",
             "[verification]\npnpm_cache_dir={password='SECRET_SENTINEL'}\n",
             "[verification]\nSECRET_SENTINEL='unknown'\n",
+            "[verification.windows_redis]\nprogram='D:/fixture/redis-server.exe'\nsha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ndlls={}\nprogram_env='SECRET_SENTINEL'\n",
             "[verification]\npython_program='SECRET_SENTINEL\n",
         ] {
             fs::write(root.path().join("config/tools.toml"), document).unwrap();

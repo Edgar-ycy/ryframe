@@ -21,12 +21,13 @@ pub(super) struct Resources<'a, T> {
 
 impl<T: Transport> Resources<'_, T> {
     pub(super) fn generation(&self) -> Result<Value> {
-        Ok(self.generation_owned(None)?.0)
+        Ok(self.generation_owned(None, true)?.0)
     }
 
     pub(super) fn generation_owned(
         &self,
         owner: Option<&super::super::guard::Generation>,
+        publish: bool,
     ) -> Result<(Value, selection::Selected, Option<Value>)> {
         let mut generation = authority::generation::observe(
             self.inputs.backend,
@@ -48,14 +49,29 @@ impl<T: Transport> Resources<'_, T> {
         let observer = Observer {
             transport: self.transport,
         };
-        storage::rustfs::verify(
+        let redis = &selected.value["redis"];
+        let windows = redis["platform"] == "windows";
+        if !publish && !windows {
+            return Err("无收据守卫仅支持 Windows Redis 连接窗口".into());
+        }
+        let rustfs = storage::rustfs::inspect(
             &self.inputs,
             &review,
             &selected.value["rustfs"],
             selected.runtime.as_ref(),
             &observer,
         )?;
-        storage::redis_layout::verify(&self.inputs, &review, &selected.value["redis"], &observer)?;
+        if publish {
+            storage::rustfs::publish(&self.inputs, &rustfs)?;
+        }
+        storage::redis_layout::verify(&self.inputs, &review, redis, &observer)?;
+        if publish && windows {
+            let path = self.inputs.observation_dir.join(format!(
+                "redis-windows-{}.json",
+                uuid::Uuid::new_v4().simple()
+            ));
+            receipts::publish(self.transport, &path, redis)?;
+        }
         storage::kernel::require_observed_identity(
             &selected.value["rustfs"]["identity"],
             &observer,
@@ -64,24 +80,20 @@ impl<T: Transport> Resources<'_, T> {
         Ok((generation, selected, cache))
     }
 
-    pub(super) fn absence(&self) -> Result<Value> {
+    pub(super) fn absence(&self, redis: &Value) -> Result<Value> {
         let databases = document::array(&self.inputs.request["target"]["databases"], "fresh 四库")?
             .iter()
             .map(|db| database_absence(&self.inputs, self.transport, db))
             .collect::<Result<Vec<_>>>()?;
         let objects = super::objects::absence(&self.inputs, self.transport)?;
-        let redis = self.redis_absence()?;
-        Ok(json!({"databases":databases,"objects":objects,"redis":redis}))
-    }
-
-    fn redis_absence(&self) -> Result<Value> {
-        super::super::redis::absence_with_observer(
+        let redis = super::super::redis::absence_with_observer(
             &self.inputs,
-            &self.inputs.request["storage"]["redis"],
+            redis,
             &Observer {
                 transport: self.transport,
             },
-        )
+        )?;
+        Ok(json!({"databases":databases,"objects":objects,"redis":redis}))
     }
 }
 
@@ -183,5 +195,14 @@ impl<T: Transport> StorageObserver for Observer<'_, T> {
     }
     fn redis(&self, inputs: &StorageInputs<'_>, redis: &Value, parts: &[&str]) -> Result<Value> {
         SystemObserver::new(self.transport).redis(inputs, redis, parts)
+    }
+
+    fn redis_window<R>(
+        &self,
+        inputs: &StorageInputs<'_>,
+        redis: &Value,
+        read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<R>,
+    ) -> Result<R> {
+        SystemObserver::new(self.transport).redis_window(inputs, redis, read)
     }
 }

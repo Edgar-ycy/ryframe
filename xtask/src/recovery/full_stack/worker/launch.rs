@@ -78,7 +78,6 @@ pub(super) fn detached(_operation: &str, args: &Value, directory: &Path) -> Resu
 }
 #[cfg(windows)]
 pub(super) fn detach_platform(args: &Value) -> Result<Value> {
-    use winsafe::{HPROCESS, STARTUPINFO, co, prelude::kernel_Hprocess};
     crate::recovery::clone::native::json::exact(
         args,
         &["backend", "directory", "operation_id", "role"],
@@ -89,48 +88,21 @@ pub(super) fn detach_platform(args: &Value) -> Result<Value> {
     }
     let role = super::role::Role::parse(&args["role"])?;
     let executable = std::env::current_exe()?;
-    let executable = executable.to_str().ok_or("Worker工具路径不是UTF-8")?;
     let input = serde_json::to_string(
         &json!({"format_version":1,"kind":if role == super::role::Role::Worker {"ryframe-full-stack-worker"} else {"ryframe-full-stack-process"},"operation":"monitor","arguments":args}),
     )?;
-    let line = format!(
-        "{} {} {}",
-        quote(executable),
-        if role == super::role::Role::Worker {
-            "__full-stack-worker-detached"
-        } else {
-            "__full-stack-process-detached"
-        },
-        quote(&input)
-    );
-    let mut startup = STARTUPINFO::default();
-    let base = co::CREATE::NO_WINDOW | co::CREATE::UNICODE_ENVIRONMENT;
-    // winsafe 0.0.19 的自定义环境构造不能保持缓冲区生命周期；环境已由跳板父级
-    // 使用 std::Command 过滤，这里只采用其已验证的继承环境入口。
-    let create = |flags, startup: &mut STARTUPINFO| {
-        HPROCESS::CreateProcess(
-            Some(executable),
-            Some(&line),
-            None,
-            None,
-            false,
-            flags,
-            None,
-            None,
-            startup,
-        )
+    let entry = if role == super::role::Role::Worker {
+        "__full-stack-worker-detached"
+    } else {
+        "__full-stack-process-detached"
     };
     let directory = Path::new(args["directory"].as_str().ok_or("缺少运行目录")?);
     let environment = super::environment::Environment::arguments(args, directory)?;
     if let Some(environment) = &environment {
         environment.inherited()?;
     }
-    let child = match create(base | co::CREATE::BREAKAWAY_FROM_JOB, &mut startup) {
-        Ok(child) => child,
-        Err(co::ERROR::ACCESS_DENIED) => create(base, &mut startup)?,
-        Err(error) => return Err(error.into()),
-    };
-    Ok(json!(child.dwProcessId))
+    let pid = crate::process::spawn_detached(&executable, &[entry, &input])?;
+    Ok(json!(pid))
 }
 #[cfg(unix)]
 pub(super) fn detached(operation: &str, args: &Value, directory: &Path) -> Result<u32> {
@@ -148,28 +120,6 @@ pub(super) fn detached(operation: &str, args: &Value, directory: &Path) -> Resul
     });
     Ok(pid)
 }
-#[cfg(windows)]
-fn quote(value: &str) -> String {
-    let mut text = String::from("\"");
-    let mut slashes = 0;
-    for character in value.chars() {
-        if character == '\\' {
-            slashes += 1;
-            continue;
-        }
-        text.push_str(&"\\".repeat(if character == '"' {
-            slashes * 2 + 1
-        } else {
-            slashes
-        }));
-        slashes = 0;
-        text.push(character);
-    }
-    text.push_str(&"\\".repeat(slashes * 2));
-    text.push('"');
-    text
-}
-
 pub(super) fn request(
     role: super::role::Role,
     backend: &Path,

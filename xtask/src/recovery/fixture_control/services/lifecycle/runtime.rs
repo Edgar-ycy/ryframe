@@ -45,7 +45,7 @@ impl PythonRuntime {
     }
     fn invoke(&self, operation: &str, arguments: Value) -> Result<Value> {
         super::primitive::validate(&self.backend, operation, &arguments)?;
-        let native = matches!(operation, "cache-start" | "cache-stop");
+        let native = matches!(operation, "cache-start" | "cache-stop" | "storage-start");
         self.verify(native)?;
         let payload = serde_json::to_vec(
             &json!({"format_version":1,"kind":"ryframe-fixture-service-primitive",
@@ -166,7 +166,7 @@ impl Runtime for PythonRuntime {
             )?;
             return Ok(json!(true));
         }
-        if matches!(operation, "cache-start" | "cache-stop") {
+        if matches!(operation, "cache-start" | "cache-stop" | "storage-start") {
             return self.invoke(operation, arguments);
         }
         if matches!(operation, "tree-stop" | "recover-controller") {

@@ -8,11 +8,16 @@ use sha2::{Digest, Sha256};
 
 use super::super::{
     bridge::scope::Scope,
+    cache::windows_tool,
     digest, json as json_io,
     lifecycle::{manifest, stage::StageRequest},
     resources::common,
 };
-use super::{guard, input::TargetContext, published, tree};
+use super::{
+    guard,
+    input::{TargetContext, request},
+    published, tree,
+};
 use crate::Result;
 
 #[path = "authority/generation.rs"]
@@ -260,22 +265,12 @@ fn auxiliary_inputs(context: &TargetContext) -> Result<Vec<PathBuf>> {
     }
     if let Some(execution) = context.request.get("execution_backend") {
         if execution.get("execution_source").is_some() {
-            let (_, verified) =
-                crate::recovery::fixture_control::source_pair::execution::target_binding(
+            paths.extend(
+                crate::recovery::fixture_control::source_pair::execution::target_protected_inputs(
                     &context.backend,
                     execution,
-                )?;
-            for descriptor in [&verified["execution_source"], &verified["fixture"]] {
-                let path = PathBuf::from(json_io::text(&descriptor["path"], "发布执行辅助输入")?);
-                crate::local_test_path::validate_absolute_path(
-                    &path,
-                    crate::local_test_path::LocalTestPathKind::ExistingFile,
-                )?;
-                if common::binding(&path)? != *descriptor {
-                    return Err("发布执行辅助输入在完整核验后变化".into());
-                }
-                paths.push(path);
-            }
+                )?,
+            );
             return Ok(paths);
         }
         paths.push(manifest::bound_file(
@@ -340,16 +335,21 @@ fn configuration_inputs(authority: &Value) -> Result<Vec<PathBuf>> {
 
 fn storage_inputs(context: &TargetContext) -> Result<Vec<PathBuf>> {
     let storage = context.storage();
-    let mut paths = vec![
-        PathBuf::from(json_io::text(
-            &storage["rustfs"]["identity"]["executable"],
-            "RustFS 执行路径",
-        )?),
-        PathBuf::from(json_io::text(
-            &storage["redis"]["wsl"]["path"],
+    let mut paths = vec![PathBuf::from(json_io::text(
+        &storage["rustfs"]["identity"]["executable"],
+        "RustFS 执行路径",
+    )?)];
+    let redis = &storage["redis"];
+    if redis["platform"] == "windows" {
+        for descriptor in windows_tool::package_bindings(&redis["tool"])? {
+            paths.push(request::external_file(&descriptor)?);
+        }
+    } else {
+        paths.push(PathBuf::from(json_io::text(
+            &redis["wsl"]["path"],
             "Redis WSL 执行路径",
-        )?),
-    ];
+        )?));
+    }
     for descriptor in [
         &storage["rustfs"]["process_receipt"],
         &storage["rustfs"]["launch_receipt"],

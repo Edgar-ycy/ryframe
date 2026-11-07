@@ -69,6 +69,12 @@ fn frozen(request: &Value, output: &Path) -> Result<Value> {
 }
 
 pub(super) fn inspect(request: &Value, output: &Path) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::inspect(request, output);
+        #[cfg(not(windows))]
+        return Err("Windows Redis v3 只在本机 Windows 核验".into());
+    }
     model::plain(output)?;
     if !output.join("intent.json").exists() {
         if [

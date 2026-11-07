@@ -11,9 +11,12 @@ pub(super) const TOOLS: &[&str] = &[
     "wsl",
     "redis_python",
 ];
+const WINDOWS_TOOLS: &[&str] = &["mysql", "mysqldump", "rustfs", "redis_server"];
 
-fn tool_names(review: &Value) -> Vec<&'static str> {
-    if review["tools"].get("native_tool").is_some() {
+fn tool_names(tools: &Value) -> Vec<&'static str> {
+    if tools["redis_server"].get("platform").is_some() {
+        WINDOWS_TOOLS.to_vec()
+    } else if tools.get("native_tool").is_some() {
         TOOLS
             .iter()
             .copied()
@@ -77,26 +80,24 @@ pub(super) fn reset_password(value: &Value) -> Result<()> {
 
 pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     let message = "夹具审阅计划缺少当前工具预检收据";
-    let tools = review["tools"].as_object();
+    let tools = &review["tools"];
+    let tool_object = tools.as_object().ok_or(message)?;
+    let names = tool_names(tools);
     check(
-        tools.is_some_and(|tools| {
-            tool_names(review)
-                .iter()
-                .all(|name| tools.contains_key(*name))
-        }),
+        names.iter().all(|name| tool_object.contains_key(*name)),
         message,
     )?;
+    if tools["redis_server"].get("platform").is_some() {
+        super::super::review::validate_windows_tools(tool_object)?;
+    } else if tools.get("native_tool").is_some() {
+        crate::recovery::clone::native::cache::validate_native_tool(&tools["native_tool"])?;
+    }
     let expected = Value::Object(
-        tool_names(review)
+        names
             .iter()
-            .map(|name| ((*name).into(), review["tools"][*name].clone()))
+            .map(|name| ((*name).into(), tools[*name].clone()))
             .collect(),
     );
-    if review["tools"].get("native_tool").is_some() {
-        crate::recovery::clone::native::cache::validate_native_tool(
-            &review["tools"]["native_tool"],
-        )?;
-    }
     let preflight = &review["preflight"];
     check(
         native_json::exact(
@@ -179,6 +180,13 @@ pub(super) fn successor(previous: &Value, review: &Value) -> Result<()> {
     super::super::review::validate_review(&structural)?;
     super::super::review::validate_review(review)?;
     preflight_binding(review)?;
+    if ready {
+        check(
+            previous["tools"]["redis_server"]["platform"]
+                == review["tools"]["redis_server"]["platform"],
+            "已就绪 Redis 审阅不能切换工具平台；请新建隔离场景",
+        )?;
+    }
     let expected = semantics(previous)?;
     let mut observed = semantics(review)?;
     if pending {

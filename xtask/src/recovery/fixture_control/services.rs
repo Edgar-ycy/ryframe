@@ -8,8 +8,12 @@ use super::{insert_optional_path, insert_path};
 
 #[path = "services/history.rs"]
 pub(crate) mod history;
+#[path = "services/initial.rs"]
+pub(super) mod initial;
 #[path = "services/lifecycle.rs"]
 pub(crate) mod lifecycle;
+#[path = "services/storage.rs"]
+mod storage;
 
 pub(super) fn fields(command: &FixtureServicesCommand, root: &Path) -> Result<Map<String, Value>> {
     let FixtureServicesCommand::Run(options) = command else {

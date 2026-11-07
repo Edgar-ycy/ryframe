@@ -110,23 +110,26 @@ pub(super) fn initialize<T: Transport>(
         confirmed(w, &stage, &observed)?;
     }
     w.objects(false)?;
-    w.redis_state(false, false)?;
+    w.redis_state(original, false, false)?;
     snapshot.check()?;
     intent(
         w,
         "sentinel",
         &json!({"key":w.inputs.request["reset"]["sentinel_key"]}),
     )?;
-    if w.redis(&[
-        "SET",
-        document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel key")?,
-        document::text(&w.inputs.request["reset"]["sentinel_value"], "sentinel值")?,
-        "NX",
-    ])? != "OK"
+    if w.redis(
+        original,
+        &[
+            "SET",
+            document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel key")?,
+            document::text(&w.inputs.request["reset"]["sentinel_value"], "sentinel值")?,
+            "NX",
+        ],
+    )? != "OK"
     {
         return Err("Redis sentinel NX未确认；禁止覆盖和重放".into());
     }
-    confirmed(w, "sentinel", &w.redis_state(false, true)?)?;
+    confirmed(w, "sentinel", &w.redis_state(original, false, true)?)?;
     for db in document::array(&w.inputs.request["target"]["databases"], "四目标")? {
         database(w, db, true)?;
     }
@@ -165,7 +168,7 @@ fn execute_reset<T: Transport>(w: &Window<'_, T>, original: &Value) -> Result<Va
         database(w, db, true)?;
     }
     w.objects(false)?;
-    w.redis_state(false, true)?;
+    w.redis_state(original, false, true)?;
     intent(w, "reset", &json!({"plan_hash":plan["plan_hash"]}))?;
     let snapshot = Snapshot::open(
         w.inputs.backend,

@@ -15,6 +15,12 @@ pub(crate) fn status(
     runtime: &Value,
     effective: Option<&Value>,
 ) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::status(backend, request, runtime, effective);
+        #[cfg(not(windows))]
+        return Err("Windows Redis 只读状态只支持本机 Windows".into());
+    }
     let current = effective.unwrap_or(request);
     model::validate(backend, current, true)?;
     let tools = effective

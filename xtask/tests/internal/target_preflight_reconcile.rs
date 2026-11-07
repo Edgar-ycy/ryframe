@@ -46,7 +46,7 @@ fn execute(resources: &Resources<'_>, drift: bool) -> Result<Value> {
     let mut environment = f.environment.clone();
     environment.insert("TEMP".into(), f.local.to_str().unwrap().into());
     let protected = initialize::inputs::protect(&registration, &f.request, &environment)?;
-    let generation = || {
+    let generation = |_| {
         let mut value = resources.generation()?;
         if drift {
             value.0["storage"]["unexpected"] = json!(true);

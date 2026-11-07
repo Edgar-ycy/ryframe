@@ -40,7 +40,8 @@ pub(in crate::recovery::source::evidence) fn run<T: Transport + Sync>(
     fs::create_dir(&output)?;
     let run = Path::new(document::text(&source["directory"], "原复制账本")?);
     let storage = resources.storage_identity(run)?;
-    let redis = resources.redis_state()?;
+    let redis_generation = &storage["redis"];
+    let redis = resources.redis_state(redis_generation)?;
     let models = schema::models(resources.execution)?;
     let observed_at = chrono::Utc::now().to_rfc3339();
     database::verify_migrations(context, resources.transport, "migrations")?;
@@ -76,7 +77,7 @@ pub(in crate::recovery::source::evidence) fn run<T: Transport + Sync>(
     if inventory::logical(&before)? != inventory::logical(&after)?
         || owner_image(&owners)? != owner_image(&repeated)?
         || resources.storage_identity(run)? != storage
-        || resources.redis_state()? != redis
+        || resources.redis_state(redis_generation)? != redis
         || database::schema_snapshot(context, &models, resources.transport, "after")? != columns
     {
         return Err("来源采集期间完整库存、schema、对象 ownership、Redis 或存储代次变化".into());

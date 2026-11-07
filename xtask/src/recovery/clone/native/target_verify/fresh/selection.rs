@@ -13,7 +13,7 @@ pub(crate) struct Selected {
     pub(crate) runtime: Option<Value>,
 }
 
-pub(super) fn transition(
+pub(crate) fn transition(
     backend: &Path,
     request: &Value,
     run: Option<&Path>,
@@ -69,7 +69,12 @@ fn non_null(value: &Value) -> Option<Value> {
     (!value.is_null()).then(|| value.clone())
 }
 
-fn redis(backend: &Path, expected: &Value, cache: Option<&Value>, fixture: bool) -> Result<Value> {
+pub(in crate::recovery::clone::native::target_verify) fn redis(
+    backend: &Path,
+    expected: &Value,
+    cache: Option<&Value>,
+    fixture: bool,
+) -> Result<Value> {
     let Some(cache) = cache else {
         return Ok(expected.clone());
     };
@@ -81,7 +86,18 @@ fn redis(backend: &Path, expected: &Value, cache: Option<&Value>, fixture: bool)
         let outer = common::read_bound(backend, &cache["generation"], "夹具缓存后继")?;
         let generation = common::read_bound(backend, &outer["generation"], "夹具完整后继")?;
         let request = common::read_bound(backend, &generation["redis"]["request"], "夹具缓存请求")?;
-        allowed["wsl"] = request["wsl"].clone();
+        let runtime = &generation["redis"]["runtime"];
+        if expected["platform"] == "windows" {
+            validate_windows_transition(expected, &request, runtime, &cache["redis"])?;
+        } else {
+            if request["format_version"] == 3
+                || runtime["format_version"] == 3
+                || cache["redis"]["platform"] == "windows"
+            {
+                return Err("夹具缓存后继不能切换 Redis 平台".into());
+            }
+            allowed["wsl"] = request["wsl"].clone();
+        }
     } else {
         let request = common::read_bound(backend, &cache["request"], "缓存后继请求")?;
         if request["previous"] != *expected {
@@ -89,13 +105,54 @@ fn redis(backend: &Path, expected: &Value, cache: Option<&Value>, fixture: bool)
         }
         if !cache["tools"].is_null() {
             let tools = common::read_bound(backend, &cache["tools"], "缓存工具后继")?;
-            allowed["wsl"] = tools["process"]["wsl"].clone();
+            if expected["platform"] == "windows" {
+                if tools["process"]["format_version"] != 3
+                    || tools["process"]["tool"] != expected["tool"]
+                {
+                    return Err("Windows 缓存后继未绑定原登记工具".into());
+                }
+            } else {
+                allowed["wsl"] = tools["process"]["wsl"].clone();
+            }
         }
     }
     if cache["redis"] != allowed {
         return Err("缓存后继改变了未授权物理配置或工具".into());
     }
     Ok(allowed)
+}
+
+fn validate_windows_transition(
+    expected: &Value,
+    request: &Value,
+    runtime: &Value,
+    observed: &Value,
+) -> Result<()> {
+    let tool = &expected["tool"];
+    cache::windows_tool::validate(tool)?;
+    if request["format_version"] != 3
+        || runtime["format_version"] != 3
+        || request["tool"] != *tool
+        || request["port"] != expected["port"]
+        || !expected["port"].is_u64()
+        || request["configuration"] != expected["configuration"]
+        || !expected["configuration"].is_object()
+        || expected["executable"] != tool["path"]
+        || expected["sha256"] != tool["sha256"]
+        || [
+            "wsl",
+            "distribution",
+            "python",
+            "native_tool",
+            "previous_boot_id",
+        ]
+        .iter()
+        .any(|key| request.get(*key).is_some() || expected.get(*key).is_some())
+        || runtime["redis"] != *observed
+    {
+        return Err("Windows Redis 后继缺少原工具、配置或完整运行代次证明".into());
+    }
+    Ok(())
 }
 
 /// 固定登记的完整历史，只返回账本实际出现过的存储组合，不生成跨阶段笛卡尔积。
@@ -238,4 +295,75 @@ fn push(result: &mut Vec<Selected>, item: Selected) {
     {
         result.push(item);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn windows_fixture_restart_updates_only_bound_process_generation() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let config = temporary.path().join("redis.conf");
+    std::fs::write(&config, "dir .\n").unwrap();
+    let configuration = common::binding(&config).unwrap();
+    let tool = json!({
+        "platform":"windows","path":"D:/tools/redis-server.exe","sha256":"a".repeat(64),
+        "version":"Redis server v=7.4.11 sha=00000000:0 malloc=libc bits=64 build=5bd2587910691cb8",
+        "dlls":{"msys-2.0.dll":"b".repeat(64)},
+    });
+    let original = json!({
+        "platform":"windows","port":29770,"pid":10,"started":"123","run_id":"a".repeat(40),
+        "executable":tool["path"],"sha256":tool["sha256"],"configuration":configuration,"tool":tool,
+    });
+    let mut current = original.clone();
+    current["pid"] = json!(11);
+    current["started"] = json!("124");
+    current["run_id"] = json!("b".repeat(40));
+    let request =
+        json!({"format_version":3,"tool":tool,"port":29770,"configuration":configuration});
+    let runtime = json!({"format_version":3,"redis":current});
+    let publish = |name: &str, request: &Value, runtime: &Value| {
+        let dir = temporary.path().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        let request_file = dir.join("request.json");
+        document::write_new(&request_file, request).unwrap();
+        let generation = dir.join("generation.json");
+        document::write_new(
+            &generation,
+            &json!({"redis":{"request":common::binding(&request_file).unwrap(),"runtime":runtime}}),
+        )
+        .unwrap();
+        let outer = dir.join("result.json");
+        document::write_new(
+            &outer,
+            &json!({"generation":common::binding(&generation).unwrap()}),
+        )
+        .unwrap();
+        json!({"generation":common::binding(&outer).unwrap(),"redis":current})
+    };
+    assert_eq!(redis(&backend, &original, None, true).unwrap(), original);
+    let cache = publish("accepted", &request, &runtime);
+    assert_eq!(
+        redis(&backend, &original, Some(&cache), true).unwrap(),
+        current
+    );
+    let mut changed = request.clone();
+    changed["tool"]["sha256"] = json!("c".repeat(64));
+    let changed_tool = publish("different-tool", &changed, &runtime);
+    assert!(redis(&backend, &original, Some(&changed_tool), true).is_err());
+    changed = request.clone();
+    changed["port"] = json!(29771);
+    let changed_port = publish("different-port", &changed, &runtime);
+    assert!(redis(&backend, &original, Some(&changed_port), true).is_err());
+    let mut changed_runtime = runtime.clone();
+    changed_runtime["redis"]["pid"] = json!(12);
+    let changed_process = publish("different-runtime", &request, &changed_runtime);
+    assert!(redis(&backend, &original, Some(&changed_process), true).is_err());
+    let missing = publish("missing-runtime", &request, &Value::Null);
+    assert!(redis(&backend, &original, Some(&missing), true).is_err());
+    let linux =
+        json!({"wsl":{"path":"D:/wsl.exe"},"pid":10,"started":"123","run_id":"a".repeat(40)});
+    let error = redis(&backend, &linux, Some(&cache), true).unwrap_err();
+    assert!(error.to_string().contains("不能切换 Redis 平台"));
 }

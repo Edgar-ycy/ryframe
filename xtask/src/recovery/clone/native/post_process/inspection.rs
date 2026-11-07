@@ -14,6 +14,27 @@ use crate::Result;
 #[cfg(windows)]
 use crate::recovery::fixture_control::services::lifecycle::readonly::process;
 
+/// 未登记生产者的历史尝试必须确实没有启动、进程或输出证据；不采纳缺失一半的未知启动。
+pub(super) fn require_unlaunched(
+    backend: &Path,
+    run: &Path,
+    stage: &str,
+    number: u64,
+) -> Result<()> {
+    use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
+    let output = run.join(stage).join(format!("attempt-{number:04}"));
+    validate_local_test_path(&output, backend, LocalTestPathKind::StateDirectory)?;
+    for name in [
+        "session-launch.json",
+        "session-process.json",
+        "session.stderr.log",
+        "session.stdout.log",
+    ] {
+        super::files::absent(&output.join(name))?;
+    }
+    Ok(())
+}
+
 pub(super) fn inspect(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,

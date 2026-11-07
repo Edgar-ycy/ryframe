@@ -4,7 +4,7 @@
 
 ## 全新环境初始化
 
-先创建隔离的 MySQL 空库，通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`，并按 [README：下载后首次运行](../README.md#下载后首次运行)准备明文数据库密码、JWT 和 `[bootstrap] admin_password`。`config/app.toml` 可省略，所选 `config/app.<environment>.toml` 必须存在；省略公共文件时，环境文件须完整提供必填配置。应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，按 README 顺序完成两侧初始化、校验后再启动。本机沿用其忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
+先创建隔离的 MySQL 空库，通过 `APP_ENV` 选择 `dev`、`test` 或 `prod`，并按 [README：下载后首次运行](../README.md#下载后首次运行)准备明文数据库密码、JWT 和 `[bootstrap] admin_password`。`config/app.toml` 可省略，所选 `config/app.<environment>.toml` 必须存在；省略公共文件时，环境文件须完整提供必填配置。应用相对路径以当前工作目录解析。默认单租户仍有控制库与 `shared-control` 两个独立账本，按 README 顺序完成两侧初始化、校验后再启动。本机沿用 README 的仓库外配置目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir ../ryframe-dev-config`，例如 `cargo migrate -- --config-dir ../ryframe-dev-config control verify` 或 `cargo serve -- --config-dir ../ryframe-dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
 `cargo migrate` 的失败诊断写入 stderr，标明实际阶段、已选择的配置文件、配置键和脱敏原因；成功输出保持原契约。连接或配置失败时尚未执行迁移；进入 `up` 或 `adopt --apply` 后，DDL 或账本可能已部分提交，不代表整体回滚。保留现场，修正原因后使用同一 `--config-dir` 和 `APP_ENV` 先执行 `status` 与 `verify`，不能自动重放写入；导出失败也须先核对已创建的目录、临时文件或目标文件。独立 MySQL 目标保留已脱敏的连接、健康及结构校验原因供内部诊断；公开 API 不包含该原因，无底层错误时不可据“不可用”猜测认证错误。租户数据访问返回 503 时，按 `request_id` 关联服务日志中的 `tenant_data_error` 分类，区分投影版本、目标、放置和连接预算；日志只保留安全原因，不自动重放写入；生成的业务持久化复用同一转换入口，事务内投影锁定也记录缺失或落后的具体版本。 建议命令均显式携带 `--config-dir` 目录占位，必须先替换为诊断中显示配置文件的父目录，再按当前 shell 正确引用；PowerShell 单引号内的单引号须写成两个单引号，不得照抄占位或省略目录后检查默认另一库。
 
@@ -15,7 +15,7 @@
 - 预览：`cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan`
 - 导出：`cargo migrate -- control export-sql --output .local-tests/control-init.sql --write`
 
-`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式 `control export-sql` 从选定配置的 `scope_id` 生成 control 与 tenant-data 两类归属，并覆盖同一物理库的控制面与 `shared-control` 租户数据面：控制库结构、后置约束、系统数据、fence/slot/投影基础表和初始化行、两个框架迁移账本，以及已注册 Control 与 Tenant 业务初始化迁移及单一业务账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管；输出文件必须新建，不能覆盖旧文件。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选文件一致，远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 使用：
+`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出按需创建产物的父目录，通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式 `control export-sql` 从选定配置的 `scope_id` 生成 control 与 tenant-data 两类归属，并覆盖同一物理库的控制面与 `shared-control` 租户数据面：控制库结构、后置约束、系统数据、fence/slot/投影基础表和初始化行、两个框架迁移账本，以及已注册 Control 与 Tenant 业务初始化迁移及单一业务账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管；输出文件必须新建，不能覆盖旧文件。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选文件一致，远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 使用：
 
 - `mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source .local-tests/control-init.sql"`
 
@@ -48,7 +48,7 @@ cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
 cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
 ```
 
-租户表的接管与 inspect 使用 `tenant-data adopt`，必须显式提供单个 `--target business-shared`，不接受 `--all`。后续 `tenant-data up`、`verify` 和 `status` 可选择单个 `--target`，也可显式使用 `--all` 处理全部已登记目标；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
+租户表的接管与 inspect 使用 `tenant-data adopt`，必须显式提供单个 `--target business-shared`，不接受 `--all`。后续 `tenant-data up`、`verify` 和 `status` 可选择单个 `--target`，也可显式使用 `--all` 处理全部已登记目标；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径，保存计划时命令自动创建产物的父目录。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
 
 授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。可接受陈旧的列表读才使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。租户数据范围由 `sys_tenant.data_scope_version` 驱动：控制库事务写入 outbox，Worker 在 placement 目标发布并原子切换投影；认证主体版本落后或投影不可用时失败关闭。用户创建、更新、删除，以及实际插入用户的导入批次，在记录数据范围变更的同一事务内推进租户授权代次，缓存启用时按既有策略写入镜像 outbox；提交后同步租户授权缓存，使其他主体的旧快照失效并在下次请求重建。更新和删除仍推进目标用户授权版本、拒绝旧令牌；无实际插入的导入批次及回滚不推进代次。提交后镜像同步失败按现有缓存策略报告，已提交写入不重放，由持久 outbox 恢复。数据迁移只有在激活阶段实际将 placement 转为 active 时，同事务推进 scope 和授权代次，并按既有缓存策略登记镜像 outbox；提交后同步新授权代次并发布上下文变化通知。重复 succeeded、已经 active 和回滚不重复推进；进入维护与 cutover 原有运行代次、fence 和租约规则不变。两个数据库之间没有分布式事务，已并发进入租户库的写入不能被控制库回滚。
 
@@ -77,7 +77,7 @@ cargo xtask data target inventory --target <target-key> --output .local-tests/ba
 
 `APP_ENV` 是唯一项目配置环境入口，只接受精确的 `dev`、`test`、`prod`，不接受大小写变体或空白；普通 API、Worker 和迁移进程未设置时选 `dev`，reset 则要求显式设置，操作示例始终主动选择环境。API、Worker、迁移和 reset 从 `--config-dir <directory>` 指定的目录读取可选公共 `app.toml`，再递归合并必须存在的 `app.<environment>.toml`；公共文件确实不存在时，环境文件须完整提供必填字段，已存在但损坏、不可读或为悬空链接的公共文件仍会报错；默认目录为 `config`，相对路径以当前工作目录解析。生产连接、密钥强度、TLS、实例编号和资源隔离校验继续保留。 本地化使用 TOML 的 `app.locales_dir`，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`。资源缺失或加载失败时生产严格失败，开发环境可内嵌回退。
 
-数据库、Redis、对象存储、JWT、监控 token 和初始管理员密码直接写入对应明文字段；真实配置只保存在忽略的本机目录，不进入日志、公开收据或版本库。根字段 `snowflake_worker_id` 在同一部署的每个实例上必须不同；`[bootstrap] admin_password` 显式提供管理员初始密码。普通初始化用户 `user`、新建和导入的普通用户仍使用 `123456` 并强制首次改密。数组在环境文件中整体替换：`cors.allow_origins`、`proxy.trusted_cidrs` 使用 TOML 字符串数组；`database.replicas`、`database.sources` 和 `tenant_data.targets` 使用完整 TOML 表数组，不能只覆盖其中一项。产品的兼容 S3 客户端和默认 OTLP HTTP 客户端分别使用 `object_storage.endpoint` 与 `telemetry.endpoint`，不读取 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及其小写形式，也不自动使用系统代理；访问密钥、区域和导出参数仍来自文件字段。
+数据库、Redis、对象存储、JWT、监控 token 和初始管理员密码直接写入对应明文字段；真实配置只保存在仓库外的私有目录，不进入日志、公开收据或版本库。根字段 `snowflake_worker_id` 在同一部署的每个实例上必须不同；`[bootstrap] admin_password` 显式提供管理员初始密码。普通初始化用户 `user`、新建和导入的普通用户仍使用 `123456` 并强制首次改密。数组在环境文件中整体替换：`cors.allow_origins`、`proxy.trusted_cidrs` 使用 TOML 字符串数组；`database.replicas`、`database.sources` 和 `tenant_data.targets` 使用完整 TOML 表数组，不能只覆盖其中一项。产品的兼容 S3 客户端和默认 OTLP HTTP 客户端分别使用 `object_storage.endpoint` 与 `telemetry.endpoint`，不读取 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及其小写形式，也不自动使用系统代理；访问密钥、区域和导出参数仍来自文件字段。
 
 生成器的 `--config-dir <directory>` 和 Builder `.configuration_directory(path)` 以后端 Workspace 根目录解析相对路径，从业务 crate 的 `src` 运行也不改变默认的 `workspace/config`。优先级为显式 CLI/Builder、本机 `.local-tests/tools.toml`、公共 `config/tools.toml`、`workspace/config`；工具文件中的 `[generator] config_dir` 可省略。共享 MySQL 测试固定读取后端根 `.local-tests/mysql/config`，公共 `app.toml` 可省略，`app.test.toml` 必须存在；完整连接与 TLS 参数来自 `database.primary`，不接受 Disabled。目录缺失仅跳过且未验收；已有非法或链接路径、缺失环境文件及无效配置均失败。文件 `scope_id` 参与唯一 schema，详细 opt-in 与证据边界见[集成验证](development.md#集成验证)；仅实际运行的用例构成对应服务证据，配置或门禁入口本身不代表完整真实链路验收。部署模板与私有配置目录的结构及 CI 工具测试已通过，真实容器、镜像和整链仍未验收，不能以局部测试代替整体门禁。
 

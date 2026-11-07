@@ -81,6 +81,9 @@ fn stop(
     if services["reconciliation"].is_object() {
         reconciliation::publish(runtime, context, services, output)?;
     }
+    if let Some(closed) = services.get("windows_failed") {
+        json_io::write_new(&output.join("redis-failed-closed.json"), closed)?;
+    }
     let receipt = proof::create(context, services, output, completion)?;
     json_io::write_new(&file, &receipt)?;
     let result = result(
@@ -115,7 +118,7 @@ fn close_cache(
         services["failed_cleanup"] != true || state == "stopped",
         "失败清理的原 Redis 必须保持停止",
     )?;
-    if state == "stopped" {
+    if state == "stopped" && services["requests"]["redis"]["format_version"] != 3 {
         let receipt = json!({"status":"redis_process_stopped","already_stopped":true,
             "alive":false,"resources_deleted":false,"runtime":services["runtime"]});
         json_io::write_new(&output.join("stopped.json"), &receipt)?;
@@ -181,6 +184,8 @@ fn ready_to_close(runtime: &mut dyn Runtime, services: &Value) -> Result<&'stati
                 None
             },
         )?
+    } else if services["windows_failed"].is_object() {
+        "stopped"
     } else {
         "not_started"
     };
@@ -215,6 +220,9 @@ fn ready_to_close(runtime: &mut dyn Runtime, services: &Value) -> Result<&'stati
 }
 
 fn stopped(runtime: &mut dyn Runtime, services: &Value) -> Result<()> {
+    if services["early_storage"].is_object() {
+        super::super::storage::closed::recheck(&services["early_storage"])?;
+    }
     if !services["runtime"].is_null() {
         cache_state(runtime, services, Some("stopped"))?;
     }

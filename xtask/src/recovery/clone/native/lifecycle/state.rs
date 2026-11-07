@@ -31,6 +31,10 @@ pub(crate) const STAGES: &[&str] = &[
     "fixture-services",
 ];
 
+pub(super) fn resource_cleanup(stage: &str, mode: &str) -> bool {
+    matches!(stage, "cache-target" | "runtime-target") && matches!(mode, "stop" | "recover")
+}
+
 pub(crate) fn load(directory: &Path, verify_results: bool) -> Result<Value> {
     let value = json_io::read(&directory.join("state.json"))?;
     let root = exact(
@@ -75,7 +79,7 @@ pub(crate) fn begin(
     if !STAGES.contains(&stage) {
         return Err("未知验收阶段".into());
     }
-    let mut value = load(directory, true)?;
+    let mut value = load(directory, !resource_cleanup(stage, mode))?;
     let attempts = value["attempts"].as_array_mut().unwrap();
     if attempts
         .iter()
@@ -109,16 +113,23 @@ pub(crate) fn bind_controller(
     owner: &Value,
     attempt: &Value,
 ) -> Result<()> {
-    let value = load(directory, true)?;
+    let value = load(directory, false)?;
     let last = value["attempts"]
         .as_array()
         .and_then(|items| items.last())
         .ok_or("验收阶段记录为空")?;
-    if last.get("number").and_then(Value::as_u64) != Some(number)
+    if last != attempt
+        || last.get("number").and_then(Value::as_u64) != Some(number)
         || last.get("status").and_then(Value::as_str) != Some("running")
         || json_io::read(&directory.join("run.lock/owner.json"))? != *owner
     {
         return Err("只能绑定当前持锁控制器刚开始的阶段".into());
+    }
+    if !resource_cleanup(
+        json_io::text(&last["stage"], "阶段")?,
+        json_io::text(&last["mode"], "模式")?,
+    ) {
+        load(directory, true)?;
     }
     json_io::write_new(
         &controller_path(directory, number),
@@ -138,7 +149,14 @@ pub(crate) fn finish(
     result: Option<&Value>,
     error_type: Option<&str>,
 ) -> Result<()> {
-    let mut value = load(directory, true)?;
+    let mut value = load(directory, false)?;
+    let current = running_attempt(&value)?.ok_or("不能收尾不存在的运行阶段")?;
+    if !resource_cleanup(
+        json_io::text(&current["stage"], "阶段")?,
+        json_io::text(&current["mode"], "模式")?,
+    ) {
+        value = load(directory, true)?;
+    }
     let attempts = value["attempts"].as_array_mut().unwrap();
     let last = attempts.last_mut().ok_or("不能收尾不存在的阶段")?;
     if last.get("number").and_then(Value::as_u64) != Some(number)

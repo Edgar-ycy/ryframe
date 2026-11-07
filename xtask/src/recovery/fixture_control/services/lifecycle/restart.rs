@@ -143,9 +143,22 @@ pub(super) fn restart_requests(services: &Value, output: &Path) -> Result<Value>
         requests["redis"] = services["cache_effective"].clone();
     }
     let previous = &services["runtime"];
-    requests["redis"]["previous_identity"] = json!({"pid":previous["linux_identity"]["pid"],
-        "started":previous["linux_identity"]["started"],"executable":previous["linux_identity"]["executable"]});
-    requests["redis"]["previous_boot_id"] = previous["linux_identity"]["boot_id"].clone();
+    if requests["redis"]["format_version"] == 3 || previous["format_version"] == 3 {
+        check(
+            requests["redis"]["format_version"] == 3
+                && previous["format_version"] == 3
+                && requests["redis"].get("previous_boot_id").is_none(),
+            "Windows Redis 重启请求与登记代次平台不同或混有 Linux 字段",
+        )?;
+        crate::recovery::clone::native::resources::common::validate_process_identity(
+            &previous["process"],
+        )?;
+        requests["redis"]["previous_identity"] = previous["process"].clone();
+    } else {
+        requests["redis"]["previous_identity"] = json!({"pid":previous["linux_identity"]["pid"],
+            "started":previous["linux_identity"]["started"],"executable":previous["linux_identity"]["executable"]});
+        requests["redis"]["previous_boot_id"] = previous["linux_identity"]["boot_id"].clone();
+    }
     requests["redis"]["previous_run_id"] = previous["redis"]["run_id"].clone();
     for role in ["rustfs", "redis"] {
         std::fs::create_dir(output.join(role))?;
@@ -236,4 +249,44 @@ fn cleanup(
         failed |= stopped.is_err();
     }
     check(!failed, "夹具服务重启失败后的精确回收未完成")
+}
+
+#[cfg(test)]
+#[test]
+fn restart_preserves_the_registered_platform_predecessor_in_each_request() {
+    let root = crate::workspace::root_dir();
+    let base = root.join(".local-tests");
+    std::fs::create_dir_all(&base).unwrap();
+    let directory = tempfile::tempdir_in(base).unwrap();
+    let process = json!({"pid":36784,"started":"134000000000000000",
+        "executable":root.join("redis-server.exe")});
+    let linux = json!({"pid":17176,"started":"8823054","executable":"/usr/bin/redis-server"});
+    let boot = "5a81dc04-9e9a-416b-8eab-1b059bddf489";
+    let run_id = "a".repeat(40);
+    for (name, redis, previous, expected, expected_boot) in [
+        (
+            "windows",
+            json!({"format_version":3,"previous_identity":null,"previous_run_id":null}),
+            json!({"format_version":3,"process":process,"redis":{"run_id":run_id}}),
+            process.clone(),
+            None,
+        ),
+        (
+            "linux",
+            json!({"format_version":2,"previous_identity":null,"previous_run_id":null,"previous_boot_id":null}),
+            json!({"format_version":2,"linux_identity":{"pid":linux["pid"],"started":linux["started"],
+                "executable":linux["executable"],"boot_id":boot},"redis":{"run_id":run_id}}),
+            linux,
+            Some(json!(boot)),
+        ),
+    ] {
+        let output = directory.path().join(name);
+        std::fs::create_dir(&output).unwrap();
+        let services = json!({"requests":{"rustfs":{},"redis":redis},"runtime":previous});
+        let request = restart_requests(&services, &output).unwrap()["redis"].clone();
+        assert_eq!(request["previous_identity"], expected);
+        assert_eq!(request["previous_run_id"], run_id);
+        assert_eq!(request.get("previous_boot_id"), expected_boot.as_ref());
+        assert_eq!(read(&output.join("redis/request.json")).unwrap(), request);
+    }
 }

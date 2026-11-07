@@ -155,6 +155,12 @@ pub(super) fn launcher(request: &Value, runtime: &Value, required: bool) -> Resu
 }
 
 pub(crate) fn observe(backend: &Path, request: &Value, runtime: &Value) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::observe(backend, request, runtime);
+        #[cfg(not(windows))]
+        return Err("Windows Redis 原生观察只支持本机 Windows".into());
+    }
     model::validate(backend, request, true)?;
     let tool = native_tool::from_request(request)?;
     tool.finish(backend)?;
@@ -203,6 +209,12 @@ pub(crate) fn stop(
     runtime: &Value,
     output: &Path,
 ) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::stop(backend, request, runtime, output, || Ok(()), false);
+        #[cfg(not(windows))]
+        return Err("Windows Redis 原生停止只支持本机 Windows".into());
+    }
     stop::run(backend, request, runtime, output, || Ok(()), false)
 }
 
@@ -213,10 +225,23 @@ pub(crate) fn stop_guarded(
     output: &Path,
     guard: impl FnMut() -> Result<()>,
 ) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::stop(backend, request, runtime, output, guard, true);
+        #[cfg(not(windows))]
+        return Err("Windows Redis 原生停止只支持本机 Windows".into());
+    }
     stop::run(backend, request, runtime, output, guard, true)
 }
 
 pub(crate) fn closed_port(backend: &Path, request: &Value, runtime: &Value) -> Result<()> {
+    if request["format_version"] == 3 {
+        let observation = super::readonly::status(backend, request, runtime, None)?;
+        if observation["state"] != "stopped" {
+            return Err("原 Windows Redis 代次尚未关闭".into());
+        }
+        return Ok(());
+    }
     model::validate(backend, request, true)?;
     let tool = native_tool::from_request(request)?;
     tool.finish(backend)?;
@@ -241,7 +266,7 @@ pub(crate) fn closed_port(backend: &Path, request: &Value, runtime: &Value) -> R
     Ok(())
 }
 
-fn bind_after_stop(request: &Value, requested: bool) -> Result<()> {
+pub(super) fn bind_after_stop(request: &Value, requested: bool) -> Result<()> {
     let port = u16::try_from(request["port"].as_u64().ok_or("缓存端口无效")?)?;
     bind_once(port).map_err(|(category, error)| {
         if matches!(category, Category::PrelaunchPortBindFailed)

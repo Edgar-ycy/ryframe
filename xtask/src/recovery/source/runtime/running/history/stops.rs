@@ -95,6 +95,9 @@ fn cache_process(
     runtime: &Value,
     generations: &[Value],
 ) -> Result<()> {
+    if runtime["format_version"] == 3 || runtime["windows_failure"].is_object() {
+        return windows_cache_process(backend, process, number, runtime, generations);
+    }
     if process["state"] == "stopped" {
         document::exact(
             process,
@@ -165,6 +168,111 @@ fn cache_process(
         || process["boot_id"] != runtime["boot_id"]
     {
         return Err("缓存停止结果没有完整关闭当前代次".into());
+    }
+    Ok(())
+}
+
+fn windows_cache_process(
+    backend: &Path,
+    process: &Value,
+    number: u64,
+    runtime: &Value,
+    generations: &[Value],
+) -> Result<()> {
+    if process["status"] == "redis_process_stopped" {
+        let failure = &runtime["windows_failure"];
+        if failure.is_object() {
+            document::exact(
+                process,
+                &[
+                    "state",
+                    "status",
+                    "runtime",
+                    "resources_deleted",
+                    "windows_failure",
+                ],
+                "失败 Windows 缓存停止收据",
+            )?;
+            if process["windows_failure"] != *failure {
+                return Err("Windows 缓存关闭未绑定原失败证据".into());
+            }
+        } else {
+            windows_cache_exit(backend, process, runtime)?;
+        }
+        if process["state"] != "stopped"
+            || process["runtime"] != *runtime
+            || process["resources_deleted"] != false
+        {
+            return Err("Windows 缓存关闭未绑定原完整运行收据".into());
+        }
+        return Ok(());
+    }
+
+    document::exact(
+        process,
+        &["state", "launcher_alive", "windows", "evidence"],
+        "历史 Windows 缓存停止进程",
+    )?;
+    let identity = if runtime["windows_failure"].is_object() {
+        &runtime["windows_failure"]["process"]
+    } else {
+        &runtime["process"]
+    };
+    let path = common::bound_file(backend, &process["evidence"], "Windows 缓存前驱关闭")?;
+    let mut belongs = false;
+    for generation in generations {
+        let root = Path::new(document::text(&generation[1], "缓存创建输出目录")?);
+        belongs |= path == root.join(format!("predecessor-{number:04}.json"));
+    }
+    let proof = common::read_bound(backend, &process["evidence"], "Windows 缓存前驱关闭")?;
+    document::exact(
+        &proof,
+        &["process_sha256", "runtime_sha256", "observation"],
+        "Windows 缓存前驱关闭",
+    )?;
+    let expected = json!({"state":"stopped","launcher_alive":false,
+        "windows":{"identity":identity,"alive":false}});
+    let mut actual = expected.clone();
+    actual["evidence"] = process["evidence"].clone();
+    if !belongs
+        || *process != actual
+        || proof["observation"] != expected
+        || proof["runtime_sha256"] != digest::plan_hash(runtime)?
+        || proof["process_sha256"] != runtime["request_sha256"]
+    {
+        return Err("Windows 缓存前驱关闭未绑定原创建代次".into());
+    }
+    Ok(())
+}
+
+fn windows_cache_exit(backend: &Path, process: &Value, runtime: &Value) -> Result<()> {
+    document::exact(
+        process,
+        &[
+            "state",
+            "status",
+            "runtime",
+            "resources_deleted",
+            "windows",
+            "exited",
+        ],
+        "当前 Windows 缓存停止收据",
+    )?;
+    let output = Path::new(document::text(&runtime["output"], "Windows 缓存运行目录")?);
+    let path = common::bound_file(backend, &process["exited"], "Windows 缓存原退出收据")?;
+    let exited = common::read_bound(backend, &process["exited"], "Windows 缓存原退出收据")?;
+    document::exact(
+        &exited,
+        &["process", "returncode", "job_empty"],
+        "Windows 缓存原退出收据",
+    )?;
+    if path != output.join("exited.json")
+        || process["windows"] != json!({"identity":runtime["process"],"alive":false})
+        || exited["process"] != runtime["process_receipt"]
+        || exited["returncode"] != 0
+        || exited["job_empty"] != true
+    {
+        return Err("Windows 缓存停止未证明原进程与 Job 完整退出".into());
     }
     Ok(())
 }

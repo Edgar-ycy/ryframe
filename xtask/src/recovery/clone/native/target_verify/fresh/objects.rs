@@ -55,7 +55,7 @@ pub(crate) fn absence(inputs: &StorageInputs<'_>, transport: &impl Transport) ->
     Ok(Value::Object(result))
 }
 
-pub(super) fn observe(
+pub(crate) fn observe(
     inputs: &StorageInputs<'_>,
     transport: &impl Transport,
     bucket: &str,

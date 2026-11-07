@@ -11,6 +11,8 @@ use crate::{
 use serde_json::{Value, json};
 use std::path::Path;
 
+#[path = "history/cache.rs"]
+pub(crate) mod cache_port;
 #[path = "history/completed.rs"]
 mod completed;
 #[path = "history/export.rs"]

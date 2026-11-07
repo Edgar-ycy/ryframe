@@ -62,7 +62,7 @@ mod status;
 #[path = "../../../../tests/unit/recovery/fixture_control/services/lifecycle/tests.rs"]
 mod tests;
 #[path = "lifecycle/tree_control.rs"]
-mod tree_control;
+pub(super) mod tree_control;
 
 use model::{Context, binding, check, read, text};
 
@@ -104,7 +104,7 @@ pub(crate) fn execute(
         )
     })();
     outcome.map_err(|failure: Box<dyn std::error::Error>| {
-        if failure.is::<model::LifecycleError>()
+        if model::reason(failure.as_ref()).is_some()
             || failure.is::<crate::recovery::clone::native::cache::ObserverFailure>()
             || crate::recovery::clone::native::cache::primitive_message(failure.as_ref()).is_some() {
             failure

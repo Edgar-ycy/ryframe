@@ -31,6 +31,17 @@ const REDIS_FIELDS: &[&str] = &[
     "run_id",
     "configuration",
 ];
+const WINDOWS_REDIS_FIELDS: &[&str] = &[
+    "platform",
+    "port",
+    "pid",
+    "started",
+    "executable",
+    "sha256",
+    "configuration",
+    "run_id",
+    "tool",
+];
 
 pub(super) fn bound_process(backend: &Path, arguments: &Value) -> Result<Value> {
     bound_process_with(backend, arguments, |memory| run("process-model", memory))
@@ -125,20 +136,18 @@ pub(super) fn run(operation: &str, a: &Value) -> Result<Value> {
             process(a).map(|()| Value::Null)
         }
         "successor-model" => {
-            doc::exact(
-                a,
-                &[
-                    "request",
-                    "directory",
-                    "value",
-                    "source_directory",
-                    "source_manifest",
-                    "tools",
-                    "tool_wsl_path",
-                    "original_wsl_path",
-                ],
-                "缓存工具后继模型",
-            )?;
+            let mut fields = vec![
+                "request",
+                "directory",
+                "value",
+                "source_directory",
+                "source_manifest",
+                "tools",
+            ];
+            if a["request"]["process"]["format_version"] != 3 {
+                fields.extend(["tool_wsl_path", "original_wsl_path"]);
+            }
+            doc::exact(a, &fields, "缓存工具后继模型")?;
             successor(a)
         }
         "pending-target" => {
@@ -204,10 +213,17 @@ fn head(request: &Value, manifest: &Value, value: &Value) -> Result<()> {
     {
         return Err(rejected("缓存恢复必须属于固定运行的原目标和明确环境"));
     }
-    doc::exact(&request["previous"], REDIS_FIELDS, "缓存原 Redis 代次")?;
+    if request["process"]["format_version"] == 3 {
+        windows_previous(&request["previous"])?;
+    } else {
+        doc::exact(&request["previous"], REDIS_FIELDS, "缓存原 Redis 代次")?;
+    }
     Ok(())
 }
 fn request(request: &Value, initial: &Value, original: &Value, selected: &Value) -> Result<()> {
+    if request["process"]["format_version"] == 3 {
+        windows_previous(&request["previous"])?;
+    }
     if request["previous"] != original["storage"]["redis"]
         || request["previous"] != initial["generation"]["storage"]["redis"]
     {
@@ -251,11 +267,77 @@ fn request(request: &Value, initial: &Value, original: &Value, selected: &Value)
     }
     Ok(())
 }
+fn windows_previous(previous: &Value) -> Result<()> {
+    doc::exact(previous, WINDOWS_REDIS_FIELDS, "缓存原 Windows Redis 代次")?;
+    if previous["platform"] != "windows" {
+        return Err(rejected("Windows Redis 请求必须绑定原 Windows 物理代次"));
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn windows_process(
+    request: &Value,
+    review: &Value,
+    runtime: &Value,
+    previous_request: &Value,
+    directory: &Path,
+    config: &Path,
+) -> Result<()> {
+    let previous = &request["previous"];
+    let process = &request["process"];
+    windows_previous(previous)?;
+    model::shape(process)?;
+    model::identity(&runtime["process"], false)?;
+    if process["format_version"] != 3
+        || previous_request["format_version"] != 3
+        || runtime["format_version"] != 3
+        || runtime["redis"] != *previous
+        || runtime["process"]["pid"] != previous["pid"]
+        || runtime["process"]["started"] != previous["started"]
+    {
+        return Err(rejected("原 Windows Redis 运行收据与初始化代次不同"));
+    }
+    let mut expected = previous_request.clone();
+    expected["previous_identity"] = runtime["process"].clone();
+    expected["previous_run_id"] = runtime["redis"]["run_id"].clone();
+    if *process != expected {
+        return Err(rejected("Windows Redis 恢复只能更新原创建身份与运行代次"));
+    }
+    let service = &review["services"]["redis"];
+    let reviewed = Path::new(doc::text(
+        &service["directory"],
+        "原 Windows Redis 审阅目录",
+    )?);
+    let tools = doc::object(&review["tools"], "Windows Redis 审阅工具")?;
+    if directory != reviewed
+        || config != directory.join("redis.conf")
+        || service
+            .get("scope_id")
+            .is_some_and(|scope| *scope != process["scope_id"])
+        || process["configuration"] != previous["configuration"]
+        || process["port"] != previous["port"]
+        || process["tool"] != previous["tool"]
+        || tools.get("redis_server") != Some(&process["tool"])
+        || ["wsl", "native_tool", "redis_python"]
+            .iter()
+            .any(|key| tools.contains_key(*key))
+        || previous["executable"] != process["tool"]["path"]
+        || previous["sha256"] != process["tool"]["sha256"]
+    {
+        return Err(rejected("Windows Redis 恢复目录、配置或工具与原审阅不同"));
+    }
+    Ok(())
+}
+
 fn process(a: &Value) -> Result<()> {
     let previous = &a["request"]["previous"];
     let process = &a["request"]["process"];
     let receipt = &a["receipt"];
     let review = &a["review"];
+    if process["format_version"] == 3 {
+        return Err(rejected("Windows Redis 绑定需要只读核对原完整运行收据"));
+    }
     if receipt["format_version"].as_u64() != Some(1)
         || receipt["role"] != "redis"
         || receipt["lifecycle"] != "running"
@@ -322,6 +404,19 @@ fn successor(a: &Value) -> Result<Value> {
     }
     let original = &a["request"]["process"];
     let tools = &a["tools"];
+    if original["format_version"] == 3 {
+        model::shape(original)?;
+        doc::exact(
+            tools,
+            &["mysql", "mysqldump", "rustfs", "redis_server"],
+            "Windows 缓存工具后继",
+        )?;
+        if tools["redis_server"] != original["tool"] {
+            return Err(rejected("Windows 缓存后继必须复用原工具和完整 DLL"));
+        }
+        // Windows 审阅可以续签来源；同一场景的可执行包仍沿用原绑定。
+        return Ok(original.clone());
+    }
     if original["format_version"] == 2 {
         let next = super::native_tool::successor(original, tools)?;
         if next == *original {
@@ -355,6 +450,74 @@ fn successor(a: &Value) -> Result<Value> {
 mod bound_review_tests {
     use super::super::super::resources::common;
     use super::*;
+
+    #[test]
+    fn windows_restart_binds_the_complete_original_request_and_review() {
+        let mut previous_request = model::tests::windows_request();
+        let identity = previous_request["previous_identity"].clone();
+        let run_id = previous_request["previous_run_id"].clone();
+        previous_request["previous_identity"] = Value::Null;
+        previous_request["previous_run_id"] = Value::Null;
+        let mut process = previous_request.clone();
+        process["previous_identity"] = identity.clone();
+        process["previous_run_id"] = run_id.clone();
+        let tool = &process["tool"];
+        let previous = json!({
+            "platform":"windows","port":process["port"],"pid":identity["pid"],
+            "started":identity["started"],"executable":tool["path"],"sha256":tool["sha256"],
+            "configuration":process["configuration"],"run_id":run_id,"tool":tool
+        });
+        let runtime = json!({"format_version":3,"process":identity,"redis":previous});
+        let review = json!({"services":{"redis":{"directory":process["directory"]["path"]}},
+            "tools":{"redis_server":tool}});
+        let directory = Path::new(process["directory"]["path"].as_str().unwrap());
+        let config = directory.join("redis.conf");
+        let outer = json!({"previous":previous,"process":process});
+        windows_process(
+            &outer,
+            &review,
+            &runtime,
+            &previous_request,
+            directory,
+            &config,
+        )
+        .unwrap();
+        for (object, field, value) in [
+            ("previous", "wsl", Value::Null),
+            ("previous", "platform", json!("wsl")),
+            ("process", "previous_run_id", json!("b".repeat(40))),
+            ("process", "timeout_seconds", json!(2)),
+            ("process", "password", json!("changed")),
+        ] {
+            let mut changed = outer.clone();
+            changed[object][field] = value;
+            assert!(
+                windows_process(
+                    &changed,
+                    &review,
+                    &runtime,
+                    &previous_request,
+                    directory,
+                    &config
+                )
+                .is_err(),
+                "{field}"
+            );
+        }
+        let mut mixed_review = review;
+        mixed_review["tools"]["wsl"] = Value::Null;
+        assert!(
+            windows_process(
+                &outer,
+                &mixed_review,
+                &runtime,
+                &previous_request,
+                directory,
+                &config
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn bound_review_rpc_keeps_full_sources_and_rejects_raw_review_or_any_file_drift() {

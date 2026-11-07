@@ -158,11 +158,25 @@ fn close(
         })?;
         if role == "redis" {
             check(
-                proof["status"] == "redis_process_stopped"
-                    && proof["alive"] == false
-                    && proof["resources_deleted"] == false,
+                proof["status"] == "redis_process_stopped" && proof["resources_deleted"] == false,
                 "Redis 关闭收据未确认精确退出",
             )?;
+            let (_, directory) = generation::paths(run, &history["active_generation"])?;
+            let runtime_path = directory.join("runtime.json");
+            let registered = if runtime_path.try_exists()? {
+                evidence::read(&runtime_path)?
+            } else {
+                Value::Null
+            };
+            if registered["format_version"] == 3 || proof["runtime"]["format_version"] == 3 {
+                check(
+                    proof["runtime"] == registered,
+                    "Windows Redis 正常关闭收据与当前登记代次不同",
+                )?;
+                evidence::windows_redis_stop(run, &proof)?;
+            } else {
+                check(proof["alive"] == false, "Redis 关闭收据未确认精确退出")?;
+            }
         } else {
             evidence::members(&proof, run)?;
         }

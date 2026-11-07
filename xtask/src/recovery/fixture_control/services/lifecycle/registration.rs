@@ -264,6 +264,17 @@ fn effective(context: &Context, original: &Value) -> Result<Value> {
         return Ok(Value::Null);
     }
     let tools = &context.value["documents"]["review"]["tools"];
+    if original["format_version"] == 3 {
+        crate::recovery::clone::native::cache::windows_tool::validate(&tools["redis_server"])?;
+        check(
+            tools["redis_server"] == original["tool"]
+                && ["wsl", "native_tool", "redis_python"]
+                    .iter()
+                    .all(|key| tools.get(*key).is_none()),
+            "Windows Redis 工具续签必须复用原登记工具及运行库",
+        )?;
+        return Ok(Value::Null);
+    }
     if original["format_version"] == 2 {
         let effective =
             crate::recovery::clone::native::cache::native_tool_successor(original, tools)?;

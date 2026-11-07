@@ -22,6 +22,12 @@ pub(crate) fn start(
     output: &Path,
     mut guard: impl FnMut() -> Result<()>,
 ) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::start(backend, request, private, output, guard);
+        #[cfg(not(windows))]
+        return Err("Windows Redis v3 启动仅支持本机 Windows".into());
+    }
     model::validate(backend, request, true)?;
     if request["format_version"] != 2 {
         return Err("新缓存启动只接受 v2 原生请求".into());

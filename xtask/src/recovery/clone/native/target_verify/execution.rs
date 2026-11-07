@@ -200,4 +200,20 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
             self.frame.checkpoint(),
         )
     }
+
+    fn redis_window<T>(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+        read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<T>,
+    ) -> Result<T> {
+        self.frame.checkpoint()?;
+        let result = self.inner.redis_window(context, redis, |send| {
+            read(&mut |parts| {
+                self.frame.checkpoint()?;
+                combine(send(parts), self.frame.checkpoint())
+            })
+        });
+        combine(result, self.frame.checkpoint())
+    }
 }

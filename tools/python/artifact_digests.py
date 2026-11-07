@@ -41,7 +41,7 @@ def _plain_digest(path: Path) -> dict:
 
 def _binary_path(path: Path) -> Path:
     if (not path.is_absolute() or not re.fullmatch(r"[a-zA-Z]:", path.drive)
-            or path.suffix.lower() != ".exe" or ":" in str(path)[2:]
+            or path.suffix.lower() not in {".exe", ".dll"} or ":" in str(path)[2:]
             or any(item.is_symlink() or getattr(item.lstat(), "st_file_attributes", 0) & 0x400
                    for item in (path, *path.parents))):
         raise ValueError("阶段摘要只接受无链接的本机绝对二进制路径")

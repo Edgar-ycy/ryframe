@@ -371,7 +371,7 @@ class CloneSession:
                 if resources.object_keys(bucket) != expected:
                     raise ValueError("目标完整对象范围包含遗漏、额外对象或 owner 缺失")
             resources.tools.verify_objects("target")
-            if resources.redis_state(initialized=True, sentinel=True) != current["redis"]:
+            if resources.redis_state() != current["redis"]:
                 raise ValueError("未启动目标的 Redis 已偏离初始化状态")
         actual = self._inventory("target")
         expected = {key: replace(value, tables=copy.deepcopy(self.source_initial[key].tables)) for key, value in self.initialized.items()}

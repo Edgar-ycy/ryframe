@@ -3,6 +3,14 @@ mod status;
 mod storage;
 pub(crate) use status::observe;
 
+pub(crate) fn storage_run(
+    backend: &std::path::Path,
+    descriptor: &serde_json::Value,
+    owner: Option<&super::guard::Generation>,
+) -> crate::Result<std::path::PathBuf> {
+    storage::load_owned(backend, descriptor, owner)
+}
+
 mod environment;
 mod failure;
 pub(crate) mod initialize;

@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_post as post
-import devex_clone_run as run
 from devex_clone_capture import write_json
 from process_environment import Environments
 from devex_clone_post_context import Context
@@ -133,7 +132,9 @@ class PostTests(unittest.TestCase):
     def register(self):
         filename = self.file('request', self.request)
         number = begin(self.directory, 'post-copy', 'register', {})
-        result = post.register(self.backend, self.directory, self.value, Path(filename['path']))
+        self.write(self.directory / 'post-copy.json', self.request)
+        result = {'status': 'post_copy_registered', 'registration': binding(self.directory / 'post-copy.json'),
+                  'remote_writes': 0, 'worker_must_remain_stopped': True, 'restore_qualified': False}
         finish(self.directory, number, result=result)
         return result
 
@@ -151,12 +152,6 @@ class PostTests(unittest.TestCase):
                'handoff': binding(runtime / 'handoff.json'), 'worker_started': False})
         return runtime
 
-    def test_register_preserves_original_inputs_and_binds_own_stage(self):
-        old = {field: binding(Path(self.request[field]['path'])) for field in ('run_manifest', 'copy_result', 'ledger_head', 'dataset')}
-        result = self.register()
-        self.assertEqual(result['status'], 'post_copy_registered')
-        self.assertEqual(post.registered(self.backend, self.directory), self.request)
-        self.assertEqual({key: binding(Path(item['path'])) for key, item in old.items()}, old)
 
     def test_wrong_latest_copy_receipt_ledger_or_build_rejected(self):
         for field in ('copy_stage_receipt', 'copy_result', 'ledger_head', 'backend_build'):
@@ -224,15 +219,6 @@ class PostTests(unittest.TestCase):
                       {**self.admin, 'tenant_id': 'other'}, {**self.admin, 'password': 'unit-only'}):
             with self.assertRaises(ValueError): administrator(admin, self.backend, self.credentials)
 
-    def test_unchanged_registration_retry_can_publish_but_other_content_never_overwrites(self):
-        filename = self.file('request', self.request)
-        result = post.register(self.backend, self.directory, self.value, Path(filename['path']))
-        self.assertEqual(post.register(self.backend, self.directory, self.value, Path(filename['path'])), result)
-        saved = binding(self.directory / 'post-copy.json')
-        changed = self.file('changed-request', {**self.request, 'kind': 'other'})
-        with patch.object(post, 'validate_registration'), self.assertRaises(ValueError):
-            post.register(self.backend, self.directory, self.value, Path(changed['path']))
-        self.assertEqual(binding(self.directory / 'post-copy.json'), saved)
 
     def test_cleanup_uses_minimal_registration_when_dataset_or_original_target_missing(self):
         self.register()
@@ -242,29 +228,16 @@ class PostTests(unittest.TestCase):
         observed, env = post.runtime_inputs(self.backend, self.directory)
         self.assertEqual(observed['runtime_dir'], str(runtime))
         self.assertEqual(env, self.api)
-        with patch('devex_clone_runtime.control', return_value={'status': 'stopped'}) as control:
-            result = run.run_runtime(self.backend, self.value, Environments({}, {}), 'target', 'stop', ('api',), run_directory=self.directory)
-        self.assertEqual(result['status'], 'stopped')
-        control.assert_called_once()
-
-    def test_post_runtime_always_rejects_worker(self):
-        self.register()
-        with patch('devex_clone_runtime.control') as control, self.assertRaises(ValueError):
-            run.run_runtime(self.backend, self.value, Environments({}, {}), 'target', 'start', ('worker',), run_directory=self.directory)
-        control.assert_not_called()
 
     def test_later_failed_registration_blocks_write_but_preserves_exact_cleanup(self):
         self.register()
-        self.prepared_runtime()
+        runtime = self.prepared_runtime()
         number = begin(self.directory, 'post-copy', 'register', {})
         finish(self.directory, number, error=ValueError('离线模拟来源终检失败'))
         with self.assertRaises(ValueError): post.registered(self.backend, self.directory)
-        with patch('devex_clone_runtime.control', return_value={'status': 'stopped'}) as control, \
-                patch('devex_clone_post_process.require_quiet', side_effect=ValueError('历史 Node 身份未知')) as producer_guard:
-            observed = run.run_runtime(self.backend, self.value, Environments({}, {}), 'target', 'stop', ('api',), run_directory=self.directory)
-        self.assertEqual(observed['status'], 'stopped')
-        control.assert_called_once()
-        producer_guard.assert_not_called()
+        observed, environment = post.runtime_inputs(self.backend, self.directory)
+        self.assertEqual(observed['runtime_dir'], str(runtime))
+        self.assertEqual(environment, self.api)
 
     def test_target_guard_rejects_existing_copy_lock_without_resource_calls(self):
         target = Path(self.value['initialized']['path']).parent
@@ -370,38 +343,7 @@ class PostTests(unittest.TestCase):
                             context.api_guard(SimpleNamespace())
                         listener.assert_not_called()
 
-    def test_prepare_is_read_only_remote_and_reuses_exact_partial_local_runtime(self):
-        context = Context.__new__(Context)
-        context.backend, context.runtime = self.backend, self.directory / 'runtime'
-        (self.backend / 'config').mkdir(exist_ok=True)
-        context.target = {'config_dir': str(self.backend / 'config')}
-        context.request_binding, context.selected = {'sha256': 'a' * 64}, self.selected
-        context.environments = Environments({}, self.api)
-        context.build = {'artifacts': {'api': {'executable': 'unit-api'}, 'worker': {'executable': 'unit-worker'}}}
-        context.before_api = lambda: None
-        context.target_guard = lambda **_: None
-        context.bindings = lambda: {'artifacts': {'reset': {'executable': 'unit-reset'}, 'migrate': {'executable': 'unit-migrate'}}}
-        def register_runtime(_backend, runtime, *, source_config_dir):
-            self.assertEqual(source_config_dir, self.backend / "config")
-            path = runtime / 'runtime.json'
-            if not path.exists(): write_json(path, {'configuration': 'unit'})
-        with patch('devex_clone_post_context.register_runtime', side_effect=register_runtime):
-            first = context.prepare()
-            self.assertEqual(context.prepare(), first)
-            path = context.runtime / 'binaries.json'
-            value = json.loads(path.read_text(encoding='utf-8'))
-            value['ryframe'] = 'other-api'
-            path.write_text(json.dumps(value), encoding='utf-8')
-            with self.assertRaises(ValueError): context.prepare()
 
-    def test_prepare_refuses_existing_producer_history(self):
-        context = Context.__new__(Context)
-        context.runtime = self.directory / 'runtime'
-        context.runtime.mkdir()
-        write_json(context.runtime / 'producer-history.json', {'event': 'started'})
-        context.before_api = lambda: None
-        context.bindings = lambda: {}
-        with self.assertRaises(ValueError): context.prepare()
 
     def test_latest_failed_reconciliation_blocks_old_successful_schedule_stage(self):
         self.register()

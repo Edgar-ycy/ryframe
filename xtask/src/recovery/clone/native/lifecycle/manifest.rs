@@ -38,6 +38,38 @@ pub(crate) struct Manifest {
     pub(crate) digest: FileDigest,
 }
 
+/// 仅供 cache/runtime-target stop/recover：保留登记形状和本地字节绑定，不读取历史资源输入。
+pub(super) fn registered(backend: &Path, path: &Path) -> Result<Manifest> {
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)?;
+    let before = digest::file(path)?;
+    let value = json_io::read(path)?;
+    let mut fields = BASE_FIELDS.to_vec();
+    if value["copy_stage"] == "seed_to_arm" {
+        fields.extend_from_slice(SEED_FIELDS);
+        if value.get("review_successor").is_some() {
+            fields.extend([
+                "review_successor",
+                "source_export_result",
+                "source_generation",
+            ]);
+        }
+        if value.get("source_rebind").is_some() {
+            fields.push("source_rebind");
+        }
+    }
+    exact(&value, &fields, "固定缓存清理运行清单")?;
+    if value["format_version"].as_u64() != Some(1) || value["kind"] != "devex-clone-run" {
+        return Err("固定缓存清理运行清单类型变化".into());
+    }
+    if digest::file(path)? != before {
+        return Err("缓存清理期间固定运行清单读取发生变化".into());
+    }
+    Ok(Manifest {
+        value,
+        digest: before,
+    })
+}
+
 pub(crate) fn load(backend: &Path, path: &Path) -> Result<Manifest> {
     validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)
         .map_err(|error| format!("复制运行清单无效：{error}"))?;

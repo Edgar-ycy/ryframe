@@ -4,8 +4,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 #[path = "../unit/recovery/fixture_control/secret_files.rs"]
 mod secret_files;
 
@@ -803,42 +801,6 @@ fn rejects_ambiguous_write_options_and_invalid_paths_before_dispatch() {
         ],
     );
     assert!(parse_control(missing_write).is_err());
-}
-
-#[test]
-fn private_protocol_selects_fixed_script_and_never_contains_argv_fields() {
-    let fixture = Fixture::new();
-    let command = parse_control(command(
-        "services",
-        Some("buckets"),
-        vec![
-            "--review".to_owned(),
-            text(&fixture.input),
-            "--environment".to_owned(),
-            text(&fixture.input_two),
-            "--write".to_owned(),
-        ],
-    ))
-    .unwrap();
-    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/reference_fixture_services.py"
-    );
-    assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["format_version"], 1);
-    assert_eq!(protocol["kind"], "ryframe-reference-fixture-control");
-    assert_eq!(protocol["domain"], "services");
-    assert_eq!(protocol["operation"], "buckets");
-    assert_eq!(protocol["write"], true);
-    assert_eq!(protocol["review"], text(&fixture.input));
-    assert_eq!(protocol["environment"], text(&fixture.input_two));
-    assert!(protocol.get("arguments").is_none());
-    let native_tool: Value =
-        serde_json::from_str(protocol["native_tool"].as_str().unwrap()).unwrap();
-    assert_eq!(native_tool["kind"], "ryframe-native-rate-limit-tool");
-    assert!(native_tool["bytes"].as_u64().unwrap() > 0);
 }
 
 #[test]

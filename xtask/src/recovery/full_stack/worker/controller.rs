@@ -18,6 +18,9 @@ use std::{
 #[path = "controller/result.rs"]
 mod result;
 use result::finish;
+#[path = "controller/bound.rs"]
+mod bound;
+pub(crate) use bound::{control_bound, observe_bound, reconcile_completed_bound};
 
 #[derive(Debug)]
 struct Pending(Role);
@@ -98,6 +101,21 @@ pub(crate) fn control(
         ))
         .into());
     }
+    control_verified(role, action, backend, directory, timeout, started, None)
+}
+
+fn control_verified(
+    role: Role,
+    action: &str,
+    backend: &Path,
+    directory: &Path,
+    timeout: f64,
+    started: Instant,
+    environment: Option<&super::environment::Environment>,
+) -> Result<Value> {
+    if role == Role::Frontend {
+        return Err("前端有限命令不能使用长期服务控制入口".into());
+    }
     if !matches!(action, "start" | "stop" | "crash" | "status" | "reconcile")
         || !timeout.is_finite()
         || !(0.0..=180.0).contains(&timeout)
@@ -113,7 +131,22 @@ pub(crate) fn control(
         Instant::now() + Duration::from_secs_f64(timeout + 10.0)
     };
     loop {
-        match once(role, action, &backend, &directory, timeout, deadline) {
+        if let Some(environment) = environment {
+            environment.check()?;
+        }
+        let result = once(
+            role,
+            action,
+            &backend,
+            &directory,
+            timeout,
+            deadline,
+            environment,
+        );
+        if let Some(environment) = environment {
+            environment.check()?;
+        }
+        match result {
             Err(error) if error.is::<Pending>() && Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(50))
             }
@@ -218,11 +251,15 @@ fn once(
     directory: &Path,
     timeout: f64,
     deadline: Instant,
+    environment: Option<&super::environment::Environment>,
 ) -> Result<Value> {
     if action == "start" {
         super::check_result_deadline(role, deadline)?;
     }
     let guard = guard(role, directory, Duration::ZERO)?;
+    if environment.is_some() {
+        bound::require_no_pending(role, directory)?;
+    }
     let (runtime, source) = inputs(role, action, backend, directory)?;
     if action == "start" {
         super::check_result_deadline(role, deadline)?;

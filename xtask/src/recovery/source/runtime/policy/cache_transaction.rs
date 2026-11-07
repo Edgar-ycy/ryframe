@@ -13,13 +13,23 @@ use std::{collections::BTreeMap, path::PathBuf};
 type Send<'a> = dyn FnMut(&[&str]) -> Result<Value> + 'a;
 
 pub(crate) fn cleanup(args: &Value) -> Result<Value> {
-    cleanup_with(
-        args,
-        |inputs, redis, comparison| match Client::authenticated(inputs, redis) {
-            Ok(mut client) => execute(comparison, &mut |parts| client.transaction_command(parts)),
-            Err(_) => outcome("pre_exec_io_failed"),
-        },
-    )
+    cleanup_with(args, |inputs, redis, comparison| {
+        let Ok(mut client) = Client::authenticated(inputs, redis) else {
+            return outcome("pre_exec_io_failed");
+        };
+        #[cfg(windows)]
+        if redis["platform"] == "windows" {
+            return execute_on(
+                comparison,
+                &mut client,
+                Client::transaction_command,
+                Client::recheck_windows_peer,
+            );
+        }
+        execute_on(comparison, &mut client, Client::transaction_command, |_| {
+            Ok(())
+        })
+    })
 }
 
 // 只替换连接执行端口；比较、独占 attempt 及执行结果持久化仍走同一正式生命周期。
@@ -68,7 +78,21 @@ pub(super) fn cleanup_with(
         environment: &environment,
         observation_dir: &backend,
     };
-    let result = run(&inputs, &args["request"]["storage"]["redis"], &comparison);
+    let original = &frame.request["storage"]["redis"];
+    let result = if original["platform"] == "windows" {
+        match frame.windows_redis(&attempt) {
+            Ok(redis) => run(&inputs, &redis, &comparison),
+            Err(_) => {
+                let mut failed = outcome("pre_exec_io_failed");
+                failed["message"] = json!(
+                    "Windows Redis 的 START 或已登记恢复代次未确认，未发送 EXEC；保留原 attempt，不重试"
+                );
+                failed
+            }
+        }
+    } else {
+        run(&inputs, original, &comparison)
+    };
     if frame.finish(&attempt, &result).is_err() {
         return Ok(outcome("unknown_exec_result"));
     }
@@ -171,8 +195,18 @@ fn prepare(plan: &cache_io::Comparison, send: &mut Send<'_>) -> std::result::Res
     expect(send, &unlink, &json!("QUEUED"))
 }
 
+#[cfg(test)]
 pub(super) fn execute(plan: &cache_io::Comparison, send: &mut Send<'_>) -> Value {
-    if let Err(error) = prepare(plan, send) {
+    execute_on(plan, send, |send, parts| send(parts), |_| Ok(()))
+}
+
+pub(super) fn execute_on<C: ?Sized>(
+    plan: &cache_io::Comparison,
+    connection: &mut C,
+    mut send: impl FnMut(&mut C, &[&str]) -> Result<Value>,
+    check_peer: impl Fn(&C) -> Result<()>,
+) -> Value {
+    if let Err(error) = prepare(plan, &mut |parts| send(connection, parts)) {
         let status = match error {
             Before::Communication => "pre_exec_io_failed",
             Before::Mismatch => "precondition_failed",
@@ -180,8 +214,15 @@ pub(super) fn execute(plan: &cache_io::Comparison, send: &mut Send<'_>) -> Value
         };
         return outcome(status);
     }
-    // 发送 EXEC 后任何通信或协议异常均保守标记未知，不重连、不重发。
-    match send(&["EXEC"]) {
+    if check_peer(connection).is_err() {
+        return outcome("pre_exec_io_failed");
+    }
+    // 发送 EXEC 后任何通信、协议或连接身份异常均保守标记未知，不重连、不重发。
+    let response = send(connection, &["EXEC"]);
+    if check_peer(connection).is_err() {
+        return outcome("unknown_exec_result");
+    }
+    match response {
         Ok(Value::Null) => outcome("watch_conflict"),
         Ok(Value::Array(values))
             if values.len() == 1 && values[0].as_u64() == Some(33 - plan.expired.len() as u64) =>

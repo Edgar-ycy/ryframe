@@ -45,6 +45,55 @@ impl Fixture {
 }
 
 #[test]
+fn windows_redis_resume_consumes_exact_projection_rounds_and_rejects_mixed_evidence() {
+    let fixture = Fixture::new();
+    let tool = json!({"platform":"windows","path":"D:/tools/redis-server.exe","sha256":"a".repeat(64),
+        "version":"Redis server v=7.4.11 bits=64","dlls":{"cygwin1.dll":"b".repeat(64)}});
+    let original = json!({"platform":"windows","port":29770,"pid":36784,"started":"123",
+        "executable":tool["path"],"sha256":tool["sha256"],"run_id":"a".repeat(40),"tool":tool,
+        "configuration":{"path":"D:/缓存 数据/redis.conf","bytes":5,"sha256":"c".repeat(64)}});
+    let mut current = original.clone();
+    current["pid"] = json!(36786);
+    current["started"] = json!("124");
+    current["run_id"] = json!("b".repeat(40));
+    let name = |index| format!("redis-windows-{index:032x}.json");
+    for index in 0..5 {
+        fixture.put(&name(index), &current);
+    }
+    let baseline = BTreeSet::from([name(0), name(1)]);
+    let mut rounds = BTreeSet::from([name(2), name(3), name(4)]);
+    let run = |names: &mut BTreeSet<String>, count| {
+        redis_delta(
+            &fixture.backend,
+            fixture.directory.path(),
+            &baseline,
+            names,
+            &original,
+            count,
+        )
+    };
+    assert!(run(&mut rounds.clone(), 2).is_err());
+    run(&mut rounds.clone(), 3).unwrap();
+    rounds.insert(fixture.receipt("redis-kernel", 9, json!(["wsl.exe"]), "linux"));
+    assert!(run(&mut rounds, 3).is_err());
+    let mut drift = current.clone();
+    drift["run_id"] = original["run_id"].clone();
+    fixture.put(&name(3), &drift);
+    let mut rounds = BTreeSet::from([name(2), name(3), name(4)]);
+    assert!(run(&mut rounds, 3).is_err());
+    fixture.put(&name(3), &current);
+    run(&mut rounds, 3).unwrap();
+    assert!(rounds.is_empty());
+
+    let mut swapped = current.clone();
+    swapped["tool"]["dlls"]["cygwin1.dll"] = json!("d".repeat(64));
+    assert!(prepare_observations::windows_redis_transition(&original, &swapped).is_err());
+    let command = format!("redis-windows-{:032x}.command.json", 0);
+    assert!(super::super::evidence_prepare::artifact(&name(0)).unwrap());
+    assert!(!super::super::evidence_prepare::artifact(&command).unwrap());
+}
+
+#[test]
 fn mysql_resume_observations_bind_exact_before_after_multiset_without_writes() {
     let fixture = Fixture::new();
     let request = json!({"target":{"databases":[{"key":"shared","server_uuid":"uuid","database":"business"}]}});

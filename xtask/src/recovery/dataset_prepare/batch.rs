@@ -2,81 +2,155 @@ use super::{
     documents,
     model::{self, Inputs},
 };
-use crate::{Result, check::consumer_context::python};
+use crate::Result;
+use crate::recovery::clone::native::export::transport::{SystemTransport, Transport};
 use serde_json::{Value, json};
-use std::{fs::OpenOptions, io::Write, path::Path, time::Duration};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
+#[path = "batch/client.rs"]
+mod client;
+#[path = "batch/input.rs"]
+mod input;
+#[path = "batch/sql.rs"]
+mod sql;
 
 pub(super) fn run(inputs: &Inputs, directory: &Path) -> Result<Value> {
-    let native_tool = serde_json::to_string(&crate::check::python_suite::native_tool_binding()?)?;
-    let settings = &inputs.plan["dataset"];
-    let records = settings["records"].as_u64().ok_or("记录数缺失")?;
-    let api = settings["api_validation_posts"]
-        .as_u64()
-        .ok_or("API记录数缺失")?;
-    let path = directory.join("post-batch.ndjson");
-    let mut stream = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
-    let mut samples = Vec::new();
-    let mut position = 0u64;
-    for index in 0..11 {
-        let count = model::count(records, index);
-        for row_index in api..count {
-            let row = row(&inputs.plan, index, row_index);
-            if row_index == api || row_index == count - 1 {
-                samples.push(json!({"identityIndex":index,"position":position,"row":row}));
-            }
-            serde_json::to_writer(&mut stream, &row)?;
-            stream.write_all(b"\n")?;
-            position += 1;
-        }
-    }
-    stream.sync_all()?;
-    drop(stream);
-    if position != records - api * 11 {
-        return Err("岗位批次行数与计划规模不一致".into());
-    }
-    let program = python::selected_program(&inputs.root)?;
-    let command = python::command(
+    use crate::recovery::clone::native::resources::common;
+    let plan_binding = common::binding(&inputs.plan_path)?;
+    let plan_identity =
+        common::device_inode_for(&inputs.plan_path, &std::fs::metadata(&inputs.plan_path)?)?;
+    run_with(
+        &inputs.plan,
         &inputs.root,
-        &program,
-        &[
-            "-X",
-            "utf8",
-            "-B",
-            "tools/python/restore_reference_post_batch.py",
-            "--native-tool",
-            &native_tool,
-            "--backend-dir",
-            inputs.root.to_str().ok_or("后端路径不是UTF-8")?,
-            "--plan",
-            inputs.plan_path.to_str().ok_or("计划路径不是UTF-8")?,
-            "--input",
-            path.to_str().ok_or("批次路径不是UTF-8")?,
-        ],
-    );
-    let output = python::output(&inputs.root, scrub(command), None, Duration::from_secs(900))
-        .map_err(|_| "岗位批次准备失败；含未知写入，禁止重放")?;
-    if !output.status.success() {
-        return Err("岗位批次准备失败；保留输入和阶段收据，含未知写入，禁止重放".into());
-    }
-    let result = documents::parse_fragment(
-        std::str::from_utf8(&output.stdout).map_err(|_| "岗位批次结果不是UTF-8")?,
-        "岗位批次结果",
-    )?;
-    let batch = settings["post_batch_rows"]
-        .as_u64()
-        .ok_or("岗位批次大小缺失")?;
-    if result["plan_sha256"] != model::hash(&inputs.plan)?
-        || result["rows"] != position
-        || result["batch_rows"] != batch
-        || result["batches"] != position.div_ceil(batch)
-        || result["input_sha256"] != model::sha(&std::fs::read(&path)?)
-    {
-        return Err("岗位批次结果未绑定计划、输入或精确行数".into());
-    }
+        directory,
+        &SystemTransport,
+        || {
+            inputs.unchanged()?;
+            if common::binding(&inputs.plan_path)? != plan_binding
+                || common::device_inode_for(
+                    &inputs.plan_path,
+                    &std::fs::metadata(&inputs.plan_path)?,
+                )? != plan_identity
+            {
+                return Err("岗位批次原计划身份或内容漂移".into());
+            }
+            crate::recovery::inputs::domain::validate_plan(&inputs.plan, &inputs.root)
+        },
+    )
+}
+
+fn run_with(
+    plan: &Value,
+    root: &Path,
+    directory: &Path,
+    transport: &impl Transport,
+    check: impl Fn() -> Result<()>,
+) -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_secs(900);
+    check()?;
+    let (path, samples) = input::create(plan, root, directory)?;
+    let bound = match client::Bound::capture(plan, root, directory, &path) {
+        Ok(bound) => bound,
+        Err(error) => {
+            // 尚未调用MySQL；仅在仍合法的受管目录独占记录安全失败。
+            if crate::local_test_path::validate_local_test_path(
+                directory,
+                root,
+                crate::local_test_path::LocalTestPathKind::ExistingDirectory,
+            )
+            .is_ok()
+            {
+                let _ = documents::write_new(
+                    &directory.join(format!(
+                        "post-batch-failure-{}.json",
+                        uuid::Uuid::new_v4().simple()
+                    )),
+                    &json!({"format_version":1,"kind":"dataset-post-batch-failure","stage":"input-binding",
+                        "batch":0,"completed_batches":0,"possible_write":false,"automatic_replay":false}),
+                );
+            }
+            return Err(error);
+        }
+    };
+    let mut client = client::Client {
+        bound,
+        transport,
+        check: &check,
+        deadline,
+        completed: 0,
+        possible_write: false,
+    };
+    let result = (|| {
+        let rows = input::read(plan, &path)?;
+        client.bound.verify()?;
+        check()?;
+        execute(plan, &rows, &mut client)
+    })();
+    let result = match result {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = match client.record(
+                "batch-rejected",
+                json!({"reason":"核对完整前后像和失败记录；禁止自动重放"}),
+            ) {
+                Ok(path) => format!("失败收据={}", path.display()),
+                Err(_) => "不能确认失败收据发布；保留输入与原现场".into(),
+            };
+            return Err(format!("{error}；阶段=batch-rejected；已完成批数={}；possible_write={}；unknown={}；核对完整前后像及绑定输入，禁止重放；{receipt}",client.completed,client.possible_write,client.possible_write).into());
+        }
+    };
     Ok(json!({"result":result,"samples":resolve_samples(&samples,&result)?}))
+}
+
+fn execute(
+    plan: &Value,
+    rows: &[Value],
+    client: &mut client::Client<'_, impl Transport>,
+) -> Result<Value> {
+    let maximum = client.query(
+        b"SELECT COALESCE(MAX(`id`), 0) FROM `sys_post`;".to_vec(),
+        false,
+    )?;
+    let maximum = std::str::from_utf8(&maximum)
+        .map_err(|_| "岗位最大ID不是UTF-8")?
+        .trim();
+    if maximum.is_empty() || !maximum.bytes().all(|v| v.is_ascii_digit()) {
+        return Err("岗位批次无法取得唯一现有最大ID".into());
+    }
+    let first = maximum
+        .parse::<i64>()
+        .ok()
+        .and_then(|v| v.checked_add(1))
+        .filter(|v| *v > 0)
+        .ok_or("岗位ID范围超过有符号64位")?;
+    let last = first
+        .checked_add(rows.len() as i64 - 1)
+        .ok_or("岗位ID范围超过有符号64位")?;
+    let batch = plan["dataset"]["post_batch_rows"]
+        .as_u64()
+        .filter(|v| *v > 0)
+        .ok_or("岗位批次大小缺失")?;
+    for (index, values) in rows.chunks(usize::try_from(batch)?).enumerate() {
+        let output = client.query(
+            sql::statement(values, first + (index as u64 * batch) as i64).into_bytes(),
+            true,
+        )?;
+        if !std::str::from_utf8(&output)
+            .map_err(|_| "岗位输出不是UTF-8")?
+            .trim()
+            .is_empty()
+        {
+            return Err("岗位批次写入产生未登记标准输出；可能已写入，禁止重放".into());
+        }
+        client.completed += 1;
+    }
+    Ok(
+        json!({"format_version":1,"kind":"restore-reference-post-batch","plan_sha256":model::hash(plan)?,
+        "input_sha256":client.bound.input_sha(),"rows":rows.len(),"batch_rows":batch,
+        "batches":client.completed,"first_id":first.to_string(),"last_id":last.to_string()}),
+    )
 }
 pub(super) fn row(plan: &Value, index: usize, row: u64) -> Value {
     json!({"tenant_id":model::tenant(plan,index),"index":row,"code":format!("{}-{row}",plan["id"].as_str().unwrap_or("")),"name":format!("恢复样本{row}"),"sort":row%1000})
@@ -104,3 +178,7 @@ pub(super) fn scrub(mut command: std::process::Command) -> std::process::Command
     }
     command
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/recovery/dataset_prepare/batch.rs"]
+mod tests;

@@ -1,8 +1,8 @@
-# 开发工具配置；本机覆盖可写入忽略目录 .local-tests/tools.toml。
+# 开发工具配置；维护验收可在 .local-tests/tools.toml 中提供本机覆盖。
 # 相对路径以此后端 Cargo Workspace 根目录为基准。
-# 开发监督器的完整覆盖示例；复制到本机工具文件并按需取消注释，不改变公共默认值。
+# 开发监督器可直接使用 --config-dir 指向工作树外的私有配置；也可配置下列字段。
 # [development]
-# config_dir = ".local-tests/dev-config"
+# config_dir = "../ryframe-dev-config"
 # verify_tenant_targets = ["shared-control"]
 
 [workspace]
@@ -33,6 +33,14 @@ build_jobs = 4
 # source_commit = "<40 lowercase hex digits: actual clean HEAD>"
 # sha256 = "<64 lowercase hex digits: ELF SHA-256>"
 # source_sha256 = "<64 lowercase hex digits: complete relative source list SHA-256>"
+
+# Windows Redis 夹具使用显式绑定；复制到本机工具文件并填入实际文件的路径与摘要。
+# 不读取环境覆盖或从 PATH 查找。DLL 表登记该构建所需的同目录文件，仅填写文件名。
+# [verification.windows_redis]
+# program = "<Windows redis-server.exe 的完整绝对路径>"
+# sha256 = "<redis-server.exe 的 64 位小写十六进制 SHA-256>"
+# [verification.windows_redis.dlls]
+# "<依赖 DLL 的文件名>" = "<DLL 的 64 位小写十六进制 SHA-256>"
 
 [generator]
 # Cargo 缓存根；生成器、维护工具直接使用，显式配置时运行/夹具/全栈构建也共用。

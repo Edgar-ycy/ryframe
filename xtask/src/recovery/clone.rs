@@ -4,10 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    cli::{
-        CacheOptions, CloneCommand, CloneRuntimeOptions, PostCopyOptions, SeedRuntimeOptions,
-        StorageOptions,
-    },
+    cli::{CloneCommand, CloneRuntimeOptions, PostCopyOptions, SeedRuntimeOptions, StorageOptions},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
@@ -15,6 +12,16 @@ use crate::{
 pub(crate) mod native;
 
 pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
+    if let CloneCommand::PostCopy(options) = command
+        && native::post_process::entry::selected(options)
+    {
+        return Err("固定登记、准备和环境修订必须使用原生持锁正式入口".into());
+    }
+    if let CloneCommand::Runtime(options) = command
+        && native::cache::handoff::selected(root, options)?
+    {
+        return Err("已登记post-copy目标API生命周期必须由原生完整树控制入口执行".into());
+    }
     if matches!(
         command,
         CloneCommand::Help
@@ -23,9 +30,11 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
             | CloneCommand::Bridge { .. }
             | CloneCommand::MaintenanceBuild { .. }
             | CloneCommand::MaintenanceVerify { .. }
+            | CloneCommand::Cache(_)
     ) {
         return Err(
-            "clone 的帮助、离线 plan/verify、bridge 与 maintenance 由 Rust 原生入口处理".into(),
+            "clone 的帮助、离线 plan/verify、bridge、maintenance 与 cache 由 Rust 原生入口处理"
+                .into(),
         );
     }
     let native_tool = crate::check::python_suite::native_tool_binding()?;
@@ -89,7 +98,7 @@ fn options(command: &CloneCommand, root: &Path) -> Result<Value> {
         CloneCommand::PostCopy(value) => post_copy(value, root)?,
         CloneCommand::SeedRuntime(value) => seed_runtime(value, root)?,
         CloneCommand::Storage(value) => storage(value, root)?,
-        CloneCommand::Cache(value) => cache(value, root)?,
+        CloneCommand::Cache(_) => return Err("cache仅通过原生Rust正式入口执行".into()),
         CloneCommand::MaintenanceBuild { output } => json!({
             "operation": "build",
             "output": local(output, root, LocalTestPathKind::NewDirectory, "维护构建目录")?,
@@ -132,13 +141,6 @@ fn storage(value: &StorageOptions, root: &Path) -> Result<Value> {
         "run_dir": run(&value.run_dir, root)?, "side": value.side.as_str(),
         "operation": value.operation.as_str(),
         "request": optional_file(value.request.as_deref(), root, "存储重启请求")?,
-    }))
-}
-
-fn cache(value: &CacheOptions, root: &Path) -> Result<Value> {
-    Ok(json!({
-        "run_dir": run(&value.run_dir, root)?, "operation": value.operation.as_str(),
-        "request": optional_file(value.request.as_deref(), root, "缓存重启请求")?,
     }))
 }
 

@@ -1,6 +1,19 @@
 //! 失败 close 的新阶段恢复证据；原失败目录及停止收据缺失事实不可改写。
 use super::*;
+use crate::recovery::{clone::native::resources::common, monitoring::execution::ProtectedInputs};
 use std::time::UNIX_EPOCH;
+
+const WINDOWS_REDIS_FILES: &[&str] = &[
+    "request.json",
+    "launch-request.json",
+    "intent.json",
+    "authorized.json",
+    "process.json",
+    "acknowledged.json",
+    "accepted.json",
+    "runtime.json",
+    "exited.json",
+];
 
 pub(crate) fn candidate(
     run: &Path,
@@ -31,23 +44,55 @@ pub(crate) fn candidate(
         "关闭恢复只接受原失败目录完整保留且无停止收据或未知写入",
     )?;
     let (rustfs, redis) = generation::paths(run, generation)?;
+    let windows = services["requests"]["redis"]["format_version"] == 3
+        || services["runtime"]["format_version"] == 3;
+    if !windows {
+        return records(run, failed, services, closed, &rustfs, &redis, false);
+    }
+    check(
+        !digest::linked_path(&redis)?.contains(&true),
+        "Windows Redis 代次目录不能经过链接",
+    )?;
+    let protected = ProtectedInputs::open(WINDOWS_REDIS_FILES.iter().map(|name| redis.join(name)))?;
+    protected.finish(records(
+        run, failed, services, closed, &rustfs, &redis, true,
+    ))
+}
+
+fn records(
+    run: &Path,
+    failed: &Value,
+    services: &Value,
+    closed: bool,
+    rustfs: &Path,
+    redis: &Path,
+    windows: bool,
+) -> Result<Value> {
     let runtime_path = redis.join("runtime.json");
     let request_path = redis.join("request.json");
-    let exit_path = redis.join("linux-exited.json");
+    let exit_path = redis.join(if windows {
+        "exited.json"
+    } else {
+        "linux-exited.json"
+    });
     let runtime = read(&runtime_path)?;
     let request = read(&request_path)?;
     let exited = read(&exit_path)?;
-    exact(&exited, &["identity", "returncode"])?;
-    check(
-        runtime == services["runtime"]
-            && request == services["requests"]["redis"]
-            && request["format_version"] == 2
-            && runtime["request_sha256"] == digest::plan_hash(&request)?
-            && exited["identity"] == runtime["linux_identity"]
-            && exited["returncode"] == 0
-            && runtime["boot_id"] == runtime["linux_identity"]["boot_id"],
-        "关闭恢复缺少原请求、runtime或正常退出身份",
-    )?;
+    if windows {
+        windows_exit(redis, &request, &runtime, &exited, services)?;
+    } else {
+        exact(&exited, &["identity", "returncode"])?;
+        check(
+            runtime == services["runtime"]
+                && request == services["requests"]["redis"]
+                && request["format_version"] == 2
+                && runtime["request_sha256"] == digest::plan_hash(&request)?
+                && exited["identity"] == runtime["linux_identity"]
+                && exited["returncode"] == 0
+                && runtime["boot_id"] == runtime["linux_identity"]["boot_id"],
+            "关闭恢复缺少原请求、runtime或正常退出身份",
+        )?;
+    }
     let before = chrono::DateTime::parse_from_rfc3339(text(failed, "started_at")?)?;
     let after = chrono::DateTime::parse_from_rfc3339(text(failed, "finished_at")?)?;
     let modified = std::fs::metadata(&exit_path)?.modified()?;
@@ -63,12 +108,47 @@ pub(crate) fn candidate(
         "关闭恢复的原RustFS完整树变化",
     )?;
     if !closed {
-        completed_records(run, &rustfs, &tree)?;
+        completed_records(run, rustfs, &tree)?;
     }
-    Ok(
-        json!({"failed_attempt":number,"failed_controller":controller(run,failed)?,"failed_sources":failed["sources"],
+    let result = json!({"failed_attempt":failed["number"],"failed_controller":controller(run,failed)?,"failed_sources":failed["sources"],
         "request":binding(&request_path)?,"runtime":binding(&runtime_path)?,"exit":binding(&exit_path)?,
-        "exit_modified_unix_ns":modified.duration_since(UNIX_EPOCH)?.as_nanos().to_string(),"rustfs_tree":binding(&tree_path)?,"redis_files":redis_files(&redis)?}),
+        "exit_modified_unix_ns":modified.duration_since(UNIX_EPOCH)?.as_nanos().to_string(),"rustfs_tree":binding(&tree_path)?,"redis_files":redis_files(redis,windows)?});
+    if windows {
+        check(
+            std::fs::metadata(&exit_path)?.modified()? == modified,
+            "Windows Redis 原退出收据时间在关闭恢复核验期间变化",
+        )?;
+    }
+    Ok(result)
+}
+
+fn windows_exit(
+    redis: &Path,
+    request: &Value,
+    runtime: &Value,
+    exited: &Value,
+    services: &Value,
+) -> Result<()> {
+    let process_path = redis.join("process.json");
+    let process = read(&process_path)?;
+    exact(&process, &["launch", "supervisor", "process"])?;
+    exact(exited, &["process", "returncode", "job_empty"])?;
+    common::validate_process_identity(&runtime["process"])?;
+    check(
+        request["format_version"] == 3
+            && runtime["format_version"] == 3
+            && request == &services["requests"]["redis"]
+            && runtime == &services["runtime"]
+            && runtime["request_sha256"] == digest::plan_hash(request)?
+            && Path::new(text(runtime, "output")?) == redis
+            && process["launch"] == runtime["launch"]
+            && process["supervisor"] == runtime["supervisor"]
+            && process["process"] == runtime["process"]
+            && exited["process"] == runtime["process_receipt"]
+            && common::binding(&process_path)? == runtime["process_receipt"]
+            && exited["returncode"] == 0
+            && exited["job_empty"] == true,
+        "关闭恢复缺少 Windows Redis 原请求、运行代次或完整正常退出证明",
     )
 }
 
@@ -135,8 +215,8 @@ fn completed_records(run: &Path, directory: &Path, tree: &Value) -> Result<()> {
     )
 }
 
-fn redis_files(directory: &Path) -> Result<Value> {
-    let required = [
+fn redis_files(directory: &Path, windows: bool) -> Result<Value> {
+    let linux = [
         "request.json",
         "launch-request.json",
         "intent.json",
@@ -148,14 +228,20 @@ fn redis_files(directory: &Path) -> Result<Value> {
         "runtime.json",
         "linux-exited.json",
     ];
-    let logs = [
+    let windows_logs = ["redis.stdout.log", "redis.stderr.log"];
+    let linux_logs = [
         "redis.stdout.log",
         "redis.stderr.log",
         "wsl.stdout.log",
         "wsl.stderr.log",
     ];
+    let (required, logs) = if windows {
+        (WINDOWS_REDIS_FILES, windows_logs.as_slice())
+    } else {
+        (linux.as_slice(), linux_logs.as_slice())
+    };
     let mut result = json!({});
-    for name in required {
+    for &name in required {
         result[name] = binding(&directory.join(name))?;
     }
     for entry in std::fs::read_dir(directory)? {
@@ -220,7 +306,13 @@ pub(crate) fn recovery_evidence(
         "关闭恢复原失败来源或退出证据变化",
     )?;
     let (rustfs, redis) = generation::paths(run, generation)?;
-    let runtime = read(&redis.join("runtime.json"))?;
+    let windows = services["requests"]["redis"]["format_version"] == 3
+        || services["runtime"]["format_version"] == 3;
+    let runtime = if windows {
+        bound(run, &candidate["runtime"])?
+    } else {
+        read(&redis.join("runtime.json"))?
+    };
     exact(&value["windows_port"], &["port", "bound_and_closed"])?;
     check(
         value["windows_port"]
@@ -232,6 +324,35 @@ pub(crate) fn recovery_evidence(
         "关闭恢复原树不一致",
     )?;
     let observed = &value["redis_observation"];
+    if windows {
+        exact(observed, &["state", "launcher_alive", "windows"])?;
+        exact(&observed["windows"], &["identity", "alive"])?;
+        check(
+            runtime == services["runtime"]
+                && observed["state"] == "stopped"
+                && observed["launcher_alive"] == false
+                && observed["windows"]["identity"] == runtime["process"]
+                && observed["windows"]["alive"] == false,
+            "关闭恢复没有原 Windows Redis 身份只读退出证明",
+        )?;
+    } else {
+        linux_observation(observed, &runtime)?;
+    }
+    let completion = &value["rustfs_members"];
+    members(
+        &json!({"state":"stopped","tree":services["tree"],"completion":completion}),
+        run,
+    )?;
+    check(
+        candidate["rustfs_tree"] == binding(&rustfs.join("rustfs-tree.json"))?,
+        "原RustFS树变化",
+    )?;
+    Ok(
+        json!({"close_recovery":descriptor,"rustfs_tree":candidate["rustfs_tree"],"rustfs_members":completion}),
+    )
+}
+
+fn linux_observation(observed: &Value, runtime: &Value) -> Result<()> {
     exact(observed, &["state", "launcher_alive", "linux"])?;
     exact(
         &observed["linux"],
@@ -245,17 +366,5 @@ pub(crate) fn recovery_evidence(
             && observed["linux"]["boot_id"] == runtime["boot_id"]
             && observed["linux"]["terminated"] == false,
         "关闭恢复没有原身份只读退出证明",
-    )?;
-    let completion = &value["rustfs_members"];
-    members(
-        &json!({"state":"stopped","tree":services["tree"],"completion":completion}),
-        run,
-    )?;
-    check(
-        candidate["rustfs_tree"] == binding(&rustfs.join("rustfs-tree.json"))?,
-        "原RustFS树变化",
-    )?;
-    Ok(
-        json!({"close_recovery":descriptor,"rustfs_tree":candidate["rustfs_tree"],"rustfs_members":completion}),
     )
 }

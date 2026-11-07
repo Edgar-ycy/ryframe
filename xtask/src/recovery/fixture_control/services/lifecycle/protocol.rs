@@ -17,6 +17,9 @@ struct Request {
 }
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    if let Some(code) = super::super::storage::run_hidden_if_requested() {
+        return Some(code);
+    }
     if let Some(code) = super::cache_primitive::run_hidden_if_requested() {
         return Some(code);
     }
@@ -48,9 +51,8 @@ pub(crate) fn execute(input: &[u8]) -> (i32, Value) {
             }
         }
         Err(error) => {
-            let reason = error
-                .downcast_ref::<model::LifecycleError>()
-                .map(|error| error.message.to_owned())
+            let reason = model::reason(error.as_ref())
+                .map(str::to_owned)
                 .or_else(|| {
                     error
                         .downcast_ref::<crate::recovery::clone::native::cache::ObserverFailure>()

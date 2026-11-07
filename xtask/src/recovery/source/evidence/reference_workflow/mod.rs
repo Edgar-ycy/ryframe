@@ -13,7 +13,7 @@ mod local;
 mod model;
 mod proof;
 mod protocol;
-mod readonly;
+pub(crate) mod readonly;
 mod receipts;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/source/evidence/reference_workflow/tests.rs"]

@@ -9,6 +9,39 @@ use serde_json::{Value, json};
 use super::super::{json as json_io, resources::common};
 use crate::{Result, recovery::fixture_control::services::lifecycle::readonly::process};
 
+/// 产品根只来自已经绑定的运行合同；证据目录仍由协调根单独核验。
+pub(crate) fn product_root(coordinator: &std::path::Path, runtime: &Value) -> Result<PathBuf> {
+    use crate::local_test_path::{LocalTestPathKind, validate_absolute_path};
+    let root = PathBuf::from(json_io::text(&runtime["backend_root"], "运行产品根")?);
+    validate_absolute_path(&root, LocalTestPathKind::ExistingDirectory)?;
+    let canonical = crate::recovery::fixture_control::portable_path(&root.canonicalize()?);
+    if canonical != root {
+        return Err("运行产品根必须是规范普通目录".into());
+    }
+    if root != coordinator {
+        common::local_directory(coordinator, &root, "发布运行产品根")?;
+    }
+    Ok(root)
+}
+/// 来源选择与已登记产品桥接必须独立指向同一根；不从构建收据补造字段。
+pub(crate) fn selected_product_root(
+    coordinator: &std::path::Path,
+    target: &Value,
+    scope: &super::super::bridge::scope::Scope,
+    build_path: &std::path::Path,
+    build: &Value,
+) -> Result<PathBuf> {
+    let (selected, _) = super::super::target_verify::input::request::execution_backend(
+        coordinator,
+        target.get("execution_backend"),
+        &super::super::target_verify::input::request::SystemSourceObserver,
+    )?;
+    let registered = scope.registered_product_root(build_path, build)?;
+    if selected != registered {
+        return Err("目标产品根与本运行已核验构建桥接根不一致".into());
+    }
+    product_root(coordinator, &json!({"backend_root":selected}))
+}
 pub(super) fn proof(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,
@@ -52,7 +85,7 @@ pub(super) fn proof(request: &Value) -> Result<Value> {
     Ok(json!({"runtime":runtime,"api_process":identity}))
 }
 
-fn contract(backend: &std::path::Path, directory: &std::path::Path) -> Result<Value> {
+pub(crate) fn contract(backend: &std::path::Path, directory: &std::path::Path) -> Result<Value> {
     let runtime = json_io::read(&directory.join("runtime.json"))?;
     json_io::exact(
         &runtime,
@@ -214,7 +247,7 @@ fn python_json(value: &Value) -> Result<String> {
     })
 }
 
-fn listener(value: &str, identity: &Value) -> Result<()> {
+pub(crate) fn listener(value: &str, identity: &Value) -> Result<()> {
     let url = url::Url::parse(value).map_err(|_| "API 地址无效")?;
     let ip = match url.host() {
         Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip),

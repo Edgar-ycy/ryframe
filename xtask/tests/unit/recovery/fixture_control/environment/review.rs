@@ -53,6 +53,21 @@ impl Fixture {
             Ok(self.observed.clone())
         })
     }
+
+    fn windows_tools(&self) -> Value {
+        let mut tools = self.observed.clone();
+        let entries = tools.as_object_mut().unwrap();
+        entries.remove("wsl");
+        entries.remove("native_tool");
+        tools["redis_server"] = json!({
+            "platform":"windows",
+            "path":"D:/tools/redis-server.exe",
+            "sha256":"b".repeat(64),
+            "version":"Redis server v=7.4.11 sha=00000000:0 malloc=libc bits=64 build=5bd2587910691cb8",
+            "dlls":{"msys-2.0.dll":"a".repeat(64)},
+        });
+        tools
+    }
 }
 
 #[test]
@@ -115,6 +130,87 @@ fn pending_and_ready_refresh_preserve_history_and_raw_predecessor_binding() {
     assert_eq!(renewed["tools"]["native_tool"], observed["native_tool"]);
     assert_eq!(renewed["services"], frozen_services);
     guards::successor(&ready, &renewed).unwrap();
+}
+
+#[test]
+fn windows_review_preserves_pending_input_and_requires_same_platform_for_ready_successors() {
+    let fixture = Fixture::new();
+    let original = fs::read(&fixture.input).unwrap();
+    let binding = file_binding(&fixture.input, "原始输入").unwrap();
+    let linux = receipt(&fixture.review, &fixture.observed, &binding).unwrap();
+    let windows = fixture.windows_tools();
+    let ready = renew_with_observer(
+        &fixture.root,
+        &fixture.input,
+        &fixture.output,
+        |_, input| {
+            assert_eq!(input, &fixture.review);
+            Ok(windows.clone())
+        },
+    )
+    .unwrap();
+    assert_eq!(ready["preflight"]["supersedes"], binding);
+    assert_eq!(ready["preflight"]["tools"], windows);
+    assert_eq!(guards::preflight_binding(&ready).unwrap(), windows);
+    assert_eq!(
+        ready["tools"]["historical"],
+        fixture.review["tools"]["historical"]
+    );
+    for key in ["wsl", "native_tool", "redis_python"] {
+        assert!(ready["tools"].get(key).is_none(), "{key}");
+    }
+    assert_eq!(fs::read(&fixture.input).unwrap(), original);
+
+    let next = fixture.directory.path().join("refreshed-windows.json");
+    let refreshed = renew_with_observer(&fixture.root, &fixture.output, &next, |_, input| {
+        assert_eq!(input, &ready);
+        Ok(windows.clone())
+    })
+    .unwrap();
+    assert_eq!(refreshed["services"], ready["services"]);
+    assert_eq!(
+        refreshed["preflight"]["supersedes"],
+        file_binding(&fixture.output, "Windows ready").unwrap()
+    );
+    for (previous, successor) in [(&linux, &ready), (&ready, &linux)] {
+        let error = guards::successor(previous, successor).unwrap_err();
+        assert!(error.to_string().contains("请新建隔离场景"));
+    }
+}
+
+#[test]
+fn windows_preflight_rejects_mixed_tools_and_changed_dll_observation() {
+    let fixture = Fixture::new();
+    let original = fs::read(&fixture.input).unwrap();
+    let binding = file_binding(&fixture.input, "原始输入").unwrap();
+    let windows = fixture.windows_tools();
+    let ready = receipt(&fixture.review, &windows, &binding).unwrap();
+    for key in ["wsl", "native_tool", "redis_python"] {
+        let mut mixed = ready.clone();
+        mixed["tools"][key] = json!({"sha256":"c".repeat(64)});
+        assert!(guards::preflight_binding(&mixed).is_err(), "{key}");
+        let mut mixed = ready.clone();
+        mixed["preflight"]["tools"][key] = json!({"sha256":"c".repeat(64)});
+        assert!(guards::preflight_binding(&mixed).is_err(), "{key}");
+    }
+    let mut mixed = ready;
+    mixed["tools"]["redis_server"]["distribution"] = json!("Ubuntu");
+    mixed["preflight"]["tools"]["redis_server"] = mixed["tools"]["redis_server"].clone();
+    assert!(guards::preflight_binding(&mixed).is_err());
+
+    let mut observations = 0;
+    let error = renew_with_observer(&fixture.root, &fixture.input, &fixture.output, |_, _| {
+        observations += 1;
+        let mut tools = windows.clone();
+        if observations == 2 {
+            tools["redis_server"]["dlls"]["msys-2.0.dll"] = json!("d".repeat(64));
+        }
+        Ok(tools)
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("ready 签发前发生变化"));
+    assert!(!fixture.output.exists());
+    assert_eq!(fs::read(&fixture.input).unwrap(), original);
 }
 
 #[test]

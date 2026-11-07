@@ -145,7 +145,7 @@ pub(super) fn complete<T: Transport>(
     claims::unchanged(w, &trusted)?;
     let objects = w.objects(true)?;
     trusted = claims::objects(w, &trusted, &objects)?;
-    let redis = w.redis_state(true, true)?;
+    let redis = w.redis_state(current, true, true)?;
     claims::unchanged(w, &trusted)?;
     let (observed, candidate, _) = w.generation()?;
     if observed != *current {

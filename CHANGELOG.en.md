@@ -4,11 +4,23 @@
 
 ## [Unreleased]
 
+- Fix historical RustFS credential authorization matching with mixed Windows path separators. Normalize only path text during reading while retaining unique full-descriptor matching, byte and kernel-identity verification, and original receipts.
+
+- Preserve safe fixed storage rejection reasons through existing fixture lifecycle error exits. Read-only partial-close status reports only I/O kind and system code, keeps unknown private errors redacted, and neither rewrites the ledger nor replays operations.
+
 - Observe all four execution-source roots completely in parallel when no static authority is active; an active authority still records actual inputs serially on its owner thread. Collect every observation thread and concurrent failure while preserving source, file-protection, receipt and deadline requirements.
 
 - Reuse the canonical root within each complete source observation, retaining per-file boundaries and complete Git, index, mode and digest checks. Success and failure both recheck the root path and directory state, without caching across requests or adding file-identity platform requirements.
 
+- Initial Redis requests use the reviewed Redis tool distribution and require the native tool distribution to match before creating directories or configuration; they no longer read a service field absent from the formal review.
+
 - Use one complete source-read window for fixture plans and prepared environments, independently verifying all four original generated and published source roots at both ends while reusing pure plan calculation. Preserve JSON, digests and input projections; protect bootstrap, configuration-directory and secret-file bytes and identities, and retain other postchecks and concurrent errors when reading or one root fails.
+
+- Fix native RustFS supervised launch returning on monitor acknowledgement and combining registration/listener timing: restore the original complete-supervision registration window of 60 seconds followed by an independent 60-second listener window. Preserve full authorization at role entries and final source validation, check immutable inputs, the original controller and actual processes within each phase, and remove repeated source-plan reconstruction. Overall primitive and recovery deadlines remain unchanged.
+
+- Connect initial RustFS, Redis and five-bucket orchestration to existing native entry points and supervisors, preserving source, configuration, secret-file, stage-owner and exclusive-order bindings; retain unknown writes across individual create+HEAD operations. Bind actor roots across coordinator/product worktrees and consume original early complete-member closure read-only for partial close, without fabricated trees, repeated stop or a restart predecessor.
+
+- Support explicit `build --resume --write` for reference-fixture builds: recheck the completed four-role build, both configurations, sources and tool context before continuing formal runtime registration. Share the build mutex and file protection, preserve original artifacts and failure evidence, and reject drift, partial prefixes, unknown files, concurrency and repeated resumption.
 
 - Run reference-fixture environment preparation natively in Rust, including private configuration, administrator credentials, source and secret-file postchecks, and bootstrap-last publication. Cover coordinator-root refusal, Seed/Base data mappings and scheduling, refusal to replay successful output, and raw-byte drift before publication. Remove Python Prepare, obsolete private dispatch and dedicated tests replaced by effective native coverage, while preserving shared readers used by service and successor workflows.
 
@@ -26,6 +38,8 @@
 
 - Remove obsolete Python object-storage lifecycle dispatch, private parameters and execution functions already replaced by formal Rust entry points; retire their protocol cases, tests and fixtures while preserving shared readers used by copying, service startup and history validation.
 
+- Remove obsolete Python cache lifecycle dispatch, dedicated preflight and execution functions while retaining cache registration, history binding and native I/O adapters still used by copying and services.
+
 - Clarify that database examples are topology fragments to merge into application configuration, and document timeout units, defaults and scope for primary, replica and named-source pools in both languages.
 
 - Move formal fixture `rotate-secrets` and `bootstrap-secrets` execution into Rust and remove their Python writers and private dispatch. Preserve seven-file bindings, non-overwrite behavior and failure evidence; recheck source and raw bytes before publication, report stages and safe causes, and reject failed sources in the remaining environment preparation flow.
@@ -33,6 +47,8 @@
 - Fix backend-only checks still querying the frontend Git repository during metric collection. The default scope no longer passes a frontend directory, while explicit cross-repository checks retain frontend state metrics; verify Chinese characters, spaces and renamed directories through the actual command entry.
 
 - Fix rejection of the same Windows runtime root when standard path separators differ. Runtime contracts compare canonical paths without links while retaining original configuration, artifact and source digest checks; frozen receipts are not rewritten.
+
+- Correct the product runtime root used by post-copy preparation and API handoff by cross-checking the target source against the audited bridge that exactly binds the build, preserving the v2 build schema. Product control and closure archives use the product root while evidence and locks remain under the coordinator; closure adds no dependency on opposing sources or original build files.
 
 - Remove the unused Python maintenance build producer, standalone command entry and last dedicated Cargo-event parser file. Maintenance builds continue through Rust; retain actual consumers' read-only source and artifact verification, merge duplicate tests, and preserve evidence safeguards for source and toolchain drift during builds in the native failure scenarios.
 
@@ -44,7 +60,11 @@
 
 - Unify isolated full-stack CI configuration and Worker health-port preparation in the formal Rust entry point, reusing paired-source receipts and application validation. Remove inline Python port selection and shell configuration writers, and check source ordering through actual YAML commands.
 
+- Fix source-file protection for independently published sources in post-copy stages and API handoff: fully verify the sibling execution manifest and protect the derived original fixture receipt, preserving ordinary file boundaries, mixed-binding rejection and no-replay failure protections.
+
 - Add complete G/P provenance verification and actual observation to fresh-target execution bindings for independently published sources, distinguishing the current backend, original generated sources and published sources. Delegate Python execution-root selection to the same Rust readonly authority, rejecting mixed bindings and drift without rewriting original receipts.
+
+- Execute reference-dataset bulk post writes in Rust through the bound MySQL CLI, independently checking input, continuous IDs, per-batch transactions and source drift. Failures publish only safe diagnostic digests and preserve possible-write evidence without automatic replay; remove the old Python post writer and dedicated tests.
 
 - Remove reviewed redundant test assertions for empty-repository backend scanning, policy-task membership and strict-migration constants. Retain safeguards for real Git inventories, backend language accounting, exact policy vectors, strict task-graph arguments and effective test entry points.
 

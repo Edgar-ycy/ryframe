@@ -31,7 +31,7 @@ from devex_clone_target_evidence import evidence
 from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
 from full_stack_process import process_identity, read_process
-from full_stack_runtime import verify_runtime, register_runtime, worker_ready_url
+from full_stack_runtime import verify_runtime, worker_ready_url
 from process_sockets import verify_listener
 from restore_build import verify_build_artifacts
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
@@ -209,39 +209,6 @@ class Context:
                 raise ValueError("API runtime 使用其他产物")
         verify_listener(identity["pid"], self.selected["api_url"])
 
-    def prepare(self):
-        self.before_api()
-        maintenance = self.bindings()
-        if self.runtime.exists():
-            exact_directory(self.runtime)
-            if {p.name for p in self.runtime.iterdir()} - {"binaries.json", "runtime.json", "handoff.json"}:
-                raise ValueError("已有运行历史不能重新准备或覆盖")
-        else:
-            self.runtime.mkdir()
-        binaries = {"ryframe": self.build["artifacts"]["api"]["executable"],
-                    "ryframe-worker": self.build["artifacts"]["worker"]["executable"],
-                    "ryframe-reset": maintenance["artifacts"]["reset"]["executable"],
-                    "ryframe-migrate": maintenance["artifacts"]["migrate"]["executable"]}
-        filename = self.runtime / "binaries.json"
-        if filename.exists():
-            if read_json(filename) != binaries:
-                raise ValueError("准备中的 runtime 产物不同，拒绝覆盖")
-        else:
-            write_json(filename, binaries)
-        with self.environments.use("target"):
-            register_runtime(self.backend, self.runtime, source_config_dir=application_config_directory(self.backend, self.target))
-        handoff = {"registration": self.request_binding, "runtime": binding(self.runtime / "runtime.json"),
-                   "binaries": binding(filename), "api_url": self.selected["api_url"], "worker_started": False}
-        filename = self.runtime / "handoff.json"
-        if filename.exists():
-            if read_json(filename) != handoff:
-                raise ValueError("准备中的 runtime 交接不同，拒绝覆盖")
-        else:
-            write_json(filename, handoff)
-        self.bindings()
-        self.target_guard(api=False)
-        return {"status": "post_copy_api_prepared", "handoff": binding(filename), "worker_started": False,
-                "restore_qualified": False}
 
     def business_binding(self):
         reference = read_json(bound_file(self.backend, self.request["reference_plan"]))

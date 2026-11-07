@@ -207,7 +207,6 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                     ("restore_reference.py", [*tool_args,"--stdin"], json.dumps({"format_version":1,
                         "kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":str(ROOT),
                         "format_version":1,"operation":"check-existing","plan":str(evidence),"side":"source","write":False}})),
-                    ("restore_reference_post_batch.py", [*tool_args,"--backend-dir",str(ROOT),"--plan",str(evidence),"--input",str(evidence)], ""),
                     ("reference_fixture_successor.py", [], envelope({"format_version":1,
                         "kind":"ryframe-reference-fixture-control","domain":"successor","operation":"relationship",
                         "backend_dir":str(ROOT),"write":True,"source_result":str(evidence),
@@ -237,10 +236,6 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                             self.assertEqual(result.returncode, 1)
                             self.assertEqual(json.loads(result.stdout), {"ok": False, "stage": "bindings"})
                             self.assertEqual(diagnostic, "")
-                        elif script == "restore_reference_post_batch.py":
-                            self.assertEqual(result.returncode, 2 if binding is None else 1)
-                            self.assertIn("the following arguments are required: --native-tool"
-                                if binding is None else "ValueError: " + digest_error, diagnostic)
                         elif script == "reference_fixture_successor.py":
                             self.assertEqual(result.returncode, 2 if binding is None else 1)
                             self.assertEqual(diagnostic,

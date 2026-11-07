@@ -357,7 +357,10 @@ pub(crate) fn successor(original: &Value, tools: &Value) -> Result<Value> {
 }
 
 pub(crate) fn tools_hash(process: &Value) -> Result<String> {
-    if process["format_version"] == 2 {
+    if process["format_version"] == 3 {
+        super::windows_tool::validate(&process["tool"])?;
+        digest::plan_hash(&process["tool"])
+    } else if process["format_version"] == 2 {
         digest::plan_hash(&json!({"wsl":process["wsl"],"native_tool":process["native_tool"]}))
     } else {
         digest::plan_hash(&json!({"wsl":process["wsl"],"python":process["python"]}))

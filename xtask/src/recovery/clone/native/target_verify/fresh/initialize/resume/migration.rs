@@ -29,6 +29,7 @@ pub(super) fn execute<T: Transport>(w: &Window<'_, T>, a: &mut Attempt) -> Resul
                 resume: &a.intent,
                 started: &a.started,
                 generation: &restart,
+                current_generation: &current,
                 before: &before["redis"],
             },
             &mut a.session["active_operation"],
@@ -81,7 +82,7 @@ fn begin<T: Transport>(
         return Err("迁移后继使用了不同夹具服务代次".into());
     }
     claims::unchanged(w, &trusted)?;
-    let before = preimage(w, successor || restart.is_null())?;
+    let before = preimage(w, &current, successor || restart.is_null())?;
     if successor && before != a.state["expected_resources"] {
         return Err("迁移后继资源前像不同于首次已确认状态".into());
     }
@@ -118,13 +119,13 @@ fn remaining<T: Transport>(
     }
     Ok(())
 }
-fn preimage<T: Transport>(w: &Window<'_, T>, markers: bool) -> Result<Value> {
+fn preimage<T: Transport>(w: &Window<'_, T>, current: &Value, markers: bool) -> Result<Value> {
     let databases = document::array(&w.inputs.request["target"]["databases"], "四目标")?
         .iter()
         .map(|db| operations::database(w, db, false))
         .collect::<Result<Vec<_>>>()?;
     Ok(
-        json!({"databases":databases,"objects":w.objects(true)?,"redis":w.redis_state(markers,markers)?}),
+        json!({"databases":databases,"objects":w.objects(true)?,"redis":w.redis_state(current,markers,markers)?}),
     )
 }
 fn refresh<T: Transport>(w: &Window<'_, T>, trusted: &mut Value, current: &Value) -> Result<()> {

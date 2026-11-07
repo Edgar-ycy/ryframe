@@ -20,7 +20,7 @@ pub(super) fn inspect(
 ) -> Result<Value> {
     let attempts = state::attempts(saved)?;
     let current = model("active-read", json!({"attempts":attempts}))?["current"].clone();
-    inspect_current(backend, run, saved, descriptor, &current)
+    inspect_current(backend, run, saved, descriptor, &current, false)
 }
 
 // 明确 attempt 只能由已核对原 RunLock 与当前账本的正式控制器提供。
@@ -37,17 +37,19 @@ pub(in crate::recovery::source::evidence) fn source_rebind(
                 controller.saved(),
                 descriptor,
                 &json!(controller.number()),
+                false,
             ),
         )
     })
 }
 
-fn inspect_current(
+pub(super) fn inspect_current(
     backend: &Path,
     run: &Path,
     saved: &Value,
     descriptor: &Value,
     current: &Value,
+    cache_recovery: bool,
 ) -> Result<Value> {
     let attempts = state::attempts(saved)?;
     let archive = prelaunch::closed(backend, run, attempts)?;
@@ -96,7 +98,7 @@ fn inspect_current(
         "history",
         json!({"attempts":attempts,"descriptor":descriptor,"current":current,
         "archive":selected_archive,"segment":selected_segment,"pending":pending,
-        "backend_available":true,"cache_recovery":false,"generation_output_exists":exists}),
+        "backend_available":true,"cache_recovery":cache_recovery,"generation_output_exists":exists}),
     )?;
     let mut proofs = Vec::new();
     let context = History {

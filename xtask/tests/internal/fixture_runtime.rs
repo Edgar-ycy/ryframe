@@ -124,6 +124,43 @@ fn parses_all_runtime_operations_into_three_typed_shapes() {
 }
 
 #[test]
+fn explicit_resume_only_accepts_existing_build_output_with_write_and_no_duplicate_flag() {
+    let fixture = Fixture::new();
+    let mut arguments = fixture.arguments("build");
+    arguments.extend(strings(&["--resume", "--write"]));
+    let command = parse_runtime(arguments.clone()).unwrap();
+    assert!(matches!(command, FixtureRuntimeCommand::ResumeBuild(_)));
+    assert_eq!(command.operation(), "build");
+    assert!(command.writes());
+    let mut duplicate = arguments.clone();
+    duplicate.push("--resume".into());
+    assert!(parse_runtime(duplicate).is_err());
+    let mut missing_write = arguments.clone();
+    missing_write.pop();
+    assert!(parse_runtime(missing_write).is_err());
+    let mut missing_directory = arguments;
+    missing_directory[8] = text(&fixture.directory.join("missing"));
+    assert!(parse_runtime(missing_directory).is_err());
+    for operation in [
+        "verify",
+        "start",
+        "stop",
+        "status",
+        "bind",
+        "browser",
+        "browser-verify",
+        "browser-close",
+    ] {
+        let mut wrong_operation = fixture.arguments(operation);
+        wrong_operation.push("--resume".into());
+        assert!(parse_runtime(wrong_operation).is_err(), "{operation}");
+    }
+    let mut ordinary = fixture.arguments("build");
+    ordinary.push("--write".into());
+    assert!(parse_runtime(ordinary).is_err());
+}
+
+#[test]
 fn parses_bind_with_new_exactly_named_binding() {
     let fixture = Fixture::new();
     let binding = fixture.runtime.join("browser-binding-r25-business.json");

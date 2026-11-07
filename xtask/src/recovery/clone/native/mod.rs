@@ -63,6 +63,9 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
             maintenance::verify_summary(&receipt)
         }
         CloneCommand::Storage(_) => resources::run(command, backend)?,
+        CloneCommand::Cache(options) => cache::run(backend, options)?,
+        CloneCommand::Runtime(options) => cache::handoff::run(backend, options)?,
+        CloneCommand::PostCopy(options) => post_process::entry::run(backend, options)?,
         _ => return Err("clone 原生模块不处理该命令".into()),
     };
     println!("{}", serde_json::to_string(&value)?);

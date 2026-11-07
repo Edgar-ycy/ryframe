@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub(crate) const FIXTURE_RUNTIME_USAGE: &str = "用法：cargo xtask check recovery fixture runtime <build|verify|start|stop|status> --environment <绝对 bootstrap.json> --output <绝对运行目录> [--write]\n  cargo xtask check recovery fixture runtime bind --environment <绝对 bootstrap.json> --output <绝对运行目录> --browser-binding <绝对新文件> --run-id <标识> --server <dev|preview> --write\n  cargo xtask check recovery fixture runtime <browser|browser-verify|browser-close> --environment <绝对 bootstrap.json> --output <绝对运行目录> --browser-binding <绝对绑定文件> [--write]";
+pub(crate) const FIXTURE_RUNTIME_USAGE: &str = "用法：cargo xtask check recovery fixture runtime <build|verify|start|stop|status> --environment <绝对 bootstrap.json> --output <绝对运行目录> [--write]\n  cargo xtask check recovery fixture runtime build --environment <绝对 bootstrap.json> --output <已完成四角色构建的绝对运行目录> --resume --write\n  cargo xtask check recovery fixture runtime bind --environment <绝对 bootstrap.json> --output <绝对运行目录> --browser-binding <绝对新文件> --run-id <标识> --server <dev|preview> --write\n  cargo xtask check recovery fixture runtime <browser|browser-verify|browser-close> --environment <绝对 bootstrap.json> --output <绝对运行目录> --browser-binding <绝对绑定文件> [--write]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FixtureServer {
@@ -34,6 +34,7 @@ pub(crate) struct FixtureBrowserBinding {
 pub(crate) enum FixtureRuntimeCommand {
     Help,
     Build(FixtureRuntimePaths),
+    ResumeBuild(FixtureRuntimePaths),
     Verify(FixtureRuntimePaths),
     Start(FixtureRuntimePaths),
     Stop(FixtureRuntimePaths),
@@ -52,7 +53,7 @@ impl FixtureRuntimeCommand {
     pub(crate) const fn operation(&self) -> &'static str {
         match self {
             Self::Help => "help",
-            Self::Build(_) => "build",
+            Self::Build(_) | Self::ResumeBuild(_) => "build",
             Self::Verify(_) => "verify",
             Self::Start(_) => "start",
             Self::Stop(_) => "stop",
@@ -67,7 +68,12 @@ impl FixtureRuntimeCommand {
     pub(crate) const fn writes(&self) -> bool {
         matches!(
             self,
-            Self::Build(_) | Self::Start(_) | Self::Stop(_) | Self::Bind { .. } | Self::Browser(_)
+            Self::Build(_)
+                | Self::ResumeBuild(_)
+                | Self::Start(_)
+                | Self::Stop(_)
+                | Self::Bind { .. }
+                | Self::Browser(_)
         )
     }
 
@@ -75,6 +81,7 @@ impl FixtureRuntimeCommand {
         match self {
             Self::Help => None,
             Self::Build(paths)
+            | Self::ResumeBuild(paths)
             | Self::Verify(paths)
             | Self::Start(paths)
             | Self::Stop(paths)

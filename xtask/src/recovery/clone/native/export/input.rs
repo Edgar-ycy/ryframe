@@ -56,6 +56,41 @@ pub(crate) struct Context {
 }
 
 impl Context {
+    pub(crate) fn verify_copy_export(&self, descriptor: &Value) -> Result<Value> {
+        super::verify::binding(self, descriptor)
+    }
+    /// 复制后只读观察复用同一来源模型；不授予重新导出或来源登记资格。
+    pub(crate) fn for_copy(backend: &Path, run: &Path, output: &Path) -> Result<Self> {
+        let loaded = manifest::load(backend, &run.join("manifest.json"))?;
+        let request_path = manifest::bound_file(
+            backend,
+            &loaded.value["source_request"],
+            "复制来源请求",
+            true,
+        )?;
+        let request = json_io::read(&request_path)?;
+        validate_request(backend, &request)?;
+        let environment = load_environment(backend, &loaded.value["source_environment"])?;
+        let execution_backend = execution_backend(backend, &request)?;
+        let object_identity = super::super::s3::app_configuration::public_configuration(
+            backend,
+            &request["source"]["s3"]["configuration"],
+        )?;
+        Ok(Self {
+            backend: backend.to_owned(),
+            run_dir: run.to_owned(),
+            output_dir: output.to_owned(),
+            mode: "copy-observation".into(),
+            attempt: 0,
+            manifest: loaded.value,
+            request,
+            object_identity,
+            request_path,
+            environment,
+            execution_backend,
+        })
+    }
+
     pub(crate) fn load(backend: &Path, request: &StageRequest<'_>) -> Result<Self> {
         if request.stage != "export" {
             return Err(format!("源导出阶段不匹配：{}", request.stage).into());

@@ -88,10 +88,25 @@ pub(super) fn binaries(backend: &Path, value: &Value) -> Result<Value> {
     let storage = json!({"path":rustfs["identity"]["executable"],"sha256":rustfs["sha256"]});
     let review = &binding["review"];
     check(
-        storage == review["tools"]["rustfs"] && redis["wsl"] == review["tools"]["wsl"],
+        storage == review["tools"]["rustfs"],
         "fresh 目标存储二进制不属于审阅版本",
     )?;
-    binaries.extend([storage, redis["wsl"].clone()]);
+    binaries.push(storage);
+    if redis["platform"] == "windows" {
+        check(
+            redis["tool"] == review["tools"]["redis_server"],
+            "fresh 目标 Windows Redis 工具不属于审阅版本",
+        )?;
+        binaries.extend(super::super::cache::windows_tool::package_bindings(
+            &redis["tool"],
+        )?);
+    } else {
+        check(
+            redis["wsl"] == review["tools"]["wsl"],
+            "fresh 目标存储二进制不属于审阅版本",
+        )?;
+        binaries.push(redis["wsl"].clone());
+    }
     bound(backend, &value["maintenance_build"])?;
     Ok(json!({"bindings":binaries}))
 }

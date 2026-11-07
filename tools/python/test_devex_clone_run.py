@@ -194,64 +194,6 @@ class RunTests(unittest.TestCase):
                 protect.assert_not_called()
                 continuation.assert_not_called()
 
-    def test_cache_action_uses_registered_controller_and_fixed_request(self):
-        request = self.local / "cache-input.json"
-        def action(backend, directory, value, mode, number, supplied):
-            self.assertEqual((backend, directory, value, mode, number, supplied),
-                             (self.backend, self.directory, self.value, "restart", 1, request))
-            self.assertEqual(state.load_state(directory)["attempts"][-1]["stage"], "cache-target")
-            self.assertTrue((directory / "controller-0001.json").is_file())
-            self.assertTrue((directory / "run.lock/owner.json").is_file())
-            return {"status": "cache_ready"}
-        with patch("devex_clone_cache.execute_cache", side_effect=action):
-            result = run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=request)
-        self.assertEqual(result["attempt"], 1)
-        self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "passed")
-
-    def test_cache_cleanup_uses_saved_manifest_when_product_or_private_environment_changed(self):
-        Path(self.value["target_environment"]["path"]).write_text('{}', encoding="utf-8")
-        with patch("source_fingerprints.artifact_sources", side_effect=ValueError("changed build")), \
-                patch("devex_clone_cache.execute_cache", return_value={"status": "cache_stopped"}) as stop:
-            result = run.execute(self.backend, self.directory, "cache-target", "stop")
-        self.assertEqual(result["result"]["status"], "cache_stopped")
-        stop.assert_called_once_with(self.backend, self.directory, self.value, "stop", 1, None)
-
-    def test_successor_preflight_is_required_before_bypassing_product_bridge(self):
-        proof = {"successor": "same"}
-        with patch("devex_clone_cache.preflight_successor", return_value=proof) as preflight, \
-                patch("source_fingerprints.artifact_sources", side_effect=AssertionError("old product bridge")), \
-                patch("devex_clone_cache.execute_cache", return_value={"status": "cache_ready"}):
-            run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=self.local / "successor.json")
-        self.assertEqual(preflight.call_count, 2)
-
-    def test_rejected_successor_does_not_create_attempt_or_locks(self):
-        before = {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
-        with patch("devex_clone_cache.preflight_successor", side_effect=ValueError("different successor")), \
-                patch("devex_clone_cache.execute_cache") as execute, self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=self.local / "successor.json")
-        execute.assert_not_called()
-        self.assertEqual(before, {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()})
-        self.assertFalse((self.directory / "run.lock").exists())
-
-    def test_cache_cli_status_is_readonly_and_mutations_require_explicit_write(self):
-        import devex_clone_run_cli as cli
-
-        args = SimpleNamespace(command="cache", run_dir=self.directory, operation="status", request=None, write=False)
-        before = state.binding(self.directory / "state.json")
-        with patch("devex_clone_cache.cache_status", return_value={"status": "cache_unregistered"}) as status, \
-                patch.object(cli, "execute") as execute:
-            self.assertEqual(cli.dispatch(args, self.backend)["status"], "cache_unregistered")
-            status.assert_called_once_with(self.backend, self.directory)
-            for operation in ("restart", "stop", "recover", "reconcile", "resume"):
-                args.operation = operation
-                with self.subTest(operation=operation), self.assertRaises(ValueError):
-                    cli.dispatch(args, self.backend)
-            args.operation, args.write, args.request = "resume", True, self.local / "request.json"
-            with self.assertRaises(ValueError):
-                cli.dispatch(args, self.backend)
-            execute.assert_not_called()
-        self.assertEqual(state.binding(self.directory / "state.json"), before)
-
     def test_runtime_environment_and_identity_are_delegated_without_build(self):
         value = dict(self.value)
         request = self.file("runtime-request", {"source": {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}})

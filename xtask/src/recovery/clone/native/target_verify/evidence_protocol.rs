@@ -334,6 +334,9 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
         "process-argv" => &["receipt", "identity"][..],
         "storage-generation" => &["expected", "actual", "runtime", "cache_runtime"][..],
         "storage-layout" => &["request", "storage", "runtime", "cache_runtime"][..],
+        "fixture-storage-selection" => &["request", "storage_run"][..],
+        "fixture-storage-layout" => &["request", "storage_run", "selection"][..],
+        "redis-initialized-state" => &["request", "storage_run", "redis", "cache_runtime"][..],
         "history" | "reset-completed" => &[][..],
         "initial-inventory" => &["receipt", "resumed"][..],
         "inventory-history" => &["initial", "request", "resumed", "inventory_directory"][..],
@@ -369,7 +372,12 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Result<Value> {
     match operation {
-        "process-argv" | "storage-generation" | "storage-layout" => {
+        "process-argv"
+        | "storage-generation"
+        | "storage-layout"
+        | "fixture-storage-selection"
+        | "fixture-storage-layout"
+        | "redis-initialized-state" => {
             super::storage::protocol::execute(backend, target, operation, value)
         }
         "inventory-history" => inventory_history::verify(backend, target, value),

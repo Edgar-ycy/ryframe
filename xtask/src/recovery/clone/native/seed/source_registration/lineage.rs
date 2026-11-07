@@ -16,7 +16,7 @@ mod identities;
 #[path = "lineage/producer.rs"]
 mod producer;
 #[path = "lineage/runtime.rs"]
-mod runtime;
+pub(crate) mod runtime;
 #[cfg(test)]
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/source_registration/lineage.rs"]
 mod tests;

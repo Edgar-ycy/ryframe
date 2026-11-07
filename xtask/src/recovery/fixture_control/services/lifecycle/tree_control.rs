@@ -18,7 +18,11 @@ use std::{
 #[path = "tree_control/windows.rs"]
 mod windows;
 
-pub(super) fn stop(backend: &Path, tree: &Value, crash: bool) -> Result<Value> {
+pub(in crate::recovery::fixture_control::services) fn stop(
+    backend: &Path,
+    tree: &Value,
+    crash: bool,
+) -> Result<Value> {
     let root = Path::new(text(tree, "runtime_directory")?);
     let original = common::binding(&root.join("rustfs-tree.json"))?;
     // 复用正式只读树解析，检查角色、scope、操作 ID 与所有成员身份。

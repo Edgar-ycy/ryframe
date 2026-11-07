@@ -1,9 +1,9 @@
 //! 一次缓存尝试与独立执行结果；已有尝试永不再次授权 EXEC。
-use super::super::super::cache;
+use super::super::super::{cache, running};
 use super::{cache_context, documents, receipts};
 use crate::{
     Result,
-    recovery::clone::native::{digest, resources::common},
+    recovery::clone::native::{digest, resources::common, source},
 };
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -75,6 +75,37 @@ impl Frame {
         common::write_new(&self.directory.join(ATTEMPT), &value)?;
         self.unchanged()?;
         common::binding(&self.directory.join(ATTEMPT))
+    }
+    pub(super) fn windows_redis(&self, attempt: &Value) -> Result<Value> {
+        let record = common::read_bound(&self.backend, attempt, "当前缓存尝试")?;
+        let recovery = &record["recovery_intent"];
+        let historical = !recovery.is_null();
+        if historical {
+            let intent = common::read_bound(&self.backend, recovery, "缓存恢复授权")?;
+            let successor = source::current(&self.backend)?;
+            if intent["successor"] != successor || successor["snapshot"]["clean"] != true {
+                return Err("缓存恢复工具不同于已登记的干净 successor".into());
+            }
+        }
+        let facts = running::load(
+            &self.backend,
+            &self.bindings["source_generation"],
+            true,
+            historical,
+        )?;
+        if facts["source"]["seed_target"] != self.request {
+            return Err("Windows 缓存清理的 START 与原 seed 请求不同".into());
+        }
+        let redis = &facts["running"]["image"]["storage"]["redis"];
+        let mut allowed = self.request["storage"]["redis"].clone();
+        for key in ["pid", "started", "run_id"] {
+            allowed[key] = redis[key].clone();
+        }
+        if redis["platform"] != "windows" || *redis != allowed {
+            return Err("Windows 缓存清理的 START 改变了原端口、配置或工具绑定".into());
+        }
+        self.unchanged()?;
+        Ok(redis.clone())
     }
     pub(super) fn finish(&self, attempt: &Value, outcome: &Value) -> Result<Value> {
         self.unchanged()?;

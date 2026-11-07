@@ -26,6 +26,7 @@ const KEYS: &[(&str, &str, &str)] = &[
 ];
 const SIDES: &[&str] = &["seed", "base", "candidate"];
 const FILE_TOOLS: &[&str] = &["mysql", "mysqldump", "rustfs"];
+pub(super) const LINUX_REDIS_TOOLS: &[&str] = &["wsl", "native_tool", "redis_python"];
 
 pub(super) fn run(command: &FixtureReviewCommand, backend: &Path) -> Result<()> {
     let FixtureReviewCommand::Renew(options) = command else {
@@ -213,6 +214,9 @@ fn validate_tools(tools: &Map<String, Value>) -> Result<()> {
         .get("redis_server")
         .and_then(Value::as_object)
         .ok_or("审阅计划 Redis 工具定义无效")?;
+    if redis.contains_key("platform") {
+        return validate_windows_tools(tools);
+    }
     if ["distribution", "resolved_path", "sha256"]
         .iter()
         .any(|field| redis.get(*field).and_then(Value::as_str).is_none())
@@ -220,6 +224,16 @@ fn validate_tools(tools: &Map<String, Value>) -> Result<()> {
         return Err("审阅计划 Redis 工具定义无效".into());
     }
     Ok(())
+}
+
+pub(super) fn validate_windows_tools(tools: &Map<String, Value>) -> Result<()> {
+    if LINUX_REDIS_TOOLS.iter().any(|key| tools.contains_key(*key)) {
+        return Err("Windows Redis 审阅不能混用 WSL 或 Linux Redis 工具绑定".into());
+    }
+    let redis = tools
+        .get("redis_server")
+        .ok_or("审阅计划缺少 Windows Redis 工具")?;
+    crate::recovery::clone::native::cache::windows_tool::validate(redis)
 }
 
 fn validate_services(services: &Map<String, Value>) -> Result<()> {

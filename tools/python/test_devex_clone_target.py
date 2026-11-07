@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_target_binding as binding
@@ -113,28 +113,58 @@ class StorageTransitionTests(unittest.TestCase):
             with self.subTest(files=files, memory=memory), self.assertRaises(ValueError):
                 runtime_evidence.fixture_restart_generation(files, memory)
 
-    def test_fixture_cache_tool_succession_reads_only_ledger_signed_request(self):
-        from devex_clone_target_resources import fixture_redis_tool_wsl
-
+    def test_fixture_storage_identity_consumes_bound_native_layout(self):
         temporary = WorkspaceDirectory(
-            dir=Path(__file__).resolve().parents[2] / ".local-tests/tmp", prefix="redis-wsl-")
+            dir=Path(__file__).resolve().parents[2] / ".local-tests/tmp", prefix="fixture-layout-")
         self.addCleanup(temporary.cleanup)
         backend = Path(temporary.name).resolve()
         run = backend / ".local-tests/run"
-        request_path = run / "lifecycle-0011/redis/request.json"
-        request_path.parent.mkdir(parents=True)
-        wsl = {"path": str(backend / ".local-tests/wsl.exe"), "sha256": "2" * 64}
-        write_json(request_path, {"wsl": wsl})
-        generation_path = run / "lifecycle-0011/restart.json"
-        write_json(generation_path, {"redis": {"request": receipt_binding(request_path)}})
-        result_path = run / "results/0011.json"
-        result_path.parent.mkdir(parents=True)
-        write_json(result_path, {"generation": receipt_binding(generation_path)})
-        cache = {"redis": {"wsl": wsl}, "generation": receipt_binding(result_path)}
-        self.assertEqual(fixture_redis_tool_wsl(backend, cache), wsl)
-        request_path.write_text("{}", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            fixture_redis_tool_wsl(backend, cache)
+        run.mkdir(parents=True)
+        write_json(run / "manifest.json", {"kind": "reference-fixture-service-run"})
+        write_json(run / "state.json", {"attempts": []})
+        request = {"storage": {"rustfs": {"pid": 101}, "redis": {"pid": 102}}}
+        request_path = run / "original-request.json"
+        write_json(request_path, request)
+        descriptor = receipt_binding(request_path)
+        resources = Resources.__new__(Resources)
+        resources.backend, resources.output, resources.storage_run = backend, run, run
+        resources.request, resources.request_descriptor = request, descriptor
+        resources.storage_runtime_binding = resources.cache_runtime_binding = None
+        projected = {"storage": {"rustfs": {"pid": 201}, "redis": {"pid": 202}},
+                     "runtime": {"storage": {"pid": 201}}, "cache_runtime": {"redis": {"pid": 202}},
+                     "manifest": receipt_binding(run / "manifest.json"),
+                     "state": receipt_binding(run / "state.json")}
+        observed = {"status": "fixture_storage_layout_verified", "remote_writes": 0}
+        namespace = {"keys": ["ryframe:{seed}:.ryframe-owner"], "owner": "seed", "sentinel": "fixture"}
+        selection_call = call("fixture-storage-selection", backend, run,
+                              request=descriptor, storage_run=str(run))
+        layout_call = call("fixture-storage-layout", backend, run,
+                           request=descriptor, storage_run=str(run), selection=projected)
+        namespace_call = call("redis-initialized-state", backend, run,
+                              request=descriptor, storage_run=str(run),
+                              redis=projected["storage"]["redis"], cache_runtime=projected["cache_runtime"])
+        with patch.object(resources, "checkpoint") as guard, \
+                patch("devex_clone_target_resources.evidence", side_effect=[projected, observed, namespace]) as native:
+            self.assertEqual(resources.storage_identity(), projected["storage"])
+            self.assertEqual(resources.redis_state(), namespace)
+            self.assertEqual(native.call_args_list, [selection_call, layout_call, namespace_call])
+            self.assertEqual(guard.call_count, 4)
+            self.assertEqual(resources.storage_runtime_binding, projected["runtime"])
+            self.assertEqual(resources.cache_runtime_binding, projected["cache_runtime"])
+            native.reset_mock()
+            native.side_effect = [projected, ValueError("夹具存储布局观察期间原请求或服务登记变化")]
+            with self.assertRaisesRegex(ValueError, "原请求或服务登记变化"):
+                resources.storage_identity()
+            with self.assertRaisesRegex(ValueError, "目标 Redis 读取前必须核对实际存储代次"):
+                resources.redis_state()
+            self.assertEqual(native.call_args_list, [selection_call, layout_call])
+            native.reset_mock()
+            native.side_effect = [{"storage": projected["storage"], "runtime": projected["runtime"]}]
+            with self.assertRaisesRegex(ValueError, "原生夹具存储选择响应无效"):
+                resources.storage_identity()
+            self.assertEqual(native.call_args_list, [selection_call])
+            self.assertEqual(resources.storage_runtime_binding, projected["runtime"])
+            self.assertEqual(resources.cache_runtime_binding, projected["cache_runtime"])
 
     def test_started_generation_rejects_jointly_forged_fixture_runtime(self):
         expected = {"configuration": "fixed", "storage": {"rustfs": "old-files",

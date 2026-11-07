@@ -2,6 +2,9 @@ use super::*;
 use crate::recovery::fixture_control::source_pair::execution::tests::Fixture;
 use std::{fs, path::PathBuf};
 
+#[path = "build_resume_tests.rs"]
+mod resume_tests;
+
 fn bind_unlaunchable_python(root: &std::path::Path) -> PathBuf {
     let python = root.join(".local-tests/not-an-interpreter.exe");
     fs::write(&python, "synthetic executable; must never be launched").unwrap();
@@ -251,7 +254,10 @@ impl Prepared {
             ("rustc", Some("-vV")) => Ok("rustc synthetic\nhost: x86_64-pc-windows-msvc\n".into()),
             ("cargo", Some("build")) => {
                 let name = &args[args.iter().position(|s| s == "--bin").unwrap() + 1];
-                let executable = self.context.output.join(format!("{name}.exe"));
+                let executable = self
+                    .context
+                    .output
+                    .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
                 fs::write(&executable, name)?;
                 Ok(json!({"reason":"compiler-artifact",
                     "manifest_path":self.context.root.join("crates/ryframe/Cargo.toml"),
@@ -365,7 +371,10 @@ fn assert_artifacts_survive_cache_reuse_and_reject_tampering(
             Some(prepared.output.join("artifacts").as_path())
         );
         fs::write(
-            prepared.context.output.join(format!("{name}.exe")),
+            prepared
+                .context
+                .output
+                .join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
             "later Cargo build",
         )
         .unwrap();

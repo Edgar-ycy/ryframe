@@ -12,6 +12,16 @@ use std::path::Path;
 #[path = "source/relationship.rs"]
 mod relationship;
 
+/// 无工具换代的正式已发布来源仍共用六文件、历史和初始化证明。
+pub(crate) fn published(backend: &Path, descriptor: &Value) -> Result<Value> {
+    let result = common::read_bound(backend, descriptor, "已发布源结果")?;
+    let registration = common::read_bound(backend, &result["registration"], "已发布源登记")?;
+    let manifest = common::read_bound(backend, &registration["run_manifest"], "已发布源原清单")?;
+    let initialized = common::bound_file(backend, &manifest["initialized"], "已发布源初始化")?;
+    let (_, target) = target_verify::published::evidence_history(backend, &initialized, None)?;
+    registered(backend, descriptor, &target, &target["review"])
+}
+
 pub(crate) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
     let relation = relationship::load(backend, descriptor)?;
     let historical = canonical(backend, &relation["predecessor_request"])?;

@@ -84,8 +84,10 @@ fn step<T: Transport + Sync>(
             )?;
         }
         "cache-cleanup" => {
-            let (observation, comparisons) = resources.cache_observation(&s.node["subjects"])?;
-            s.cleanup = resources.cleanup(&observation, &comparisons)?;
+            let redis = &session.facts["running"]["image"]["storage"]["redis"];
+            let (observation, comparisons) =
+                resources.cache_observation(redis, &s.node["subjects"])?;
+            s.cleanup = resources.cleanup(redis, &observation, &comparisons)?;
         }
         "capture-after" => {
             (s.after, s.after_image) = session.capture("after")?;

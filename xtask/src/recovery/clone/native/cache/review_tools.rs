@@ -21,10 +21,24 @@ pub(super) fn local_tools(review: &Value) -> Result<Value> {
 }
 
 pub(in crate::recovery) fn observe(backend: &Path, review: &Value) -> Result<Value> {
-    if review["ready_for_execution"].as_bool().is_none() {
-        return Err("夹具预检状态无效".into());
+    let ready = review["ready_for_execution"]
+        .as_bool()
+        .ok_or("夹具预检状态无效")?;
+    let windows_review = review["tools"]["redis_server"]["platform"] == "windows";
+    let windows = super::windows_tool::observe(backend)?;
+    if ready && windows.is_some() != windows_review {
+        return Err(if windows_review {
+            "已就绪 Windows Redis 审阅需要显式 verification.windows_redis 工具配置"
+        } else {
+            "已就绪 Linux Redis 审阅不能改用 Windows Redis；请新建隔离场景"
+        }
+        .into());
     }
     let mut result = local_tools(review)?;
+    if let Some(redis) = windows {
+        result["redis_server"] = redis;
+        return Ok(result);
+    }
     let path = native_tool::wsl_program()?;
     let wsl = json!({"path":path,"sha256":digest::file(&path)?.sha256});
     let tool = NativeTool::capture(backend)?;

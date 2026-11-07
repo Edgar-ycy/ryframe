@@ -51,7 +51,7 @@ fn ordinary_transport_cleanup_rejects_without_resource_calls_or_attempt_publicat
     };
     // 仅验证写端口拒绝，不调用父链只读 Redis 观察，也不伪造有效 START。
     let error = resources
-        .cleanup(&observation, &data["comparisons"])
+        .cleanup(&Value::Null, &observation, &data["comparisons"])
         .unwrap_err();
     assert!(error.to_string().contains("当前资源端口未授权来源缓存清理"));
     assert!(transport.0.borrow().is_empty());
@@ -80,6 +80,41 @@ fn reply(plan: &cache_io::Comparison, parts: &[&str]) -> Value {
         "HLEN" => json!(1),
         "HGET" => json!(values[4]),
         _ => panic!("unexpected command kind"),
+    }
+}
+
+#[test]
+fn peer_drift_before_or_after_exec_preserves_distinct_write_outcomes() {
+    let plan = plan();
+    for (failure_check, status, exec_count) in
+        [(1, "pre_exec_io_failed", 0), (2, "unknown_exec_result", 1)]
+    {
+        let checks = std::cell::Cell::new(0);
+        let mut sent = 0;
+        let result = cache_transaction::execute_on(
+            &plan,
+            &mut sent,
+            |sent, parts| {
+                if parts[0] == "EXEC" {
+                    *sent += 1;
+                    Ok(json!([33 - plan.expired.len()]))
+                } else {
+                    Ok(reply(&plan, parts))
+                }
+            },
+            |_| {
+                checks.set(checks.get() + 1);
+                if checks.get() == failure_check {
+                    Err("Redis peer drift".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result["status"], status);
+        assert_eq!(result["remote_write_may_have_occurred"], exec_count == 1);
+        assert_eq!(result["automatic_retry_permitted"], false);
+        assert_eq!(sent, exec_count);
     }
 }
 

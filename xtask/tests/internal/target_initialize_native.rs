@@ -40,7 +40,7 @@ fn execute(resources: &Resources<'_>, resuming: bool) -> Result<Value> {
     let mut environment = f.environment.clone();
     environment.insert("TEMP".into(), f.local.to_str().unwrap().into());
     let protected = initialize::inputs::protect(&registration, &f.request, &environment)?;
-    let observe_generation = || resources.generation();
+    let observe_generation = |_| resources.generation();
     let window = initialize::window::Window {
         registration: &registration,
         inputs: StorageInputs {

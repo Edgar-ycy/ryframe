@@ -15,6 +15,7 @@ use crate::Result;
 mod environment;
 pub(crate) mod generation;
 pub(crate) mod kernel;
+mod namespace;
 mod observer;
 pub(crate) mod protocol;
 pub(crate) mod redis_layout;

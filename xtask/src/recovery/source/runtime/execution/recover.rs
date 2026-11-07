@@ -105,7 +105,10 @@ fn intent<T: Transport>(session: &Session<'_, T>, prefix: &Prefix) -> Result<Val
         let audit = session.directory.join("recovery-audit");
         session
             .resources(&audit, &checkpoint)?
-            .cache_observation(&prefix.node["subjects"])?
+            .cache_observation(
+                &session.facts["running"]["image"]["storage"]["redis"],
+                &prefix.node["subjects"],
+            )?
             .0
     } else {
         state["observation"].clone()
@@ -145,7 +148,8 @@ fn step<T: Transport + Sync>(
             )?;
         }
         "cache-resume" => {
-            s.cleanup = resources.resume_cleanup(&s.intent)?;
+            let redis = &session.facts["running"]["image"]["storage"]["redis"];
+            s.cleanup = resources.resume_cleanup(redis, &s.intent)?;
         }
         "capture-after" => {
             (s.after, s.after_image) = session.capture("after")?;

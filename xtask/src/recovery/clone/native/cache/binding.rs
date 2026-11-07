@@ -67,6 +67,24 @@ struct BindingRuntime<'a> {
     owner: Option<&'a target_verify::guard::Generation>,
 }
 
+pub(super) fn port(
+    backend: &Path,
+    run: &Path,
+    owner: Option<&target_verify::guard::Generation>,
+    operation: &str,
+    arguments: Value,
+) -> Result<Value> {
+    session::Runtime::call(
+        &mut BindingRuntime {
+            backend,
+            run,
+            owner,
+        },
+        operation,
+        arguments,
+    )
+}
+
 impl session::Runtime for BindingRuntime<'_> {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
         match operation {
@@ -118,14 +136,15 @@ impl BindingRuntime<'_> {
             &args["request"]["process"],
             document::boolean(&args["observe_current_tools"], "观察当前工具")?,
         )?;
-        let effective = super::request::run(
-            "successor-model",
-            &json!({"request":args["request"],
+        let mut model = json!({"request":args["request"],
             "directory":self.run,"value":document::read(&self.run.join("manifest.json"))?,
-            "source_directory":source["directory"],"source_manifest":source["manifest"],"tools":observed,
-            "tool_wsl_path":canonical_tool(&observed["wsl"]["path"])?,
-            "original_wsl_path":canonical_tool(&args["request"]["process"]["wsl"]["path"])?,}),
-        )?;
+            "source_directory":source["directory"],"source_manifest":source["manifest"],"tools":observed});
+        if args["request"]["process"]["format_version"] != 3 {
+            model["tool_wsl_path"] = json!(canonical_tool(&observed["wsl"]["path"])?);
+            model["original_wsl_path"] =
+                json!(canonical_tool(&args["request"]["process"]["wsl"]["path"])?);
+        }
+        let effective = super::request::run("successor-model", &model)?;
         let private = request::successor(
             self.backend,
             self.run,

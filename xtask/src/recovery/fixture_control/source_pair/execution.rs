@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
@@ -248,6 +252,28 @@ pub(in crate::recovery) fn target_binding(
     let binding = json!({"kind":"published-business-fixture","path":root,
         "execution_source":declared["execution_source"],"fixture":publication["original"]["fixture_receipt"],"source":snapshot});
     Ok((root, binding))
+}
+
+/// 发布输入只从完整来源证明派生；不扩大普通收据的本地路径边界。
+pub(in crate::recovery) fn target_protected_inputs(
+    coordinator: &Path,
+    declared: &Value,
+) -> Result<Vec<PathBuf>> {
+    let (_, verified) = target_binding(coordinator, declared)?;
+    let mut paths = Vec::new();
+    for descriptor in [&verified["execution_source"], &verified["fixture"]] {
+        let path = PathBuf::from(
+            descriptor["path"]
+                .as_str()
+                .ok_or("发布执行辅助输入路径缺失")?,
+        );
+        validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
+        if crate::recovery::clone::native::resources::common::binding(&path)? != *descriptor {
+            return Err("发布执行辅助输入在完整核验后变化".into());
+        }
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
 pub(in crate::recovery) const PAIR_KIND: &str = "reference-fixture-execution-source-pair";

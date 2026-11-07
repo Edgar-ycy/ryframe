@@ -51,6 +51,11 @@ mod stopped;
 mod tests;
 
 pub(crate) use ready::policy::cache_transaction::cleanup as cleanup_source_cache;
+pub(crate) use running::history::cache_port::dispatch as cache_history;
+
+pub(crate) fn validate_copy_api_environment(args: &Value) -> Result<Value> {
+    environment::copy_api(args)
+}
 
 pub(crate) fn source_rebind_history(
     controller: &crate::recovery::clone::native::seed::rebind::Controller<'_>,

@@ -1,4 +1,4 @@
-"""缓存阶段的锁、资源和进程 I/O 适配；阶段判断由 __cache-process 执行。"""
+"""缓存登记、历史绑定及资源 I/O 适配；判断由 __cache-process 执行。"""
 from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,7 +7,6 @@ from devex_clone_capture import read_json
 from devex_clone_cache_native import stage_session
 from devex_clone_cache_request import environment, successor_process, validate_request
 from devex_clone_storage_request import producers_stopped
-from process_guard import process_guard
 
 STAGE = "cache-target"
 
@@ -91,12 +90,6 @@ def _invoke(backend, directory, action, **parameters):
                          lambda op, args: _port(backend, directory, op, args))
 
 
-def execute_cache(backend, directory, value, mode, number, request_file=None):
-    _invoke(backend, directory, "execution-preflight", value=value, mode=mode, number=number, request_file=request_file)
-    with process_guard(directory, STAGE + ".guard"):
-        return _invoke(backend, directory, "execute", value=value, mode=mode, number=number, request_file=request_file)
-
-
 def registration(backend, directory):
     return tuple(_invoke(backend, directory, "registration"))
 
@@ -117,10 +110,6 @@ def registered_cache_binding(backend, directory, *, owned_lock_identity=None, be
 
 def cache_status(backend, directory, *, allow_close_attempt=False):
     return _invoke(backend, directory, "status", allow_close_attempt=allow_close_attempt)
-
-
-def preflight_successor(backend, directory, value, filename=None, *, mode="restart"):
-    return _invoke(backend, directory, "preflight", filename=filename, mode=mode)
 
 
 def seed_history_proof(backend, directory, attempt, source_result, *, frozen_successor=None):

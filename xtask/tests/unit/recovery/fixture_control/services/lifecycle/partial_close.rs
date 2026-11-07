@@ -168,8 +168,25 @@ impl Runtime for PartialRuntime {
             )?;
             return Ok(json!({"state":self.cache_state}));
         }
-        if operation == "tree-read" && self.inner.fail.as_deref() == Some("tree-read") {
-            return Err(std::io::Error::other("synthetic-private-json credential-marker").into());
+        if operation == "tree-read" {
+            match self.inner.fail.as_deref() {
+                Some("tree-read") => {
+                    return Err(
+                        std::io::Error::other("synthetic-private-json credential-marker").into(),
+                    );
+                }
+                Some("tree-read-rejected") => {
+                    return super::super::super::storage::check(
+                        false,
+                        "RustFS 输入字节或内核文件身份变化",
+                    )
+                    .map(|()| Value::Null);
+                }
+                Some("tree-read-unknown") => {
+                    return Err("synthetic-private-json credential-marker".into());
+                }
+                _ => {}
+            }
         }
         if operation == "identity" {
             if self.stopped {
@@ -470,25 +487,40 @@ fn partial_close_rejects_unknown_initial_writes_and_foreign_identity_before_stop
         assert_eq!(runtime.inner.fixture.state(), before);
         assert!(!runtime.stopped);
     }
-    let mut runtime = PartialRuntime::new();
-    runtime.inner.fail = Some("tree-read".to_owned());
-    let before = fs::read(runtime.inner.fixture.run.join("state.json")).unwrap();
-    let status = runtime.execute("status").unwrap();
-    assert_eq!(status["next_operation"], "reconcile-evidence");
-    assert_eq!(
-        status["partial_close_rejection"],
-        json!({
-        "category":"LifecycleFailure",
-        "reason":"部分关闭资格核验未完成，原始证据、文件或进程身份无法安全确认",
-        "advice":"核对原始首代账本、冻结请求、控制器、启动收据与完整进程树；保留现场，不重签绑定、不重放启动，不绕过状态执行关闭"})
-    );
-    assert!(!status.to_string().contains("credential-marker"));
-    assert!(!status.to_string().contains("synthetic-private-json"));
-    assert_eq!(
-        fs::read(runtime.inner.fixture.run.join("state.json")).unwrap(),
-        before
-    );
-    assert!(!runtime.stopped);
+    for (failure, reason) in [
+        ("tree-read", "I/O kind=Other, os_code=None"),
+        ("tree-read-rejected", "RustFS 输入字节或内核文件身份变化"),
+        (
+            "tree-read-unknown",
+            "部分关闭资格核验未完成，原始证据、文件或进程身份无法安全确认",
+        ),
+    ] {
+        let mut runtime = PartialRuntime::new();
+        runtime.inner.fail = Some(failure.to_owned());
+        let before = snapshot(&runtime.inner.fixture.run);
+        let status = runtime.execute("status").unwrap();
+        assert_eq!(status["next_operation"], "reconcile-evidence");
+        assert_eq!(
+            status["partial_close_rejection"],
+            json!({
+            "category":"LifecycleFailure","reason":reason,
+            "advice":"核对原始首代账本、冻结请求、控制器、启动收据与完整进程树；保留现场，不重签绑定、不重放启动，不绕过状态执行关闭"})
+        );
+        assert!(!status.to_string().contains("credential-marker"));
+        assert!(!status.to_string().contains("synthetic-private-json"));
+        if failure == "tree-read-rejected" {
+            assert_eq!(runtime.execute("close").unwrap_err().to_string(), reason);
+        }
+        assert_eq!(snapshot(&runtime.inner.fixture.run), before);
+        assert!(!runtime.stopped);
+        assert!(
+            !runtime
+                .inner
+                .events
+                .iter()
+                .any(|event| { event.ends_with("-stop") || event.ends_with("-start") })
+        );
+    }
 }
 
 #[test]

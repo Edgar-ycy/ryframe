@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 pub(crate) fn validate(request: &Value, output: &Path) -> Result<Value> {
+    if request["format_version"] == 3 {
+        return windows_failure(request, output, false);
+    }
     model::shape(request)?;
     model::plain(output)?;
     let bindings = files(output)?;
@@ -39,6 +42,20 @@ pub(crate) fn validate(request: &Value, output: &Path) -> Result<Value> {
         result["cleanup_directory_present"] = json!(directory_present);
     }
     Ok(result)
+}
+
+pub(crate) fn observe_windows_failure(request: &Value, output: &Path) -> Result<Value> {
+    windows_failure(request, output, true)
+}
+
+fn windows_failure(request: &Value, output: &Path, live: bool) -> Result<Value> {
+    #[cfg(windows)]
+    return super::windows::failure::read(request, output, live);
+    #[cfg(not(windows))]
+    {
+        let _ = (request, output, live);
+        Err("Windows Redis 首代失败只能由原 Windows 主机核对".into())
+    }
 }
 
 fn stopped_runtime(request: &Value, output: &Path, original: &Value) -> Result<Value> {

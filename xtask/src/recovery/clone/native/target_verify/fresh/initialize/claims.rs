@@ -79,10 +79,27 @@ pub(super) fn runtime<T: Transport>(
         false,
         &mut progress,
     )?;
-    if progress != 6 {
-        return Err("续作实际存储观察不是layout及五项内核完整轮次".into());
+    let redis = &candidate.value["redis"];
+    if redis["platform"] == "windows" {
+        if progress != 2 {
+            return Err("续作实际存储观察缺少完整 layout 与 Windows Redis 投影".into());
+        }
+        let baseline = observations::windows_redis_baseline(
+            w.inputs.backend,
+            w.inputs.observation_dir,
+            &active_prepare(w)?,
+        )?;
+        prepare_observations::windows_redis_transition(
+            &w.inputs.request["storage"]["redis"],
+            &baseline,
+        )?;
+        prepare_observations::windows_redis_transition(&baseline, redis)?;
+    } else {
+        if progress != 6 {
+            return Err("续作实际存储观察不是layout及五项内核完整轮次".into());
+        }
+        same_redis_name(w, &names)?;
     }
-    same_redis_name(w, &names)?;
     Ok(current)
 }
 pub(super) fn objects<T: Transport>(

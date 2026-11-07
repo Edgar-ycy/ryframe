@@ -188,33 +188,32 @@ fn invalid_arguments_exit_two_before_python_starts() {
 }
 
 #[test]
-fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
-    let fixture = Fixture::new();
-    let mut arguments = fixture.valid();
-    arguments[4] = "buckets".to_owned();
-    arguments.push("--write".to_owned());
-    let result = invoke(&arguments);
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/reference_fixture_services.py"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("--review"), "{stdout}");
-    assert!(
-        !stdout.contains(fixture.review.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(
-        !stdout.contains(fixture.environment.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(
-        stderr.contains("reference_fixture_services_failed"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
+fn initial_services_reject_invalid_environment_before_any_python_or_side_effect() {
+    for operation in ["rustfs", "redis", "buckets"] {
+        let fixture = Fixture::new();
+        let mut arguments = fixture.valid();
+        arguments[4] = operation.to_owned();
+        arguments.push("--write".to_owned());
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(1));
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(!stdout.contains("--review"), "{stdout}");
+        assert!(
+            !stdout.contains(fixture.review.to_str().unwrap()),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains(fixture.environment.to_str().unwrap()),
+            "{stdout}"
+        );
+        assert!(stderr.contains("任务失败"), "{stderr}");
+        assert!(!stderr.contains("protocol_error"), "{stderr}");
+        assert_eq!(fs::read(&fixture.review).unwrap(), b"{}\n");
+        assert_eq!(fs::read(&fixture.environment).unwrap(), b"{}\n");
+        assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
+    }
 }
 
 #[test]

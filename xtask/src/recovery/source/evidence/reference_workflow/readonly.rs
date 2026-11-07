@@ -9,7 +9,7 @@ use native::{export::transport::SystemTransport, resources::common};
 
 mod binding;
 mod collector;
-mod defaults;
+pub(crate) mod defaults;
 
 pub(super) fn execute(args: &Value) -> Result<Value> {
     super::exact(args, &["raw"])?;

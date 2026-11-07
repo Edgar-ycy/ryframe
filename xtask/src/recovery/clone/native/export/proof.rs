@@ -225,7 +225,7 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
     Ok(result)
 }
 
-fn validate_registry(
+pub(crate) fn validate_registry(
     registry: &Value,
     scope: &Value,
     runtime_sha: &str,
@@ -335,7 +335,7 @@ fn runtime_configuration(
     )
 }
 
-fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
+pub(crate) fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
     let host = configuration["app"]["host"]
         .as_str()
         .ok_or("源 TOML 配置缺少 app.host")?;
@@ -364,7 +364,7 @@ fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
     Ok(())
 }
 
-fn verify_worker_address(url: &str, configuration: &Value) -> Result<()> {
+pub(crate) fn verify_worker_address(url: &str, configuration: &Value) -> Result<()> {
     let jobs = &configuration["jobs"];
     let port = jobs["health_port"]
         .as_u64()

@@ -31,6 +31,12 @@ pub(super) fn error(message: &'static str) -> Box<dyn Error> {
 pub(super) fn check(valid: bool, message: &'static str) -> Result<()> {
     if valid { Ok(()) } else { Err(error(message)) }
 }
+pub(super) fn reason(error: &(dyn Error + 'static)) -> Option<&'static str> {
+    error
+        .downcast_ref::<LifecycleError>()
+        .map(|error| error.message)
+        .or_else(|| super::super::storage::rejection_reason(error))
+}
 pub(super) fn category(error: &(dyn Error + 'static)) -> &'static str {
     error
         .downcast_ref::<LifecycleError>()

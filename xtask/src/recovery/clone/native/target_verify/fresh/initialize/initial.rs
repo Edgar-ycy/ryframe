@@ -80,7 +80,7 @@ fn preflight<T: Transport>(
         .iter()
         .map(|db| super::super::resources::database_absence(&w.inputs, w.transport, db))
         .collect::<Result<Vec<_>>>()?;
-    let absence = json!({"databases":databases,"objects":w.objects(false)?,"redis":w.redis_state(false,false)?});
+    let absence = json!({"databases":databases,"objects":w.objects(false)?,"redis":w.redis_state(&original,false,false)?});
     if prepared["absence"] != absence {
         return Err("prepare之后目标空前像变化，禁止接管".into());
     }
@@ -98,7 +98,7 @@ fn publish<T: Transport>(
 ) -> Result<Value> {
     let target = w.inputs.observation_dir;
     let objects = w.objects(true)?;
-    let redis = w.redis_state(true, true)?;
+    let redis = w.redis_state(original, true, true)?;
     w.unchanged(original)?;
     common::bound_file(
         w.inputs.backend,

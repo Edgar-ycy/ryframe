@@ -21,13 +21,6 @@ from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 
 
-def fixture_redis_tool_wsl(backend: Path, cache_binding: dict) -> dict:
-    """读取夹具缓存代次请求中由账本签发的 WSL 工具指纹；绑定不符时失败关闭。"""
-    outer = read_json(bound_file(backend, cache_binding["generation"]))
-    generation = read_json(bound_file(backend, outer["generation"]))
-    return read_json(bound_file(backend, generation["redis"]["request"]))["wsl"]
-
-
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
                  *, execution_backend: Path | None = None, storage_run: Path | None = None,
@@ -39,6 +32,7 @@ class Resources:
         self.selected, self.review, self.runner = selected, review, run
         self.storage_run, self.storage_runtime_binding = storage_run, None
         self.cache_runtime_binding = None
+        self._selected_redis = None
         self.owned_lock_identity = owned_lock_identity
         self.lock_output = lock_output or output
         self.object_configuration = configuration_binding(self.execution_backend, application_config_directory(backend, request))
@@ -259,33 +253,20 @@ class Resources:
         self.checkpoint()
         return result
 
-    def redis_state(self, *, initialized: bool, sentinel: bool) -> dict:
-        redis, reset = self.selected["redis"], self.request["reset"]
-        found, cursors, cursor = set(), set(), "0"
-        for _ in range(10000):
-            page = self._redis(["SCAN", cursor, "MATCH", redis["namespace"] + "*", "COUNT", "1000"])
-            if (not isinstance(page, list) or len(page) != 2 or not isinstance(page[0], str)
-                    or not page[0].isdigit() or not isinstance(page[1], list)):
-                raise ValueError("Redis scoped 分页格式错误")
-            for key in page[1]:
-                if not isinstance(key, str) or not key.startswith(redis["namespace"]):
-                    raise ValueError("Redis scoped 分页越界")
-                found.add(key)
-            cursor = page[0]
-            if cursor == "0":
-                break
-            if cursor in cursors:
-                raise ValueError("Redis scoped 分页无法完成")
-            cursors.add(cursor)
-        else:
-            raise ValueError("Redis scoped 分页超限")
-        if found != ({redis["ownership_key"]} if initialized else set()):
-            raise ValueError("Redis namespace 出现未知或旧状态")
-        owner = self._redis(["GET", redis["ownership_key"]])
-        marker = self._redis(["GET", reset["sentinel_key"]])
-        if owner != (redis["ownership_value"] if initialized else None) or marker != (reset["sentinel_value"] if sentinel else None):
-            raise ValueError("Redis owner 或精确 sentinel 与新代次不符")
-        return {"keys": sorted(found), "owner": owner, "sentinel": marker}
+    def redis_state(self) -> dict:
+        if self.request_descriptor is None or self._selected_redis is None:
+            raise ValueError("目标 Redis 读取前必须核对实际存储代次")
+        self.checkpoint()
+        value = evidence("redis-initialized-state", self.backend, self.output,
+                         request=self.request_descriptor,
+                         storage_run=None if self.storage_run is None else str(self.storage_run),
+                         redis=self._selected_redis, cache_runtime=self.cache_runtime_binding)
+        if (set(value) != {"keys", "owner", "sentinel"} or not isinstance(value["keys"], list)
+                or any(not isinstance(key, str) for key in value["keys"])
+                or not isinstance(value["owner"], str) or not isinstance(value["sentinel"], str)):
+            raise ValueError("目标 Redis 读取响应无效")
+        self.checkpoint()
+        return value
 
 
     def _cache_owned_lock_identity(self, cache_request: dict) -> int | None:
@@ -296,33 +277,26 @@ class Resources:
 
     def storage_identity(self) -> dict:
         self.checkpoint()
+        self._selected_redis = None
         rustfs = self.request["storage"]["rustfs"]
+        redis = self.request["storage"]["redis"]
         fixture = False
         if self.storage_run is not None:
             manifest = read_json(self.storage_run / "manifest.json")
             fixture = manifest.get("kind") == "reference-fixture-service-run"
-            if fixture:
-                from reference_fixture_service_context import runtime_transition
+        if self.storage_run is not None and not fixture:
+            from devex_clone_storage import registered_storage_binding
 
-                expected = {"storage": self.request["storage"]["rustfs"],
-                            "redis": self.request["storage"]["redis"]}
-                self.storage_runtime_binding, self.cache_runtime_binding = runtime_transition(
-                    self.backend, self.storage_run, expected)
-            else:
-                from devex_clone_storage import registered_storage_binding
-
-                self.storage_runtime_binding = registered_storage_binding(self.backend, self.storage_run, "target")
+            self.storage_runtime_binding = registered_storage_binding(self.backend, self.storage_run, "target")
             if self.storage_runtime_binding is not None:
-                if not fixture:
-                    runtime_request = json.loads(bound_file(
-                        self.backend, self.storage_runtime_binding["request"]).read_text(encoding="utf-8"))
-                    original = self.request["storage"]["rustfs"]
-                    if (runtime_request["previous"]["identity"] != original["identity"]
-                            or runtime_request["previous"]["process_receipt"] != original["process_receipt"]
-                            or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
-                        raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
+                runtime_request = json.loads(bound_file(
+                    self.backend, self.storage_runtime_binding["request"]).read_text(encoding="utf-8"))
+                original = self.request["storage"]["rustfs"]
+                if (runtime_request["previous"]["identity"] != original["identity"]
+                        or runtime_request["previous"]["process_receipt"] != original["process_receipt"]
+                        or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
+                    raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
                 rustfs = self.storage_runtime_binding["storage"]
-        redis = self.request["storage"]["redis"]
         if self.storage_run is not None and not fixture and self.cache_runtime_binding is None:
             from devex_clone_cache import registered_cache_binding, registration
 
@@ -332,28 +306,15 @@ class Resources:
                 cache_lock_identity = self._cache_owned_lock_identity(cache_request)
             self.cache_runtime_binding = registered_cache_binding(self.backend, self.storage_run,
                                                                  owned_lock_identity=cache_lock_identity)
-        if self.cache_runtime_binding is not None:
-            tools_wsl = None
-            if fixture:
-                from devex_clone_target_runtime_evidence import fixture_restart_generation
-
-                fixture_restart_generation(
-                    self.storage_runtime_binding, self.cache_runtime_binding
-                )
-                # 夹具服务代次可能按续签审阅重启：只允许该代次请求（已经历史校验）签发的
-                # WSL 工具指纹随缓存代次更新，其余物理配置仍必须与本目标原始 Redis 一致。
-                tools_wsl = fixture_redis_tool_wsl(self.backend, self.cache_runtime_binding)
-            else:
-                cache_request = json.loads(bound_file(
-                    self.backend, self.cache_runtime_binding["request"]
-                ).read_text(encoding="utf-8"))
-                if cache_request["previous"] != redis:
-                    raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
+        if self.cache_runtime_binding is not None and not fixture:
+            cache_request = json.loads(bound_file(
+                self.backend, self.cache_runtime_binding["request"]
+            ).read_text(encoding="utf-8"))
+            if cache_request["previous"] != redis:
+                raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
             resumed = self.cache_runtime_binding["redis"]
             allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
-            if tools_wsl is not None:
-                allowed["wsl"] = tools_wsl
-            elif not fixture and self.cache_runtime_binding.get("tools") is not None:
+            if self.cache_runtime_binding.get("tools") is not None:
                 from devex_clone_cache import generation_request
 
                 output = bound_file(self.backend, self.cache_runtime_binding["tools"]).parent
@@ -361,17 +322,42 @@ class Resources:
                                                     owned_lock_identity=self.owned_lock_identity)
                 if tools != self.cache_runtime_binding["tools"]:
                     raise ValueError("缓存工具后继与已发布代次不符")
-                allowed["wsl"] = process["wsl"]
+                if redis.get("platform") == "windows":
+                    if process["format_version"] != 3 or process["tool"] != redis["tool"]:
+                        raise ValueError("Windows Redis 后继必须保留原登记工具")
+                else:
+                    allowed["wsl"] = process["wsl"]
             if resumed != allowed:
-                raise ValueError("缓存恢复不能改变原 WSL、配置、产物、端口或发行版")
+                raise ValueError("缓存恢复不能改变原配置、产物、端口或未授权工具")
             redis = resumed
         if self.request_descriptor is None:
             raise ValueError("存储布局观察缺少原请求文件绑定")
         request_path = bound_file(self.backend, self.request_descriptor)
         if read_json(request_path) != self.request:
             raise ValueError("存储布局请求与当前绑定文件不同")
+        if fixture:
+            run = str(self.storage_run)
+            projected = evidence("fixture-storage-selection", self.backend, self.output,
+                                 request=self.request_descriptor, storage_run=run)
+            if (set(projected) != {"storage", "runtime", "cache_runtime", "manifest", "state"}
+                    or any(not isinstance(projected[name], dict) for name in ("manifest", "state"))
+                    or not isinstance(projected["storage"], dict)
+                    or set(projected["storage"]) != {"rustfs", "redis"}
+                    or any(not isinstance(value, dict) for value in projected["storage"].values())
+                    or (projected["runtime"] is None) != (projected["cache_runtime"] is None)
+                    or any(projected[name] is not None and not isinstance(projected[name], dict)
+                           for name in ("runtime", "cache_runtime"))):
+                raise ValueError("原生夹具存储选择响应无效；保留现场，不重放")
+            evidence("fixture-storage-layout", self.backend, self.output,
+                     request=self.request_descriptor, storage_run=run, selection=projected)
+            self.checkpoint()
+            self.storage_runtime_binding = projected["runtime"]
+            self.cache_runtime_binding = projected["cache_runtime"]
+            self._selected_redis = projected["storage"]["redis"]
+            return projected["storage"]
         evidence("storage-layout", self.backend, self.output, request=self.request_descriptor,
                  storage={"rustfs": rustfs, "redis": redis}, runtime=self.storage_runtime_binding,
                  cache_runtime=self.cache_runtime_binding)
         self.checkpoint()
+        self._selected_redis = redis
         return {"rustfs": rustfs, "redis": redis}

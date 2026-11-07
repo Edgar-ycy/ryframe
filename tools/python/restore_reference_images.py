@@ -122,7 +122,7 @@ class RestoreImages:
                     environment=environment, evidence_root=self.backend)
                 databases = {item.resource["database"]: json.loads(json.dumps(asdict(item))) for item in captured.observations}
                 objects, object_evidence = self._objects(resources, tools, output, after=after)
-                redis = resources.redis_state(initialized=True, sentinel=True)
+                redis = resources.redis_state()
                 target_history(self.backend, self.inputs.target.value["fresh_target"]["initialized"],
                     output, self.tools.run, storage_run=Path(self.arm["target_storage_run"]["path"]))
             self.inputs.assert_unchanged()

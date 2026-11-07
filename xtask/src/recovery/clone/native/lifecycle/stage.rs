@@ -108,21 +108,28 @@ pub(crate) fn run_named(
         mode,
         attempt: None,
     };
-    let initial_manifest = manifest::load(backend, &run_dir.join("manifest.json"))?;
-    let _ = state::load(run_dir, true)?;
+    let initial_manifest = stage_manifest(backend, run_dir, stage_name, mode)?;
+    let _ = state::load(run_dir, !state::resource_cleanup(stage_name, mode))?;
     runner.preflight(&request)?;
 
     let guard = ProcessGuard::acquire(run_dir)?;
     let run_lock = RunLock::claim(run_dir)?;
-    let execution = execute_claimed(
-        backend,
-        run_dir,
-        stage_name,
-        mode,
-        runner,
-        &initial_manifest.value,
-        &run_lock,
-    );
+    let execution = (|| {
+        if stage_name == "cache-target"
+            || stage_name == "post-copy" && matches!(mode, "register" | "prepare" | "amend")
+        {
+            runner.preflight(&request)?;
+        }
+        execute_claimed(
+            backend,
+            run_dir,
+            stage_name,
+            mode,
+            runner,
+            &initial_manifest.value,
+            &run_lock,
+        )
+    })();
     let release = run_lock.release();
     let finish = match execution {
         Ok(mut outcome) => {
@@ -140,7 +147,7 @@ pub(crate) fn run_named(
                 )
                 .into());
             }
-            finish_unstarted_failure(run_dir, &*error)?;
+            finish_unstarted_failure(run_dir, stage_name, mode, &*error)?;
             Err(error)
         }
     };
@@ -167,12 +174,17 @@ fn execute_claimed(
     initial_manifest: &Value,
     run_lock: &RunLock,
 ) -> Result<LockedOutcome> {
-    let registered = manifest::load(backend, &run_dir.join("manifest.json"))?;
+    let cleanup = state::resource_cleanup(stage, mode);
+    let registered = stage_manifest(backend, run_dir, stage, mode)?;
     if registered.value != *initial_manifest {
         return Err("取得控制锁前验收清单发生变化".into());
     }
-    let _ = state::load(run_dir, true)?;
-    let sources = source::current(backend)?;
+    let _ = state::load(run_dir, !cleanup)?;
+    let sources = match source::current(backend) {
+        Ok(value) => value,
+        Err(_) if cleanup => json!({"source_capture_error_type":"SourceCaptureError"}),
+        Err(error) => return Err(error),
+    };
     let (number, attempt) = state::begin(run_dir, stage, mode, &sources)?;
     let mut failure = state::bind_controller(run_dir, number, &run_lock.owner, &attempt)
         .err()
@@ -206,15 +218,17 @@ fn execute_claimed(
     {
         failure = Some("NeedsReconciliation".into());
     }
-    match manifest::load(backend, &run_dir.join("manifest.json")) {
+    match stage_manifest(backend, run_dir, stage, mode) {
         Ok(value) if value.value == *initial_manifest => {}
         Ok(_) => failure = Some("ManifestChanged".into()),
         Err(error) => failure = Some(failure_type(&*error)),
     }
-    match source::current(backend) {
-        Ok(value) if value == sources => {}
-        Ok(_) => failure = Some("SourceChanged".into()),
-        Err(error) => failure = Some(failure_type(&*error)),
+    if !cleanup {
+        match source::current(backend) {
+            Ok(value) if value == sources => {}
+            Ok(_) => failure = Some("SourceChanged".into()),
+            Err(error) => failure = Some(failure_type(&*error)),
+        }
     }
     Ok(LockedOutcome {
         number,
@@ -279,9 +293,11 @@ fn finalize(run_dir: &Path, stage: &str, mode: &str, outcome: LockedOutcome) -> 
 
 fn finish_unstarted_failure(
     run_dir: &Path,
+    stage: &str,
+    mode: &str,
     error: &(dyn std::error::Error + 'static),
 ) -> Result<()> {
-    let value = state::load(run_dir, true)?;
+    let value = state::load(run_dir, !state::resource_cleanup(stage, mode))?;
     let Some(attempt) = state::running_attempt(&value)? else {
         return Ok(());
     };
@@ -302,6 +318,20 @@ fn finish_unstarted_failure(
         state::record_failure(run_dir, number, stage, mode, &error_type)?;
     }
     state::finish(run_dir, number, None, Some(&error_type))
+}
+
+fn stage_manifest(
+    backend: &Path,
+    run: &Path,
+    stage: &str,
+    mode: &str,
+) -> Result<manifest::Manifest> {
+    let path = run.join("manifest.json");
+    if state::resource_cleanup(stage, mode) {
+        manifest::registered(backend, &path)
+    } else {
+        manifest::load(backend, &path)
+    }
 }
 
 pub(crate) fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result<Value> {
@@ -350,6 +380,12 @@ pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<St
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some((category, _)) = super::super::post_process::diagnostic::diagnostic(error) {
+        return category.into();
+    }
+    if let Some((category, _)) = super::super::cache::handoff::diagnostic(error) {
+        return category;
+    }
     if let Some((category, _)) = super::super::target_verify::diagnostic(error) {
         return category;
     }
@@ -378,6 +414,12 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
 }
 
 fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some((_, diagnostic)) = super::super::post_process::diagnostic::diagnostic(error) {
+        return Some(diagnostic);
+    }
+    if let Some((_, diagnostic)) = super::super::cache::handoff::diagnostic(error) {
+        return Some(diagnostic);
+    }
     if let Some((_, diagnostic)) = super::super::target_verify::diagnostic(error) {
         return Some(diagnostic);
     }

@@ -14,10 +14,15 @@ use crate::{Result, workspace::root_dir};
 
 #[path = "process/child.rs"]
 mod child;
+#[cfg(any(windows, test))]
+#[path = "process/windows_detach.rs"]
+mod windows_detach;
 #[cfg(windows)]
 #[path = "process/windows_members.rs"]
 mod windows_members;
 pub(crate) use child::{ChildGroup, ManagedChild};
+#[cfg(windows)]
+pub(crate) use windows_detach::spawn_detached;
 #[path = "process/cancellation.rs"]
 mod cancellation;
 #[allow(unused_imports)]

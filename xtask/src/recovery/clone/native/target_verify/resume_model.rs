@@ -1,6 +1,6 @@
 //! 迁移续作共享模型；只读取已绑定的本地证据。
 use super::{
-    super::{digest, json as json_io},
+    super::{cache::windows_tool, digest, json as json_io},
     evidence_model::*,
 };
 use crate::Result;
@@ -166,12 +166,25 @@ pub(super) fn binaries(backend: &Path, request: &Value) -> Result<Value> {
         bindings.push(json!({"path":path,"sha256":artifact["sha256"]}));
     }
     let rustfs = json!({"path":request["storage"]["rustfs"]["identity"]["executable"],"sha256":request["storage"]["rustfs"]["sha256"]});
+    let redis = &request["storage"]["redis"];
     check(
-        rustfs == review["tools"]["rustfs"]
-            && request["storage"]["redis"]["wsl"] == review["tools"]["wsl"],
+        rustfs == review["tools"]["rustfs"],
         "fresh 目标存储二进制不属于审阅版本",
     )?;
-    bindings.extend([rustfs, request["storage"]["redis"]["wsl"].clone()]);
+    bindings.push(rustfs);
+    if redis["platform"] == "windows" {
+        check(
+            redis["tool"] == review["tools"]["redis_server"],
+            "fresh 目标 Windows Redis 工具不属于审阅版本",
+        )?;
+        bindings.extend(windows_tool::package_bindings(&redis["tool"])?);
+    } else {
+        check(
+            redis["wsl"] == review["tools"]["wsl"],
+            "fresh 目标存储二进制不属于审阅版本",
+        )?;
+        bindings.push(redis["wsl"].clone());
+    }
     Ok(json!(bindings))
 }
 

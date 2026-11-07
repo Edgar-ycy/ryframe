@@ -96,7 +96,13 @@ pub(super) fn owned(context: &Context<'_>, output: &Path, base: &Value) -> Resul
 fn expected_redis(request: &Value, process: &Value, redis: &Value) -> Result<Value> {
     let mut expected = request["previous"].clone();
     doc::object(&expected, "原 Redis 代次")?;
-    expected["wsl"] = process["wsl"].clone();
+    if process["format_version"] == 3 {
+        if expected["platform"] != "windows" || expected["tool"] != process["tool"] {
+            return Err(rejected("Windows 缓存重启未绑定原工具与平台"));
+        }
+    } else {
+        expected["wsl"] = process["wsl"].clone();
+    }
     for key in ["pid", "started", "run_id"] {
         expected[key] = redis.get(key).ok_or("Redis 运行身份缺失")?.clone();
     }

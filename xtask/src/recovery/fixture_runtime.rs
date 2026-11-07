@@ -78,6 +78,9 @@ pub(super) fn run(command: &FixtureRuntimeCommand, root: &Path) -> Result<()> {
     validate_runtime(command, root)?;
     let value = match command {
         FixtureRuntimeCommand::Build(paths) => build::run(root, &paths.environment, &paths.output)?,
+        FixtureRuntimeCommand::ResumeBuild(paths) => {
+            build::resume_run(root, &paths.environment, &paths.output)?
+        }
         FixtureRuntimeCommand::Verify(paths) => runtime::verify(
             &json!({"backend":root,"environment":paths.environment,"output":paths.output}),
         )?,

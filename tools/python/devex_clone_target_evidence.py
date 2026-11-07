@@ -58,7 +58,7 @@ def evidence(operation: str, backend: Path, target: Path, **fields) -> dict:
             or not isinstance(response["result"], dict)):
         raise ValueError("原生目标证据核验失败；核对计划、账本及直接前像，不自动重放或清理")
     value = response["result"]
-    if operation in {"process-argv", "storage-layout", "storage-generation"}:
+    if operation in {"process-argv", "storage-layout", "storage-generation", "fixture-storage-layout"}:
         if type(value.get("remote_writes")) is not int or value["remote_writes"] != 0:
             raise ValueError("原生存储观察响应无效；保留现场，不重放")
         if operation == "process-argv":

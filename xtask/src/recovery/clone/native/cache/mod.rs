@@ -12,11 +12,12 @@ pub(crate) mod failed_cleanup;
 mod history;
 mod linux_observer;
 pub(crate) use linux_observer::Failure as ObserverFailure;
+pub(crate) mod handoff;
 pub(crate) mod host_control;
 pub(crate) mod host_start;
 mod linux_write;
 mod markers;
-mod model;
+pub(in crate::recovery) mod model;
 mod native_tool;
 pub(in crate::recovery) mod review_tools;
 pub(crate) use native_tool::review_value as validate_native_tool;
@@ -24,9 +25,16 @@ pub(crate) use native_tool::successor as native_tool_successor;
 mod process;
 pub(crate) mod readonly;
 mod request;
+pub(crate) mod runner;
+mod runtime;
 mod session;
 mod stage;
 mod start_deadline;
+#[cfg(windows)]
+mod windows;
+pub(in crate::recovery) mod windows_tool;
+
+pub(crate) use runner::run;
 
 use super::json as document;
 use crate::Result;
@@ -34,6 +42,10 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
+    #[cfg(windows)]
+    if let Some(code) = windows::run_hidden_if_requested() {
+        return Some(code);
+    }
     if let Some(code) = linux_write::run_hidden_if_requested() {
         return Some(code);
     }
@@ -206,6 +218,12 @@ fn execute_control(backend: &std::path::Path, operation: &str, args: &Value) -> 
             document::exact(args, &["request"], "缓存只读核验")?;
             model::validate(backend, &args["request"], false)?;
             facts::observe(&args["request"])
+        }
+        #[cfg(windows)]
+        "windows-facts" => {
+            document::exact(args, &["request", "identity"], "Windows 缓存只读核验")?;
+            model::validate(backend, &args["request"], true)?;
+            facts::observe_windows(&args["request"], &args["identity"])
         }
         "check-facts" => {
             document::exact(

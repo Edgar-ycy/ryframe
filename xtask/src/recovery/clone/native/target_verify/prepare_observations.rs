@@ -57,6 +57,9 @@ pub(super) fn validate(
         }
     }
     check(remaining.is_empty(), "prepare 观察组包含未消耗增量")?;
+    if candidate.value["redis"]["platform"] == "windows" {
+        return Ok(());
+    }
     // 两轮内核观察只比较稳定身份，调度态和累计计数不属于身份。
     let redis = done
         .into_iter()
@@ -66,9 +69,90 @@ pub(super) fn validate(
 }
 
 pub(crate) fn category(name: &str) -> String {
+    if name.starts_with("redis-windows-") {
+        return if windows_redis_name(name) {
+            "redis-windows".into()
+        } else {
+            String::new()
+        };
+    }
     name.rsplit_once('-')
         .map(|(prefix, _)| prefix.to_owned())
         .unwrap_or_default()
+}
+
+pub(super) fn windows_redis_name(name: &str) -> bool {
+    name.strip_prefix("redis-windows-")
+        .and_then(|suffix| suffix.strip_suffix(".json"))
+        .is_some_and(|id| {
+            id.len() == 32
+                && id
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+}
+
+pub(super) fn windows_redis_projection(redis: &Value) -> Result<()> {
+    document::exact(
+        redis,
+        &[
+            "platform",
+            "port",
+            "pid",
+            "started",
+            "executable",
+            "sha256",
+            "configuration",
+            "run_id",
+            "tool",
+        ],
+        "Windows Redis 观察投影",
+    )?;
+    let tool = &redis["tool"];
+    super::super::cache::windows_tool::validate(tool)?;
+    super::super::lifecycle::manifest::validate_binding_shape(
+        &redis["configuration"],
+        "Windows Redis 配置绑定",
+    )?;
+    super::super::cache::model::cygwin_path(document::text(
+        &redis["configuration"]["path"],
+        "Windows Redis 配置路径",
+    )?)?;
+    let started = document::text(&redis["started"], "Windows Redis 创建代次")?;
+    let run_id = document::text(&redis["run_id"], "Windows Redis 运行代次")?;
+    check(
+        redis["platform"] == "windows"
+            && redis["port"]
+                .as_u64()
+                .and_then(|port| u16::try_from(port).ok())
+                .is_some_and(|port| port > 0)
+            && redis["pid"]
+                .as_u64()
+                .and_then(|pid| u32::try_from(pid).ok())
+                .is_some_and(|pid| pid > 1)
+            && started.bytes().all(|byte| byte.is_ascii_digit())
+            && started.parse::<u64>().is_ok()
+            && run_id.len() == 40
+            && run_id
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            && redis["executable"] == tool["path"]
+            && redis["sha256"] == tool["sha256"],
+        "Windows Redis 观察未绑定登记进程、端点或工具",
+    )
+}
+
+pub(super) fn windows_redis_transition(original: &Value, current: &Value) -> Result<()> {
+    windows_redis_projection(original)?;
+    windows_redis_projection(current)?;
+    let mut allowed = original.clone();
+    for key in ["pid", "started", "run_id"] {
+        allowed[key] = current[key].clone();
+    }
+    check(
+        *current == allowed,
+        "Windows Redis 后继改变了登记工具、配置或端点",
+    )
 }
 
 pub(crate) fn slots(backend: &Path, request: &Value, candidate: &Selected) -> Result<Vec<Slot>> {
@@ -125,6 +209,13 @@ pub(crate) fn slots(backend: &Path, request: &Value, candidate: &Selected) -> Re
 }
 
 fn kernel_slots(redis: &Value) -> Result<Vec<Slot>> {
+    if redis["platform"] == "windows" {
+        windows_redis_projection(redis)?;
+        return Ok(vec![Slot {
+            name: "redis-windows".into(),
+            expected: redis.clone(),
+        }]);
+    }
     let config = recorded_configuration(Path::new(document::text(
         &redis["configuration"]["path"],
         "Redis 配置",
@@ -175,6 +266,12 @@ fn kernel_slots(redis: &Value) -> Result<Vec<Slot>> {
 }
 
 pub(crate) fn matches_slot(value: &Value, expected: &Value, success: bool) -> Result<()> {
+    if expected["platform"] == "windows" {
+        return check(
+            success && value == expected,
+            "Windows Redis 观察不同于唯一账本代次",
+        );
+    }
     if expected.get("process_receipt").is_some() {
         return check(
             success && value == expected,
@@ -320,6 +417,8 @@ fn missing(category: &str) -> &'static str {
         "fresh prepare MySQL 缺失观察不属于固定目标"
     } else if category == "redis-kernel" {
         "fresh prepare Redis /proc stat 观察不属于固定进程"
+    } else if category == "redis-windows" {
+        "fresh prepare Windows Redis 观察不属于固定代次"
     } else if category == "storage-layout" {
         "fresh prepare 存储目录两轮观察不一致"
     } else {

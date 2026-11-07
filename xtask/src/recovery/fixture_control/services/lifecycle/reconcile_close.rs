@@ -501,6 +501,15 @@ fn require_tree(runtime: &mut dyn Runtime, services: &Value, running: bool) -> R
 }
 fn cache_observation(runtime: &mut dyn Runtime, services: &Value) -> Result<Value> {
     let value = runtime.call("cache-status",json!({"request":services["requests"]["redis"],"runtime":services["runtime"],"effective":services["cache_effective"]}))?;
+    if services["requests"]["redis"]["format_version"] == 3 {
+        check(
+            value
+                == json!({"state":"stopped","launcher_alive":false,
+                "windows":{"identity":services["runtime"]["process"],"alive":false}}),
+            "关闭恢复未观察到原 Windows Redis 身份及监督器退出",
+        )?;
+        return Ok(value);
+    }
     check(
         value["state"] == "stopped"
             && value["launcher_alive"] == false

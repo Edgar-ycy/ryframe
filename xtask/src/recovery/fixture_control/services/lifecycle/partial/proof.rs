@@ -15,12 +15,16 @@ pub(super) fn create(
             "stopped"
         });
     }
-    let rustfs = if services["tree"].is_null() {
+    let rustfs = if services["early_storage"].is_object() {
+        json!({"state":"stopped","early":services["early_storage"]})
+    } else if services["tree"].is_null() {
         Value::Null
     } else {
         json!({"state":"stopped","tree":services["tree"],"completion":completion})
     };
-    let redis = if services["runtime"].is_null() {
+    let redis = if services["windows_failed"].is_object() {
+        binding(&output.join("redis-failed-closed.json"))?
+    } else if services["runtime"].is_null() {
         Value::Null
     } else {
         binding(&output.join(if services["reconciliation"].is_object() {
@@ -132,16 +136,7 @@ fn validate_inputs(run: &Path, proof: &Value, initial: &[Value]) -> Result<()> {
             )?;
         }
     }
-    if !proof["rustfs"].is_null() {
-        for file in [
-            "intent.json",
-            "process.json",
-            "launch.json",
-            "rustfs-tree.json",
-        ] {
-            expected[format!("rustfs_{file}")] = binding(&run.join("rustfs").join(file))?;
-        }
-    }
+    storage_bindings(run, proof, initial, &mut expected)?;
     if !proof["redis"].is_null() {
         if let Some(validated) = failed_cache(run, proof)? {
             expected
@@ -163,6 +158,64 @@ fn validate_inputs(run: &Path, proof: &Value, initial: &[Value]) -> Result<()> {
     )?;
     for descriptor in expected.as_object().ok_or("部分关闭输入集合无效")?.values() {
         bound(run, descriptor)?;
+    }
+    Ok(())
+}
+
+fn storage_bindings(
+    run: &Path,
+    proof: &Value,
+    initial: &[Value],
+    expected: &mut Value,
+) -> Result<()> {
+    if !proof["rustfs"].is_null() {
+        if proof["rustfs"]["early"].is_object() {
+            let closed = super::super::super::storage::closed::read(
+                &crate::workspace::root_dir(),
+                run,
+                &initial[0],
+            )?;
+            check(
+                closed == proof["rustfs"]["early"],
+                "部分关闭未绑定原真实早期关闭证据",
+            )?;
+            expected
+                .as_object_mut()
+                .ok_or("部分关闭输入集合无效")?
+                .extend(
+                    closed["bindings"]
+                        .as_object()
+                        .ok_or("原早期关闭输入集合无效")?
+                        .clone(),
+                );
+        } else {
+            for file in [
+                "intent.json",
+                "process.json",
+                "launch.json",
+                "rustfs-tree.json",
+            ] {
+                expected[format!("rustfs_{file}")] = binding(&run.join("rustfs").join(file))?;
+            }
+            if run.join("rustfs/actor.json").try_exists()?
+                || run.join("rustfs/actor-binding.json").try_exists()?
+            {
+                let records = super::super::super::storage::records::load(
+                    &crate::workspace::root_dir(),
+                    run,
+                    &initial[0],
+                )?;
+                expected
+                    .as_object_mut()
+                    .ok_or("部分关闭输入集合无效")?
+                    .extend(
+                        records["bindings"]
+                            .as_object()
+                            .ok_or("原 actor 输入集合无效")?
+                            .clone(),
+                    );
+            }
+        }
     }
     Ok(())
 }
@@ -210,6 +263,15 @@ fn validate_roles(run: &Path, number: usize, proof: &Value) -> Result<()> {
                 "未启动角色不能伪造退出收据",
             )?;
         } else if role == "rustfs" {
+            if proof["rustfs"]["early"].is_object() {
+                exact(&proof["rustfs"], &["state", "early"])?;
+                check(
+                    proof["services"][role] == "stopped" && proof["rustfs"]["state"] == "stopped",
+                    "早期关闭角色必须明确已停止",
+                )?;
+                super::super::super::storage::closed::recheck(&proof["rustfs"]["early"])?;
+                continue;
+            }
             exact(&proof["rustfs"], &["state", "tree", "completion"])?;
             check(
                 proof["services"][role] == "stopped"
@@ -219,15 +281,29 @@ fn validate_roles(run: &Path, number: usize, proof: &Value) -> Result<()> {
             )?;
             members(&proof["rustfs"], run)?;
         } else {
-            if let Some(validated) = failed_cache(run, proof)?
-                && validated["reconcile_required"] == true
-            {
-                check(
-                    proof["services"][role] == "stopped",
-                    "协调角色必须确认为已退出",
-                )?;
-                reconciliation::validate(run, number, &proof["redis"], &validated)?;
-                continue;
+            if let Some(validated) = failed_cache(run, proof)? {
+                if let Some(closed) = validated.get("windows_closed") {
+                    check(
+                        proof["services"][role] == "stopped"
+                            && path_is(
+                                &proof["redis"]["path"],
+                                &run.join(format!(
+                                    "lifecycle-{number:04}/redis-failed-closed.json"
+                                )),
+                            )
+                            && bound(run, &proof["redis"])? == *closed,
+                        "Windows Redis 部分关闭未绑定原失败和退出证据",
+                    )?;
+                    continue;
+                }
+                if validated["reconcile_required"] == true {
+                    check(
+                        proof["services"][role] == "stopped",
+                        "协调角色必须确认为已退出",
+                    )?;
+                    reconciliation::validate(run, number, &proof["redis"], &validated)?;
+                    continue;
+                }
             }
             let expected = run.join(format!("lifecycle-{number:04}/stopped.json"));
             let stopped = bound(run, &proof["redis"])?;
@@ -244,11 +320,18 @@ fn validate_roles(run: &Path, number: usize, proof: &Value) -> Result<()> {
                 path_is(&proof["redis"]["path"], &expected)
                     && proof["services"][role] == "stopped"
                     && stopped["status"] == "redis_process_stopped"
-                    && stopped["alive"] == false
                     && stopped["resources_deleted"] == false
                     && stopped["runtime"] == original,
                 "Redis 部分关闭未证明原登记身份退出",
             )?;
+            if original["format_version"] == 3 {
+                super::super::super::history::evidence::windows_redis_stop(run, &stopped)?;
+            } else {
+                check(
+                    stopped["alive"] == false,
+                    "Redis 部分关闭未证明原登记身份退出",
+                )?;
+            }
         }
     }
     Ok(())

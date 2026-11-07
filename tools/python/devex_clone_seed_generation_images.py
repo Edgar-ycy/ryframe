@@ -35,7 +35,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     resources = Resources(backend, target, output, seed, review, run, execution_backend=execution,
                           storage_run=source["directory"], request_descriptor=descriptor)
     storage = resources.storage_identity()
-    redis = resources.redis_state(initialized=True, sentinel=True)
+    redis = resources.redis_state()
     tools = ExternalTools({"source": selected, "tools": predecessor["tools"]}, output, run)
     maintenance_path = bound_file(execution, request["maintenance_build"])
     with control_environment() if control_environment else nullcontext():
@@ -67,7 +67,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     repeated = CaptureReader(tools, "source", output).owners("owners-after")
     owner_image = lambda rows: [{key: item[key] for key in ("bucket", "key", "bytes", "sha256")} for item in rows]
     if (logical_inventory(after) != logical_inventory(inventory) or owner_image(owners) != owner_image(repeated)
-            or resources.storage_identity() != storage or resources.redis_state(initialized=True, sentinel=True) != redis
+            or resources.storage_identity() != storage or resources.redis_state() != redis
             or schema_snapshot(tools, models, "after") != schema):
         raise ValueError("source-generation 采集期间完整库存、schema 或对象 ownership 变化")
     value = {"format_version": 1, "kind": "seed-source-generation-image",

@@ -19,6 +19,59 @@ pub(in crate::recovery::source::evidence) use observation::request;
 
 const CLOSE: &str = "source-generation-reboot-close";
 
+pub(super) fn cache_restart(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+    current: &Value,
+) -> Result<Value> {
+    if !current.is_null() && current != "cache-target:restart" {
+        return Err("缓存主机重启授权只能排除当前缓存 restart 阶段".into());
+    }
+    let authority = completed::read(backend, run, attempts)?
+        .ok_or("缺少已收尾并绑定 C69 授权的唯一源代次 START")?;
+    let start = &authority["completed_successor"];
+    let candidates = attempts
+        .iter()
+        .filter(|row| {
+            row["stage"] == "seed-runtime" && row["mode"] == CLOSE && row["status"] == "passed"
+        })
+        .collect::<Vec<_>>();
+    let [record] = candidates.as_slice() else {
+        return Err("缺少唯一主机重启收尾收据，不能登记新的缓存代次".into());
+    };
+    let issued = closure(backend, run, record, start)?;
+    let observed = observation::read(backend, run, attempts, start)?;
+    observation::require_closed(&observed)?;
+    if issued["receipt"]["start"] != start["result"]
+        || issued["receipt"]["request"] != observed["facts"]["receipt"]["request"]
+    {
+        return Err("重启收尾收据没有绑定当前源代次或冻结请求".into());
+    }
+    let number = record["number"].as_u64().ok_or("重启收尾序号无效")?;
+    let later = attempts
+        .iter()
+        .filter(|row| row["number"].as_u64().is_some_and(|n| n > number))
+        .collect::<Vec<_>>();
+    for row in &later {
+        if !matches!(
+            row["stage"].as_str(),
+            Some("storage-target" | "cache-target")
+        ) || row["mode"] != "restart"
+            || !matches!(row["status"].as_str(), Some("passed" | "running"))
+        {
+            return Err("重启收尾之后存在其他阶段或未收尾的服务登记".into());
+        }
+        if row["status"] == "running" {
+            if current != "cache-target:restart" || row["stage"] != "cache-target" {
+                return Err("当前持锁缓存阶段与重启授权请求不一致".into());
+            }
+            super::resolution::owner(run)?;
+        }
+    }
+    Ok(serde_json::json!({"closure":issued,"observation":observed,"later":later}))
+}
+
 pub(super) fn tail(
     backend: &Path,
     run: &Path,

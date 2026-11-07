@@ -200,6 +200,7 @@ fn parses_service_controls_without_ambiguous_roles_or_requests() {
             "status",
         ])
         .unwrap();
+    assert!(protocol(&cache, &super::workspace::root_dir()).is_err());
     assert!(
         matches!(cache, CloneCommand::Cache(value) if value.operation == CacheOperation::Status)
     );

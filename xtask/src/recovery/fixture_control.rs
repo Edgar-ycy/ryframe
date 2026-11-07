@@ -93,6 +93,20 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
         FixtureControlCommand::Review(command) => return review::run(command, root),
         FixtureControlCommand::Artifact(command) => return artifact::run(command, root),
         FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
+            if matches!(options.operation.as_str(), "rustfs" | "redis" | "buckets") =>
+        {
+            services::fields(
+                &crate::cli::FixtureServicesCommand::Run(options.clone()),
+                root,
+            )?;
+            return print_json(&services::initial::run(
+                root,
+                &options.review,
+                &options.environment,
+                options.operation.as_str(),
+            )?);
+        }
+        FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
             if matches!(
                 options.operation,
                 crate::cli::FixtureServiceOperation::Status
@@ -138,6 +152,11 @@ pub(crate) fn private_invocation_at(
     command: &FixtureControlCommand,
     root: &Path,
 ) -> Result<PrivateFixtureControlInvocation> {
+    if matches!(command, FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
+        if matches!(options.operation.as_str(), "rustfs" | "redis" | "buckets"))
+    {
+        return Err("首代服务由 Rust 原生执行，不生成 Python 请求".into());
+    }
     if matches!(
         command,
         FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Prepare { .. })

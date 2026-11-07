@@ -521,6 +521,107 @@ fn revision_numbers_are_monotonic_and_tampering_fails_closed() {
 }
 
 #[test]
+fn cache_cleanup_retains_old_failures_when_historical_result_or_input_is_unavailable() {
+    use super::recovery::clone::native::lifecycle::state as ledger;
+    for mode in ["stop", "recover"] {
+        let fixture = Fixture::new();
+        fixture.init().unwrap();
+        let (number, _) = ledger::begin(&fixture.run, "copy", "run", &json!({})).unwrap();
+        ledger::finish(
+            &fixture.run,
+            number,
+            Some(&json!({"partial":true})),
+            Some("UnknownWrite"),
+        )
+        .unwrap();
+        let failure = fixture.run.join("failure-before.json");
+        fs::write(&failure, b"original failure evidence").unwrap();
+        let before = ledger::load(&fixture.run, false).unwrap()["attempts"][0].clone();
+        let result = fixture.run.join("results/0001.json");
+        fs::write(&result, b"unavailable original result").unwrap();
+        fs::remove_file(fixture.local.join("source-request.json")).unwrap();
+        for (stage_name, operation) in [
+            ("cache-target", "resume"),
+            ("storage-target", "stop"),
+            ("copy", "run"),
+        ] {
+            assert!(
+                stage::run_named(
+                    &fixture.backend,
+                    &fixture.run,
+                    stage_name,
+                    operation,
+                    &Success
+                )
+                .is_err()
+            );
+            assert!(!fixture.run.join("unknown-write.txt").exists());
+        }
+        let published = stage::run_named(
+            &fixture.backend,
+            &fixture.run,
+            "cache-target",
+            mode,
+            &Success,
+        )
+        .unwrap();
+        assert_eq!(published["attempt"], 2);
+        let saved = ledger::load(&fixture.run, false).unwrap();
+        assert_eq!(saved["attempts"][0], before);
+        assert_eq!(saved["attempts"][1]["status"], "passed");
+        assert_eq!(fs::read(&result).unwrap(), b"unavailable original result");
+        assert_eq!(fs::read(&failure).unwrap(), b"original failure evidence");
+        assert!(!fixture.run.join("run.lock").exists());
+    }
+}
+
+#[test]
+fn cache_cleanup_records_source_capture_failure_without_relaxing_other_stages() {
+    use super::recovery::clone::native::lifecycle::state as ledger;
+    let fixture = Fixture::new();
+    let backend = fixture.local.join("not-a-git-root");
+    let run = backend.join(".local-tests/run");
+    fs::create_dir_all(&run).unwrap();
+    // 阻断 Git 向父级工作树查找，确保夹具真实触发来源采集失败。
+    fs::write(backend.join(".git"), "invalid fixture git metadata\n").unwrap();
+    let mut manifest = read_json(&fixture.manifest);
+    for field in [
+        "source_request",
+        "initialized",
+        "source_environment",
+        "target_environment",
+    ] {
+        let original = Path::new(manifest[field]["path"].as_str().unwrap());
+        let selected = backend.join(".local-tests").join(format!("{field}.json"));
+        fs::copy(original, &selected).unwrap();
+        manifest[field] = binding(&selected);
+    }
+    manifest["source_export"] = Value::Null;
+    manifest["copy_directory"] = json!(backend.join(".local-tests/copy"));
+    super::recovery::clone::native::lifecycle::manifest::validate(&manifest, &backend).unwrap();
+    write_json(&run.join("manifest.json"), &manifest);
+    ledger::initialize(&run).unwrap();
+    assert!(super::recovery::clone::native::source::current(&backend).is_err());
+    assert!(stage::run_named(&backend, &run, "copy", "run", &Success).is_err());
+    assert!(
+        ledger::load(&run, true).unwrap()["attempts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!run.join("unknown-write.txt").exists());
+    let result = stage::run_named(&backend, &run, "cache-target", "recover", &Success).unwrap();
+    assert_eq!(result["mode"], "recover");
+    let saved = ledger::load(&run, false).unwrap();
+    assert_eq!(
+        saved["attempts"][0]["sources"],
+        json!({"source_capture_error_type":"SourceCaptureError"})
+    );
+    assert_eq!(saved["attempts"][0]["status"], "passed");
+    assert!(!run.join("run.lock").exists());
+}
+
+#[test]
 fn failed_stage_exposes_typed_repair_guidance_without_echoing_arbitrary_errors() {
     for typed in [true, false] {
         let fixture = Fixture::new();

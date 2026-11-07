@@ -121,8 +121,8 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 ```powershell
 git rev-parse HEAD
 $env:APP_ENV = "test"
-cargo reset -- plan --config-dir .local-tests/reset-config
-cargo reset -- execute --config-dir .local-tests/reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
+cargo reset -- plan --config-dir ../ryframe-reset-config
+cargo reset -- execute --config-dir ../ryframe-reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```
 
 `reset plan` 会真实读取、校验应用配置，生成绑定来源与资源范围的清单及哈希，不执行破坏性重建，也不能替代 `execute` 的 ownership 预检；它不属于不读应用配置的离线 `control export-sql --plan` 或 `adopt --plan`。reset 内部物理别名去重只避免重复处理同一物理数据库，不放宽独立租户目标的共库限制；仍须遵守[数据指南](data.md#租户路由)中的 schema 隔离约束。执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。`cargo reset` 是使用者直接入口；框架维护工具 `cargo xtask data reset` 消费同一任务图并要求显式 `--write`。排障时不要混用两种入口的状态目录，也不要通过删除 ledger 启动新的重建。

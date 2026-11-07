@@ -205,7 +205,7 @@ fn run(
             run: active,
         };
         let observer = super::super::storage::SystemObserver::new(&SystemTransport);
-        let generation = || resources.generation_owned(Some(&owner));
+        let generation = || resources.generation_owned(Some(&owner), true);
         window::Window {
             inputs: StorageInputs {
                 backend,

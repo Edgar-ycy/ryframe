@@ -33,6 +33,7 @@ pub(super) struct Input<'a> {
     pub(super) resume: &'a Path,
     pub(super) started: &'a Path,
     pub(super) generation: &'a Value,
+    pub(super) current_generation: &'a Value,
     pub(super) before: &'a Value,
 }
 pub(super) fn execute<T: Transport>(
@@ -46,6 +47,7 @@ pub(super) fn execute<T: Transport>(
         resume,
         started,
         generation,
+        current_generation,
         before,
     } = input;
     let target = w.inputs.observation_dir;
@@ -67,21 +69,24 @@ pub(super) fn execute<T: Transport>(
     let owner = format!("{namespace}.ryframe-owner");
     let owner_value = format!("ryframe-owner:v1:{scope}:redis");
     let result: Result<(Value, Value)> = (|| {
-        let result = w.redis(&[
-            "EVAL",
-            SCRIPT,
-            "2",
-            &owner,
-            document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel")?,
-            &format!("{namespace}*"),
-            &owner_value,
-            document::text(&w.inputs.request["reset"]["sentinel_value"], "sentinel值")?,
-        ])?;
+        let result = w.redis(
+            current_generation,
+            &[
+                "EVAL",
+                SCRIPT,
+                "2",
+                &owner,
+                document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel")?,
+                &format!("{namespace}*"),
+                &owner_value,
+                document::text(&w.inputs.request["reset"]["sentinel_value"], "sentinel值")?,
+            ],
+        )?;
         if result.as_str() != Some("2") {
             return Err("Redis原子marker重绑结果未确认，禁止重试".into());
         }
         // 标准命令保留字符串响应；确认精确值后写入既有整数收据。
-        Ok((json!(2), w.redis_state(true, true)?))
+        Ok((json!(2), w.redis_state(current_generation, true, true)?))
     })();
     match result {
         Ok((result, after)) => {

@@ -67,14 +67,33 @@ fn dispatch(bytes: &[u8]) -> Result<Value> {
         "原生cache原语版本或信封无效",
     )?;
     check(
-        matches!(request.operation.as_str(), "cache-start" | "cache-stop"),
+        matches!(
+            request.operation.as_str(),
+            "cache-start" | "cache-stop" | "storage-start"
+        ),
         "原生cache原语仅接受明确cache启动或停止",
     )?;
     validate_binding(&request.backend, &request.native_tool)?;
     primitive::validate(&request.backend, &request.operation, &request.arguments)?;
     let args = &request.arguments;
     let output = Path::new(model::text(args, "output")?);
-    let result = if request.operation == "cache-start" {
+    let result = if request.operation == "storage-start" {
+        super::super::storage::start(
+            super::super::storage::Start {
+                backend: &request.backend,
+                request: &args["request"],
+                private: &args["private"],
+                output,
+                manifest: &args["manifest"],
+                controller: &args["controller"],
+                number: args["number"].as_u64().ok_or("RustFS 阶段编号无效")?,
+            },
+            || {
+                super::context::guarded(&request.backend, &args["context"], Some(&args["running"]))
+                    .map(|_| ())
+            },
+        )
+    } else if request.operation == "cache-start" {
         cache::host_start::start(
             &request.backend,
             &args["request"],

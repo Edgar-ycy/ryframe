@@ -123,6 +123,12 @@ pub(super) fn process(
     effective: Option<&Value>,
     observe_files: bool,
 ) -> Result<()> {
+    if value["process"]["format_version"] == 3 {
+        #[cfg(windows)]
+        return windows_process(backend, value, review, effective);
+        #[cfg(not(windows))]
+        return Err("Windows Redis 原代次只能在本机 Windows 核验".into());
+    }
     model::validate(backend, &value["process"], effective.is_none())?;
     if let Some(effective) = effective {
         model::validate(backend, effective, observe_files)?;
@@ -159,6 +165,72 @@ pub(super) fn process(
     )?;
     common::bound_file(backend, &binding, "原 Redis 配置")?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn windows_process(
+    backend: &Path,
+    value: &Value,
+    review: &Value,
+    effective: Option<&Value>,
+) -> Result<()> {
+    use crate::recovery::monitoring::execution::ProtectedInputs;
+
+    let process = &value["process"];
+    if effective.is_some_and(|effective| effective != process) {
+        return Err("Windows Redis 恢复不允许替换原请求或工具包".into());
+    }
+    model::validate(backend, process, true)?;
+    let directory = common::directory_identity(backend, &process["directory"])?;
+    common::local_directory(
+        backend,
+        Path::new(document::text(
+            &review["services"]["redis"]["directory"],
+            "原 Windows Redis 审阅目录",
+        )?),
+        "原 Windows Redis 审阅目录",
+    )?;
+    let receipt = &value["process_receipt"];
+    let runtime_path = common::bound_file(backend, receipt, "原 Windows Redis 运行收据")?;
+    let config = common::bound_file(
+        backend,
+        &value["previous"]["configuration"],
+        "原 Windows Redis 配置",
+    )?;
+    let protected = ProtectedInputs::open([runtime_path.clone(), config.clone()])?;
+    let result = (|| {
+        let runtime = common::read_bound(backend, receipt, "原 Windows Redis 运行收据")?;
+        let output = common::local_directory(
+            backend,
+            Path::new(document::text(
+                &runtime["output"],
+                "原 Windows Redis 输出目录",
+            )?),
+            "原 Windows Redis 输出目录",
+        )?;
+        if runtime_path != output.join("runtime.json") {
+            return Err("Windows Redis 原进程引用必须指向其完整 runtime.json".into());
+        }
+        let previous_request =
+            super::super::windows::predecessor_request(backend, &runtime_path, &runtime)?;
+        request::windows_process(
+            value,
+            review,
+            &runtime,
+            &previous_request,
+            &directory,
+            &config,
+        )?;
+        let port = u16::try_from(process["port"].as_u64().ok_or("Windows Redis 端口无效")?)?;
+        let password = model::password(&process["password"])?;
+        let expected = model::render_configuration(".", port, password);
+        if std::fs::read(&config)? != expected.as_bytes() {
+            return Err("原 Windows Redis 配置字节与冻结请求不同".into());
+        }
+        common::bound_file(backend, receipt, "原 Windows Redis 运行收据")?;
+        model::validate(backend, process, true)
+    })();
+    protected.finish(result)
 }
 
 pub(in crate::recovery::clone::native::cache) fn words(line: &str) -> Result<Vec<String>> {

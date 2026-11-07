@@ -15,6 +15,17 @@ pub(crate) fn verify<O: StorageObserver>(
     runtime: Option<&Value>,
     observer: &O,
 ) -> Result<()> {
+    let evidence = inspect(context, review, rustfs, runtime, observer)?;
+    publish(context, &evidence)
+}
+
+pub(crate) fn inspect<O: StorageObserver>(
+    context: &StorageInputs<'_>,
+    review: &Value,
+    rustfs: &Value,
+    runtime: Option<&Value>,
+    observer: &O,
+) -> Result<Value> {
     json_io::exact(
         rustfs,
         &["identity", "sha256", "process_receipt", "launch_receipt"],
@@ -71,13 +82,16 @@ pub(crate) fn verify<O: StorageObserver>(
         )?;
     }
     kernel::require_observed_identity(&identity, observer)?;
-    let evidence = evidence(context.backend, review, rustfs, runtime)?;
+    evidence(context.backend, review, rustfs, runtime)
+}
+
+pub(crate) fn publish(context: &StorageInputs<'_>, evidence: &Value) -> Result<()> {
     json_io::write_new(
         &context.observation_dir.join(format!(
             "storage-layout-{}.json",
             uuid::Uuid::new_v4().simple()
         )),
-        &evidence,
+        evidence,
     )
 }
 

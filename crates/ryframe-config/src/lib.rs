@@ -30,7 +30,8 @@ mod user_import_config;
 pub use release_stage::{ReleaseStage, release_stage, stable_version, workspace_version};
 #[cfg(feature = "tools")]
 pub use tool_config::{
-    GeneratorSettings, LinuxObserverSettings, ToolSettings, VerificationSettings, WorkspaceSettings,
+    GeneratorSettings, LinuxObserverSettings, ToolSettings, VerificationSettings,
+    WindowsRedisSettings, WorkspaceSettings,
 };
 
 pub use app_config::AppSettings;

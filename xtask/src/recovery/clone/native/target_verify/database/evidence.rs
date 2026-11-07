@@ -16,6 +16,25 @@ use crate::Result;
 
 #[path = "stdout.rs"]
 pub(crate) mod stdout;
+
+/// 交接复用固定 identity/ownership 查询及原有空输出核验规则，不接受任意 SQL。
+pub(crate) fn verify_query<T: Transport, F: Fn() -> Result<()>>(
+    context: &StorageInputs<'_>,
+    configuration: &Value,
+    transport: &T,
+    checkpoint: &F,
+    database: &Value,
+    check: &str,
+) -> Result<String> {
+    let port = Port {
+        configuration: Some(configuration),
+        context,
+        transport,
+        checkpoint,
+        directory: context.observation_dir,
+    };
+    Evidence::default().mysql(&port, database, check)
+}
 #[cfg(test)]
 #[path = "../../../../../../tests/internal/target_stdout_native.rs"]
 mod stdout_tests;

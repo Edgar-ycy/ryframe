@@ -61,22 +61,97 @@ fn platform_arguments(pid: u32) -> Result<Vec<String>> {
 }
 
 #[cfg(windows)]
-fn platform_listener(pid: u32, port: u16) -> Result<bool> {
+pub(crate) fn loopback_listener(identity: &Value, port: u16) -> Result<bool> {
+    let pid = pid(identity)?;
+    if port == 0 {
+        return Err("登记回环监听端口无效".into());
+    }
+    require(identity)?;
+    let rows = windows_listeners(port);
+    require(identity)?;
+    match rows?.as_slice() {
+        [] => Ok(false),
+        [row] if row.owner == pid && row.address == "127.0.0.1" => Ok(true),
+        _ => Err("监听记录必须是唯一登记进程的 127.0.0.1 端点".into()),
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn require_loopback_peer(identity: &Value, stream: &std::net::TcpStream) -> Result<()> {
+    use std::net::{Ipv4Addr, SocketAddr};
+
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Row {
         #[serde(rename = "LocalAddress")]
-        address: String,
+        local_address: String,
         #[serde(rename = "LocalPort")]
-        port: u16,
+        local_port: u16,
+        #[serde(rename = "RemoteAddress")]
+        remote_address: String,
+        #[serde(rename = "RemotePort")]
+        remote_port: u16,
         #[serde(rename = "OwningProcess")]
         owner: u32,
         #[serde(rename = "State")]
         state: u8,
     }
+
+    let pid = pid(identity)?;
+    require(identity)?;
+    let (SocketAddr::V4(client), SocketAddr::V4(server)) =
+        (stream.local_addr()?, stream.peer_addr()?)
+    else {
+        return Err("已连接套接字必须使用 IPv4 回环".into());
+    };
+    if *client.ip() != Ipv4Addr::LOCALHOST || *server.ip() != Ipv4Addr::LOCALHOST {
+        return Err("已连接套接字必须使用精确的 127.0.0.1 回环".into());
+    }
+    let server_port = server.port();
+    let client_port = client.port();
+    // 查询当前客户端套接字的反向四元组，取得服务端的已建立连接。
+    let connection = wmi::WMIConnection::with_namespace_path("ROOT\\StandardCimv2")
+        .map_err(|_| "连接归属 CIM 连接失败；检查本机读取权限，保留现场")?;
+    let rows: Result<Vec<Row>> = connection
+        .raw_query(format!(
+            "SELECT LocalAddress,LocalPort,RemoteAddress,RemotePort,OwningProcess,State \
+             FROM MSFT_NetTCPConnection WHERE LocalAddress='127.0.0.1' AND LocalPort={server_port} \
+             AND RemoteAddress='127.0.0.1' AND RemotePort={client_port} AND State=5"
+        ))
+        .map_err(|_| "连接归属 CIM 查询失败；检查本机读取权限，保留现场".into());
+    require(identity)?;
+    if !matches!(rows?.as_slice(), [row]
+        if row.local_address == "127.0.0.1"
+            && row.local_port == server_port
+            && row.remote_address == "127.0.0.1"
+            && row.remote_port == client_port
+            && row.owner == pid
+            && row.state == 5)
+    {
+        return Err("已建立连接的反向四元组未唯一归属于登记进程".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsListener {
+    #[serde(rename = "LocalAddress")]
+    address: String,
+    #[serde(rename = "LocalPort")]
+    port: u16,
+    #[serde(rename = "OwningProcess")]
+    owner: u32,
+    #[serde(rename = "State")]
+    state: u8,
+}
+
+#[cfg(windows)]
+fn windows_listeners(port: u16) -> Result<Vec<WindowsListener>> {
     let connection = wmi::WMIConnection::with_namespace_path("ROOT\\StandardCimv2")
         .map_err(|_| "监听 CIM 连接失败；检查本机读取权限，保留现场")?;
-    let rows: Vec<Row> = connection.raw_query(format!(
+    let rows: Vec<WindowsListener> = connection.raw_query(format!(
         "SELECT LocalAddress,LocalPort,OwningProcess,State FROM MSFT_NetTCPConnection WHERE LocalPort={port} AND State=2"))
         .map_err(|_| "监听 CIM 查询失败；检查本机读取权限，保留现场")?;
     for row in &rows {
@@ -84,7 +159,12 @@ fn platform_listener(pid: u32, port: u16) -> Result<bool> {
             return Err("监听 CIM 返回不符合固定查询的记录".into());
         }
     }
-    Ok(rows
+    Ok(rows)
+}
+
+#[cfg(windows)]
+fn platform_listener(pid: u32, port: u16) -> Result<bool> {
+    Ok(windows_listeners(port)?
         .iter()
         .any(|row| row.owner == pid && matches!(row.address.as_str(), "127.0.0.1" | "0.0.0.0")))
 }

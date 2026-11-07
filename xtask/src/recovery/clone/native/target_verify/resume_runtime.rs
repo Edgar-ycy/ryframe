@@ -158,11 +158,11 @@ fn registered(backend: &Path, expected: &Value, storage: &Value, cache: &Value) 
     Ok(())
 }
 
-fn storage_projection(value: &Value) -> Value {
+pub(super) fn storage_projection(value: &Value) -> Value {
     json!({"identity":value["identity"],"sha256":value["sha256"],"process_receipt":value["process_receipt"],"launch_receipt":value["launch_receipt"]})
 }
 
-fn fixture_evidence(
+pub(super) fn fixture_evidence(
     backend: &Path,
     expected: &Value,
     generation: &Value,

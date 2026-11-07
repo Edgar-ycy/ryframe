@@ -198,19 +198,6 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
         raise ValueError("Python seed-runtime 不接受此操作；来源登记与重绑定必须使用原生 Rust 入口")
     directory = evidence_path(backend, args.run_dir)
-    if args.command == "cache":
-        if args.request is not None and args.operation != "restart":
-            raise ValueError("仅 cache restart 可提供 --request")
-        if args.operation == "status":
-            if args.write:
-                raise ValueError("cache status 是只读操作，不接受 --write")
-            from devex_clone_cache import cache_status
-
-            return cache_status(backend, directory)
-        if not args.write:
-            raise ValueError("缓存恢复、启停和核对需要显式 --write")
-        result = execute(backend, directory, "cache-target", args.operation, cache_request=args.request)
-        return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "seed-runtime":
         request_operations = {"register", "arm-input", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
         if (args.operation in request_operations) != (args.request is not None):
@@ -242,14 +229,16 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "seed-runtime", args.operation, seed_request=request, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "post-copy":
+        if args.operation in {"register", "prepare", "amend"}:
+            raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
         if not args.write:
             raise ValueError("post-copy 需要显式 --write")
-        if (args.operation in {"register", "amend"}) != (args.request is not None):
-            raise ValueError("仅 register/amend 且必须明确提供 --request")
+        if args.request is not None:
+            raise ValueError("已登记业务阶段不能替换固定请求")
         if (args.operation == "recover-session") != (args.producer_binding is not None):
             raise ValueError("仅 recover-session 且必须明确提供 --producer-binding")
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None
-        result = execute(backend, directory, "post-copy", args.operation, post_copy_request=args.request, producer_binding=producer)
+        result = execute(backend, directory, "post-copy", args.operation, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "recover-copy":
         if not args.write:

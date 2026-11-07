@@ -11,7 +11,7 @@ pub(super) struct Inputs {
     pub root: PathBuf,
     pub coordinator: PathBuf,
     pub execution_source: Value,
-    bootstrap: PathBuf,
+    pub bootstrap: PathBuf,
     pub configuration: PathBuf,
     pub environment: BTreeMap<String, String>,
     cargo_target: Option<String>,
@@ -20,6 +20,21 @@ pub(super) struct Inputs {
 }
 
 impl Inputs {
+    pub fn protect(
+        &self,
+        extra: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<crate::recovery::clone::native::target_verify::guard::Inputs> {
+        let mut paths = self
+            .guards
+            .iter()
+            .map(|guard| path(&guard["descriptor"]["path"]))
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        paths.extend(extra);
+        let protected = crate::recovery::clone::native::target_verify::guard::Inputs::open(paths)?;
+        self.verify()?;
+        Ok(protected)
+    }
+
     pub fn load(backend: &Path, environment: &Path) -> Result<Self> {
         let boot = runtime::bootstrap(backend, environment)?;
         let bootstrap = path(&boot["bootstrap"])?;

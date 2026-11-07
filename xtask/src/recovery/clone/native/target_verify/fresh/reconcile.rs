@@ -72,7 +72,7 @@ fn run<T: Transport>(
         scope,
         run: active,
     };
-    let observe_generation = || resources.generation_owned(Some(&owner));
+    let observe_generation = |publish| resources.generation_owned(Some(&owner), publish);
     let observer = SystemObserver::new(transport);
     let result = cleanup(&Window {
         registration,
@@ -97,8 +97,8 @@ pub(crate) fn cleanup<T: Transport>(w: &Window<'_, T>) -> Result<Value> {
     let original = &evidence.prepared["generation"];
     check(w, &evidence, original)?;
     // 保留原先双轮完整前像；任何一轮出现资源写入都不能发布清理计划。
-    observe(w, true)?;
-    let before = observe(w, true)?;
+    observe(w, original, true)?;
+    let before = observe(w, original, true)?;
     check(w, &evidence, original)?;
     receipts::write(
         &w.inputs.observation_dir.join("reconciliation-plan.json"),
@@ -106,15 +106,18 @@ pub(crate) fn cleanup<T: Transport>(w: &Window<'_, T>) -> Result<Value> {
             "failure":evidence.failure_digest(),"reset_report":evidence.report_digest()}),
     )?;
     check(w, &evidence, original)?;
-    w.redis_state(false, true)?;
-    let deleted = w.redis(&[
-        "DEL",
-        document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel key")?,
-    ])?;
+    w.redis_state(original, false, true)?;
+    let deleted = w.redis(
+        original,
+        &[
+            "DEL",
+            document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel key")?,
+        ],
+    )?;
     if deleted.as_str() != Some("1") {
         return Err(super::failure::DEL_UNCONFIRMED.into());
     }
-    w.redis_state(false, false)?;
+    w.redis_state(original, false, false)?;
     let mut databases = document::array(&w.inputs.request["target"]["databases"], "四目标")?
         .iter()
         .collect::<Vec<_>>();
@@ -131,7 +134,7 @@ pub(crate) fn cleanup<T: Transport>(w: &Window<'_, T>) -> Result<Value> {
         )?;
         absent(w, db)?;
     }
-    let after = observe(w, false)?;
+    let after = observe(w, original, false)?;
     check(w, &evidence, original)?;
     let result = json!({"status":"preflight_failure_reconciled","before":before,"after":after,
         "failure":evidence.failure_digest(),"reset_report":evidence.report_digest(),
@@ -154,7 +157,7 @@ fn check<T: Transport>(w: &Window<'_, T>, evidence: &Evidence, original: &Value)
     w.unchanged(original)
 }
 
-fn observe<T: Transport>(w: &Window<'_, T>, before: bool) -> Result<Value> {
+fn observe<T: Transport>(w: &Window<'_, T>, original: &Value, before: bool) -> Result<Value> {
     let databases = document::array(&w.inputs.request["target"]["databases"], "四目标")?
         .iter()
         .map(|db| {
@@ -166,7 +169,7 @@ fn observe<T: Transport>(w: &Window<'_, T>, before: bool) -> Result<Value> {
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(json!({"databases":databases,"objects":w.objects(false)?,
-        "redis":w.redis_state(false,before)?}))
+        "redis":w.redis_state(original,false,before)?}))
 }
 
 fn absent<T: Transport>(w: &Window<'_, T>, db: &Value) -> Result<Value> {

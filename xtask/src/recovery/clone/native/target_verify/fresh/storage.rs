@@ -10,6 +10,14 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 pub(super) fn load(backend: &Path, descriptor: &Value) -> Result<PathBuf> {
+    load_owned(backend, descriptor, None)
+}
+
+pub(super) fn load_owned(
+    backend: &Path,
+    descriptor: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> Result<PathBuf> {
     document::exact(descriptor, &["path", "manifest", "state"], "fresh 存储绑定")?;
     let run = common::local_directory(
         backend,
@@ -47,7 +55,7 @@ pub(super) fn load(backend: &Path, descriptor: &Value) -> Result<PathBuf> {
         {
             return Err("fresh 当前 RustFS 重启尚未完整发布".into());
         }
-        if kinds["cache"] == true && cache::binding::load(backend, &run, None)?.is_null() {
+        if kinds["cache"] == true && cache::binding::load(backend, &run, owner)?.is_null() {
             return Err("fresh 当前 Redis 重启尚未完整发布".into());
         }
     }

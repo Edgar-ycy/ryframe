@@ -46,7 +46,9 @@ impl<T: Transport> Resources<'_, T> {
             }
             if let Some(tools) = cache.get("tools").filter(|value| !value.is_null()) {
                 common::bound_file(self.backend, tools, "缓存已验证工具后继")?;
-                allowed["wsl"] = cache["redis"]["wsl"].clone();
+                if original["platform"] != "windows" {
+                    allowed["wsl"] = cache["redis"]["wsl"].clone();
+                }
             }
             if cache["redis"] != allowed {
                 return Err("缓存恢复改变了原配置、产物、端点或未授权工具".into());
@@ -76,11 +78,11 @@ impl<T: Transport> Resources<'_, T> {
         Ok(storage)
     }
 
-    pub(crate) fn redis_state(&self) -> Result<Value> {
+    pub(crate) fn redis_state(&self, redis: &Value) -> Result<Value> {
         (self.checkpoint)()?;
         let result = crate::recovery::clone::native::target_verify::redis::state_with_observer(
             &self.inputs(),
-            &self.request["storage"]["redis"],
+            redis,
             true,
             true,
             &SystemObserver::new(self.transport),

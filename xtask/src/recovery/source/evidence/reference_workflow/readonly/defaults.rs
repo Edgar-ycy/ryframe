@@ -2,7 +2,7 @@
 use crate::Result;
 use std::{collections::BTreeMap, path::Path};
 
-pub(super) fn validate(path: &Path) -> Result<()> {
+pub(crate) fn validate(path: &Path) -> Result<()> {
     let raw = std::fs::read_to_string(path).map_err(|_| "MySQL 凭据文件不是可读 UTF-8")?;
     let values = parse(&raw)?;
     if !matches!(
@@ -17,7 +17,7 @@ pub(super) fn validate(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn parse(raw: &str) -> Result<BTreeMap<String, String>> {
+pub(crate) fn parse(raw: &str) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::<String, String>::new();
     let mut section = false;
     let mut client = false;

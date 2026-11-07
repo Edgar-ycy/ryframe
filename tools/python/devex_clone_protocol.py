@@ -11,7 +11,7 @@ from types import SimpleNamespace
 PROTOCOL_KIND = "ryframe-xtask-recovery-clone"
 COMMANDS = {
     "plan", "verify", "init", "status", "stage", "runtime", "recover",
-    "recover-copy", "post-copy", "seed-runtime", "cache",
+    "recover-copy", "post-copy", "seed-runtime",
 }
 
 
@@ -131,7 +131,6 @@ def _validate_paths(backend, command, options):
                       ("producer_binding", "existing-file")),
         "seed-runtime": (("run_dir", "existing-directory"), ("request", "existing-file"),
                          ("producer_binding", "existing-file")),
-        "cache": (("run_dir", "existing-directory"), ("request", "existing-file")),
     }
     for name, kind in mappings[command]:
         value = options.get(name)
@@ -183,10 +182,6 @@ def effect(command, options):
         }:
             return "evidence-write"
         return "business-write"
-    if command == "cache":
-        if options["operation"] == "status":
-            return "read-only"
-        return "evidence-write" if options["operation"] == "reconcile" else "business-write"
     raise CloneProtocolError("clone 私有协议 command 缺少副作用分类")
 
 
@@ -239,11 +234,11 @@ def _runtime(options):
 def _post_copy(options):
     _exact(options, {"run_dir", "operation", "request", "producer_binding"}, "post-copy options")
     operation = _enum(options["operation"], {
-        "register", "amend", "prepare", "schedules", "reconcile", "verify", "recover-session",
+        "schedules", "reconcile", "verify", "recover-session",
     }, "operation")
     request = _path(options["request"], "request", optional=True)
     producer = _path(options["producer_binding"], "producer_binding", optional=True)
-    if ((request is not None) != (operation in {"register", "amend"})
+    if (request is not None
             or (producer is not None) != (operation == "recover-session")):
         raise CloneProtocolError("clone 私有协议 post-copy 路径与操作不匹配")
     return {"run_dir": _path(options["run_dir"], "run_dir"), "operation": operation,
@@ -266,16 +261,6 @@ def _seed_runtime(options):
         raise CloneProtocolError("clone 私有协议 seed-runtime 路径与操作不匹配")
     return {"run_dir": _path(options["run_dir"], "run_dir"), "operation": operation,
             "request": request, "producer_binding": producer}
-
-
-def _cache(options):
-    _exact(options, {"run_dir", "operation", "request"}, "cache options")
-    operation = _enum(options["operation"], {"restart", "status", "stop", "recover", "reconcile", "resume"}, "operation")
-    request = _path(options["request"], "request", optional=True)
-    if request is not None and operation != "restart":
-        raise CloneProtocolError("clone 私有协议仅 cache restart 接受 request")
-    return {"run_dir": _path(options["run_dir"], "run_dir"),
-            "operation": operation, "request": request}
 
 
 def read_private_stdin(stream):
@@ -324,7 +309,6 @@ def decode(source: str):
             "runtime": _runtime,
             "post-copy": _post_copy,
             "seed-runtime": _seed_runtime,
-            "cache": _cache,
         }[command](options)
     expected_effect = effect(command, options)
     if request["effect"] != expected_effect:

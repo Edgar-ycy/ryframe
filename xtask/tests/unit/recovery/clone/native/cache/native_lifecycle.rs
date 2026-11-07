@@ -8,6 +8,71 @@ use super::{
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
+#[test]
+fn formal_cache_status_is_read_only_and_direct_guard_failure_never_connects_or_publishes() {
+    use super::{runner, runtime::Native, session::Runtime};
+    use crate::{
+        cli::{CacheOperation, CacheOptions},
+        recovery::clone::native::{json as document, lifecycle::state, resources::common},
+    };
+    use std::{fs, net::TcpListener};
+    let backend = crate::workspace::root_dir();
+    fs::create_dir_all(backend.join(".local-tests")).unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("cache-direct-")
+        .tempdir_in(backend.join(".local-tests"))
+        .unwrap();
+    let run = temporary.path();
+    document::write_new(
+        &run.join("manifest.json"),
+        &json!({"kind":"cache-query-fixture"}),
+    )
+    .unwrap();
+    state::initialize(run).unwrap();
+    let before = common::binding(&run.join("state.json")).unwrap();
+    assert_eq!(
+        runner::run(
+            &backend,
+            &CacheOptions {
+                run_dir: run.to_owned(),
+                operation: CacheOperation::Status,
+                request: None
+            }
+        )
+        .unwrap(),
+        json!({"status":"cache_unregistered","copy_usable":false,"processes":[]})
+    );
+    assert_eq!(common::binding(&run.join("state.json")).unwrap(), before);
+    let socket = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let request = json!({"previous":{"port":socket.local_addr().unwrap().port()}});
+    let mut runtime = Native {
+        backend: &backend,
+        directory: run,
+        owner: None,
+    };
+    let error = runtime
+        .call(
+            "redis",
+            json!({"request":request,
+        "guard":{"request":request,"process":{"password":"private-guard-sentinel"}},
+        "parts":["MSETNX","owner","value","sentinel","value"]}),
+        )
+        .unwrap_err();
+    assert!(!error.to_string().contains("private-guard-sentinel"));
+    assert!(matches!(socket.accept(),Err(error) if error.kind()==std::io::ErrorKind::WouldBlock));
+    assert_eq!(common::binding(&run.join("state.json")).unwrap(), before);
+    for name in [
+        "run.lock",
+        "cache-target",
+        "intent.json",
+        "start.json",
+        "runtime.json",
+    ] {
+        assert!(!run.join(name).exists());
+    }
+}
+
 fn initialize_capture_source(root: &std::path::Path) {
     use crate::frontend_origin::sources;
     use std::{fs, process::Command};

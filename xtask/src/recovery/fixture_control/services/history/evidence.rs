@@ -173,11 +173,15 @@ pub(crate) fn close_evidence(
     let redis = read(&redis_path)?;
     check(
         redis["status"] == "redis_process_stopped"
-            && redis["alive"] == false
             && redis["resources_deleted"] == false
             && redis["runtime"] == services["runtime"],
         "Redis 失败 close 证据与原服务代次不一致",
     )?;
+    if services["runtime"]["format_version"] == 3 {
+        windows_redis_stop(run, &redis)?;
+    } else {
+        check(redis["alive"] == false, "Redis 失败 close 未确认原进程退出")?;
+    }
     let (rustfs, _) = generation::paths(run, generation)?;
     let tree_path = rustfs.join("rustfs-tree.json");
     let tree = read(&tree_path)?;
@@ -208,6 +212,48 @@ pub(crate) fn close_evidence(
         evidence["rustfs_close"] = binding(&wrapped)?;
     }
     Ok((evidence, controller(run, failed)?))
+}
+
+pub(in crate::recovery::fixture_control::services) fn windows_redis_stop(
+    run: &Path,
+    receipt: &Value,
+) -> Result<()> {
+    exact(
+        receipt,
+        &[
+            "state",
+            "status",
+            "runtime",
+            "resources_deleted",
+            "windows",
+            "exited",
+        ],
+    )?;
+    let runtime = &receipt["runtime"];
+    let output = Path::new(text(runtime, "output")?);
+    check(
+        runtime["format_version"] == 3
+            && receipt["state"] == "stopped"
+            && receipt["windows"] == json!({"identity":runtime["process"],"alive":false})
+            && path_is(&receipt["exited"]["path"], &output.join("exited.json"))
+            && path_is(
+                &runtime["process_receipt"]["path"],
+                &output.join("process.json"),
+            ),
+        "Windows Redis 停止收据未绑定原代次及退出记录",
+    )?;
+    let process = bound(run, &runtime["process_receipt"])?;
+    let exited = bound(run, &receipt["exited"])?;
+    exact(&exited, &["process", "returncode", "job_empty"])?;
+    check(
+        process
+            == json!({"launch":runtime["launch"],"supervisor":runtime["supervisor"],
+            "process":runtime["process"]})
+            && exited["process"] == runtime["process_receipt"]
+            && exited["returncode"] == 0
+            && exited["job_empty"] == true,
+        "Windows Redis 停止收据未证明原进程正常退出及 Job 清空",
+    )
 }
 
 pub(in crate::recovery::fixture_control::services) fn members(

@@ -22,6 +22,9 @@ pub(super) const FAILURE: &[&str] = &[
 ];
 
 pub(crate) fn artifact(name: &str) -> Result<bool> {
+    if name.starts_with("redis-windows-") {
+        return Ok(super::prepare_observations::windows_redis_name(name));
+    }
     Ok(
         ["request.json", "prepare.json", "failure.json"].contains(&name)
             || Regex::new(r"^[a-z0-9-]+-[a-f0-9]{32}\.command\.json$")?.is_match(name)

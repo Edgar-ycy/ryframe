@@ -1,11 +1,56 @@
 //! 复制后处理生产者的计划、证据核验、精确回收和私有协议。
 
+pub(crate) mod amend;
 pub(crate) mod command;
+mod context;
+pub(crate) mod diagnostic;
+pub(crate) mod entry;
+pub(super) mod files;
+mod images;
 mod inspection;
 mod lock;
+mod prepare;
 pub(crate) mod protocol;
 pub(crate) mod registration;
-mod runtime;
+pub(crate) mod runtime;
+
+pub(crate) fn require_quiet(
+    backend: &std::path::Path,
+    run: &std::path::Path,
+    current: Option<u64>,
+) -> crate::Result<()> {
+    use super::{json as document, lifecycle::state, resources::common, seed};
+    let saved = state::load(run, false)?;
+    let mut registrations = serde_json::Map::new();
+    for attempt in state::attempts(&saved)? {
+        let number = attempt["number"].as_u64().ok_or("生产者阶段序号无效")?;
+        if current == Some(number) {
+            continue;
+        }
+        let stage = document::text(&attempt["stage"], "生产者阶段")?;
+        let pair = match stage {
+            "post-copy" => {
+                let post = seed::history::post(backend, run, None, None, true)?;
+                (post.request, post.descriptor)
+            }
+            "seed-runtime" => {
+                let descriptor = common::binding(&run.join("seed-runtime.json"))?;
+                (
+                    registration::resolve(backend, run, stage, &descriptor, None, true)?,
+                    descriptor,
+                )
+            }
+            _ => continue,
+        };
+        registrations.insert(
+            number.to_string(),
+            serde_json::json!({"request":pair.0,"binding":pair.1}),
+        );
+    }
+    inspection::quiet(&serde_json::json!({"backend":backend,"run_dir":run,
+        "current_attempt":current,"registrations":registrations}))
+    .map(|_| ())
+}
 
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/post_process/tests.rs"]

@@ -107,6 +107,16 @@ fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
 }
 
 fn run_clone(command: &CloneCommand) -> Result<()> {
+    if let CloneCommand::PostCopy(options) = command
+        && clone::native::post_process::entry::selected(options)
+    {
+        return clone::native::run(command, &root_dir());
+    }
+    if let CloneCommand::Runtime(options) = command
+        && clone::native::cache::handoff::selected(&root_dir(), options)?
+    {
+        return clone::native::run(command, &root_dir());
+    }
     match command {
         CloneCommand::Help => {
             println!("{}", crate::cli::CLONE_USAGE);
@@ -121,7 +131,8 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
         | CloneCommand::Bridge { .. }
         | CloneCommand::MaintenanceBuild { .. }
         | CloneCommand::MaintenanceVerify { .. }
-        | CloneCommand::Storage(_) => {
+        | CloneCommand::Storage(_)
+        | CloneCommand::Cache(_) => {
             return clone::native::run(command, &root_dir());
         }
         _ => {}

@@ -228,7 +228,7 @@ fn collect(
     *stage = "prepare_binding";
     let generation = resources.generation()?;
     *stage = "prepare_absence";
-    let absence = resources.absence()?;
+    let absence = resources.absence(&generation["storage"]["redis"])?;
     if resources.generation()? != generation {
         return Err("fresh 只读观察期间完整代次变化".into());
     }

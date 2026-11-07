@@ -14,6 +14,57 @@ mod arms;
 mod generation;
 mod published;
 mod shape;
+
+/// 复制后消费者复用已发布源/代次/导出的同一权威，不重建另一套来源模型。
+pub(crate) fn copy_source(backend: &Path, manifest: &Value) -> Result<Value> {
+    use crate::recovery::clone::native::{cache, lifecycle::state};
+    if manifest.get("review_successor").is_some() {
+        let identity = published::identity(backend, &manifest["source_export_result"])?;
+        for field in [
+            "source_registration",
+            "source_rebind",
+            "source_generation",
+            "review_successor",
+            "source_request",
+        ] {
+            if identity[field] != manifest[field] {
+                return Err("复制清单与已发布来源代次或导出绑定不同".into());
+            }
+        }
+        if identity["export"] != manifest["source_export"] {
+            return Err("复制清单采用了其他已发布导出".into());
+        }
+        let initial = cache::binding::source::load(backend, &manifest["review_successor"])?;
+        let run = path(&initial["directory"])?;
+        let saved = state::load(&run, true)?;
+        let source = super::running::history::predecessor(backend, &run, &saved)?;
+        let resolved = generation::resolve(backend, &source, &saved)?;
+        if state::load(&run, true)? != saved {
+            return Err("复制来源完整历史在核验期间变化".into());
+        }
+        return Ok(resolved);
+    }
+    let mut source = cache::binding::source::published(backend, &manifest["source_registration"])?;
+    let run = path(&source["directory"])?;
+    super::cache_history(
+        backend,
+        &run,
+        "seed-history",
+        &json!({
+        "source":manifest["source_registration"],"current":null,"mode":"run"}),
+    )?;
+    if !manifest["source_rebind"].is_null() {
+        let saved = state::load(&run, true)?;
+        source = super::running::history::predecessor(backend, &run, &saved)?;
+        if source["source_rebind"] != manifest["source_rebind"] || state::load(&run, true)? != saved
+        {
+            return Err("复制清单的原来源重绑定收据不同于已发布完整历史".into());
+        }
+    }
+    source["source_request"] = source["registration"]["source_request"].clone();
+    source["source_environment"] = source["registration"]["source_environment"].clone();
+    Ok(source)
+}
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/source/comparison.rs"]
 mod tests;

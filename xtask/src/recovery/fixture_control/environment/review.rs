@@ -72,7 +72,13 @@ fn receipt(original: &Value, observed: &Value, predecessor: &Value) -> Result<Va
     for (name, value) in observed.as_object().ok_or("观察工具不是对象")? {
         tools.insert(name.clone(), value.clone());
     }
-    tools.remove("redis_python");
+    if observed["redis_server"]["platform"] == "windows" {
+        for key in super::super::review::LINUX_REDIS_TOOLS {
+            tools.remove(*key);
+        }
+    } else {
+        tools.remove("redis_python");
+    }
     // Ready 的资源字段已通过原绑定守卫；保持 JSON 原文，不重写等价路径。
     if original["ready_for_execution"] == false {
         let scope = format!(
@@ -138,7 +144,7 @@ impl std::fmt::Display for ReviewFailure {
         };
         write!(
             f,
-            "环境审阅阶段“{}”失败：{reason}；核对 --review 的受控普通文件、原始字节摘要和前后像；核对 config/tools.toml 与 .local-tests/tools.toml 的 verification.linux_observer、WSL入口、工具文件摘要及完整源码/ELF绑定",
+            "环境审阅阶段“{}”失败：{reason}；核对 --review 的受控普通文件、原始字节摘要和前后像；核对 config/tools.toml 与 .local-tests/tools.toml 的 verification.windows_redis 及 Windows 工具/DLL 摘要，或 verification.linux_observer、WSL入口及完整源码/ELF绑定",
             self.stage
         )?;
         if self.stage == "本地收据发布" {
