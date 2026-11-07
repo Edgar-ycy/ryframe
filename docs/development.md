@@ -10,7 +10,7 @@
 
 ## 启动后端
 
-在 Git 工作树之外选择一个私有配置目录。从后端根目录运行以下命令，把公共和开发样例复制到并列的新目录 `../ryframe-dev-config`。已有适用的配置可直接用 `--config-dir` 选中，复制命令会在目标已存在时停止，以保留原文件。
+在 Git 工作树之外选择一个私有配置目录。从后端根目录运行以下命令，把公共和开发样例复制到并列的新目录 `../ryframe-dev-config`。这是后端启动所用的私有配置位置，仓库内的运行目录由工具按需创建。已有适用的配置可直接用 `--config-dir` 选中，复制命令会在目标已存在时停止，以保留原文件。
 
 ```powershell
 if (Test-Path -LiteralPath ../ryframe-dev-config) { throw "Configuration directory already exists; preserve it and choose a new directory" }
@@ -101,6 +101,8 @@ cargo worker -- --config-dir ../ryframe-worker-config
 `cargo xtask build` 从同一构建计划依次运行三个任务：关闭默认 feature 后分别定向构建 API 和 Worker，再通过 Corepack 构建前端生产目录。每项完成后输出 Cargo 实际报告的可执行文件或完整前端目录的路径、字节数和 SHA-256；`--profile dev` 只改变构建 profile，任务边界保持不变。 `cargo xtask build --plan` 渲染这份计划的依赖、有效参数、输入范围、编译覆盖和允许写入，不启动 Cargo、Corepack 或服务，也不创建目录、缓存和报告。实际执行在首个任务前和全部任务后核对前后端工作树指纹；任一来源在构建期间变化都会失败，已生成文件不能作为同源成功产物。
 
 ## 集成验证
+
+本节面向框架维护者。真实服务门禁使用已登记的隔离测试配置。
 
 共享真实 MySQL 测试的固定 opt-in 为后端根目录 `.local-tests/mysql/config`；目录缺失时明确跳过且未验收，已有目录及各层必须普通无链接。`app.test.toml` 必须存在，公共 `app.toml` 可以缺省；已存在的配置必须是普通无链接文件，缺少环境文件、无权读取或配置非法直接失败。通过 `AppConfig::load(directory, Environment::Test)` 加载完整 `database.primary`，地址、密码、连接池、超时及 TLS CA/证书/私钥均来自文件；普通测试保留配置 TLS 模式并拒绝 Disabled，显式 TLS 用例使用 Required。fixture 一次加载配置，用文件 `scope_id`、净化测试名、PID 和序号生成唯一 schema，不再读取旧 MySQL 项目环境配置。可运行 `mysql_real_protocol` 测试目标。MySQL、Redis 及 TLS 出站测试的文件配置与统一 CI 入口已整合，文件协议和回环 fixture 回归已通过；真实 MySQL、Redis 与存储服务仍未实际验收，局部回归不代表完整集成门禁通过。 fixture 在同一条管理连接上持有会话锁，记录实例 UUID、连接编号、schema 和不可覆盖的计划与 journal；业务池每条新物理连接均核对该实例及 schema。证据位于 `.local-tests/mysql/fixtures`，不包含密码或连接串。只有测试成功、业务连接池关闭、归属与文件身份仍一致、全局连接列表可见且没有活动业务连接时才精确删除本次 schema。测试账号须直接拥有全局 `PROCESS` 或 `ALL PRIVILEGES`，仅从角色继承的权限暂不用于证明全局可见性。测试失败、panic、连接或 DDL 结果未知、证据变化及权限不足均保留数据库和证据；先核对现场，不按库名前缀清理，不自动重放或声称回滚。
 

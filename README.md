@@ -8,7 +8,7 @@ RyFrame 是面向企业后台的 Rust 2024 框架，与 Vue 3 管理端配套使
 
 ## 下载后首次运行
 
-后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell；MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
+后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell，无需预建任何 Git 忽略目录。MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
 
 1. 安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
 2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。文件存储默认使用本地目录，也支持 RustFS、MinIO 和 S3 兼容服务。

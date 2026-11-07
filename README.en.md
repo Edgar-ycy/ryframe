@@ -8,7 +8,7 @@ It includes users, roles, permissions, organizations, product plans, tenancy, co
 
 ## First run after downloading
 
-Backend and frontend are separate repositories. Run these commands from the backend root. Examples use Windows PowerShell; MySQL, Redis and RustFS/MinIO/S3-compatible storage may run on any suitable platform or remote server. WSL is not required.
+Backend and frontend are separate repositories. Run these Windows PowerShell examples from the backend root. No Git-ignored directories need to be created beforehand. MySQL, Redis and RustFS/MinIO/S3-compatible storage may run on any suitable platform or remote server. WSL is not required.
 
 1. Install rustup and run `rustup show` in the repository to select the stable toolchain, rustfmt and Clippy pinned by `rust-toolchain.toml`.
 2. Prepare MySQL 8.0.16 or newer (MariaDB is not a substitute) and an account with the required schema, migration and application permissions. Redis uses a RESP connection; Redis 7.x is the current acceptance baseline (CI uses 7.4.9), with AUTH, an isolated database index and TLS configured as required by the deployment. File storage defaults to a local directory and also supports RustFS, MinIO and S3-compatible services.
