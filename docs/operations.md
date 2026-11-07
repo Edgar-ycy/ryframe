@@ -4,18 +4,22 @@
 
 ## 部署与发布
 
-生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在受控的忽略目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <directory>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<digest>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过：
+生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在 Git 工作树之外的受控私有目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <directory>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<digest>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过：
 
 镜像构建使用 Docker 的 `SOURCE_COMMIT` 构建参数绑定 40 位小写提交 SHA。Dockerfile 校验后将它写入构建容器内的受管 `.local-tests/build/source-commit`，Rust 构建脚本只读取该文件；它不属于应用环境变量，也不会进入运行镜像。仓库内正式维护构建和恢复构建由 Rust/Python 协调器独占创建同一受管文件，完成后核对内容再清理；并发、漂移或未知清理结果会失败并保留现场。直接运行普通开发构建且没有该文件时，版本信息明确为 `development`，不能用于正式恢复证明。
 ```powershell
 $sourceCommit = git rev-parse HEAD
 docker build --build-arg "SOURCE_COMMIT=$sourceCommit" -f deploy/Dockerfile .
 ```
+
+将公开的 `deploy/compose.prod.yml` 样例复制到自己的工作树外部署目录。使用该副本设置真实镜像摘要，并将四个角色的配置和共享 TLS 挂载的宿主机 `source` 改为实际目录的绝对路径。保留容器内挂载目标、只读设置和 `create_host_path: false`。示例中的 `$composeFile` 指向已经准备好的副本。
+
 ```powershell
-docker compose -f deploy/compose.prod.yml config
-docker compose -f deploy/compose.prod.yml up -d
+$composeFile = "D:/deployments/ryframe/compose.prod.yml"
+docker compose -f $composeFile config
+docker compose -f $composeFile up -d
 ```
-四角色部署顺序是先更新控制库与租户库，再启动 Worker 和 API；模板结构检查不替代真实环境的启动和升级验收。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；SQL 导入后仍须 `control verify`，并为实际租户目标运行 `tenant-data up/verify`。 本机沿用 README 的忽略目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir .local-tests/dev-config`，例如 `cargo migrate -- --config-dir .local-tests/dev-config control verify` 或 `cargo serve -- --config-dir .local-tests/dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
+四角色部署顺序是先更新控制库与租户库，再启动 Worker 和 API；模板结构检查不替代真实环境的启动和升级验收。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。直接在主机运行时，先创建空数据库并设置 `APP_ENV` 与配置，再按 `control up`、`control verify`、`tenant-data up --target shared-control`、`tenant-data verify --target shared-control`、`cargo serve` 的顺序执行。默认单租户也有控制库和 `shared-control` 两套迁移账本；`verify` 只校验，新空库必须先 `up`。完整步骤见[数据指南](data.md#全新环境初始化)；SQL 导入后仍须 `control verify`，并为实际租户目标运行 `tenant-data up/verify`。 本机沿用 README 的仓库外配置目录时，本文默认 `config` 的 Cargo 别名示例须在 `--` 后传 `--config-dir ../ryframe-dev-config`，例如 `cargo migrate -- --config-dir ../ryframe-dev-config control verify` 或 `cargo serve -- --config-dir ../ryframe-dev-config`；后续校验、导出和运行继续选择同一目录，避免连接另一份未初始化配置。
 
 当前版本只接受全新生产库。已有真实生产旧库需要先设计并演练非破坏升级方案，不能使用 reset 代替升级。 生产 API 还必须通过 TOML 的 `app.locales_dir` 提供完整 `zh-CN.toml` 与 `en-US.toml`；默认目录为 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`。缺失或加载失败会严格拒绝生产启动；开发环境的内嵌回退不能替代生产资源部署。
 
@@ -83,7 +87,7 @@ post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、
 
 ### 采集和登记
 
-在 Windows 维护机通过 `cargo xtask data` 执行备份和恢复登记；配置和密钥放在受控的忽略目录。该维护能力不包含在生产运行镜像中。
+在 Windows 维护机通过 `cargo xtask data` 执行备份和恢复登记；备份与恢复使用受控的私有配置，框架维护验收证据按对应命令登记。该维护能力不包含在生产运行镜像中。
 ```powershell
 cargo xtask data --help
 cargo xtask data backup inventory --output <absolute-new-file-in-backend-workspace/.local-tests> --source-sha <exact-backend-sha> --quiesced-at <writes-quiesced-at-rfc3339>
