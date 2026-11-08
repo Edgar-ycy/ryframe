@@ -29,6 +29,10 @@ fn recorded_path(backend: &Path, selected: &Path, recorded: &Value) -> Result<Op
 }
 
 pub(super) fn service_run(review: &Value) -> Result<PathBuf> {
+    check(
+        !crate::recovery::fixture_control::review::reconciled::has_origin(review),
+        "接续产品审阅不登记服务；服务操作须使用原审阅",
+    )?;
     let root = PathBuf::from(text(review, "future_root")?);
     let backend = PathBuf::from(text(&review["scopes"]["seed"], "backend_dir")?);
     check(

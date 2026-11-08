@@ -87,6 +87,11 @@ impl Registration {
             Some(self.storage.as_path())
         };
         let request = common::read_bound(&self.backend, &self.value["request"], "fresh 请求")?;
+        crate::recovery::fixture_control::review::reconciled::validate_request(
+            &self.backend,
+            &request,
+            &self.storage,
+        )?;
         let binaries = super::super::binding_request::binaries(&self.backend, &request)?;
         let paths = document::array(&binaries["bindings"], "fresh 二进制")?
             .iter()

@@ -28,13 +28,21 @@ const SIDES: &[&str] = &["seed", "base", "candidate"];
 const FILE_TOOLS: &[&str] = &["mysql", "mysqldump", "rustfs"];
 pub(super) const LINUX_REDIS_TOOLS: &[&str] = &["wsl", "native_tool", "redis_python"];
 
+#[path = "review/reconciled.rs"]
+pub(crate) mod reconciled;
+
 pub(super) fn run(command: &FixtureReviewCommand, backend: &Path) -> Result<()> {
+    if let FixtureReviewCommand::AfterReconcile(options) = command {
+        return print_json(&reconciled::publish(backend, options)?);
+    }
     let FixtureReviewCommand::Renew(options) = command else {
         println!(
             "cargo xtask check recovery fixture review --template <文件> --execution-source <文件> \
              --future-root <新目录> --id <ID> --api-port <端口> --worker-port <端口> \
              --frontend-port <端口> --rustfs-api-port <端口> \
-             --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write"
+             --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write\n\
+             cargo xtask check recovery fixture review after-reconcile --workspace <原已收尾目录> \
+             --execution-source <新发布收据> --future-root <新目录> --output <新文件> --write"
         );
         return Ok(());
     };

@@ -121,7 +121,10 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     let seed_scope = review["scopes"]["seed"]["scope_id"]
         .as_str()
         .ok_or(message)?;
-    let run = service_run(review)?;
+    let run = match super::super::review::reconciled::service_run(review)? {
+        Some(run) => run,
+        None => service_run(review)?,
+    };
     let process = review["services"]["rustfs"]["process_receipt"]
         .as_str()
         .map(Path::new)

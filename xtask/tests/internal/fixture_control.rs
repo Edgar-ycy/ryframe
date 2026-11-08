@@ -455,6 +455,31 @@ fn parses_review_request_and_all_service_operations() {
         FixtureControlCommand::Review(FixtureReviewCommand::Renew(_))
     ));
 
+    let reconciled = vec![
+        "--workspace".to_owned(),
+        text(&fixture.controlled_dir),
+        "--execution-source".to_owned(),
+        text(&fixture.input_two),
+        "--future-root".to_owned(),
+        text(&fixture.path("successor runtime")),
+        "--output".to_owned(),
+        text(&fixture.path("successor review.json")),
+    ];
+    assert!(
+        parse_control(command(
+            "review",
+            Some("after-reconcile"),
+            reconciled.clone()
+        ))
+        .is_err()
+    );
+    let mut write = reconciled;
+    write.push("--write".to_owned());
+    assert!(matches!(
+        parse_control(command("review", Some("after-reconcile"), write)).unwrap(),
+        FixtureControlCommand::Review(FixtureReviewCommand::AfterReconcile(_))
+    ));
+
     let request = vec![
         "--environment".to_owned(),
         text(&fixture.input),
@@ -468,10 +493,12 @@ fn parses_review_request_and_all_service_operations() {
         text(&fixture.path("request.json")),
         "--write".to_owned(),
     ];
+    let parsed = parse_control(command("request", None, request)).unwrap();
     assert!(matches!(
-        parse_control(command("request", None, request)).unwrap(),
+        parsed,
         FixtureControlCommand::Request(FixtureRequestCommand::Publish(_))
     ));
+    assert!(private_invocation_at(&parsed, &root_dir()).is_err());
 
     for operation in [
         "rustfs",

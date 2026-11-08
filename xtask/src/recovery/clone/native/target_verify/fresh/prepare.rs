@@ -42,7 +42,12 @@ pub(crate) fn prepare(
             &json!({"paths":[workspace,storage]}),
         )?;
         let request = common::binding(&request)?;
-        common::bound_file(backend, &request, "fresh 固定请求")?;
+        let request_value = common::read_bound(backend, &request, "fresh 固定请求")?;
+        crate::recovery::fixture_control::review::reconciled::validate_request(
+            backend,
+            &request_value,
+            &storage,
+        )?;
         let environment = common::binding(&environment)?;
         let private = super::super::binding::private_environment(backend, &environment)?;
         let storage = json!({"path":storage,"manifest":common::binding(&storage.join("manifest.json"))?,"state":common::binding(&storage.join("state.json"))?});

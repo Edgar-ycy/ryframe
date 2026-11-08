@@ -22,6 +22,37 @@ use evidence::Evidence;
 use serde_json::{Value, json};
 use std::path::Path;
 
+pub(crate) struct SeedOrigin {
+    pub(crate) request: Value,
+    pub(crate) registration: Value,
+    pub(crate) reconciliation: Value,
+    pub(crate) storage_run: Value,
+}
+
+/// 复用正式收尾的原始文件闭集，不重新触碰已经收尾的资源。
+pub(crate) fn seed_origin(backend: &Path, workspace: &Path) -> Result<SeedOrigin> {
+    let registration = Registration::load(backend, workspace)?;
+    let request = common::read_bound(
+        backend,
+        &registration.value["request"],
+        "收尾的原 seed 请求",
+    )?;
+    if request["side"] != "seed" || registration.storage.join("run.lock").try_exists()? {
+        return Err("接续只接受已经收尾且没有控制锁的 seed".into());
+    }
+    let evidence = Evidence::open(&registration.target, &registration.value["request"])?;
+    let reconciliation =
+        super::super::binding::reconciliation(backend, &registration.target)?["binding"].clone();
+    evidence.check()?;
+    registration.check(true)?;
+    Ok(SeedOrigin {
+        request,
+        reconciliation,
+        registration: registration.binding,
+        storage_run: registration.value["storage_run"].clone(),
+    })
+}
+
 pub(crate) fn execute(backend: &Path, workspace: &Path) -> Result<Value> {
     let result = (|| {
         let scope = Scope::load(backend, &[], &[])?;

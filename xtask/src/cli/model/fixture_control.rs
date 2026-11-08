@@ -46,6 +46,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  environment bootstrap-secrets --source-fixture <文件> --source-secrets <目录> --fixture <文件> --write\n",
     "  review --template <文件> --execution-source <文件> --future-root <新目录> --id <ID> --api-port <端口> --worker-port <端口> --frontend-port <端口> --rustfs-api-port <端口> --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write\n",
     "  request --environment <文件> --service-run <目录> --id <ID> --side seed|base|candidate --output <新文件> --write\n",
+    "  review after-reconcile --workspace <原已收尾目录> --execution-source <新发布收据> --future-root <新目录> --output <新文件> --write\n",
     "  source-pair --output <新文件> --write\n",
     "  source-pair publish-execution --output-dir <新目录> --write\n",
     "  successor relationship --source-result <文件> --predecessor-review <文件> --predecessor-request <文件> --successor-review <文件> --seed-request <文件> --base-request <文件> --candidate-request <文件> --id <ID> --output <新文件> --write\n",

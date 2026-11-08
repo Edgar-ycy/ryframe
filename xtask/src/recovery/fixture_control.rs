@@ -133,6 +133,9 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
             )?;
             return print_json(&value);
         }
+        FixtureControlCommand::Request(command) => {
+            return print_json(&request::run(root, command)?);
+        }
         FixtureControlCommand::Retention(command) => return retention::run(command, root),
         _ => {}
     }
@@ -178,6 +181,7 @@ pub(crate) fn private_invocation_at(
             | FixtureControlCommand::Artifact(_)
             | FixtureControlCommand::Retention(_)
             | FixtureControlCommand::Dataset(_)
+            | FixtureControlCommand::Request(_)
     ) {
         return Err("该夹具操作由 Rust 原生实现".into());
     }
@@ -197,10 +201,7 @@ pub(crate) fn private_invocation_at(
         }
         FixtureControlCommand::Retention(_) => unreachable!("原生保留期验收已提前返回"),
         FixtureControlCommand::Review(_) => unreachable!("原生审阅续签已提前返回"),
-        FixtureControlCommand::Request(command) => (
-            "tools/python/reference_fixture_request.py",
-            request::fields(command, root)?,
-        ),
+        FixtureControlCommand::Request(_) => unreachable!("原生目标请求已提前返回"),
         FixtureControlCommand::SourcePair(_) => unreachable!("原生来源组合已提前返回"),
         FixtureControlCommand::Successor(command) => (
             "tools/python/reference_fixture_successor.py",
@@ -239,7 +240,6 @@ pub(crate) fn private_invocation_at(
     if matches!(
         command,
         FixtureControlCommand::Services(_)
-            | FixtureControlCommand::Request(_)
             | FixtureControlCommand::Environment(_)
             | FixtureControlCommand::Successor(_)
     ) {

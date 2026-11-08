@@ -1,5 +1,5 @@
 use crate::{
-    cli::{CliError, FixtureReviewCommand, FixtureReviewOptions},
+    cli::{CliError, FixtureReconciledReview, FixtureReviewCommand, FixtureReviewOptions},
     local_test_path::LocalTestPathKind,
 };
 
@@ -22,6 +22,29 @@ const OPTIONS: &[&str] = &[
 pub(super) fn parse(args: &[String]) -> Result<FixtureReviewCommand, CliError> {
     if matches!(args, [help] if matches!(help.as_str(), "--help" | "-h")) {
         return Ok(FixtureReviewCommand::Help);
+    }
+    if let Some((first, rest)) = args.split_first()
+        && first == "after-reconcile"
+    {
+        let options = ParsedOptions::parse(
+            rest,
+            &[
+                "--workspace",
+                "--execution-source",
+                "--future-root",
+                "--output",
+            ],
+        )?;
+        require_write(&options, "review after-reconcile")?;
+        return Ok(FixtureReviewCommand::AfterReconcile(
+            FixtureReconciledReview {
+                workspace: options.path("--workspace", LocalTestPathKind::ExistingDirectory)?,
+                execution_source: options
+                    .path("--execution-source", LocalTestPathKind::ExistingFile)?,
+                future_root: new_directory(options.require("--future-root")?, "--future-root")?,
+                output: output_file(options.require("--output")?, "--output")?,
+            },
+        ));
     }
     let options = ParsedOptions::parse(args, OPTIONS)?;
     require_write(&options, "review renew")?;

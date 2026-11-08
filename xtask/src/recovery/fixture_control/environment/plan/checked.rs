@@ -42,6 +42,7 @@ impl Document {
 }
 
 pub(super) struct Inputs {
+    root: PathBuf,
     review: Document,
     publication: execution::Window,
     maintenance: Document,
@@ -87,6 +88,7 @@ impl Inputs {
             }
         };
         Ok(Self {
+            root: root.to_owned(),
             review,
             publication,
             maintenance,
@@ -96,6 +98,15 @@ impl Inputs {
     }
 
     pub(super) fn calculate(&self) -> Result<Value> {
+        if crate::recovery::fixture_control::review::reconciled::verify(
+            &self.root,
+            &self.review.value,
+        )?
+        .is_some()
+            && self.side != "seed"
+        {
+            return Err("预检收尾后的产品审阅仅用于 seed".into());
+        }
         calculate(
             &self.review.value,
             self.publication.publication(),

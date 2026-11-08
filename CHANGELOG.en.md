@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- After a failed preflight has been formally reconciled, issue a successor seed request from new execution sources and maintenance artifacts. Keep the original service ledger and physical resources, verify the four schemas and credential bindings, and publish fresh-target requests in Rust.
+
 - Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
 
 - Verify the four source roots before and after the independent backend snapshot comparison in one target-binding window. Reduce duplicate reads during fresh-target request publication while preserving the complete checks and deadline.
