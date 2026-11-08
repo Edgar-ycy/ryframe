@@ -1,11 +1,79 @@
 use ryframe_auth::password;
 
-use super::{identity::seed_credentials, operations::verify_seed_account};
+use super::{
+    RECREATE_SCHEMA_PRIVILEGES, REQUIRED_SCHEMA_PRIVILEGES,
+    identity::seed_credentials,
+    operations::{has_database_privileges, verify_seed_account},
+};
 
 #[path = "seed_mysql.rs"]
 mod mysql;
 
 const ADMIN_PASSWORD: &str = "Reset!Admin123";
+
+#[test]
+fn rebuild_requires_privileges_for_the_exact_schema() {
+    let permits = |grants: &[&str], case_sensitive, literal_names| {
+        let grants = grants
+            .iter()
+            .map(|grant| (*grant).to_owned())
+            .collect::<Vec<_>>();
+        has_database_privileges(
+            &grants,
+            "fixture_seed",
+            case_sensitive,
+            literal_names,
+            REQUIRED_SCHEMA_PRIVILEGES,
+        )
+    };
+    let exact = r"GRANT ALL PRIVILEGES ON `fixture\_seed`.* TO `account`@`host`";
+    let literal = "GRANT ALL PRIVILEGES ON `fixture_seed`.* TO `account`@`host`";
+    let upper = r"GRANT ALL PRIVILEGES ON `FIXTURE\_SEED`.* TO `account`@`host`";
+    let global = "GRANT ALL PRIVILEGES ON *.* TO `account`@`host`";
+    assert!(permits(&[exact], true, false));
+    assert!(permits(&[literal], true, true));
+    assert!(permits(&[upper], false, false));
+    assert!(permits(&[global], true, true));
+    assert!(!permits(&[literal], true, false));
+    assert!(!permits(&[upper], true, false));
+    for grant in [
+        r"GRANT ALL PRIVILEGES ON `fixture\_other`.* TO `account`@`host`",
+        "GRANT ALL PRIVILEGES ON `fixture%`.* TO `account`@`host`",
+        "GRANT ALL PRIVILEGES ON `fixture_seed`.`table` TO `account`@`host`",
+        r"GRANT SELECT, CREATE, DROP ON `fixture\_seed`.* TO `account`@`host`",
+    ] {
+        assert!(!permits(&[grant], true, false));
+    }
+    let revoke = "REVOKE DROP ON `fixture_seed`.* FROM `account`@`host`";
+    assert!(!permits(&[global, revoke], true, true));
+}
+
+#[test]
+fn rebuild_lock_permissions_do_not_follow_another_connections_grant() {
+    let holding = vec![r"GRANT SELECT, CREATE, DROP ON `fixture\_first`.* TO `lock`@`host`".into()];
+    let target = vec![r"GRANT ALL PRIVILEGES ON `fixture\_second`.* TO `target`@`host`".into()];
+    assert!(has_database_privileges(
+        &target,
+        "fixture_second",
+        true,
+        false,
+        REQUIRED_SCHEMA_PRIVILEGES,
+    ));
+    assert!(!has_database_privileges(
+        &holding,
+        "fixture_second",
+        true,
+        false,
+        RECREATE_SCHEMA_PRIVILEGES,
+    ));
+    assert!(has_database_privileges(
+        &holding,
+        "fixture_first",
+        true,
+        false,
+        RECREATE_SCHEMA_PRIVILEGES,
+    ));
+}
 
 #[test]
 fn ordinary_seed_uses_initial_password_and_both_accounts_require_password_change() {

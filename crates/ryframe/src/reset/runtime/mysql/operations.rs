@@ -7,10 +7,7 @@ use sea_orm::{
 
 use crate::reset::{ResetError, ResetResult, model::PhysicalDatabase};
 
-use super::{
-    DatabaseHandle, EMPTY_CONTROL_TABLES, REQUIRED_GLOBAL_PRIVILEGES, SeedCredentials,
-    identity::OwnershipState,
-};
+use super::{DatabaseHandle, EMPTY_CONTROL_TABLES, SeedCredentials, identity::OwnershipState};
 
 pub(super) async fn connect_target(
     config: &DbConnection,
@@ -87,7 +84,18 @@ pub(super) async fn verify_server_writable(db: &DatabaseConnection) -> ResetResu
     Ok(())
 }
 
-pub(super) async fn verify_global_privileges(db: &DatabaseConnection) -> ResetResult<()> {
+pub(super) async fn verify_database_privileges<C: ConnectionTrait + ?Sized>(
+    db: &C,
+    database: &str,
+    case_sensitive: bool,
+    required: &[&str],
+) -> ResetResult<()> {
+    let literal_schema_names =
+        match scalar_i64(db, "SELECT CAST(@@global.partial_revokes AS SIGNED)", []).await? {
+            Some(0) => false,
+            Some(1) => true,
+            _ => return Err(ResetError::new("MySQL partial_revokes 状态无效")),
+        };
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
@@ -95,32 +103,94 @@ pub(super) async fn verify_global_privileges(db: &DatabaseConnection) -> ResetRe
         ))
         .await
         .map_err(|_| ResetError::new("无法读取 MySQL 当前账号权限"))?;
-    let mut granted = BTreeSet::new();
-    let mut all = false;
-    for row in rows {
-        let grant = String::try_get_by_index(&row, 0)
-            .map_err(|_| ResetError::new("MySQL grant 返回格式无效"))?
-            .to_ascii_uppercase();
-        let Some((prefix, _)) = grant.split_once(" ON *.*") else {
-            continue;
-        };
-        let list = prefix.strip_prefix("GRANT ").unwrap_or_default();
-        if list == "ALL PRIVILEGES" {
-            all = true;
-            break;
-        }
-        granted.extend(list.split(',').map(str::trim).map(str::to_owned));
-    }
-    if !all
-        && REQUIRED_GLOBAL_PRIVILEGES
-            .iter()
-            .any(|privilege| !granted.contains(*privilege))
-    {
-        return Err(ResetError::new(
-            "MySQL 当前账号缺少重建所需的全局 DDL/DML 权限",
-        ));
+    let grants = rows
+        .iter()
+        .map(|row| {
+            String::try_get_by_index(row, 0)
+                .map_err(|_| ResetError::new("MySQL grant 返回格式无效"))
+        })
+        .collect::<ResetResult<Vec<_>>>()?;
+    if !has_database_privileges(
+        &grants,
+        database,
+        case_sensitive,
+        literal_schema_names,
+        required,
+    ) {
+        return Err(ResetError::new(format!(
+            "MySQL 当前连接缺少数据库 {database} 重建所需的 DDL/DML 权限"
+        )));
     }
     Ok(())
+}
+
+pub(super) fn has_database_privileges(
+    grants: &[String],
+    database: &str,
+    case_sensitive: bool,
+    literal_schema_names: bool,
+    required: &[&str],
+) -> bool {
+    let escaped = database.replace('_', "\\_");
+    let same_name = |actual: &str, expected: &str| {
+        if case_sensitive {
+            actual == expected
+        } else {
+            actual.eq_ignore_ascii_case(expected)
+        }
+    };
+    let exact_schema = |scope: &str| {
+        scope
+            .strip_prefix('`')
+            .and_then(|value| value.strip_suffix("`.*"))
+            .is_some_and(|schema| {
+                same_name(schema, &escaped) || (literal_schema_names && same_name(schema, database))
+            })
+    };
+    let mut global = BTreeSet::new();
+    let mut schema = BTreeSet::new();
+    let mut revoked = BTreeSet::new();
+    for grant in grants {
+        let Some((list, scope)) = grant.split_once(" ON ") else {
+            continue;
+        };
+        let (privileges, applied) = if let Some(list) = list.strip_prefix("GRANT ") {
+            let Some((scope, _)) = scope.split_once(" TO ") else {
+                continue;
+            };
+            match scope {
+                "*.*" => (list, &mut global),
+                value if exact_schema(value) => (list, &mut schema),
+                _ => continue,
+            }
+        } else if let Some(list) = list.strip_prefix("REVOKE ") {
+            let Some((scope, _)) = scope.split_once(" FROM ") else {
+                continue;
+            };
+            if !exact_schema(scope) {
+                continue;
+            }
+            (list, &mut revoked)
+        } else {
+            continue;
+        };
+        if privileges == "ALL PRIVILEGES" {
+            applied.extend(required.iter().copied());
+            continue;
+        }
+        let list = privileges.split(',').map(str::trim);
+        if list.clone().all(|value| {
+            !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || matches!(byte, b' ' | b'_'))
+        }) {
+            applied.extend(list);
+        }
+    }
+    required.iter().all(|privilege| {
+        schema.contains(privilege) || (global.contains(privilege) && !revoked.contains(privilege))
+    })
 }
 
 async fn inspect_database_ownership_on_server<C>(

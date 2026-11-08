@@ -24,7 +24,7 @@ use identity::{
 };
 use operations::{
     connect_target, database_exists, scalar_i64, verify_database_ownership_before_recreate,
-    verify_empty_control_resources, verify_empty_external_tenant, verify_global_privileges,
+    verify_database_privileges, verify_empty_control_resources, verify_empty_external_tenant,
     verify_seed_hashes, verify_server_writable,
 };
 
@@ -40,7 +40,7 @@ const EMPTY_CONTROL_TABLES: &[&str] = &[
     "sys_user_import_job",
     "sys_user_import_row_result",
 ];
-const REQUIRED_GLOBAL_PRIVILEGES: &[&str] = &[
+const REQUIRED_SCHEMA_PRIVILEGES: &[&str] = &[
     "ALTER",
     "CREATE",
     "DELETE",
@@ -52,6 +52,7 @@ const REQUIRED_GLOBAL_PRIVILEGES: &[&str] = &[
     "TRIGGER",
     "UPDATE",
 ];
+const RECREATE_SCHEMA_PRIVILEGES: &[&str] = &["CREATE", "DROP", "SELECT"];
 
 pub struct MysqlReset {
     databases: Vec<DatabaseHandle>,
@@ -143,7 +144,15 @@ impl MysqlReset {
                 .await
                 .map_err(|_| ResetError::new("MySQL 版本预检失败，要求 MySQL 8.0.16 或更高"))?;
             verify_server_writable(&handle.server).await?;
-            verify_global_privileges(&handle.server).await?;
+            let name = &handle.resource.database;
+            let case_sensitive = handle.lower_case_table_names == 0;
+            verify_database_privileges(
+                &handle.server,
+                name,
+                case_sensitive,
+                REQUIRED_SCHEMA_PRIVILEGES,
+            )
+            .await?;
             let resource_key = database_resource_key(&handle.resource);
             let resource_started = ledger.resource_started(&resource_key);
             let physical_identity = database_physical_identity(handle);
@@ -161,6 +170,13 @@ impl MysqlReset {
                 _ => {}
             }
             let lock = self.lock_for_server(&handle.server_uuid)?;
+            verify_database_privileges(
+                &lock.transaction,
+                name,
+                case_sensitive,
+                RECREATE_SCHEMA_PRIVILEGES,
+            )
+            .await?;
             verify_database_ownership_before_recreate(
                 handle,
                 &lock.transaction,

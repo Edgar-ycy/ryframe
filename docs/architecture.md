@@ -116,6 +116,8 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 
 ## 非生产重建
 
+MySQL 重建预检接受覆盖清单中精确库名的库级授权。每个迁移连接须具备目标库所需的 DDL/DML 权限，同一物理服务器的持锁连接也须对它负责的每个库具备 `SELECT`、`CREATE` 和 `DROP`。权限核对通过后才进入资源写入阶段。
+
 `ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。先用 `git rev-parse HEAD` 查看完整提交，再将 40 位 Git SHA 填入所选明文配置的 `reset.source_sha`；`plan` 必须提供该字段及非秘密轮换声明 `reset.credential_version`，后者为 1～64 位 ASCII 字母、数字、点、下划线或连字符，任一 reset 相关密码或私钥轮换时必须同步变更。`reset.services_stopped` 默认 `false`，`plan` 不要求它为 `true`，也不要求 `reset.state_directory`。只有 `execute` 必须先停止 API、Worker 和 scheduler，声明 `reset.services_stopped=true`，显式提供绝对目录 `reset.state_directory` 并完成全部只读预检。管理员密码统一在 `[bootstrap] admin_password` 中明文显式提供并满足复杂度策略；普通种子用户 `user` 使用统一初始密码 `123456`，无需额外提供普通用户密码。重建验证同时核对 `admin`、`user` 的密码哈希及 `password_change_required=true`，任一不符均失败关闭；两个账号首次登录后都必须修改密码。
 
 ```powershell

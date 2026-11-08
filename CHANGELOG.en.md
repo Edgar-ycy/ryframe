@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
+
 - Verify the four source roots before and after the independent backend snapshot comparison in one target-binding window. Reduce duplicate reads during fresh-target request publication while preserving the complete checks and deadline.
 
 - Fix historical RustFS credential authorization matching with mixed Windows path separators. Normalize only path text during reading while retaining unique full-descriptor matching, byte and kernel-identity verification, and original receipts.

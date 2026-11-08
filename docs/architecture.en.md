@@ -116,6 +116,8 @@ Recovery proceeds through start, data validation, and business and runtime valid
 
 ## Non-production Rebuilds
 
+MySQL rebuild preflight accepts schema-level grants on the exact database names in the manifest. Each migration connection needs the required DDL and DML privileges for its target. The connection holding the lock on a physical server also needs `SELECT`, `CREATE`, and `DROP` on every database it handles. Resource writes begin after both checks pass.
+
 `ryframe-reset` is only compiled with the explicit `bin-reset` feature, and production images do not copy this binary. First inspect the full commit with `git rev-parse HEAD`, then fill the 40-character Git SHA into `reset.source_sha` in the selected plaintext configuration. `plan` requires this field and the non-secret rotation declaration `reset.credential_version`: 1–64 ASCII letters, digits, dots, underscores or hyphens, updated whenever any reset-related password or private key rotates. `reset.services_stopped` defaults to `false`; `plan` requires neither a `true` value nor `reset.state_directory`. Only `execute` requires API, Worker and scheduler to be stopped first, an explicit `reset.services_stopped=true`, an explicitly supplied absolute `reset.state_directory`, and all read-only preflights. Supply the administrator password explicitly as plaintext in `[bootstrap] admin_password`, meeting the complexity policy. The ordinary seed account `user` uses the shared initial password `123456` and requires no separately supplied user password. Rebuild verification checks `admin` and `user` for both their password hashes and `password_change_required=true`, failing closed on any mismatch; both accounts must change their passwords after the first login.
 
 ```powershell
