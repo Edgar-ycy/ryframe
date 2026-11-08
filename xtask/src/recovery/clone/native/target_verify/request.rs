@@ -282,20 +282,16 @@ pub(crate) fn execution_backend(
     observer: &dyn SourceObserver,
 ) -> Result<(PathBuf, Value)> {
     if let Some(declared) = declared.filter(|v| v.get("execution_source").is_some()) {
-        let (root, binding) =
-            crate::recovery::fixture_control::source_pair::execution::target_binding(
-                backend, declared,
-            )?;
-        if observer.snapshot(&root)? != binding["source"] {
-            return Err("发布执行源码实际观察与发布绑定不同".into());
-        }
-        let (_, after) = crate::recovery::fixture_control::source_pair::execution::target_binding(
-            backend, declared,
-        )?;
-        if binding != after {
-            return Err("发布执行绑定在来源观察期间漂移".into());
-        }
-        return Ok((root, binding));
+        return crate::recovery::fixture_control::source_pair::execution::target_binding_with(
+            backend,
+            declared,
+            |root, expected| {
+                if observer.snapshot(root)? != *expected {
+                    return Err("发布执行源码实际观察与发布绑定不同".into());
+                }
+                Ok(())
+            },
+        );
     }
     let Some(declared) = declared.filter(|value| !value.is_null()) else {
         validate_absolute_path(backend, LocalTestPathKind::ExistingDirectory)

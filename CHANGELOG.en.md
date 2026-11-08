@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Verify the four source roots before and after the independent backend snapshot comparison in one target-binding window. Reduce duplicate reads during fresh-target request publication while preserving the complete checks and deadline.
+
 - Fix historical RustFS credential authorization matching with mixed Windows path separators. Normalize only path text during reading while retaining unique full-descriptor matching, byte and kernel-identity verification, and original receipts.
 
 - Preserve safe fixed storage rejection reasons through existing fixture lifecycle error exits. Read-only partial-close status reports only I/O kind and system code, keeps unknown private errors redacted, and neither rewrites the ledger nor replays operations.

@@ -228,6 +228,15 @@ pub(in crate::recovery) fn target_binding(
     coordinator: &Path,
     declared: &Value,
 ) -> Result<(std::path::PathBuf, Value)> {
+    target_binding_with(coordinator, declared, |_, _| Ok(()))
+}
+
+/// 在同一个完整来源窗口内执行调用方的独立快照校验，并核对窗口末态。
+pub(in crate::recovery) fn target_binding_with(
+    coordinator: &Path,
+    declared: &Value,
+    observe: impl FnOnce(&Path, &Value) -> Result<()>,
+) -> Result<(std::path::PathBuf, Value)> {
     exact(declared, &["path", "execution_source"], "发布执行工作树")?;
     let requested = Path::new(declared["path"].as_str().ok_or("发布执行根缺失")?);
     validate_absolute_path(coordinator, LocalTestPathKind::ExistingDirectory)?;
@@ -237,21 +246,33 @@ pub(in crate::recovery) fn target_binding(
     if root != coordinator {
         validate_local_test_path(&root, &coordinator, LocalTestPathKind::ExistingDirectory)?;
     }
-    let publication = verify_for_root(&root, &declared["execution_source"])?;
-    let mut snapshot =
-        publication["published"]["backend"]["inventory"]["source"]["snapshot"].clone();
-    snapshot
-        .as_object_mut()
-        .ok_or("发布源码快照无效")?
-        .remove("clean");
-    exact(
-        &snapshot,
-        &["files", "head", "patch_sha256"],
-        "发布源码快照",
-    )?;
-    let binding = json!({"kind":"published-business-fixture","path":root,
-        "execution_source":declared["execution_source"],"fixture":publication["original"]["fixture_receipt"],"source":snapshot});
-    Ok((root, binding))
+    let window = root_window(&root, &declared["execution_source"])?;
+    let result = (|| {
+        let publication = window.publication();
+        require_root(&root, publication)?;
+        let mut snapshot =
+            publication["published"]["backend"]["inventory"]["source"]["snapshot"].clone();
+        snapshot
+            .as_object_mut()
+            .ok_or("发布源码快照无效")?
+            .remove("clean");
+        exact(
+            &snapshot,
+            &["files", "head", "patch_sha256"],
+            "发布源码快照",
+        )?;
+        observe(&root, &snapshot)?;
+        Ok(json!({"kind":"published-business-fixture","path":root,
+            "execution_source":declared["execution_source"],"fixture":publication["original"]["fixture_receipt"],"source":snapshot}))
+    })();
+    let after = window.verify();
+    match result {
+        Ok(binding) => {
+            after?;
+            Ok((root, binding))
+        }
+        Err(error) => Err(window::failure(error, after)),
+    }
 }
 
 /// 发布输入只从完整来源证明派生；不扩大普通收据的本地路径边界。

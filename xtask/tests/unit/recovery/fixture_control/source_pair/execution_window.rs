@@ -99,6 +99,22 @@ fn execution_window_rejects_same_bytes_publication_and_fixture_replacement() {
 }
 
 #[test]
+fn target_binding_rechecks_published_sources_after_an_independent_observation_fails() {
+    let fixture = Fixture::new();
+    fixture.publication();
+    let root = fixture.output.join("backend");
+    let changed = fixture.output.join("frontend/src/business.txt");
+    let declared = json!({"path":root,"execution_source":fixture.binding()});
+    let result = super::super::target_binding_with(&root, &declared, |_, _| {
+        fs::write(&changed, "窗口内发布源码漂移\n")?;
+        Err("独立目标快照校验失败".into())
+    });
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("独立目标快照校验失败"), "{error}");
+    assert!(error.contains("发布来源 frontend"), "{error}");
+}
+
+#[test]
 fn execution_window_keeps_business_failure_and_independent_root_postcheck_errors() {
     let fixture = Fixture::new();
     let publication = fixture.publication();
