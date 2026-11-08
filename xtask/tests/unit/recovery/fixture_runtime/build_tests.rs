@@ -407,6 +407,7 @@ fn assert_artifacts_survive_cache_reuse_and_reject_tampering(
             .to_string()
             .contains("发布业务来源在核验期间变化")
     );
+    assert_published_runtime_rejects_unregistered_fixture_path(prepared, receipt);
     for path in [
         prepared.fixture.output.join("execution-source.json"),
         prepared.fixture.receipt.clone(),
@@ -445,6 +446,43 @@ fn assert_artifacts_survive_cache_reuse_and_reject_tampering(
             backend
         )
         .is_err()
+    );
+}
+
+fn assert_published_runtime_rejects_unregistered_fixture_path(
+    prepared: &Prepared,
+    receipt: &Value,
+) {
+    let build_path = prepared.output.join("build-evidence.json");
+    let runtime_path = prepared.output.join("runtime-evidence.json");
+    let build_before = fs::read(&build_path).unwrap();
+    let runtime_before = fs::read(&runtime_path).unwrap();
+    let fixture_before = fs::read(&prepared.fixture.receipt).unwrap();
+    let missing = prepared.output.join("unregistered-fixture.json");
+    assert!(!missing.exists());
+
+    let mut build: Value = serde_json::from_slice(&build_before).unwrap();
+    build["source"]["fixture_receipt"]["path"] = json!(missing);
+    fs::write(&build_path, serde_json::to_vec(&build).unwrap()).unwrap();
+    let mut runtime: Value = serde_json::from_slice(&runtime_before).unwrap();
+    runtime["source"] = build["source"].clone();
+    runtime["build_evidence"] = fixture_control::file_binding(&build_path, "构建证据").unwrap();
+    fs::write(&runtime_path, serde_json::to_vec(&runtime).unwrap()).unwrap();
+
+    let checked =
+        fixture_control::verify_full_stack_runtime(&prepared.context.root, &prepared.output);
+    fs::write(&build_path, build_before).unwrap();
+    fs::write(&runtime_path, runtime_before).unwrap();
+    assert_eq!(
+        checked.unwrap_err().to_string(),
+        "已发布业务来源与完整当前来源不一致"
+    );
+    assert_eq!(fs::read(&prepared.fixture.receipt).unwrap(), fixture_before);
+    assert!(!missing.exists());
+    assert_eq!(
+        fixture_control::verify_full_stack_runtime(&prepared.context.root, &prepared.output)
+            .unwrap(),
+        *receipt
     );
 }
 

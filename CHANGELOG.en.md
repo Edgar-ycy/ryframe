@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Derive the fixture receipt from verified publication provenance or the fixed business worktree location. Verify its file binding before consuming the evidence, preventing early reads of paths declared in build evidence.
+
 - Allow the coordinator worktree to restart registered RustFS from its original external executable. Verify the original launch identity, absolute path without links, actual file size, and SHA-256.
 
 - A recovery successor relationship accepts the ready review exactly referenced by the original seed request and revalidates its full preflight. Historical pending reviews remain readable through an explicit predecessor binding, and successor resource isolation still covers all three sides.

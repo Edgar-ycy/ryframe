@@ -17,7 +17,7 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
         }
         return Ok(());
     }
-    let mut bindings = evidence_bindings(directory)?;
+    let bindings = evidence_bindings(directory)?;
     let build_path = directory.join("build-evidence.json");
     let build = read_json(&build_path, "全栈构建证据", 4 * 1024 * 1024)?;
     exact_object(
@@ -46,18 +46,6 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
         return Err("全栈构建证据的 build_jobs 与当前 verification.build_jobs 不同；核对工具配置并保留原证据，使用新目录显式构建，不能改写或自动重放".into());
     }
     let source = &build["source"];
-    if source["fixture"] == "business" {
-        for path in [
-            PathBuf::from(text_field(
-                &source["fixture_receipt"],
-                "path",
-                "业务来源收据",
-            )?),
-            root.join("tools/python/fixtures/order-business/src/resources/mod.rs"),
-        ] {
-            bindings.push((path.clone(), evidence_binding(&path)?));
-        }
-    }
     let (path, pair) = source_pair(directory)?;
     let inspect = || -> Result<()> {
         verify_artifacts(directory, &build)?;
@@ -320,6 +308,9 @@ fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {
         .parent()
         .ok_or("业务后端缺少父目录")?
         .join("fixture.json");
+    if evidence["fixture_receipt"] != evidence_binding(&fixture_path)? {
+        return Err("业务 fixture 来源或状态不匹配".into());
+    }
     let fixture = read_json(&fixture_path, "业务 fixture", 4 * 1024 * 1024)?;
     exact_object(
         &fixture,
@@ -344,7 +335,6 @@ fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {
     if fixture["format_version"] != 1
         || fixture["fixture"] != "business"
         || fixture["status"] != "ready"
-        || evidence["fixture_receipt"] != evidence_binding(&fixture_path)?
         || evidence["original"] != fixture["sources"]
         || pair["sources"] != fixture["sources"]
     {
