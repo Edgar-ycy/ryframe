@@ -3,7 +3,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import subprocess
 
-from devex_clone_capture import read_json, write_json
+from devex_clone_capture import read_bound_json, read_json, write_json
 from devex_clone_copy_locks import GUARDS
 from devex_clone_model import exact, linked, local_path
 from devex_clone_post_model import administrator, environment_delta, exact_directory, native_invoke, native_response
@@ -126,7 +126,7 @@ def pacing_binding(backend, directory, request):
 
 
 
-def runtime_inputs(backend: Path, directory: Path, *, descriptor=None) -> tuple[dict, dict]:
+def runtime_inputs(backend: Path, directory: Path, *, descriptor=None, cleanup=False) -> tuple[dict, dict]:
     state = load_state(directory, verify_results=False)
     prepares = [item for item in state["attempts"] if item["stage"] == "post-copy" and item["mode"] == "prepare"
                 and item["status"] == "passed"]
@@ -149,10 +149,7 @@ def runtime_inputs(backend: Path, directory: Path, *, descriptor=None) -> tuple[
     handoff = read_json(handoff_path)
     active = registration(backend, directory, descriptor=handoff["registration"], cleanup=True)
     request = active.request
-    private = read_json(bound_file(backend, request["api_environment"]))
-    exact(private, {"environment"})
-    if private["environment"] != {"APP_ENV": "test"}:
-        raise ValueError("API 运行环境只能选择 APP_ENV=test")
+    environment = _read_runtime_environment(backend, request["api_environment"])
     runtime = active.runtime
     exact_directory(runtime)
     handoff = read_json(runtime / "handoff.json")
@@ -161,7 +158,38 @@ def runtime_inputs(backend: Path, directory: Path, *, descriptor=None) -> tuple[
         raise ValueError("API runtime 交接不属于固定登记")
     if handoff.get("runtime") != binding(runtime / "runtime.json") or handoff.get("binaries") != binding(runtime / "binaries.json"):
         raise ValueError("API runtime 文件发生变化")
-    return {"runtime_dir": str(runtime), "api_url": handoff["api_url"]}, private["environment"]
+    if cleanup:
+        if environment != {"APP_ENV": "test"}:
+            raise ValueError("历史 API 清理环境只能选择 APP_ENV=test")
+    else:
+        _verify_runtime_environment(backend, directory, state["manifest"], request, environment, handoff["api_url"])
+    return {"runtime_dir": str(runtime), "api_url": handoff["api_url"]}, environment
+
+
+def _read_runtime_environment(backend, descriptor):
+    path = bound_file(backend, descriptor)
+    private = read_bound_json(path, {**descriptor, "path": str(path)})
+    exact(private, {"environment"})
+    return private["environment"]
+
+
+def _verify_runtime_environment(backend, directory, manifest, request, environment, api_url):
+    if request["run_manifest"] != manifest:
+        raise ValueError("API 运行环境不属于本 run 的冻结清单")
+    original = read_bound_json(directory / "manifest.json", manifest)["target_environment"]
+    environment_delta(_read_runtime_environment(backend, original), environment, api_url)
+    if set(environment) != {"APP_ENV"}:
+        temporary = environment.get("TEMP")
+        try:
+            valid = (set(environment) == {"APP_ENV", "TEMP", "TMP"} and temporary == environment["TMP"]
+                     and not any(character in temporary for character in "\r\n")
+                     and ".." not in Path(temporary).parts and local_path(backend, temporary).is_dir())
+        except (OSError, ValueError):
+            valid = False
+        if not valid:
+            raise ValueError("API 运行环境 TEMP/TMP 必须指向同一现有受管私有目录")
+    for field in (manifest, original, request["api_environment"]):
+        bound_file(backend, field)
 
 
 @contextmanager

@@ -130,7 +130,6 @@ class PostTests(unittest.TestCase):
         return self.write(self.local / (name + '.json'), value)
 
     def register(self):
-        filename = self.file('request', self.request)
         number = begin(self.directory, 'post-copy', 'register', {})
         self.write(self.directory / 'post-copy.json', self.request)
         result = {'status': 'post_copy_registered', 'registration': binding(self.directory / 'post-copy.json'),
@@ -151,6 +150,21 @@ class PostTests(unittest.TestCase):
         finish(self.directory, number, result={'status': 'post_copy_api_prepared',
                'handoff': binding(runtime / 'handoff.json'), 'worker_started': False})
         return runtime
+
+    def prepared_environment(self, name, initial, api):
+        self.directory = self.local / name
+        self.directory.mkdir()
+        self.value['target_environment'] = self.file(name + '-target', {'environment': initial})
+        self.request['api_environment'] = self.file(name + '-api', {'environment': api})
+        for descriptor in (self.value['target_environment'], self.request['api_environment']):
+            descriptor['path'] = Path(descriptor['path']).as_posix()
+        self.request['run_manifest'] = self.write(self.directory / 'manifest.json', self.value)
+        initialize_state(self.directory)
+        number = begin(self.directory, 'copy', 'run', {})
+        finish(self.directory, number, result={'status': 'data_steps_verified'})
+        self.request['copy_stage_receipt'] = load_state(self.directory)['attempts'][-1]['result']
+        self.register()
+        return self.prepared_runtime()
 
 
     def test_wrong_latest_copy_receipt_ledger_or_build_rejected(self):
@@ -225,7 +239,7 @@ class PostTests(unittest.TestCase):
         runtime = self.prepared_runtime()
         Path(self.request['dataset']['path']).unlink()
         Path(self.value['target_environment']['path']).unlink()
-        observed, env = post.runtime_inputs(self.backend, self.directory)
+        observed, env = post.runtime_inputs(self.backend, self.directory, cleanup=True)
         self.assertEqual(observed['runtime_dir'], str(runtime))
         self.assertEqual(env, self.api)
 
@@ -235,7 +249,7 @@ class PostTests(unittest.TestCase):
         number = begin(self.directory, 'post-copy', 'register', {})
         finish(self.directory, number, error=ValueError('离线模拟来源终检失败'))
         with self.assertRaises(ValueError): post.registered(self.backend, self.directory)
-        observed, environment = post.runtime_inputs(self.backend, self.directory)
+        observed, environment = post.runtime_inputs(self.backend, self.directory, cleanup=True)
         self.assertEqual(observed['runtime_dir'], str(runtime))
         self.assertEqual(environment, self.api)
 
@@ -306,10 +320,13 @@ class PostTests(unittest.TestCase):
         pinned.assert_called_once_with(self.backend, context.value['initialized'], owned_lock_identity=4242)
 
     def test_api_guard_requires_exact_executable_and_verified_contract_configuration_arguments(self):
+        temporary = self.local / '私有 临时目录'
+        temporary.mkdir()
+        environment = {'APP_ENV': 'test', 'TEMP': str(temporary), 'TMP': str(temporary)}
         context = Context.__new__(Context)
+        context.runtime = self.prepared_environment('api-frozen', environment, environment)
         context.backend, context.directory_root = self.backend, self.directory
-        context.runtime, context.selected = self.directory / 'runtime', self.selected
-        context.runtime.mkdir()
+        context.selected = self.selected
         context.target_config = {'scope_id': 'target-one'}
         executable = str(self.local / 'api.exe')
         identity = {'pid': 21000, 'started': '1234567', 'executable': executable}
@@ -321,9 +338,7 @@ class PostTests(unittest.TestCase):
         contract = {'api_config_dir': configuration, 'artifacts': {
             role: {'path': value['executable'], 'sha256': value['sha256']}
             for role, value in context.build['artifacts'].items()}}
-        runtime = {'runtime_dir': str(context.runtime), 'api_url': context.selected['api_url']}
-        with patch('devex_clone_post.runtime_inputs', return_value=(runtime, {})), \
-                patch('devex_clone_post_context.verify_runtime', return_value=contract), \
+        with patch('devex_clone_post_context.verify_runtime', return_value=contract), \
                 patch('devex_clone_post_context.read_process', return_value=identity), \
                 patch('devex_clone_post_context.process_identity', return_value=identity), \
                 patch('devex_clone_post_context.evidence') as evidence, \
@@ -342,6 +357,39 @@ class PostTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, 'API 内核身份、产物或实际命令发生变化'):
                             context.api_guard(SimpleNamespace())
                         listener.assert_not_called()
+
+    def test_api_guard_rejects_changed_or_invalid_frozen_environment_before_process_reads(self):
+        temporary = self.local / 'private-temp'
+        temporary.mkdir()
+        original = {'APP_ENV': 'test', 'TEMP': str(temporary), 'TMP': str(temporary)}
+        missing = str(self.local / 'missing')
+        outside = str(self.frontend)
+        cases = (
+            ('removed', original, {'APP_ENV': 'test'}, 'frozen_context_changed'),
+            ('changed', original, {**original, 'TEMP': missing, 'TMP': missing}, 'frozen_context_changed'),
+            ('injected', original, {**original, 'APP_JOBS_MODE': 'embedded'}, 'api_private'),
+            ('selector', original, {**original, 'APP_ENV': 'dev'}, 'api_private'),
+            ('unpaired', {'APP_ENV': 'test', 'TEMP': str(temporary)}, None, 'TEMP/TMP'),
+            ('unequal', {**original, 'TMP': missing}, None, 'TEMP/TMP'),
+            ('missing', {**original, 'TEMP': missing, 'TMP': missing}, None, 'TEMP/TMP'),
+            ('outside', {**original, 'TEMP': outside, 'TMP': outside}, None, 'TEMP/TMP'),
+            ('relative', {**original, 'TEMP': 'private-temp', 'TMP': 'private-temp'}, None, 'TEMP/TMP'),
+            ('duplicate', {**original, 'temp': str(temporary)}, None, 'initial_private'),
+        )
+        with patch('devex_clone_post_context.verify_runtime') as verify:
+            for name, initial, api, reason in cases:
+                with self.subTest(name=name):
+                    context = Context.__new__(Context)
+                    context.runtime = self.prepared_environment('api-' + name, initial, initial if api is None else api)
+                    context.backend, context.directory_root, context.selected = self.backend, self.directory, self.selected
+                    with self.assertRaisesRegex(ValueError, reason):
+                        context.api_guard(SimpleNamespace())
+            context.runtime = self.prepared_environment('api-missing-receipt', original, original)
+            context.directory_root = self.directory
+            Path(self.value['target_environment']['path']).unlink()
+            with self.assertRaises((OSError, ValueError)):
+                context.api_guard(SimpleNamespace())
+            verify.assert_not_called()
 
 
 

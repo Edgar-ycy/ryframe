@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse native registration rules when verifying the frozen post-copy API environment. Preserve `TEMP` and `TMP` when both identify the same existing private directory, and reject environment drift and injected variables.
+
 - Derive the fixture receipt from verified publication provenance or the fixed business worktree location. Verify its file binding before consuming the evidence, preventing early reads of paths declared in build evidence.
 
 - Allow the coordinator worktree to restart registered RustFS from its original external executable. Verify the original launch identity, absolute path without links, actual file size, and SHA-256.
