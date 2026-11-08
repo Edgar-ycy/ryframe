@@ -65,17 +65,17 @@ cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
 cargo migrate -- control verify
 ```
 
-租户表把 `control` 改为 `tenant-data`，并显式提供 `--target business-shared`；不接受 `--all`。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划使用 `.local-tests` 内的新路径，保存计划时命令自动创建产物的父目录。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
+租户表把 `control` 改为 `tenant-data`，并显式提供 `--target business-shared`；不接受 `--all`。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划使用 `.local-tests` 内的新路径，保存计划时命令自动创建产物的父目录。普通开发配置继续使用工作树外的私有目录。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
 
 授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。可接受陈旧的列表读才使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。租户数据范围由 `sys_tenant.data_scope_version` 驱动：控制库事务写入 outbox，Worker 在 placement 目标发布并原子切换投影；认证主体版本落后或投影不可用时失败关闭。两个数据库之间没有分布式事务，已并发进入租户库的写入不能被控制库回滚。
 
 ## 备份、恢复与保留
 
-正式备份前停止 API、Worker、调度和消息生产者。库存以 `--quiesced-at` 表明外部已静止；`--observed-at` 只记录观察起点，不能作为正式备份资格。备份登记验证文件大小和 SHA-256，恢复数据校验比较当前 schema、完整表摘要、placement、ownership 和对象清单，资源与登记元数据不参与业务摘要。隔离恢复必须使用新 scope、数据库和对象前缀，保留目标 ownership；通过数据验证、API/Worker 就绪和真实业务证明后才登记成功。参考目标是 24 小时恢复点、60 分钟 RTO，实际结果不能由计划或单次库存推断。下列输出父目录须已存在，目标文件必须不存在；详细恢复命令见[运维指南](operations.md#备份失败或过期)。
+正式备份前停止 API、Worker、调度和消息生产者。库存以 `--quiesced-at` 表明外部已静止；`--observed-at` 只记录观察起点，不能作为正式备份资格。备份登记验证文件大小和 SHA-256，恢复数据校验比较当前 schema、完整表摘要、placement、ownership 和对象清单，资源与登记元数据不参与业务摘要。隔离恢复必须使用新 scope、数据库和对象前缀，保留目标 ownership；通过数据验证、API/Worker 就绪和真实业务证明后才登记成功。参考目标是 24 小时恢复点、60 分钟 RTO，实际结果不能由计划或单次库存推断。下列库存命令用于登记备份与恢复证据，使用本次演练已准备的 `.local-tests` 子目录内的新文件，并传入绝对路径。详细恢复命令见[运维指南](operations.md#备份失败或过期)。
 
 ```powershell
-cargo xtask data backup inventory --output .local-tests/backup/inventory.json --source-sha <40-character-sha> --quiesced-at <RFC3339>
-cargo xtask data target inventory --target <target-key> --output .local-tests/backup/target-inventory.json
+cargo xtask data backup inventory --output <absolute-new-inventory-file> --source-sha <40-character-sha> --quiesced-at <RFC3339>
+cargo xtask data target inventory --target <target-key> --output <absolute-new-target-inventory-file>
 ```
 
 开发复制先用 `cargo xtask check recovery clone plan --input <manifest> --output <new-plan> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <plan>` 只读复核。两个入口由 Rust 原生执行，不启动 Python，也不访问数据库、网络或共享服务；严格核验输入对象字段、16 MiB 上限、schema/业务目录、SQL 数据转储、对象大小与 SHA-256、租户 placement/fence、任务关系和确定性计划哈希。`bridge --build <receipt> --inventory <manifest> --output <new-bridge-file> --write` 只在 Rust 中核验明确构建收据、完整来源快照、文件集合、产物字节、构建上下文和当前产品输入后登记复用边界，不编译、不改旧收据、不取得恢复资格；输出必须 create-new。`maintenance --operation build --output <new-directory> --write` 通过统一进程层以 Cargo 离线模式分别定向构建 `reset`、`migrate`、`tenant-data` 三个维护 CLI，冻结二进制、Cargo JSON 事件、日志、源码、工具链和 target 收据；失败留下 `failed.json` 与原始日志，不用成功收据掩盖部分写入。`maintenance --operation verify --output <directory-or-build.json>` 只读复核冻结收据、当前源码与工具链，重复构建已有输出会在启动 Cargo 前拒绝。`storage` 同样由 Rust 接管：RustFS 固定请求、数据目录身份、原始启动和实际进程代次、监听端口、服务日志、失败与未知启动收据、服务身份变化和精确进程回收都在原生入口核验；`storage status` 不创建 attempt 或证据文件，其他操作要求显式 `--write`。`cache` 的 successor 与前代工具换代路径尚未完整迁移，因此本版本继续使用原状态机，不保留半完成的 Rust 入口。

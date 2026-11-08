@@ -8,7 +8,7 @@ RyFrame 是面向企业后台的 Rust 2024 框架，与 Vue 3 管理端配套使
 
 ## 下载后首次运行
 
-后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell，无需预建任何 Git 忽略目录。MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
+后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell。首次启动、联调和可选的开发步骤都无需手工创建 Git 忽略目录，构建和运行目录由工具按需创建。MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
 
 1. 安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
 2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。文件存储默认使用本地目录，也支持 RustFS、MinIO 和 S3 兼容服务。
@@ -63,7 +63,7 @@ cargo serve -- --config-dir ../ryframe-dev-config
 cargo migrate -- --config-dir ../ryframe-dev-config control export-sql --output .local-tests/control-init.sql --write
 ```
 
-推荐使用迁移命令初始化。需要直接导入时，先用上方命令导出完整 SQL。导出命令自动创建产物的父目录。随后选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir ../ryframe-dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 只初始化控制库；使用租户业务数据时仍须对实际目标执行 `tenant-data up` 和 `verify`。
+推荐使用迁移命令初始化。需要直接导入时，先用上方命令导出完整 SQL。导出命令自动创建产物的父目录。`.local-tests/control-init.sql` 是命令生成的私有 SQL 文件。随后选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir ../ryframe-dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 只初始化控制库；使用租户业务数据时仍须对实际目标执行 `tenant-data up` 和 `verify`。
 
 租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir ../ryframe-dev-config tenant-data up --target <target-key>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 
