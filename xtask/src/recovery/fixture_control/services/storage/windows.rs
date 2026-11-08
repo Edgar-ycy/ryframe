@@ -1,7 +1,10 @@
 //! Job 成员和实际句柄只归本 monitor；产品继承 supervisor 所在 Job。
 use super::*;
-use crate::process::{ChildGroup, ManagedChild, stop_child};
-use winsafe::{FILETIME, HPROCESS, co, guard::CloseHandleGuard, prelude::kernel_Hprocess};
+use crate::{
+    process::{ChildGroup, ManagedChild, stop_child},
+    recovery::clone::native::lifecycle::identity,
+};
+use winsafe::{HPROCESS, co, guard::CloseHandleGuard, prelude::kernel_Hprocess};
 
 struct Member {
     identity: Value,
@@ -51,12 +54,8 @@ impl Group {
         self.members.iter().map(|m| m.identity.clone()).collect()
     }
     pub(super) fn capture(&mut self) -> Result<()> {
-        for pid in self
-            .child
-            .as_ref()
-            .ok_or("原 Job 句柄已经释放")?
-            .member_pids()?
-        {
+        let child = self.child.as_ref().ok_or("原 Job 句柄已经释放")?;
+        for pid in child.member_pids()? {
             let Some(identity) = common::process_identity(pid)? else {
                 continue;
             };
@@ -67,30 +66,9 @@ impl Group {
             {
                 continue;
             }
-            let handle = HPROCESS::OpenProcess(
-                co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
-                false,
-                pid,
-            )?;
-            let mut creation = FILETIME::default();
-            let mut exit = FILETIME::default();
-            let mut kernel = FILETIME::default();
-            let mut user = FILETIME::default();
-            handle.GetProcessTimes(&mut creation, &mut exit, &mut kernel, &mut user)?;
-            let ticks =
-                (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
-            let image = handle.QueryFullProcessImageName(co::PROCESS_NAME::WIN32)?;
-            check(
-                identity["started"]
-                    .as_str()
-                    .and_then(|value| value.parse::<u64>().ok())
-                    == Some(ticks)
-                    && Path::new(document::text(&identity["executable"], "成员映像")?)
-                        == Path::new(&image)
-                    && common::process_identity(pid)?.as_ref() == Some(&identity),
-                "Job 成员句柄创建身份变化",
-            )?;
-            self.members.push(Member { identity, handle });
+            if let Some(member) = capture_member(child, pid, &identity)? {
+                self.members.push(member);
+            }
         }
         Ok(())
     }
@@ -135,6 +113,36 @@ impl Group {
     }
 }
 
+fn capture_member(child: &ManagedChild, pid: u32, observed: &Value) -> Result<Option<Member>> {
+    let handle = match HPROCESS::OpenProcess(
+        co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
+        false,
+        pid,
+    ) {
+        Ok(handle) => handle,
+        Err(co::ERROR::INVALID_PARAMETER) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let snapshot = identity::windows_snapshot(&handle, pid);
+    let Some(identity) = identity::confirm_live_observation(snapshot, exited(&handle))? else {
+        return Ok(None);
+    };
+    let in_job = child.member_pids()?.contains(&pid);
+    // 成员可在重读 Job 时退出；仍活跃的句柄必须和原创建身份及 Job 成员表一致。
+    if exited(&handle)? {
+        return Ok(None);
+    }
+    check(
+        identity == *observed && in_job,
+        "Job 成员句柄创建身份或归属变化",
+    )?;
+    Ok(Some(Member { identity, handle }))
+}
+
+fn exited(handle: &HPROCESS) -> Result<bool> {
+    Ok(handle.WaitForSingleObject(Some(0))? == co::WAIT::OBJECT_0)
+}
+
 fn reject_child(mut child: ManagedChild, error: Box<dyn std::error::Error>) -> Result<Group> {
     let stopped = stop_child(&mut child);
     let empty = child.active_process_count();
@@ -144,4 +152,58 @@ fn reject_child(mut child: ManagedChild, error: Box<dyn std::error::Error>) -> R
     stopped?;
     check(empty? == Some(0), "RustFS 创建失败后原 Job 成员退出未确认")?;
     Err(error)
+}
+
+#[cfg(test)]
+#[test]
+fn rustfs_windows_job_capture_skips_exited_member_and_rejects_live_drift() {
+    use std::{
+        io::Read,
+        process::{Command, Stdio},
+    };
+
+    const PROBE: &str = "RYFRAME_TEST_RUSTFS_JOB_CAPTURE_CHILD";
+    if std::env::var_os(PROBE).is_some() {
+        std::io::stdin().read_exact(&mut [0]).unwrap();
+        return;
+    }
+    let test = format!(
+        "{}::rustfs_windows_job_capture_skips_exited_member_and_rejects_live_drift",
+        module_path!().split_once("::").unwrap().1
+    );
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", &test])
+        .env(PROBE, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null());
+    let mut child = ChildGroup::new().unwrap().spawn(command).unwrap();
+    let pid = child.id();
+    let observed = common::process_identity(pid).unwrap().unwrap();
+    let captured = capture_member(&child, pid, &observed).unwrap().unwrap();
+    assert_eq!(captured.identity, observed);
+
+    let mut replaced = observed.clone();
+    replaced["started"] = json!("1");
+    assert!(capture_member(&child, pid, &replaced).is_err());
+    let foreign = identity::current().unwrap();
+    assert!(capture_member(&child, std::process::id(), &foreign).is_err());
+
+    child
+        .take_stdin_writer()
+        .unwrap()
+        .unwrap()
+        .write_all(b"x")
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "测试 Job 子进程未退出");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(exited(&captured.handle).unwrap());
+    assert!(capture_member(&child, pid, &observed).unwrap().is_none());
 }

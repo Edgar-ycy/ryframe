@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows RustFS supervision tolerates short-lived Job members that exit during observation. Live members must match the original creation identity and remain in the same Job. Full-tree shutdown proof and startup deadlines are preserved.
+
 - Reuse native registration rules when verifying the frozen post-copy API environment. Preserve `TEMP` and `TMP` when both identify the same existing private directory, and reject environment drift and injected variables.
 
 - Derive the fixture receipt from verified publication provenance or the fixed business worktree location. Verify its file binding before consuming the evidence, preventing early reads of paths declared in build evidence.
