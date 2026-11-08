@@ -462,7 +462,7 @@ def execution_binary_bindings(backend: Path, request: dict) -> list[dict]:
     return _native("binaries", backend, request=request)["bindings"]
 
 
-def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
+def predecessor_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
     result = _native("request", backend, request=request, predecessor=predecessor)
     return result["review"], result["selected"]
 

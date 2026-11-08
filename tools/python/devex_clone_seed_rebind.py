@@ -149,7 +149,7 @@ def resolve_storage(backend: Path, descriptor: dict, source: dict, state: dict, 
 
 def published_restart_guard(backend: Path, directory: Path, number: int | None) -> None:
     from devex_clone_seed_source import _registered_source
-    from devex_clone_target_binding import pending_request_binding, request_binding
+    from devex_clone_target_binding import predecessor_request_binding, request_binding
 
     state = load_state(directory)
     selected = _model(backend, "restart-stage", {"attempts": state["attempts"], "number": number})
@@ -173,7 +173,7 @@ def published_restart_guard(backend: Path, directory: Path, number: int | None) 
         review = read_json(bound_file(root, {key: value for key, value in target["review"].items()
                                           if key != "canonical_sha256"}))
         return (request_binding(root, target) if review["ready_for_execution"] else
-                pending_request_binding(root, target, target["review"]))
+                predecessor_request_binding(root, target, target["review"]))
 
     source = _registered_source(backend, descriptor, live_storage=False, validate_seed_target=validate_history)
     quiet_producers(backend, source)

@@ -820,7 +820,7 @@ class SegmentedSourceResumeTests(unittest.TestCase):
                     return_value={"physical_binding": registered["generation"]["physical_binding"]}),
               patch("restore_source_runtime.verify_source_runtime", return_value=verified_runtime),
               patch.object(successor, "_validated_relationship", return_value=relationship),
-              patch.object(successor, "pending_request_binding"),
+              patch.object(successor, "predecessor_request_binding"),
               patch.object(seed_export, "load_state", return_value=state)):
             public = successor.published_source(self.backend, self.successor, live_storage=False)
             adopted = seed_export.published_export(self.backend, export_descriptor, public)

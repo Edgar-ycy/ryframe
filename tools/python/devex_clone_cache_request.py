@@ -10,7 +10,7 @@ from devex_clone_model import local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from devex_clone_storage_request import directory_identity
-from devex_clone_target_binding import external_file, pending_request_binding, request_binding
+from devex_clone_target_binding import external_file, predecessor_request_binding, request_binding
 from rate_limit_client import load_app_table
 
 
@@ -79,10 +79,10 @@ def successor_process(backend, directory, value, request, successor, *, owned_lo
         source_directory=str(source["directory"]), source_manifest=source["manifest"], tools=tools,
         tool_wsl_path=str(Path(tools["wsl"]["path"]).resolve()),
         original_wsl_path=str(Path(request["process"]["wsl"]["path"]).resolve()))
-    def bind_pending(root, target):
+    def bind_predecessor(root, target):
         invoke("pending-target", target=target, seed_target=source["seed_target"])
-        return pending_request_binding(root, target, relationship["predecessor_review"])
-    private = _validate_request(backend, directory, value, request, bind_pending,
+        return predecessor_request_binding(root, target, relationship["predecessor_review"])
+    private = _validate_request(backend, directory, value, request, bind_predecessor,
                                  owned_lock_identity=owned_lock_identity, effective=effective,
                                  initialization=(source["initialization"], source["seed_target"]),
                                  observe_effective_files=observe_current_tools,

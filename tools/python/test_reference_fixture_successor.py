@@ -193,13 +193,13 @@ class SuccessorTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "尚未就绪"):
             target_binding.request_binding(fixture.root, fixture.request)
-        observed, selected = target_binding.pending_request_binding(
+        observed, selected = target_binding.predecessor_request_binding(
             fixture.root, fixture.request, fixture.request["review"]
         )
         self.assertFalse(observed["ready_for_execution"])
         self.assertEqual(selected["scope_id"], fixture.scope)
-        with self.assertRaisesRegex(ValueError, "pending predecessor"):
-            target_binding.pending_request_binding(
+        with self.assertRaisesRegex(ValueError, "指定 predecessor"):
+            target_binding.predecessor_request_binding(
                 fixture.root,
                 fixture.request,
                 {**fixture.request["review"], "sha256": "f" * 64},
@@ -220,7 +220,9 @@ class SuccessorTests(unittest.TestCase):
                 "restore_qualified": False,
             },
         )
-        predecessor = self.review("old", 11000)
+        prior = {**self.review("old", 11000), "ready_for_execution": True}
+        _, prior_file = self.file("predecessor-previous-ready.json", prior)
+        predecessor = {**prior, "preflight": {"supersedes": prior_file}}
         successor_pending = {
             **self.review("new", 12000),
             "ready_for_execution": False,
@@ -258,14 +260,9 @@ class SuccessorTests(unittest.TestCase):
             }
             requests[side] = self.file(f"{side}.json", request)[0]
         with (
-            patch.object(
-                successor,
-                "_pending_review",
-                return_value=(predecessor, predecessor_descriptor),
-            ),
-            patch.object(successor, "validate_preflight_successor"),
+            patch.object(successor, "validate_preflight_successor") as preflight,
             patch.object(successor, "request_binding"),
-            patch.object(successor, "pending_request_binding") as pending,
+            patch.object(successor, "predecessor_request_binding") as history,
         ):
             result = successor.build(
                 self.backend,
@@ -276,7 +273,14 @@ class SuccessorTests(unittest.TestCase):
                 requests,
                 "successor-r1",
             )
-        pending.assert_called_once()
+        self.assertEqual(
+            [call.args for call in preflight.call_args_list],
+            [(prior, predecessor), (successor_pending, successor_review)],
+        )
+        history.assert_called_once_with(
+            self.backend, {"id": "historical-seed", "side": "seed", "review": predecessor_descriptor},
+            predecessor_descriptor,
+        )
         self.assertNotEqual(predecessor_file, successor_pending_file)
         self.assertEqual(result["predecessor_review"], predecessor_descriptor)
         self.assertEqual(result["successor_review"], successor_descriptor)
@@ -312,14 +316,9 @@ class SuccessorTests(unittest.TestCase):
         candidate.unlink()
         write_json(candidate, value)
         with (
-            patch.object(
-                successor,
-                "_pending_review",
-                return_value=(predecessor, predecessor_descriptor),
-            ),
             patch.object(successor, "validate_preflight_successor"),
             patch.object(successor, "request_binding"),
-            patch.object(successor, "pending_request_binding"),
+            patch.object(successor, "predecessor_request_binding"),
             self.assertRaisesRegex(ValueError, "服务代次"),
         ):
             successor.build(
@@ -364,7 +363,7 @@ class SuccessorTests(unittest.TestCase):
             successor.main([*arguments[1:], "--native-tool", json.dumps(tool_binding())])
         self.assertEqual(raised.exception.code, 2)
 
-    def test_published_source_uses_pending_validator_and_rechecks_relationship(self):
+    def test_published_source_uses_predecessor_validator_and_rechecks_relationship(self):
         historical = {"id": "historical-seed", "side": "seed"}
         historical_path, historical_binding = self.file(
             "historical-request.json", historical
@@ -413,12 +412,12 @@ class SuccessorTests(unittest.TestCase):
                 side_effect=[relationship, relationship],
             ) as validate_relationship,
             patch.object(successor, "_deep_published_source", side_effect=deep_source),
-            patch.object(successor, "pending_request_binding") as pending,
+            patch.object(successor, "predecessor_request_binding") as history,
         ):
             observed = successor.published_source(
                 self.backend, successor_binding, live_storage=True
             )
-        pending.assert_called_once_with(self.backend, historical, predecessor_review)
+        history.assert_called_once_with(self.backend, historical, predecessor_review)
         self.assertEqual(validate_relationship.call_count, 2)
         self.assertEqual(observed["review_successor"], relationship)
         self.assertEqual(observed["review_successor_binding"], successor_binding)
@@ -475,7 +474,7 @@ class SuccessorTests(unittest.TestCase):
             patch.object(
                 successor, "_deep_published_source", side_effect=wrong_registration
             ),
-            patch.object(successor, "pending_request_binding"),
+            patch.object(successor, "predecessor_request_binding"),
             self.assertRaisesRegex(ValueError, "关系不一致"),
         ):
             successor.published_source(self.backend, successor_binding)
@@ -496,7 +495,7 @@ class SuccessorTests(unittest.TestCase):
                 side_effect=[relationship, changed],
             ),
             patch.object(successor, "_deep_published_source", side_effect=valid_source),
-            patch.object(successor, "pending_request_binding"),
+            patch.object(successor, "predecessor_request_binding"),
             self.assertRaisesRegex(ValueError, "核对期间变化"),
         ):
             successor.published_source(self.backend, successor_binding)

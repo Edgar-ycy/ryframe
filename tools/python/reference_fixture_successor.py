@@ -1,4 +1,4 @@
-"""把历史 pending seed 计划与新的三侧 ready 计划绑定为不可变 successor 证据。"""
+"""把历史 seed 计划与新的三侧 ready 计划绑定为不可变 successor 证据。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from devex_clone_model import digest, exact, linked, local_path, name
 from devex_clone_run_state import binding
 from devex_clone_seed_source import _published_source as _deep_published_source
 from devex_clone_target_binding import (
-    pending_request_binding,
+    predecessor_request_binding,
     request_binding,
     validate_review,
 )
@@ -58,18 +58,27 @@ def _review_descriptor(path: Path, value: dict, descriptor: dict) -> dict:
     return {**descriptor, "canonical_sha256": plan_hash(value)}
 
 
-def _pending_review(backend: Path, path: Path) -> tuple[dict, dict]:
+def _predecessor_review(backend: Path, path: Path) -> tuple[dict, dict]:
     filename, review, descriptor = _document(backend, path)
-    if review.get("ready_for_execution") is not False:
-        raise ValueError("predecessor review 必须保持 pending")
-    structural = copy.deepcopy(review)
-    structural["ready_for_execution"] = True
-    validate_review(structural)
+    ready = review.get("ready_for_execution")
+    if ready is False:
+        structural = copy.deepcopy(review)
+        structural["ready_for_execution"] = True
+        validate_review(structural)
+    elif ready is True:
+        _validate_ready_preflight(backend, review, require_pending_parent=False)
+    else:
+        raise ValueError("predecessor review 必须有明确布尔就绪状态")
     return review, _review_descriptor(filename, review, descriptor)
 
 
 def _ready_review(backend: Path, path: Path) -> tuple[dict, dict]:
     filename, review, descriptor = _document(backend, path)
+    _validate_ready_preflight(backend, review, require_pending_parent=True)
+    return review, _review_descriptor(filename, review, descriptor)
+
+
+def _validate_ready_preflight(backend: Path, review: dict, *, require_pending_parent: bool) -> None:
     preflight = review.get("preflight")
     predecessor = preflight.get("supersedes") if isinstance(preflight, dict) else None
     if not isinstance(predecessor, dict):
@@ -77,7 +86,7 @@ def _ready_review(backend: Path, path: Path) -> tuple[dict, dict]:
     prior_path, prior, _ = _document(
         backend, Path(predecessor.get("path", "")), predecessor
     )
-    if prior.get("ready_for_execution") is not False:
+    if require_pending_parent and prior.get("ready_for_execution") is not False:
         raise ValueError("successor preflight predecessor 必须保持 pending")
     try:
         validate_preflight_successor(prior, review)
@@ -85,7 +94,6 @@ def _ready_review(backend: Path, path: Path) -> tuple[dict, dict]:
         raise ValueError("successor review 与其 preflight predecessor 语义不同") from error
     if binding(prior_path) != predecessor:
         raise ValueError("successor preflight predecessor 在核对期间变化")
-    return review, _review_descriptor(filename, review, descriptor)
 
 
 def _socket(value: str, *, redis: bool = False) -> str:
@@ -277,7 +285,7 @@ def _validated_relationship(backend: Path, descriptor: dict) -> dict:
 def _source_with_loader(
     backend: Path, descriptor: dict, *, live_storage: bool, loader
 ) -> dict:
-    """通过 successor 特例恢复历史 pending seed，不改变普通发布源的就绪规则。"""
+    """通过 successor 复核明确绑定的历史 seed，普通发布源仍要求 ready。"""
     backend = backend.resolve(strict=True)
     expected_descriptor = copy.deepcopy(descriptor)
     successor = _validated_relationship(backend, expected_descriptor)
@@ -292,12 +300,12 @@ def _source_with_loader(
         raise ValueError("successor 历史 seed 请求规范摘要无效")
     validation_count = 0
 
-    def validate_pending(root: Path, seed_target: dict) -> tuple[dict, dict]:
+    def validate_predecessor(root: Path, seed_target: dict) -> tuple[dict, dict]:
         nonlocal validation_count
         validation_count += 1
         if seed_target != historical_request:
             raise ValueError("发布源初始化历史不是 successor 绑定的 seed 请求")
-        return pending_request_binding(
+        return predecessor_request_binding(
             root, seed_target, successor["predecessor_review"]
         )
 
@@ -305,7 +313,7 @@ def _source_with_loader(
         backend,
         successor["source_result"],
         live_storage=live_storage,
-        validate_seed_target=validate_pending,
+        validate_seed_target=validate_predecessor,
     )
     if (
         validation_count != 1
@@ -364,14 +372,14 @@ def build(
     )
     if registration.get("kind") != "devex-clone-seed-source-registration":
         raise ValueError("successor 来源 inner registration 类型无效")
-    predecessor, predecessor_binding = _pending_review(backend, predecessor_review)
+    predecessor, predecessor_binding = _predecessor_review(backend, predecessor_review)
     predecessor_path, historical_request, historical_binding = _document(
         backend, predecessor_request
     )
-    pending_request_binding(backend, historical_request, predecessor_binding)
+    predecessor_request_binding(backend, historical_request, predecessor_binding)
     if historical_request["side"] != "seed":
         raise ValueError("successor predecessor 请求必须是历史 seed 侧")
-    predecessor_request_binding = {
+    historical_descriptor = {
         **historical_binding,
         "canonical_sha256": plan_hash(historical_request),
     }
@@ -400,7 +408,7 @@ def build(
         "source_result": source_result_binding,
         "source_registration": registration_binding,
         "predecessor_review": predecessor_binding,
-        "predecessor_request": predecessor_request_binding,
+        "predecessor_request": historical_descriptor,
         "successor_review": successor_binding,
         "requests": request_bindings,
         "collision_projection": collision_projection(predecessor, successor),

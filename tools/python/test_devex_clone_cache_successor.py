@@ -30,7 +30,7 @@ class SuccessorRequestTests(CacheFixture):
         stack = self.patches()
         stack.enter_context(patch("reference_fixture_successor._source_with_loader", return_value=self.source))
         stack.enter_context(patch("reference_fixture_environment.validate_current_review_tools", side_effect=lambda _: self.tools))
-        stack.enter_context(patch.object(model, "pending_request_binding", return_value=(self.review, self.selected)))
+        stack.enter_context(patch.object(model, "predecessor_request_binding", return_value=(self.review, self.selected)))
         return stack
 
     def test_frozen_successor_validates_structure_without_observing_current_tool_files(self):

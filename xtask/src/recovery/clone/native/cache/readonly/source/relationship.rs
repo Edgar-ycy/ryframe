@@ -51,14 +51,14 @@ pub(super) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
         return Err("successor 来源登记类型无效".into());
     }
     let previous = canonical(backend, &value["predecessor_review"])?;
-    pending(&previous)?;
+    predecessor(backend, &previous)?;
     let target = canonical(backend, &value["predecessor_request"])?;
     target_verify::binding_request::validate(backend, &target, &value["predecessor_review"])?;
     if target["side"] != "seed" {
         return Err("successor 历史请求必须属于 seed 侧".into());
     }
     let current = canonical(backend, &value["successor_review"])?;
-    ready(backend, &current)?;
+    ready(backend, &current, true)?;
     requests(backend, &value)?;
     if projection(&previous, &current)? != value["collision_projection"] {
         return Err("successor 碰撞投影不同于完整输入重建结果".into());
@@ -84,10 +84,20 @@ fn pending(review: &Value) -> Result<()> {
     target_verify::input::request_review::validate(&structural)
 }
 
-fn ready(backend: &Path, review: &Value) -> Result<()> {
+fn predecessor(backend: &Path, review: &Value) -> Result<()> {
+    match review["ready_for_execution"].as_bool() {
+        Some(false) => pending(review),
+        Some(true) => ready(backend, review, false),
+        None => Err("predecessor review 必须有明确布尔就绪状态".into()),
+    }
+}
+
+fn ready(backend: &Path, review: &Value, require_pending_parent: bool) -> Result<()> {
     let descriptor = &review["preflight"]["supersedes"];
     let previous = common::read_bound(backend, descriptor, "successor preflight 前驱")?;
-    pending(&previous)?;
+    if require_pending_parent {
+        pending(&previous)?;
+    }
     let (code, result) =
         crate::recovery::fixture_control::environment::protocol::execute(&serde_json::to_vec(
             &json!({"format_version":1,"operation":"preflight-successor",
@@ -98,6 +108,44 @@ fn ready(backend: &Path, review: &Value) -> Result<()> {
     }
     common::bound_file(backend, descriptor, "successor preflight 前驱")?;
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn historical_ready_predecessor_verifies_both_preflight_lineages() {
+    use crate::recovery::fixture_control::environment::protocol::tests as fixtures;
+
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let pending_path = directory.path().join("pending.json");
+    let ready_path = directory.path().join("ready.json");
+    let mut draft = fixtures::review(backend);
+    draft["ready_for_execution"] = json!(false);
+    for role in ["mysql", "mysqldump", "rustfs"] {
+        draft["tools"][role]["sha256"] = json!("a".repeat(64));
+    }
+    document::write_new(&pending_path, &draft).unwrap();
+
+    let mut original = fixtures::ready(draft);
+    original["preflight"]["supersedes"] = common::binding(&pending_path).unwrap();
+    predecessor(backend, &original).unwrap();
+    ready(backend, &original, true).unwrap();
+    document::write_new(&ready_path, &original).unwrap();
+
+    let mut renewed = original;
+    renewed["preflight"]["supersedes"] = common::binding(&ready_path).unwrap();
+    renewed["tools"]["mysql"]["sha256"] = json!("b".repeat(64));
+    renewed["preflight"]["tools"]["mysql"] = renewed["tools"]["mysql"].clone();
+    predecessor(backend, &renewed).unwrap();
+    assert!(ready(backend, &renewed, true).is_err());
+
+    let mut drift = renewed.clone();
+    drift["preflight"]["tools"]["mysql"]["sha256"] = json!("different");
+    assert!(predecessor(backend, &drift).is_err());
+    std::fs::write(ready_path, b"{}").unwrap();
+    assert!(predecessor(backend, &renewed).is_err());
 }
 
 fn requests(backend: &Path, value: &Value) -> Result<()> {
