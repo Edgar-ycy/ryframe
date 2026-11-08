@@ -58,17 +58,35 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
             bindings.push((path.clone(), evidence_binding(&path)?));
         }
     }
-    verify_source(root, directory, source)?;
-    verify_artifacts(directory, &build)?;
-    let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
-    let expected = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":evidence_binding(&build_path)?,"runtime":evidence_binding(&directory.join("runtime.json"))?});
-    if actual != expected {
-        return Err("全栈运行来源证据与当前来源不匹配".into());
+    let (path, pair) = source_pair(directory)?;
+    let inspect = || -> Result<()> {
+        verify_artifacts(directory, &build)?;
+        let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
+        let expected = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":evidence_binding(&build_path)?,"runtime":evidence_binding(&directory.join("runtime.json"))?});
+        if actual != expected {
+            return Err("全栈运行来源证据与当前来源不匹配".into());
+        }
+        observe();
+        Ok(())
+    };
+    if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
+        crate::recovery::full_stack::provenance::published(root, directory, &pair, |current| {
+            if current != source {
+                return Err("已发布业务来源与完整当前来源不一致".into());
+            }
+            inspect()
+        })?;
+        return verify_unchanged(root, &build["build_jobs"], bindings);
     }
-    // 每次调用独立的观察点，不使用全局状态；随后必须重读同一来源和全部证据。
-    observe();
-    verify_source(root, directory, source)?;
-    if build["build_jobs"].as_u64()
+    verify_source(root, &path, &pair, source)?;
+    inspect()?;
+    let (path, pair) = source_pair(directory)?;
+    verify_source(root, &path, &pair, source)?;
+    verify_unchanged(root, &build["build_jobs"], bindings)
+}
+
+fn verify_unchanged(root: &Path, jobs: &Value, bindings: Vec<(PathBuf, Value)>) -> Result<()> {
+    if jobs.as_u64()
         != Some(u64::from(
             crate::recovery::clone::native::bridge::build_jobs(root)?,
         ))
@@ -137,7 +155,7 @@ fn verify_artifacts(directory: &Path, build: &Value) -> Result<()> {
     Ok(())
 }
 
-fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> {
+fn source_pair(directory: &Path) -> Result<(PathBuf, Value)> {
     let original = directory.join("source-pair.json");
     crate::local_test_path::validate_absolute_path(
         &original,
@@ -147,17 +165,14 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
     let path =
         super::super::portable_path(&std::fs::canonicalize(directory)?).join("source-pair.json");
     let pair = read_json(&path, "全栈源码组合", 16 * 1024)?;
-    if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
-        let current = crate::recovery::full_stack::provenance::current(root, directory)?;
-        if current != *evidence {
-            return Err("已发布业务来源与完整当前来源不一致".into());
-        }
-        return Ok(());
-    }
+    Ok((path, pair))
+}
+
+fn verify_source(root: &Path, path: &Path, pair: &Value, evidence: &Value) -> Result<()> {
     let reference = pair["kind"] == "reference-fixture-source-pair";
     if reference {
         exact_object(
-            &pair,
+            pair,
             &["format_version", "kind", "fixture_receipt", "sources"],
             "参考源码组合",
         )?;
@@ -166,7 +181,7 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
         }
     } else {
         exact_object(
-            &pair,
+            pair,
             &[
                 "format_version",
                 "backend_sha",
@@ -187,7 +202,7 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
         return Err("业务 fixture 不得使用 core 来源证据".into());
     }
     let mut bound = pair.clone();
-    bound["receipt"] = evidence_binding(&path)?;
+    bound["receipt"] = evidence_binding(path)?;
     if evidence["format_version"] != 1 || evidence["source_pair"] != bound {
         return Err(format!(
             "构建来源与源码组合不匹配，不一致字段：{}；核对原 source-pair 与构建收据，保留现场，禁止覆盖或重建来源",
@@ -209,7 +224,7 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
                 "core 构建来源",
             )?;
             exact_object(
-                &pair,
+                pair,
                 &[
                     "format_version",
                     "backend_sha",
@@ -230,10 +245,10 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
                 return Err("core 来源与当前源码不匹配".into());
             }
         }
-        Some("business") => verify_business(root, evidence, &pair)?,
+        Some("business") => verify_business(root, evidence, pair)?,
         _ => return Err("未知全栈来源类型".into()),
     }
-    verify_source_identity(&pair)
+    verify_source_identity(pair)
 }
 
 fn verify_source_identity(pair: &Value) -> Result<()> {

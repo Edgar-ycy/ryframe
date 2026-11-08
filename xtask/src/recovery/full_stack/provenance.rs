@@ -21,15 +21,15 @@ pub(in crate::recovery) fn current(root: &Path, directory: &Path) -> Result<Valu
     if !directory.join("source-pair.json").is_file() {
         return Ok(Value::Null);
     }
-    let root = portable_path(&fs::canonicalize(root)?);
     let source_pair = read_json(
         &directory.join("source-pair.json"),
         "全栈源码组合",
         4 * 1024 * 1024,
     )?;
     if source_pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
-        return published(&root, directory, &source_pair);
+        return published(root, directory, &source_pair, |current| Ok(current.clone()));
     }
+    let root = portable_path(&fs::canonicalize(root)?);
     let fixture = root.parent().ok_or("后端缺少父目录")?.join("fixture.json");
     if fixture.is_file() {
         return business(&root, directory, &fixture);
@@ -45,13 +45,31 @@ pub(in crate::recovery) fn current(root: &Path, directory: &Path) -> Result<Valu
     )
 }
 
-fn published(root: &Path, directory: &Path, pair: &Value) -> Result<Value> {
+pub(in crate::recovery) fn published<T>(
+    root: &Path,
+    directory: &Path,
+    pair: &Value,
+    observe: impl FnOnce(&Value) -> Result<T>,
+) -> Result<T> {
     use crate::recovery::fixture_control::source_pair::execution;
-    let publication = execution::verify_pair(root, pair)?;
+    let root = portable_path(&fs::canonicalize(root)?);
+    execution::verify_pair(&root, pair, |publication| {
+        published_evidence(&root, directory, pair, publication, observe)
+    })
+}
+
+fn published_evidence<T>(
+    root: &Path,
+    directory: &Path,
+    pair: &Value,
+    publication: &Value,
+    observe: impl FnOnce(&Value) -> Result<T>,
+) -> Result<T> {
     let fixture_binding = &publication["original"]["fixture_receipt"];
     let fixture_path = Path::new(text_field(fixture_binding, "path", "原始 fixture")?);
     let fixture = read_json(fixture_path, "原始 fixture", 4 * 1024 * 1024)?;
-    let model = file_binding(&root.join(MODEL), "发布业务模型")?;
+    let model_path = root.join(MODEL);
+    let model = file_binding(&model_path, "发布业务模型")?;
     if file_binding(fixture_path, "原始 fixture")? != *fixture_binding
         || model["sha256"] != fixture["fixture_sha256"]
     {
@@ -71,18 +89,34 @@ fn published(root: &Path, directory: &Path, pair: &Value) -> Result<Value> {
         generated.insert((*side).into(), snapshot);
     }
     let pair_path = portable_path(&fs::canonicalize(directory)?).join("source-pair.json");
-    let mut bound = pair.clone();
-    bound["receipt"] = file_binding(&pair_path, "执行来源组合")?;
-    if read_json(&pair_path, "执行来源组合", 4 * 1024 * 1024)? != *pair
-        || execution::verify_pair(root, pair)? != publication
-    {
+    let pair_binding = file_binding(&pair_path, "执行来源组合")?;
+    if read_json(&pair_path, "执行来源组合", 4 * 1024 * 1024)? != *pair {
         return Err("发布业务来源在核验期间变化".into());
     }
-    Ok(
-        json!({"format_version":1,"fixture":"business","fixture_receipt":fixture_binding,
+    let mut bound = pair.clone();
+    bound["receipt"] = pair_binding.clone();
+    let result = observe(
+        &json!({"format_version":1,"fixture":"business","fixture_receipt":fixture_binding,
         "fixture_definition":{"model":model},"roots":roots,"source_pair":bound,
         "original":publication["original"]["source_pair"]["sources"],"generated":generated}),
-    )
+    );
+    let after: Result<()> = (|| {
+        if read_json(&pair_path, "执行来源组合", 4 * 1024 * 1024)? != *pair
+            || file_binding(&pair_path, "执行来源组合")? != pair_binding
+            || file_binding(fixture_path, "原始 fixture")? != *fixture_binding
+            || file_binding(&model_path, "发布业务模型")? != model
+        {
+            return Err("发布业务来源在核验期间变化".into());
+        }
+        Ok(())
+    })();
+    match (result, after) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Err(after)) => {
+            Err(format!("{error}；发布业务来源绑定后验同时失败：{after}").into())
+        }
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+    }
 }
 
 fn business(root: &Path, directory: &Path, path: &Path) -> Result<Value> {

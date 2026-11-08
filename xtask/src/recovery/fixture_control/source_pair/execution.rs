@@ -321,7 +321,11 @@ pub(in crate::recovery) fn pair(
     )
 }
 
-pub(in crate::recovery) fn verify_pair(root: &Path, pair: &Value) -> Result<Value> {
+pub(in crate::recovery) fn verify_pair<T>(
+    root: &Path,
+    pair: &Value,
+    observe: impl FnOnce(&Value) -> Result<T>,
+) -> Result<T> {
     exact(
         pair,
         &["format_version", "kind", "execution_source", "sources"],
@@ -336,7 +340,10 @@ pub(in crate::recovery) fn verify_pair(root: &Path, pair: &Value) -> Result<Valu
         pair["sources"] == window.publication()["original"]["source_pair"]["sources"],
         "执行来源组合的原始来源不匹配",
     );
+    let result = window::finish([selected, sources]).and_then(|()| observe(window.publication()));
     let after = window.verify();
-    window::finish([selected, sources, after])?;
-    Ok(window.publication().clone())
+    match result {
+        Ok(value) => after.map(|()| value),
+        Err(error) => Err(window::failure(error, after)),
+    }
 }

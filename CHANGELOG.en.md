@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Verify build and runtime evidence between the two observations of one four-root publication window for full-stack roles. API reuses its verified configuration, and supervisor progress rechecks the same authorized operation, configuration, and receipts. Existing startup, readiness, and handoff deadlines remain in force.
+
 - After a failed preflight has been formally reconciled, issue a successor seed request from new execution sources and maintenance artifacts. Keep the original service ledger and physical resources, verify the four schemas and credential bindings, and publish fresh-target requests in Rust.
 
 - Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.

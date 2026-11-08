@@ -8,18 +8,13 @@ pub(super) fn load(role: Role, backend: &Path, directory: &Path) -> Result<Value
     if role == Role::Frontend {
         return crate::recovery::fixture_runtime::frontend_runtime_contract(backend, directory);
     }
-    let mut runtime =
-        crate::recovery::fixture_control::verify_full_stack_runtime(backend, directory)?;
+    use crate::recovery::fixture_control::artifact::runtime;
+
+    let binding = runtime::verify(backend, directory)?;
+    let mut runtime = binding.receipt;
     if role == Role::Api {
-        let original = runtime.clone();
-        let config = Path::new(
-            runtime["api_config_dir"]
-                .as_str()
-                .ok_or("缺少 API 配置目录")?,
-        );
-        let table = crate::rate_limit::load_app_table(backend, Some(config), "test")
-            .map_err(|_| "API 文件配置读取失败；核对已绑定配置，不回显正文")?;
-        let app = table
+        let app = binding
+            .table
             .get("app")
             .and_then(toml::Value::as_table)
             .ok_or("缺少 app 配置")?;
@@ -37,12 +32,11 @@ pub(super) fn load(role: Role, backend: &Path, directory: &Path) -> Result<Value
             "::1" | "::" => "[::1]",
             _ => return Err("受监督 API 必须绑定可核验的本机监听地址".into()),
         };
-        runtime["api_ready_url"] = json!(format!("http://{host}:{port}/readyz"));
-        if crate::recovery::fixture_control::verify_full_stack_runtime(backend, directory)?
-            != original
-        {
+        let current = runtime::verify_configuration(backend, directory)?;
+        if current.receipt != runtime || current.table != binding.table {
             return Err("API 配置或运行登记在装配期间发生变化".into());
         }
+        runtime["api_ready_url"] = json!(format!("http://{host}:{port}/readyz"));
     }
     Ok(runtime)
 }

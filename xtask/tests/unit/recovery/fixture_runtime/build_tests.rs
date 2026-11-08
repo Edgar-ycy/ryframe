@@ -390,6 +390,23 @@ fn assert_artifacts_survive_cache_reuse_and_reject_tampering(
         backend,
     )
     .unwrap();
+    let pair_path = prepared.output.join("source-pair.json");
+    let pair = document(&pair_path).unwrap().0;
+    let original = fs::read(&pair_path).unwrap();
+    let mut changed = original.clone();
+    changed.push(b'\n');
+    let result =
+        full_stack::provenance::published(&prepared.context.root, &prepared.output, &pair, |_| {
+            fs::write(&pair_path, changed)?;
+            Ok(())
+        });
+    fs::write(&pair_path, original).unwrap();
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("发布业务来源在核验期间变化")
+    );
     for path in [
         prepared.fixture.output.join("execution-source.json"),
         prepared.fixture.receipt.clone(),

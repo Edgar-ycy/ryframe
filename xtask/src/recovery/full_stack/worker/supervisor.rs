@@ -51,9 +51,8 @@ fn inputs(args: &Value) -> Result<(Role, PathBuf, PathBuf, String)> {
     ))
 }
 fn operation(role: Role, backend: &Path, directory: &Path, id: &str) -> Result<Operation> {
-    super::runtime::load(role, backend, directory)?;
     let op = Operation::read(role, directory, &operation::source(directory)?)?;
-    op.validate("request", Value::Null)?;
+    op.load_request(backend)?.validate()?;
     if op.id()? != id
         || op.request["operation"]
             != if role == Role::Frontend {
@@ -82,11 +81,11 @@ fn monitor_operation(
         if op.id()? != id || op.request["backend_root"] != json!(backend) {
             return Err("角色监督进程不属于当前start操作".into());
         }
-        preparation::step(&op, monitor, Stage::RuntimeInput, || {
-            super::runtime::load(role, backend, directory).map(|_| ())
+        let request = preparation::step(&op, monitor, Stage::RuntimeInput, || {
+            op.load_request(backend)
         })?;
         preparation::step(&op, monitor, Stage::RequestContract, || {
-            op.validate("request", Value::Null)?;
+            request.validate()?;
             if op.request["operation"] != "start" {
                 return Err("角色监督进程不属于当前start操作".into());
             }
@@ -221,15 +220,32 @@ pub(super) fn run(args: &Value) -> Result<Value> {
     }
     Ok(Value::Null)
 }
-fn progress(backend: &Path, op: &Operation, phase: &str, identity: &Value) -> Result<()> {
+fn progress(
+    backend: &Path,
+    op: &Operation,
+    phase: &str,
+    supervisor: &Value,
+    identity: &Value,
+) -> Result<()> {
     let guard = super::controller::guard(op.role, op.directory(), Duration::from_secs(10))?;
-    let current = operation(op.role, backend, op.directory(), op.id()?)?;
-    let mut value = current.bound(&op.role.kind("progress"))?;
+    op.check()?;
+    if op.role != Role::Frontend {
+        crate::recovery::fixture_control::artifact::runtime::verify_configuration(
+            backend,
+            op.directory(),
+        )?;
+    }
+    let authorization = op.child("supervisor.json")?;
+    if authorization["identity"] != *supervisor {
+        return Err("角色进度收据不属于原监督授权".into());
+    }
+    let mut value = op.bound(&op.role.kind("progress"))?;
     value["phase"] = json!(phase);
     value["identity"] = identity.clone();
-    value["supervisor_sha256"] = json!(super::documents::hash(&current.child("supervisor.json")?)?);
+    value["supervisor_sha256"] = json!(super::documents::hash(&authorization)?);
     value["updated_at_ns"] = json!(operation::now());
-    current.publish("progress.json", &value, true)?;
+    op.check_source()?;
+    op.publish("progress.json", &value, true)?;
     guard.check()
 }
 fn run_product(backend: &Path, op: &Operation, supervisor: &Value, monitor: &Value) -> Result<()> {
@@ -237,7 +253,7 @@ fn run_product(backend: &Path, op: &Operation, supervisor: &Value, monitor: &Val
     if op.role == Role::Frontend {
         return run_frontend(backend, op, supervisor, monitor, &runtime);
     }
-    progress(backend, op, "launching", &Value::Null)?;
+    progress(backend, op, "launching", supervisor, &Value::Null)?;
     let executable = op.request[op.role.artifact()]["path"]
         .as_str()
         .ok_or("缺少角色产物")?;
@@ -269,7 +285,7 @@ fn run_product(backend: &Path, op: &Operation, supervisor: &Value, monitor: &Val
         return Err("角色产物与实际创建身份不同".into());
     }
     let tree = tree::register(op, supervisor, monitor, &product)?;
-    progress(backend, op, "started", &product)?;
+    progress(backend, op, "started", supervisor, &product)?;
     let url = op.request[op.role.ready()].as_str().ok_or("缺少就绪端点")?;
     let deadline = Instant::now()
         + Duration::from_secs_f64(op.request["timeout_seconds"].as_f64().ok_or("无效超时")?);
@@ -280,7 +296,7 @@ fn run_product(backend: &Path, op: &Operation, supervisor: &Value, monitor: &Val
         require_monitor(monitor)?;
         if super::controller::ready(url)? {
             process::listener(&product, url)?;
-            progress(backend, op, "ready", &product)?;
+            progress(backend, op, "ready", supervisor, &product)?;
             let guard = super::controller::guard(op.role, op.directory(), Duration::from_secs(10))?;
             super::runtime::load(op.role, backend, op.directory())?;
             op.publish(
@@ -304,7 +320,7 @@ fn run_frontend(
     monitor: &Value,
     runtime: &Value,
 ) -> Result<()> {
-    progress(backend, op, "launching", &Value::Null)?;
+    progress(backend, op, "launching", supervisor, &Value::Null)?;
     let argv = runtime["command"]
         .as_array()
         .ok_or("前端命令参数必须为数组")?;
@@ -333,10 +349,10 @@ fn run_frontend(
         return Err("前端实际产物与冻结启动器不一致".into());
     }
     let tree = tree::register(op, supervisor, monitor, &product)?;
-    progress(backend, op, "started", &product)?;
+    progress(backend, op, "started", supervisor, &product)?;
     let code = supervise_product(&mut child, &tree)?;
     super::runtime::load(op.role, backend, op.directory())?;
-    progress(backend, op, "completed", &product)?;
+    progress(backend, op, "completed", supervisor, &product)?;
     let guard = super::controller::guard(op.role, op.directory(), Duration::from_secs(10))?;
     op.publish(
         "result.json",

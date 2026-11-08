@@ -98,6 +98,22 @@ pub(super) struct Operation {
     pub request: Value,
     inode: (u64, u64),
 }
+
+pub(super) struct LoadedRequest<'a> {
+    operation: &'a Operation,
+    runtime: Value,
+}
+
+impl LoadedRequest<'_> {
+    pub(super) fn validate(self) -> Result<Value> {
+        let op = self.operation;
+        op.check_source()?;
+        let result = op.validate_with_runtime("request", Value::Null, Some(&self.runtime))?;
+        op.check_source()?;
+        Ok(result)
+    }
+}
+
 impl Operation {
     pub fn read(role: Role, directory: &Path, source: &str) -> Result<Self> {
         let path = directory.join(role.lock());
@@ -222,6 +238,30 @@ impl Operation {
             .ok_or_else(|| "操作ID无效".into())
     }
     pub fn validate(&self, mode: &str, value: Value) -> Result<Value> {
+        self.validate_with_runtime(mode, value, None)
+    }
+    pub(super) fn load_request(&self, backend: &Path) -> Result<LoadedRequest<'_>> {
+        self.check_source()?;
+        if self.request["backend_root"] != json!(backend) {
+            return Err("角色监督请求不属于当前后端".into());
+        }
+        Ok(LoadedRequest {
+            operation: self,
+            runtime: super::runtime::load(self.role, backend, self.directory())?,
+        })
+    }
+    pub(super) fn check_source(&self) -> Result<()> {
+        if self.owner["source_sha256"].as_str() != Some(source(self.directory())?.as_str()) {
+            return Err("角色运行来源发生变化，保留锁".into());
+        }
+        self.check()
+    }
+    fn validate_with_runtime(
+        &self,
+        mode: &str,
+        value: Value,
+        loaded: Option<&Value>,
+    ) -> Result<Value> {
         if let Some(binding) = self.request.get("environment_binding") {
             super::environment::Environment::recorded(binding)?.check()?;
         }
@@ -240,8 +280,11 @@ impl Operation {
                 Ok(Value::Null)
             }
         };
-        let runtime = if mode == "request" && self.role != Role::Worker {
-            super::runtime::load(
+        let current;
+        let runtime = if let Some(runtime) = loaded {
+            runtime
+        } else if mode == "request" && self.role != Role::Worker {
+            current = super::runtime::load(
                 self.role,
                 Path::new(
                     self.request["backend_root"]
@@ -249,9 +292,11 @@ impl Operation {
                         .ok_or("缺少后端目录")?,
                 ),
                 directory,
-            )?
+            )?;
+            &current
         } else {
-            read(&directory.join("runtime.json"))?
+            current = read(&directory.join("runtime.json"))?;
+            &current
         };
         receipts::execute(
             &json!({"mode":mode,"directory":directory,"source":self.owner["source_sha256"],"owner":self.owner,"request":self.request,"value":value,"candidate":optional("candidate.json")?,"supervisor":optional("supervisor.json")?,"runtime_sha256":file(&directory.join("runtime.json"))?["sha256"],"backend":self.request["backend_root"],"runtime":runtime}),

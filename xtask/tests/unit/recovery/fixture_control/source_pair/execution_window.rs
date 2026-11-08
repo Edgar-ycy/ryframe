@@ -38,28 +38,47 @@ fn execution_window_preserves_publication_and_rejects_each_source_root_drift() {
         json!({"format_version":1,"kind":super::super::PAIR_KIND,
         "execution_source":descriptor,"sources":publication["original"]["source_pair"]["sources"]})
     );
-    assert_eq!(super::super::verify_pair(root, &pair).unwrap(), publication);
-    for (changed, label) in [
-        (fixture.backend.join("src/lib.rs"), "生成来源 backend"),
+    assert_eq!(
+        super::super::verify_pair(root, &pair, |value| Ok(value.clone())).unwrap(),
+        publication
+    );
+    let failure =
+        || -> crate::Result<()> { Err(std::io::Error::other("观察阶段失败").into()) };
+    let error = super::super::verify_pair(root, &pair, |_| failure()).unwrap_err();
+    assert!(error.is::<std::io::Error>());
+    for (changed, label, fail_observation) in [
+        (
+            fixture.backend.join("src/lib.rs"),
+            "生成来源 backend",
+            false,
+        ),
         (
             fixture.frontend.join("src/business.txt"),
             "生成来源 frontend",
+            false,
         ),
         (
             fixture.output.join("backend/src/lib.rs"),
             "发布来源 backend",
+            false,
         ),
         (
             fixture.output.join("frontend/src/business.txt"),
             "发布来源 frontend",
+            true,
         ),
     ] {
         let before = fs::read(&changed).unwrap();
-        let window = Window::open(&fixture.backend, &path).unwrap();
-        fs::write(&changed, "// 窗口内源码漂移\n").unwrap();
-        let message = window.verify().unwrap_err().to_string();
+        let error = super::super::verify_pair(root, &pair, |_| {
+            fs::write(&changed, "// 窗口内源码漂移\n")?;
+            if fail_observation { failure() } else { Ok(()) }
+        })
+        .unwrap_err();
+        let message = error.to_string();
         assert!(message.contains(label), "{message}");
-        drop(window);
+        if fail_observation {
+            assert!(message.contains("观察阶段失败"), "{message}");
+        }
         fs::write(changed, before).unwrap();
     }
     assert_eq!(fs::read(path).unwrap(), original);
