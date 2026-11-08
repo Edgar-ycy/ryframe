@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Allow the coordinator worktree to restart registered RustFS from its original external executable. Verify the original launch identity, absolute path without links, actual file size, and SHA-256.
+
 - A recovery successor relationship accepts the ready review exactly referenced by the original seed request and revalidates its full preflight. Historical pending reviews remain readable through an explicit predecessor binding, and successor resource isolation still covers all three sides.
 
 - Verify build and runtime evidence between the two observations of one four-root publication window for full-stack roles. API reuses its verified configuration, and supervisor progress rechecks the same authorized operation, configuration, and receipts. Existing startup, readiness, and handoff deadlines remain in force.

@@ -2,8 +2,11 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use serde_json::{Value, json};
 
-use super::super::{super::json as json_io, common, origin};
-use crate::{Result, cli::CloneSide};
+use super::super::{
+    super::{digest, json as json_io, lifecycle::manifest},
+    common, origin,
+};
+use crate::{Result, cli::CloneSide, local_test_path::validate_external_existing_file};
 
 const FIELDS: &[&str] = &[
     "format_version",
@@ -63,11 +66,16 @@ pub(crate) fn validate(
         .ok_or("存储重启缺少 scope_id")?;
     common::scope_id(scope)?;
     common::directory_identity(backend, object.get("data_directory").unwrap())?;
-    let executable = common::bound_file(
-        backend,
-        object.get("executable").unwrap(),
-        "RustFS 可执行文件",
-    )?;
+    let executable = manifest::validate_binding_shape(&object["executable"], "RustFS 可执行文件")?;
+    let path = Path::new(json_io::text(&executable["path"], "RustFS 可执行文件")?);
+    let path = validate_external_existing_file(path)
+        .map_err(|error| format!("RustFS 可执行文件无效：{error}"))?;
+    let actual = digest::file(&path)?;
+    if executable["bytes"].as_u64() != Some(actual.bytes)
+        || executable["sha256"].as_str() != Some(actual.sha256.as_str())
+    {
+        return Err("RustFS 可执行文件与登记大小或摘要不一致".into());
+    }
     let previous = json_io::exact(
         object.get("previous").unwrap(),
         &[
@@ -79,7 +87,7 @@ pub(crate) fn validate(
         "RustFS 原启动代次",
     )?;
     let previous_identity = common::validate_process_identity(previous.get("identity").unwrap())?;
-    if Path::new(previous_identity["executable"].as_str().unwrap()) != executable {
+    if Path::new(previous_identity["executable"].as_str().unwrap()) != path {
         return Err("存储重启不能替换原可执行文件".into());
     }
     let api = object
