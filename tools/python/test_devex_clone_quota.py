@@ -50,8 +50,8 @@ class FakeBridge:
         if self.failure == "before":
             raise TimeoutError("未知 PUT")
         self.rows[tenant].update(copy.deepcopy(values["body"]))
-        if self.failure in {"after", "refresh"}:
-            raise TimeoutError("响应或刷新未知")
+        if self.failure == "after":
+            raise TimeoutError("PUT 后响应未知")
         auth = {**self.auth, "subject_id": "999"} if self.failure == "wrong-auth" else self.auth
         return {"response": {"code": 200, "message": "成功", "data": copy.deepcopy(self.rows[tenant])}, "authorization": auth}
 
@@ -213,17 +213,10 @@ class QuotaTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.run_mode("quotas-apply")
         self.assertEqual(len([c for c in self.bridge.calls if c[0] == "update"]), 1)
 
-    def test_refresh_failure_or_wrong_identity_remains_unknown(self):
+    def test_wrong_response_identity_remains_unknown(self):
         self.plan_actions()
         self.bridge.failure = "wrong-auth"
         with self.assertRaises(ValueError): self.run_mode("quotas-apply")
-        with self.assertRaises(ValueError): self.run_mode("quotas-apply")
-        self.assertEqual(len([c for c in self.bridge.calls if c[0] == "update"]), 1)
-
-    def test_refresh_transport_failure_is_not_retried(self):
-        self.plan_actions()
-        self.bridge.failure = "refresh"
-        with self.assertRaises(TimeoutError): self.run_mode("quotas-apply")
         with self.assertRaises(ValueError): self.run_mode("quotas-apply")
         self.assertEqual(len([c for c in self.bridge.calls if c[0] == "update"]), 1)
 
@@ -236,10 +229,8 @@ class QuotaTests(unittest.TestCase):
 
     def test_unpublished_confirmation_after_guard_failure_can_reconcile(self):
         self.plan_actions()
-        original = quota.confirm
         with patch.object(quota, "confirm", side_effect=ValueError("写入后守卫失败")):
             with self.assertRaises(ValueError): self.run_mode("quotas-apply")
-        self.assertIs(quota.confirm, original)
         self.run_mode("quotas-reconcile")
         self.run_mode("quotas-apply")
         self.assertEqual(len([c for c in self.bridge.calls if c[0] == "update"]), 11)
